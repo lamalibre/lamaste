@@ -7,6 +7,8 @@
 
 import type { PluginHosting, PluginMode } from './constants.js';
 import type { HostEligibility } from './host-eligibility.js';
+import type { AudienceChange, NormalizedIdentityBlock } from './identity.js';
+import type { SettingsField, SettingsValue } from './plugin-settings.js';
 import type { AgentBlock } from './schemas.js';
 
 // ---------------------------------------------------------------------------
@@ -118,6 +120,211 @@ export interface RetainedAgentData {
 }
 
 // ---------------------------------------------------------------------------
+// Users, the user directory and plugin audiences (4.5, slice 6)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a users change could not complete beside the change itself (a
+ * session epoch, registry tokens, Gatekeeper's cleanup, an erasure): a
+ * sentence, or the step and what went wrong. The change itself is done.
+ */
+export type AdminWarning = string | { readonly step: string; readonly message: string };
+
+/** A user as `GET /api/users` lists them: Authelia's record with the directory's id. */
+export interface AdminUser {
+  readonly username: string;
+  readonly displayname: string;
+  readonly email: string;
+  readonly groups: readonly string[];
+  /** Authelia's `disabled: true` — the user cannot sign in. */
+  readonly disabled: boolean;
+  /** The directory's id (UUID v4); null until the directory has seen the user (within a minute). */
+  readonly userId: string | null;
+  readonly status: 'active' | 'disabled';
+}
+
+/**
+ * A user as the directory keeps them — removed and erased users too. A
+ * removed user keeps the username, name and address they last had until
+ * erased; an erased one keeps the id alone.
+ */
+export interface DirectoryUserView {
+  readonly userId: string;
+  /** Null once erased. */
+  readonly username: string | null;
+  readonly displayName: string | null;
+  readonly email: string | null;
+  readonly status: 'active' | 'disabled' | 'removed';
+  /** `deleted`: through Lamaste; `deleted-outside`: gone from users.yml without it. */
+  readonly removedReason: 'deleted' | 'deleted-outside' | null;
+  readonly removedAt: string | null;
+  readonly erasedAt: string | null;
+  /**
+   * When Gatekeeper dropped the grants and group memberships under the
+   * username — null on a removed user while that cleanup is pending.
+   */
+  readonly principalClearedAt: string | null;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  /** Who erased the user, and when. */
+  readonly erasure: { readonly requestedAt: string; readonly requestedBy: string } | null;
+  /** The plugins whose agent half has not acknowledged the user's erasure yet. */
+  readonly pendingErasures: readonly string[];
+}
+
+/** Why users cannot reach an agent-hosted plugin's `/app` yet; null when they can. */
+export type IdentityReadinessReason =
+  | 'not_installed'
+  | 'no_identity'
+  | 'not_approved'
+  | 'not_hosted'
+  | 'not_answered';
+
+/**
+ * An agent-hosted plugin's settings as the panel shows them
+ * (`GET /api/plugins/:name/settings`): each non-secret field's effective
+ * value, each secret only as set or not — never its value. `source` says
+ * whether they were read from the agent half now (`live`), from the
+ * relay's cache (`cache`) or never (`none`).
+ */
+export interface PluginSettingsView {
+  readonly schemaVersion: number;
+  readonly fields: SettingsField[];
+  readonly values: Record<string, SettingsValue | { set: true; setAt: string } | { set: false }>;
+  readonly configured: boolean;
+  readonly missing: string[];
+  readonly revision: number | null;
+  readonly source: 'live' | 'cache' | 'none';
+  readonly syncedAt: string | null;
+  readonly hosting: {
+    readonly agentLabel: string;
+    readonly phase: string;
+    readonly state: string;
+    readonly reason: string | null;
+    readonly since: string | null;
+    readonly agentLastSeenAt: string | null;
+  } | null;
+}
+
+/**
+ * What the panel knows about an agent-hosted plugin's users: the identity
+ * block its installed version declares, whether users can reach it, the
+ * feed to its agent half, its audience in numbers and the erasures its half
+ * has not acknowledged.
+ */
+export interface PluginIdentityView {
+  /** The installed version's identity block, normalized; null: it declares none. */
+  readonly declared: NormalizedIdentityBlock | null;
+  readonly readiness: {
+    readonly ready: boolean;
+    readonly declared: boolean;
+    readonly approved: boolean;
+    readonly hostingActive: boolean;
+    readonly version: string | null;
+    /** The version whose agent half last answered the feed's protocol 1. */
+    readonly readyVersion: string | null;
+    readonly reason: IdentityReadinessReason | null;
+  };
+  /** Null for a plugin that declares no identity. */
+  readonly sync: {
+    readonly directoryId: string;
+    /** The directory the agent half follows, as it last answered. */
+    readonly halfDirectoryId: string | null;
+    /** The seq the agent half has applied up to, as it last answered. */
+    readonly cursor: number | null;
+    /** The highest seq of the plugin's audience. */
+    readonly head: number;
+    /** How many audience rows the agent half has not applied. */
+    readonly behind: number;
+    readonly readyVersion: string | null;
+    readonly lastSyncAt: string | null;
+    readonly lastReconcileAt: string | null;
+    /** What the last daily reconcile found out of step (non-zero: a feed bug, audited). */
+    readonly lastMismatches: number | null;
+    /** Why the last sync did not finish, or was not tried. */
+    readonly lastError: string | null;
+  } | null;
+  readonly audience: {
+    readonly active: number;
+    readonly disabled: number;
+    readonly removed: number;
+    readonly erased: number;
+  } | null;
+  /** User ids whose erasure the agent half has not acknowledged. */
+  readonly pendingErasures: readonly string[];
+  readonly approval: {
+    readonly approved: boolean;
+    readonly state: 'not-required' | 'approved' | 'pending';
+  };
+}
+
+/** `Omit` applied to each member of a union. */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+/** An audience change as the panel stores it — the feed's change without its `seq`. */
+export type StoredAudienceChange = DistributiveOmit<AudienceChange, 'seq'>;
+
+/** One row of a plugin's audience: a member, or a user who left it (a tombstone). */
+export interface PluginAudienceRow {
+  readonly userId: string;
+  readonly seq: number;
+  readonly version: number;
+  readonly updatedAt: string;
+  /** Null when the stored row is not a change the panel can read. */
+  readonly change: StoredAudienceChange | null;
+}
+
+/**
+ * An entitlement: a Gatekeeper grant giving a user or a Lamaste group
+ * roles on an agent-hosted plugin.
+ */
+export interface PluginEntitlement {
+  readonly grantId: string;
+  readonly principalType: 'user' | 'group';
+  /** A username or a Lamaste group name. */
+  readonly principalId: string;
+  /** The directory id of a user principal (null for a group, or a user the directory lacks). */
+  readonly userId: string | null;
+  readonly roles: readonly string[];
+  /** Roles the grant carries that the installed version no longer declares (they count for nothing). */
+  readonly unknownRoles: readonly string[];
+  readonly createdAt: string;
+}
+
+/** The principal of an entitlement. */
+export interface EntitlementPrincipal {
+  readonly principalType: 'user' | 'group';
+  readonly principalId: string;
+}
+
+/** The outcome of one sync of a plugin's audience to its agent half. */
+export interface IdentitySyncResult {
+  readonly status: 'synced' | 'up-to-date' | 'skipped' | 'failed';
+  /** Why it was skipped. */
+  readonly reason?: string;
+  /** Why it failed (or was skipped). */
+  readonly error?: string;
+  /** Where the agent half is now. */
+  readonly cursor?: number;
+  /** Whether everything was sent from 0. */
+  readonly replay?: boolean;
+  /** What a reconcile found out of step. */
+  readonly mismatches?: number;
+}
+
+/**
+ * How a route bound to a tunnel as a plugin's user surface is served: its
+ * host carries the route's locations only while the plugin's installed,
+ * approved version declares identity.
+ */
+export interface UserSurfaceRouteStatus {
+  readonly route: string;
+  readonly served: boolean;
+  readonly reason: 'not_installed' | 'no_identity' | 'not_approved' | null;
+}
+
+// ---------------------------------------------------------------------------
 // AdminClient interface
 // ---------------------------------------------------------------------------
 
@@ -129,15 +336,15 @@ export interface RetainedAgentData {
  * - Desktop app: uses Tauri invoke() -> Rust -> curl + P12
  */
 export interface AdminClient {
-  // Users
-  getUsers(): Promise<{ users: unknown[] }>;
+  // Users — Authelia's users.yml, each with the directory's `userId` and `status`
+  getUsers(): Promise<{ users: AdminUser[] }>;
   createUser(data: {
     username: string;
     displayname: string;
     email: string;
     password: string;
     groups?: string[];
-  }): Promise<{ ok: boolean; user: unknown }>;
+  }): Promise<{ ok: boolean; user: AdminUser; warnings?: AdminWarning[] }>;
   updateUser(
     username: string,
     data: {
@@ -145,10 +352,56 @@ export interface AdminClient {
       email?: string;
       password?: string;
       groups?: string[];
+      disabled?: boolean;
     },
-  ): Promise<{ ok: boolean; user: unknown }>;
-  deleteUser(username: string): Promise<{ ok: boolean }>;
+  ): Promise<{ ok: boolean; user: AdminUser; warnings?: AdminWarning[] }>;
+  /**
+   * Disable a user — the one offboarding action: they cannot sign in, every
+   * plugin audience shows them disabled, the user surface refuses them, and
+   * their desktop sessions and registry tokens end. Refused (`code`
+   * `last_admin`) for the last enabled administrator.
+   */
+  disableUser(
+    username: string,
+  ): Promise<{ ok: boolean; user: AdminUser; warnings?: AdminWarning[] }>;
+  enableUser(
+    username: string,
+  ): Promise<{ ok: boolean; user: AdminUser; warnings?: AdminWarning[] }>;
+  /**
+   * Delete a user: the directory keeps a tombstone (the id and the last
+   * known name and address) so plugins' history stays readable; `erase`
+   * scrubs it at once. `principalCleared`: Gatekeeper dropped the grants
+   * and group memberships under the username (false: the cleanup is
+   * pending, and nothing is given to the username until it is done).
+   */
+  deleteUser(
+    username: string,
+    options?: { erase?: boolean },
+  ): Promise<{
+    ok: boolean;
+    userId: string | null;
+    principalCleared: boolean;
+    erased?: boolean;
+    warnings?: AdminWarning[];
+  }>;
   resetTotp(username: string): Promise<{ ok: boolean; totpUri: string }>;
+
+  // User directory — every user it knows, removed and erased ones too
+  getUserDirectory(): Promise<{ directoryId: string; users: DirectoryUserView[] }>;
+  /**
+   * Erase a removed user: the tombstone is scrubbed to the bare id, their
+   * invitations and Gatekeeper's access-request log rows go, and every
+   * plugin that had them is sent the erasure. Refused with `code`
+   * `user_not_found`, `user_not_removed`, `already_erased` or
+   * `gatekeeper_unavailable` (nothing erased).
+   */
+  eraseDirectoryUser(userId: string): Promise<{
+    ok: boolean;
+    userId: string;
+    erasedAt: string;
+    invitationsPurged: number;
+    accessLogPurged: number;
+  }>;
 
   // Invitations
   getInvitations(): Promise<{ invitations: unknown[] }>;
@@ -334,6 +587,55 @@ export interface AdminClient {
     operation?: unknown;
   }>;
   discardPluginUpdate(name: string): Promise<{ ok: boolean }>;
+  // Settings of an agent-hosted plugin, kept by its agent half: a partial
+  // change against the `revision` they were read at; `null` puts a field
+  // back to its default or clears a secret. Secrets travel in the body only.
+  getPluginSettings(name: string): Promise<PluginSettingsView>;
+  updatePluginSettings(
+    name: string,
+    body: {
+      revision: number;
+      values?: Record<string, SettingsValue | null>;
+      secrets?: Record<string, string | null>;
+    },
+  ): Promise<PluginSettingsView>;
+  // People of an agent-hosted plugin that declares identity (4.5): its
+  // block and readiness, audience, entitlements (Gatekeeper plugin grants
+  // with roles) and the feed to its agent half. Refused with `code`
+  // `no_identity` for a plugin that declares none (the identity view
+  // answers it with `declared: null` instead).
+  getPluginIdentity(name: string): Promise<{ identity: PluginIdentityView }>;
+  /** Members and tombstones, in seq order; `head` is the highest seq. */
+  getPluginAudience(name: string): Promise<{ head: number; audience: PluginAudienceRow[] }>;
+  /** Role grants on the plugin, and how many of its grants carry no roles (they never count). */
+  getPluginEntitlements(
+    name: string,
+  ): Promise<{ entitlements: PluginEntitlement[]; roleless: number }>;
+  /**
+   * Give a user or a Lamaste group exactly `roles` on the plugin (replacing
+   * the roles it had). Refused with `code` `unknown_roles` (the installed
+   * version declares no such role), `user_not_found`, `group_not_found` or
+   * `gatekeeper_unavailable`.
+   */
+  setPluginEntitlement(
+    name: string,
+    entitlement: EntitlementPrincipal & { roles: string[] },
+  ): Promise<{
+    ok: boolean;
+    entitlement: PluginEntitlement;
+    changed: boolean;
+    warnings?: AdminWarning[];
+  }>;
+  /** Revoke every role grant the principal holds on the plugin (`entitlement_not_found` when none). */
+  removePluginEntitlement(
+    name: string,
+    principal: EntitlementPrincipal,
+  ): Promise<{ ok: boolean; revoked: number; warnings?: AdminWarning[] }>;
+  /** Sync the audience to the agent half now; `reconcile` replays everything and counts mismatches. */
+  syncPluginIdentity(
+    name: string,
+    options?: { reconcile?: boolean },
+  ): Promise<{ ok: boolean; result: IdentitySyncResult; sync: PluginIdentityView['sync'] }>;
   // Push install: what lets the panel install, update and remove what
   // Lamaste installs on an agent while that agent's window is open.
   getPushInstallConfig(): Promise<{
@@ -461,6 +763,19 @@ export interface AdminClient {
   ): Promise<{ ok: boolean; tunnel: unknown }>;
   deleteTunnel(id: string): Promise<{ ok: boolean }>;
   getTunnelAgentConfig(): Promise<Record<string, unknown>>;
+  /**
+   * Serve plugin `route`'s user surface (`/api/<route>/app/*`) on the
+   * tunnel's host — an enabled, agent-carried app tunnel that is
+   * `authenticated` or `restricted`; a route on one host at most (`code`
+   * `user_surface_conflict`). The answer's tunnel carries
+   * `userSurfaceStatus` (`UserSurfaceRouteStatus` per bound route).
+   */
+  bindTunnelUserSurface(
+    id: string,
+    route: string,
+  ): Promise<{ ok: boolean; changed: boolean; tunnel: unknown }>;
+  /** Stop serving it there: requests for the route go down the tunnel again. */
+  unbindTunnelUserSurface(id: string, route: string): Promise<{ ok: boolean; tunnel: unknown }>;
 
   // Gatekeeper Groups
   getGatekeeperGroups(): Promise<{ groups: unknown[] }>;

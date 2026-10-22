@@ -52,6 +52,13 @@
  *   configure <name> [--set key=value]... [--clear key]... [--secrets-stdin]
  *                        Change them (kept by its agent half); in a terminal without
  *                        flags, field by field — a secret never on the command line
+ *   identity <name>      The people of an agent-hosted plugin that declares identity:
+ *                        its roles and attributes, approval, readiness, the feed, erasures
+ *   audience <name>      Its members and the users who left, as its agent half is told
+ *   entitlements <name> [--user <u> | --group <g> --roles a,b] [--revoke --user|--group]
+ *                        Who holds which of its roles; give or take them away
+ *   identity-sync <name> [--reconcile]
+ *                        Sync its audience to its agent half now
  *
  * Every subcommand goes through the running panel (`/api/plugins/*`, admin
  * certificate): the panel owns the plugin registry (SQLite `state.db`), runs
@@ -69,10 +76,13 @@ import { PANEL_SERVICE } from '../config.js';
 import { panelRequest } from '../panel-api.js';
 import { emit, emitStep, emitError, emitComplete, emitLog } from '../ndjson.js';
 import { configureCmd, settingsCmd } from './plugin-settings.js';
+import { audienceCmd, entitlementsCmd, identityCmd, identitySyncCmd } from './plugin-identity.js';
 import { settingsDiffLines, terminalText } from '../plugin-settings.js';
 import {
   APPROVE_HOOKS_USAGE,
   approveHooksCommand,
+  identityBlockLines,
+  identityDiffLines,
   parseApproveArgs,
   pendingUpdateReasons,
 } from '../plugin-approval.js';
@@ -134,6 +144,14 @@ export async function runPlugins(args, { json }) {
       return settingsCmd(args.slice(1), { json });
     case 'configure':
       return configureCmd(args.slice(1), { json });
+    case 'identity':
+      return identityCmd(args[1], { json });
+    case 'audience':
+      return audienceCmd(args[1], { json });
+    case 'entitlements':
+      return entitlementsCmd(args.slice(1), { json });
+    case 'identity-sync':
+      return identitySyncCmd(args.slice(1), { json });
     default:
       printPluginUsage();
       process.exit(sub ? 1 : 0);
@@ -191,6 +209,16 @@ ${b('Subcommands:')}
                        --clear puts a field back to its default or clears a secret,
                        --secrets-stdin reads {"key": "value" | null} from stdin;
                        in a terminal without flags, asked field by field
+  ${c('identity <name>')}      People of a plugin that declares identity: its roles and attributes,
+                       approval, whether users reach it (and why not), the feed, erasures
+  ${c('audience <name>')}      Its members and the users who left, as its agent half is told
+  ${c('entitlements <name>')}  Who holds which of its roles (Gatekeeper grants with roles)
+  ${c('entitlements <name> --user <u> | --group <g> --roles a,b')}
+                       Give a user or a Lamaste group exactly these roles
+  ${c('entitlements <name> --revoke --user <u> | --group <g>')}
+                       Take every role away
+  ${c('identity-sync <name> [--reconcile]')}
+                       Sync its audience to its agent half now; --reconcile replays all of it
 `);
 }
 
@@ -760,14 +788,24 @@ function printAgentHalf(agentHalf, title) {
 }
 
 /**
+ * Print an identity block — the roles a plugin's users hold and what it
+ * receives about each member.
+ */
+function printIdentityBlock(block, title) {
+  console.log(chalk.bold(`  ${title}`));
+  for (const line of identityBlockLines(block)) console.log(`    ${line}`);
+}
+
+/**
  * Print what a version brings that needs approval — the approval digest
  * (what `approve-hooks` takes; none for an update that brings neither
- * relay hooks nor an agent half Lamaste installs), its relay hook set and
- * the agent half Lamaste installs.
+ * relay hooks, nor an agent half Lamaste installs, nor an identity block),
+ * its relay hook set, the agent half Lamaste installs and its identity
+ * block.
  */
-function printApprovalContents({ digest, relay, agentHalf }) {
+function printApprovalContents({ digest, relay, agentHalf, identity = null }) {
   console.log(
-    `    approval digest: ${digest ? chalk.cyan(digest) : chalk.dim('none — no relay hooks, no agent half Lamaste installs')}`,
+    `    approval digest: ${digest ? chalk.cyan(digest) : chalk.dim('none — no relay hooks, no agent half Lamaste installs, no identity block')}`,
   );
   if (relay) {
     console.log('');
@@ -777,12 +815,45 @@ function printApprovalContents({ digest, relay, agentHalf }) {
     console.log('');
     printAgentHalf(agentHalf, 'Agent half — Lamaste installs it on the hosting agent');
   }
+  if (identity) {
+    console.log('');
+    printIdentityBlock(
+      identity,
+      'Identity — Lamaste sends its agent half the users entitled to these roles',
+    );
+  }
+}
+
+/**
+ * Print how an update changes the plugin's identity block (part of the
+ * digest): roles added or removed and attributes widened wait for an
+ * administrator whatever auto-approve says; the block it brings.
+ */
+function printIdentityChanges(diff) {
+  const shown = identityDiffLines(diff);
+  if (!shown) {
+    // Declared before and after, unchanged: still part of what is approved.
+    if (diff?.after) {
+      console.log('');
+      printIdentityBlock(diff.after, 'Identity — unchanged');
+    }
+    return;
+  }
+  console.log('');
+  console.log(chalk.bold(`  Identity — this version ${shown.headline}`));
+  for (const line of shown.lines) {
+    console.log(`    ${line.approval ? chalk.yellow(line.text) : line.text}`);
+  }
+  if (diff.after) {
+    for (const line of identityBlockLines(diff.after)) console.log(chalk.dim(`    ${line}`));
+  }
 }
 
 /**
  * Print an update that waits for approval under `title`: why it waits
- * (`approvalRequired` — a secret turned plain in red), what it brings
- * (its digest, relay hook set and agent half), how it changes the settings
+ * (`approvalRequired` — a secret turned plain in red, an identity change
+ * with its note), what it brings (its digest, relay hook set and agent
+ * half), how it changes the identity block, how it changes the settings
  * schema (outside the digest) — fields added and removed with their types,
  * retyped ones, newly required ones, and a warning for secrets that become
  * plain values — what auto-approve could not cover beyond the reasons, and
@@ -793,10 +864,16 @@ function printPendingUpdate(name, update, title) {
   console.log(chalk.bold(`  ${title}`));
   const { required, notCovered } = pendingUpdateReasons(update);
   for (const line of required) {
-    console.log(line.warning ? chalk.red(`    - ${line.text}`) : `    - ${line.text}`);
+    const text = line.warning ? chalk.red(`    - ${line.text}`) : `    - ${line.text}`;
+    console.log(line.note ? `${text}${chalk.dim(` (${line.note})`)}` : text);
   }
   console.log('');
-  printApprovalContents(update);
+  printApprovalContents({
+    digest: update.digest,
+    relay: update.relay,
+    agentHalf: update.agentHalf,
+  });
+  printIdentityChanges(update.identity);
   const lines = settingsDiffLines(update.settings);
   if (lines.length > 0) {
     console.log('');
@@ -839,7 +916,7 @@ async function hooksCmd(name, { json }) {
   console.log('');
   if (!approval.required && !hooks.agent && !hooks.pendingUpdate) {
     console.log(
-      `  Plugin ${chalk.cyan(name)} declares no lifecycle hooks and no agent half for Lamaste to install.\n`,
+      `  Plugin ${chalk.cyan(name)} declares no lifecycle hooks, no agent half for Lamaste to install and no identity.\n`,
     );
     return;
   }
@@ -855,12 +932,20 @@ async function hooksCmd(name, { json }) {
       digest: approval.digest,
       relay: hooks.relay,
       agentHalf: hooks.agentHalf,
+      identity: hooks.identity?.declared ? hooks.identity.block : null,
     });
     console.log(
       `\n    auto-approve for later versions: ${hooks.autoApprove ? chalk.yellow('on') : 'off'}`,
     );
     if (approval.state !== 'approved') {
       console.log(`\n    Approve with: ${approveCommand(name, { digest: approval.digest })}`);
+    }
+    if (hooks.identity?.declared) {
+      console.log(
+        chalk.dim(
+          `    Its people (entitlements, audience, feed): lamaste-server plugins identity ${terminalText(name)}`,
+        ),
+      );
     }
   }
   if (hooks.agent) {
@@ -1176,6 +1261,7 @@ async function installPluginCmd(packageName, { json }) {
       digest: approval.digest,
       relay: result.hooks.relay,
       agentHalf: result.hooks.agentHalf,
+      identity: result.hooks.identity?.declared ? result.hooks.identity.block : null,
     });
     if (approval.state === 'pending') {
       console.log(

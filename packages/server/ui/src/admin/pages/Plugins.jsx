@@ -21,6 +21,7 @@ import { useToast } from '../components/Toast.jsx';
 import { useOidcSecretReveal } from '../components/OidcSecretReveal.jsx';
 import { PluginHooks, PluginOperation, PluginUpdate } from '../components/PluginLifecycle.jsx';
 import PluginHostDialog from '../components/PluginHostDialog.jsx';
+import PluginIdentity from '../components/PluginIdentity.jsx';
 import PluginSettings, { NeedsConfigurationBadge } from '../components/PluginSettings.jsx';
 import PushInstallSection from '../components/PushInstallSection.jsx';
 import { PluginRetainedData, UninstalledRetainedData } from '../components/RetainedData.jsx';
@@ -362,6 +363,7 @@ function PluginCard({
       {(plugin.hooks?.relay ||
         plugin.hooks?.agent ||
         plugin.hooks?.agentHalf ||
+        plugin.identity ||
         plugin.hooks?.pendingUpdate) && <PluginHooks plugin={plugin} isActing={isActing} />}
 
       {hasAgentHalf && (
@@ -377,6 +379,8 @@ function PluginCard({
       )}
 
       {plugin.settings && <PluginSettings plugin={plugin} />}
+
+      {plugin.identity && <PluginIdentity plugin={plugin} />}
 
       {agentHosted && <PluginRetainedData plugin={plugin} isActing={isActing} />}
 

@@ -23,11 +23,17 @@ const AdminClientContext = createContext(null);
  * @typedef {Object} AdminClient
  *
  * Users:
- * @property {() => Promise<{users: Array}>} getUsers
- * @property {(data: {username, displayname, email, password, groups?}) => Promise<{ok, user}>} createUser
- * @property {(username: string, data: {displayname?, email?, password?, groups?}) => Promise<{ok, user}>} updateUser
- * @property {(username: string) => Promise<{ok}>} deleteUser
+ * @property {() => Promise<{users: Array<{username, displayname, email, groups, disabled, userId, status}>}>} getUsers — `userId` is the directory's (null until it has seen the user, within a minute); `status` active | disabled
+ * @property {(data: {username, displayname, email, password, groups?}) => Promise<{ok, user, warnings?}>} createUser
+ * @property {(username: string, data: {displayname?, email?, password?, groups?, disabled?}) => Promise<{ok, user, warnings?}>} updateUser
+ * @property {(username: string) => Promise<{ok, user, warnings?}>} disableUser — they cannot sign in, every plugin audience shows them disabled, the user surface refuses them, desktop sessions and registry tokens end; refused with `code` last_admin for the last enabled administrator
+ * @property {(username: string) => Promise<{ok, user, warnings?}>} enableUser
+ * @property {(username: string, options?: {erase?: boolean}) => Promise<{ok, userId, principalCleared, erased?, warnings?}>} deleteUser — the directory keeps a tombstone; `erase` scrubs it at once; `principalCleared` false: Gatekeeper's cleanup of the username is pending
  * @property {(username: string) => Promise<{ok, totpUri}>} resetTotp
+ *
+ * User directory:
+ * @property {() => Promise<{directoryId, users: Array<{userId, username, displayName, email, status, removedReason, removedAt, erasedAt, principalClearedAt, version, createdAt, updatedAt, erasure, pendingErasures}>}>} getUserDirectory — removed and erased users too; `pendingErasures`: the plugins whose agent half has not acknowledged the erasure
+ * @property {(userId: string) => Promise<{ok, userId, erasedAt, invitationsPurged, accessLogPurged}>} eraseDirectoryUser — a removed user; refused with `code` user_not_removed, already_erased, gatekeeper_unavailable or user_not_found
  *
  * Invitations:
  * @property {() => Promise<{invitations: Array}>} getInvitations
@@ -107,6 +113,12 @@ const AdminClientContext = createContext(null);
  * @property {(name: string, enabled: boolean) => Promise<{ok, autoApprove}>} setPluginHooksAutoApprove
  * @property {(name: string, version?: string) => Promise<{ok, upToDate?, pendingUpdate?, operation?}>} updatePlugin
  * @property {(name: string) => Promise<{ok}>} discardPluginUpdate
+ * @property {(name: string) => Promise<{identity: {declared, readiness, sync, audience, pendingErasures, approval}}>} getPluginIdentity — the identity block the installed version declares (null: none), whether users reach its `/app` (`readiness.reason` not_installed | no_identity | not_approved | not_hosted | not_answered), the feed to its agent half, the audience in numbers, the erasures it has not acknowledged
+ * @property {(name: string) => Promise<{head, audience: Array<{userId, seq, version, updatedAt, change}>}>} getPluginAudience — members (`change.kind` upsert) and tombstones (remove: deleted | unentitled | erased), in seq order; refused with `code` no_identity
+ * @property {(name: string) => Promise<{entitlements: Array<{grantId, principalType, principalId, userId, roles, unknownRoles, createdAt}>, roleless}>} getPluginEntitlements — Gatekeeper plugin grants with roles; `roleless` counts the grants without (they never make anyone a member)
+ * @property {(name: string, entitlement: {principalType, principalId, roles}) => Promise<{ok, entitlement, changed, warnings?}>} setPluginEntitlement — exactly these roles for a user or a Lamaste group; refused with `code` unknown_roles, user_not_found, group_not_found or gatekeeper_unavailable
+ * @property {(name: string, principal: {principalType, principalId}) => Promise<{ok, revoked, warnings?}>} removePluginEntitlement — refused with `code` entitlement_not_found
+ * @property {(name: string, options?: {reconcile?: boolean}) => Promise<{ok, result: {status, reason?, error?, cursor?, replay?, mismatches?}, sync}>} syncPluginIdentity — sync the audience to the agent half now; `reconcile` replays everything and counts what was out of step
  * @property {() => Promise<{enabled, defaultPolicy, policies, windowMinutes: {min, max}}>} getPushInstallConfig
  * @property {(data: {enabled?, defaultPolicy?}) => Promise<any>} updatePushInstallConfig
  * @property {() => Promise<{policies: Array}>} getPushInstallPolicies
@@ -149,11 +161,13 @@ const AdminClientContext = createContext(null);
  * @property {(grantId: string) => Promise<{ok}>} revokeUserAccessGrant
  *
  * Tunnels:
- * @property {() => Promise<{tunnels: Array}>} getTunnels
+ * @property {() => Promise<{tunnels: Array}>} getTunnels — a tunnel bound as a user surface carries `userSurface: {routes}` and `userSurfaceStatus: [{route, served, reason}]` (reason not_installed | no_identity | not_approved, null when served)
  * @property {(data: {subdomain, port, description?, type?, pluginName?, agentLabel?, accessMode?, maxBodySizeMb?}) => Promise<{ok, tunnel}>} createTunnel
  * @property {(id: string, data: {enabled?, agentLabel?, accessMode?, maxBodySizeMb?}) => Promise<{ok, tunnel}>} updateTunnel
  * @property {(id: string) => Promise<{ok}>} deleteTunnel
  * @property {() => Promise<Object>} getTunnelAgentConfig
+ * @property {(id: string, route: string) => Promise<{ok, changed, tunnel}>} bindTunnelUserSurface — serve plugin `route`'s user surface on the tunnel's host (an enabled, agent-carried app tunnel, authenticated or restricted); refused with `code` user_surface_conflict when another host serves it
+ * @property {(id: string, route: string) => Promise<{ok, tunnel}>} unbindTunnelUserSurface
  *
  * Gatekeeper Groups:
  * @property {() => Promise<{groups: Array}>} getGatekeeperGroups
@@ -165,7 +179,7 @@ const AdminClientContext = createContext(null);
  *
  * Gatekeeper Grants:
  * @property {(filter?) => Promise<{grants: Array}>} getGatekeeperGrants
- * @property {(data: {principalType, principalId, resourceType, resourceId, context?}) => Promise<{ok, grant}>} createGatekeeperGrant
+ * @property {(data: {principalType, principalId, resourceType, resourceId, context?}) => Promise<{ok, grant}>} createGatekeeperGrant — a plugin grant whose `context.roles` names roles is an entitlement: the panel checks them against the plugin's identity block (`code` unknown_roles, no_identity)
  * @property {(grantId: string) => Promise<{ok, grant}>} revokeGatekeeperGrant
  *
  * Gatekeeper Diagnostics:

@@ -363,7 +363,8 @@ export default function App() {
       case 'server-gatekeeper-groups':
         return <GatekeeperGroupsPage />;
       case 'server-gatekeeper-grants':
-        return <GatekeeperGrantsPage />;
+        // Plugin role grants are managed in the plugin's People panel.
+        return <GatekeeperGrantsPage onOpenPlugins={() => setActiveTab('server-plugins')} />;
       case 'server-gatekeeper-requests':
         return <GatekeeperAccessRequestsPage />;
       case 'server-gatekeeper-settings':

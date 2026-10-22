@@ -100,6 +100,9 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+
+        # A relay assertion comes only from Gatekeeper, on a plugin's user surface
+        proxy_set_header X-Lamalibre-Relay-Assertion "";
     }
 
     # API paths with WebSocket upgrade support
@@ -118,6 +121,9 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
+        # A relay assertion comes only from Gatekeeper, on a plugin's user surface
+        proxy_set_header X-Lamalibre-Relay-Assertion "";
+
         # WebSocket: only upgrade when client requests it
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -132,6 +138,7 @@ Key characteristics:
 - Includes the mTLS snippet for client certificate enforcement
 - Error pages 495 (no cert) and 496 (bad cert) serve a static help page with import instructions
 - Two `location` blocks: `/` for standard HTTP proxy, `/api` for WebSocket-capable proxy
+- Every location that proxies to the panel clears a client's `X-Lamalibre-Relay-Assertion` (`proxy_set_header X-Lamalibre-Relay-Assertion "";`): only Gatekeeper's, on a plugin's user surface, may reach the panel. The panel cannot write this vhost; `create-lamaste`'s redeploy refreshes it when its text differs (from 4.5)
 
 ### 2. Domain Panel Vhost (`lamalibre-lamaste-panel-domain`)
 
@@ -312,7 +319,7 @@ All three also declare the same request headers inside their `location /` (`TUNN
 - **Per location, not per server.** nginx inherits `proxy_set_header` from the enclosing level only when a level declares none of its own. Every tunnel location declares some (`Upgrade`, `Remote-*`), so headers placed at server level never reached the app — it saw `Host: 127.0.0.1:<port>` and no client address. Declared in the location, `Host`, `X-Real-IP`, `X-Forwarded-For` and `X-Forwarded-Proto` now reach the app.
 - **Client-certificate headers are always cleared.** The panel treats `X-SSL-Client-*` from nginx as proof of an mTLS client certificate. A tunnel vhost never passes client-supplied values through, whatever listens on its port.
 - **Identity headers.** Public vhosts also clear `Remote-User`, `Remote-Groups`, `Remote-Name` and `Remote-Email` — a public tunnel has no authenticated user, and an app might trust those headers from an authenticated vhost. Authenticated and restricted vhosts set them from the Gatekeeper's answer, which replaces anything the client sent.
-- **Relay assertions on plugin tunnels.** A plugin tunnel (a vhost with a `pathPrefix`) ends at the agent's lamaste-agentd, which takes the user only from a relay assertion — its port can be reached without nginx, so a `Remote-User` header proves nothing to it. Authenticated and restricted plugin vhosts forward the one Gatekeeper signs for the request (`auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;` and `proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;`); public plugin vhosts clear the header. App tunnel vhosts are unchanged. See [Security Model](../01-concepts/security-model.md#5c-the-agent-daemon-lamaste-agentd-and-relay-assertions).
+- **Relay assertions on plugin tunnels.** A plugin tunnel (a vhost with a `pathPrefix`) ends at the agent's lamaste-agentd, which takes the user only from a relay assertion — its port can be reached without nginx, so a `Remote-User` header proves nothing to it. Authenticated and restricted plugin vhosts forward the one Gatekeeper signs for the request (`auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;` and `proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;`); public plugin vhosts clear the header. App tunnel vhosts clear it too: Gatekeeper signs one only for a plugin tunnel or the panel, never one a client sent. An app tunnel's backend gets the user only as the unsigned `Remote-*` headers — trustworthy as far as nginx goes, but anything that reaches its loopback port can send them as well. An app tunnel bound as a plugin's user surface also carries the [user-surface locations](#user-surface-locations). See [Security Model](../01-concepts/security-model.md#5c-the-agent-daemon-lamaste-agentd-and-relay-assertions).
 
 A tunnel created before `maxBodySizeMb` existed has no value and its vhost has no directive, so nginx applies its built-in 1 MiB limit until a body limit is set on it (`PATCH /api/tunnels/:id` with `maxBodySizeMb`, or **Edit** in the panel). Changing the access mode or body limit re-renders the vhost in place through the write-with-rollback pattern below; a disabled tunnel's vhost stays disabled.
 
@@ -510,7 +517,7 @@ Key characteristics:
 
 ### 9. Restricted Tunnel Vhost (`lamalibre-lamaste-app-<name>`, access mode: restricted)
 
-Created when a tunnel requires both Authelia login and an explicit access grant. Only users with a matching grant in `access-grants.json` can access the tunnel.
+Created when a tunnel requires both Authelia login and an explicit access grant. Only users with a matching grant in Gatekeeper (`gatekeeper.db`) can access the tunnel.
 
 ```nginx
 server {
@@ -581,6 +588,92 @@ Key differences from the authenticated vhost:
 - The Gatekeeper checks both the Authelia session and the access grant. If the user is authenticated but has no grant for this resource, the Gatekeeper returns 403 instead of 200
 - `error_page 403 = /internal/lamaste/authz` replays the request to the Gatekeeper internal location. The `=` prefix causes nginx to use the response body and status code from the Gatekeeper, which serves an inline HTML access-request page with pre-filled message templates
 - 401 (unauthenticated) still redirects to Authelia login as before
+
+### User-surface locations
+
+An `authenticated` or `restricted` app tunnel bound as the user surface of agent-hosted plugins ([Tunnels API](../04-api-reference/tunnels.md#user-surface-binding)) carries, for each plugin whose installed, approved version declares `identity`, two more locations — `= /api/<route>/app` and `/api/<route>/app/` — and two internal ones they share (`renderTunnelVhost` with `userSurface`, `userSurfaceLocations` in `nginx.js`). A bound route whose plugin does not declare identity yet has no locations: its requests take `location /` down the tunnel. A public vhost never carries them (the generator refuses).
+
+```nginx
+    # The user surface of agent-hosted plugins on this host: Gatekeeper
+    # vouches for the session's user to the panel, for one request each.
+    location = /internal/lamaste/user-surface-authz {
+        internal;
+
+        proxy_pass http://127.0.0.1:9294/authz/user-surface/app.example.com;
+        proxy_pass_request_body off;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Connection "";
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Original-URL https://app.example.com$request_uri;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        # ... X-Forwarded-Host, -Proto, -Uri and -Method cleared ("")
+        proxy_set_header Host app.example.com;
+        proxy_set_header Cookie $http_cookie;
+
+        proxy_http_version 1.1;
+    }
+
+    location = /internal/lamaste/user-surface-401 {
+        internal;
+
+        proxy_pass http://127.0.0.1:9294/authz/user-surface-unauthenticated;
+        proxy_pass_request_body off;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+
+        proxy_http_version 1.1;
+    }
+
+    # The user surface of plugin "market-indicators"
+    location = /api/market-indicators/app { ... }   # the same block as below
+
+    location /api/market-indicators/app/ {
+        auth_request /internal/lamaste/user-surface-authz;
+        auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;
+
+        # The user, vouched for by Gatekeeper to the panel for this one request
+        proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;
+
+        # Nothing else that any part of the panel trusts
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Groups "";
+        proxy_set_header Remote-Name "";
+        proxy_set_header Remote-Email "";
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
+        proxy_set_header X-Forwarded-Host "";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+
+        # No URI: the request target reaches the panel as the browser sent it
+        proxy_pass http://127.0.0.1:3100;
+        proxy_http_version 1.1;
+
+        client_max_body_size 10m;      # the plugin's internal tunnel's maxBodySizeMb
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+
+        # No session: a JSON 401, never a redirect
+        error_page 401 = /internal/lamaste/user-surface-401;
+    }
+```
+
+- **Gatekeeper attests, the panel identifies.** The subrequest names the tunnel as the tunnel's own does; Gatekeeper answers with a single-use relay assertion for the panel (never cached) and no `Remote-*` headers. The location passes that assertion to the panel and **nothing else of the browser's credentials**: the panel serves other contexts on the same listener, so everything any of them trusts — the client-certificate headers, `Remote-*`, a desktop session's `Authorization`, an administrator's 2FA `Cookie`, `X-Forwarded-Host` — is cleared. `X-Forwarded-For` is the client's address alone: the panel trusts one loopback hop, and the user surface's rate limit keys on it.
+- **`proxy_pass` names no URI**, so the panel receives `$request_uri` unchanged — the raw target the assertion is bound to and the panel compares byte for byte. A normalized path would differ from what Gatekeeper signed.
+- **The body limit is the plugin's** (its internal tunnel's `maxBodySizeMb`), not the tunnel's; long timeouts carry server-sent events, which the panel streams unbuffered.
+- **`= /api/<route>/app`** and **`/api/<route>/app/`** are both needed: a prefix location `/api/<route>/app` would also match `/api/<route>/apps`, which belongs to the tunnel.
+
+**A client's relay assertion is cleared wherever a browser reaches the panel.** The panel accepts `X-Lamalibre-Relay-Assertion` only on the user surface, and only from Gatekeeper; every location of the domain panel vhost, the auth vhost's panel locations, the agent-panel vhost's subrequest to the panel and the IP panel vhost set it to `""`, and so does every tunnel vhost that does not set Gatekeeper's (app tunnels, public vhosts). The panel's startup reconcile rewrites the domain panel and auth vhosts and every tunnel vhost; the IP panel vhost, which the installer writes and the panel cannot, is refreshed by `create-lamaste`'s redeploy (`Refreshing the IP panel vhost`).
 
 ### Authorization subrequests name their own hostname
 
@@ -848,8 +941,8 @@ Without it nothing listens on port 80 and `http://` links to the relay's hostnam
 
 A vhost is written when its tunnel or site is created or changed, so a generator change does not reach existing vhosts by itself. At startup, once onboarding is complete, the panel (`lib/vhost-reconcile.js`) renders installed vhosts again and rewrites each one whose text differs through the write-with-rollback pattern, on the certificate directory the installed file names (a wildcard certificate stays a wildcard certificate). A rewrite never links a vhost that is not linked now; a disabled tunnel's vhost is unlinked:
 
-- **Before it listens:** the auth portal (`lamalibre-lamaste-auth`) and every static site, from `sites.json` and the domain. Site changes take no lock, so this runs while none can arrive.
-- **Once it listens**, under the tunnel lock: every agent-panel, app and plugin tunnel, from `tunnels.json` — the stored access mode (`restricted` when absent, as Gatekeeper reads it), the plugin route, and the body limit only when the tunnel has one. After listen because a rewritten agent-panel vhost asks the panel about every request.
+- **Before it listens:** the domain panel vhost (`lamalibre-lamaste-panel-domain`), the auth portal (`lamalibre-lamaste-auth`) and every static site, from `sites.json` and the domain. Site changes take no lock, so this runs while none can arrive.
+- **Once it listens**, under the tunnel lock: every agent-panel, app and plugin tunnel, from `tunnels.json` — the stored access mode (`restricted` when absent, as Gatekeeper reads it), the plugin route, the body limit only when the tunnel has one, and the user-surface locations of the bound routes it serves now. The same reconcile, limited to the tunnels a route is bound to, runs whenever whether that route is served can change: the plugin's approval, update or revert, hosting and unhosting, uninstall. After listen because a rewritten agent-panel vhost asks the panel about every request.
 
 That is how vhosts written before 4.3 start forwarding relay assertions (agent-panel and plugin tunnels) and start naming their own hostname to Gatekeeper and Authelia (see [above](#authorization-subrequests-name-their-own-hostname)). A rewrite never adds or removes authentication: a tunnel or site vhost whose `auth_request` disagrees with its state (a public vhost for a restricted tunnel, say) is logged and left alone until the tunnel or site is reconfigured — the agent-panel vhost, which gains the panel's `auth_request` beside its mTLS check, is the exception. Missing vhosts are logged (a site still waiting for its certificate has none yet); a failed rewrite restores the previous file and the others still run.
 

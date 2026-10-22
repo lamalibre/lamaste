@@ -114,10 +114,8 @@ Per agent label, on the agent machine (user-level, no root):
 | `/etc/lamalibre/lamaste/chisel-sentinel`                 | Sentinel Chisel user password                                                       |
 | `/etc/lamalibre/lamaste/ticket-scopes.json`              | Ticket scope registry (scopes, instances, assignments)                              |
 | `/etc/lamalibre/lamaste/tickets.json`                    | Ticket and session store                                                            |
-| `/etc/lamalibre/lamaste/groups.json`                     | Lamaste group definitions and membership                                            |
-| `/etc/lamalibre/lamaste/access-grants.json`              | Generic access grants (principal → resource)                                        |
+| `/etc/lamalibre/lamaste/gatekeeper.db`                   | Gatekeeper (SQLite): groups, access grants, denied-access log                       |
 | `/etc/lamalibre/lamaste/gatekeeper.json`                 | Gatekeeper settings (cache TTL, logging)                                            |
-| `/etc/lamalibre/lamaste/access-request-log.json`         | Optional denied access log                                                          |
 | `/etc/authelia/configuration.yml`                        | Authelia server configuration                                                       |
 | `/etc/authelia/users.yml`                                | Authelia user database                                                              |
 | `/etc/authelia/.secrets.json`                            | Authelia secrets (JWT, session, encryption)                                         |

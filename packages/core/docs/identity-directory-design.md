@@ -1,9 +1,31 @@
 # Lamaste Identity Directory — Design Document
 
-> **Status:** design, 2026-10-13. Nothing here is implemented yet.
+> **Status:** design, 2026-10-13. Partly implemented in Lamaste 4.5 for agent-hosted plugins — see [Status](#status-4-5-slice-6).
 > **Package:** `@lamalibre/lamaste-identity` (completes the existing SDK).
 > **Companions:** `gatekeeper-design.md` (authorization),
 > `plugin-development/design/agent-hosted-app-plugins.md` (app plugins).
+
+## Status (4.5, slice 6)
+
+Slice 6 of the agent-hosted app plugins (`plugin-development/design/agent-hosted-app-plugins.md`, _Slice 6 as planned_) implements the part of this design that agent-hosted plugins need. Reference: [Agent-Hosted Plugins — Users and identity](04-api-reference/agent-hosted-plugins.md#users-and-identity), [Users API](04-api-reference/users.md).
+
+**Implemented**, with where it departs from the design below:
+
+- **The directory** in the panel's `state.db` (migration `0013`): a `userId` (UUID v4) per user, `active` / `disabled` / `removed`, a store-wide `seq` stamped by triggers, a `directoryId`. `users.yml` is **not** derived: it stays Authelia's credential file (Authelia's own password reset rewrites it); every Lamaste write goes through one lock that reconciles the directory before Authelia restarts, and the panel reconciles the directory against the file at start, after onboarding and every minute — read only. A re-created username is a new user with a new `userId`.
+- **Disable** (Authelia's `disabled`, effective at once on the user surface), **delete** (a tombstone keeps the `userId` and the last known attributes), **erase** (the tombstone, invitations and Gatekeeper's access-request log rows scrubbed; `remove/erased` to every plugin, acknowledged by its cursor). A deleted username's Gatekeeper principal is removed before anyone can hold the username again.
+- **The manifest `identity` block** (roles, `attributes` ⊆ `displayName`, `email`) for agent-hosted plugins with an agent half, inside the approval digest when present; an update that adds or removes a role or widens the attributes waits for an administrator (`identity.changed`) — auto-approve never covers it.
+- **Entitlements** are Gatekeeper plugin grants with `context.roles`, checked against the manifest; roleless grants never count. `user-plugin-access.json` is **not** migrated: it still gates the desktop's enrolment, not requests.
+- **The audience** per plugin, materialized and recomputed after every panel-side change, every minute and at start.
+- **The feed is pushed, not pulled.** An agent half cannot reach the panel, so the panel sends the data itself through the internal tunnel — `POST /admin/identity/notify`, then `/admin/identity/changes` batches — with replay from 0 as the snapshot and a daily reconcile whose mismatches are audited. The subscriber is `createIdentityProjection` + `createIdentityHandlers` in `@lamalibre/lamaste/agent`, not an `IdentitySubscriber` in this SDK.
+- **Identity in requests, for agent-hosted plugins:** a tunnel bound as a plugin's user surface serves `/api/<route>/app/*`; Gatekeeper attests the session's username to the panel, and the panel forwards to the agent half with `{ type: "user", userId, username, roles }` in the HMAC caller assertion — not a JWT ([question 6](#open-questions)).
+
+**Not yet:**
+
+- **Renames.** A username cannot be changed; the user is deleted and created again under a new `userId`.
+- **Audience endpoints for server plugins and plain agents** (`GET /api/identity/audience…`, the in-process event, `seq` in the agent sync), and the `IdentitySubscriber` / `verifyIdentity` SDK pieces.
+- **Signed identity for plain tunnels.** An `authenticated` or `restricted` app tunnel still passes unsigned `Remote-*` headers; only plugin tunnels and plugin user surfaces carry a signed identity.
+- **Badges** as user credentials, **connectors** (GitLab), **CSV import** and the directory import API for external systems of record, projection age reporting.
+- **Authelia's own logs** — its authentication log and database — are outside erasure, as are nginx's access logs and earlier backups.
 
 ## Goal
 
@@ -28,15 +50,15 @@ copy to follow Lamaste.
 
 ## What exists today
 
-| Piece                                                    | State                                                                                                              |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| User store                                               | Authelia's `users.yml`, keyed by **username**. No stable id.                                                       |
-| `GET /api/identity/users`, `/users/:username`, `/groups` | Read `users.yml`; admin or agent with `identity:query`.                                                            |
-| `GET /api/identity/self`                                 | Echoes `Remote-*` headers; only meaningful behind Authelia.                                                        |
-| SDK `IdentityClient`                                     | `listUsers`, `getUser`, `listGroups` over mTLS.                                                                    |
-| SDK `parseIdentity` + Fastify plugin                     | Parses `Remote-User/Name/Email/Groups` headers.                                                                    |
-| Tunnel vhosts                                            | **Blank** `Remote-User` and `Remote-Groups` before proxying — apps receive no identity.                            |
-| Entitlements                                             | Two models: per-plugin grants (`user-plugin-access.json`, by username) and Gatekeeper grants (groups → resources). |
+| Piece                                                    | State                                                                                                                  |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| User store                                               | Authelia's `users.yml`, keyed by **username**. No stable id.                                                           |
+| `GET /api/identity/users`, `/users/:username`, `/groups` | Read `users.yml`; admin or agent with `identity:query`.                                                                |
+| `GET /api/identity/self`                                 | Echoes `Remote-*` headers; only meaningful behind Authelia.                                                            |
+| SDK `IdentityClient`                                     | `listUsers`, `getUser`, `listGroups` over mTLS.                                                                        |
+| SDK `parseIdentity` + Fastify plugin                     | Parses `Remote-User/Name/Email/Groups` headers.                                                                        |
+| Tunnel vhosts                                            | Set `Remote-*` from Gatekeeper's answer (replacing the client's) — **unsigned**; plugin tunnels add a relay assertion. |
+| Entitlements                                             | Two models: per-plugin grants (`user-plugin-access.json`, by username) and Gatekeeper grants (groups → resources).     |
 
 So the SDK can list users, but nothing gives an application a stable key, a
 scoped user list, a change feed, or a trustworthy identity on a request.
@@ -434,11 +456,22 @@ directory and one out of it.
 2. **PDKS's source of truth:** samplepark pushes into Lamaste, or Lamaste
    mirrors samplepark?
 3. **Erasure:** which plugins hold data that must be anonymised on request,
-   and is a single `erased` event enough for them?
+   and is a single `erased` event enough for them? _(Decided 2026-10-22 for
+   agent-hosted plugins: deleting keeps a tombstone, erasing is a separate
+   action; one `remove/erased` change, the half scrubs its row and runs the
+   plugin's anonymiser in the same transaction, and its cursor passing the
+   change is the acknowledgement.)_
 4. **Door hardware:** which doors, and are their readers able to use
    cryptographic cards (DESFire)? Until then, doors stay out of scope.
 5. **GitLab password sign-in:** turn it off once OIDC sign-in works (keeps
    offboarding single-action), with the root account as the only exception?
 6. **Signing:** Gatekeeper signs assertions (it is already on the request
    path), or the panel issues them and Gatekeeper only forwards — which keeps
-   Gatekeeper free of keys, as its design intends?
+   Gatekeeper free of keys, as its design intends? _(Decided 2026-10-22:
+   both, each for what it knows. **Gatekeeper attests the session** — an
+   Ed25519 relay assertion for the panel, with the relay signing key it has
+   held since 4.3, naming the Authelia username alone and bound to the
+   method and the raw request path. **The panel issues the identity
+   applications see** — the directory's `userId`, the username and the
+   plugin's roles, in the caller assertion it signs for the agent half.
+   Gatekeeper never signs a role or an attribute.)_

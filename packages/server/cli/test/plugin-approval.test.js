@@ -1,8 +1,10 @@
 /**
  * `lamaste-server plugins hooks|update|approve-hooks`: why a pending update
- * waits (its `approvalRequired`, a secret turned plain as a warning), what
- * auto-approve could not cover beyond that, the command that approves it —
- * by digest, by version, or both — and the arguments `approve-hooks` takes.
+ * waits (its `approvalRequired`, a secret turned plain as a warning, an
+ * identity change with its note), what auto-approve could not cover beyond
+ * that, what an identity block lets a plugin learn and how an update
+ * changes it, the command that approves it — by digest, by version, or
+ * both — and the arguments `approve-hooks` takes.
  */
 
 import { test } from 'node:test';
@@ -11,6 +13,8 @@ import assert from 'node:assert/strict';
 import {
   APPROVE_HOOKS_USAGE,
   approveHooksCommand,
+  identityBlockLines,
+  identityDiffLines,
   parseApproveArgs,
   pendingUpdateReasons,
 } from '../src/plugin-approval.js';
@@ -32,8 +36,8 @@ test('why an update waits: each reason, a secret turned plain as a warning', () 
   };
   assert.deepEqual(pendingUpdateReasons(update), {
     required: [
-      { text: 'its agent half is not what was approved', warning: false },
-      { text: TOKEN_TURNS_PLAIN, warning: true },
+      { text: 'its agent half is not what was approved', warning: false, note: null },
+      { text: TOKEN_TURNS_PLAIN, warning: true, note: null },
     ],
     notCovered: [],
   });
@@ -59,7 +63,7 @@ test('why an update waits: whatever the panel sent reaches the terminal printabl
     autoApproveWithheld: ['adds\u0007 curl'],
   });
   assert.deepEqual(reasons, {
-    required: [{ text: 'turns [2Jplain', warning: true }],
+    required: [{ text: 'turns [2Jplain', warning: true, note: null }],
     notCovered: ['adds curl'],
   });
 });
@@ -98,4 +102,112 @@ test('approve-hooks arguments: a digest, a version, or both — well-formed', ()
   ]) {
     assert.deepEqual(parseApproveArgs(rest), { error: APPROVE_HOOKS_USAGE }, JSON.stringify(rest));
   }
+});
+
+const ROLES_ADDED = 'it adds roles (auditor) and receives more about its users (email)';
+
+test('why an update waits: an identity change, with what auto-approve never covers', () => {
+  const reasons = pendingUpdateReasons({
+    approvalRequired: [
+      { code: 'digest.unapproved', reason: 'its identity is not what was approved' },
+      { code: 'identity.changed', reason: ROLES_ADDED },
+    ],
+    // Auto-approve on: the identity change withheld it — said above already.
+    autoApproveWithheld: [ROLES_ADDED],
+  });
+  assert.deepEqual(reasons.required, [
+    { text: 'its identity is not what was approved', warning: false, note: null },
+    {
+      text: ROLES_ADDED,
+      warning: false,
+      note: 'who its users are and what it learns about them — auto-approve never covers it',
+    },
+  ]);
+  assert.deepEqual(reasons.notCovered, []);
+});
+
+test('an identity block: its roles, and what it receives about each member', () => {
+  assert.deepEqual(
+    identityBlockLines({
+      roles: [
+        { id: 'viewer', label: 'Viewer', description: 'Reads the dashboard' },
+        { id: 'editor', label: 'Editor' },
+      ],
+      attributes: ['displayName', 'email'],
+    }),
+    [
+      'roles:    viewer (Viewer — Reads the dashboard), editor (Editor)',
+      'receives: user id, username, roles, status, display name, email address — of the users entitled to it',
+    ],
+  );
+  assert.deepEqual(
+    identityBlockLines({ roles: [{ id: 'viewer', label: 'V\u001b[2J' }], attributes: [] }),
+    [
+      'roles:    viewer (V[2J)',
+      'receives: user id, username, roles, status — of the users entitled to it',
+    ],
+  );
+  assert.deepEqual(identityBlockLines(null), []);
+  assert.deepEqual(identityBlockLines({ roles: 'viewer' }), []);
+});
+
+test('an identity diff: what waits for approval, what only changes the digest', () => {
+  const before = {
+    roles: [
+      { id: 'editor', label: 'Editor' },
+      { id: 'viewer', label: 'Viewer' },
+    ],
+    attributes: ['displayName'],
+  };
+  const after = {
+    roles: [
+      { id: 'auditor', label: 'Auditor' },
+      { id: 'viewer', label: 'Reader' },
+    ],
+    attributes: ['email'],
+  };
+  assert.deepEqual(
+    identityDiffLines({
+      before,
+      after,
+      rolesAdded: ['auditor'],
+      rolesRemoved: ['editor'],
+      attributesAdded: ['email'],
+      attributesRemoved: ['displayName'],
+      labelsChanged: ['viewer'],
+    }),
+    {
+      headline: 'changes its identity',
+      lines: [
+        { text: 'roles added: auditor (Auditor) — waits for approval', approval: true },
+        { text: 'roles removed: editor (Editor) — waits for approval', approval: true },
+        {
+          text: 'receives more about its users: email address — waits for approval',
+          approval: true,
+        },
+        { text: 'receives less about its users: display name', approval: false },
+        { text: 'role labels changed: viewer (Reader)', approval: false },
+      ],
+    },
+  );
+  const unchanged = {
+    before,
+    after: before,
+    rolesAdded: [],
+    rolesRemoved: [],
+    attributesAdded: [],
+    attributesRemoved: [],
+    labelsChanged: [],
+  };
+  assert.equal(identityDiffLines(unchanged), null);
+  assert.equal(identityDiffLines(null), null);
+  assert.equal(
+    identityDiffLines({ ...unchanged, before: null, after, rolesAdded: ['auditor', 'viewer'] })
+      .headline,
+    'declares identity for the first time',
+  );
+  assert.match(
+    identityDiffLines({ ...unchanged, after: null, rolesRemoved: ['editor', 'viewer'] }).headline,
+    /^no longer declares identity/,
+  );
 });

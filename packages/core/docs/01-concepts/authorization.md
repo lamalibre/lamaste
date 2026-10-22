@@ -30,7 +30,7 @@ Lamaste has two separate group systems that serve different purposes:
 | `internal` | Internal team members                      |
 | `external` | External collaborators, clients, or guests |
 
-**Lamaste groups** are access-control groups stored in `groups.json` and managed through the Gatekeeper dashboard. These are project-oriented groups that describe what a user can access:
+**Lamaste groups** are access-control groups stored in Gatekeeper's database (`gatekeeper.db`) and managed through the Gatekeeper dashboard. These are project-oriented groups that describe what a user can access:
 
 | Example group  | Members           |
 | -------------- | ----------------- |
@@ -55,6 +55,17 @@ For example:
 When a group is the principal, the grant expands to all members of that group at check time. If you add a new member to the `developers` group, they immediately gain access to everything granted to `developers` — no need to create individual grants.
 
 Grants are not tunnel-specific. The resource model is generic: each grant has a resource type (e.g., `tunnel`, `plugin`) and a resource identifier. This means the same grant system works for tunnels, plugins, and any future resource types.
+
+### Plugin roles (entitlements)
+
+An agent-hosted plugin that declares `identity` has roles of its own — `viewer`, `editor`, whatever its manifest names. A grant on such a plugin (`resourceType: "plugin"`, `resourceId: <route>`) whose `context.roles` lists some of them is an **entitlement**: the user — or every member of the group — holds those roles in the plugin. The panel checks the roles against the plugin's manifest, keeps each plugin's **audience** (who holds which role) and sends it to the plugin's agent half, and on every request a user makes to the plugin's user surface tells the agent half who is calling, with which roles. A plugin grant without roles never makes anyone a plugin user. Manage entitlements from the plugin's **People** panel on the Plugins page, or `lamaste-server plugins entitlements` — see [Agent-Hosted Plugins](../04-api-reference/agent-hosted-plugins.md#users-and-identity).
+
+### Who attests what
+
+Gatekeeper authenticates the Authelia session; it does not tell applications who the user is. For a plain app tunnel nginx sets `Remote-User`, `Remote-Groups`, `Remote-Name` and `Remote-Email` from Gatekeeper's answer — replacing what the client sent, but **unsigned**: anything else that reaches the backend's loopback port can send them too. Signed identity exists in two places:
+
+- **Plugin tunnels** (`type: 'plugin'`, into an agent's lamaste-agentd): Gatekeeper signs a relay assertion for the agent with the session's user ([Security Model](security-model.md#5c-the-agent-daemon-lamaste-agentd-and-relay-assertions)).
+- **Plugin user surfaces** (`/api/<route>/app/*` on a host bound to an agent-hosted plugin): Gatekeeper **attests the session** — a relay assertion for the panel naming the username alone, bound to the method and the raw request path — and the **panel issues the identity** the application sees: the directory's `userId`, the username and the user's roles in the plugin, in the caller assertion it signs for the agent half ([Security Model](security-model.md#5f-users-of-agent-hosted-plugins-who-attests-what)).
 
 ### Access modes for tunnels
 
@@ -89,7 +100,7 @@ From the Gatekeeper dashboard in the admin panel:
 
 ### How changes take effect
 
-Gatekeeper watches its state files (`groups.json`, `access-grants.json`) for changes. When you create a group, add a member, or create a grant through the admin panel, the change takes effect immediately — no service restart required.
+Gatekeeper reads groups and grants from its SQLite database (`gatekeeper.db`) on every check, so a group, member or grant created through the admin panel takes effect on the next request — no service restart required. The tunnel list (the panel's `tunnels.json`) and Gatekeeper's settings (`gatekeeper.json`) are watched and reloaded when they change. Changes through the panel also recompute the audiences of agent-hosted plugins at once; edits made with Gatekeeper's own CLI are picked up by the panel within a minute.
 
 ## For Developers
 
@@ -121,6 +132,8 @@ The request flow for a restricted tunnel:
 
 Public tunnel vhosts have no `auth_request`. For authenticated tunnels Gatekeeper answers 200 for any valid session without looking for a grant.
 
+A tunnel bound as an agent-hosted plugin's user surface has a second subrequest for `/api/<route>/app*` — `/authz/user-surface/<fqdn>` — where Gatekeeper checks the session (and, on a restricted tunnel, the grant) as above, then answers with a single-use relay assertion for the panel instead of `Remote-*` headers, and a missing session with a JSON 401 instead of a login redirect ([Gatekeeper API](../04-api-reference/gatekeeper.md#user-surface-authorization-nginx-auth-request)).
+
 ### Which tunnel is authorized
 
 Gatekeeper authorizes the tunnel the vhost names, never one the client names. nginx selects the vhost from the request line when a request is in absolute form (`GET https://staging.example.com/ HTTP/1.1`) and from `Host` otherwise, so a client can send the request line of one tunnel with the `Host` header of another. Vhosts written before 4.3 called `/authz/check` with `X-Original-URL` and `Host` built from the client's `Host` header (`$http_host`): an Authelia user allowed on any tunnel — and every user is allowed on an `authenticated` one — reached any `restricted` tunnel, app or plugin, by naming the allowed tunnel in `Host`, without a grant, and Authelia evaluated that other URL as well.
@@ -138,7 +151,7 @@ The grant model is generic, not tunnel-specific:
   principalId: 'alice',          // username or group name
   resourceType: 'tunnel',        // 'tunnel', 'plugin', or custom
   resourceId: 'staging-app',     // resource identifier
-  context: {},                   // optional metadata
+  context: {},                   // optional metadata; { roles: [...] } on a plugin entitlement
   used: false,                   // whether grant has been consumed
   createdAt: '2026-04-01T...',
   usedAt: null                   // consumption timestamp, or null
@@ -162,20 +175,13 @@ Gatekeeper uses an in-memory session cache to solve this:
 
 > **Note:** The installer also writes an nginx `proxy_cache_path` snippet (`/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf`) for optional nginx-level caching, but the generated vhosts do not currently include `proxy_cache` directives. All authorization caching relies on the Gatekeeper's in-memory session cache.
 
-**Effect:** On a warm cache, repeated subrequests for the same session are resolved from the in-memory cache without re-validating against Authelia. The 30-second default TTL ensures that revoked grants and expired sessions take effect within half a minute.
+**Effect:** On a warm cache, repeated subrequests for the same session are resolved from the in-memory cache without re-validating against Authelia. Grants and groups are read on every check, so a revoked grant takes effect at once; the session itself — a user disabled or deleted in Authelia, a session that expired — is noticed within the 30-second TTL. (A plugin's user surface does not wait for it: the panel refuses a disabled or removed user on the next request.)
 
-### File watching
+### State and change propagation
 
-Gatekeeper watches its state files using `fs.watch`:
+Groups, grants and the access-request log live in Gatekeeper's SQLite database, `/etc/lamalibre/lamaste/gatekeeper.db` (0600 with its WAL and SHM files; numbered migrations under `src/lib/migrations/gatekeeper/`). Every check reads it, and every write through Gatekeeper's API runs under the groups and grants locks and invalidates the session cache. Gatekeeper watches two JSON files with `fs.watch` (on their parent directory, since they are replaced by rename): the panel's `tunnels.json` — tunnels, access modes, plugin targets and user-surface bindings — and its own settings, `gatekeeper.json`.
 
-| File                 | Contains                         |
-| -------------------- | -------------------------------- |
-| `groups.json`        | Lamaste groups and their members |
-| `access-grants.json` | All grants (user and group)      |
-
-When a file changes, Gatekeeper reloads its in-memory state and invalidates the session cache. This means changes made through the admin panel API (which writes to these files atomically) take effect immediately without restarting the Gatekeeper service.
-
-State files use the same atomic write pattern as the rest of Lamaste (temp file with `O_EXCL` + mode `0600` -> `fsync` -> rename).
+The JSON files of earlier versions (`groups.json`, `access-grants.json`, `access-request-log.json`) are no longer read; the installer still creates empty `groups.json` and `access-grants.json`. The legacy `user-plugin-access.json` grants are not migrated into Gatekeeper (`migrateFromLegacy` exists but nothing calls it): they stay where the desktop's user-access flow reads them, and never make anyone a plugin user.
 
 ### Access request page generation
 
@@ -190,37 +196,43 @@ The HTML is self-contained (inline CSS, no external dependencies) so it renders 
 
 ### State files
 
-| File                                        | Purpose                    | Format |
-| ------------------------------------------- | -------------------------- | ------ |
-| `/etc/lamalibre/lamaste/groups.json`        | Lamaste groups and members | JSON   |
-| `/etc/lamalibre/lamaste/access-grants.json` | All grants                 | JSON   |
+| File                                                        | Purpose                                                     | Format |
+| ----------------------------------------------------------- | ----------------------------------------------------------- | ------ |
+| `/etc/lamalibre/lamaste/gatekeeper.db`                      | Groups and members, grants, the access-request log          | SQLite |
+| `/etc/lamalibre/lamaste/gatekeeper.json`                    | Settings                                                    | JSON   |
+| `/etc/lamalibre/lamaste/gatekeeper-secret.json`             | The secret the panel calls Gatekeeper's management API with | JSON   |
+| `/etc/lamalibre/lamaste/tunnels.json` (read only)           | The panel's tunnels and their user-surface bindings         | JSON   |
+| `/etc/lamalibre/lamaste/relay-signing-key.json` (read only) | The relay signing key Gatekeeper signs assertions with      | JSON   |
 
 ### Source files
 
-| File                                                                 | Purpose                                               |
-| -------------------------------------------------------------------- | ----------------------------------------------------- |
-| `packages/lamaste-gatekeeper/src/server/index.ts`                    | Fastify server setup, file watching                   |
-| `packages/lamaste-gatekeeper/src/server/routes/authz.ts`             | Authorization check endpoint (nginx auth_request)     |
-| `packages/lamaste-gatekeeper/src/server/routes/grants.ts`            | Grant CRUD API                                        |
-| `packages/lamaste-gatekeeper/src/server/routes/groups.ts`            | Group CRUD API                                        |
-| `packages/lamaste-gatekeeper/src/server/routes/access-request.ts`    | Access request submission and listing                 |
-| `packages/lamaste-gatekeeper/src/lib/authz.ts`                       | Authorization logic (grant matching, group expansion) |
-| `packages/lamaste-gatekeeper/src/lib/grants.ts`                      | Grant storage and atomic writes                       |
-| `packages/lamaste-gatekeeper/src/lib/groups.ts`                      | Group storage and atomic writes                       |
-| `packages/lamaste-gatekeeper/src/lib/templates.ts`                   | Access request HTML page generation                   |
-| `packages/lamaste-serverd/src/routes/management/gatekeeper-proxy.js` | Admin panel proxy to Gatekeeper API                   |
-| `packages/lamaste-serverd/src/lib/nginx.js`                          | Vhost generation with Gatekeeper auth_request block   |
+| File                                                               | Purpose                                                    |
+| ------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `packages/sdks/gatekeeper/src/server/index.ts`                     | Fastify server setup, file watching                        |
+| `packages/sdks/gatekeeper/src/server/routes/authz.ts`              | Tunnel and user-surface authorization (nginx auth_request) |
+| `packages/sdks/gatekeeper/src/server/routes/grants.ts`             | Grant CRUD API                                             |
+| `packages/sdks/gatekeeper/src/server/routes/groups.ts`             | Group CRUD API                                             |
+| `packages/sdks/gatekeeper/src/server/routes/principals.ts`         | Removing a user principal everywhere                       |
+| `packages/sdks/gatekeeper/src/server/routes/diagnostic.ts`         | Access check, settings, cache bust, access-request log     |
+| `packages/sdks/gatekeeper/src/server/routes/access-request.ts`     | Access request submission and listing                      |
+| `packages/sdks/gatekeeper/src/lib/authz.ts`                        | Authorization logic (grant matching, group expansion)      |
+| `packages/sdks/gatekeeper/src/lib/state-db.ts`                     | `gatekeeper.db` and its migrations                         |
+| `packages/sdks/gatekeeper/src/lib/grants.ts`, `groups.ts`          | Grant and group storage                                    |
+| `packages/sdks/gatekeeper/src/lib/tunnels.ts`                      | What Gatekeeper reads of `tunnels.json`                    |
+| `packages/sdks/gatekeeper/src/lib/templates.ts`                    | Access request HTML page generation                        |
+| `packages/server/daemon/src/routes/management/gatekeeper-proxy.js` | Admin panel proxy to Gatekeeper API (role grants checked)  |
+| `packages/server/daemon/src/lib/nginx.js`                          | Vhost generation with Gatekeeper auth_request blocks       |
 
 ## Quick Reference
 
 ### Service
 
-| Property    | Value                                                            |
-| ----------- | ---------------------------------------------------------------- |
-| Listen      | `127.0.0.1:9294`                                                 |
-| Runtime     | Fastify (TypeScript)                                             |
-| State files | `groups.json`, `access-grants.json` in `/etc/lamalibre/lamaste/` |
-| RAM usage   | Minimal (in-process)                                             |
+| Property  | Value                                                                    |
+| --------- | ------------------------------------------------------------------------ |
+| Listen    | `127.0.0.1:9294`                                                         |
+| Runtime   | Fastify (TypeScript)                                                     |
+| State     | `gatekeeper.db` (SQLite), `gatekeeper.json` in `/etc/lamalibre/lamaste/` |
+| RAM usage | Minimal (in-process)                                                     |
 
 ### Access modes
 
@@ -241,7 +253,7 @@ The HTML is self-contained (inline CSS, no external dependencies) so it renders 
 | Property    | Authelia groups                  | Lamaste groups                         |
 | ----------- | -------------------------------- | -------------------------------------- |
 | Purpose     | Identity classification          | Access control                         |
-| Storage     | `users.yml`                      | `groups.json`                          |
+| Storage     | `users.yml`                      | `gatekeeper.db`                        |
 | Managed by  | Authelia (via panel Users page)  | Gatekeeper (via panel Gatekeeper page) |
 | Examples    | `admins`, `internal`, `external` | `developers`, `design-team`            |
 | Granularity | Broad (who you are)              | Fine (what you access)                 |

@@ -1,8 +1,43 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
-import { Key, Plus, Trash2, Loader2, User, Users, Globe, Puzzle } from 'lucide-react';
+import { Key, Plus, Trash2, Loader2, User, Users, Globe, Puzzle, UsersRound } from 'lucide-react';
 import { errorMessage } from '../lib/errorMessage.js';
+
+/** Whether a grant is an entitlement: a plugin grant whose context names roles. */
+function isEntitlement(grant) {
+  const roles = grant.context?.roles;
+  return grant.resourceType === 'plugin' && Array.isArray(roles) && roles.length > 0;
+}
+
+/** A grant's context: its roles as badges, anything else as `key: value`. */
+function GrantContext({ context }) {
+  const entries = Object.entries(context ?? {});
+  if (entries.length === 0) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1 text-xs text-zinc-600">
+      {entries.map(([key, value]) =>
+        key === 'roles' && Array.isArray(value) ? (
+          <span key={key} className="inline-flex items-center gap-1">
+            roles
+            {value.map((role) => (
+              <span
+                key={String(role)}
+                className="rounded bg-cyan-500/10 px-1.5 py-0.5 font-mono text-cyan-400"
+              >
+                {String(role)}
+              </span>
+            ))}
+          </span>
+        ) : (
+          <span key={key}>
+            ({key}: {value !== null && typeof value === 'object' ? JSON.stringify(value) : value})
+          </span>
+        ),
+      )}
+    </span>
+  );
+}
 
 function CreateGrantModal({ onClose }) {
   const client = useAdminClient();
@@ -148,6 +183,11 @@ function CreateGrantModal({ onClose }) {
                   placeholder="Target: local or agent:<label>"
                   className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-100"
                 />
+                <p className="text-xs text-zinc-500">
+                  A grant made here carries no roles and never makes anyone a member of a
+                  plugin&apos;s audience. Give users and groups an agent-hosted plugin&apos;s roles
+                  in the People panel on its card under Plugins.
+                </p>
               </div>
             )}
           </div>
@@ -207,7 +247,14 @@ function ResourceBadge({ type, id, tunnels }) {
   );
 }
 
-export default function GatekeeperGrantsPage() {
+/**
+ * Gatekeeper's grants. A plugin grant with `context.roles` is an
+ * entitlement on an agent-hosted plugin (who is in its audience, with which
+ * roles): it is shown here with its roles and managed in the plugin's
+ * People panel — `onOpenPlugins`, when the host passes it, opens the
+ * Plugins page.
+ */
+export default function GatekeeperGrantsPage({ onOpenPlugins }) {
   const client = useAdminClient();
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
@@ -226,7 +273,13 @@ export default function GatekeeperGrantsPage() {
 
   const revokeMutation = useMutation({
     mutationFn: (grantId) => client.revokeGatekeeperGrant(grantId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['gatekeeper-grants'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['gatekeeper-grants'] });
+      // A revoked role grant changes a plugin's people.
+      queryClient.invalidateQueries({ queryKey: ['plugin-entitlements'] });
+      queryClient.invalidateQueries({ queryKey: ['plugin-audience'] });
+      queryClient.invalidateQueries({ queryKey: ['plugin-identity'] });
+    },
   });
 
   let grants = grantsQuery.data?.grants || [];
@@ -278,17 +331,24 @@ export default function GatekeeperGrantsPage() {
               key={grant.grantId}
               className="flex items-center justify-between p-3 bg-zinc-900 border border-zinc-800 rounded-lg"
             >
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                 <PrincipalBadge type={grant.principalType} id={grant.principalId} />
                 <span className="text-zinc-600 text-xs">can access</span>
                 <ResourceBadge type={grant.resourceType} id={grant.resourceId} tunnels={tunnels} />
-                {grant.context && Object.keys(grant.context).length > 0 && (
-                  <span className="text-xs text-zinc-600">
-                    (
-                    {Object.entries(grant.context)
-                      .map(([k, v]) => `${k}: ${v}`)
-                      .join(', ')}
-                    )
+                <GrantContext context={grant.context} />
+                {isEntitlement(grant) && (
+                  <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
+                    <UsersRound className="w-3 h-3" />
+                    plugin roles — managed in its People panel
+                    {onOpenPlugins && (
+                      <button
+                        type="button"
+                        onClick={onOpenPlugins}
+                        className="text-cyan-400 hover:text-cyan-300"
+                      >
+                        (open Plugins)
+                      </button>
+                    )}
                   </span>
                 )}
               </div>

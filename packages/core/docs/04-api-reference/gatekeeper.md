@@ -4,7 +4,9 @@
 
 ## Authentication
 
-All Gatekeeper endpoints proxied through the panel require admin mTLS authentication. The internal `authz/tunnel/<fqdn>` endpoint on `127.0.0.1:9294` is called by nginx only and is not exposed externally.
+All Gatekeeper endpoints proxied through the panel require admin mTLS authentication. The internal `authz/tunnel/<fqdn>` and `authz/user-surface/<fqdn>` endpoints on `127.0.0.1:9294` are called by nginx only and are not exposed externally; Gatekeeper's own management API (`127.0.0.1:9294/api/*`, the shared secret in `gatekeeper-secret.json`) is called by the panel only.
+
+**Grants and groups decide who uses agent-hosted plugins.** A plugin grant whose `context` names `roles` is an **entitlement** ([Agent-Hosted Plugins](agent-hosted-plugins.md#entitlements-and-the-audience)): every grant or group change that goes through the proxy is followed by a recompute of the plugins' audiences before the answer goes back, and anything given to a username — a user grant, a group membership — first clears what a removed user who held that username left in Gatekeeper ([Users API](users.md#usernames-and-gatekeeper)); when that cannot complete, the proxy answers `503` with `code: "gatekeeper_unavailable"`. Gatekeeper's own CLI writes the same database without telling the panel; the panel's minute-long recompute picks such edits up.
 
 If the Gatekeeper service is unavailable, proxied endpoints return `503 Service Unavailable`.
 
@@ -195,7 +197,7 @@ Add one or more members to a group.
 }
 ```
 
-**Errors:** 400 (invalid or empty usernames array), 404 (group not found)
+**Errors:** 400 (invalid or empty usernames array), 404 (group not found), 503 (a removed user's principal under one of the usernames cannot be cleared — `code: "gatekeeper_unavailable"`)
 
 ---
 
@@ -268,7 +270,9 @@ Create a new authorization grant linking a principal (user or group) to a resour
 }
 ```
 
-**Errors:** 400 (invalid body), 409 (duplicate grant), 503 (Gatekeeper unavailable)
+**Plugin role grants.** For `resourceType: "plugin"` with `context.roles`, the panel checks the grant before Gatekeeper sees it: `resourceId` must be the route of an installed plugin that declares `identity` (`400`, `code: "no_identity"`) and `roles` a non-empty list of its role ids (`400`, `code: "invalid_roles"`, or `"unknown_roles"` with the `unknown` ones); they go on sorted and without repeats. The plugin's **People** panel and `lamaste-server plugins entitlements` manage these grants one principal at a time (`PUT /api/plugins/:name/entitlements` replaces a principal's role grants) — prefer them to creating one here. A plugin grant without `roles` (the desktop's local-install grants) never makes anyone a plugin user.
+
+**Errors:** 400 (invalid body; a role grant as above), 409 (duplicate grant), 503 (Gatekeeper unavailable, or a removed user's principal under `principalId` cannot be cleared — `code: "gatekeeper_unavailable"`)
 
 ---
 
@@ -561,9 +565,12 @@ Delete all access log entries.
 
 ```json
 {
-  "ok": true
+  "ok": true,
+  "removed": 142
 }
 ```
+
+Gatekeeper's own API also takes `?username=<u>` and `&before=<ISO 8601 UTC>`: only that user's entries — logged before they were removed, since a later user may have the same username — and the entries still queued for the log, so none of them is written afterwards. The panel calls it when it [erases](users.md#erasing-a-removed-user) a removed user; the proxy always clears everything.
 
 ---
 
@@ -592,3 +599,30 @@ This is the nginx `auth_request` target. nginx calls this endpoint on every requ
 | 403    | Denied  | User is authenticated but lacks a grant; returns an HTML body with denial details |
 
 This endpoint is bound to `127.0.0.1` only. External traffic never reaches it directly -- nginx forwards the subrequest internally.
+
+### User-Surface Authorization (nginx auth_request)
+
+```
+GET /authz/user-surface/:fqdn
+```
+
+**Host:** `127.0.0.1:9294`
+
+The `auth_request` target of a plugin's user surface — `/api/<route>/app` and everything under it on the host of a tunnel bound to the plugin ([Tunnels API](tunnels.md#user-surface-binding)). The vhost names its tunnel in the path, `X-Original-URL` and `Host`, as for `/authz/tunnel/:fqdn`, and sends `X-Original-Method`. Gatekeeper checks, in order: the hostnames agree; the tunnel is known, enabled, not public and has a user surface; the raw request target — what follows `https://<fqdn>` in `X-Original-URL`, never re-encoded by a URL parser — lies on the user surface of a route bound to the tunnel, with no `.` or `..` segment, backslash, percent-encoded `.`, `/` or `\`, or escape that does not decode; the Authelia session; on a `restricted` tunnel, the user's grant for the tunnel. Then it signs a **relay assertion for the panel**: Ed25519 with the relay signing key, audience `@panel`, port 3100, caller `{ type: "user", username }` — the username alone; the panel takes everything else about the user from its directory — bound to the method and the raw target (`{ route, path }`).
+
+| Status | Meaning                                                                                                                                                                                 |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 200    | `X-Lamalibre-Relay-Assertion` for this one request; `Cache-Control: no-store`; no `Remote-*` headers                                                                                    |
+| 401    | No valid session — nginx answers with `GET /authz/user-surface-unauthenticated`: a JSON `401 { "error": "unauthenticated" }`, never a redirect (the caller is an application's request) |
+| 403    | Anything else refused, with an empty body — never the access-request page; the reason is logged (`user-surface authz denied`)                                                           |
+| 503    | The relay signing key is unusable                                                                                                                                                       |
+
+### Principals (Gatekeeper's own API)
+
+```
+DELETE /api/principals/user/:username
+```
+
+**Host:** `127.0.0.1:9294`, with the panel's secret. Not proxied.
+
+Removes a user principal everywhere — every grant naming the username, of any resource type, and its membership of every group — in one transaction, holding the groups lock and then the grants lock. Idempotent. `{ "ok": true, "grantsRemoved": 2, "groupsLeft": 1 }`. The panel calls it when it deletes a user, retries it every minute while it is pending, and calls it before it creates a user, a grant or a membership under a username a removed user held ([Usernames and Gatekeeper](users.md#usernames-and-gatekeeper)).

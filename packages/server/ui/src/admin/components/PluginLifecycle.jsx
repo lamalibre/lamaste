@@ -24,6 +24,7 @@ import { errorMessage } from '../lib/errorMessage.js';
 import { refusalText } from '../lib/pluginRefusal.js';
 import { markSecretsRead, operationSecretsAction, withoutSecrets } from '../lib/oidcSecrets.js';
 import { settingsDiffRows } from '../lib/pluginSettings.js';
+import { IDENTITY_CHANGED, attributeLabel, identityDiffRows } from '../lib/identity.js';
 
 /** `0123…cdef` — enough of a digest to compare by eye. */
 function short(digest) {
@@ -391,29 +392,71 @@ function updateRefusalText(err, plugin) {
   return refusalText(err, { agentLabel: plugin.agentHosting?.agentLabel, action: 'update' });
 }
 
+/**
+ * What the installed version brings that an approval covers — its relay
+ * hook set, the agent half Lamaste installs, its identity block (each null
+ * when it brings none) — from the hook status.
+ */
+function installedBrings(hooks) {
+  return {
+    relay: hooks.relay ?? null,
+    agentHalf: hooks.agentHalf ?? null,
+    identity: hooks.identity?.declared ? hooks.identity.block : null,
+  };
+}
+
+/** The same for a pending update (its identity diff names the block it brings, `after`). */
+function updateBrings(update) {
+  return {
+    relay: update.relay ?? null,
+    agentHalf: update.agentHalf ?? null,
+    identity: update.identity?.after ?? null,
+  };
+}
+
+/** `a`, `a and b`, `a, b and c`. */
+function listed(parts) {
+  return parts.length <= 1
+    ? (parts[0] ?? '')
+    : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
 /** What an approval covers, in words, and the verb that goes with it. */
-function approvalSubject({ relay, agentHalf }) {
-  if (relay && agentHalf) return { subject: 'relay hooks and agent half', plural: true };
-  if (agentHalf) return { subject: 'agent half', plural: false };
-  return { subject: 'relay hooks', plural: true };
+function approvalSubject({ relay, agentHalf, identity }) {
+  const parts = [relay && 'relay hooks', agentHalf && 'agent half', identity && 'identity'].filter(
+    Boolean,
+  );
+  if (parts.length === 0) return { subject: 'relay hooks', plural: true };
+  return { subject: listed(parts), plural: parts.length > 1 || parts[0] === 'relay hooks' };
 }
 
 /** The question before approving: what approving lets Lamaste do. */
-function approvalQuestion({ relay, agentHalf }) {
-  if (relay && agentHalf) return 'Run this code on the relay and install this agent half?';
-  if (agentHalf) return 'Install this agent half on the hosting agent?';
-  return 'Run this code on the relay?';
+function approvalQuestion({ relay, agentHalf, identity }) {
+  const parts = [
+    relay && 'run this code on the relay',
+    agentHalf &&
+      (relay || identity
+        ? 'install this agent half'
+        : 'install this agent half on the hosting agent'),
+    identity && 'send it its users with these roles and attributes',
+  ].filter(Boolean);
+  const question = listed(parts.length > 0 ? parts : ['run this code on the relay']);
+  return `${question.charAt(0).toUpperCase()}${question.slice(1)}?`;
 }
 
-/** What waits for an approval to happen: the relay hooks run, the agent half is installed. */
-function approvalGate({ relay, agentHalf }) {
-  if (relay && agentHalf) {
-    return 'Lamaste runs its relay hooks, installs its agent half and hosts the plugin only once this is approved.';
-  }
-  if (agentHalf) {
-    return 'Lamaste installs its agent half and hosts the plugin only once this is approved.';
-  }
-  return 'Lamaste runs its relay hooks and hosts the plugin only once they are approved.';
+/**
+ * What waits for an approval to happen: the relay hooks run, the agent
+ * half is installed, its users are sent to it and reach it.
+ */
+function approvalGate({ relay, agentHalf, identity }) {
+  const parts = [
+    relay && 'runs its relay hooks',
+    agentHalf && 'installs its agent half',
+    identity && 'sends it its users (and lets them reach it)',
+    'hosts the plugin',
+  ].filter(Boolean);
+  const what = relay && !agentHalf && !identity ? 'they are' : 'this is';
+  return `Lamaste ${listed(parts)} only once ${what} approved.`;
 }
 
 /** The reason a pending update turns secret settings into plain ones. */
@@ -430,12 +473,13 @@ function updateApprovalQuestion(update) {
   const codes = new Set((update.approvalRequired ?? []).map((reason) => reason.code));
   const keys = update.settings?.secretToPlain ?? [];
   const fields = `${keys.join(', ')} into ${keys.length === 1 ? 'a plain setting' : 'plain settings'}`;
+  const brings = updateBrings(update);
   if (codes.has(DIGEST_UNAPPROVED) && codes.has(SECRET_TO_PLAIN)) {
     // "Install this agent half on the hosting agent, and turn token into a plain setting?"
-    return `${approvalQuestion(update).replace(/\?$/, '')}, and turn ${fields}?`;
+    return `${approvalQuestion(brings).replace(/\?$/, '')}, and turn ${fields}?`;
   }
   if (codes.has(SECRET_TO_PLAIN)) return `Turn ${fields} and update?`;
-  return approvalQuestion(update);
+  return approvalQuestion(brings);
 }
 
 /**
@@ -457,7 +501,8 @@ function ApprovalDigest({ digest, approved = false }) {
 /**
  * Why a pending update waits for an administrator (`approvalRequired`):
  * what it brings is not what was approved, and — whatever its digest and
- * auto-approve — secrets it turns into plain values.
+ * auto-approve — secrets it turns into plain values, and roles it adds or
+ * removes or attributes it widens (`identity.changed`).
  */
 function ApprovalReasons({ reasons }) {
   if (reasons.length === 0) return null;
@@ -469,6 +514,12 @@ function ApprovalReasons({ reasons }) {
           className={reason.code === SECRET_TO_PLAIN ? 'text-red-400' : 'text-yellow-400/90'}
         >
           {reason.reason}
+          {reason.code === IDENTITY_CHANGED && (
+            <span className="text-zinc-500">
+              {' '}
+              — who its users are and what it learns about them; auto-approve never covers it
+            </span>
+          )}
         </li>
       ))}
     </ul>
@@ -476,11 +527,44 @@ function ApprovalReasons({ reasons }) {
 }
 
 /**
- * What a version brings that needs approval — its relay hook set (code
- * Lamaste runs on the relay, in a sandbox) and the agent half Lamaste
- * installs on the hosting agent.
+ * An identity block an approval covers: the roles the plugin's users hold
+ * (entitlements name them) and what it receives about each member.
  */
-function ApprovalContents({ relay, agentHalf }) {
+function IdentityBlockView({ block }) {
+  return (
+    <div className="space-y-1 text-zinc-400">
+      <div>
+        <span className="text-zinc-500">roles </span>
+        {block.roles.map((role, i) => (
+          <span key={role.id}>
+            {i > 0 && <span className="text-zinc-600">, </span>}
+            <span className="font-mono text-zinc-300" title={role.description}>
+              {role.id}
+            </span>
+            <span className="text-zinc-500"> ({role.label})</span>
+          </span>
+        ))}
+      </div>
+      <div>
+        <span className="text-zinc-500">receives </span>
+        <span className="text-zinc-300">
+          {['user id', 'username', 'roles', 'status', ...block.attributes.map(attributeLabel)].join(
+            ', ',
+          )}
+        </span>
+        <span className="text-zinc-600"> — of the users entitled to it</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What a version brings that needs approval — its relay hook set (code
+ * Lamaste runs on the relay, in a sandbox), the agent half Lamaste
+ * installs on the hosting agent, and its identity block (who its users are
+ * and what it learns about them).
+ */
+function ApprovalContents({ relay, agentHalf, identity }) {
   return (
     <>
       {relay && (
@@ -499,7 +583,60 @@ function ApprovalContents({ relay, agentHalf }) {
           <AgentHalfView agentHalf={agentHalf} />
         </div>
       )}
+      {identity && (
+        <div>
+          <p className="mb-1 text-zinc-500">
+            Identity — Lamaste sends its agent half the users entitled to these roles, and lets them
+            reach its application:
+          </p>
+          <IdentityBlockView block={identity} />
+        </div>
+      )}
     </>
+  );
+}
+
+/**
+ * What an update changes in the plugin's identity block
+ * (`pendingUpdate.identity`, part of the digest): roles added and removed
+ * and attributes widened — which wait for an administrator whatever
+ * auto-approve says — attributes narrowed and labels edited.
+ */
+function IdentityChanges({ diff }) {
+  const shown = identityDiffRows(diff);
+  if (!shown) {
+    // Declared before and after, unchanged: still part of what is approved.
+    if (!diff?.after) return null;
+    return (
+      <div>
+        <p className="mb-1 text-zinc-500">Identity — unchanged:</p>
+        <IdentityBlockView block={diff.after} />
+      </div>
+    );
+  }
+  const headline = !shown.declaredBefore
+    ? 'Identity — this version declares it for the first time:'
+    : !shown.declaredAfter
+      ? 'Identity — this version no longer declares it: its audience is dropped and its user surface is no longer served:'
+      : 'Identity — what this version changes in it:';
+  return (
+    <div>
+      <p className="mb-1 text-zinc-500">{headline}</p>
+      <div className="space-y-0.5 text-zinc-400">
+        {shown.rows.map((row) => (
+          <div key={row.label}>
+            <span className="text-zinc-500">{row.label} </span>
+            <span className="font-mono text-zinc-300">{row.entries.join(', ')}</span>
+            {row.approval && <span className="text-yellow-400"> — waits for approval</span>}
+          </div>
+        ))}
+      </div>
+      {shown.declaredAfter && diff.after && (
+        <div className="mt-1.5">
+          <IdentityBlockView block={diff.after} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -616,13 +753,21 @@ export function PluginHooks({ plugin, isActing }) {
     onError: (err) => addToast(errorMessage(err), 'error'),
   });
 
-  if (!hooks || (!hooks.relay && !hooks.agent && !hooks.agentHalf && !hooks.pendingUpdate)) {
+  if (
+    !hooks ||
+    (!hooks.relay &&
+      !hooks.agent &&
+      !hooks.agentHalf &&
+      !hooks.identity?.declared &&
+      !hooks.pendingUpdate)
+  ) {
     return null;
   }
   const busy = isActing || approve.isPending || autoApprove.isPending || discard.isPending;
   const { approval, pendingUpdate } = hooks;
   const pending = approval.state === 'pending';
-  const { subject, plural } = approvalSubject(hooks);
+  const brings = installedBrings(hooks);
+  const { subject, plural } = approvalSubject(brings);
   // Why the pending update waits, and what auto-approve withheld beyond that.
   const updateReasons = Array.isArray(pendingUpdate?.approvalRequired)
     ? pendingUpdate.approvalRequired
@@ -703,14 +848,14 @@ export function PluginHooks({ plugin, isActing }) {
             <div className="space-y-2">
               <p className="text-zinc-500">
                 {pending
-                  ? approvalGate(hooks)
+                  ? approvalGate(brings)
                   : `Approved by ${approval.approvedBy} ${approval.approvedAt ? new Date(approval.approvedAt).toLocaleString() : ''} (version ${approval.approvedVersion}).`}
               </p>
               <ApprovalDigest digest={approval.digest} />
-              <ApprovalContents relay={hooks.relay} agentHalf={hooks.agentHalf} />
+              <ApprovalContents {...brings} />
               <div className="flex flex-wrap items-center gap-3">
                 {pending &&
-                  approveButton('installed', 'Approve', approvalQuestion(hooks), {
+                  approveButton('installed', 'Approve', approvalQuestion(brings), {
                     digest: approval.digest,
                   })}
                 <label className="flex items-center gap-1.5 text-zinc-400">
@@ -751,6 +896,7 @@ export function PluginHooks({ plugin, isActing }) {
                 />
               )}
               <ApprovalContents relay={pendingUpdate.relay} agentHalf={pendingUpdate.agentHalf} />
+              <IdentityChanges diff={pendingUpdate.identity} />
               <SettingsSchemaChanges diff={pendingUpdate.settings} />
               <AutoApproveWithheld reasons={notCovered} />
               <div className="flex items-center gap-2">
@@ -815,7 +961,7 @@ export function PluginUpdate({ plugin, isActing }) {
         disabled={isActing || update.isPending}
         onClick={() => update.mutate()}
         className="flex items-center gap-1.5 rounded bg-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
-        title="Fetch the version and read it before installing it; relay hooks that changed, a new agent half and secret settings turned plain wait for approval"
+        title="Fetch the version and read it before installing it; relay hooks that changed, a new agent half, secret settings turned plain and roles added or removed or attributes widened wait for approval"
       >
         {update.isPending ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
         Update

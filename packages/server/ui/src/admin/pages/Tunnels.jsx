@@ -1,9 +1,25 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { errorMessage } from '../lib/errorMessage.js';
-import { Plus, Trash2, ExternalLink, Loader2, Network, Power, Settings2 } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  ExternalLink,
+  Loader2,
+  Network,
+  Power,
+  Settings2,
+  UsersRound,
+  X,
+} from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
+import {
+  boundRoutes,
+  userSurfaceEligibility,
+  userSurfaceReasonText,
+  userSurfaceStatusOf,
+} from '../lib/identity.js';
 
 // --- Relative time helper ---
 
@@ -397,6 +413,7 @@ function EditTunnelDialog({ tunnel, onConfirm, onCancel, isPending }) {
     changes.maxBodySizeMb = Number(maxBody);
   }
   const hasChanges = Object.keys(changes).length > 0;
+  const bound = boundRoutes(tunnel);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -427,23 +444,34 @@ function EditTunnelDialog({ tunnel, onConfirm, onCancel, isPending }) {
 
         <label className="block text-xs text-zinc-400 mt-4 mb-2">Access</label>
         <div className="space-y-2">
-          {ACCESS_OPTIONS.map((opt) => (
-            <label key={opt.value} className="flex items-start gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="editAccessMode"
-                value={opt.value}
-                checked={accessMode === opt.value}
-                onChange={(e) => setAccessMode(e.target.value)}
-                disabled={isPending}
-                className="mt-1 text-cyan-500 focus:ring-cyan-500 bg-zinc-800 border-zinc-700"
-              />
-              <div>
-                <span className="text-sm text-zinc-200">{opt.label}</span>
-                <p className="text-xs text-zinc-500">{opt.desc}</p>
-              </div>
-            </label>
-          ))}
+          {ACCESS_OPTIONS.map((opt) => {
+            // A user surface needs a signed-in user: a bound host cannot go public.
+            const blocked = opt.value === 'public' && bound.length > 0;
+            return (
+              <label
+                key={opt.value}
+                className={`flex items-start gap-2 ${blocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+              >
+                <input
+                  type="radio"
+                  name="editAccessMode"
+                  value={opt.value}
+                  checked={accessMode === opt.value}
+                  onChange={(e) => setAccessMode(e.target.value)}
+                  disabled={isPending || blocked}
+                  className="mt-1 text-cyan-500 focus:ring-cyan-500 bg-zinc-800 border-zinc-700"
+                />
+                <div>
+                  <span className="text-sm text-zinc-200">{opt.label}</span>
+                  <p className="text-xs text-zinc-500">
+                    {blocked
+                      ? `Not while it serves the user surface of ${bound.join(', ')} — unbind it first`
+                      : opt.desc}
+                  </p>
+                </div>
+              </label>
+            );
+          })}
         </div>
 
         <label className="block text-xs text-zinc-400 mt-4 mb-1">Largest request body (MiB)</label>
@@ -488,6 +516,195 @@ function EditTunnelDialog({ tunnel, onConfirm, onCancel, isPending }) {
   );
 }
 
+// --- User surfaces (agent-hosted plugins' /api/<route>/app on this host) ---
+
+/**
+ * How each plugin route bound to the tunnel is served: `served` (its
+ * installed, approved version declares identity — the host routes
+ * `/api/<route>/app/*` through Gatekeeper to the panel) or why not, in
+ * which case those requests still go down the tunnel.
+ */
+function UserSurfaceBadges({ tunnel }) {
+  const routes = boundRoutes(tunnel);
+  if (routes.length === 0) return null;
+  return (
+    <span className="mt-1 flex flex-wrap items-center gap-1">
+      {routes.map((route) => {
+        const status = userSurfaceStatusOf(tunnel, route);
+        const served = status?.served === true;
+        return (
+          <span
+            key={route}
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
+              served ? 'bg-cyan-500/10 text-cyan-400' : 'bg-yellow-500/10 text-yellow-400'
+            }`}
+            title={`User surface of ${route}: ${status ? userSurfaceReasonText(status.reason) : 'status unknown'}`}
+          >
+            <UsersRound size={11} />
+            {route}
+            {!served && status?.reason && (
+              <span className="text-yellow-400/70">({status.reason.replace(/_/g, ' ')})</span>
+            )}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+/**
+ * Bind the tunnel's host as agent-hosted plugins' user surface — where
+ * their users reach `/api/<route>/app/*`, with their identity — or unbind
+ * it. A route is served on one host at most; a plugin may be bound before
+ * it declares identity (it is served from the update that brings it).
+ */
+function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
+  const client = useAdminClient();
+  const queryClient = useQueryClient();
+  const addToast = useToast();
+  const [route, setRoute] = useState('');
+  const tunnel = tunnels.find((t) => t.id === tunnelId);
+  const pluginsQuery = useQuery({ queryKey: ['plugins'], queryFn: () => client.getPlugins() });
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['tunnels'] });
+    queryClient.invalidateQueries({ queryKey: ['plugin-identity'] });
+  };
+  const bind = useMutation({
+    mutationFn: (r) => client.bindTunnelUserSurface(tunnelId, r),
+    onSuccess: (data, r) => {
+      refresh();
+      setRoute('');
+      const status = userSurfaceStatusOf(data.tunnel, r);
+      addToast(
+        status?.served
+          ? `Users reach ${r} at https://${data.tunnel.fqdn}/api/${r}/app/`
+          : `Bound ${r} — ${userSurfaceReasonText(status?.reason ?? null)}`,
+      );
+    },
+    onError: (err) => addToast(errorMessage(err), 'error'),
+  });
+  const unbind = useMutation({
+    mutationFn: (r) => client.unbindTunnelUserSurface(tunnelId, r),
+    onSuccess: (_data, r) => {
+      refresh();
+      addToast(`${r}: its requests go down the tunnel again`);
+    },
+    onError: (err) => addToast(errorMessage(err), 'error'),
+  });
+
+  if (!tunnel) return null;
+  const busy = bind.isPending || unbind.isPending;
+  const routes = boundRoutes(tunnel);
+  const eligibility = userSurfaceEligibility(tunnel);
+  // Which host serves each route already: a route is on one host at most.
+  const servedOn = new Map();
+  for (const t of tunnels) {
+    if (t.id === tunnel.id) continue;
+    for (const r of boundRoutes(t)) servedOn.set(r, t.fqdn ?? t.subdomain);
+  }
+  const candidates = (pluginsQuery.data?.plugins ?? [])
+    .filter((p) => p.hosting === 'agent' && p.route && !routes.includes(p.route))
+    .sort((a, b) => a.route.localeCompare(b.route));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-lg w-full mx-4 shadow-xl">
+        <div className="mb-1 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-white">User Surface</h3>
+          <button type="button" onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
+            <X size={18} />
+          </button>
+        </div>
+        <p className="text-cyan-400 font-mono text-sm mb-3">{tunnel.fqdn}</p>
+        <p className="text-xs text-zinc-500 mb-4">
+          Agent-hosted plugins bound here are reached at{' '}
+          <span className="font-mono text-zinc-400">/api/&lt;route&gt;/app/</span> on this host by
+          signed-in users: Gatekeeper vouches for the session, the panel passes the user&apos;s id
+          and roles to the plugin&apos;s agent half. Until a plugin&apos;s installed, approved
+          version declares identity, those requests still go down the tunnel.
+        </p>
+
+        <p className="text-xs text-zinc-400 mb-1">Bound here</p>
+        {routes.length === 0 ? (
+          <p className="text-xs text-zinc-600 mb-4">No plugin yet.</p>
+        ) : (
+          <ul className="mb-4 space-y-1">
+            {routes.map((r) => {
+              const status = userSurfaceStatusOf(tunnel, r);
+              return (
+                <li
+                  key={r}
+                  className="flex items-start justify-between gap-2 rounded bg-zinc-800/60 px-2 py-1.5 text-xs"
+                >
+                  <span>
+                    <span className="font-mono text-zinc-200">{r}</span>{' '}
+                    <span className={status?.served ? 'text-green-400' : 'text-yellow-400'}>
+                      — {userSurfaceReasonText(status?.reason ?? null)}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => unbind.mutate(r)}
+                    className="shrink-0 rounded bg-zinc-700 px-2 py-0.5 text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
+                  >
+                    Unbind
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {eligibility.eligible ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={route}
+              onChange={(e) => setRoute(e.target.value)}
+              disabled={busy || pluginsQuery.isLoading}
+              aria-label="Agent-hosted plugin"
+              className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 font-mono focus:outline-none focus:border-cyan-400 disabled:opacity-50"
+            >
+              <option value="">
+                {pluginsQuery.isLoading ? 'Loading plugins…' : 'Select an agent-hosted plugin'}
+              </option>
+              {candidates.map((p) => (
+                <option key={p.route} value={p.route} disabled={servedOn.has(p.route)}>
+                  {p.route}
+                  {servedOn.has(p.route)
+                    ? ` — served on ${servedOn.get(p.route)}`
+                    : p.identity
+                      ? ''
+                      : ' — declares no identity yet'}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={busy || !route}
+              onClick={() => bind.mutate(route)}
+              className="flex items-center gap-2 rounded bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+            >
+              {bind.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+              Bind
+            </button>
+            {!pluginsQuery.isLoading && candidates.length === 0 && (
+              <p className="basis-full text-xs text-zinc-500">
+                No other agent-hosted plugin is installed.
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-yellow-400">
+            This tunnel cannot serve a user surface: {eligibility.reason}.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // --- Internal plugin tunnel badge ---
 
 function InternalBadge({ tunnel }) {
@@ -519,7 +736,7 @@ function CarrierBadge({ tunnel }) {
 
 // --- Tunnel Table (desktop) ---
 
-function TunnelTable({ tunnels, onDelete, onToggle, onEdit }) {
+function TunnelTable({ tunnels, onDelete, onToggle, onEdit, onUserSurface }) {
   return (
     <div className="hidden md:block overflow-x-auto">
       <table className="w-full">
@@ -584,15 +801,18 @@ function TunnelTable({ tunnels, onDelete, onToggle, onEdit }) {
                   {internal ? (
                     <span className="text-zinc-500">relay loopback only</span>
                   ) : (
-                    <a
-                      href={`https://${tunnel.fqdn}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`inline-flex items-center gap-1 ${enabled ? 'text-cyan-400 hover:text-cyan-300' : 'text-zinc-500'}`}
-                    >
-                      {tunnel.fqdn}
-                      <ExternalLink size={12} />
-                    </a>
+                    <>
+                      <a
+                        href={`https://${tunnel.fqdn}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`inline-flex items-center gap-1 ${enabled ? 'text-cyan-400 hover:text-cyan-300' : 'text-zinc-500'}`}
+                      >
+                        {tunnel.fqdn}
+                        <ExternalLink size={12} />
+                      </a>
+                      <UserSurfaceBadges tunnel={tunnel} />
+                    </>
                   )}
                 </td>
                 <td className="py-3 px-4 text-sm text-zinc-200 font-mono">{tunnel.port}</td>
@@ -653,6 +873,17 @@ function TunnelTable({ tunnels, onDelete, onToggle, onEdit }) {
                           Edit
                         </button>
                       )}
+                      {(tunnel.type ?? 'app') === 'app' && (
+                        <button
+                          type="button"
+                          onClick={() => onUserSurface(tunnel)}
+                          className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600"
+                          title="Serve agent-hosted plugins' user surfaces on this host"
+                        >
+                          <UsersRound size={12} />
+                          Users
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => onToggle(tunnel)}
@@ -686,7 +917,7 @@ function TunnelTable({ tunnels, onDelete, onToggle, onEdit }) {
 
 // --- Tunnel Cards (mobile) ---
 
-function TunnelCards({ tunnels, onDelete, onToggle, onEdit }) {
+function TunnelCards({ tunnels, onDelete, onToggle, onEdit, onUserSurface }) {
   return (
     <div className="md:hidden space-y-3">
       {tunnels.map((tunnel) => {
@@ -723,6 +954,16 @@ function TunnelCards({ tunnels, onDelete, onToggle, onEdit }) {
                     <Settings2 size={14} />
                   </button>
                 )}
+                {(tunnel.type ?? 'app') === 'app' && !internal && (
+                  <button
+                    type="button"
+                    onClick={() => onUserSurface(tunnel)}
+                    className="text-xs text-zinc-300"
+                    title="Serve agent-hosted plugins' user surfaces on this host"
+                  >
+                    <UsersRound size={14} />
+                  </button>
+                )}
                 {!internal && (
                   <button
                     type="button"
@@ -748,15 +989,18 @@ function TunnelCards({ tunnels, onDelete, onToggle, onEdit }) {
                 Relay loopback only — managed by plugin hosting
               </p>
             ) : (
-              <a
-                href={`https://${tunnel.fqdn}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`text-sm inline-flex items-center gap-1 mb-1 ${enabled ? 'text-cyan-400 hover:text-cyan-300' : 'text-zinc-500'}`}
-              >
-                {tunnel.fqdn}
-                <ExternalLink size={12} />
-              </a>
+              <>
+                <a
+                  href={`https://${tunnel.fqdn}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`text-sm inline-flex items-center gap-1 mb-1 ${enabled ? 'text-cyan-400 hover:text-cyan-300' : 'text-zinc-500'}`}
+                >
+                  {tunnel.fqdn}
+                  <ExternalLink size={12} />
+                </a>
+                <UserSurfaceBadges tunnel={tunnel} />
+              </>
             )}
             <div className="flex items-center gap-4 text-xs text-zinc-500 mt-2">
               <span>
@@ -787,6 +1031,7 @@ export default function Tunnels() {
   const [showForm, setShowForm] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
+  const [userSurfaceTarget, setUserSurfaceTarget] = useState(null);
 
   const tunnelsQuery = useQuery({
     queryKey: ['tunnels'],
@@ -842,6 +1087,10 @@ export default function Tunnels() {
 
   const handleEdit = useCallback((tunnel) => {
     setEditTarget(tunnel);
+  }, []);
+
+  const handleUserSurface = useCallback((tunnel) => {
+    setUserSurfaceTarget(tunnel.id);
   }, []);
 
   const handleDelete = useCallback((tunnel) => {
@@ -914,14 +1163,25 @@ export default function Tunnels() {
             onDelete={handleDelete}
             onToggle={handleToggle}
             onEdit={handleEdit}
+            onUserSurface={handleUserSurface}
           />
           <TunnelCards
             tunnels={tunnels}
             onDelete={handleDelete}
             onToggle={handleToggle}
             onEdit={handleEdit}
+            onUserSurface={handleUserSurface}
           />
         </>
+      )}
+
+      {/* User surface binding */}
+      {userSurfaceTarget && (
+        <UserSurfaceDialog
+          tunnelId={userSurfaceTarget}
+          tunnels={tunnels}
+          onClose={() => setUserSurfaceTarget(null)}
+        />
       )}
 
       {/* Edit Modal */}

@@ -32,10 +32,8 @@ This approach works because Lamaste manages a small amount of state (one admin, 
 ├── tickets.json            ← Ticket and session store
 ├── storage-config.json     ← Storage server registry and plugin bindings
 ├── storage-master.key      ← 32-byte master key for storage credential encryption
-├── groups.json             ← Lamaste groups (separate from Authelia groups)
-├── access-grants.json      ← Generic access grants (principal → resource)
+├── gatekeeper.db           ← Gatekeeper (SQLite): Lamaste groups, access grants, denied-access log
 ├── gatekeeper.json         ← Gatekeeper settings (cache TTL, admin contact, logging)
-├── access-request-log.json ← Optional denied access log (for admin review)
 └── pki/
     ├── ca.key              ← CA private key
     ├── ca.crt              ← CA certificate
@@ -466,10 +464,8 @@ Environment variables allow overriding paths for development and testing without
 | `invitations.json`        | `0600` | `lamaste:lamaste`          | Written by Panel Server                                              |
 | `storage-config.json`     | `0600` | `lamaste:lamaste`          | Storage registry (credentials AES-256-GCM encrypted)                 |
 | `storage-master.key`      | `0600` | `lamaste:lamaste`          | 32-byte master key for storage encryption                            |
-| `groups.json`             | `0600` | `lamaste:lamaste`          | Lamaste group definitions and membership                             |
-| `access-grants.json`      | `0600` | `lamaste:lamaste`          | Generic access grants (principal → resource)                         |
+| `gatekeeper.db`           | `0600` | `lamaste:lamaste`          | Gatekeeper (SQLite, WAL): groups, access grants, denied-access log   |
 | `gatekeeper.json`         | `0600` | `lamaste:lamaste`          | Gatekeeper settings (cache TTL, logging)                             |
-| `access-request-log.json` | `0600` | `lamaste:lamaste`          | Optional denied access log                                           |
 | `pki/ca.key`              | `0600` | `lamaste:lamaste`          | CA private key — most sensitive file                                 |
 | `pki/ca.crt`              | `0644` | `lamaste:lamaste`          | CA cert — needs to be readable by nginx                              |
 | `pki/client.key`          | `0600` | `lamaste:lamaste`          | Client private key                                                   |

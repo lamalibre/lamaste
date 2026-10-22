@@ -5,7 +5,12 @@
 
 import { apiFetch } from './api.js';
 
+/**
+ * POST `data` as JSON — or nothing at all when there is no data: the panel
+ * refuses a JSON content type with an empty body (400).
+ */
 function jsonPost(url, data) {
+  if (data === undefined) return apiFetch(url, { method: 'POST' });
   return apiFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -57,13 +62,30 @@ function removalQuery({ force = false, purge = false } = {}) {
   return toQuery({ force: force ? 'true' : undefined, purge: purge ? 'true' : undefined });
 }
 
+/** `/api/plugins/<name>/<rest>`. */
+function pluginPath(name, rest) {
+  return `/api/plugins/${encodeURIComponent(name)}/${rest}`;
+}
+
 export const webAdminClient = {
   // --- Users ---
   getUsers: () => apiFetch('/api/users'),
   createUser: (data) => jsonPost('/api/users', data),
   updateUser: (username, data) => jsonPut(`/api/users/${encodeURIComponent(username)}`, data),
-  deleteUser: (username) => jsonDelete(`/api/users/${encodeURIComponent(username)}`),
+  disableUser: (username) =>
+    jsonPut(`/api/users/${encodeURIComponent(username)}`, { disabled: true }),
+  enableUser: (username) =>
+    jsonPut(`/api/users/${encodeURIComponent(username)}`, { disabled: false }),
+  deleteUser: (username, { erase = false } = {}) =>
+    jsonDelete(
+      `/api/users/${encodeURIComponent(username)}${toQuery({ erase: erase ? 'true' : undefined })}`,
+    ),
   resetTotp: (username) => jsonPost(`/api/users/${encodeURIComponent(username)}/reset-totp`),
+
+  // --- User directory ---
+  getUserDirectory: () => apiFetch('/api/identity/directory'),
+  eraseDirectoryUser: (userId) =>
+    jsonPost(`/api/identity/directory/${encodeURIComponent(userId)}/erase`),
 
   // --- Invitations ---
   getInvitations: () => apiFetch('/api/invitations'),
@@ -222,6 +244,15 @@ export const webAdminClient = {
   updatePlugin: (name, version) =>
     jsonPost(`/api/plugins/${encodeURIComponent(name)}/update`, version ? { version } : {}),
   discardPluginUpdate: (name) => jsonDelete(`/api/plugins/${encodeURIComponent(name)}/update`),
+  getPluginIdentity: (name) => apiFetch(pluginPath(name, 'identity')),
+  getPluginAudience: (name) => apiFetch(pluginPath(name, 'audience')),
+  getPluginEntitlements: (name) => apiFetch(pluginPath(name, 'entitlements')),
+  setPluginEntitlement: (name, { principalType, principalId, roles }) =>
+    jsonPut(pluginPath(name, 'entitlements'), { principalType, principalId, roles }),
+  removePluginEntitlement: (name, { principalType, principalId }) =>
+    jsonDelete(`${pluginPath(name, 'entitlements')}${toQuery({ principalType, principalId })}`),
+  syncPluginIdentity: (name, { reconcile = false } = {}) =>
+    jsonPost(pluginPath(name, 'identity/sync'), { reconcile }),
   fetchPluginBundle: async (name) => {
     const res = await fetch(`/api/${encodeURIComponent(name)}/panel.js`);
     if (!res.ok) throw new Error(`Failed to load plugin bundle for "${name}"`);
@@ -287,4 +318,35 @@ export const webAdminClient = {
   updateTunnel: (id, data) => jsonPatch(`/api/tunnels/${encodeURIComponent(id)}`, data),
   deleteTunnel: (id) => jsonDelete(`/api/tunnels/${encodeURIComponent(id)}`),
   getTunnelAgentConfig: () => apiFetch('/api/tunnels/agent-config'),
+  bindTunnelUserSurface: (id, route) =>
+    jsonPut(`/api/tunnels/${encodeURIComponent(id)}/user-surface`, { route }),
+  unbindTunnelUserSurface: (id, route) =>
+    jsonDelete(`/api/tunnels/${encodeURIComponent(id)}/user-surface/${encodeURIComponent(route)}`),
+
+  // --- Gatekeeper (the panel proxies /api/gatekeeper/* to Gatekeeper) ---
+  getGatekeeperGroups: () => apiFetch('/api/gatekeeper/groups'),
+  createGatekeeperGroup: (data) => jsonPost('/api/gatekeeper/groups', data),
+  updateGatekeeperGroup: (name, data) =>
+    jsonPatch(`/api/gatekeeper/groups/${encodeURIComponent(name)}`, data),
+  deleteGatekeeperGroup: (name) => jsonDelete(`/api/gatekeeper/groups/${encodeURIComponent(name)}`),
+  addGatekeeperGroupMembers: (name, data) =>
+    jsonPost(`/api/gatekeeper/groups/${encodeURIComponent(name)}/members`, data),
+  removeGatekeeperGroupMember: (name, username) =>
+    jsonDelete(
+      `/api/gatekeeper/groups/${encodeURIComponent(name)}/members/${encodeURIComponent(username)}`,
+    ),
+  getGatekeeperGrants: (filter) => apiFetch(`/api/gatekeeper/grants${toQuery(filter ?? {})}`),
+  // A plugin grant whose context names `roles` is an entitlement: the panel
+  // checks the roles against the plugin's identity block.
+  createGatekeeperGrant: (data) => jsonPost('/api/gatekeeper/grants', data),
+  revokeGatekeeperGrant: (grantId) =>
+    jsonDelete(`/api/gatekeeper/grants/${encodeURIComponent(grantId)}`),
+  checkGatekeeperAccess: (username, resourceType, resourceId) =>
+    apiFetch(`/api/gatekeeper/access/check${toQuery({ username, resourceType, resourceId })}`),
+  bustGatekeeperCache: () => jsonPost('/api/gatekeeper/cache/bust'),
+  getGatekeeperSettings: () => apiFetch('/api/gatekeeper/settings'),
+  updateGatekeeperSettings: (data) => jsonPatch('/api/gatekeeper/settings', data),
+  getAccessRequestLog: (limit = 100, offset = 0) =>
+    apiFetch(`/api/gatekeeper/access-log${toQuery({ limit, offset })}`),
+  clearAccessRequestLog: () => jsonDelete('/api/gatekeeper/access-log'),
 };

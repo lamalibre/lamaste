@@ -213,6 +213,28 @@ Agent halves built against `@lamalibre/lamaste` 4.3 must be rebuilt: one that do
 
 **What remains.** The installation secret is held by the relay's panel (`plugin-hostings.json`, `0600`, `lamaste`), by the hosting **agent's account** (its plugin config, `0600`) and by the **agent half's own account** (`/etc/lamalibre/apps/<route>/plugin-config.json`, `0600`). Whoever holds one of them can sign as Lamaste and answer as the agent half. The agent account runs the tunnel's client, so it can route the tunnel to a listener of its own and open the sealed secrets of a change sent then; any holder can read and change the settings through the agent half's handler — though never read a secret back from it, since no answer carries one, and a change made that way is reported as made outside Lamaste. Relay-signed assertions with a key the agent half holds alone would be the next step; until then the agent account and the agent half's account are inside the secrets' trust boundary. The agent half — the plugin's own code — holds its secrets in memory and in its file and uses them as it likes; its account and unit (5d above) keep them from other accounts on the agent, but root on the agent can read them, and they stay with the agent half's retained data when it is removed without purge. On the relay, a secret is readable in clear for the duration of a change by whoever can read the panel process's memory (root, or the `lamaste` account itself). None of the processes that hold these secrets writes a core dump: the units of the panel, Gatekeeper, the hook runner and every agent half set `LimitCORE=0`.
 
+#### 5f. Users of agent-hosted plugins: who attests what
+
+An agent-hosted plugin that declares `identity` serves its users at `/api/<route>/app/*` on a tunnel host bound as its user surface, and learns who is calling from Lamaste — never from a header it has to take on faith ([Users and identity](../04-api-reference/agent-hosted-plugins.md#users-and-identity)). Three parties vouch, each for what it knows:
+
+| Who                | Attests                                                                                                                                                        | How                                                                                                                                                                                                                                |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Gatekeeper**     | The Authelia **session**: this request comes from the user signed in as `<username>` (and, on a restricted tunnel, the user holds its grant)                   | A relay assertion for the panel — Ed25519 with the relay signing key, audience `@panel` (no agent label can be one), port 3100, the username alone, bound to the method and the raw request target, 60 s, single use, never cached |
+| **The panel**      | The **identity** applications see: the directory's `userId`, the username and the user's roles in this plugin — or a refusal (disabled, removed, not entitled) | The HMAC caller assertion keyed with the hosting's installation secret, caller `{ type: "user", userId, username, roles }`, on the request it forwards to the agent half's `/app/*`                                                |
+| **The agent half** | Its answer is its own                                                                                                                                          | The responder signature over the request's nonce and the status — without it the panel sends the client a `502`                                                                                                                    |
+
+Gatekeeper attests the session; the panel issues the identity. Gatekeeper never signs a role or an attribute, and the panel never believes a username it did not receive in a Gatekeeper assertion bound to that very request. nginx sends the panel the request target exactly as the browser sent it, so the target the assertion binds is the one the panel checks byte for byte; every server on the way applies one path rule — no `.` or `..` segment, no backslash, no percent-encoded `.`, `/` or `\`, no escape that does not decode — so the path a check approves is the path the next server resolves.
+
+**The `/app` boundary.** On the agent half, paths are a boundary between callers: a `user` caller is valid only under `/app` (read literally), and every other caller — an administrator's certificate, an agent, Lamaste itself — never for a path a router could take for `/app` (`/App`, `/%61pp`, `//app`, `/app.json`). Signing refuses either mistake and verifying answers `wrong_request`: an administrator's assertion cannot act on a user's routes, a user's never reaches `/admin`. On the panel, `/api/<route>/app*` are routes of the user surface's own context — no mTLS, no 2FA session, the assertion alone — which win over the admin forwarder's wildcard, so the admin forwarder no longer reaches an agent half's `/admin/app*`. Panel, auth, agent-panel and IP-panel vhosts clear a client's `X-Lamalibre-Relay-Assertion`, as do tunnel vhosts that do not set Gatekeeper's; a user-surface location also clears the browser's `Cookie`, `Authorization`, `Remote-*`, `X-SSL-Client-*` and `X-Forwarded-Host` before the panel sees the request.
+
+**CSRF.** The Authelia session cookie travels with any cross-site request to the bound host, so a request that may change something — any method but `GET`, `HEAD` and `OPTIONS` — must carry `Origin` equal to the bound host as the tunnel state names it (never the request's `Host`); otherwise `403`. A user-surface request without a session gets a JSON `401`, never a redirect, and the panel never passes a `Set-Cookie` back.
+
+**Data minimisation.** A plugin receives only the attributes its manifest declares (`displayName`, `email`), and widening them waits for an administrator's approval that auto-approve never gives (`identity.changed`); nothing identity is ever sent to a plugin that does not declare `identity`. A user who leaves keeps, on the plugin's side, only what it last received. Audit entries name users by `userId` alone, logs carry `user:<userId>` and counts, and the feed's wire parsers never echo a received value. `users.yml`'s content never reaches a log, even when it cannot be parsed.
+
+**Offboarding and erasure.** Disabling a user is effective at once: the directory is written before Authelia restarts, so the user surface refuses them (`403`) before Authelia lets them out, every audience shows them disabled, and their desktop sessions and registry tokens end. Deleting keeps a tombstone (the `userId` and the last known name and address, `removed`) so history stays readable, and clears what Gatekeeper holds under the username before anyone can hold it again — a re-created username is a new user with a new `userId` and inherits no grant, group or role. **Erasing** scrubs the tombstone, the user's invitations and Gatekeeper's access-request log rows, and sends every plugin that had the user `remove/erased`: its agent half scrubs its row and anonymises its own data in one transaction, and the panel shows the erasure as pending until each half's cursor passes it. Outside Lamaste's reach: Authelia's own authentication log and database, nginx's access logs, and backups taken before.
+
+**What remains.** Plain `authenticated` and `restricted` app tunnels still pass the user to their backend as **unsigned** `Remote-User`, `Remote-Groups`, `Remote-Name` and `Remote-Email` headers set from Gatekeeper's answer: nginx replaces whatever the client sent, but the backend's port is reachable on the relay's and the agent's loopback by any local process, which can send any `Remote-*` it likes. Only plugin tunnels (a relay assertion for lamaste-agentd, 5c) and plugin user surfaces carry a signed identity; Gatekeeper-signed identity for plain tunnels is future work. The relay's loopback stays the relay's trust boundary: a process on the relay that can read the relay signing key can mint assertions for the panel, as it could for agents before.
+
 #### 6. TOTP 2FA for app access
 
 Visitors to your tunneled apps authenticate through Authelia with a password and a TOTP code from their phone. See [Authentication](authentication.md) for full details.
@@ -633,28 +655,29 @@ Configuration files that are read live by services (like Authelia's `users.yml`)
 
 ### Security layers
 
-| Layer                | Technology                              | Blocks                                |
-| -------------------- | --------------------------------------- | ------------------------------------- |
-| Firewall             | UFW                                     | Connections to non-allowed ports      |
-| Intrusion prevention | fail2ban                                | Repeated failed login attempts        |
-| SSH hardening        | sshd_config                             | Password-based SSH access             |
-| TLS encryption       | Let's Encrypt / self-signed             | Traffic interception and tampering    |
-| Admin auth           | mTLS client certificates                | Unauthorized admin access             |
-| Admin 2FA (optional) | Built-in TOTP                           | Stolen certificate abuse              |
-| Agent-to-agent auth  | Tickets (time-limited, single-use)      | Unauthorized cross-agent access       |
-| Tunnel ownership     | Chisel authfile per-agent grants        | One agent hijacking another's host    |
-| Reserved ports       | Tunnel port validation                  | Publishing internal services          |
-| Privileged commands  | No-wildcard sudoers, `lamaste-priv`     | Root code execution via extra flags   |
-| Relay authenticity   | Agent verifies `tunnel.<domain>` TLS    | Relay impersonation, credential theft |
-| Panel authenticity   | Pinned panel key, CA for its domain     | Panel impersonation, credential theft |
-| Agent daemon auth    | Relay assertions (Ed25519), owner token | Callers forged on an agent's loopback |
-| Agent root helper    | Relay-signed app jobs, pinned key       | Root actions the relay did not sign   |
-| Agent half sandbox   | Own account, hardened systemd unit      | Plugin code as root                   |
-| Plugin secrets       | Agent half only, through the tunnel     | Plugin secrets at rest on the relay   |
-| App auth             | Authelia TOTP 2FA                       | Unauthorized app access               |
-| Service isolation    | `127.0.0.1` binding                     | Direct access to internal services    |
-| File permissions     | `chmod 600`                             | Unauthorized secret access            |
-| Atomic writes        | `mv` pattern                            | Partial file reads by services        |
+| Layer                | Technology                               | Blocks                                |
+| -------------------- | ---------------------------------------- | ------------------------------------- |
+| Firewall             | UFW                                      | Connections to non-allowed ports      |
+| Intrusion prevention | fail2ban                                 | Repeated failed login attempts        |
+| SSH hardening        | sshd_config                              | Password-based SSH access             |
+| TLS encryption       | Let's Encrypt / self-signed              | Traffic interception and tampering    |
+| Admin auth           | mTLS client certificates                 | Unauthorized admin access             |
+| Admin 2FA (optional) | Built-in TOTP                            | Stolen certificate abuse              |
+| Agent-to-agent auth  | Tickets (time-limited, single-use)       | Unauthorized cross-agent access       |
+| Tunnel ownership     | Chisel authfile per-agent grants         | One agent hijacking another's host    |
+| Reserved ports       | Tunnel port validation                   | Publishing internal services          |
+| Privileged commands  | No-wildcard sudoers, `lamaste-priv`      | Root code execution via extra flags   |
+| Relay authenticity   | Agent verifies `tunnel.<domain>` TLS     | Relay impersonation, credential theft |
+| Panel authenticity   | Pinned panel key, CA for its domain      | Panel impersonation, credential theft |
+| Agent daemon auth    | Relay assertions (Ed25519), owner token  | Callers forged on an agent's loopback |
+| Agent root helper    | Relay-signed app jobs, pinned key        | Root actions the relay did not sign   |
+| Agent half sandbox   | Own account, hardened systemd unit       | Plugin code as root                   |
+| Plugin secrets       | Agent half only, through the tunnel      | Plugin secrets at rest on the relay   |
+| Plugin users         | Gatekeeper attests, the panel identifies | Forged users on a plugin's `/app`     |
+| App auth             | Authelia TOTP 2FA                        | Unauthorized app access               |
+| Service isolation    | `127.0.0.1` binding                      | Direct access to internal services    |
+| File permissions     | `chmod 600`                              | Unauthorized secret access            |
+| Atomic writes        | `mv` pattern                             | Partial file reads by services        |
 
 ### Firewall rules
 

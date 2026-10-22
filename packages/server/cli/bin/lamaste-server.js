@@ -15,6 +15,7 @@
  *   restart       Restart panel server (and optionally gatekeeper)
  *   plugins       Manage server-side plugins
  *   push-install  Push install: the switch, the default policy, agents' windows
+ *   users         Users and the user directory: disable, delete, erase
  *   tunnels       Manage tunnels
  *   sites         Manage static sites
  *   certs         Certificate status and renewal
@@ -63,7 +64,8 @@ ${b('COMMANDS')}
   ${c('plugins')}         Manage plugins (list, install, enable, disable, uninstall, update, hosting, hooks, settings, …)
   ${c('push-install')}    Push install: on/off, default policy, open/close an agent's window
   ${c('audit')}           The panel's audit log (approvals, hostings, updates, hook events)
-  ${c('tunnels')}         Manage tunnels (list, create, delete, toggle)
+  ${c('users')}           Users and the user directory (list, disable, enable, delete, erase, directory)
+  ${c('tunnels')}         Manage tunnels (list, create, delete, toggle, bind a plugin's user surface)
   ${c('sites')}           Manage static sites (list, create, delete)
   ${c('certs')}           Certificate status, renewal, and agent cert listing
   ${c('reset-admin')}     Emergency admin reset (reverts to P12, clears 2FA)
@@ -108,6 +110,13 @@ ${b('EXAMPLES')}
 
   ${d("# Broker agent install tokens from the registry as the panel's own Authelia client")}
   ${c('lamaste-server registry-credential set --url https://feria.example.com --oidc')}
+
+  ${d('# Offboard a user: they cannot sign in, plugins see them disabled')}
+  ${c('lamaste-server users disable alice')}
+
+  ${d("# Give a user an agent-hosted plugin's role, and serve its user surface on a tunnel")}
+  ${c('lamaste-server plugins entitlements market-indicators --user alice --roles viewer')}
+  ${c('lamaste-server tunnels bind-user-surface piyasa market-indicators')}
 
   ${d('# List tunnels')}
   ${c('lamaste-server tunnels list')}
@@ -168,6 +177,11 @@ async function main() {
     case 'audit': {
       const { runAudit } = await import('../src/commands/audit.js');
       await runAudit(args.slice(1), { json });
+      break;
+    }
+    case 'users': {
+      const { runUsers } = await import('../src/commands/users.js');
+      await runUsers(args.slice(1), { json });
       break;
     }
     case 'tunnels': {

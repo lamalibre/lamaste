@@ -11,12 +11,15 @@ import { settingsErrorsOf } from '@lamalibre/lamaste-server-ui/lib/pluginSetting
  * Invoke a command whose refusal the panel UI explains: one that starts a
  * plugin operation (hosting, removing a hosting, uninstalling, updating,
  * approving an update, purging retained data), settles one's leftovers
- * (forgetting retained data), or reads or changes a plugin's settings. It
+ * (forgetting retained data), reads or changes a plugin's settings or its
+ * people (identity, audience, entitlements, sync), disables, enables,
+ * deletes or erases a user, or binds a tunnel as a user surface. It
  * rejects with the panel's refusal — `{ error, status?, code?, reasons?,
  * operationId?, errors? }` — which is rethrown as the Error the web client
  * throws for it, so the panel UI can explain it (an ineligible agent's
  * reasons, closed push install, a stale settings revision, a message per
- * setting). The panel's messages never contain a setting's value.
+ * setting, the last enabled administrator, a route served elsewhere). The
+ * panel's messages never contain a setting's value.
  */
 async function invokeRefusable(command, args) {
   try {
@@ -56,8 +59,15 @@ export const desktopAdminClient = {
   getUsers: () => invoke('admin_get_users'),
   createUser: (data) => invoke('admin_create_user', { data }),
   updateUser: (username, data) => invoke('admin_update_user', { username, data }),
-  deleteUser: (username) => invoke('admin_delete_user', { username }),
+  disableUser: (username) => invokeRefusable('admin_disable_user', { username }),
+  enableUser: (username) => invokeRefusable('admin_enable_user', { username }),
+  deleteUser: (username, { erase = false } = {}) =>
+    invokeRefusable('admin_delete_user', { username, erase: erase === true }),
   resetTotp: (username) => invoke('admin_reset_totp', { username }),
+
+  // --- User directory ---
+  getUserDirectory: () => invoke('admin_get_user_directory'),
+  eraseDirectoryUser: (userId) => invokeRefusable('admin_erase_directory_user', { userId }),
 
   // --- Invitations ---
   getInvitations: () => invoke('admin_get_invitations'),
@@ -174,6 +184,18 @@ export const desktopAdminClient = {
   updatePlugin: (name, version) =>
     invokeRefusable('admin_update_plugin', { name, version: version ?? null }),
   discardPluginUpdate: (name) => invoke('admin_discard_plugin_update', { name }),
+  getPluginIdentity: (name) => invokeRefusable('admin_get_plugin_identity', { name }),
+  getPluginAudience: (name) => invokeRefusable('admin_get_plugin_audience', { name }),
+  getPluginEntitlements: (name) => invokeRefusable('admin_get_plugin_entitlements', { name }),
+  setPluginEntitlement: (name, { principalType, principalId, roles }) =>
+    invokeRefusable('admin_set_plugin_entitlement', {
+      name,
+      data: { principalType, principalId, roles },
+    }),
+  removePluginEntitlement: (name, { principalType, principalId }) =>
+    invokeRefusable('admin_remove_plugin_entitlement', { name, principalType, principalId }),
+  syncPluginIdentity: (name, { reconcile = false } = {}) =>
+    invokeRefusable('admin_sync_plugin_identity', { name, reconcile: reconcile === true }),
   getPluginSettings: (name) => invokeRefusable('admin_get_plugin_settings', { name }),
   // The body carries secrets: it goes to the Rust command and on to curl's
   // stdin as the request body, and nowhere else.
@@ -224,6 +246,10 @@ export const desktopAdminClient = {
   updateTunnel: (id, data) => invoke('admin_update_tunnel', { id, data }),
   deleteTunnel: (id) => invoke('admin_delete_tunnel', { id }),
   getTunnelAgentConfig: () => invoke('admin_get_tunnel_agent_config'),
+  bindTunnelUserSurface: (id, route) =>
+    invokeRefusable('admin_bind_tunnel_user_surface', { id, route }),
+  unbindTunnelUserSurface: (id, route) =>
+    invokeRefusable('admin_unbind_tunnel_user_surface', { id, route }),
 
   // --- Agents ---
   getAgents: () => invoke('admin_get_agent_certs'),

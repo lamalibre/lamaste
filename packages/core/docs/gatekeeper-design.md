@@ -1,5 +1,7 @@
 # Lamaste Gatekeeper — Design Document
 
+> **Status (4.5):** implemented, with these departures from the design below. Groups, grants and the access-request log live in SQLite — `/etc/lamalibre/lamaste/gatekeeper.db` (0600, WAL, numbered migrations) — not in `groups.json`, `access-grants.json` and `access-request-log.json`, which are no longer read; every check reads the database, and only `tunnels.json` and `gatekeeper.json` are watched. The legacy `user-plugin-access.json` grants are **not** migrated (`migrateFromLegacy` exists but nothing calls it). Gatekeeper signs relay assertions with the relay signing key: for plugin tunnels (into lamaste-agentd, since 4.3) and, from 4.5, for the panel on a plugin's user surface (`/authz/user-surface/:fqdn`, the session's username alone). Plain `authenticated` and `restricted` app tunnels pass the user as unsigned `Remote-*` headers. Plugin grants with `context.roles` are agent-hosted plugins' entitlements; Gatekeeper's own API also removes a user principal everywhere (`DELETE /api/principals/user/:username`) and purges one user's access-log rows. Current behaviour: [Authorization](01-concepts/authorization.md), [Gatekeeper API](04-api-reference/gatekeeper.md).
+
 ## Overview
 
 `@lamalibre/lamaste-gatekeeper` is a standalone authorization package for Lamaste. It manages **groups** and **grants**, enforces tunnel access control via a lightweight Fastify service, and serves user-friendly "request access" pages when access is denied.

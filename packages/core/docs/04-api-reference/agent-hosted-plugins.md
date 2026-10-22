@@ -1,6 +1,6 @@
 # Agent-Hosted Plugins
 
-An **agent-hosted plugin** is an application that runs on one of your agents — typically a VM — while its admin pages live in the Lamaste panel. Lamaste never runs the plugin's code on the relay. This page covers what Lamaste adds for a plugin whose manifest has an `agent` block: hosting it on an agent, the internal plugin tunnel, the forwarded admin API, the installation secret, the health monitor and what the panel shows while the hosting agent is offline, the plugin's [settings and secrets](#settings) — and, for a plugin that names its agent package, installing, updating and removing that agent half on the agent from the panel ([Hosting with an agent half](#hosting-with-an-agent-half)). What happens on the agent machine itself — the root helper, the unit, the signed jobs — is in [App Host](app-host.md). The hooks a plugin can run around all of these — and their approval — are in [Lifecycle Hooks](lifecycle-hooks.md). The full design is `plugin-development/design/agent-hosted-app-plugins.md`.
+An **agent-hosted plugin** is an application that runs on one of your agents — typically a VM — while its admin pages live in the Lamaste panel. Lamaste never runs the plugin's code on the relay. This page covers what Lamaste adds for a plugin whose manifest has an `agent` block: hosting it on an agent, the internal plugin tunnel, the forwarded admin API, the installation secret, the health monitor and what the panel shows while the hosting agent is offline, the plugin's [settings and secrets](#settings), its [users and the user surface](#users-and-identity) where they reach it — and, for a plugin that names its agent package, installing, updating and removing that agent half on the agent from the panel ([Hosting with an agent half](#hosting-with-an-agent-half)). What happens on the agent machine itself — the root helper, the unit, the signed jobs — is in [App Host](app-host.md). The hooks a plugin can run around all of these — and their approval — are in [Lifecycle Hooks](lifecycle-hooks.md). The full design is `plugin-development/design/agent-hosted-app-plugins.md`.
 
 ## In Plain English
 
@@ -25,6 +25,10 @@ Hosting a plugin on an agent does three things at once: it creates the internal 
   "panel": {
     "pages": [{ "path": "/indicators", "title": "Indicators" }],
     "apiPrefix": "/api/market-indicators"
+  },
+  "identity": {
+    "roles": [{ "id": "viewer", "label": "Viewer", "description": "Sees the dashboard" }],
+    "attributes": ["displayName"]
   }
 }
 ```
@@ -40,6 +44,7 @@ Hosting a plugin on an agent does three things at once: it creates the internal 
 | `panel`          | Allowed with an `agent` block: the pages are listed in the panel, and the bundle at `/api/<route>/panel.js` comes from the agent half (`/admin/panel.js`).                                                                                                                                                                                                                                |
 | `hooks`          | Lifecycle hooks on the relay and in the agent half — see [Lifecycle Hooks](lifecycle-hooks.md).                                                                                                                                                                                                                                                                                           |
 | `settings`       | What an administrator configures — values and secrets the agent half stores. Only with an `agent` block. See [Settings](#settings).                                                                                                                                                                                                                                                       |
+| `identity`       | The plugin's users: its roles (1–32, `{ id, label, description? }`) and the user attributes it may receive (`attributes`, a subset of `displayName` and `email`, default `["displayName"]`). Only with `hosting: "agent"` and an `agent` block. Part of the approval digest when present. See [Users and identity](#users-and-identity).                                                  |
 
 There is no port in the manifest: Lamaste assigns it when the plugin is hosted.
 
@@ -192,7 +197,7 @@ To open a window from the panel: the Plugins page's **Push install** section tur
 
 ### Approval
 
-What a version brings that Lamaste runs or installs — relay hooks and the agent half — is approved with one digest ([Approval](lifecycle-hooks.md#approval)); for the agent half it covers the package, version, tarball integrity, service and system packages. Hosting waits for it (`409`, `code: "hooks_not_approved"`). `GET /api/plugins/:name/hooks` shows what is to be approved as `agentHalf`:
+What a version brings that Lamaste runs or installs — relay hooks and the agent half — and, when it declares one, its [identity block](#the-identity-block) is approved with one digest ([Approval](lifecycle-hooks.md#approval)); for the agent half it covers the package, version, tarball integrity, service and system packages. Hosting waits for it (`409`, `code: "hooks_not_approved"`), and so do the plugin's users: its audience is sent to the agent half, and its user surface served, only while the installed version is approved. `GET /api/plugins/:name/hooks` shows what is to be approved as `agentHalf`:
 
 ```json
 "agentHalf": {
@@ -208,7 +213,7 @@ What a version brings that Lamaste runs or installs — relay hooks and the agen
 }
 ```
 
-An update whose agent half differs waits for approval like a changed hook set: `pendingUpdate` is `{ version, digest, stagedAt, relay, agentHalf, settings, approvalRequired, autoApproveWithheld }` (`relay` and `agentHalf` are `null` when the version brings none, and `digest` when it brings neither; `settings` is how it changes the [settings schema](#in-the-plugin-list-and-the-update-preview), outside the digest). `approvalRequired` says why it waits, never empty: `[{ code, reason }]` with `digest.unapproved` (what it brings is not what was approved) and `settings.secret-to-plain` (below), each with a sentence. **Auto-approve** covers a new version and tarball of the same agent half — what every release brings — and is **withheld** when the version brings an agent half where there was none, changes the agent package, adds system packages, or changes the service entry or memory limit: those run as root on the agent and wait for an administrator. `autoApproveWithheld` says why, in sentences; the audit log records `hooks.auto-approve.withheld` with the sentences (`reasons`) and a stable code for each (`codes`: `agent-half.added`, `agent-half.package`, `agent-half.system-packages`, `agent-half.entry`, `agent-half.memory-max`, `settings.secret-to-plain`), and the administrators are notified.
+An update whose agent half differs waits for approval like a changed hook set: `pendingUpdate` is `{ version, digest, stagedAt, relay, agentHalf, settings, identity, approvalRequired, autoApproveWithheld }` (`relay` and `agentHalf` are `null` when the version brings none, and `digest` when it brings no relay hooks, no agent half and no identity block; `settings` is how it changes the [settings schema](#in-the-plugin-list-and-the-update-preview), outside the digest; `identity` how it changes the [identity block](#the-identity-block), inside it). `approvalRequired` says why it waits, never empty: `[{ code, reason }]` with `digest.unapproved` (what it brings is not what was approved), `settings.secret-to-plain` (below) and `identity.changed` ([below](#the-identity-block)), each with a sentence. **Auto-approve** covers a new version and tarball of the same agent half — what every release brings — and is **withheld** when the version brings an agent half where there was none, changes the agent package, adds system packages, or changes the service entry or memory limit: those run as root on the agent and wait for an administrator. `autoApproveWithheld` says why, in sentences; the audit log records `hooks.auto-approve.withheld` with the sentences (`reasons`) and a stable code for each (`codes`: `agent-half.added`, `agent-half.package`, `agent-half.system-packages`, `agent-half.entry`, `agent-half.memory-max`, `settings.secret-to-plain`, `identity.changed`), and the administrators are notified.
 
 **A secret turned plain always waits for an administrator.** Settings stay outside the digest, but an update that turns a secret setting into a plain one (`secretToPlain`) waits for approval — whatever is typed into the field next would be kept on the relay and shown in clear, which a release must not decide alone — even when its digest is already approved, when the plugin brings neither relay hooks nor an agent half Lamaste installs, and whether or not auto-approve is on (when it is, `autoApproveWithheld` and `hooks.auto-approve.withheld` name it as well). It is the same pending update, shown and approved the same way, and one approval covers everything it waits for: `POST /api/plugins/:name/hooks/approve` with the digest it shows, or with `{ digest, version }` — `{ version }` alone when it has no digest ([Approval](lifecycle-hooks.md#post-api-plugins-name-hooks-approve)). Approved, the version is fetched again and must still have that digest and turn no other secret plain than those shown (`409` otherwise). `plugin.update.awaiting-approval` and the update's `hooks.approved` carry the codes of what it waited for (`codes`), and the administrators are notified with the reasons. Any other update that needs no approval — no relay hooks and an agent half installed by hand, or a version whose digest is already approved — runs at once, whatever else it does to the settings.
 
@@ -383,7 +388,7 @@ Once the plugin is enabled and hosted, the panel answers `/api/<route>` and `/ap
 
 The internal tunnel ends on loopback ports: on the relay, the port chisel listens on while the hosting agent is connected; on the agent, the port the agent half listens on. Every process on either machine can reach them — and **take** them: on the relay while the agent is offline, on the agent while an agent half installed by hand restarts (for one Lamaste installs, systemd holds the port in a socket unit, so it stays bound across restarts and updates — [App Host](app-host.md)). So neither end trusts the network position, and **anything that takes a tunnel's loopback port gets nothing and can serve nothing**. All three mechanisms below are keyed with the hosting's installation secret, which only the relay's panel, the hosting agent's account and the agent half's own account hold.
 
-**Requests carry a caller assertion bound to their body.** Lamaste's own calls with a body — settings changes, hook calls — carry `bodySha256` in the assertion: the SHA-256 of the exact body bytes, 64 lower-case hex characters. `createSettingsHandler` (`PUT`) and `createAgentHookHandler` require it and compare it with the bytes received; an assertion lifted onto another body is refused (`401`, reason `wrong_body`) without burning its nonce, so the true request still verifies. The handlers therefore need the body **exactly as received** — a `Buffer` (or `Uint8Array`) or a string; an object a framework already parsed is refused with `400` "The body must be passed as received". With Fastify, register a `parseAs: 'buffer'` content-type parser for these routes; with `node:http`, collect the chunks. Forwarded requests stream, so theirs carries no hash. Verifiers built before the field existed ignore it.
+**Requests carry a caller assertion bound to their body.** Lamaste's own calls with a body — settings changes, hook calls, the [identity feed](#the-identity-feed) — carry `bodySha256` in the assertion: the SHA-256 of the exact body bytes, 64 lower-case hex characters. `createSettingsHandler` (`PUT`), `createAgentHookHandler` and `createIdentityHandlers` require it and compare it with the bytes received; an assertion lifted onto another body is refused (`401`, reason `wrong_body`) without burning its nonce, so the true request still verifies. The handlers therefore need the body **exactly as received** — a `Buffer` (or `Uint8Array`) or a string; an object a framework already parsed is refused with `400` "The body must be passed as received". With Fastify, register a `parseAs: 'buffer'` content-type parser for these routes; with `node:http`, collect the chunks. Forwarded requests stream, so theirs carries no hash. Verifiers built before the field existed ignore it.
 
 **Answers carry a responder signature.** Every answer an agent half gives to a request whose assertion verified carries
 
@@ -396,7 +401,7 @@ keyed with the secret that verified the request (the previous one during a rotat
 
 | Who checks                                           | Form | Without a valid signature                                                  |
 | ---------------------------------------------------- | ---- | -------------------------------------------------------------------------- |
-| `callAgentHalf` (settings reads and changes)         | body | failure `unauthenticated`; a settings change answers `502 unauthenticated` |
+| `callAgentHalf` (settings, the identity feed)        | body | failure `unauthenticated`; a settings change answers `502 unauthenticated` |
 | `callAgentHalfHook` (agent hooks through the tunnel) | body | failure `unauthenticated`, a failed hook                                   |
 | The health monitor (`GET /admin/health`)             | body | a failure with reason `app`, however the port answered                     |
 | The forwarder (every forwarded `/admin/*` answer)    | `-`  | `502` with `reason: "app"` before anything reaches the client              |
@@ -716,6 +721,246 @@ Before sending, `configure` refuses what the panel would: the settings of a plug
 
 Both commands exit `0` when they did what was asked — for `configure`, saved the change, found nothing to change, or the administrator declined to save — and `1` for a usage error, a refusal, or a prompt cancelled with Ctrl-C (nothing is saved). With `--json`, `configure` prints `{ "event": "complete", "name", "changed", "cleared", "secretsSet", "secretsCleared", "settings" }` — key names, and the settings as `GET` answers them — and every failure of either command `{ "event": "error", "message", "recoverable": false, "code"?, "errors"?, "revision"?, "operationId"?, "hosting"? }`.
 
+## Users and identity
+
+A plugin with an agent half may have **users**: people who sign in to the relay's Authelia and use the application itself, not its admin pages. Lamaste is their directory. The plugin declares its roles; an administrator gives users (or Lamaste groups) those roles; Lamaste keeps the plugin's **audience** — who holds which role — and pushes it to the agent half through the internal tunnel, which keeps a local copy to join its data to and to show names from. On every request a user makes to the plugin, the agent half learns who it is from a signed caller assertion: the user's stable `userId`, username and roles. Nothing about users reaches a plugin that does not declare `identity`.
+
+| Piece                             | Where                                                                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The plugin's roles and attributes | The manifest's [`identity` block](#the-identity-block), approved with the plugin                                                                  |
+| Who the users are                 | The relay's user directory — a `userId` per user, `active`, `disabled` or `removed` ([Users API](users.md))                                       |
+| Who holds which role              | [Entitlements](#entitlements-and-the-audience): Gatekeeper plugin grants with `context.roles`                                                     |
+| What the agent half knows         | [The identity feed](#the-identity-feed) into its own SQLite projection                                                                            |
+| Where users reach the plugin      | [The user surface](#the-user-surface): `/api/<route>/app/*` on a tunnel host bound to the plugin ([Tunnels API](tunnels.md#user-surface-binding)) |
+| Who is calling, on each request   | [The user caller](#the-user-caller) in the caller assertion                                                                                       |
+
+### The identity block
+
+```json
+"identity": {
+  "roles": [
+    { "id": "viewer", "label": "Viewer", "description": "Sees the dashboard" },
+    { "id": "editor", "label": "Editor" }
+  ],
+  "attributes": ["displayName", "email"]
+}
+```
+
+- **`roles`** — 1 to 32, ids unique. `id`: a lower-case letter, then lower-case letters, digits and `-`, at most 32 characters; `label`: 1–64 characters; `description`: optional, at most 200. Labels and descriptions refuse control and bidirectional formatting characters.
+- **`attributes`** — what Lamaste tells the agent half about each user besides the `userId`, username, roles and status: a subset of `displayName` and `email`, no repeats; `["displayName"]` when omitted. The agent half receives nothing it did not declare.
+- Only a plugin with `hosting: "agent"` and an `agent` block may declare it (`400` at install otherwise): its users reach the agent half.
+
+The panel stores the block **normalized** — roles sorted by id, attributes sorted, the default applied — as `identity` on the plugin's entry in `GET /api/plugins` and in `plugins.identity` (`state.db`). It enters the [approval digest](lifecycle-hooks.md#approval) **only when present**, so the digest of a plugin without one is the digest it had before 4.5, byte for byte. A plugin that declares one waits for approval even when it brings no relay hooks and no agent half Lamaste installs; until its installed version is approved, it has no audience on its agent half and no user surface. `GET /api/plugins/:name/hooks` shows it as `identity: { declared, approved, block }`.
+
+An update that **adds or removes a role**, or **widens the attributes**, waits for an administrator with the reason `identity.changed` — the update gives the plugin a new power over its users, or more about them — and **auto-approve never covers it**. Narrowing the attributes and editing a role's label or description only change the digest (`digest.unapproved`, which auto-approve may cover). The update's preview carries the change:
+
+```json
+"identity": {
+  "before": { "roles": [{ "id": "viewer", "label": "Viewer" }], "attributes": ["displayName"] },
+  "after": { "roles": [{ "id": "editor", "label": "Editor" }, { "id": "viewer", "label": "Viewer" }], "attributes": ["displayName", "email"] },
+  "rolesAdded": ["editor"],
+  "rolesRemoved": [],
+  "attributesAdded": ["email"],
+  "attributesRemoved": [],
+  "labelsChanged": []
+}
+```
+
+`null` when neither version declares a block. A removed role leaves every member's roles without it at the next recompute; a member left with none leaves the audience (`unentitled`).
+
+### Entitlements and the audience
+
+An **entitlement** is a Gatekeeper grant on the plugin — `resourceType: "plugin"`, `resourceId: <route>` — to a user (by username) or a Lamaste group, whose `context.roles` is a non-empty list of role ids the installed version declares. Nothing else makes anyone a user of the plugin: a grant without roles — the desktop's local-install grants, grants migrated from `user-plugin-access.json` — never counts. The panel checks roles against the manifest wherever a grant is created, here and in the [Gatekeeper proxy](gatekeeper.md#create-grant) (`400`, `code: "unknown_roles"` with the `unknown` ones), and stores them sorted, without repeats. One principal has one role grant per plugin: setting its roles creates the new grant first, then revokes the others.
+
+The **audience** is the directory's users who hold at least one of the plugin's roles — the union of their own entitlements and those of the Lamaste groups they are in, restricted to the declared roles. Users whose username an earlier, removed user held hold no role until Gatekeeper has dropped what that user left there ([Users API](users.md#usernames-and-gatekeeper)). A member is carried in full; a user who leaves is a removal with its reason:
+
+| Change                                                       | Carries                                                                                                                         |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `upsert`                                                     | `member: { userId, username, displayName?, email?, roles, status: "active" \| "disabled", version }` — only declared attributes |
+| `remove`, reason `unentitled` (lost every role)              | `userId`, `last: { username, displayName?, email? }` — what the plugin last received                                            |
+| `remove`, reason `deleted` (removed from the directory)      | `userId`, `last` as above — history stays readable                                                                              |
+| `remove`, reason `erased` (an administrator erased the user) | `userId` alone                                                                                                                  |
+
+The panel materializes each plugin's audience in `state.db` (`plugin_audience`): one row per plugin and user who was ever a member, written only when the change differs, each write stamped with the next value of one store-wide sequence (`seq`, by triggers) — the feed's cursor. It recomputes the audiences after every change of users, the directory or entitlements made through the panel (the Gatekeeper proxy included), on a plugin's install, update and approval, at start and every minute (Gatekeeper's own CLI edits); while Gatekeeper cannot be read, the stored audience stays as it is. A disabled user stays a member with `status: "disabled"`.
+
+### The identity feed
+
+The agent half cannot reach the panel, so the panel pushes: two calls through the internal tunnel, Lamaste's own (`callAgentHalf`: caller `lamaste`, the body hash bound, the answer authenticated by its responder signature over the body). The forwarder reserves `/admin/identity*`, so no administrator or agent reaches them.
+
+```
+POST /admin/identity/notify   { protocol: 1, directoryId, seq }
+  → 200 { protocol: 1, directoryId, cursor }      what the half holds (directoryId null before its first batch)
+POST /admin/identity/changes  { protocol: 1, directoryId, from, to, reset, reconcile, pass, final, changes }
+  → 200 { protocol: 1, directoryId, cursor, mismatches? }
+  → 409 { error: "cursor_mismatch", protocol: 1, directoryId, cursor }
+```
+
+- `seq` in a notification is the plugin's head; `directoryId` the relay directory's id (a UUID v4 made with `state.db`).
+- A batch carries the changes of `(from, to]` in strictly increasing `seq`, each one of the [changes above](#entitlements-and-the-audience) with its `seq` — at most 500 changes and 1 MiB. The half applies it and moves its cursor to `to` in one transaction; one that does not continue from its cursor (another `from`, or another directory without `reset`) is answered `409` with what it holds, and the panel continues from there (or replays) — up to three times per sync.
+- **A replay from 0 is the snapshot.** The panel replays when the half follows another directory or none, its cursor is ahead of the head (a restored relay), it never completed a replay since the plugin was installed or hosted, a replay was cut short — and once a day as a **reconcile**. Every batch of a replay carries the same `pass`; the first has `reset: true` (the half adopts `directoryId` and restarts its cursor), the last `final: true`, when the half marks every row the pass did not mention as removed. Batches with `reconcile: true` — every batch of the daily reconcile, and every batch after the first of any replay — have the half count every change that differs from its row (and, at the final batch, every row the pass did not mention) and answer `mismatches`. For the daily reconcile a non-zero count on a healthy system is a feed bug: it is recorded on the plugin's sync state and audited as `identity.reconcile.mismatches`.
+- A half that speaks another protocol answers `400 { error, protocol: 1 }`; one built before 4.5 has no such route. Either way the sync fails and says so.
+
+**When it runs.** After a recompute that changed the plugin's rows, when its agent half comes up (a health transition), after a hosting, an update or its revert succeeded, on approval, at the panel's start, every minute for a plugin that is behind or whose last sync failed, daily (the reconcile), and on demand (`POST /api/plugins/:name/identity/sync`). One sync per plugin at a time; requests made while one runs share the next. A sync runs only for a plugin that declares `identity`, whose installed version is approved, that is hosted, and whose hosting is active and not down; otherwise it records why (`lastError`). When a hosting is removed, what the panel knew of its half goes with it: the half of a later hosting must answer again and receives a replay. The audience itself stays — it is the plugin's, not the hosting's.
+
+**Readiness.** Users reach the plugin only once its agent half has answered a notification with protocol 1 **since the installed version was installed** (`readyVersion`). So a half built on core 4.4 never receives a user caller — it would refuse one as malformed — and an update that brings a new half waits for that half's answer. `readiness.reason` says why a plugin is not ready:
+
+| `reason`        | Meaning                                                              |
+| --------------- | -------------------------------------------------------------------- |
+| `not_installed` | No installed plugin holds the route                                  |
+| `no_identity`   | The installed version declares no `identity`                         |
+| `not_approved`  | The installed version is not approved                                |
+| `not_hosted`    | The plugin is not hosted, or its hosting is not active               |
+| `not_answered`  | Its agent half has not answered protocol 1 for the installed version |
+
+### The user surface
+
+A plugin's users reach it at `/api/<route>/app` and everything under it, on the host of an app tunnel **bound** as the plugin's user surface ([Tunnels API](tunnels.md#user-surface-binding)). The bound host serves those paths only while the plugin's installed, approved version declares `identity`; before that, its requests go down the tunnel as every other path does — which is how a plugin moves its users' API to the relay with a plain update. Each request:
+
+1. **nginx** asks Gatekeeper (`auth_request` to `/authz/user-surface/<fqdn>`, the tunnel named in the path).
+2. **Gatekeeper** checks the tunnel (enabled, not public, the route bound to it), that the raw request target lies on that route's user surface — no `.` or `..` segment, no backslash, no percent-encoded `.`, `/` or `\`, no escape that does not decode, so the path it approves is the path every server after it resolves — the Authelia session, and on a `restricted` tunnel the user's grant for the tunnel. It answers with a **relay assertion for the panel**: Ed25519 with the relay signing key, audience `@panel`, port 3100, caller `{ type: "user", username }` — the username alone — bound to the method and the raw request target, single use, never cached. Without a session it answers a JSON `401 { error: "unauthenticated" }` (never a login redirect: the caller is an application's request); anything else refused is a bare `403`.
+3. **nginx** passes the request to the panel on `127.0.0.1:3100` with the assertion and the request target exactly as the browser sent it, and nothing else of the browser's credentials: `Cookie`, `Authorization`, `Remote-*`, `X-SSL-Client-*` and `X-Forwarded-Host` are cleared ([nginx Configuration](../03-architecture/nginx-configuration.md#user-surface-locations)).
+4. **The panel** serves `/api/:route/app` and `/api/:route/app/*` in a context of its own — no mTLS, no 2FA session, no role guard; the assertion is the only thing it trusts — and answers, in order:
+
+| Check                                                                                                                      | Refusal                                                                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The assertion verifies (audience `@panel`, port 3100, method, raw target, 60 s + 5 s skew, nonce once) for the URL's route | `401 { error: "unauthenticated" }` — JSON, no redirect                                                                                               |
+| The route is bound to an enabled tunnel and its plugin is enabled and hosted                                               | `404` (no user surface) or `503` (not available right now)                                                                                           |
+| A method other than `GET`, `HEAD` and `OPTIONS` carries `Origin: https://<bound host>` (CSRF)                              | `403 { error: "cross-origin request refused" }`                                                                                                      |
+| The directory's user for the attested username, for this plugin                                                            | `404` (no identity), `503` (not [ready](#the-identity-feed)), `403` (disabled, removed, not entitled, an earlier holder's principal not yet cleared) |
+
+5. Then the request goes to the agent half's `/app/<rest>?query` with the [user caller](#the-user-caller), through the admin forwarder's pipeline: the same stripped headers, the internal tunnel's body limit (`413`), the plugin's approved [request hooks](lifecycle-hooks.md#request) on its `/app` routes, the responder check (`502 reason: "app"` without it), streaming, timeouts, and no `Set-Cookie`, `Service-Worker-Allowed`, `Clear-Site-Data` or `X-Lamalibre-*` back.
+
+The user surface has its own rate limit: 1200 requests a minute per client address and route (the panel's root limit is for its administrators). Logs carry one metadata line per request, the user as `user:<userId>` — never a username, a query string or a body. The origin a request must come from is the bound host as `tunnels.json` names it, never the request's `Host`.
+
+On the panel's router `/api/<route>/app*` are static routes that win over the admin forwarder's wildcard, so **the admin forwarder no longer reaches an agent half's `/admin/app` or anything under it**; an agent half keeps none of its admin routes there.
+
+### The user caller
+
+A forwarded user request carries the caller assertion (`X-Lamalibre-Caller`, still version 1, HMAC with the installation secret, no body hash — it streams) with
+
+```json
+{ "type": "user", "userId": "6f1c…-4…", "username": "alice", "roles": ["viewer"] }
+```
+
+— the directory's `userId` (a lower-case UUID v4: key everything on it, a username can come back as another person), the username to show, and the user's roles in this plugin (1–32 of its declared role ids, from the audience). Paths are a **boundary between callers**: a `user` caller is valid only for `/app`, `/app/…` and `/app?…` read literally with no unsafe segment, and every other caller — an administrator, an agent, Lamaste — never for a path a router could take for `/app` (`/App`, `/%61pp`, `//app`, `/app.json`, `/apps`). Signing refuses either mistake and the verifier answers `wrong_request`, so an administrator's assertion cannot act on a user's routes and a user's never reaches `/admin`. A verifier built before 4.5 refuses a user caller as `malformed`; the panel never sends one before the agent half is [ready](#the-identity-feed).
+
+An agent half verifies `/app` requests with its `createCallerAssertionVerifier`, checks `verified.payload.caller.type === "user"` and the roles it needs, and signs **every** answer to a verified request — a `404` and a `405` too — with `responderHeaderFor(verified, status)`; the relay passes on nothing that is not signed. An administrator certificate holds every role in the plugin's admin pages, which ignore roles; those pages stay on `/admin`.
+
+### In the agent half
+
+`@lamalibre/lamaste/agent` keeps the projection and answers the feed:
+
+```js
+import { DatabaseSync } from 'node:sqlite';
+import {
+  createCallerAssertionVerifier,
+  createIdentityHandlers,
+  createIdentityProjection,
+} from '@lamalibre/lamaste/agent';
+
+const db = new DatabaseSync(`${dataDir}/app.db`);
+const projection = createIdentityProjection({
+  db,
+  // Inside the batch's transaction, synchronous: anonymise what the plugin keeps.
+  onErase: (userId, tx) =>
+    tx.prepare('UPDATE notes SET author = NULL WHERE author_id = ?').run(userId),
+});
+const identity = createIdentityHandlers({ verifier, projection, logger });
+
+// POST /admin/identity/notify and /admin/identity/changes — the body exactly as received
+const answer = await identity.handle({ method, url, headers, body: rawBody });
+// send answer.status, answer.headers and answer.bodyText, byte for byte
+```
+
+- **`createIdentityProjection({ db, onUpsert?, onRemove?, onErase? })`** keeps two tables in the half's own database, created when missing — `lamaste_users` (one row per user the feed ever named: the declared attributes it last carried, roles, `active` / `disabled` / `removed` with reason and time, `erased_at`, version) and `lamaste_identity_cursor` (the directory and the cursor) — and never touches the database's `user_version`, which stays the plugin's. A batch and its cursor are written in one `BEGIN IMMEDIATE` transaction. Removal keeps history readable: a deleted or unentitled user keeps the row with the last known attributes, no roles, `removed`; an **erased** user is scrubbed to the bare `userId`, and `onErase` anonymises the plugin's own data in the same transaction — the cursor passing the erasure is the acknowledgement the panel waits for. Hooks run inside the transaction and must be synchronous; one that throws rolls the batch back and the panel sends it again. Replays repeat erasures (the daily reconcile replays every one), so `onErase` must be idempotent — which is also how an erasure reaches data restored from an older backup. It offers `state()`, `applyBatch(request)`, `getUser(userId)` and `listUsers({ includeRemoved })`.
+- **`createIdentityHandlers({ verifier, projection, logger? })`** answers `POST /admin/identity/notify` and `POST /admin/identity/changes`: `404` for another path, `405` for another method, `400` for a body already parsed, `413` above 1 MiB — unsigned, before verification; `401` for an assertion that does not verify or does not sign the body; then, signed: `403` for any caller but Lamaste, `400` for a body that is not the contract (or of another protocol, with `protocol: 1`), the projection's state, a batch applied, `409 cursor_mismatch`, `500` when the projection failed (rolled back). A plugin with its own person model may pass any `projection` with `state()` and `applyBatch()` that throws `IdentityCursorConflictError`.
+
+Neither logs a member's attributes: log lines carry the directory, the cursor and counts.
+
+### Erasure
+
+Deleting a user tombstones them; **erasing** scrubs the tombstone ([Users API](users.md#erasing-a-removed-user)). Every plugin that had the user as a member is sent `remove` with reason `erased` and no attributes; its agent half scrubs its row and runs `onErase` in the same transaction. The panel shows the erasures a plugin has not acknowledged — those stamped after its half's cursor — as `pendingErasures` on the plugin's identity view and, per user, on the directory. Delivery takes seconds while the hosting agent is online and happens when it reconnects otherwise.
+
+### Endpoints
+
+All admin only. `404` when the plugin is not installed; `400 { code: "no_identity" }` from the audience, entitlement and sync routes for a plugin that declares no identity.
+
+#### `GET /api/plugins/:name/identity`
+
+```json
+{
+  "identity": {
+    "declared": { "roles": [{ "id": "viewer", "label": "Viewer" }], "attributes": ["displayName"] },
+    "readiness": {
+      "ready": true,
+      "declared": true,
+      "approved": true,
+      "hostingActive": true,
+      "version": "1.1.0",
+      "readyVersion": "1.1.0",
+      "reason": null
+    },
+    "approval": { "approved": true, "state": "approved" },
+    "sync": {
+      "directoryId": "3b0e…",
+      "halfDirectoryId": "3b0e…",
+      "cursor": 42,
+      "head": 42,
+      "behind": 0,
+      "readyVersion": "1.1.0",
+      "lastSyncAt": "2026-10-22T09:14:03.120Z",
+      "lastReconcileAt": "2026-10-22T03:00:11.002Z",
+      "lastMismatches": 0,
+      "lastError": null
+    },
+    "audience": { "active": 12, "disabled": 1, "removed": 3, "erased": 1 },
+    "pendingErasures": []
+  }
+}
+```
+
+For a plugin without identity: `declared`, `sync` and `audience` are `null`, `pendingErasures` empty, `readiness.reason` `no_identity`. `sync.cursor` and `halfDirectoryId` are what the half last answered; `behind` is how many rows it has not applied; `lastError` why the last sync did not finish or was not tried.
+
+#### `GET /api/plugins/:name/audience`
+
+`{ head, audience: [{ userId, seq, version, updatedAt, change }] }` in `seq` order — members and tombstones, each `change` as the feed delivers it (without `seq`).
+
+#### `GET /api/plugins/:name/entitlements`
+
+`{ entitlements: [{ grantId, principalType, principalId, userId, roles, unknownRoles, createdAt }], roleless }` — the role grants (a user principal with its directory `userId`, `null` for a group; `unknownRoles` those the installed version no longer declares), and how many grants on the plugin carry no roles.
+
+#### `PUT /api/plugins/:name/entitlements`
+
+```json
+{ "principalType": "user", "principalId": "alice", "roles": ["viewer"] }
+```
+
+Gives the principal exactly these roles (`principalType` `user` with a username, or `group` with a Lamaste group name). `{ ok, entitlement, changed, warnings? }`. `400` `invalid_roles` or `unknown_roles` (with `unknown`); `404` `user_not_found` (the user must be in the directory and not removed) or `group_not_found`; `503` `gatekeeper_unavailable` (also when an earlier holder's principal under the username cannot be cleared first); Gatekeeper's own refusals with its status, `gatekeeper_refused`. Audited as `plugin.entitlement.set` (a user by `userId`, never by name). 30 a minute.
+
+#### `DELETE /api/plugins/:name/entitlements?principalType=<user|group>&principalId=<id>`
+
+Revokes every role grant of the principal on the plugin (grants without roles stay). `{ ok, revoked, warnings? }`; `404 entitlement_not_found`, `502 gatekeeper_refused` when Gatekeeper revoked none. Audited as `plugin.entitlement.removed`. 30 a minute.
+
+#### `POST /api/plugins/:name/identity/sync`
+
+`{ "reconcile"?: true }` — sync now; `reconcile` replays everything and counts mismatches. Answers when the sync ended: `{ ok, result, sync }` — `result.status` is `synced`, `up-to-date`, `skipped` (with `reason`) or `failed` (with `error`), with `cursor`, `replay` and, for a reconcile, `mismatches`; `sync` is the state above. 10 a minute.
+
+### In the panel and the CLI
+
+On the Plugins page, a plugin that declares identity gets a **People** section on its card: the declared roles and attributes with the approval state and readiness (with its reason), the entitlements by user or group with a checkbox per role (add, change, remove), the audience — members with their roles and status, and tombstones — the sync state (directory, head, the half's cursor, last sync and reconcile, mismatches, last error) with **Sync now** and **Reconcile**, and pending erasures. **Lifecycle hooks** shows the identity block in the approval preview and an update's identity diff, with `identity.changed` among the reasons it waits. The desktop app shows the same through `AdminClient` (`getPluginIdentity`, `getPluginAudience`, `getPluginEntitlements`, `setPluginEntitlement`, `removePluginEntitlement`, `syncPluginIdentity`; Tauri commands `admin_get_plugin_identity`, `admin_get_plugin_audience`, `admin_get_plugin_entitlements`, `admin_set_plugin_entitlement`, `admin_remove_plugin_entitlement`, `admin_sync_plugin_identity`).
+
+```
+lamaste-server plugins identity <name>             # roles, attributes, approval, readiness, sync state, pending erasures
+lamaste-server plugins audience <name>             # members and tombstones
+lamaste-server plugins entitlements <name>         # role grants
+lamaste-server plugins entitlements <name> --user <u>|--group <g> --roles a,b
+                                                   # exactly these roles
+lamaste-server plugins entitlements <name> --revoke --user <u>|--group <g>
+lamaste-server plugins identity-sync <name> [--reconcile]
+```
+
+`plugins hooks` and `plugins update` print the identity block, an update's identity diff and the `identity.changed` reason. Binding the user surface: [Tunnels API](tunnels.md#user-surface-binding).
+
 ## Internal tunnels
 
 `GET /api/tunnels` lists an internal tunnel with `exposure: "internal"`, `subdomain: null`, `fqdn: null`, no `accessMode`, its `pluginName` and `pluginRoute`, and the hosting agent as `agentLabel`. It cannot be changed or deleted through the tunnels API (`403`) — it belongs to the hosting. Its only effect on the relay is the chisel grant `^R:127\.0\.0\.1:<port>$` for the hosting agent, whose chisel client binds the same port on the agent, where the agent half listens. Gatekeeper and Authelia access control ignore internal tunnels.
@@ -737,13 +982,19 @@ lamaste-server plugins approve-hooks <name> --digest <sha> [--version <v>]
                                                           # approve it; a pending update by its version too
 lamaste-server plugins settings <name>                    # its settings (secrets only as set), the hosting
 lamaste-server plugins configure <name> [--set key=value]... [--clear key]... [--secrets-stdin]
+lamaste-server plugins identity <name>                    # its users: roles, readiness, the feed's state
+lamaste-server plugins audience <name>                    # members and tombstones
+lamaste-server plugins entitlements <name> [--user <u>|--group <g> --roles a,b] [--revoke --user <u>|--group <g>]
+lamaste-server plugins identity-sync <name> [--reconcile] # send its audience to the agent half now
+lamaste-server tunnels bind-user-surface <tunnel> <plugin>   # serve the plugin's user surface on the tunnel's host
+lamaste-server tunnels unbind-user-surface <tunnel> <plugin>
 lamaste-server push-install status|on|off                 # the switch, policies, every agent's window
 lamaste-server push-install open <agent> [--minutes <n>] [--policy <id>]
 lamaste-server push-install close <agent>
 lamaste-server push-install default-policy <id>
 ```
 
-`lamaste-server plugins list` shows where each hosted plugin runs, its health and the agent half version. `host` and `unhost` follow the operation step by step and exit non-zero unless it succeeded. A refusal is explained: `agent_not_eligible` lists the reasons (and points at `eligibility`), `push_install_refused` says which gates a push passes — `lamaste-server` calls the panel from `127.0.0.1`, so the agent's policy must allow that address. `--purge` names the data directory it deletes before it starts. `retained-data` lists every agent's records — marking those of uninstalled plugins — or one plugin's, with the data directory and account of each; `purge-data` says which directory and account it deletes, follows the operation and exits non-zero unless it succeeded; `forget-data` says that nothing on the agent changed and how to remove the data there. `hooks` prints the approval digest, the relay hook set and the agent half (package and version, integrity, entry and memory limit, the account and unit it runs as, its data directory, its system packages), and a pending update's — with why it waits (`approvalRequired`; a secret turned plain in red) and the `approve-hooks` command that approves it, naming its version (`--digest <sha256> --version <v>`, or `--version <v>` alone when it has no digest); `update` prints the same for an update that waits. `settings` and `configure` — interactive in a terminal, a secret only from a masked prompt or stdin, never an argument — are described under [Settings](#from-the-cli). `push-install status` lists the switch, the default policy, each policy's actions, packages and addresses, and each enrolled machine agent's window (`open until …` with its policy, or `closed`); `open` checks the minutes against the bounds the panel reports (default 30).
+`lamaste-server plugins list` shows where each hosted plugin runs, its health and the agent half version. `host` and `unhost` follow the operation step by step and exit non-zero unless it succeeded. A refusal is explained: `agent_not_eligible` lists the reasons (and points at `eligibility`), `push_install_refused` says which gates a push passes — `lamaste-server` calls the panel from `127.0.0.1`, so the agent's policy must allow that address. `--purge` names the data directory it deletes before it starts. `retained-data` lists every agent's records — marking those of uninstalled plugins — or one plugin's, with the data directory and account of each; `purge-data` says which directory and account it deletes, follows the operation and exits non-zero unless it succeeded; `forget-data` says that nothing on the agent changed and how to remove the data there. `hooks` prints the approval digest, the relay hook set and the agent half (package and version, integrity, entry and memory limit, the account and unit it runs as, its data directory, its system packages), and a pending update's — with why it waits (`approvalRequired`; a secret turned plain in red) and the `approve-hooks` command that approves it, naming its version (`--digest <sha256> --version <v>`, or `--version <v>` alone when it has no digest) — and the identity block, an update's identity diff and the `identity.changed` reason; `update` prints the same for an update that waits. The identity commands are described under [Users and identity](#in-the-panel-and-the-cli). `settings` and `configure` — interactive in a terminal, a secret only from a masked prompt or stdin, never an argument — are described under [Settings](#from-the-cli). `push-install status` lists the switch, the default policy, each policy's actions, packages and addresses, and each enrolled machine agent's window (`open until …` with its policy, or `closed`); `open` checks the minutes against the bounds the panel reports (default 30).
 
 ## State
 
@@ -759,6 +1010,10 @@ lamaste-server push-install default-policy <id>
 | `state.db` `plugins.settings`                                                   | The installed manifest's settings block — the schema the panel checks a change against                   |
 | `state.db` `plugin_settings`                                                    | The cache of each plugin's settings: non-secret values, `{ key: setAt }` for secrets, status, provenance |
 | `state.db` `agent_presence`                                                     | When each agent last contacted the relay (written at most once a minute per agent)                       |
+| `state.db` `plugins.identity`                                                   | The installed version's identity block, normalized                                                       |
+| `state.db` `plugin_audience`                                                    | Each plugin's audience as last delivered — one change per plugin and user, stamped with `seq`            |
+| `state.db` `plugin_identity_sync`                                               | What the panel knows of each agent half's feed: directory, cursor, ready version, last sync and error    |
+| `<agent half's database>` `lamaste_users`, `lamaste_identity_cursor` (agent)    | The agent half's projection of its audience (`createIdentityProjection`)                                 |
 | `/etc/lamalibre/lamaste/push-install-config.json`, `push-install-sessions.json` | The switch and policies; the push log (last 500)                                                         |
 | `<agent>/agents/<label>/app-plugins/<route>.json`                               | The agent's copy of the port and secret (0600)                                                           |
 | `/etc/lamalibre/apps/<route>/plugin-config.json` (agent)                        | The service's copy, for an agent half Lamaste installed (0600, its account)                              |

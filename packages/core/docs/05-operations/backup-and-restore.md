@@ -18,24 +18,26 @@ Lamaste's state is spread across four directories. All of them matter.
 
 This is the most important directory. It contains:
 
-| File                      | Purpose                                                                                                                                                                                                   |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `panel.json`              | Server configuration (IP, domain, email, onboarding status)                                                                                                                                               |
-| `tunnels.json`            | Tunnel definitions (subdomain, port, carrying agent, enabled state)                                                                                                                                       |
-| `sites.json`              | Static site definitions (including custom-domain aliases)                                                                                                                                                 |
-| `chisel-credentials.json` | Per-agent Chisel credentials. If lost, the panel mints a new credential for every active agent at its next start, and each agent's sync timer fetches it within about 30 seconds (the issue time changed) |
-| `chisel-users`            | Chisel authfile — derived; rewritten from the two files above, with mode `0640` and group `lamaste-chisel`, at every panel start                                                                          |
-| `chisel-sentinel`         | Password of the no-grants sentinel Chisel user                                                                                                                                                            |
-| `invitations.json`        | Pending user invitations                                                                                                                                                                                  |
-| `pki/revoked.json`        | Revoked certificate tracking                                                                                                                                                                              |
-| `pki/ca.key`              | Certificate Authority private key                                                                                                                                                                         |
-| `pki/ca.crt`              | Certificate Authority certificate                                                                                                                                                                         |
-| `pki/client.key`          | Client certificate private key                                                                                                                                                                            |
-| `pki/client.crt`          | Client certificate                                                                                                                                                                                        |
-| `pki/client.p12`          | PKCS12 bundle (imported into browsers)                                                                                                                                                                    |
-| `pki/.p12-password`       | Password for the PKCS12 bundle                                                                                                                                                                            |
-| `pki/self-signed.pem`     | Self-signed TLS cert for IP:9292 access                                                                                                                                                                   |
-| `pki/self-signed-key.pem` | Self-signed TLS key for IP:9292 access                                                                                                                                                                    |
+| File                      | Purpose                                                                                                                                                                                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `panel.json`              | Server configuration (IP, domain, email, onboarding status)                                                                                                                                                                                            |
+| `tunnels.json`            | Tunnel definitions (subdomain, port, carrying agent, enabled state)                                                                                                                                                                                    |
+| `sites.json`              | Static site definitions (including custom-domain aliases)                                                                                                                                                                                              |
+| `chisel-credentials.json` | Per-agent Chisel credentials. If lost, the panel mints a new credential for every active agent at its next start, and each agent's sync timer fetches it within about 30 seconds (the issue time changed)                                              |
+| `chisel-users`            | Chisel authfile — derived; rewritten from the two files above, with mode `0640` and group `lamaste-chisel`, at every panel start                                                                                                                       |
+| `chisel-sentinel`         | Password of the no-grants sentinel Chisel user                                                                                                                                                                                                         |
+| `invitations.json`        | Pending user invitations                                                                                                                                                                                                                               |
+| `state.db`                | The panel's SQLite store (WAL): plugins and their hostings' state, agents, audit log, notifications, settings cache — and the **user directory**: every user's `userId`, tombstones, the `directoryId`, plugin audiences and the identity feed's state |
+| `gatekeeper.db`           | Gatekeeper's SQLite store (WAL): Lamaste groups and members, grants (plugin entitlements included), the access-request log                                                                                                                             |
+| `pki/revoked.json`        | Revoked certificate tracking                                                                                                                                                                                                                           |
+| `pki/ca.key`              | Certificate Authority private key                                                                                                                                                                                                                      |
+| `pki/ca.crt`              | Certificate Authority certificate                                                                                                                                                                                                                      |
+| `pki/client.key`          | Client certificate private key                                                                                                                                                                                                                         |
+| `pki/client.crt`          | Client certificate                                                                                                                                                                                                                                     |
+| `pki/client.p12`          | PKCS12 bundle (imported into browsers)                                                                                                                                                                                                                 |
+| `pki/.p12-password`       | Password for the PKCS12 bundle                                                                                                                                                                                                                         |
+| `pki/self-signed.pem`     | Self-signed TLS cert for IP:9292 access                                                                                                                                                                                                                |
+| `pki/self-signed-key.pem` | Self-signed TLS key for IP:9292 access                                                                                                                                                                                                                 |
 
 **If you lose the PKI files**, every browser that imported the client certificate will need a new one. This is the single most important directory to back up.
 
@@ -304,13 +306,15 @@ The existing client certificate (`.p12` file) will still work because the CA key
 
 All Lamaste state is stored as flat files with atomic writes:
 
-| File                                      | Format | Write Pattern                                                 |
-| ----------------------------------------- | ------ | ------------------------------------------------------------- |
-| `/etc/lamalibre/lamaste/panel.json`       | JSON   | Write `.tmp` then `rename()`                                  |
-| `/etc/lamalibre/lamaste/tunnels.json`     | JSON   | Write `.tmp`, `fsync()`, then `rename()`                      |
-| `/etc/lamalibre/lamaste/sites.json`       | JSON   | Write `.tmp`, `fsync()`, then `rename()`                      |
-| `/etc/lamalibre/lamaste/invitations.json` | JSON   | Write `.tmp`, `fsync()`, then `rename()`                      |
-| `/etc/authelia/users.yml`                 | YAML   | Temp file in `/etc/authelia`, `fsync()`, `rename()` (no sudo) |
+| File                                      | Format | Write Pattern                                                       |
+| ----------------------------------------- | ------ | ------------------------------------------------------------------- |
+| `/etc/lamalibre/lamaste/panel.json`       | JSON   | Write `.tmp` then `rename()`                                        |
+| `/etc/lamalibre/lamaste/tunnels.json`     | JSON   | Write `.tmp`, `fsync()`, then `rename()`                            |
+| `/etc/lamalibre/lamaste/sites.json`       | JSON   | Write `.tmp`, `fsync()`, then `rename()`                            |
+| `/etc/lamalibre/lamaste/invitations.json` | JSON   | Write `.tmp`, `fsync()`, then `rename()`                            |
+| `/etc/authelia/users.yml`                 | YAML   | Temp file in `/etc/authelia`, `fsync()`, `rename()` (no sudo)       |
+| `/etc/lamalibre/lamaste/state.db`         | SQLite | WAL, transactions; numbered migrations (`0013`: the user directory) |
+| `/etc/lamalibre/lamaste/gatekeeper.db`    | SQLite | WAL, transactions; numbered migrations                              |
 
 The atomic write pattern (write to temporary file, sync, rename) ensures that a crash during a write does not corrupt the primary file. The `rename()` system call is atomic on POSIX filesystems.
 
@@ -320,6 +324,9 @@ The atomic write pattern (write to temporary file, sync, rename) ensures that a 
 - **`/etc/authelia/.secrets.json`** contains the JWT secret. If this changes, all active Authelia sessions are invalidated and users must re-authenticate.
 - **`/etc/authelia/db.sqlite3`** contains Authelia session data and TOTP registration states. It can be regenerated (users re-enroll TOTP), but this is disruptive.
 - **Let's Encrypt account credentials** in `/etc/letsencrypt/accounts/` are tied to the email address used during registration. If lost, certbot creates a new account on next run.
+- **`state.db` holds the user directory.** Each user's `userId` — what agent-hosted plugins key their data on — exists only there; `users.yml` has none. **Losing `state.db` re-keys every user**: the panel rebuilds the directory from `users.yml` with new user ids and a new `directoryId`, and every plugin's agent half, seeing another directory, replays its audience from 0 — its old rows are marked removed and the same people arrive under new ids, so their history in the plugin is no longer joined to them. Tombstones and erasure records are lost too. Keep `state.db` in every backup.
+- **Restoring an older `state.db`** keeps the `directoryId` but moves the audiences back: an agent half whose cursor is now ahead of the panel's head is sent a full replay, which brings it in line with the restored audiences (users created since the backup come back from `users.yml` with new ids). An erasure made after the backup is lost from the relay but stays done in the agent halves that applied it; erase the user again to record it.
+- **SQLite files** (`state.db`, `gatekeeper.db`) run in WAL mode: for a consistent copy, stop `lamalibre-lamaste-serverd` and `lamalibre-lamaste-gatekeeper` while the archive is made, and restore the `-wal` and `-shm` files with the database (or neither). Both are `0600`, owned by `lamaste`.
 - **Settings of agent-hosted plugins** are kept by each plugin's agent half on its hosting agent — `settings.json` and `secrets.json` in its data directory (`/var/lib/lamalibre/apps/<route>/` for an agent half Lamaste installs) — not on the relay. The relay's `state.db` holds a cache of the non-secret values only, which it reads again from the agent half whenever the settings are read while the hosting is up. A relay backup therefore restores no plugin secret: back them up with the agent half's data. An agent half reads its restored files when it starts ([Agent-Hosted Plugins](../04-api-reference/agent-hosted-plugins.md#settings)); since restored files carry another revision than the one Lamaste last wrote, the relay's next read records the restore as a change made outside Lamaste (`plugin.settings.changed-outside-lamaste`, with the names of the settings that differ) and warns the administrators — expected after a restore you made.
 
 ## Quick Reference

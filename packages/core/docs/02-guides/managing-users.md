@@ -4,7 +4,7 @@
 
 ## In Plain English
 
-Every tunneled app in Lamaste is protected by Authelia, a login system that requires a username, password, and a one-time code from an authenticator app. When you create a user in the Lamaste panel, that person can log in to any of your tunneled apps. This guide covers the full lifecycle: creating users, enrolling them in two-factor authentication, changing passwords, and safely removing users.
+Every tunneled app in Lamaste is protected by Authelia, a login system that requires a username, password, and a one-time code from an authenticator app. When you create a user in the Lamaste panel, that person can log in to any of your tunneled apps. This guide covers the full lifecycle: creating users, enrolling them in two-factor authentication, changing passwords, and offboarding them — disabling, deleting and erasing users. The same users can be given roles in agent-hosted plugins ([Agent-Hosted Plugins](../04-api-reference/agent-hosted-plugins.md#users-and-identity)), which know them by a stable user ID.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ Log in to the Lamaste admin panel at `https://<ip>:9292`.
 
 Click **Users** in the sidebar navigation.
 
-You see a list of existing users. After onboarding, there is one user: `admin` — the account created during provisioning.
+You see a list of existing users — each with its status (**active** or **disabled**) and its **user ID**, the stable id plugins know the user by (click it to copy). After onboarding, there is one user: `admin` — the account created during provisioning.
 
 ### 2. Add a New User
 
@@ -43,7 +43,7 @@ Fill in the form and click **Create User**.
 1. The panel validates all fields against the schema.
 2. The password is hashed with **bcrypt** (not argon2id — argon2id uses ~93 MB per hash and causes OOM kills on 512 MB droplets).
 3. The user record is written to `/etc/authelia/users.yml` using an atomic write (write to temp file, then rename) to prevent corruption.
-4. Authelia is reloaded to pick up the new user.
+4. The user directory gives the user a `userId` (a UUID v4), then Authelia is reloaded to pick up the new user.
 
 **Expected result:** The new user appears in the list. Share the username and password with the person — they need these to log in to your tunneled apps.
 
@@ -107,21 +107,75 @@ To change a user's display name, email, or group membership:
 
 Only the fields you change are updated — the password and TOTP secret remain the same unless explicitly changed.
 
-### 7. Remove a User
+### 7. Disable a User (Offboarding)
+
+When someone leaves, **disable** them first — it is immediate and reversible:
+
+1. Go to the **Users** page.
+2. Click **Disable** on the user and confirm.
+
+The user's status turns **disabled**. From that moment:
+
+- they can no longer sign in to Authelia (Authelia's `disabled: true`);
+- every agent-hosted plugin's user surface refuses them (`403`) — the panel's directory is updated before Authelia restarts;
+- every plugin they use sees them as `disabled` in its audience (its agent half is told within seconds while it is online);
+- their desktop app sessions end and their registry (Feria) tokens are revoked.
+
+Their `userId`, grants and group memberships stay, so **Enable** brings everything back as it was. The last enabled member of the `admins` group cannot be disabled — the panel refuses with "Cannot disable the last enabled administrator".
+
+```bash
+lamaste-server users disable alice
+lamaste-server users enable alice
+```
+
+### 8. Delete a User
 
 1. Go to the **Users** page.
 2. Click the **Delete** button next to the user you want to remove.
-3. Confirm the deletion.
+3. Leave **Also erase personal data** unchecked to keep a tombstone (see below), or check it to erase at once.
+4. Confirm the deletion.
 
 **Safety rule:** You cannot delete the last user. Lamaste enforces this to prevent locking everyone out of the tunneled apps. If you try to delete the last user, the panel returns an error: "Cannot delete the last user."
 
 **What happens behind the scenes:**
 
-1. The panel removes the user from `users.yml` (atomic write).
-2. Authelia is reloaded.
-3. Any active sessions for that user expire naturally (Authelia does not have a "force logout" mechanism, but sessions have a timeout).
+1. The panel removes the user from `users.yml` (atomic write, under the panel's one lock for user changes) and restarts Authelia.
+2. The user directory keeps a **tombstone**: the user's `userId` and their last username, display name and email, marked `removed`. Plugins that had the user as a member are told the user was deleted and keep what they last received, so a plugin's history — "approved by Alice Smith" — stays readable.
+3. Gatekeeper drops every grant naming the username and its membership of every Lamaste group. If Gatekeeper is unreachable, the panel says so and retries every minute; until it succeeds, the username holds no role in any plugin and cannot be given to a new user.
+4. The user's registry tokens and desktop sessions end.
 
 After deletion, the user can no longer log in to any tunneled app.
+
+```bash
+lamaste-server users delete alice           # keeps the tombstone
+lamaste-server users delete alice --erase   # and erases it in the same step
+```
+
+### 9. Erase a Deleted User
+
+A tombstone keeps a name and an address. When a person asks for their personal data to be removed, **erase** it:
+
+1. Go to the **Users** page and scroll to **Deleted users** — every tombstone the directory keeps, with its `userId`, when it was removed and whether Gatekeeper's cleanup is still pending.
+2. Click **Erase** on the user and confirm.
+
+Erasing deletes the user's invitations and Gatekeeper's access-request log entries for them, then scrubs the tombstone to the bare `userId`. Every plugin that had the user as a member is sent an erasure: its agent half scrubs its own row and anonymises what the plugin keeps about the user. Until each plugin's agent half has acknowledged it, **Deleted users** lists that plugin under the user as a pending erasure — seconds while the hosting agent is online, or when it reconnects. Erasure cannot be undone. It cannot reach Authelia's own authentication log, nginx's access logs or backups taken before it.
+
+```bash
+lamaste-server users directory              # every user the directory knows, tombstones and pending erasures
+lamaste-server users erase 7d9e1a2b-3c4d-4e5f-8a6b-7c8d9e0f1a2b
+```
+
+### Disable, delete or erase?
+
+| Action      | Can sign in | Plugins see                            | Reversible | Use when                                      |
+| ----------- | ----------- | -------------------------------------- | ---------- | --------------------------------------------- |
+| **Disable** | No          | The user, `disabled`                   | Yes        | Someone leaves or must be locked out now      |
+| **Delete**  | No          | A removed user, last name kept         | No         | The account is gone for good; history matters |
+| **Erase**   | —           | A bare `userId`; their data anonymised | No         | The person asked for their data to be removed |
+
+### Re-created usernames
+
+A username that comes back after a deletion — re-created by hand, through an invitation, or edited into `users.yml` — is a **new user with a new `userId`**. Plugins key their data on the `userId`, so the new person sees nothing of the old one's, and Gatekeeper's cleanup has run before the new user exists: no grant, group membership or plugin role passes from one person to the next. If that cleanup cannot complete (Gatekeeper down), creating the user is refused with a message saying so — try again once Gatekeeper answers.
 
 ## For Developers
 
@@ -150,13 +204,34 @@ All writes to this file are atomic: write to a temp file, then rename. This prev
 
 ### API Endpoints
 
-| Method   | Path                              | Purpose                                                     |
-| -------- | --------------------------------- | ----------------------------------------------------------- |
-| `GET`    | `/api/users`                      | List all users (sorted alphabetically, no sensitive fields) |
-| `POST`   | `/api/users`                      | Create a new user                                           |
-| `PUT`    | `/api/users/:username`            | Update user fields                                          |
-| `DELETE` | `/api/users/:username`            | Delete a user (not the last one)                            |
-| `POST`   | `/api/users/:username/reset-totp` | Generate a new TOTP secret                                  |
+| Method   | Path                                    | Purpose                                                                                 |
+| -------- | --------------------------------------- | --------------------------------------------------------------------------------------- |
+| `GET`    | `/api/users`                            | List all users (sorted alphabetically, no sensitive fields), with `userId` and `status` |
+| `POST`   | `/api/users`                            | Create a new user                                                                       |
+| `PUT`    | `/api/users/:username`                  | Update user fields; `{ "disabled": true \| false }` disables or enables                 |
+| `DELETE` | `/api/users/:username[?erase=true]`     | Delete a user (not the last one); a tombstone stays unless erased                       |
+| `POST`   | `/api/users/:username/reset-totp`       | Generate a new TOTP secret                                                              |
+| `GET`    | `/api/identity/directory`               | Every user the directory knows, tombstones and pending erasures included                |
+| `POST`   | `/api/identity/directory/:userId/erase` | Erase a removed user                                                                    |
+
+Details: [Users API](../04-api-reference/users.md).
+
+### The User Directory
+
+Authelia's `users.yml` stays Authelia's credential file; the panel's `state.db` holds the **directory** beside it: a `userId` per user, the status, and the tombstones of deleted users. Every write of `users.yml` the panel makes goes through one lock that brings the directory in line before Authelia restarts. The panel also reads `users.yml` at start and every minute — never writing it — and adopts what changed outside Lamaste (Authelia's own password reset rewrites the file): a new username gets a new `userId`, a changed name, address or `disabled` flag is taken over, and a user gone from the file (seen in two reads) becomes a tombstone marked `deleted-outside`. Audit entries name users by `userId` only.
+
+### The CLI
+
+Every command goes through the running panel with the admin certificate (`--json` prints NDJSON):
+
+```bash
+lamaste-server users list                 # username, status, userId, groups
+lamaste-server users disable <username>
+lamaste-server users enable <username>
+lamaste-server users delete <username> [--erase]
+lamaste-server users erase <userId>
+lamaste-server users directory            # tombstones, erasures, pending cleanups and erasures
+```
 
 ### Create User Request
 
@@ -242,14 +317,18 @@ Authelia reads `users.yml` on restart. If the restart fails, a warning is logged
 | **Edit user**       | Users page, "Edit" on user, modify fields, "Save" |
 | **Change password** | Edit user, enter new password, "Save"             |
 | **Reset TOTP**      | Users page, "Reset TOTP" on user, share QR code   |
+| **Disable user**    | Users page, "Disable" on user, confirm            |
 | **Delete user**     | Users page, "Delete" on user, confirm             |
+| **Erase user**      | Users page, Deleted users, "Erase", confirm       |
 
-| Constraint       | Value                                           |
-| ---------------- | ----------------------------------------------- |
-| Username format  | `^[a-z0-9][a-z0-9_-]*$` (users and invitations) |
-| Username length  | 2-32 characters                                 |
-| Password length  | 8-128 characters                                |
-| Password hashing | bcrypt (cost 12)                                |
-| Minimum users    | 1 (cannot delete last user)                     |
-| TOTP algorithm   | SHA1, 6 digits, 30-second period                |
-| User file        | `/etc/authelia/users.yml`                       |
+| Constraint       | Value                                                       |
+| ---------------- | ----------------------------------------------------------- |
+| Username format  | `^[a-z0-9][a-z0-9_-]*$` (users and invitations)             |
+| Username length  | 2-32 characters                                             |
+| Password length  | 8-128 characters                                            |
+| Password hashing | bcrypt (cost 12)                                            |
+| Minimum users    | 1 (cannot delete last user)                                 |
+| Administrators   | The last enabled `admins` member cannot be disabled         |
+| User ID          | UUID v4, never reused; a re-created username gets a new one |
+| TOTP algorithm   | SHA1, 6 digits, 30-second period                            |
+| User file        | `/etc/authelia/users.yml`                                   |

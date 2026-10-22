@@ -53,20 +53,22 @@ curl -s --cert client.p12:password \
 }
 ```
 
-| Field           | Type             | Description                                                                                                                                                                                                                                             |
-| --------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`            | `string`         | UUID v4 identifier                                                                                                                                                                                                                                      |
-| `subdomain`     | `string`         | The subdomain portion (e.g., `app`)                                                                                                                                                                                                                     |
-| `fqdn`          | `string`         | Fully qualified domain name (e.g., `app.example.com`)                                                                                                                                                                                                   |
-| `port`          | `number`         | Port the carrying agent forwards; bound on `127.0.0.1` on both the server and the agent                                                                                                                                                                 |
-| `description`   | `string \| null` | Optional human-readable description                                                                                                                                                                                                                     |
-| `type`          | `string`         | `'app'` (default), `'panel'` (agent web panel), or `'plugin'`                                                                                                                                                                                           |
-| `accessMode`    | `string`         | `'restricted'` (default), `'authenticated'`, or `'public'` — absent on panel tunnels                                                                                                                                                                    |
-| `agentLabel`    | `string`         | The agent that carries the tunnel. Absent only on an unassigned legacy tunnel (see below)                                                                                                                                                               |
-| `exposure`      | `string`         | `'internal'` on the internal tunnel of a hosted agent-hosted plugin: no `subdomain`, `fqdn` or `accessMode`, only the chisel grant on a relay-loopback port. Absent (public) on every other tunnel. See [Agent-Hosted Plugins](agent-hosted-plugins.md) |
-| `maxBodySizeMb` | `number`         | Largest request body nginx accepts, in MiB. Absent on panel tunnels and on tunnels created before the setting existed, which keep nginx's built-in 1 MiB until a body limit is set on them                                                              |
-| `enabled`       | `boolean`        | Whether the tunnel is active (defaults to `true`)                                                                                                                                                                                                       |
-| `createdAt`     | `string`         | ISO 8601 timestamp                                                                                                                                                                                                                                      |
+| Field               | Type             | Description                                                                                                                                                                                                                                             |
+| ------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                | `string`         | UUID v4 identifier                                                                                                                                                                                                                                      |
+| `subdomain`         | `string`         | The subdomain portion (e.g., `app`)                                                                                                                                                                                                                     |
+| `fqdn`              | `string`         | Fully qualified domain name (e.g., `app.example.com`)                                                                                                                                                                                                   |
+| `port`              | `number`         | Port the carrying agent forwards; bound on `127.0.0.1` on both the server and the agent                                                                                                                                                                 |
+| `description`       | `string \| null` | Optional human-readable description                                                                                                                                                                                                                     |
+| `type`              | `string`         | `'app'` (default), `'panel'` (agent web panel), or `'plugin'`                                                                                                                                                                                           |
+| `accessMode`        | `string`         | `'restricted'` (default), `'authenticated'`, or `'public'` — absent on panel tunnels                                                                                                                                                                    |
+| `agentLabel`        | `string`         | The agent that carries the tunnel. Absent only on an unassigned legacy tunnel (see below)                                                                                                                                                               |
+| `exposure`          | `string`         | `'internal'` on the internal tunnel of a hosted agent-hosted plugin: no `subdomain`, `fqdn` or `accessMode`, only the chisel grant on a relay-loopback port. Absent (public) on every other tunnel. See [Agent-Hosted Plugins](agent-hosted-plugins.md) |
+| `maxBodySizeMb`     | `number`         | Largest request body nginx accepts, in MiB. Absent on panel tunnels and on tunnels created before the setting existed, which keep nginx's built-in 1 MiB until a body limit is set on them                                                              |
+| `enabled`           | `boolean`        | Whether the tunnel is active (defaults to `true`)                                                                                                                                                                                                       |
+| `userSurface`       | `object`         | `{ routes: string[] }` — the agent-hosted plugins whose user surface this host serves ([User Surface Binding](#user-surface-binding)). Absent when none                                                                                                 |
+| `userSurfaceStatus` | `object[]`       | With `userSurface`: how each bound route is served — `{ route, served, reason }`, `reason` `null` when served, else `not_installed`, `no_identity` or `not_approved`                                                                                    |
+| `createdAt`         | `string`         | ISO 8601 timestamp                                                                                                                                                                                                                                      |
 
 ---
 
@@ -206,7 +208,7 @@ Changes any of: carrying agent, access mode, request body limit, enabled state. 
 
 - **`enabled`** — when disabled, the tunnel's nginx vhost symlink is removed (the config file is kept) and the owner's Chisel grant for the port is withdrawn (Chisel restarts, which ends sessions still holding it). Re-enabling restores both. Only enabled tunnels appear in an agent's config, and the owner's sync timer drops or adds the remote within about 30 seconds.
 - **`agentLabel`** (admin only) — moves the tunnel to another active agent. The previous owner loses the port grant in the same Chisel sync that gives it to the new owner. Both agents' sync timers apply the move within about 30 seconds; `lamaste-agent update` applies it at once. Agent panel tunnels (`type: 'panel'`) belong to the agent they expose and cannot be moved.
-- **`accessMode`** and **`maxBodySizeMb`** — both live in the tunnel's nginx vhost, which is re-rendered and tested (nginx keeps the previous vhost if the test fails). Gatekeeper watches the tunnel state and picks up an access-mode change on its own. A disabled tunnel stays disabled. `public` and `authenticated` are admin-only, as on creation. Agent panel tunnels have a fixed mTLS vhost and cannot be reconfigured.
+- **`accessMode`** and **`maxBodySizeMb`** — both live in the tunnel's nginx vhost, which is re-rendered and tested (nginx keeps the previous vhost if the test fails). Gatekeeper watches the tunnel state and picks up an access-mode change on its own. A disabled tunnel stays disabled. `public` and `authenticated` are admin-only, as on creation. A tunnel bound as a plugin's [user surface](#user-surface-binding) cannot be made public (`409`), and its re-rendered vhost keeps the user-surface locations it serves. Agent panel tunnels have a fixed mTLS vhost and cannot be reconfigured.
 
 **Request:**
 
@@ -252,7 +254,7 @@ curl -s --cert client.p12:password \
 
 ### `DELETE /api/tunnels/:id`
 
-Deletes a tunnel by its UUID: removes the nginx vhost, removes the tunnel from the state file, and syncs Chisel so the owner's grant for the port is withdrawn.
+Deletes a tunnel by its UUID: removes the nginx vhost, removes the tunnel from the state file, and syncs Chisel so the owner's grant for the port is withdrawn. Its [user-surface bindings](#user-surface-binding) go with it.
 
 The TLS certificate is not deleted (it is harmless to keep and may be reused if the subdomain is recreated).
 
@@ -325,6 +327,37 @@ curl -s --cert client.p12:password \
 | 400    | `{"error":"Domain not configured"}`           | Domain has not been set  |
 | 500    | `{"error":"Failed to generate agent config"}` | Config generation failed |
 
+## User Surface Binding
+
+An app tunnel can be **bound** as the user surface of an agent-hosted plugin: its host then serves the plugin's users at `/api/<route>/app` and everything under it — Gatekeeper authenticates the Authelia session and vouches for the user to the panel, and the panel forwards the request to the plugin's agent half with the directory's `userId`, username and the user's roles ([Agent-Hosted Plugins](agent-hosted-plugins.md#the-user-surface)). Every other path of the host goes down the tunnel as before. Admin only, 30 a minute.
+
+**What can be bound.** An enabled app tunnel (`type` `app`, not internal) that an agent carries, with access mode `authenticated` or `restricted` — a public host has no signed-in user to vouch for. On a `restricted` tunnel the user also needs a grant for the tunnel. The route must be held by an installed agent-hosted plugin; a plugin's user surface is on one host at most, and one host serves at most 16 plugins' user surfaces. A bound tunnel cannot be made public (`PATCH` answers `409` "… cannot be made public — unbind it first").
+
+**When it is served.** A plugin may be bound before it declares `identity`: its host serves the route — locations that ask Gatekeeper and pass the request to the panel ([nginx Configuration](../03-architecture/nginx-configuration.md#user-surface-locations)) — only while the plugin's installed, approved version declares it. Until then its requests go down the tunnel as before, so a plugin moves its users' API to the relay with a plain update: bind first, then update and approve. The vhosts of the bound tunnels are re-rendered whenever that can change — the plugin's approval, update or its revert, hosting and unhosting — and at the panel's start. Uninstalling the plugin releases its binding everywhere; deleting a tunnel releases its bindings. Every change is audited: `tunnel.user-surface.bound`, `tunnel.user-surface.unbound` (with `reason`: `unbound`, `tunnel-deleted`, `plugin-uninstalled`).
+
+### `PUT /api/tunnels/:id/user-surface`
+
+```json
+{ "route": "market-indicators" }
+```
+
+Binds the plugin route to the tunnel's host. Idempotent. **Response (200):** `{ "ok": true, "changed": true, "tunnel": { ... } }` — the tunnel with its `userSurface` and `userSurfaceStatus`; `changed: false` when the route was bound there already.
+
+### `DELETE /api/tunnels/:id/user-surface/:route`
+
+Unbinds it: requests for the route go down the tunnel again. **Response (200):** `{ "ok": true, "tunnel": { ... } }`.
+
+**Errors** (both):
+
+| Status | Body                                                                                              | When                                                                                                                                                              |
+| ------ | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `{"error":"…"}`                                                                                   | Not an app tunnel's host, disabled, unassigned, public; no installed agent-hosted plugin holds the route; 16 routes bound already; domain or email not configured |
+| 404    | `{"error":"Tunnel not found"}` / `{"error":"This tunnel does not serve the user surface of '…'"}` | No such tunnel; unbinding a route that is not bound there                                                                                                         |
+| 409    | `{"error":"The user surface of '…' is already served on …","code":"user_surface_conflict"}`       | The route is bound to another tunnel                                                                                                                              |
+| 500    | `{"error":"Failed to bind the user surface","details":"…"}`                                       | nginx or state operation failed (the previous vhost is restored)                                                                                                  |
+
+From the CLI: `lamaste-server tunnels bind-user-surface <tunnel> <plugin>` and `tunnels unbind-user-surface <tunnel> <plugin>` (the tunnel by id, subdomain or FQDN; the plugin by name or route). In the panel: the Tunnels page's **User surface** action on an eligible tunnel, which shows each bound route's status; the desktop app through `AdminClient` `bindTunnelUserSurface(id, route)` and `unbindTunnelUserSurface(id, route)`.
+
 ## Chisel Grants
 
 The Chisel server authenticates every client against `/etc/lamalibre/lamaste/chisel-users`. That file is rendered by the panel from two persisted inputs — the per-agent credential store and the tunnel state — and re-rendered whenever either changes:
@@ -386,16 +419,18 @@ A tunnel's vhost proxies to `127.0.0.1:<port>` on the relay, so a tunnel on one 
 
 ## Quick Reference
 
-| Method | Path                              | Description                                                                                                         |
-| ------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/tunnels`                    | List tunnels (an agent sees only its own)                                                                           |
-| POST   | `/api/tunnels`                    | Create a tunnel carried by an agent                                                                                 |
-| PATCH  | `/api/tunnels/:id`                | Move (admin), access mode, body limit, enable/disable                                                               |
-| DELETE | `/api/tunnels/:id`                | Delete a tunnel by UUID                                                                                             |
-| GET    | `/api/tunnels/agent-config`       | One agent's Chisel client config (macOS & Linux)                                                                    |
-| GET    | `/api/tunnels/agent-panel-status` | Check if agent has an exposed panel tunnel                                                                          |
-| POST   | `/api/tunnels/expose-panel`       | Create mTLS panel tunnel for requesting agent (refused when a static site or alias serves `agent-<label>.<domain>`) |
-| DELETE | `/api/tunnels/retract-panel`      | Remove the panel tunnel for requesting agent                                                                        |
+| Method | Path                                   | Description                                                                                                         |
+| ------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/tunnels`                         | List tunnels (an agent sees only its own)                                                                           |
+| POST   | `/api/tunnels`                         | Create a tunnel carried by an agent                                                                                 |
+| PATCH  | `/api/tunnels/:id`                     | Move (admin), access mode, body limit, enable/disable                                                               |
+| DELETE | `/api/tunnels/:id`                     | Delete a tunnel by UUID                                                                                             |
+| PUT    | `/api/tunnels/:id/user-surface`        | Bind a plugin route as the tunnel host's user surface (admin)                                                       |
+| DELETE | `/api/tunnels/:id/user-surface/:route` | Unbind it (admin)                                                                                                   |
+| GET    | `/api/tunnels/agent-config`            | One agent's Chisel client config (macOS & Linux)                                                                    |
+| GET    | `/api/tunnels/agent-panel-status`      | Check if agent has an exposed panel tunnel                                                                          |
+| POST   | `/api/tunnels/expose-panel`            | Create mTLS panel tunnel for requesting agent (refused when a static site or alias serves `agent-<label>.<domain>`) |
+| DELETE | `/api/tunnels/retract-panel`           | Remove the panel tunnel for requesting agent                                                                        |
 
 ### curl Cheat Sheet
 

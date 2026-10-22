@@ -9,16 +9,28 @@
  *   assign <id> --agent <label>                   Move a tunnel to another agent
  *   configure <id> [--access-mode <m>] [--max-body-mb <n>]
  *                                                 Change access mode / body limit
+ *   bind-user-surface <tunnel> <plugin>           Serve an agent-hosted plugin's user
+ *                                                 surface (/api/<route>/app/*) on the
+ *                                                 tunnel's host
+ *   unbind-user-surface <tunnel> <plugin>         Stop serving it there
  *
  * List reads directly from the state file.
- * Create/delete/toggle use the panel REST API (which has the full
- * nginx/certbot/chisel dependency stack).
+ * Create/delete/toggle and the user-surface binding use the panel REST API
+ * (which has the full nginx/certbot/chisel dependency stack); a tunnel is
+ * named by its id, subdomain or FQDN there, a plugin by its name or route.
  */
 
 import chalk from 'chalk';
 import { readTunnels } from '../state.js';
 import { panelRequest } from '../panel-api.js';
 import { emit, emitError, emitComplete } from '../ndjson.js';
+import {
+  findHostTunnel,
+  findPluginByNameOrRoute,
+  parseUserSurfaceArgs,
+  userSurfaceStatusText,
+} from '../plugin-identity.js';
+import { terminalText } from '../plugin-settings.js';
 
 /**
  * @param {string[]} args
@@ -40,6 +52,9 @@ export async function runTunnels(args, { json }) {
       return assignTunnel(args.slice(1), { json });
     case 'configure':
       return configureTunnel(args.slice(1), { json });
+    case 'bind-user-surface':
+    case 'unbind-user-surface':
+      return userSurfaceCmd(sub, args.slice(1), { json });
     default:
       printTunnelUsage();
       process.exit(sub ? 1 : 0);
@@ -59,6 +74,12 @@ ${b('Subcommands:')}
   ${c('toggle')} <id> --enable|--disable                      Enable or disable a tunnel
   ${c('assign')} <id> --agent <label>                         Move a tunnel to another agent
   ${c('configure')} <id> [--access-mode <m>] [--max-body-mb <n>] Change access mode / body limit
+  ${c('bind-user-surface')} <tunnel> <plugin>                Serve an agent-hosted plugin's user surface
+                                                      (/api/<route>/app/*) on the tunnel's host
+  ${c('unbind-user-surface')} <tunnel> <plugin>              Stop serving it there
+
+  A tunnel is named by its id, subdomain or FQDN; a plugin by its name or route. A user
+  surface needs an enabled, agent-carried tunnel that is authenticated or restricted.
 
 ${b('Create options:')}
   --subdomain <name>    Tunnel subdomain (required)
@@ -107,6 +128,10 @@ async function listTunnels({ json }) {
     );
     if (t.description) {
       console.log(`    ${d(t.description)}`);
+    }
+    const userSurface = Array.isArray(t.userSurface?.routes) ? t.userSurface.routes : [];
+    if (userSurface.length > 0) {
+      console.log(`    ${d('user surface of:')} ${terminalText(userSurface.join(', '))}`);
     }
     console.log(`    ${d(`id: ${t.id}  fqdn: ${t.fqdn}`)}`);
   }
@@ -362,4 +387,78 @@ function getArg(args, name) {
   const idx = args.indexOf(`--${name}`);
   if (idx === -1 || idx + 1 >= args.length) return null;
   return args[idx + 1];
+}
+
+/**
+ * `bind-user-surface|unbind-user-surface <tunnel> <plugin>`: the tunnel's
+ * host serves (or stops serving) the plugin's `/api/<route>/app/*` — from
+ * when its installed, approved version declares identity; until then its
+ * requests go down the tunnel. Prints how each route bound to the tunnel is
+ * served afterwards.
+ *
+ * @param {'bind-user-surface' | 'unbind-user-surface'} sub
+ * @param {string[]} args
+ * @param {{ json: boolean }} options
+ */
+async function userSurfaceCmd(sub, args, { json }) {
+  const failWith = (message, code) => {
+    if (json) emitError(message, false, code ? { code } : {});
+    else console.error(`\n  ${chalk.red(terminalText(message))}\n`);
+    process.exit(1);
+  };
+  const parsed = parseUserSurfaceArgs(sub, args);
+  if (!parsed.ok) failWith(parsed.error);
+
+  const found = findHostTunnel(await readTunnels(), parsed.tunnel);
+  if (found.error) failWith(found.error);
+  const { tunnel } = found;
+
+  let plugins;
+  try {
+    ({ plugins = [] } = await panelRequest('GET', '/api/plugins'));
+  } catch (err) {
+    failWith(err.message, err.code);
+  }
+  const named = findPluginByNameOrRoute(plugins, parsed.plugin);
+  if (named.error) failWith(named.error);
+  const { route } = named.plugin;
+
+  const bind = sub === 'bind-user-surface';
+  const surfacePath = `/api/tunnels/${encodeURIComponent(tunnel.id)}/user-surface`;
+  let result;
+  try {
+    result = bind
+      ? await panelRequest('PUT', surfacePath, { route })
+      : await panelRequest('DELETE', `${surfacePath}/${encodeURIComponent(route)}`);
+  } catch (err) {
+    failWith(err.message, err.code);
+  }
+  if (json) {
+    emitComplete({ id: tunnel.id, route, ...result });
+    return;
+  }
+  const host = terminalText(result.tunnel?.fqdn ?? tunnel.fqdn);
+  if (bind) {
+    console.log(
+      result.changed
+        ? `\n  ${chalk.green('✓')} ${chalk.cyan(host)} serves the user surface of ${chalk.cyan(route)}`
+        : `\n  ${chalk.cyan(host)} already serves the user surface of ${chalk.cyan(route)}`,
+    );
+  } else {
+    console.log(
+      `\n  ${chalk.green('✓')} ${chalk.cyan(host)} no longer serves the user surface of ${chalk.cyan(route)} — its requests go down the tunnel`,
+    );
+  }
+  const statuses = Array.isArray(result.tunnel?.userSurfaceStatus)
+    ? result.tunnel.userSurfaceStatus
+    : [];
+  for (const status of statuses) {
+    const served = status.served === true;
+    const word = userSurfaceStatusText(status);
+    console.log(
+      `    ${terminalText(status.route)}: ${served ? chalk.green(word) : chalk.yellow(word)}` +
+        (served ? chalk.dim(`  https://${host}/api/${terminalText(status.route)}/app/`) : ''),
+    );
+  }
+  console.log('');
 }

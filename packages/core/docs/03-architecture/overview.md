@@ -185,28 +185,25 @@ End User → nginx :443 → auth_request → 127.0.0.1:9294/authz/tunnel/<fqdn>
                                     │  In-memory session  │
                                     │  cache (Map)        │
                                     │                     │
-                                    │  State files:       │
-                                    │  - groups.json      │
-                                    │  - access-grants.json│
+                                    │  State:             │
+                                    │  - gatekeeper.db    │
                                     │  - gatekeeper.json  │
                                     └─────────────────────┘
 ```
 
-**Grant model:** The Gatekeeper uses a generic principal-to-resource grant model. A principal is an Authelia user or a Lamaste group. A resource is a tunnel subdomain or other protected endpoint. Grants are stored in `/etc/lamalibre/lamaste/access-grants.json`.
+**Grant model:** The Gatekeeper uses a generic principal-to-resource grant model. A principal is an Authelia user or a Lamaste group. A resource is a tunnel subdomain or other protected endpoint. Grants are stored in Gatekeeper's SQLite database, `/etc/lamalibre/lamaste/gatekeeper.db`. A plugin grant whose `context` names `roles` is an agent-hosted plugin's entitlement (see [Agent-Hosted Plugins](../04-api-reference/agent-hosted-plugins.md#users-and-identity)).
 
-**Lamaste groups:** Separate from Authelia groups. Stored in `/etc/lamalibre/lamaste/groups.json`. Lamaste groups allow the admin to organize users for access control without modifying Authelia's `users.yml`.
+**Lamaste groups:** Separate from Authelia groups. Stored in `gatekeeper.db`. Lamaste groups allow the admin to organize users for access control without modifying Authelia's `users.yml`.
 
 **Two-layer caching:**
 
 1. **nginx `proxy_cache`** — the installer defines the `lamaste_authz` cache zone (1m keys, 10m storage) and a location-level policy (key `$server_name|$cookie_authelia_session`, `200` cached for 10 seconds, `403` never), but the generated vhosts do not include it today (see [nginx Configuration](nginx-configuration.md#nginx-cache-zone-lamaste_authz)).
 2. **In-memory session cache** — the Gatekeeper keeps validated Authelia sessions in a `Map` keyed by an HMAC of the session cookie, so a check within the TTL does not ask Authelia again. It caches the identity, not the decision: grants are checked on every request.
 
-**State files:** All stored in `/etc/lamalibre/lamaste/` with 0600 permissions, `lamaste:lamaste` ownership, and atomic writes (tmp, fsync, rename):
+**State:** In `/etc/lamalibre/lamaste/` with 0600 permissions and `lamaste:lamaste` ownership:
 
-- `groups.json` — Lamaste group definitions and membership
-- `access-grants.json` — Principal-to-resource access grants
-- `gatekeeper.json` — Settings (admin contact info, cache TTL, logging configuration)
-- `access-request-log.json` — Optional log of denied access attempts (for admin review)
+- `gatekeeper.db` — SQLite (WAL): Lamaste groups and members, access grants, the optional log of denied access attempts (for admin review); read on every check
+- `gatekeeper.json` — Settings (admin contact info, cache TTL, logging configuration), atomic writes (tmp, fsync, rename)
 
 **Service:** Runs as `lamalibre-lamaste-gatekeeper.service` (systemd), binding `127.0.0.1:9294`. nginx is the sole entry point — the Gatekeeper is never directly accessible from the internet.
 
@@ -530,8 +527,7 @@ Phase 4: Recovery (if needed)
 | `/etc/systemd/system/authelia.service`                  | Authelia systemd unit                                   |
 | `/etc/lamalibre/lamaste/plugins.json`                   | Plugin registry (installed plugins and status)          |
 | `/etc/lamalibre/lamaste/plugins/`                       | Per-plugin data directories                             |
-| `/etc/lamalibre/lamaste/groups.json`                    | Lamaste group definitions and membership                |
-| `/etc/lamalibre/lamaste/access-grants.json`             | Generic access grants (principal → resource)            |
+| `/etc/lamalibre/lamaste/gatekeeper.db`                  | Gatekeeper: groups, access grants, denied-access log    |
 | `/etc/lamalibre/lamaste/gatekeeper.json`                | Gatekeeper settings (cache TTL, admin contact, logging) |
 | `/etc/lamalibre/lamaste/push-install-config.json`       | Push install configuration and policies                 |
 | `/etc/lamalibre/lamaste/push-install-sessions.json`     | Push install session audit log                          |

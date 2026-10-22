@@ -17,9 +17,33 @@ import {
   ChevronDown,
   ChevronUp,
   Fingerprint,
+  UserX,
+  UserCheck,
+  Eraser,
+  AlertTriangle,
+  Archive,
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
+import CopyableId from '../components/CopyableId.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
+import { relativeTime } from '../lib/formatters.js';
+import { isLastEnabledAdmin, warningText } from '../lib/identity.js';
+
+/**
+ * Refetch what a users change touches: the users, the directory (ids,
+ * tombstones), and the plugins' people (audiences follow users).
+ */
+function invalidateUsers(queryClient) {
+  queryClient.invalidateQueries({ queryKey: ['users'] });
+  queryClient.invalidateQueries({ queryKey: ['user-directory'] });
+  queryClient.invalidateQueries({ queryKey: ['plugin-identity'] });
+  queryClient.invalidateQueries({ queryKey: ['plugin-audience'] });
+}
+
+/** Toast each warning a users change came back with: what the panel could not complete beside it. */
+function toastWarnings(toast, result) {
+  for (const warning of result?.warnings ?? []) toast(warningText(warning), 'error');
+}
 
 // --- Modal backdrop ---
 
@@ -121,12 +145,18 @@ function UserFormModal({ user, onClose, onSuccess }) {
 
   const createMutation = useMutation({
     mutationFn: (data) => client.createUser(data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: (data) => {
+      invalidateUsers(queryClient);
+      toastWarnings(toast, data);
+    },
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ username, ...data }) => client.updateUser(username, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: (data) => {
+      invalidateUsers(queryClient);
+      toastWarnings(toast, data);
+    },
   });
 
   const mutation = isEdit ? updateMutation : createMutation;
@@ -475,6 +505,38 @@ function InviteLinkModal({ inviteUrl, token, onClose }) {
 
 // --- Confirm Dialog ---
 
+/** A dialog's Cancel and confirm buttons; the confirm button waits while `isPending`. */
+function DialogButtons({
+  confirmLabel,
+  destructive,
+  disabled = false,
+  isPending,
+  onConfirm,
+  onCancel,
+}) {
+  return (
+    <div className="flex gap-3">
+      <button
+        type="button"
+        onClick={onCancel}
+        className="flex-1 rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:text-white"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        onClick={onConfirm}
+        disabled={isPending || disabled}
+        className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${
+          destructive ? 'bg-red-600 hover:bg-red-500' : 'bg-cyan-600 hover:bg-cyan-500'
+        }`}
+      >
+        {isPending ? 'Please wait...' : confirmLabel}
+      </button>
+    </div>
+  );
+}
+
 function ConfirmDialog({
   title,
   message,
@@ -488,26 +550,341 @@ function ConfirmDialog({
     <Modal onClose={onCancel}>
       <h2 className="mb-2 text-lg font-bold text-white">{title}</h2>
       <p className="mb-6 text-sm text-zinc-400">{message}</p>
-      <div className="flex gap-3">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="flex-1 rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:text-white"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={onConfirm}
-          disabled={isPending}
-          className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${
-            destructive ? 'bg-red-600 hover:bg-red-500' : 'bg-cyan-600 hover:bg-cyan-500'
-          }`}
-        >
-          {isPending ? 'Please wait...' : confirmLabel}
-        </button>
-      </div>
+      <DialogButtons
+        confirmLabel={confirmLabel}
+        destructive={destructive}
+        isPending={isPending}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />
     </Modal>
+  );
+}
+
+// --- Erasure confirmation (typed) ---
+
+/**
+ * What erasing a user does, said before it is done, and the field it is
+ * confirmed in: the administrator types the username — erasing cannot be
+ * undone, and nothing of the user is left to tell who it was afterwards.
+ */
+function ErasureConfirmation({ username, typed, onType }) {
+  return (
+    <div className="mb-4 space-y-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+      <ul className="list-disc space-y-1 pl-5 text-xs text-zinc-400">
+        <li>
+          The directory keeps the bare user id; the username, name and address it last had are
+          scrubbed.
+        </li>
+        <li>Their invitations and Gatekeeper&apos;s access-request log entries are deleted.</li>
+        <li>
+          Every plugin that had them is sent the erasure: its agent half scrubs its record to the id
+          and runs the plugin&apos;s anonymiser. The panel shows it pending until each acknowledges.
+        </li>
+        <li>
+          Authelia&apos;s own authentication log is outside Lamaste&apos;s reach and is not erased.
+        </li>
+        <li className="text-red-400">This cannot be undone.</li>
+      </ul>
+      <div>
+        <label className="mb-1 block text-xs text-zinc-400">
+          Type <span className="font-mono text-zinc-200">{username}</span> to confirm
+        </label>
+        <input
+          type="text"
+          value={typed}
+          onChange={(e) => onType(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-sm text-white focus:border-red-500 focus:outline-none"
+        />
+      </div>
+    </div>
+  );
+}
+
+// --- Delete User Dialog ---
+
+/**
+ * Delete a user: Authelia forgets them and the directory keeps a tombstone
+ * — the user id with the name and address they last had — so plugins'
+ * history stays readable; or, with "also erase personal data", scrub the
+ * tombstone at once.
+ */
+function DeleteUserDialog({ user, onConfirm, onCancel, isPending }) {
+  const [erase, setErase] = useState(false);
+  const [typed, setTyped] = useState('');
+  const confirmed = !erase || typed === user.username;
+  return (
+    <Modal onClose={onCancel}>
+      <h2 className="mb-2 text-lg font-bold text-white">Delete User</h2>
+      <p className="mb-3 text-sm text-zinc-400">
+        Delete <span className="font-mono text-cyan-400">{user.username}</span>? They can no longer
+        sign in, their grants and group memberships are removed, and every plugin they used is told
+        they were deleted.
+      </p>
+      <p className="mb-4 text-xs text-zinc-500">
+        The user directory keeps a tombstone — their user id with the name and address they last had
+        — so what plugins recorded about them stays readable. A user created later under the same
+        username is a new user with a new id.
+      </p>
+      <label className="mb-3 flex items-start gap-2 text-sm text-zinc-300">
+        <input
+          type="checkbox"
+          checked={erase}
+          onChange={(e) => {
+            setErase(e.target.checked);
+            setTyped('');
+          }}
+          className="mt-1"
+        />
+        <span>Also erase their personal data</span>
+      </label>
+      {erase && <ErasureConfirmation username={user.username} typed={typed} onType={setTyped} />}
+      <DialogButtons
+        confirmLabel={erase ? 'Delete and erase' : 'Delete'}
+        destructive
+        disabled={!confirmed}
+        isPending={isPending}
+        onConfirm={() => onConfirm(erase)}
+        onCancel={onCancel}
+      />
+    </Modal>
+  );
+}
+
+// --- Erase Dialog (a deleted user) ---
+
+function EraseUserDialog({ user, onConfirm, onCancel, isPending }) {
+  const [typed, setTyped] = useState('');
+  return (
+    <Modal onClose={onCancel}>
+      <h2 className="mb-2 text-lg font-bold text-white">Erase Deleted User</h2>
+      <p className="mb-3 text-sm text-zinc-400">
+        Erase what Lamaste keeps of <span className="font-mono text-cyan-400">{user.username}</span>{' '}
+        (<span className="font-mono text-xs">{user.userId}</span>)?
+      </p>
+      <ErasureConfirmation username={user.username} typed={typed} onType={setTyped} />
+      <DialogButtons
+        confirmLabel="Erase"
+        destructive
+        disabled={typed !== user.username}
+        isPending={isPending}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />
+    </Modal>
+  );
+}
+
+// --- Status badge ---
+
+function StatusBadge({ status }) {
+  const disabled = status === 'disabled';
+  return (
+    <span
+      className={`text-xs px-2 py-0.5 rounded-full border ${
+        disabled
+          ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20'
+          : 'text-green-400 bg-green-500/10 border-green-500/20'
+      }`}
+      title={
+        disabled
+          ? 'Cannot sign in; every plugin audience shows them disabled; plugins’ user surfaces refuse them'
+          : undefined
+      }
+    >
+      {disabled ? 'disabled' : 'active'}
+    </span>
+  );
+}
+
+// --- Deleted users (the directory's tombstones) ---
+
+/** Why a user was removed, in words. */
+function removedText(user) {
+  return user.removedReason === 'deleted-outside'
+    ? 'gone from Authelia’s users file (not deleted through Lamaste)'
+    : 'deleted';
+}
+
+/**
+ * The users the directory keeps after they were deleted: their tombstone
+ * (the id and the name they last had) until an administrator erases it,
+ * whether Gatekeeper has dropped what it held under their username, and —
+ * for an erased user — the plugins whose agent half has not acknowledged
+ * the erasure yet.
+ */
+function DeletedUsersSection() {
+  const client = useAdminClient();
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [eraseTarget, setEraseTarget] = useState(null);
+
+  const query = useQuery({
+    queryKey: ['user-directory'],
+    queryFn: () => client.getUserDirectory(),
+    refetchInterval: 30000,
+  });
+
+  const eraseMutation = useMutation({
+    mutationFn: (userId) => client.eraseDirectoryUser(userId),
+    onSuccess: (data) => {
+      invalidateUsers(queryClient);
+      queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      toast(
+        `Erased — ${data.invitationsPurged} invitation(s) and ${data.accessLogPurged} access-log entr${data.accessLogPurged === 1 ? 'y' : 'ies'} deleted; plugins are being told`,
+      );
+      setEraseTarget(null);
+    },
+    onError: (err) => {
+      toast(errorMessage(err), 'error');
+      setEraseTarget(null);
+    },
+  });
+
+  const now = query.dataUpdatedAt;
+  const removed = (query.data?.users ?? []).filter((u) => u.status === 'removed');
+
+  return (
+    <div className="mt-8">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-bold text-white">
+            <Archive size={16} className="text-zinc-400" />
+            Deleted Users
+          </h2>
+          <p className="text-zinc-500 text-sm">
+            Tombstones the directory keeps until they are erased, so plugins&apos; history stays
+            readable.
+          </p>
+        </div>
+        {query.data?.directoryId && (
+          <span className="flex items-center gap-1 text-xs text-zinc-500">
+            directory <CopyableId id={query.data.directoryId} />
+          </span>
+        )}
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900">
+        {query.isLoading ? (
+          <div className="p-6 text-center">
+            <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-zinc-600 border-t-cyan-400" />
+          </div>
+        ) : query.isError ? (
+          <div className="p-6 text-center text-red-400 text-sm">
+            Failed to load the user directory: {errorMessage(query.error)}
+          </div>
+        ) : removed.length === 0 ? (
+          <div className="p-6 text-center text-zinc-500 text-sm">No deleted users.</div>
+        ) : (
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-zinc-700">
+                <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400">User</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400">User ID</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400 hidden sm:table-cell">
+                  Removed
+                </th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400">State</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400 text-right">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {removed.map((u) => {
+                const erased = u.erasedAt !== null;
+                const cleanupPending = u.principalClearedAt === null && !erased;
+                return (
+                  <tr key={u.userId} className="border-b border-zinc-700 last:border-b-0 align-top">
+                    <td className="px-4 py-3 text-sm">
+                      {erased ? (
+                        <span className="text-zinc-600">erased</span>
+                      ) : (
+                        <>
+                          <span className="font-mono text-zinc-300">{u.username}</span>
+                          {u.displayName && (
+                            <span className="block text-xs text-zinc-500">{u.displayName}</span>
+                          )}
+                        </>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <CopyableId id={u.userId} />
+                    </td>
+                    <td className="px-4 py-3 text-xs text-zinc-500 hidden sm:table-cell">
+                      {removedText(u)}
+                      {u.removedAt && (
+                        <span className="block" title={new Date(u.removedAt).toLocaleString()}>
+                          {relativeTime(u.removedAt, now)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      {erased ? (
+                        <>
+                          <span className="text-zinc-400">
+                            erased {relativeTime(u.erasedAt, now)}
+                            {u.erasure?.requestedBy ? ` by ${u.erasure.requestedBy}` : ''}
+                          </span>
+                          {u.pendingErasures.length > 0 ? (
+                            <span className="mt-0.5 flex items-start gap-1 text-amber-400">
+                              <Eraser size={11} className="mt-0.5 shrink-0" />
+                              <span>
+                                waiting for {u.pendingErasures.join(', ')} to acknowledge it
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="block text-zinc-600">
+                              acknowledged by every plugin
+                            </span>
+                          )}
+                        </>
+                      ) : cleanupPending ? (
+                        <span
+                          className="flex items-start gap-1 text-yellow-400"
+                          title="Until it is done, nothing — no user, grant or group membership — is given to this username again"
+                        >
+                          <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                          <span>
+                            Gatekeeper cleanup pending — retried every minute; the username cannot
+                            be reused until it is done
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-zinc-500">tombstone</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {!erased && (
+                        <button
+                          type="button"
+                          onClick={() => setEraseTarget(u)}
+                          className="inline-flex items-center gap-1 rounded p-1.5 text-xs text-zinc-500 hover:bg-zinc-700 hover:text-red-400"
+                          title="Erase what Lamaste keeps of this user"
+                        >
+                          <Eraser size={14} />
+                          Erase
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {eraseTarget && (
+        <EraseUserDialog
+          user={eraseTarget}
+          onConfirm={() => eraseMutation.mutate(eraseTarget.userId)}
+          onCancel={() => setEraseTarget(null)}
+          isPending={eraseMutation.isPending}
+        />
+      )}
+    </div>
   );
 }
 
@@ -521,6 +898,7 @@ export default function Users() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editUser, setEditUser] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [disableTarget, setDisableTarget] = useState(null);
   const [totpUri, setTotpUri] = useState(null);
   const [confirmTotpReset, setConfirmTotpReset] = useState(null);
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -530,18 +908,52 @@ export default function Users() {
   const usersQuery = useQuery({
     queryKey: ['users'],
     queryFn: () => client.getUsers(),
+    // A new user's directory id appears within a minute.
+    refetchInterval: 30000,
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (username) => client.deleteUser(username),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast('User deleted successfully');
+    mutationFn: ({ username, erase }) => client.deleteUser(username, { erase }),
+    onSuccess: (data, { username, erase }) => {
+      invalidateUsers(queryClient);
+      if (erase) queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      toast(
+        erase && data.erased
+          ? `User '${username}' deleted and erased`
+          : `User '${username}' deleted — the directory keeps a tombstone`,
+      );
+      if (!data.principalCleared) {
+        toast(
+          `Gatekeeper has not dropped the grants and groups of '${username}' yet — retried every minute; the username cannot be reused until then`,
+          'error',
+        );
+      }
+      toastWarnings(toast, data);
       setDeleteTarget(null);
     },
     onError: (err) => {
       toast(errorMessage(err), 'error');
       setDeleteTarget(null);
+    },
+  });
+
+  // Disable (`disabled: true`) or enable a user.
+  const statusMutation = useMutation({
+    mutationFn: ({ username, disabled }) =>
+      disabled ? client.disableUser(username) : client.enableUser(username),
+    onSuccess: (data, { username, disabled }) => {
+      invalidateUsers(queryClient);
+      toast(
+        disabled
+          ? `User '${username}' disabled — signed out of the desktop, refused by every plugin`
+          : `User '${username}' enabled`,
+      );
+      toastWarnings(toast, data);
+      setDisableTarget(null);
+    },
+    onError: (err) => {
+      toast(errorMessage(err), 'error');
+      setDisableTarget(null);
     },
   });
 
@@ -610,7 +1022,8 @@ export default function Users() {
         <div>
           <h1 className="text-xl font-bold text-white">Users</h1>
           <p className="text-zinc-500 text-sm mt-1">
-            Manage Authelia users and two-factor authentication.
+            Manage Authelia users, two-factor authentication, and what the user directory keeps of
+            them.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -661,62 +1074,110 @@ export default function Users() {
                 <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400 hidden md:table-cell">
                   Groups
                 </th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400">Status</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400 hidden lg:table-cell">
+                  User ID
+                </th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400 text-right">
                   Actions
                 </th>
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
-                <tr key={u.username} className="border-b border-zinc-700 last:border-b-0">
-                  <td className="px-4 py-3 font-mono text-sm text-cyan-400">{u.username}</td>
-                  <td className="px-4 py-3 text-sm text-zinc-300">{u.displayname}</td>
-                  <td className="px-4 py-3 text-sm text-zinc-400 hidden sm:table-cell">
-                    {u.email}
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell">
-                    <div className="flex flex-wrap gap-1">
-                      {(u.groups || []).map((g) => (
-                        <span
-                          key={g}
-                          className="rounded bg-zinc-700 px-2 py-0.5 text-xs text-zinc-300"
+              {users.map((u) => {
+                const disabled = u.status === 'disabled';
+                const lastAdmin = isLastEnabledAdmin(u, users);
+                return (
+                  <tr key={u.username} className="border-b border-zinc-700 last:border-b-0">
+                    <td
+                      className={`px-4 py-3 font-mono text-sm ${disabled ? 'text-zinc-500' : 'text-cyan-400'}`}
+                    >
+                      {u.username}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-zinc-300">{u.displayname}</td>
+                    <td className="px-4 py-3 text-sm text-zinc-400 hidden sm:table-cell">
+                      {u.email}
+                    </td>
+                    <td className="px-4 py-3 hidden md:table-cell">
+                      <div className="flex flex-wrap gap-1">
+                        {(u.groups || []).map((g) => (
+                          <span
+                            key={g}
+                            className="rounded bg-zinc-700 px-2 py-0.5 text-xs text-zinc-300"
+                          >
+                            {g}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge status={u.status} />
+                    </td>
+                    <td className="px-4 py-3 hidden lg:table-cell">
+                      <CopyableId
+                        id={u.userId}
+                        missing="Not in the user directory yet — it adopts new users within a minute"
+                      />
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setEditUser(u)}
+                          className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
+                          title="Edit user"
                         >
-                          {g}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setEditUser(u)}
-                        className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
-                        title="Edit user"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleTotpResetRequest(u.username)}
-                        className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
-                        title="Reset TOTP"
-                      >
-                        <KeyRound size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => !isLastUser && setDeleteTarget(u.username)}
-                        disabled={isLastUser}
-                        className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30"
-                        title={isLastUser ? 'Cannot delete the last user' : 'Delete user'}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleTotpResetRequest(u.username)}
+                          className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
+                          title="Reset TOTP"
+                        >
+                          <KeyRound size={14} />
+                        </button>
+                        {disabled ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              statusMutation.mutate({ username: u.username, disabled: false })
+                            }
+                            disabled={statusMutation.isPending}
+                            className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-green-400 disabled:opacity-30"
+                            title="Enable user"
+                          >
+                            <UserCheck size={14} />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => !lastAdmin && setDisableTarget(u.username)}
+                            disabled={lastAdmin}
+                            className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-yellow-400 disabled:cursor-not-allowed disabled:opacity-30"
+                            title={
+                              lastAdmin
+                                ? 'Cannot disable the last enabled administrator'
+                                : 'Disable user'
+                            }
+                          >
+                            <UserX size={14} />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => !isLastUser && setDeleteTarget(u)}
+                          disabled={isLastUser}
+                          className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30"
+                          title={isLastUser ? 'Cannot delete the last user' : 'Delete user'}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -842,14 +1303,24 @@ export default function Users() {
 
       {/* Delete Confirmation */}
       {deleteTarget && (
-        <ConfirmDialog
-          title="Delete User"
-          message={`Are you sure you want to delete user '${deleteTarget}'? This action cannot be undone.`}
-          confirmLabel="Delete"
-          destructive
-          onConfirm={() => deleteMutation.mutate(deleteTarget)}
+        <DeleteUserDialog
+          user={deleteTarget}
+          onConfirm={(erase) => deleteMutation.mutate({ username: deleteTarget.username, erase })}
           onCancel={() => setDeleteTarget(null)}
           isPending={deleteMutation.isPending}
+        />
+      )}
+
+      {/* Disable Confirmation */}
+      {disableTarget && (
+        <ConfirmDialog
+          title="Disable User"
+          message={`Disable '${disableTarget}'? They can no longer sign in; their desktop sessions and registry tokens end; every plugin's audience shows them disabled and plugins' user surfaces refuse them at once. Nothing is deleted — enable them again at any time.`}
+          confirmLabel="Disable"
+          destructive
+          onConfirm={() => statusMutation.mutate({ username: disableTarget, disabled: true })}
+          onCancel={() => setDisableTarget(null)}
+          isPending={statusMutation.isPending}
         />
       )}
 
@@ -867,6 +1338,9 @@ export default function Users() {
 
       {/* TOTP Enrollment QR Code */}
       {totpUri && <TotpModal totpUri={totpUri} onClose={closeTotpModal} />}
+
+      {/* The directory's tombstones: erase, pending erasures, Gatekeeper cleanup */}
+      <DeletedUsersSection />
 
       {/* Identity & Groups Section */}
       <IdentitySection />

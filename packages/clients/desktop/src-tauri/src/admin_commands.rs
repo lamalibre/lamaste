@@ -226,13 +226,54 @@ pub async fn admin_update_user(username: String, data: serde_json::Value) -> Res
     .await.map_err(|e| format!("Task failed: {}", e))?
 }
 
+/// `/api/users/<username>`, for a name the panel could have given a user
+/// (a lowercase letter or digit, then lowercase letters, digits, `_` and
+/// `-`; 2–32 characters).
+fn user_path(username: &str) -> Result<String, serde_json::Value> {
+    let valid = (2..=32).contains(&username.len())
+        && username.bytes().enumerate().all(|(i, b)| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || (i > 0 && (b == b'_' || b == b'-'))
+        });
+    if !valid {
+        return Err(refusal(format!("\"{}\" is not a username", username)));
+    }
+    Ok(format!("/api/users/{}", url_encode(username)))
+}
+
+/// Disable (`true`) or enable a user: Authelia's `disabled` flag, and with
+/// it every plugin audience and the user surface. Rejects with the panel's
+/// refusal (`code` `last_admin` for the last enabled administrator).
+async fn set_user_disabled(username: &str, disabled: bool) -> Result<serde_json::Value, serde_json::Value> {
+    let path = user_path(username)?;
+    let body = serde_json::json!({ "disabled": disabled }).to_string();
+    admin_refusable_task("PUT", path, Some(body)).await
+}
+
 #[tauri::command]
-pub async fn admin_delete_user(username: String) -> Result<serde_json::Value, String> {
-    tokio::task::spawn_blocking(move || {
-        let path = format!("/api/users/{}", url_encode(&username));
-        admin_delete(&path, None)
-    })
-    .await.map_err(|e| format!("Task failed: {}", e))?
+pub async fn admin_disable_user(username: String) -> Result<serde_json::Value, serde_json::Value> {
+    set_user_disabled(&username, true).await
+}
+
+#[tauri::command]
+pub async fn admin_enable_user(username: String) -> Result<serde_json::Value, serde_json::Value> {
+    set_user_disabled(&username, false).await
+}
+
+/// `/api/users/<username>[?erase=true]`.
+fn delete_user_path(username: &str, erase: bool) -> Result<String, serde_json::Value> {
+    let path = user_path(username)?;
+    Ok(if erase { format!("{}?erase=true", path) } else { path })
+}
+
+/// Delete a user: the directory keeps a tombstone, and `erase` scrubs it at
+/// once. Answered with `{ ok, userId, principalCleared, erased?, warnings? }`.
+#[tauri::command]
+pub async fn admin_delete_user(
+    username: String,
+    erase: Option<bool>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = delete_user_path(&username, erase.unwrap_or(false))?;
+    admin_refusable_task("DELETE", path, None).await
 }
 
 #[tauri::command]
@@ -242,6 +283,43 @@ pub async fn admin_reset_totp(username: String) -> Result<serde_json::Value, Str
         admin_post(&path, None)
     })
     .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+// ===========================================================================
+// User directory (every user it knows, removed and erased ones too)
+// ===========================================================================
+
+/// Whether `id` is a UUID in its canonical form: 36 characters, hyphens at
+/// 8, 13, 18 and 23, lowercase hexadecimal digits elsewhere — what the panel
+/// gives directory users and tunnels.
+fn is_canonical_uuid(id: &str) -> bool {
+    id.len() == 36
+        && id.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_digit() || (b'a'..=b'f').contains(&b),
+        })
+}
+
+/// `/api/identity/directory/<userId>/erase`, for a directory user id.
+fn erase_user_path(user_id: &str) -> Result<String, serde_json::Value> {
+    if !is_canonical_uuid(user_id) {
+        return Err(refusal(format!("\"{}\" is not a directory user id", user_id)));
+    }
+    Ok(format!("/api/identity/directory/{}/erase", user_id))
+}
+
+#[tauri::command]
+pub async fn admin_get_user_directory() -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(|| admin_get("/api/identity/directory"))
+        .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+/// Erase a removed user by their directory id. Rejects with the panel's
+/// refusal (`code` `user_not_removed`, `already_erased`,
+/// `gatekeeper_unavailable`, `user_not_found`).
+#[tauri::command]
+pub async fn admin_erase_directory_user(user_id: String) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("POST", erase_user_path(&user_id)?, None).await
 }
 
 // ===========================================================================
@@ -911,10 +989,26 @@ fn admin_refusable(
     })
 }
 
+/// `admin_refusable` on a blocking thread, for the commands that await it.
+async fn admin_refusable_task(
+    method: &'static str,
+    path: String,
+    body: Option<String>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    tokio::task::spawn_blocking(move || admin_refusable(method, &path, body.as_deref()))
+        .await
+        .map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
+/// `/api/plugins/<name>/<rest>`, for a name the panel could have given a plugin.
+fn plugin_api_path(name: &str, rest: &str) -> Result<String, serde_json::Value> {
+    crate::local_plugins::validate_plugin_name(name).map_err(refusal)?;
+    Ok(format!("/api/plugins/{}/{}", url_encode(name), rest))
+}
+
 /// `/api/plugins/<name>/settings`, for a name the panel could have given a plugin.
 fn plugin_settings_path(name: &str) -> Result<String, serde_json::Value> {
-    crate::local_plugins::validate_plugin_name(name).map_err(refusal)?;
-    Ok(format!("/api/plugins/{}/settings", url_encode(name)))
+    plugin_api_path(name, "settings")
 }
 
 /// The settings of a plugin whose manifest declares them: the fields, each
@@ -922,10 +1016,7 @@ fn plugin_settings_path(name: &str) -> Result<String, serde_json::Value> {
 /// and the hosting. Rejects with the panel's refusal (`code` `no_settings`).
 #[tauri::command]
 pub async fn admin_get_plugin_settings(name: String) -> Result<serde_json::Value, serde_json::Value> {
-    let path = plugin_settings_path(&name)?;
-    tokio::task::spawn_blocking(move || admin_refusable("GET", &path, None))
-        .await
-        .map_err(|e| refusal(format!("Task failed: {}", e)))?
+    admin_refusable_task("GET", plugin_settings_path(&name)?, None).await
 }
 
 /// A partial change `{ revision, values?, secrets? }`, answered with the new
@@ -951,6 +1042,91 @@ pub async fn admin_update_plugin_settings(
     })
     .await
     .map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
+// --- People of an agent-hosted plugin that declares identity ---
+
+/// A read of the plugin's people (`identity`, `audience`, `entitlements`).
+/// Rejects with the panel's refusal (`code` `no_identity` for a plugin that
+/// declares none, `gatekeeper_unavailable`).
+async fn plugin_people_get(name: String, rest: &'static str) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("GET", plugin_api_path(&name, rest)?, None).await
+}
+
+/// The identity block the plugin declares, its approval and readiness, the
+/// feed's state, its audience in numbers and the erasures pending.
+#[tauri::command]
+pub async fn admin_get_plugin_identity(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    plugin_people_get(name, "identity").await
+}
+
+/// The plugin's audience — members and tombstones, in seq order.
+#[tauri::command]
+pub async fn admin_get_plugin_audience(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    plugin_people_get(name, "audience").await
+}
+
+/// The role grants on the plugin, and how many of its grants carry no roles.
+#[tauri::command]
+pub async fn admin_get_plugin_entitlements(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    plugin_people_get(name, "entitlements").await
+}
+
+/// Give a user or a Lamaste group exactly these roles on the plugin:
+/// `{ principalType, principalId, roles }`. Rejects with the panel's refusal
+/// (`code` `unknown_roles`, `user_not_found`, `group_not_found`,
+/// `gatekeeper_unavailable`).
+#[tauri::command]
+pub async fn admin_set_plugin_entitlement(
+    name: String,
+    data: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = plugin_api_path(&name, "entitlements")?;
+    if !data.is_object() {
+        return Err(refusal(
+            "An entitlement is a JSON object: { principalType, principalId, roles }".to_string(),
+        ));
+    }
+    admin_refusable_task("PUT", path, Some(data.to_string())).await
+}
+
+/// `/api/plugins/<name>/entitlements?principalType=…&principalId=…`.
+fn entitlement_path(
+    name: &str,
+    principal_type: &str,
+    principal_id: &str,
+) -> Result<String, serde_json::Value> {
+    Ok(format!(
+        "{}?principalType={}&principalId={}",
+        plugin_api_path(name, "entitlements")?,
+        url_encode(principal_type),
+        url_encode(principal_id)
+    ))
+}
+
+/// Revoke every role grant the principal holds on the plugin (`code`
+/// `entitlement_not_found` when there is none).
+#[tauri::command]
+pub async fn admin_remove_plugin_entitlement(
+    name: String,
+    principal_type: String,
+    principal_id: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = entitlement_path(&name, &principal_type, &principal_id)?;
+    admin_refusable_task("DELETE", path, None).await
+}
+
+/// Sync the plugin's audience to its agent half now; `reconcile` replays
+/// everything and counts what was out of step. Answered with
+/// `{ ok, result, sync }` — `ok` false when the sync was skipped or failed.
+#[tauri::command]
+pub async fn admin_sync_plugin_identity(
+    name: String,
+    reconcile: Option<bool>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = plugin_api_path(&name, "identity/sync")?;
+    let body = serde_json::json!({ "reconcile": reconcile.unwrap_or(false) }).to_string();
+    admin_refusable_task("POST", path, Some(body)).await
 }
 
 // --- Audit log and panel notifications ---
@@ -1227,6 +1403,56 @@ pub async fn admin_delete_tunnel(id: String) -> Result<serde_json::Value, String
 pub async fn admin_get_tunnel_agent_config() -> Result<serde_json::Value, String> {
     tokio::task::spawn_blocking(|| admin_get("/api/tunnels/agent-config"))
         .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+/// `route`, when it is a plugin route as the panel binds a user surface for
+/// one: lowercase letters, digits and inner hyphens, at most 64 characters.
+fn plugin_route(route: &str) -> Result<&str, serde_json::Value> {
+    let bytes = route.as_bytes();
+    let valid = !bytes.is_empty()
+        && bytes.len() <= 64
+        && bytes.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+        && bytes.first() != Some(&b'-')
+        && bytes.last() != Some(&b'-');
+    if !valid {
+        return Err(refusal(format!("\"{}\" is not a plugin route", route)));
+    }
+    Ok(route)
+}
+
+/// `/api/tunnels/<id>/user-surface`, followed by `/<route>` when one is given.
+fn user_surface_path(id: &str, route: Option<&str>) -> Result<String, serde_json::Value> {
+    if !is_canonical_uuid(id) {
+        return Err(refusal(format!("\"{}\" is not a tunnel id", id)));
+    }
+    let path = format!("/api/tunnels/{}/user-surface", id);
+    match route {
+        None => Ok(path),
+        Some(route) => Ok(format!("{}/{}", path, plugin_route(route)?)),
+    }
+}
+
+/// Serve plugin `route`'s user surface on the tunnel's host. Answered with
+/// `{ ok, changed, tunnel }` (the tunnel with its `userSurfaceStatus`);
+/// rejects with the panel's refusal (`code` `user_surface_conflict` when
+/// another host serves the route).
+#[tauri::command]
+pub async fn admin_bind_tunnel_user_surface(
+    id: String,
+    route: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = user_surface_path(&id, None)?;
+    let body = serde_json::json!({ "route": plugin_route(&route)? }).to_string();
+    admin_refusable_task("PUT", path, Some(body)).await
+}
+
+/// Stop serving plugin `route`'s user surface on the tunnel's host.
+#[tauri::command]
+pub async fn admin_unbind_tunnel_user_surface(
+    id: String,
+    route: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("DELETE", user_surface_path(&id, Some(&route))?, None).await
 }
 
 // ===========================================================================
@@ -1602,5 +1828,67 @@ mod tests {
             let err = plugin_settings_path(bad).unwrap_err();
             assert!(err["error"].is_string(), "{}", bad);
         }
+    }
+
+    #[test]
+    fn a_user_path_takes_only_a_username() {
+        assert_eq!(user_path("alice_2").unwrap(), "/api/users/alice_2");
+        assert_eq!(user_path("7-up").unwrap(), "/api/users/7-up");
+        for bad in ["", "a", "-alice", "_alice", "Alice", "al/ice", "..", "a.b", &"a".repeat(33)] {
+            assert!(user_path(bad).unwrap_err()["error"].is_string(), "{}", bad);
+        }
+        assert_eq!(delete_user_path("alice", false).unwrap(), "/api/users/alice");
+        assert_eq!(delete_user_path("alice", true).unwrap(), "/api/users/alice?erase=true");
+    }
+
+    #[test]
+    fn an_erasure_names_a_directory_user_id() {
+        let id = "0f6c2a2e-6c1d-4c58-9d0e-3f1b2a4c5d6e";
+        assert_eq!(
+            erase_user_path(id).unwrap(),
+            format!("/api/identity/directory/{}/erase", id)
+        );
+        for bad in [
+            "",
+            "..",
+            "0F6C2A2E-6C1D-4C58-9D0E-3F1B2A4C5D6E",
+            "0f6c2a2e6c1d4c589d0e3f1b2a4c5d6e",
+            "0f6c2a2e-6c1d-4c58-9d0e-3f1b2a4c5d6e/..",
+            "0f6c2a2e-6c1d-4c58-9d0e-3f1b2a4c5d6g",
+        ] {
+            assert!(erase_user_path(bad).unwrap_err()["error"].is_string(), "{}", bad);
+        }
+    }
+
+    #[test]
+    fn an_entitlement_is_removed_by_its_principal_in_the_query() {
+        assert_eq!(
+            entitlement_path("fx", "user", "alice").unwrap(),
+            "/api/plugins/fx/entitlements?principalType=user&principalId=alice"
+        );
+        // Whatever the principal says stays inside its query value.
+        assert_eq!(
+            entitlement_path("fx", "group", "a&b=c/..").unwrap(),
+            "/api/plugins/fx/entitlements?principalType=group&principalId=a%26b%3Dc%2F.."
+        );
+        assert!(entitlement_path("../fx", "user", "alice").is_err());
+    }
+
+    #[test]
+    fn a_user_surface_path_takes_a_tunnel_id_and_a_plugin_route() {
+        let id = "8d3f1c2b-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
+        assert_eq!(
+            user_surface_path(id, None).unwrap(),
+            format!("/api/tunnels/{}/user-surface", id)
+        );
+        assert_eq!(
+            user_surface_path(id, Some("market-indicators")).unwrap(),
+            format!("/api/tunnels/{}/user-surface/market-indicators", id)
+        );
+        for bad in ["", "-fx", "fx-", "Fx", "fx/x", "..", "fx%2F"] {
+            assert!(user_surface_path(id, Some(bad)).is_err(), "{}", bad);
+        }
+        assert!(user_surface_path("not-a-uuid", None).is_err());
+        assert!(user_surface_path("../tunnels", Some("fx")).is_err());
     }
 }
