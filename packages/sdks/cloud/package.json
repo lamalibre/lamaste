@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste-cloud",
-  "version": "4.4.1",
+  "version": "4.5.0",
   "description": "Cloud provider abstraction for Lamaste server and storage provisioning",
   "type": "module",
   "exports": {
@@ -24,7 +24,7 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@lamalibre/lamaste": "^4.4.1",
+    "@lamalibre/lamaste": "^4.5.0",
     "undici": "^7.8.0"
   },
   "devDependencies": {

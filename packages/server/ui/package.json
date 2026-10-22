@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste-server-ui",
-  "version": "4.4.1",
+  "version": "4.5.0",
   "description": "Lamaste server management panel frontend",
   "private": true,
   "type": "module",

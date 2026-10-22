@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The coming 4.5.0: users of agent-hosted plugins (slice 6) — a user directory with stable user ids, plugin roles and audiences, the identity feed into agent halves, and the user surface through which users reach an agent half with a signed identity.
+## [4.5.0] - 2026-10-22
+
+All lockstep packages, the desktop crate and its Tauri config move to 4.5.0; internal `@lamalibre/*` ranges become `^4.5.0`. Users of agent-hosted plugins (slice 6) — a user directory with stable user ids, plugin roles and audiences, the identity feed into agent halves, and the user surface through which users reach an agent half with a signed identity.
 
 ### Upgrade notes
 
@@ -15,7 +17,7 @@ The coming 4.5.0: users of agent-hosted plugins (slice 6) — a user directory w
 
 1. On its first start the panel applies `state.db` migration `0013` (the user directory, plugin audiences, the identity feed's state, erasures, `plugins.identity`), then reads `users.yml` — never writing it — and gives every user a `userId`. From now on `state.db` holds the only mapping from usernames to user ids: keep it in every backup (losing it re-keys every user; [Backup and Restore](packages/core/docs/05-operations/backup-and-restore.md)).
 2. **The redeploy now touches the IP panel vhost.** It refreshes `lamalibre-lamaste-panel-ip`, which the installer writes and the panel cannot, when its text differs (`nginx -t`, put back on failure, its `sites-enabled` link left alone) — new step `Refreshing the IP panel vhost`. The panel rewrites the domain panel, auth portal and tunnel vhosts at start, as before.
-3. Agent halves built on `@lamalibre/lamaste` 4.4 keep working and never receive a user caller: the panel sends one only after a half has answered the identity feed with protocol 1 for its installed version. A plugin gets users by shipping a version that declares `identity`, with a half built on 4.5 — an update that waits for approval — and by binding its user surface to a tunnel.
+3. Agent halves built on `@lamalibre/lamaste` 4.4 keep working and never receive a user caller: the panel sends one only to a plugin whose installed, approved version declares `identity` and whose half has completed a sync of the identity feed up to its head for that version. A plugin gets users by shipping a version that declares `identity`, with a half built on 4.5 — an update that waits for approval — and by binding its user surface to a tunnel.
 4. A registry credential must carry the `read` scope as well as `admin` (see Fixed): check Feria's `workloads` rule for `lamaste-server` before you next set the credential.
 5. **The redeploy first installs an nginx map** — `/etc/nginx/conf.d/lamalibre-lamaste-backend-cookie.conf`, which keeps Authelia's session cookie from every tunnel and agent backend (see Security) — new first step `Keeping Authelia's session cookie from tunnel backends`, before the running panel is stopped: a relay whose `nginx -t` refuses it keeps the version it runs. The panel then rewrites every tunnel and agent-panel vhost at start. An application behind a tunnel no longer receives the `authelia_session` cookie; its own cookies still reach it.
 6. **Desktop users sign in again once.** Their user-access sessions are now bound to the directory's `userId`; sessions issued before 4.5 carry none and are refused. `panel.json`'s `userEpochs` were keyed by username: the panel drops those keys at start (they guarded only such sessions) and keys new ones by `userId`.
