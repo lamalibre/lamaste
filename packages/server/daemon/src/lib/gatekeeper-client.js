@@ -310,6 +310,18 @@ export async function removeUserPrincipal(username) {
 }
 
 /**
+ * Drop Gatekeeper's cached session verdicts. Authelia ends every session
+ * when users.yml changes; without this a cached verdict would keep a
+ * disabled or deleted user in for up to the cache lifetime (30 s).
+ *
+ * @returns {Promise<{ ok: true } | Extract<GatekeeperResult, { ok: false }>>}
+ */
+export async function bustGatekeeperSessions() {
+  const result = await gatekeeperRequest('POST', '/api/cache/bust');
+  return result.ok ? { ok: true } : result;
+}
+
+/**
  * Delete the access-request log rows of `username` (logged before
  * `before`, an ISO 8601 time, when given) — part of erasing a removed user.
  *

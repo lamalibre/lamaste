@@ -25,6 +25,12 @@ import { checkProxiedGrant } from '../../lib/entitlements.js';
 import { actorFromRequest } from '../../lib/actor.js';
 import { gatekeeperRequest } from '../../lib/gatekeeper-client.js';
 
+/** Gatekeeper's `path`, with the request's query string when it has one. */
+function withQuery(path, request) {
+  const qs = new URLSearchParams(request.query).toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
 export default async function gatekeeperProxyRoutes(fastify, _opts) {
   // All gatekeeper management routes are admin-only
   fastify.addHook('preHandler', fastify.requireRole(['admin']));
@@ -142,9 +148,7 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
   // --- Grants ---
 
   fastify.get('/gatekeeper/grants', async (request, reply) => {
-    const qs = new URLSearchParams(request.query).toString();
-    const grantPath = qs ? `/api/grants?${qs}` : '/api/grants';
-    const { statusCode, data } = await proxy('GET', grantPath);
+    const { statusCode, data } = await proxy('GET', withQuery('/api/grants', request));
     return reply.code(statusCode).send(data);
   });
 
@@ -189,9 +193,11 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
   // Bulk-revoke every grant for a principal. Forwarded to gatekeeper as
   // DELETE /api/grants?principalType=...&principalId=...
   fastify.delete('/gatekeeper/grants', async (request, reply) => {
-    const qs = new URLSearchParams(request.query).toString();
-    const grantPath = qs ? `/api/grants?${qs}` : '/api/grants';
-    const { statusCode, data } = await proxyChange(request, 'DELETE', grantPath);
+    const { statusCode, data } = await proxyChange(
+      request,
+      'DELETE',
+      withQuery('/api/grants', request),
+    );
     return reply.code(statusCode).send(data);
   });
 
@@ -219,14 +225,14 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
   });
 
   fastify.get('/gatekeeper/access-log', async (request, reply) => {
-    const qs = new URLSearchParams(request.query).toString();
-    const logPath = qs ? `/api/access-log?${qs}` : '/api/access-log';
-    const { statusCode, data } = await proxy('GET', logPath);
+    const { statusCode, data } = await proxy('GET', withQuery('/api/access-log', request));
     return reply.code(statusCode).send(data);
   });
 
-  fastify.delete('/gatekeeper/access-log', async (_request, reply) => {
-    const { statusCode, data } = await proxy('DELETE', '/api/access-log');
+  // The query narrows the purge (`username`, `before`): dropping it would
+  // clear the whole log instead.
+  fastify.delete('/gatekeeper/access-log', async (request, reply) => {
+    const { statusCode, data } = await proxy('DELETE', withQuery('/api/access-log', request));
     return reply.code(statusCode).send(data);
   });
 }

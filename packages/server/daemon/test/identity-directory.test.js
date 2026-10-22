@@ -366,8 +366,14 @@ test('users API: ids and status; disable and enable; the last enabled administra
   assert.equal(ayse.disabled, false);
 
   const restartsBefore = restarts;
+  const bustsBefore = gatekeeper.state.sessionBusts;
   const disabled = await call('PUT', '/api/users/ayse', { disabled: true });
   assert.equal(disabled.statusCode, 200, disabled.body);
+  assert.equal(
+    gatekeeper.state.sessionBusts,
+    bustsBefore + 1,
+    'Gatekeeper dropped its cached sessions with Authelia’s',
+  );
   assert.equal(disabled.json().user.disabled, true);
   assert.equal(disabled.json().user.status, 'disabled');
   assert.equal(disabled.json().user.userId, ayse.userId);

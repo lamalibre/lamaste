@@ -20,7 +20,7 @@ function createFakeGatekeeper({ maxGrants = 1000 } = {}) {
   const calls = [];
   /** Access-request log rows: { username, timestamp }. */
   const accessLog = [];
-  const state = { unreachable: false, maxGrants };
+  const state = { unreachable: false, maxGrants, sessionBusts: 0 };
 
   const ok = (statusCode, data) => ({ ok: true, statusCode, data });
   const refuse = (statusCode, error) => ({ ok: false, statusCode, error, reason: 'http-error' });
@@ -153,6 +153,11 @@ function createFakeGatekeeper({ maxGrants = 1000 } = {}) {
       return ok(200, { ok: true, grantsRemoved, groupsLeft });
     }
 
+    if (parts[1] === 'cache' && parts[2] === 'bust' && method === 'POST') {
+      state.sessionBusts += 1;
+      return ok(200, { ok: true });
+    }
+
     if (parts[1] === 'access-log' && method === 'DELETE') {
       let removed = 0;
       for (let i = accessLog.length - 1; i >= 0; i -= 1) {
@@ -199,6 +204,7 @@ function createFakeGatekeeper({ maxGrants = 1000 } = {}) {
       accessLog.length = 0;
       state.unreachable = false;
       state.maxGrants = maxGrants;
+      state.sessionBusts = 0;
     },
   };
 }

@@ -43,7 +43,11 @@ import { PromiseChainMutex } from '@lamalibre/lamaste';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
 import { readUsersRaw, reloadAuthelia } from './authelia.js';
-import { purgeAccessLogForUser, removeUserPrincipal } from './gatekeeper-client.js';
+import {
+  bustGatekeeperSessions,
+  purgeAccessLogForUser,
+  removeUserPrincipal,
+} from './gatekeeper-client.js';
 import { getStateDb } from './state-db.js';
 import { readInvitations, withInvitationsLock, writeInvitations } from './state.js';
 
@@ -532,7 +536,9 @@ export function reconcileDirectory({ actor = 'lamaste', logger, confirmDelayMs }
  * `deleted`, and known to the directory before the write so they leave a
  * tombstone), then clear the deleted users' Gatekeeper principals, then
  * restart Authelia (unless `restartAuthelia` is false: onboarding starts it
- * next), all still under the lock; then recompute the plugins' audiences.
+ * next) — which ends every session — and drop Gatekeeper's cached session
+ * verdicts with them, all still under the lock; then recompute the plugins'
+ * audiences.
  * `creates` names the usernames `mutate` creates: a removed user's pending
  * Gatekeeper cleanup under one of them runs first, and when it cannot
  * complete the change is refused (503 `gatekeeper_unavailable`) — a new
@@ -592,6 +598,14 @@ export async function changeUsers(
       } catch (err) {
         logger?.warn({ err: err.message }, 'Failed to restart Authelia after a users change');
         warnings.push({ step: 'authelia', message: `Authelia was not restarted: ${err.message}` });
+      }
+      const busted = await bustGatekeeperSessions();
+      if (!busted.ok) {
+        logger?.warn({ err: busted.error }, 'Gatekeeper did not drop its cached sessions');
+        warnings.push({
+          step: 'gatekeeper',
+          message: `Gatekeeper did not drop its cached sessions (${busted.error}); they expire within 30 seconds`,
+        });
       }
     }
     return { result: value, directory: reconciled };

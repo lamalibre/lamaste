@@ -579,6 +579,20 @@ test('the Gatekeeper proxy: plugin roles checked and sorted; grant and group cha
   const revoked = await call('DELETE', `/api/gatekeeper/grants/${grant.grantId}`);
   assert.equal(revoked.statusCode, 200);
   assert.equal((await rows('mx'))[ayse].change.reason, 'unentitled');
+
+  // A narrowed access-log purge reaches Gatekeeper with its query — without
+  // it the whole log would go.
+  gatekeeper.accessLog.push(
+    { username: 'ayse', timestamp: '2026-10-01T00:00:00.000Z' },
+    { username: 'ali', timestamp: '2026-10-01T00:00:00.000Z' },
+  );
+  const purged = await call('DELETE', '/api/gatekeeper/access-log?username=ayse');
+  assert.equal(purged.statusCode, 200, purged.body);
+  assert.deepEqual(purged.json(), { ok: true, removed: 1 });
+  assert.deepEqual(
+    gatekeeper.accessLog.map((row) => row.username),
+    ['ali'],
+  );
 });
 
 test('the audience and identity views', async () => {
