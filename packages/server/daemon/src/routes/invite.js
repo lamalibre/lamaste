@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { readInvitations, writeInvitations } from '../lib/state.js';
+import { readInvitations, withInvitationsLock, writeInvitations } from '../lib/state.js';
 import {
   createUserFromInvitation,
   hashPassword,
@@ -9,6 +9,8 @@ import {
   writeTotpToDatabase,
 } from '../lib/authelia.js';
 import { getConfig } from '../lib/config.js';
+import { httpError } from '../lib/app-error.js';
+import { changeUsers, usersFileError } from '../lib/directory.js';
 
 /**
  * Find an invitation by token using a constant-time comparison.
@@ -117,15 +119,39 @@ export default async function inviteRoutes(fastify, _opts) {
       return reply.code(500).send({ error: 'Failed to process password' });
     }
 
+    // Through the users lock: the directory gives the user their id before
+    // Authelia restarts and lets them sign in.
     try {
-      await createUserFromInvitation(
-        invitation.username,
-        invitation.email,
-        invitation.groups,
-        hashedPassword,
+      await changeUsers(
+        async () => {
+          // An unreadable users file is refused, never written over.
+          let current = { users: {} };
+          try {
+            current = await readUsersRaw();
+          } catch (err) {
+            if (err.code !== 'ENOENT') {
+              throw httpError('Failed to read user database', 500, { cause: usersFileError(err) });
+            }
+          }
+          if (current.users[invitation.username]) {
+            throw httpError('This username already exists', 409);
+          }
+          await createUserFromInvitation(
+            invitation.username,
+            invitation.email,
+            invitation.groups,
+            hashedPassword,
+          );
+        },
+        // A removed user's grants and groups under the username go first.
+        { actor: 'invitation', logger: request.log, creates: [invitation.username] },
       );
     } catch (err) {
-      request.log.error(err, 'Failed to create user from invitation');
+      if (err.statusCode === 409) return reply.code(409).send({ error: err.message });
+      if (err.statusCode === 503) {
+        return reply.code(503).send({ error: err.message, code: err.code });
+      }
+      request.log.error(err.cause ?? err, 'Failed to create user from invitation');
       return reply.code(500).send({ error: 'Failed to create user account' });
     }
 
@@ -140,12 +166,17 @@ export default async function inviteRoutes(fastify, _opts) {
       // Non-fatal: user was created, they can have admin reset TOTP later
     }
 
-    // Mark invitation as used
-    invitation.used = true;
-    invitation.acceptedAt = new Date().toISOString();
-
+    // Mark invitation as used — on the file as it is now, under its lock.
     try {
-      await writeInvitations(invitations);
+      await withInvitationsLock(async () => {
+        const current = await readInvitations();
+        // The token found it (checked above); it names this invitation alone.
+        const accepted = current.find((inv) => inv.token === invitation.token);
+        if (!accepted) return;
+        accepted.used = true;
+        accepted.acceptedAt = new Date().toISOString();
+        await writeInvitations(current);
+      });
     } catch (err) {
       request.log.warn(err, 'Failed to update invitation status (user was created)');
     }

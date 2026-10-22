@@ -1,5 +1,6 @@
 import { readFile, writeFile, rename, open } from 'node:fs/promises';
 import path from 'node:path';
+import { PromiseChainMutex } from '@lamalibre/lamaste';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
@@ -137,4 +138,21 @@ export async function writeInvitations(invitations) {
   await fd.close();
 
   await rename(tmpPath, filePath);
+}
+
+/** Serializes every read-modify-write of invitations.json in this process. */
+const invitationsMutex = new PromiseChainMutex();
+
+/**
+ * Run `fn` holding the invitations lock: a read of invitations.json, the
+ * decisions made on it and the write that follows must not interleave with
+ * another — creating, revoking, accepting an invitation, and purging a
+ * removed user's.
+ *
+ * @template T
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export function withInvitationsLock(fn) {
+  return invitationsMutex.run(fn);
 }

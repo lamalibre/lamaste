@@ -21,6 +21,24 @@ const DEFAULT_RETENTION_DAYS = 90;
 // retention setting.
 const RETENTION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
+/**
+ * `DELETE /api/access-log?username=<u>[&before=<iso>]`: the rows of one
+ * username, before a time when given. Without `username` the whole log is
+ * cleared, as before.
+ */
+const PurgeQuerySchema = z
+  .object({
+    username: z.string().min(1).max(100).optional(),
+    before: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/, 'before is an ISO 8601 UTC time')
+      .optional(),
+  })
+  .strict()
+  .refine((query) => query.before === undefined || query.username !== undefined, {
+    message: 'before needs a username',
+  });
+
 const UpdateSettingsSchema = z.object({
   adminEmail: z.string().email().max(200).optional(),
   adminName: z.string().max(200).optional(),
@@ -41,6 +59,8 @@ interface LogStmts {
   countAll: StatementSync;
   deleteAll: StatementSync;
   deleteOlderThan: StatementSync;
+  deleteByUsername: StatementSync;
+  deleteByUsernameBefore: StatementSync;
   begin: StatementSync;
   commit: StatementSync;
   rollback: StatementSync;
@@ -63,6 +83,13 @@ async function getStmts(): Promise<LogStmts> {
     countAll: db.prepare('SELECT COUNT(*) AS n FROM access_request_log'),
     deleteAll: db.prepare('DELETE FROM access_request_log'),
     deleteOlderThan: db.prepare('DELETE FROM access_request_log WHERE timestamp < ?'),
+    // Erasing a removed user (the panel): their rows only — those logged
+    // before they were removed, when the panel says when that was (a later
+    // user may have the same username).
+    deleteByUsername: db.prepare('DELETE FROM access_request_log WHERE username = ?'),
+    deleteByUsernameBefore: db.prepare(
+      'DELETE FROM access_request_log WHERE username = ? AND timestamp < ?',
+    ),
     begin: db.prepare('BEGIN IMMEDIATE'),
     commit: db.prepare('COMMIT'),
     rollback: db.prepare('ROLLBACK'),
@@ -277,12 +304,36 @@ export async function diagnosticRoutes(fastify: FastifyInstance): Promise<void> 
     }
   });
 
-  // DELETE /api/access-log — clear access request log
-  fastify.delete('/access-log', async (_request: FastifyRequest, reply: FastifyReply) => {
+  // DELETE /api/access-log — clear the access request log; with
+  // `?username=<u>` (and `&before=<iso>`), only that user's rows — and the
+  // entries still queued for the log, so none of them is written after the
+  // purge. Answers how many rows went (`removed`).
+  fastify.delete('/access-log', async (request: FastifyRequest, reply: FastifyReply) => {
+    const parsed = PurgeQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: 'Invalid query',
+        details: parsed.error.issues.map((i) => i.message),
+      });
+    }
+    const { username, before } = parsed.data;
     try {
       const s = await getStmts();
-      s.deleteAll.run();
-      return { ok: true };
+      if (username === undefined) {
+        logQueue = [];
+        const result = s.deleteAll.run();
+        return { ok: true, removed: Number(result.changes) };
+      }
+      const matches = (e: AccessRequestEntry) =>
+        e.username === username && (before === undefined || e.timestamp < before);
+      const kept = logQueue.filter((e) => !matches(e));
+      const queued = logQueue.length - kept.length;
+      logQueue = kept;
+      const result =
+        before === undefined
+          ? s.deleteByUsername.run(username)
+          : s.deleteByUsernameBefore.run(username, before);
+      return { ok: true, removed: Number(result.changes) + queued };
     } catch (err) {
       return reply.code(500).send({ error: (err as Error).message });
     }

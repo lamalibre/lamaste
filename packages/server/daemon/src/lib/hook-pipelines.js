@@ -83,6 +83,7 @@ import { forgetRetainedData, recordRetainedData } from './retained-data.js';
 import { runRelayHook } from './relay-hooks.js';
 import { recordAuditBestEffort } from './audit.js';
 import { deleteSettingsCache, relayHookSettings } from './plugin-settings.js';
+import { forgetIdentityHalf } from './identity-sync.js';
 import {
   tunnelNginxDeps,
   tunnelCertbotDeps,
@@ -835,6 +836,11 @@ export async function runUninstallPipeline(op, ctx, { force = false } = {}) {
   if (!(await getPluginHosting(STATE_DIR, ctx.route))) {
     await deleteSettingsCache(ctx.plugin.name).catch((err) =>
       op.warn(`Could not drop the cached settings: ${err.message}`),
+    );
+    // So does what the relay knew of the half's identity feed: the next
+    // hosting's half answers protocol 1 before users reach it, and replays.
+    await forgetIdentityHalf(ctx.plugin.name).catch((err) =>
+      op.warn(`Could not forget the agent half's identity feed: ${err.message}`),
     );
   }
   await recordAuditBestEffort(

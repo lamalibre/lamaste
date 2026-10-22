@@ -18,7 +18,12 @@ import type { PrincipalType } from './constants.js';
 
 const grantMutex = new PromiseChainMutex();
 
-function withGrantLock<T>(fn: () => Promise<T>): Promise<T> {
+/**
+ * Run `fn` holding the grants lock. A caller that also holds the groups
+ * lock takes that one first (`withGroupLock`, then this) — the order every
+ * cascade uses.
+ */
+export function withGrantLock<T>(fn: () => Promise<T>): Promise<T> {
   return grantMutex.run(fn);
 }
 

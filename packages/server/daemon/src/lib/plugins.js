@@ -19,6 +19,7 @@ import {
   RESERVED_NAV_LABELS,
   derivePluginRoute,
   hasAgentHalf,
+  normalizeIdentityBlock,
   pluginHostCapability,
   validateManifest as coreValidateManifest,
 } from '@lamalibre/lamaste';
@@ -71,10 +72,14 @@ async function getStmts() {
       INSERT INTO plugins
         (name, route, display_name, package_name, version, description, capabilities,
          packages, panel, config, modes, hosting, agent, hooks, hooks_entry_sha256,
-         agent_half_pin, settings, status, installed_at, enabled_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         agent_half_pin, settings, identity, status, installed_at, enabled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     deleteByName: db.prepare('DELETE FROM plugins WHERE name = ?'),
+    // The plugin's audience and the state of its identity feed
+    // (lib/audience.js, lib/identity-sync.js) go with its row.
+    deleteAudienceByName: db.prepare('DELETE FROM plugin_audience WHERE plugin = ?'),
+    deleteIdentitySyncByName: db.prepare('DELETE FROM plugin_identity_sync WHERE plugin = ?'),
     // The relay's cache of the plugin's settings (lib/plugin-settings.js)
     // goes with its row, and follows its settings schema.
     deleteSettingsByName: db.prepare('DELETE FROM plugin_settings WHERE plugin = ?'),
@@ -137,6 +142,7 @@ function rowToPlugin(row) {
   if (row.hooks_entry_sha256 != null) entry.hooksEntrySha256 = row.hooks_entry_sha256;
   if (row.agent_half_pin != null) entry.agentHalfPin = JSON.parse(row.agent_half_pin);
   if (row.settings != null) entry.settings = JSON.parse(row.settings);
+  if (row.identity != null) entry.identity = JSON.parse(row.identity);
   if (row.enabled_at != null) entry.enabledAt = row.enabled_at;
   return entry;
 }
@@ -147,6 +153,29 @@ function nullableString(value) {
 
 function nullableJson(value) {
   return value === undefined || value === null ? null : JSON.stringify(value);
+}
+
+/**
+ * A manifest's `identity` block as the registry stores it — normalized
+ * (core `normalizeIdentityBlock`: roles by id, attributes sorted, the
+ * default applied) — or undefined when it declares none. The stored block
+ * enters the approval digest.
+ *
+ * @param {{ identity?: import('@lamalibre/lamaste').IdentityBlockInput }} manifest
+ * @returns {import('@lamalibre/lamaste').NormalizedIdentityBlock | undefined}
+ */
+export function identityOf(manifest) {
+  return manifest.identity ? normalizeIdentityBlock(manifest.identity) : undefined;
+}
+
+/** Recompute the plugin audiences (lib/audience.js) beside other work — never throws. */
+async function recomputeAudiencesInBackground(logger) {
+  try {
+    const { recomputeAudiences } = await import('./audience.js');
+    void recomputeAudiences({ logger });
+  } catch (err) {
+    logger?.warn({ err: err.message }, 'Could not recompute the plugin audiences');
+  }
 }
 
 // --- Plugin registry persistence ---
@@ -196,6 +225,7 @@ export async function writePlugins(data) {
         nullableString(p.hooksEntrySha256),
         nullableJson(p.agentHalfPin),
         nullableJson(p.settings),
+        nullableJson(p.identity),
         p.status,
         p.installedAt,
         nullableString(p.enabledAt),
@@ -479,6 +509,7 @@ export function installPlugin(packageName, logger) {
       hooksEntrySha256,
       agentHalfPin,
       settings: manifest.settings,
+      identity: identityOf(manifest),
       status: 'disabled',
       installedAt: new Date().toISOString(),
     };
@@ -506,6 +537,7 @@ export function installPlugin(packageName, logger) {
         nullableString(entry.hooksEntrySha256),
         nullableJson(entry.agentHalfPin),
         nullableJson(entry.settings),
+        nullableJson(entry.identity),
         entry.status,
         entry.installedAt,
         null,
@@ -518,6 +550,9 @@ export function installPlugin(packageName, logger) {
 
     logger.info({ name: manifest.name, packageName }, 'Plugin installed');
     const oidcClients = await syncOidcClientsBestEffort(logger);
+    // Users already entitled to its route (grants that outlived an earlier
+    // installation) make up its audience from the start.
+    if (entry.identity) await recomputeAudiencesInBackground(logger);
     return { ...entry, oidcClients };
   });
 }
@@ -580,11 +615,14 @@ export function uninstallPlugin(name, logger) {
 
     // Remove from registry, with the cache of its settings (the agent half
     // holds the settings themselves; a purge removed them, or they stay with
-    // the data an agent keeps of it)
+    // the data an agent keeps of it), its audience and its feed's state (a
+    // later install starts both afresh: its first sync replays everything)
     s.begin.run();
     try {
       s.deleteByName.run(name);
       s.deleteSettingsByName.run(name);
+      s.deleteAudienceByName.run(name);
+      s.deleteIdentitySyncByName.run(name);
       s.commit.run();
     } catch (err) {
       s.rollback.run();
@@ -631,7 +669,7 @@ const updateRowSql = `
   UPDATE plugins SET
     display_name = ?, version = ?, description = ?, capabilities = ?, packages = ?, panel = ?,
     config = ?, modes = ?, hosting = ?, agent = ?, hooks = ?, hooks_entry_sha256 = ?,
-    agent_half_pin = ?, settings = ?
+    agent_half_pin = ?, settings = ?, identity = ?
   WHERE name = ?`;
 
 /**
@@ -643,7 +681,8 @@ const updateRowSql = `
  * (`prunedSettingsCache`) — so no read pairs the new schema with values
  * stored for the old one: a value whose field became a secret never shows
  * beside it, and a secret whose field became a plain value is no longer
- * reported set.
+ * reported set. The identity block is stored normalized; the update's
+ * caller recomputes the audiences once the version is in place.
  */
 export async function writePluginRow(name, manifest, hooksEntrySha256, agentHalfPin) {
   const s = await getStmts();
@@ -668,6 +707,7 @@ export async function writePluginRow(name, manifest, hooksEntrySha256, agentHalf
         nullableString(hooksEntrySha256),
         nullableJson(agentHalfPin),
         nullableJson(manifest.settings),
+        nullableJson(identityOf(manifest)),
         name,
       );
     const pruned = prunedSettingsCache(

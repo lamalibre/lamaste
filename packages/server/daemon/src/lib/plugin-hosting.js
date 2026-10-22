@@ -69,6 +69,7 @@ import { recordAudit } from './audit.js';
 import { onHealthTransition } from './tunnel-hooks.js';
 import { agentLastSeenAt, agentPresenceMap } from './agent-presence.js';
 import { refreshPluginSettingsBestEffort } from './plugin-settings.js';
+import { refreshPluginIdentity } from './identity-sync.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
@@ -311,7 +312,7 @@ export async function hostPlugin(name, agentLabel, { actor, logger, sourceIp }) 
   }
   if (!(await installedVersionApproved(plugin))) {
     throw httpError(
-      `Plugin "${name}" brings relay hooks or an agent half that are not approved — review and approve them first`,
+      `Plugin "${name}" brings relay hooks, an agent half or an identity block that are not approved — review and approve them first`,
       409,
       { code: 'hooks_not_approved' },
     );
@@ -339,9 +340,14 @@ export async function hostPlugin(name, agentLabel, { actor, logger, sourceIp }) 
     logger,
     run: async (op) => {
       const result = await runInstallPipeline(op, ctx);
-      // The agent half starts without settings — or with those it kept on
-      // this agent from an earlier hosting: the relay's cache follows it.
-      if (result.status === 'succeeded') await refreshPluginSettingsBestEffort(plugin.name, logger);
+      if (result.status === 'succeeded') {
+        // The agent half starts without settings — or with those it kept on
+        // this agent from an earlier hosting: the relay's cache follows it.
+        await refreshPluginSettingsBestEffort(plugin.name, logger);
+        // A plugin that declares identity learns its users now: its first
+        // sync replays the whole audience.
+        await refreshPluginIdentity(plugin.name, logger);
+      }
       return result;
     },
   });

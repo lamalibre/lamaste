@@ -11,6 +11,7 @@ import { writeInvitePage } from '../../lib/invite-page.js';
 import { migrateChiselCredentialsIfNeeded } from '../../lib/chisel-users.js';
 import { loadAgentRegistry } from '../../lib/mtls.js';
 import { setChiselRunningPinnedRelease } from '../../lib/chisel-runtime.js';
+import { changeUsers } from '../../lib/directory.js';
 
 // Module-level state for provisioning
 const emitter = new EventEmitter();
@@ -125,7 +126,17 @@ async function runProvisioning(log) {
 
     emitProgress('install-authelia', 'running', 'Creating admin user...');
     adminPassword = crypto.randomBytes(16).toString('base64url');
-    await authelia.createUser('admin', adminPassword);
+    // Through the users lock, and into the user directory — which reconciles
+    // with users.yml from here on. Authelia starts next, so no restart.
+    const created = await changeUsers(() => authelia.createUser('admin', adminPassword), {
+      actor: 'lamaste',
+      logger: log,
+      creates: ['admin'],
+      restartAuthelia: false,
+    });
+    for (const warning of created.warnings) {
+      log.warn({ step: warning.step }, warning.message);
+    }
 
     emitProgress('install-authelia', 'running', 'Starting Authelia service...');
     await authelia.startAuthelia();

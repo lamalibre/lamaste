@@ -101,6 +101,8 @@ export interface AutheliaUser {
   readonly displayname: string;
   readonly email: string;
   readonly groups: string[];
+  /** Authelia's `disabled: true` — the user cannot sign in. */
+  readonly disabled: boolean;
 }
 
 export interface UsersYamlEntry {
@@ -108,6 +110,8 @@ export interface UsersYamlEntry {
   email?: string;
   password?: string;
   groups?: string[];
+  /** Authelia refuses to sign in a user marked `disabled: true`; absent means enabled. */
+  disabled?: boolean;
   [k: string]: unknown;
 }
 
@@ -272,12 +276,14 @@ export async function writeAutheliaConfig(
 
 /**
  * Create a default Authelia user with a bcrypt-hashed password, added to
- * the `admins` group.
+ * the `admins` group. `usersFile` is Authelia's users file unless a caller
+ * names another (the daemon's tests).
  */
 export async function createUser(
   username: string,
   password: string,
   bcryptHash: BcryptHashFn,
+  usersFile: string = AUTHELIA_USERS,
 ): Promise<{ username: string; created: true }> {
   const hash = await bcryptHash(password, 12);
 
@@ -285,15 +291,7 @@ export async function createUser(
     throw new Error(`Bcrypt hashing produced invalid output: ${hash}`);
   }
 
-  let usersData: UsersYamlFile = { users: {} };
-  try {
-    const parsed = yaml.load(await readFile(AUTHELIA_USERS, 'utf-8')) as UsersYamlFile | null;
-    if (parsed && parsed.users) {
-      usersData = parsed;
-    }
-  } catch {
-    // file missing or empty — start fresh
-  }
+  const usersData = await readUsersForWrite(usersFile);
 
   usersData.users[username] = {
     displayname: username,
@@ -302,17 +300,18 @@ export async function createUser(
     groups: ['admins'],
   };
 
-  await writeUsers(usersData);
+  await writeUsers(usersData, usersFile);
 
   return { username, created: true };
 }
 
 /**
- * Read the Authelia users file and return user info (without password hashes).
+ * Read the Authelia users file and return user info (without password
+ * hashes): `disabled` is true only for Authelia's `disabled: true`.
  */
-export async function readUsers(): Promise<AutheliaUser[]> {
+export async function readUsers(usersFile: string = AUTHELIA_USERS): Promise<AutheliaUser[]> {
   try {
-    const parsed = yaml.load(await readFile(AUTHELIA_USERS, 'utf-8')) as UsersYamlFile | null;
+    const parsed = yaml.load(await readFile(usersFile, 'utf-8')) as UsersYamlFile | null;
 
     if (!parsed || !parsed.users) {
       return [];
@@ -323,6 +322,7 @@ export async function readUsers(): Promise<AutheliaUser[]> {
       displayname: data.displayname || username,
       email: data.email || '',
       groups: data.groups || [],
+      disabled: data.disabled === true,
     }));
   } catch {
     return [];
@@ -332,27 +332,62 @@ export async function readUsers(): Promise<AutheliaUser[]> {
 /**
  * Atomically write the Authelia users YAML file.
  */
-export async function writeUsers(usersData: UsersYamlFile): Promise<void> {
+export async function writeUsers(
+  usersData: UsersYamlFile,
+  usersFile: string = AUTHELIA_USERS,
+): Promise<void> {
   const yamlContent = yaml.dump(usersData, { lineWidth: -1 });
 
   try {
     // 0660: Authelia rewrites the file in place when a user changes a password.
-    await writeAutheliaFile(AUTHELIA_USERS, yamlContent, 0o660);
+    await writeAutheliaFile(usersFile, yamlContent, 0o660);
   } catch (err: unknown) {
     throw new Error(`Failed to write Authelia users file: ${errText(err)}`);
   }
 }
 
 /**
+ * Why the users file could not be read, without its content: a YAML
+ * parser's message quotes the lines around the fault (usernames, password
+ * hashes).
+ */
+function usersFileFault(err: unknown): string {
+  const e = err as { name?: unknown; code?: unknown; mark?: { line?: unknown } };
+  if (e?.name === 'YAMLException') {
+    return typeof e.mark?.line === 'number'
+      ? `not valid YAML at line ${e.mark.line + 1}`
+      : 'not valid YAML';
+  }
+  return typeof e?.code === 'string' ? e.code : 'unreadable';
+}
+
+/**
  * Read the raw users.yml data, returning the full object including password
  * hashes. Used by CRUD operations that need to modify and re-write the file.
+ * Throws when the file cannot be read or parsed.
  */
-export async function readUsersRaw(): Promise<UsersYamlFile> {
-  const parsed = yaml.load(await readFile(AUTHELIA_USERS, 'utf-8')) as UsersYamlFile | null;
+export async function readUsersRaw(usersFile: string = AUTHELIA_USERS): Promise<UsersYamlFile> {
+  const parsed = yaml.load(await readFile(usersFile, 'utf-8')) as UsersYamlFile | null;
   if (!parsed || !parsed.users) {
     return { users: {} };
   }
   return parsed;
+}
+
+/**
+ * The users file for a read-modify-write: a missing or empty file starts
+ * fresh; one that cannot be read or parsed is refused — writing over it
+ * would drop every user it holds.
+ */
+async function readUsersForWrite(usersFile: string): Promise<UsersYamlFile> {
+  try {
+    return await readUsersRaw(usersFile);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new Error(`Failed to read Authelia users file: ${usersFileFault(err)}`);
+    }
+    return { users: {} };
+  }
 }
 
 /**
@@ -965,6 +1000,18 @@ export async function updateOidcProvider(
 // Invitations
 // ---------------------------------------------------------------------------
 
+/** How {@link createUserFromInvitation} writes the user. */
+export interface CreateInvitedUserOptions {
+  /**
+   * Restart Authelia after writing (default true). A caller that brings
+   * other state in line with the users file first — the panel's user
+   * directory — passes false and restarts Authelia itself.
+   */
+  readonly restart?: boolean;
+  /** Authelia's users file unless named (the daemon's tests). */
+  readonly usersFile?: string;
+}
+
 /**
  * Create an Authelia user from an accepted invitation.
  */
@@ -974,13 +1021,10 @@ export async function createUserFromInvitation(
   groups: string[],
   hashedPassword: string,
   exec: ExecFn,
+  options: CreateInvitedUserOptions = {},
 ): Promise<{ username: string; created: true }> {
-  let usersData: UsersYamlFile;
-  try {
-    usersData = await readUsersRaw();
-  } catch {
-    usersData = { users: {} };
-  }
+  const usersFile = options.usersFile ?? AUTHELIA_USERS;
+  const usersData = await readUsersForWrite(usersFile);
 
   if (usersData.users[username]) {
     throw new Error(`User '${username}' already exists`);
@@ -993,8 +1037,8 @@ export async function createUserFromInvitation(
     groups,
   };
 
-  await writeUsers(usersData);
-  await reloadAuthelia(exec);
+  await writeUsers(usersData, usersFile);
+  if (options.restart !== false) await reloadAuthelia(exec);
 
   return { username, created: true };
 }

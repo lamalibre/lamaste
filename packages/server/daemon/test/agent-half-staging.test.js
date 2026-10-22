@@ -233,11 +233,14 @@ test('an update whose agent half changed waits for approval and is pinned again 
     'approvalRequired',
     'autoApproveWithheld',
     'digest',
+    'identity',
     'relay',
     'settings',
     'stagedAt',
     'version',
   ]);
+  // Neither version declares identity.
+  assert.equal(shown.pendingUpdate.identity, null);
   // It waits for one reason: its digest is not the approved one.
   assert.deepEqual(shown.pendingUpdate.approvalRequired, [
     { code: 'digest.unapproved', reason: 'its agent half is not what was approved' },

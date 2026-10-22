@@ -18,7 +18,11 @@
  *   a version that turns a secret setting into a plain one always waits for
  *   an administrator's approval, its digest approved or not, and whatever
  *   auto-approve says (`pendingUpdate.approvalRequired` says why an update
- *   waits).
+ *   waits). The identity block is inside the digest; a version that adds or
+ *   removes a role or widens the attributes its users' records carry waits
+ *   for an administrator too, whatever auto-approve says
+ *   (`identity.changed`; `pendingUpdate.identity` shows the change), and
+ *   after the update the audiences are recomputed and the agent half told.
  */
 
 import {
@@ -27,6 +31,8 @@ import {
   derivePluginRoute,
   hasAgentHalf,
   hookEntrySha256,
+  identityChangeNeedsApproval,
+  identityDiff,
   relayHookSetNeedsEntry,
   relayHookSetOf,
   relayHookSetPreview,
@@ -39,6 +45,7 @@ import { setPluginCapabilities } from './mtls.js';
 import {
   findPlugin,
   getPluginCapabilities,
+  identityOf,
   manifestPolicyError,
   replacePluginPackage,
   uninstallPlugin,
@@ -47,6 +54,7 @@ import {
 import { pinAgentHalf, readRegistryPackage } from './plugin-packages.js';
 import {
   DIGEST_UNAPPROVED,
+  IDENTITY_CHANGED,
   SETTINGS_SECRET_TO_PLAIN,
   digestUnapprovedReason,
   installRunnerModule,
@@ -82,6 +90,7 @@ import { getConfig } from './config.js';
 import { recordAudit, recordAuditBestEffort } from './audit.js';
 import { notifyAdminsBestEffort } from './notifications.js';
 import { refreshPluginSettingsBestEffort, settingsBlockOf } from './plugin-settings.js';
+import { refreshPluginIdentity } from './identity-sync.js';
 
 /** Replaces the OIDC client sync (tests: there is no Authelia to write to). */
 let oidcSyncOverride = null;
@@ -262,27 +271,62 @@ export function settingsApprovalRequired(diff) {
 }
 
 /**
+ * Why a version waits for an administrator because of how it changes the
+ * plugin's identity block (`identity.changed`): it adds or removes a role —
+ * entitlements name roles, and a new role is a new power over its users —
+ * or widens the attributes it receives about them. Narrowing the
+ * attributes and editing labels only change the digest. Auto-approve never
+ * covers it.
+ *
+ * @param {(import('@lamalibre/lamaste').IdentityDiff & { before: object | null, after: object | null }) | null} identity
+ * @returns {Array<{ code: string, reason: string }>}
+ */
+function identityApprovalRequired(identity) {
+  if (!identity || !identityChangeNeedsApproval(identity)) return [];
+  const changes = [];
+  if (identity.rolesAdded.length > 0) {
+    changes.push(`adds roles (${identity.rolesAdded.join(', ')})`);
+  }
+  if (identity.rolesRemoved.length > 0) {
+    changes.push(`removes roles (${identity.rolesRemoved.join(', ')})`);
+  }
+  if (identity.attributesAdded.length > 0) {
+    changes.push(`receives more about its users (${identity.attributesAdded.join(', ')})`);
+  }
+  return [{ code: IDENTITY_CHANGED, reason: `it ${changes.join(' and ')}` }];
+}
+
+/**
  * Why a staged version waits for an administrator's approval (`[{ code,
  * reason }]`; empty: it needs none and runs at once) — what the approval of
  * the pending update covers. Independent of auto-approve, which may stand
  * in for an administrator on the first reason alone:
  *
  * - `digest.unapproved` — what it brings (relay hooks, the agent half
- *   Lamaste installs) is not what was approved;
- * - `settings.secret-to-plain` — {@link settingsApprovalRequired}.
+ *   Lamaste installs, its identity block) is not what was approved;
+ * - `settings.secret-to-plain` — {@link settingsApprovalRequired};
+ * - `identity.changed` — {@link identityApprovalRequired}.
  *
- * @param {{ approvalRequired: boolean, digest: string | null, relaySet: object | null, agentHalf: object | null }} staged
+ * @param {{ approvalRequired: boolean, digest: string | null, relaySet: object | null, agentHalf: object | null, identity: object | null }} staged
  * @param {{ approvedDigest: string | null } | null} state
  * @param {import('@lamalibre/lamaste').SettingsSchemaDiff | null} settings
+ * @param {(import('@lamalibre/lamaste').IdentityDiff & { before: object | null, after: object | null }) | null} identity
  * @returns {Array<{ code: string, reason: string }>}
  */
-function approvalRequiredFor(staged, state, settings) {
+function approvalRequiredFor(staged, state, settings, identity) {
   const digestApproved = !staged.approvalRequired || state?.approvedDigest === staged.digest;
   return [
     ...(digestApproved
       ? []
-      : [digestUnapprovedReason({ relay: staged.relaySet, agentHalf: staged.agentHalf })]),
+      : [
+          digestUnapprovedReason({
+            relay: staged.relaySet,
+            agentHalf: staged.agentHalf,
+            identity: staged.identity,
+          }),
+        ]),
     ...settingsApprovalRequired(settings),
+    ...identityApprovalRequired(identity),
   ];
 }
 
@@ -401,6 +445,7 @@ async function stageVersion(plugin, requestedVersion, record) {
     agent: manifest.agent,
     agentHalfPin,
     settings: manifest.settings,
+    identity: identityOf(manifest),
   };
   const approval = installedApproval(entry);
   return {
@@ -412,6 +457,8 @@ async function stageVersion(plugin, requestedVersion, record) {
     entrySha256,
     agentHalfPin,
     agentHalf: approval.agentHalf,
+    // The staged identity block, normalized (null: it declares none).
+    identity: approval.identity,
     // The relay hook set's own digest — what the runner holds.
     relayDigest: approval.relay?.digest ?? null,
     approvalRequired: approval.required,
@@ -437,6 +484,23 @@ function settingsPreview(plugin, manifest) {
   const staged = settingsBlockOf(manifest);
   if (!installed && !staged) return null;
   return settingsSchemaDiff(installed, staged);
+}
+
+/**
+ * How a staged version changes the identity block, for the update's
+ * preview: both blocks, normalized (null: that version declares none), and
+ * core's `identityDiff` — roles added and removed, attributes added and
+ * removed, roles whose label or description changed. Null when neither
+ * version declares one.
+ *
+ * @param {object} plugin the installed registry entry
+ * @param {object} manifest the staged version's manifest
+ */
+function identityPreview(plugin, manifest) {
+  const before = plugin.identity ?? null;
+  const after = identityOf(manifest) ?? null;
+  if (!before && !after) return null;
+  return { before, after, ...identityDiff(before, after) };
 }
 
 /**
@@ -489,7 +553,8 @@ export async function updatePlugin(
 
   const state = await readHookState(name);
   const settings = settingsPreview(plugin, staged.manifest);
-  const approvalRequired = approvalRequiredFor(staged, state, settings);
+  const identity = identityPreview(plugin, staged.manifest);
+  const approvalRequired = approvalRequiredFor(staged, state, settings, identity);
   let approvedBy = null;
   let autoApproved = false;
   if (approvedUpdate !== null) {
@@ -499,7 +564,7 @@ export async function updatePlugin(
     // Auto-approve stands in for an administrator on a digest that changed,
     // when the agent half changes nothing that runs as root on the agent —
     // and on nothing else: every other reason (a secret setting turned
-    // plain) withholds it.
+    // plain, a role added or removed, an attribute widened) withholds it.
     const digestChanged = approvalRequired.some((reason) => reason.code === DIGEST_UNAPPROVED);
     const withheldReasons = state?.autoApprove
       ? [
@@ -514,6 +579,7 @@ export async function updatePlugin(
         plugin,
         staged,
         settings,
+        identity,
         approvalRequired,
         withheldReasons,
         actor,
@@ -592,6 +658,7 @@ async function awaitApproval({
   plugin,
   staged,
   settings,
+  identity,
   approvalRequired,
   withheldReasons,
   actor,
@@ -609,6 +676,7 @@ async function awaitApproval({
       ? agentHalfPreview(derivePluginRoute(plugin.name), staged.agentHalf)
       : null,
     settings,
+    identity,
     approvalRequired,
     ...(withheld.length > 0 ? { autoApproveWithheld: withheld } : {}),
   };
@@ -704,6 +772,7 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
         hooks: installed.manifest.hooks,
         hooksEntrySha256: installed.hooksEntrySha256,
         agent: installed.manifest.agent,
+        identity: identityOf(installed.manifest),
       };
       let approval;
       try {
@@ -760,6 +829,10 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
   // The agent half may have dropped values the new version retyped or no
   // longer knows (and keeps that after a revert): the relay re-reads them.
   if (hosted) await refreshPluginSettingsBestEffort(name, logger);
+  // The roles and attributes may have changed with the version (or back,
+  // after a revert); the agent half of the installed version must answer
+  // protocol 1 again before its users reach it.
+  await refreshPluginIdentity(name, logger);
 
   // Hooks the new version no longer has: the old runner goes once the new
   // version is in place.

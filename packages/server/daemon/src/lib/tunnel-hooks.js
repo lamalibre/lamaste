@@ -12,7 +12,8 @@
  * Whenever the plugin comes up — after a `down`, or first seen up — the
  * relay also re-reads its settings from the agent half: they may have
  * changed while the relay could not see it (a restore, a retyped field
- * dropped by a new version).
+ * dropped by a new version) — and, for a plugin that declares identity,
+ * sends its agent half the audience changes it missed while it was down.
  *
  * Calls for one plugin are serialised and run beside the monitor, which
  * does not wait for them.
@@ -27,6 +28,7 @@ import {
 import { runRelayHook } from './relay-hooks.js';
 import { rememberTunnelFallback } from './request-hooks.js';
 import { refreshPluginSettingsBestEffort } from './plugin-settings.js';
+import { syncPluginIdentity } from './identity-sync.js';
 
 const chains = new Map();
 
@@ -44,6 +46,7 @@ export function onHealthTransition(plugin, before, after, logger) {
     .then(async () => {
       if (after.state === 'up' && before?.state !== 'up') {
         await refreshPluginSettingsBestEffort(plugin, logger);
+        await syncPluginIdentity(plugin, { logger });
       }
     });
   chains.set(plugin, next);

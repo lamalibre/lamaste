@@ -38,6 +38,7 @@ import {
   stopHostedPluginHealthMonitor,
 } from './lib/plugin-hosting.js';
 import { refreshHostedPluginSettings } from './lib/plugin-settings.js';
+import { startIdentityServices, stopIdentityServices } from './lib/identity-sync.js';
 import { syncOidcClients } from './lib/plugin-oidc.js';
 import { ensureRelaySigningKey } from './lib/relay-signing.js';
 import { reconcileSiteVhosts, reconcileTunnelVhosts } from './lib/vhost-reconcile.js';
@@ -238,6 +239,12 @@ async function start() {
     server.log.warn({ err: err.message }, 'Startup refresh of plugin settings failed');
   });
 
+  // --- Users and identity: the directory reconciled with users.yml (read
+  // only), the plugin audiences recomputed and sent to the agent halves that
+  // are behind — now, then every minute (Gatekeeper CLI edits, users.yml
+  // changed outside Lamaste, retries), with a daily full reconcile per plugin ---
+  startIdentityServices(server.log);
+
   // --- Periodic ticket instance liveness check (every 60s) ---
   const livenessInterval = setInterval(() => {
     checkInstanceLiveness(server.log).catch((err) => {
@@ -250,6 +257,7 @@ async function start() {
   const shutdown = async (signal) => {
     server.log.info({ signal }, 'Received signal, shutting down gracefully');
     clearInterval(livenessInterval);
+    stopIdentityServices();
     stopHostedPluginHealthMonitor();
     clearRateLimitInterval();
     await server.close();

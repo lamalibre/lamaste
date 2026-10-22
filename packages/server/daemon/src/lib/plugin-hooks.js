@@ -5,14 +5,17 @@
  *
  * Approval binds bytes (see `hook-set.ts` in the core library): one digest
  * (`approvalDigest`) covers the relay hook set — the normalised relay
- * declarations and the SHA-256 of the relay entry module — and the agent
- * half Lamaste installs onto the hosting agent — its package, version,
- * tarball integrity, service and system packages. Approval is needed when
- * either exists. Lamaste runs relay hooks, hosts the plugin and installs its
- * agent half only while the installed version's digest is the approved
- * one. Settings are outside the digest, but an update that turns a secret
- * setting into a plain one waits for an administrator's approval all the
- * same (`plugin-lifecycle.js`): the same pending update, approved here.
+ * declarations and the SHA-256 of the relay entry module — the agent half
+ * Lamaste installs onto the hosting agent — its package, version, tarball
+ * integrity, service and system packages — and the plugin's identity block
+ * — the roles its users hold and the attributes it receives about them.
+ * Approval is needed when any exists. Lamaste runs relay hooks, hosts the
+ * plugin, installs its agent half and sends it its users only while the
+ * installed version's digest is the approved one. Settings are outside the
+ * digest, but an update that turns a secret setting into a plain one waits
+ * for an administrator's approval all the same (`plugin-lifecycle.js`), and
+ * so does one that adds or removes a role or widens the attributes: the
+ * same pending update, approved here.
  *
  * The runner is about the relay part alone: it holds a root-owned copy of
  * the approved module that lamaste-priv installed after checking its
@@ -216,22 +219,27 @@ export function installedAgentHalf(plugin) {
 }
 
 /**
- * What approving a plugin version covers — its relay hook set and the
- * agent half Lamaste installs — and the digest the approval names. `digest`
- * is null when there is nothing to approve.
+ * What approving a plugin version covers — its relay hook set, the agent
+ * half Lamaste installs and its identity block (normalized, as the registry
+ * stores it) — and the digest the approval names. `digest` is null when
+ * there is nothing to approve. A plugin without an identity block has the
+ * digest it had before identity existed.
  */
 export function installedApproval(plugin) {
   const relay = installedRelayHooks(plugin);
   const agentHalf = installedAgentHalf(plugin);
-  const required = relay !== null || agentHalf !== null;
+  const identity = plugin.identity ?? null;
+  const required = relay !== null || agentHalf !== null || identity !== null;
   return {
     relay,
     agentHalf,
+    identity,
     required,
     digest: required
       ? approvalDigest({
           relay: relay ? { set: relay.set, entrySha256: relay.entrySha256 } : null,
           agentHalf,
+          identity,
         })
       : null,
   };
@@ -243,9 +251,10 @@ function isApproved(approval, state) {
 }
 
 /**
- * Whether the installed version is approved — it brings neither relay hooks
- * nor an agent half Lamaste installs, or its digest is the approved one.
- * Relay hooks run, and the plugin is hosted, only then.
+ * Whether the installed version is approved — it brings no relay hooks, no
+ * agent half Lamaste installs and no identity block, or its digest is the
+ * approved one. Relay hooks run, the plugin is hosted and its users are
+ * sent to it only then.
  */
 export async function installedVersionApproved(plugin) {
   const approval = installedApproval(plugin);
@@ -253,10 +262,14 @@ export async function installedVersionApproved(plugin) {
   return isApproved(approval, await readHookState(plugin.name));
 }
 
-/** What the panel shows about a plugin's hooks, its agent half and their approval. */
+/**
+ * What the panel shows about a plugin's hooks, its agent half, its identity
+ * (`identity`: whether the installed version declares it, whether that
+ * version is approved, and the normalized block) and their approval.
+ */
 export async function hookStatus(plugin) {
   const approval = installedApproval(plugin);
-  const { relay, agentHalf } = approval;
+  const { relay, agentHalf, identity } = approval;
   const agent = agentHookSetOf({ hooks: plugin.hooks });
   const state = await readHookState(plugin.name);
   const approved = isApproved(approval, state);
@@ -264,6 +277,11 @@ export async function hookStatus(plugin) {
     relay: relay ? relayHookSetPreview(relay.set, relay.entrySha256) : null,
     agent,
     agentHalf: agentHalf ? agentHalfPreview(derivePluginRoute(plugin.name), agentHalf) : null,
+    identity: {
+      declared: identity !== null,
+      approved: identity !== null && approved,
+      block: identity,
+    },
     approval: {
       required: approval.required,
       state: !approval.required ? 'not-required' : approved ? 'approved' : 'pending',
@@ -287,22 +305,29 @@ export async function hookStatus(plugin) {
 export const DIGEST_UNAPPROVED = 'digest.unapproved';
 /** Why an update waits: it turns secret settings into plain ones. */
 export const SETTINGS_SECRET_TO_PLAIN = 'settings.secret-to-plain';
+/** Why an update waits: it adds or removes a role, or widens the attributes it receives. */
+export const IDENTITY_CHANGED = 'identity.changed';
 
 /**
  * The reason a staged version waits because what it brings — its relay
- * hooks (`relay`), the agent half Lamaste installs (`agentHalf`); either
- * truthy when it brings one — is not what was approved.
+ * hooks (`relay`), the agent half Lamaste installs (`agentHalf`), its
+ * identity block (`identity`); each truthy when it brings one — is not what
+ * was approved.
  *
  * @returns {{ code: string, reason: string }}
  */
-export function digestUnapprovedReason({ relay, agentHalf }) {
-  const what =
-    relay && agentHalf
-      ? 'its relay hooks and agent half are'
-      : agentHalf
-        ? 'its agent half is'
-        : 'its relay hooks are';
-  return { code: DIGEST_UNAPPROVED, reason: `${what} not what was approved` };
+export function digestUnapprovedReason({ relay, agentHalf, identity = null }) {
+  const parts = [
+    ...(relay || (!agentHalf && !identity) ? ['relay hooks'] : []),
+    ...(agentHalf ? ['agent half'] : []),
+    ...(identity ? ['identity'] : []),
+  ];
+  const named =
+    parts.length === 1
+      ? parts[0]
+      : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  const verb = parts.length === 1 && parts[0] !== 'relay hooks' ? 'is' : 'are';
+  return { code: DIGEST_UNAPPROVED, reason: `its ${named} ${verb} not what was approved` };
 }
 
 /**
@@ -314,7 +339,11 @@ export function digestUnapprovedReason({ relay, agentHalf }) {
 function pendingApprovalRequired(pending) {
   return (
     pending.approvalRequired ?? [
-      digestUnapprovedReason({ relay: pending.preview, agentHalf: pending.agentHalf }),
+      digestUnapprovedReason({
+        relay: pending.preview,
+        agentHalf: pending.agentHalf,
+        identity: pending.identity?.after ?? null,
+      }),
     ]
   );
 }
@@ -323,14 +352,18 @@ function pendingApprovalRequired(pending) {
  * A staged update waiting for approval as clients see it — in the hook
  * status and in the update response alike: its version, the digest to
  * approve it with (null when it brings neither relay hooks nor an agent
- * half Lamaste installs: it is approved by its version), what it brings
- * (its relay hook set and the agent half Lamaste installs, each null when
- * it brings none), how it changes the settings schema (`settings`:
- * `{ added: [{ key, type }], removed: [{ key, type }], retyped: [{ key,
- * from, to }], newRequired: [key], secretToPlain: [key] }`, null when
- * neither version declares settings — not part of the digest), why it
- * waits for an administrator (`approvalRequired`: `[{ code, reason }]`,
- * `digest.unapproved` and `settings.secret-to-plain`; never empty), and —
+ * half Lamaste installs nor an identity block: it is approved by its
+ * version), what it brings (its relay hook set and the agent half Lamaste
+ * installs, each null when it brings none), how it changes the settings
+ * schema (`settings`: `{ added: [{ key, type }], removed: [{ key, type }],
+ * retyped: [{ key, from, to }], newRequired: [key], secretToPlain: [key] }`,
+ * null when neither version declares settings — not part of the digest),
+ * how it changes the identity block (`identity`: `{ before, after,
+ * rolesAdded, rolesRemoved, attributesAdded, attributesRemoved,
+ * labelsChanged }` with the normalized blocks, null when neither version
+ * declares one — part of the digest), why it waits for an administrator
+ * (`approvalRequired`: `[{ code, reason }]`, `digest.unapproved`,
+ * `settings.secret-to-plain` and `identity.changed`; never empty), and —
  * when the plugin has auto-approve on — why auto-approve did not cover it
  * (`autoApproveWithheld`, sentences; null otherwise). The stored record
  * names the relay hook set's preview `preview`.
@@ -343,6 +376,7 @@ export function pendingUpdateView(pending) {
     relay: pending.preview ?? null,
     agentHalf: pending.agentHalf ?? null,
     settings: pending.settings ?? null,
+    identity: pending.identity ?? null,
     approvalRequired: pendingApprovalRequired(pending),
     autoApproveWithheld: pending.autoApproveWithheld ?? null,
   };
@@ -462,12 +496,14 @@ export async function restartRelayHookRunner(plugin, logger) {
 
 /**
  * An administrator approves what a plugin version brings — its relay hook
- * set and the agent half Lamaste installs — with the digest they were
- * shown: the installed version's, or a pending update's. A pending update
- * is also approved by naming its `version`, with its digest when it has
- * one — the only way to approve one that brings neither relay hooks nor an
- * agent half (its digest is null), and what binds the approval of a
- * settings change to the release that was shown.
+ * set, the agent half Lamaste installs and its identity block — with the
+ * digest they were shown: the installed version's, or a pending update's.
+ * A pending update is also approved by naming its `version`, with its
+ * digest when it has one — the only way to approve one that brings neither
+ * relay hooks nor an agent half nor an identity block (its digest is
+ * null), and what binds the approval of a settings change to the release
+ * that was shown. Approving an installed version that declares identity
+ * computes its audience and sends it to its agent half.
  *
  * The installed version's approval is recorded here, in the hook state and
  * the audit log. A pending update's is checked against the update that is
@@ -506,7 +542,7 @@ export async function approveHookSet(
     const pendingDigest = pending.digest ?? null;
     if (digest === null && pendingDigest !== null) {
       throw httpError(
-        `Version ${version} brings relay hooks or an agent half — approve it with the approval digest it shows`,
+        `Version ${version} brings relay hooks, an agent half or an identity block — approve it with the approval digest it shows`,
         400,
       );
     }
@@ -530,7 +566,7 @@ export async function approveHookSet(
   if (pending && pending.digest === digest) return pendingUpdateApproval(pending);
   if (!approval.required) {
     throw httpError(
-      `Plugin "${plugin.name}" has no relay hooks and no agent half Lamaste installs — nothing to approve`,
+      `Plugin "${plugin.name}" has no relay hooks, no agent half Lamaste installs and no identity block — nothing to approve`,
       400,
     );
   }
@@ -553,6 +589,12 @@ export async function approveHookSet(
     details: { digest, version: plugin.version, for: 'installed', certSerial },
   });
   await ensureRelayHooksInstalled(plugin, logger);
+  // An approved identity block lets the plugin's users through: its
+  // audience is computed and sent to its agent half (when it is hosted).
+  if (approval.identity) {
+    const { refreshPluginIdentity } = await import('./identity-sync.js');
+    await refreshPluginIdentity(plugin.name, logger);
+  }
   return { target: 'installed', digest };
 }
 

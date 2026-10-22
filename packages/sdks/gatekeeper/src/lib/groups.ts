@@ -31,7 +31,11 @@ import type {
 
 const groupMutex = new PromiseChainMutex();
 
-function withGroupLock<T>(fn: () => Promise<T>): Promise<T> {
+/**
+ * Run `fn` holding the groups lock. Taken before the grants lock when both
+ * are needed (a group's cascades to its grants, a user principal's removal).
+ */
+export function withGroupLock<T>(fn: () => Promise<T>): Promise<T> {
   return groupMutex.run(fn);
 }
 

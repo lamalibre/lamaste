@@ -32,6 +32,7 @@ import { groupRoutes } from './routes/groups.js';
 import { grantRoutes } from './routes/grants.js';
 import { diagnosticRoutes } from './routes/diagnostic.js';
 import { accessRequestRoutes } from './routes/access-request.js';
+import { principalRoutes } from './routes/principals.js';
 
 const dataDir = process.env.LAMALIBRE_LAMASTE_DATA_DIR ?? DEFAULT_DATA_DIR;
 const tunnelsPath = path.join(dataDir, 'tunnels.json');
@@ -320,6 +321,7 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
     });
     await scope.register(groupRoutes, { prefix: '/api' });
     await scope.register(grantRoutes, { prefix: '/api' });
+    await scope.register(principalRoutes, { prefix: '/api' });
     await scope.register(diagnosticRoutes, { prefix: '/api' });
   });
 

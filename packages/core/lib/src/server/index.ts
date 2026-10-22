@@ -237,6 +237,7 @@ export type {
   AutheliaUser,
   UsersYamlEntry,
   UsersYamlFile,
+  CreateInvitedUserOptions,
   ProtectedSiteRule,
   BcryptHashFn,
   ExecFn as AutheliaExecFn,
