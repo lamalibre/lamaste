@@ -23,15 +23,31 @@
  * might) — so an admin's assertion cannot act on a user's routes, and a
  * user's never reaches `/admin`.
  *
+ * A host serves a plugin's user surface once a tunnel is *bound* to it
+ * (`TunnelEntry.userSurface` in `tunnels.json`): {@link tunnelUserSurfaceRoutes}
+ * is how everything that reads that state — the panel, its vhost renderer,
+ * Gatekeeper — reads a binding.
+ *
  * Pure; shared by the root (caller and relay assertions) and the server
- * subpath (the forwarder).
+ * subpath (the forwarder, the tunnel workflows).
  */
+
+import { RESERVED_API_PREFIXES } from './constants.js';
 
 /** The agent half's user surface, the only prefix a `user` caller reaches. */
 export const AGENT_HALF_APP_PREFIX = '/app';
 
 /** Where the relay serves a plugin's user surface: `/api/<route>/app/*`. */
 export const USER_SURFACE_API_PREFIX = '/api';
+
+/** How many plugins' user surfaces one host may serve. */
+export const USER_SURFACE_MAX_ROUTES_PER_HOST = 16;
+
+/**
+ * The longest route a user surface is bound for: what a relay assertion's
+ * target may carry.
+ */
+const USER_SURFACE_ROUTE_MAX_LENGTH = 64;
 
 /** A plugin route as the forwarder accepts it. */
 const ROUTE_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -144,4 +160,45 @@ export function userSurfaceApiPath(route: string): string {
  */
 export function isUserSurfaceUrl(url: string, route: string): boolean {
   return ROUTE_RE.test(route) && isSafelyUnder(url, userSurfaceApiPath(route));
+}
+
+/**
+ * Whether `route` is a plugin route a host can be bound to serve the user
+ * surface of: a route the forwarder accepts, short enough for a relay
+ * assertion to carry, and none of the panel's own API prefixes.
+ */
+export function isUserSurfaceRoute(route: unknown): route is string {
+  return (
+    typeof route === 'string' &&
+    route.length <= USER_SURFACE_ROUTE_MAX_LENGTH &&
+    ROUTE_RE.test(route) &&
+    !(RESERVED_API_PREFIXES as readonly string[]).includes(route)
+  );
+}
+
+/**
+ * The plugin routes a tunnel entry as `tunnels.json` stores it binds as a
+ * user surface (`userSurface: { routes: [...] }`), read defensively: only an
+ * app tunnel's (`type` 'app', or none — tunnels persisted before `type`
+ * existed), never an internal one's; only valid routes
+ * ({@link isUserSurfaceRoute}), each once, at most
+ * {@link USER_SURFACE_MAX_ROUTES_PER_HOST}; `[]` for anything else. The file
+ * is the panel's, but Gatekeeper and the vhost renderer write what they read
+ * into signatures and nginx configuration, so nothing malformed in it may
+ * pass.
+ */
+export function tunnelUserSurfaceRoutes(tunnel: unknown): string[] {
+  if (!tunnel || typeof tunnel !== 'object') return [];
+  const t = tunnel as { type?: unknown; exposure?: unknown; userSurface?: unknown };
+  if ((t.type !== undefined && t.type !== 'app') || t.exposure === 'internal') return [];
+  const binding = t.userSurface;
+  if (!binding || typeof binding !== 'object' || Array.isArray(binding)) return [];
+  const routes = (binding as { routes?: unknown }).routes;
+  if (!Array.isArray(routes)) return [];
+  const out: string[] = [];
+  for (const route of routes) {
+    if (isUserSurfaceRoute(route) && !out.includes(route)) out.push(route);
+    if (out.length === USER_SURFACE_MAX_ROUTES_PER_HOST) break;
+  }
+  return out;
 }

@@ -84,6 +84,7 @@ import { runRelayHook } from './relay-hooks.js';
 import { recordAuditBestEffort } from './audit.js';
 import { deleteSettingsCache, relayHookSettings } from './plugin-settings.js';
 import { forgetIdentityHalf } from './identity-sync.js';
+import { refreshUserSurfaceVhosts } from './user-surface.js';
 import {
   tunnelNginxDeps,
   tunnelCertbotDeps,
@@ -842,6 +843,9 @@ export async function runUninstallPipeline(op, ctx, { force = false } = {}) {
     await forgetIdentityHalf(ctx.plugin.name).catch((err) =>
       op.warn(`Could not forget the agent half's identity feed: ${err.message}`),
     );
+    // Its user surface's locations no longer take the internal tunnel's
+    // body limit (best effort; the panel answers 503 until it is hosted).
+    await refreshUserSurfaceVhosts(ctx.route, ctx.logger);
   }
   await recordAuditBestEffort(
     {

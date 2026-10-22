@@ -18,6 +18,7 @@ import onboardingRoutes from './routes/onboarding/index.js';
 import managementRoutes from './routes/management.js';
 import pluginRouter from './routes/plugin-router.js';
 import agentForwarderRoutes from './routes/agent-forwarder.js';
+import userSurfaceContext from './routes/user-surface.js';
 import inviteRoutes from './routes/invite.js';
 import enrollmentRoutes from './routes/enrollment.js';
 import {
@@ -178,9 +179,15 @@ async function start() {
     app.register(userAccessAdminRoutes, { prefix: '/api' });
     app.register(pluginRouter, { prefix: '/api' });
     // Last: agent-hosted plugins with an agent half, forwarded over their
-    // internal tunnels. Only what no other /api route answers reaches it.
+    // internal tunnels. Only what no other /api route answers reaches it —
+    // and never /api/<route>/app[/*], the user surface's static routes below.
     app.register(agentForwarderRoutes, { prefix: '/api' });
   });
+
+  // --- Plugins' user surfaces: /api/<route>/app[/*] from the host bound to
+  // the plugin. No mTLS, 2FA or role: only a relay assertion Gatekeeper
+  // signed for the panel admits a request (routes/user-surface.js) ---
+  server.register(userSurfaceContext);
 
   // --- User-access session-protected routes (Bearer token, no mTLS) ---
   server.register(async function userAccessContext(app) {

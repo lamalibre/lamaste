@@ -553,6 +553,10 @@ export function installPlugin(packageName, logger) {
     // Users already entitled to its route (grants that outlived an earlier
     // installation) make up its audience from the start.
     if (entry.identity) await recomputeAudiencesInBackground(logger);
+    // A new installation is served on no host (its version is not approved
+    // yet): a vhost still carrying the route from before goes in line.
+    const { refreshUserSurfaceVhosts } = await import('./user-surface.js');
+    await refreshUserSurfaceVhosts(entry.route, logger);
     return { ...entry, oidcClients };
   });
 }
@@ -656,6 +660,11 @@ export function uninstallPlugin(name, logger) {
         'Failed to sweep plugin capabilities from agent registry on uninstall',
       );
     }
+
+    // Its user surface is unbound from every host, so a later install
+    // starts unbound (a plugin sharing another's route never held one).
+    const { releasePluginUserSurface } = await import('./user-surface.js');
+    await releasePluginUserSurface(plugin.route, { plugin: name, logger });
 
     logger.info({ name }, 'Plugin uninstalled');
     await syncOidcClientsBestEffort(logger);

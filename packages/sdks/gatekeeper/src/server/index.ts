@@ -5,12 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  atomicWriteJSON,
-  AGENT_LABEL_REGEX,
-  createRelaySigner,
-  RELAY_SIGNING_KEY_FILE,
-} from '@lamalibre/lamaste';
+import { atomicWriteJSON, createRelaySigner, RELAY_SIGNING_KEY_FILE } from '@lamalibre/lamaste';
 import type { RelaySigner } from '@lamalibre/lamaste';
 import {
   DEFAULT_DATA_DIR,
@@ -20,13 +15,9 @@ import {
   GATEKEEPER_PORT,
   SESSION_CACHE_TTL_MS,
 } from '../lib/constants.js';
-import type {
-  TunnelInfo,
-  PluginTunnelTarget,
-  GatekeeperSettings,
-  AutheliaSession,
-} from '../lib/types.js';
+import type { TunnelInfo, GatekeeperSettings, AutheliaSession } from '../lib/types.js';
 import { registerCacheInvalidator } from '../lib/cache-bust.js';
+import { tunnelInfoFromState } from '../lib/tunnels.js';
 import { authzRoutes } from './routes/authz.js';
 import { groupRoutes } from './routes/groups.js';
 import { grantRoutes } from './routes/grants.js';
@@ -40,8 +31,8 @@ const settingsPath = path.join(dataDir, SETTINGS_FILE);
 
 /**
  * The relay's assertion signing key, created by the panel (never here). A
- * plugin tunnel's user is vouched for to the agent with it; the file is
- * re-read when it changes.
+ * plugin tunnel's user is vouched for to the agent with it, and a user on a
+ * plugin's user surface to the panel; the file is re-read when it changes.
  */
 const relaySigner = createRelaySigner(path.join(dataDir, RELAY_SIGNING_KEY_FILE), {
   create: false,
@@ -67,48 +58,9 @@ let cacheVersion = 0;
 // File loaders
 // ---------------------------------------------------------------------------
 
-/**
- * The agent-side target of a plugin tunnel, or undefined. Only a well-formed
- * one is returned: its fields end up in a signed assertion.
- */
-function pluginTunnelTarget(t: Record<string, unknown>): PluginTunnelTarget | undefined {
-  const { type, agentLabel, port, pluginRoute } = t;
-  if (
-    type !== 'plugin' ||
-    typeof agentLabel !== 'string' ||
-    !AGENT_LABEL_REGEX.test(agentLabel) ||
-    typeof port !== 'number' ||
-    !Number.isInteger(port) ||
-    port < 1 ||
-    port > 65535 ||
-    typeof pluginRoute !== 'string' ||
-    !/^[a-z0-9][a-z0-9-]{0,63}$/.test(pluginRoute)
-  ) {
-    return undefined;
-  }
-  return { agentLabel, port, route: pluginRoute };
-}
-
 async function loadTunnels(): Promise<TunnelInfo[]> {
   try {
-    const raw = await readFile(tunnelsPath, 'utf-8');
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return (
-      parsed
-        // An internal plugin tunnel has no hostname: nothing to authorize.
-        .filter((t: Record<string, unknown>) => t.exposure !== 'internal' && t.fqdn)
-        .map((t: Record<string, unknown>) => {
-          const plugin = pluginTunnelTarget(t);
-          return {
-            id: String(t.id ?? ''),
-            fqdn: String(t.fqdn ?? ''),
-            accessMode: (t.accessMode as TunnelInfo['accessMode']) ?? 'restricted',
-            enabled: t.enabled !== false,
-            ...(plugin ? { plugin } : {}),
-          };
-        })
-    );
+    return tunnelInfoFromState(JSON.parse(await readFile(tunnelsPath, 'utf-8')));
   } catch {
     return [];
   }

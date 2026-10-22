@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { access, lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { RELAY_PANEL_PORT, isUserSurfaceRoute, userSurfaceApiPath } from '@lamalibre/lamaste';
 
 const SITES_AVAILABLE = '/etc/nginx/sites-available';
 const SITES_ENABLED = '/etc/nginx/sites-enabled';
@@ -58,11 +59,41 @@ async function writeVhostFile(name, content) {
   await siteAction('write', name, content);
 }
 
+/** Site name of the panel's domain vhost (`panel.<domain>`). */
+export const PANEL_DOMAIN_VHOST = 'lamalibre-lamaste-panel-domain';
+
+/**
+ * Cleared in every location that proxies a browser's request to the panel
+ * itself: a relay assertion reaches the panel only from a user-surface
+ * location of a tunnel vhost, which sets it from Gatekeeper's answer — never
+ * one a client sent.
+ */
+const PANEL_ASSERTION_CLEARED = `
+        # A relay assertion comes only from Gatekeeper, on a plugin's user surface
+        proxy_set_header X-Lamalibre-Relay-Assertion "";`;
+
 /**
  * Write the panel domain vhost with mTLS and Let's Encrypt certs.
  */
 export async function writePanelVhost(domain) {
+  const { name, config } = renderPanelVhost(domain);
+  await writeVhostFile(name, config);
+  return path.join(SITES_AVAILABLE, name);
+}
+
+/**
+ * Render the panel domain vhost. Pure; the startup reconcile renders it on
+ * the certificate directory the installed vhost names.
+ *
+ * @param {string} domain
+ * @param {string} [certPath] - certificate directory (default: the panel's own lineage)
+ * @returns {{ name: string, fqdn: string, config: string }}
+ */
+export function renderPanelVhost(domain, certPath) {
   const fqdn = `panel.${domain}`;
+  assertLiteralHostname(fqdn);
+  let certDirClean = certPath || `/etc/letsencrypt/live/${fqdn}`;
+  while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
   const config = `# Rate limit zone for public enrollment endpoint (5 requests/minute per IP)
 limit_req_zone $binary_remote_addr zone=enroll_domain:1m rate=5r/m;
 
@@ -76,8 +107,8 @@ server {
     listen 443 ssl;
     server_name ${fqdn};
 
-    ssl_certificate /etc/letsencrypt/live/${fqdn}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${fqdn}/privkey.pem;
+    ssl_certificate ${certDirClean}/fullchain.pem;
+    ssl_certificate_key ${certDirClean}/privkey.pem;
 
     # mTLS — same as IP-based access
     include /etc/nginx/snippets/lamalibre-lamaste-mtls.conf;
@@ -103,7 +134,7 @@ server {
         proxy_set_header Remote-User "";
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
+        proxy_set_header Remote-Email "";${PANEL_ASSERTION_CLEARED}
 
         # Standard proxy headers
         proxy_set_header Host $host;
@@ -126,7 +157,7 @@ server {
         proxy_set_header Remote-User "";
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
+        proxy_set_header Remote-Email "";${PANEL_ASSERTION_CLEARED}
 
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -146,7 +177,7 @@ server {
         proxy_set_header Remote-User "";
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
+        proxy_set_header Remote-Email "";${PANEL_ASSERTION_CLEARED}
 
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -167,7 +198,7 @@ server {
         proxy_set_header Remote-User "";
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
+        proxy_set_header Remote-Email "";${PANEL_ASSERTION_CLEARED}
 
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -187,7 +218,7 @@ server {
         proxy_set_header Remote-User "";
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
+        proxy_set_header Remote-Email "";${PANEL_ASSERTION_CLEARED}
 
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -207,7 +238,7 @@ server {
         proxy_set_header Remote-User "";
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
+        proxy_set_header Remote-Email "";${PANEL_ASSERTION_CLEARED}
 
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -232,7 +263,7 @@ server {
         proxy_set_header Remote-User "";
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
+        proxy_set_header Remote-Email "";${PANEL_ASSERTION_CLEARED}
 
         # Standard proxy headers
         proxy_set_header Host $host;
@@ -247,8 +278,7 @@ server {
 }
 `;
 
-  await writeVhostFile('lamalibre-lamaste-panel-domain', config);
-  return path.join(SITES_AVAILABLE, 'lamalibre-lamaste-panel-domain');
+  return { name: PANEL_DOMAIN_VHOST, fqdn, config };
 }
 
 /**
@@ -351,7 +381,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
     }
 
     # User access authorization — Authelia forward auth protects this endpoint
@@ -393,7 +423,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
 
         error_page 401 =302 $redirection_url;
     }
@@ -485,10 +515,158 @@ const TUNNEL_PROXY_HEADERS = `
  */
 function bodySizeDirective(maxBodySizeMb) {
   if (maxBodySizeMb === undefined) return '';
+  assertBodySizeMb(maxBodySizeMb);
+  return `\n    client_max_body_size ${maxBodySizeMb}m;\n`;
+}
+
+/** A body limit in MiB, as the tunnel workflow allows it — interpolated into nginx configuration. */
+function assertBodySizeMb(maxBodySizeMb) {
   if (!Number.isInteger(maxBodySizeMb) || maxBodySizeMb < 1 || maxBodySizeMb > 10240) {
     throw new Error(`Invalid maxBodySizeMb for nginx vhost: ${maxBodySizeMb}`);
   }
-  return `\n    client_max_body_size ${maxBodySizeMb}m;\n`;
+}
+
+/**
+ * Request headers a user-surface location sends the panel. The panel's
+ * user-surface context trusts nothing but the relay assertion — but the
+ * panel serves other contexts on the same listener, so everything a browser
+ * could send that any of them trusts is cleared: no user request can pass
+ * for a client-certificate holder (`X-SSL-Client-*`), an Authelia user
+ * (`Remote-*`), a desktop session (`Authorization`) or an administrator's
+ * 2FA session (`Cookie`), nor name another host to the panel
+ * (`X-Forwarded-Host`). `X-Forwarded-For` is the client's address alone:
+ * the panel trusts one loopback hop (`trust-proxy.js`), so that is its
+ * `request.ip` — what the user surface's rate limit keys on. `Connection`
+ * cleared: the panel keeps the upstream connection alive (HTTP/1.1), and
+ * the user surface carries no WebSocket.
+ */
+const USER_SURFACE_PROXY_HEADERS = `
+        # Nothing else that any part of the panel trusts
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Groups "";
+        proxy_set_header Remote-Name "";
+        proxy_set_header Remote-Email "";
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
+        proxy_set_header X-Forwarded-Host "";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";`;
+
+/**
+ * The body of a tunnel vhost's Gatekeeper subrequest location,
+ * `/authz/<check>/<fqdn>`: the tunnel is named in the path, in
+ * `X-Original-URL` and in `Host` — never by the client's `Host` header (see
+ * {@link originalUrl}) — and the session cookie is passed on.
+ *
+ * @param {'tunnel'|'user-surface'} check
+ * @param {string} fqdn
+ * @returns {string}
+ */
+function gatekeeperSubrequest(check, fqdn) {
+  return `internal;
+
+        proxy_pass http://127.0.0.1:9294/authz/${check}/${fqdn};
+        proxy_pass_request_body off;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Connection "";
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Original-URL ${originalUrl(fqdn)};
+        proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
+        proxy_set_header Host ${fqdn};
+        proxy_set_header Cookie $http_cookie;
+
+        proxy_http_version 1.1;`;
+}
+
+/**
+ * The user-surface locations of a tunnel vhost — `/api/<route>/app` and
+ * everything under it for each plugin it serves (`opts.userSurface`), and
+ * the two internal locations they share:
+ *
+ * - `/internal/lamaste/user-surface-authz` asks Gatekeeper
+ *   (`/authz/user-surface/<fqdn>`, the tunnel named in the path and in
+ *   `X-Original-URL` and `Host`, as for the tunnel's own subrequest).
+ *   Gatekeeper authenticates the Authelia session — and, on a restricted
+ *   tunnel, checks its grant — then vouches for the user to the panel with
+ *   a relay assertion bound to the method and the raw request target. Never
+ *   cached: an assertion is single use.
+ * - `/internal/lamaste/user-surface-401` answers a request without a
+ *   session with Gatekeeper's JSON 401 — an application's request is never
+ *   redirected to the login page.
+ *
+ * Each route's locations pass the assertion, and nothing else of the
+ * browser's credentials ({@link USER_SURFACE_PROXY_HEADERS}), to the panel
+ * with `proxy_pass` naming no URI: the panel receives the request target
+ * exactly as the browser sent it — the target the assertion is bound to.
+ * The body limit is the plugin's (its internal tunnel's); timeouts are long
+ * for server-sent events, which the panel streams unbuffered.
+ *
+ * @param {string} fqdn
+ * @param {ReadonlyArray<{ route: string, maxBodySizeMb: number }>} userSurface
+ * @returns {string}
+ */
+function userSurfaceLocations(fqdn, userSurface) {
+  if (userSurface.length === 0) return '';
+  const routes = userSurface.map(({ route, maxBodySizeMb }) => {
+    if (!isUserSurfaceRoute(route)) {
+      throw new Error(`Invalid user-surface route for nginx vhost: ${route}`);
+    }
+    assertBodySizeMb(maxBodySizeMb);
+    const block = `{
+        auth_request /internal/lamaste/user-surface-authz;
+        auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;
+
+        # The user, vouched for by Gatekeeper to the panel for this one request
+        proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;
+${USER_SURFACE_PROXY_HEADERS}
+
+        # No URI: the request target reaches the panel as the browser sent it
+        proxy_pass http://127.0.0.1:${RELAY_PANEL_PORT};
+        proxy_http_version 1.1;
+
+        client_max_body_size ${maxBodySizeMb}m;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+
+        # No session: a JSON 401, never a redirect
+        error_page 401 = /internal/lamaste/user-surface-401;
+    }`;
+    const apiPath = userSurfaceApiPath(route);
+    return `
+    # The user surface of plugin "${route}"
+    location = ${apiPath} ${block}
+
+    location ${apiPath}/ ${block}
+`;
+  });
+  return `
+    # The user surface of agent-hosted plugins on this host: Gatekeeper
+    # vouches for the session's user to the panel, for one request each.
+    location = /internal/lamaste/user-surface-authz {
+        ${gatekeeperSubrequest('user-surface', fqdn)}
+    }
+
+    location = /internal/lamaste/user-surface-401 {
+        internal;
+
+        proxy_pass http://127.0.0.1:9294/authz/user-surface-unauthenticated;
+        proxy_pass_request_body off;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+
+        proxy_http_version 1.1;
+    }
+${routes.join('')}`;
 }
 
 /**
@@ -500,18 +678,29 @@ export async function writePublicVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, enabled = true } = {},
+  { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
 ) {
   const { name, fqdn, config } = renderPublicVhost(subdomain, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
+    userSurface,
   });
   return safeWriteVhost(name, config, fqdn, { enabled });
 }
 
-function renderPublicVhost(subdomain, domain, port, certPath, { pathPrefix, maxBodySizeMb } = {}) {
+function renderPublicVhost(
+  subdomain,
+  domain,
+  port,
+  certPath,
+  { pathPrefix, maxBodySizeMb, userSurface } = {},
+) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
+  }
+  // A public host has no signed-in user for Gatekeeper to vouch for.
+  if (userSurface && userSurface.length > 0) {
+    throw new Error("A public tunnel vhost cannot serve a plugin's user surface");
   }
 
   const fqdn = `${subdomain}.${domain}`;
@@ -536,14 +725,11 @@ ${bodySizeDirective(maxBodySizeMb)}
         proxy_set_header Remote-User "";
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";${
-          pathPrefix
-            ? `
-        # Nor a relay assertion: lamaste-agentd, which serves plugin routes,
-        # would otherwise be handed one a client sent.
-        proxy_set_header X-Lamalibre-Relay-Assertion "";`
-            : ''
-        }
+        proxy_set_header Remote-Email "";
+
+        # Nor a relay assertion: only Gatekeeper's, set on an authenticated
+        # vhost, may reach a backend (lamaste-agentd serves plugin routes)
+        proxy_set_header X-Lamalibre-Relay-Assertion "";
 ${TUNNEL_PROXY_HEADERS}
 
         ${pathPrefix ? `rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n        ` : ''}proxy_pass http://127.0.0.1:${port};
@@ -568,11 +754,12 @@ export async function writeAuthenticatedVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, enabled = true } = {},
+  { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
 ) {
   const { name, fqdn, config } = renderGatekeeperTunnelVhost(subdomain, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
+    userSurface,
     restricted: false,
   });
   return safeWriteVhost(name, config, fqdn, { enabled });
@@ -588,11 +775,12 @@ export async function writeRestrictedVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, enabled = true } = {},
+  { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
 ) {
   const { name, fqdn, config } = renderGatekeeperTunnelVhost(subdomain, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
+    userSurface,
     restricted: true,
   });
   return safeWriteVhost(name, config, fqdn, { enabled });
@@ -603,7 +791,7 @@ function renderGatekeeperTunnelVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, restricted },
+  { pathPrefix, maxBodySizeMb, userSurface, restricted },
 ) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
@@ -617,6 +805,7 @@ function renderGatekeeperTunnelVhost(
   const config = buildGatekeeperVhost(fqdn, certDirClean, port, domain, {
     pathPrefix,
     maxBodySizeMb,
+    userSurface,
     restricted,
   });
 
@@ -629,16 +818,27 @@ function renderGatekeeperTunnelVhost(
  * the generators produce today (see vhost-reconcile.js).
  *
  * @param {'public'|'authenticated'|'restricted'} accessMode
+ * @param {string} subdomain
+ * @param {string} domain
+ * @param {number} port
+ * @param {string} [certPath]
+ * @param {{ pathPrefix?: string, maxBodySizeMb?: number, userSurface?: ReadonlyArray<{ route: string, maxBodySizeMb: number }> }} [opts]
+ *   `userSurface`: the plugins' user surfaces the vhost serves (not on a public vhost)
  * @returns {{ name: string, fqdn: string, config: string }}
  */
 export function renderTunnelVhost(accessMode, subdomain, domain, port, certPath, opts = {}) {
-  const { pathPrefix, maxBodySizeMb } = opts;
+  const { pathPrefix, maxBodySizeMb, userSurface } = opts;
   if (accessMode === 'public') {
-    return renderPublicVhost(subdomain, domain, port, certPath, { pathPrefix, maxBodySizeMb });
+    return renderPublicVhost(subdomain, domain, port, certPath, {
+      pathPrefix,
+      maxBodySizeMb,
+      userSurface,
+    });
   }
   return renderGatekeeperTunnelVhost(subdomain, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
+    userSurface,
     restricted: accessMode !== 'authenticated',
   });
 }
@@ -658,13 +858,18 @@ export function renderTunnelVhost(accessMode, subdomain, domain, port, certPath,
  * the one Gatekeeper authorized. Gatekeeper now refuses `/authz/check`: a
  * vhost the panel has not rewritten closes its tunnel instead of opening it.
  * The login redirect names this vhost for the same reason.
+ *
+ * The backend gets Gatekeeper's relay assertion on a plugin tunnel, and no
+ * relay assertion at all on any other — a client's is cleared. An app
+ * tunnel bound as plugins' user surface also carries their locations
+ * ({@link userSurfaceLocations}).
  */
 function buildGatekeeperVhost(
   fqdn,
   certDirClean,
   port,
   domain,
-  { pathPrefix, maxBodySizeMb, restricted } = {},
+  { pathPrefix, maxBodySizeMb, userSurface = [], restricted } = {},
 ) {
   const url = originalUrl(fqdn);
   return `server {
@@ -681,24 +886,11 @@ ${bodySizeDirective(maxBodySizeMb)}
     # Gatekeeper authorization subrequest (handles Authelia validation + grant check).
     # The tunnel is named in the path — never by the client's Host header.
     location /internal/lamaste/authz {
-        internal;
-
-        proxy_pass http://127.0.0.1:9294/authz/tunnel/${fqdn};
-        proxy_pass_request_body off;
-
-        proxy_set_header Content-Length "";
-        proxy_set_header Connection "";
-        proxy_set_header X-Original-Method $request_method;
-        proxy_set_header X-Original-URL ${url};
-        proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
-        proxy_set_header Host ${fqdn};
-        proxy_set_header Cookie $http_cookie;
-
-        proxy_http_version 1.1;
+        ${gatekeeperSubrequest('tunnel', fqdn)}
         proxy_buffers 4 32k;
         proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
     }
-
+${userSurfaceLocations(fqdn, userSurface)}
     location / {
         auth_request /internal/lamaste/authz;
         auth_request_set $user $upstream_http_remote_user;
@@ -721,7 +913,11 @@ ${bodySizeDirective(maxBodySizeMb)}
         # The user, signed by Gatekeeper for this one request — lamaste-agentd,
         # which serves plugin routes, trusts no Remote-* header without it
         proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;`
-            : ''
+            : `
+
+        # No relay assertion reaches an app: Gatekeeper signs one only for a
+        # plugin tunnel or the panel, never one a client sent
+        proxy_set_header X-Lamalibre-Relay-Assertion "";`
         }
 ${TUNNEL_PROXY_HEADERS}
 
@@ -1208,6 +1404,7 @@ export function renderAgentPanelVhost(subdomain, domain, port, certPath) {
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
         proxy_set_header Remote-Email "";
+        proxy_set_header X-Lamalibre-Relay-Assertion "";
     }
 
     # Reject requests without valid client certificate

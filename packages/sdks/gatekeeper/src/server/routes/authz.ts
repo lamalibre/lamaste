@@ -1,7 +1,13 @@
 import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { request as undiciRequest } from 'undici';
-import { RELAY_ASSERTION_HEADER, signRelayAssertion } from '@lamalibre/lamaste';
+import {
+  RELAY_ASSERTION_HEADER,
+  RELAY_PANEL_AUDIENCE,
+  RELAY_PANEL_PORT,
+  isUserSurfaceUrl,
+  signRelayAssertion,
+} from '@lamalibre/lamaste';
 import type { RelaySigningKey } from '@lamalibre/lamaste';
 import { AUTHELIA_VERIFY_URL, SESSION_CACHE_TTL_MS } from '../../lib/constants.js';
 import { checkAccess } from '../../lib/authz.js';
@@ -116,6 +122,26 @@ function findTunnelByFqdn(tunnels: readonly TunnelInfo[], fqdn: string): TunnelI
   return tunnels.find((t) => t.fqdn.toLowerCase() === wanted);
 }
 
+/**
+ * Why the hostnames a tunnel vhost writes into the subrequest's path,
+ * X-Original-URL and Host disagree, or null when they agree.
+ */
+function hostnameMismatch(
+  request: FastifyRequest,
+  fqdn: string,
+  originalHost: string,
+): { reason: string; originalHost: string; hostHeader: string } | null {
+  const named = fqdn.toLowerCase();
+  const hostHeader = (request.headers['host'] as string | undefined) ?? '';
+  const hostOnly = hostHeader.split(':')[0]?.toLowerCase() ?? '';
+  if (originalHost.toLowerCase() === named && hostOnly === named) return null;
+  return {
+    reason: hostOnly ? 'tunnel_name_mismatch' : 'missing_host_header',
+    originalHost,
+    hostHeader,
+  };
+}
+
 /** A tunnel hostname as a vhost writes it into the subrequest's path. */
 const TUNNEL_FQDN_RE =
   /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
@@ -180,6 +206,44 @@ export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
   );
 
   /**
+   * GET /authz/user-surface/:fqdn — the nginx auth_request target of a
+   * plugin's user surface: `/api/<route>/app` and everything under it, on
+   * the host of a tunnel bound to the plugin (`userSurface` in
+   * tunnels.json). The vhost names the tunnel as for `/authz/tunnel/:fqdn`.
+   *
+   * Gatekeeper authenticates the session — on a restricted tunnel it checks
+   * the user's grant too — and vouches for its user to the panel: a relay
+   * assertion for the panel's audience and port, naming the username alone
+   * and bound to the method and the raw request target, which must lie on
+   * the user surface of a route bound to this tunnel. The panel takes
+   * everything else about the user from its own directory.
+   *
+   * 200 with the assertion (never cacheable, no `Remote-*`), 401 without a
+   * session (nginx answers with `/authz/user-surface-unauthenticated`), 403
+   * for anything else refused — never the access-request page, never a
+   * redirect: the caller is an application's request. 503 while the relay
+   * signing key is unusable.
+   */
+  fastify.get<{ Params: { fqdn: string } }>(
+    '/authz/user-surface/:fqdn',
+    { config: INTERNAL_RATE_LIMIT },
+    async (request, reply) =>
+      authorizeUserSurfaceRequest(fastify, request, reply, request.params.fqdn),
+  );
+
+  /**
+   * GET /authz/user-surface-unauthenticated — what a user-surface request
+   * without a session is answered with (nginx `error_page 401`): JSON, so
+   * the application can tell its user to sign in again; never a redirect.
+   */
+  fastify.get(
+    '/authz/user-surface-unauthenticated',
+    { config: INTERNAL_RATE_LIMIT },
+    async (_request, reply) =>
+      reply.code(401).header('Cache-Control', 'no-store').send({ error: 'unauthenticated' }),
+  );
+
+  /**
    * GET /authz/check — what tunnel vhosts written before 4.3 call. They name
    * the tunnel by the client's Host header (`$http_host`), which an
    * absolute-form request line can point at another tunnel than the one
@@ -202,6 +266,56 @@ export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
       .type('text/plain; charset=utf-8')
       .send('This tunnel is unavailable until the relay rewrites its configuration.\n');
   });
+}
+
+/**
+ * The Authelia session behind the request's cookies, or null (no
+ * `authelia_session` cookie, or Authelia refused it). The session cache is
+ * keyed by the Authelia session cookie only, so unrelated cookies (CSRF
+ * tokens, analytics) cannot pollute it; one shared by every route here.
+ */
+async function authenticatedSession(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  cookie: string,
+  originalUrl: string,
+  hostname: string,
+): Promise<AutheliaSession | null> {
+  const requestId = request.id;
+  const autheliaCookie = extractAutheliaCookie(cookie);
+  if (!autheliaCookie) {
+    // No authelia_session — short-circuit before any cache work or the
+    // upstream Authelia /verify call. Without this, an unauthenticated
+    // request would still cost us an Authelia round-trip.
+    request.log.info(
+      { requestId, reason: 'missing_authelia_cookie', fqdn: hostname },
+      'authz denied',
+    );
+    return null;
+  }
+  const cacheKey = hashCookie(autheliaCookie);
+  const sessionCache = fastify.getSessionCache();
+  const cached = sessionCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached;
+  if (cached) {
+    // Lazy TTL eviction — one stale entry pruned per request.
+    sessionCache.delete(cacheKey);
+  }
+  const validated = await validateWithAuthelia(cookie, originalUrl, requestId);
+  if (!validated) {
+    request.log.info({ requestId, reason: 'authelia_rejected', fqdn: hostname }, 'authz denied');
+    return null;
+  }
+
+  // Opportunistic eviction — drop oldest (insertion-order head) when at cap.
+  while (sessionCache.size >= MAX_SESSION_CACHE_ENTRIES) {
+    const oldestKey = sessionCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    sessionCache.delete(oldestKey);
+  }
+
+  sessionCache.set(cacheKey, validated);
+  return validated;
 }
 
 /**
@@ -232,23 +346,12 @@ async function authorizeTunnelRequest(
     return reply.code(401).send();
   }
 
-  // The vhost writes the same hostname into the path, X-Original-URL and
-  // Host. Disagreement means a request that did not come from a tunnel
-  // vhost of this version: refuse it before Authelia is asked anything.
-  const named = fqdn.toLowerCase();
-  const hostHeader = (request.headers['host'] as string | undefined) ?? '';
-  const hostOnly = hostHeader.split(':')[0]?.toLowerCase() ?? '';
-  if (parsed.hostname.toLowerCase() !== named || hostOnly !== named) {
-    request.log.info(
-      {
-        requestId,
-        reason: hostOnly ? 'tunnel_name_mismatch' : 'missing_host_header',
-        tunnel: fqdn,
-        originalHost: parsed.hostname,
-        hostHeader,
-      },
-      'authz denied',
-    );
+  // Disagreement means a request that did not come from a tunnel vhost of
+  // this version: refuse it before Authelia is asked anything.
+  const mismatch = hostnameMismatch(request, fqdn, parsed.hostname);
+  if (mismatch) {
+    const { reason, ...detail } = mismatch;
+    request.log.info({ requestId, reason, tunnel: fqdn, ...detail }, 'authz denied');
     return reply.code(401).send();
   }
 
@@ -259,51 +362,14 @@ async function authorizeTunnelRequest(
     return reply.code(401).send();
   }
 
-  // Check session cache (keyed by Authelia session cookie only to prevent
-  // cache pollution via unrelated cookies like CSRF tokens or analytics).
-  const autheliaCookie = extractAutheliaCookie(cookie);
-  if (!autheliaCookie) {
-    // No authelia_session — short-circuit before any cache work or the
-    // upstream Authelia /verify call. Without this, an unauthenticated
-    // request would still cost us an Authelia round-trip.
-    request.log.info(
-      { requestId, reason: 'missing_authelia_cookie', fqdn: parsed.hostname },
-      'authz denied',
-    );
-    return reply.code(401).send();
-  }
-  const cacheKey = hashCookie(autheliaCookie);
-  const sessionCache = fastify.getSessionCache();
-  const cached = sessionCache.get(cacheKey);
-  const now = Date.now();
-  let session: AutheliaSession | undefined;
-
-  if (cached && cached.expiresAt > now) {
-    session = cached;
-  } else {
-    if (cached) {
-      // Lazy TTL eviction — one stale entry pruned per request.
-      sessionCache.delete(cacheKey);
-    }
-    const validated = await validateWithAuthelia(cookie, originalUrl, requestId);
-    if (!validated) {
-      request.log.info(
-        { requestId, reason: 'authelia_rejected', fqdn: parsed.hostname },
-        'authz denied',
-      );
-      return reply.code(401).send();
-    }
-
-    // Opportunistic eviction — drop oldest (insertion-order head) when at cap.
-    while (sessionCache.size >= MAX_SESSION_CACHE_ENTRIES) {
-      const oldestKey = sessionCache.keys().next().value;
-      if (oldestKey === undefined) break;
-      sessionCache.delete(oldestKey);
-    }
-
-    sessionCache.set(cacheKey, validated);
-    session = validated;
-  }
+  const session = await authenticatedSession(
+    fastify,
+    request,
+    cookie,
+    originalUrl,
+    parsed.hostname,
+  );
+  if (!session) return reply.code(401).send();
 
   // Check access mode
   if (tunnel.accessMode === 'public' || tunnel.accessMode === 'authenticated') {
@@ -359,6 +425,124 @@ async function authorizeTunnelRequest(
 }
 
 /**
+ * Authorize one request on the user surface of the tunnel named `fqdn` (see
+ * the `/authz/user-surface/:fqdn` route).
+ */
+async function authorizeUserSurfaceRequest(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  fqdn: string,
+): Promise<FastifyReply> {
+  const requestId = request.id;
+  // Single use: nothing of this answer may be cached, a refusal included.
+  reply.header('Cache-Control', 'no-store');
+  const refuse = (reason: string, extra: Record<string, unknown> = {}): FastifyReply => {
+    request.log.info({ requestId, reason, tunnel: fqdn, ...extra }, 'user-surface authz denied');
+    return reply.code(403).send();
+  };
+
+  if (!TUNNEL_FQDN_RE.test(fqdn)) return refuse('invalid_tunnel_name');
+  const originalUrl = request.headers['x-original-url'];
+  const originalMethod = request.headers['x-original-method'];
+  if (typeof originalUrl !== 'string' || typeof originalMethod !== 'string') {
+    return refuse('missing_original_request');
+  }
+  const parsed = parseOriginalUrl(originalUrl);
+  if (!parsed) return refuse('invalid_original_url');
+
+  const mismatch = hostnameMismatch(request, fqdn, parsed.hostname);
+  if (mismatch) {
+    const { reason, ...detail } = mismatch;
+    return refuse(reason, detail);
+  }
+
+  const tunnel = findTunnelByFqdn(fastify.getTunnels(), fqdn);
+  if (!tunnel) return refuse('unknown_tunnel_fqdn');
+  if (!tunnel.enabled) return refuse('tunnel_disabled');
+  if (tunnel.accessMode === 'public' || !tunnel.userSurface) return refuse('no_user_surface');
+
+  // The request target exactly as the browser sent it — what follows the
+  // hostname the vhost wrote — never re-encoded by a URL parser: the panel
+  // receives it unchanged and holds the assertion against it byte for byte.
+  const prefix = `https://${fqdn.toLowerCase()}`;
+  if (originalUrl.slice(0, prefix.length).toLowerCase() !== prefix) {
+    return refuse('invalid_original_url');
+  }
+  const target = originalUrl.slice(prefix.length);
+  const route = tunnel.userSurface.routes.find((r) => isUserSurfaceUrl(target, r));
+  if (!route) return refuse('not_on_user_surface');
+
+  const session = await authenticatedSession(
+    fastify,
+    request,
+    request.headers['cookie'] ?? '',
+    originalUrl,
+    parsed.hostname,
+  );
+  if (!session) return reply.code(401).send();
+
+  if (tunnel.accessMode !== 'authenticated') {
+    // restricted — the user's grant for the tunnel, as on its other paths
+    const result = await checkAccess(session.username, 'tunnel', tunnel.id, {
+      adminContact: fastify.getSettings().adminEmail,
+      adminName: fastify.getSettings().adminName,
+    });
+    if (!result.allowed) {
+      return refuse('no_matching_grant', {
+        username: session.username,
+        resourceType: 'tunnel',
+        resourceId: tunnel.id,
+      });
+    }
+  }
+
+  const key = await currentRelayKey(fastify, request);
+  if (!key) {
+    request.log.error(
+      { requestId, reason: 'relay_signing_key_unavailable', tunnel: fqdn },
+      'user-surface authz failed',
+    );
+    return reply.code(503).send();
+  }
+
+  let assertion: string;
+  try {
+    assertion = signRelayAssertion(
+      {
+        aud: RELAY_PANEL_AUDIENCE,
+        port: RELAY_PANEL_PORT,
+        caller: { type: 'user', username: session.username },
+        method: originalMethod,
+        target: { route, path: target },
+      },
+      key,
+    );
+  } catch (err: unknown) {
+    // A username, method or target an assertion cannot carry.
+    return refuse('not_assertable', { detail: err instanceof Error ? err.message : String(err) });
+  }
+  reply.header(RELAY_ASSERTION_HEADER, assertion);
+  return reply.code(200).send();
+}
+
+/** The relay signing key, or null when there is none or it is unusable (logged). */
+async function currentRelayKey(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+): Promise<RelaySigningKey | null> {
+  try {
+    return await fastify.getRelaySigner().current();
+  } catch (err: unknown) {
+    request.log.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      'Relay signing key unusable',
+    );
+    return null;
+  }
+}
+
+/**
  * Answer an allowed request: the Authelia identity headers nginx forwards
  * to the tunnel backend.
  *
@@ -383,15 +567,7 @@ async function allow(
   }
 
   reply.header('Cache-Control', 'no-store');
-  let key: RelaySigningKey | null = null;
-  try {
-    key = await fastify.getRelaySigner().current();
-  } catch (err: unknown) {
-    request.log.error(
-      { err: err instanceof Error ? err.message : String(err) },
-      'Relay signing key unusable',
-    );
-  }
+  const key = await currentRelayKey(fastify, request);
   if (!key) {
     request.log.error(
       { requestId: request.id, reason: 'relay_signing_key_unavailable', fqdn: tunnel.fqdn },

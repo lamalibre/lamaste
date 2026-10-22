@@ -71,6 +71,13 @@ export const RELAY_SIGNING_KEY_FILE = 'relay-signing-key.json';
  */
 export const RELAY_PANEL_AUDIENCE = '@panel';
 
+/**
+ * The port of an assertion for the panel: the panel's own listener on the
+ * relay's loopback (`127.0.0.1:3100`), where nginx sends a user-surface
+ * request.
+ */
+export const RELAY_PANEL_PORT = 3100;
+
 const MAX_HEADER_LENGTH = 8192;
 const MAX_PATH_LENGTH = 4096;
 const MAX_FIELD_LENGTH = 256;

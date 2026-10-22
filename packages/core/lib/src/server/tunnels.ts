@@ -10,6 +10,13 @@
  * pass the "port is free" check, and a read-modify-write never loses a
  * concurrent change. The lock is not re-entrant: workflows must not call one
  * another; {@link updateTunnel} composes the PATCH steps under one hold.
+ *
+ * An app tunnel may be *bound* as the user surface of agent-hosted plugins
+ * ({@link bindUserSurface}): its host then serves `/api/<route>/app/*` for
+ * each bound route whose plugin's installed, approved version declares
+ * `identity` — the panel's {@link UserSurfaceDeps} decides which — through
+ * locations in its vhost that ask Gatekeeper and pass the request to the
+ * panel. Every workflow that renders the vhost carries them.
  */
 
 import crypto from 'node:crypto';
@@ -21,6 +28,11 @@ import {
   isInternalPluginPort,
 } from '../constants.js';
 import { PromiseChainMutex } from '../file-helpers.js';
+import {
+  USER_SURFACE_MAX_ROUTES_PER_HOST,
+  isUserSurfaceRoute,
+  tunnelUserSurfaceRoutes,
+} from '../user-surface.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,6 +83,19 @@ export interface TunnelEntry {
    * nginx's built-in 1 MiB limit until the tunnel is reconfigured.
    */
   maxBodySizeMb?: number | undefined;
+  /**
+   * The agent-hosted plugins whose user surface (`/api/<route>/app/*`) this
+   * tunnel's host serves — app tunnels only, `authenticated` or
+   * `restricted`; a route on one host at most. Absent when it serves none.
+   * Gatekeeper reads it too (`/authz/user-surface/<fqdn>`).
+   */
+  userSurface?: TunnelUserSurface | undefined;
+}
+
+/** A tunnel's binding as the user surface of agent-hosted plugins. */
+export interface TunnelUserSurface {
+  /** Plugin routes, each a valid user-surface route (`isUserSurfaceRoute`). */
+  routes: string[];
 }
 
 export interface TunnelLogger {
@@ -101,6 +126,34 @@ export interface VhostOptions {
    * being enabled, and a failed write restores the previous link state.
    */
   enabled?: boolean;
+  /**
+   * The plugins' user surfaces the vhost serves: a location for
+   * `/api/<route>/app` and everything under it per entry, authorized by
+   * Gatekeeper and passed to the panel. Only for `authenticated` and
+   * `restricted` vhosts — a public writer refuses any.
+   */
+  userSurface?: readonly UserSurfaceVhostRoute[];
+}
+
+/** One plugin's user surface as a tunnel's vhost serves it. */
+export interface UserSurfaceVhostRoute {
+  readonly route: string;
+  /** `client_max_body_size` of its locations, in MiB: the plugin's internal tunnel's body limit. */
+  readonly maxBodySizeMb: number;
+}
+
+/**
+ * Which of a tunnel's bound user-surface routes its vhost serves. The
+ * panel's: it knows the plugins.
+ */
+export interface UserSurfaceDeps {
+  /**
+   * Of `routes` (bound to one tunnel), the ones served — an installed
+   * plugin holds the route and its installed, approved version declares
+   * `identity` — each with its body limit, in the order given. Called under
+   * the tunnel lock: it must not take it.
+   */
+  servedRoutes(routes: readonly string[]): Promise<UserSurfaceVhostRoute[]>;
 }
 
 /** Writes an nginx vhost config based on tunnel type and access mode. */
@@ -223,7 +276,9 @@ export class TunnelError extends Error {
       | 'UNKNOWN_AGENT'
       | 'INVALID_SETTING'
       | 'RESERVED_PORT'
-      | 'FORBIDDEN',
+      | 'FORBIDDEN'
+      /** A route bound to another host, or a change a bound tunnel cannot take. */
+      | 'USER_SURFACE_CONFLICT',
   ) {
     super(message);
     this.name = 'TunnelError';
@@ -349,6 +404,54 @@ function writeModeVhost(
     return nginx.writeAuthenticatedVhost(subdomain, domain, port, certPath, opts);
   }
   return nginx.writeRestrictedVhost(subdomain, domain, port, certPath, opts);
+}
+
+/**
+ * The certificate directory a tunnel's vhost is rewritten with: what the
+ * certificate check finds — a wildcard certificate, or the tunnel's own.
+ */
+async function tunnelCertPath(
+  certbot: CertbotDeps,
+  subdomain: string,
+  tunnel: Pick<TunnelEntry, 'fqdn'>,
+  domain: string,
+  email: string,
+): Promise<string | undefined> {
+  const fqdn = tunnel.fqdn ?? `${subdomain}.${domain}`;
+  try {
+    const cert = await certbot.issueTunnelCert(fqdn, email);
+    return cert.certPath || undefined;
+  } catch (err: unknown) {
+    throw new TunnelError(
+      `Certificate check failed: ${err instanceof Error ? err.message : String(err)}`,
+      'CERT_FAILED',
+    );
+  }
+}
+
+/**
+ * Rewrite an app or plugin tunnel's vhost from its settings — access mode,
+ * body limit, the user surfaces it serves — keeping its enabled/disabled
+ * link state.
+ */
+function writeTunnelVhost(
+  nginx: NginxDeps,
+  tunnel: TunnelEntry,
+  subdomain: string,
+  domain: string,
+  certPath: string | undefined,
+  settings: {
+    readonly accessMode: AccessMode;
+    readonly maxBodySizeMb: number | undefined;
+    readonly userSurface: readonly UserSurfaceVhostRoute[];
+  },
+): Promise<void> {
+  return writeModeVhost(nginx, settings.accessMode, subdomain, domain, tunnel.port, certPath, {
+    ...(tunnel.pluginRoute ? { pathPrefix: tunnel.pluginRoute } : {}),
+    ...(settings.maxBodySizeMb !== undefined ? { maxBodySizeMb: settings.maxBodySizeMb } : {}),
+    ...(settings.userSurface.length > 0 ? { userSurface: settings.userSurface } : {}),
+    enabled: tunnel.enabled !== false,
+  });
 }
 
 /**
@@ -788,8 +891,11 @@ export interface DeleteTunnelOptions {
 
 /**
  * Delete a tunnel: remove nginx vhost, remove from state, sync chisel.
+ * Returns the removed entry — a user-surface binding it had goes with it.
  */
-export function deleteTunnel(opts: DeleteTunnelOptions): Promise<{ ok: true }> {
+export function deleteTunnel(
+  opts: DeleteTunnelOptions,
+): Promise<{ ok: true; tunnel: TunnelEntry }> {
   return withTunnelLock(async () => {
     const { id, nginx, chisel, state, logger, authorize } = opts;
 
@@ -817,7 +923,7 @@ export function deleteTunnel(opts: DeleteTunnelOptions): Promise<{ ok: true }> {
     logger.info({}, 'Syncing Chisel');
     await syncOrThrow(chisel);
 
-    return { ok: true as const };
+    return { ok: true as const, tunnel };
   });
 }
 
@@ -838,6 +944,8 @@ export interface UpdateTunnelOptions {
   chisel: ChiselDeps;
   state: TunnelStateDeps;
   agents: TunnelAgentDeps;
+  /** Which bound user surfaces a re-rendered vhost serves. */
+  userSurface: UserSurfaceDeps;
   logger: TunnelLogger;
   authorize?: AuthorizeTunnel | undefined;
 }
@@ -847,7 +955,8 @@ export interface UpdateTunnelOptions {
  * state under one hold of the tunnel lock, in that order: ownership first,
  * so a failure later leaves the tunnel carried by the agent that was asked
  * for; enabled last, so a tunnel being disabled is never re-enabled by the
- * vhost rewrite before it.
+ * vhost rewrite before it. A user-surface binding stays with the tunnel
+ * through all of them; a bound tunnel cannot be made public.
  */
 export function updateTunnel(
   opts: UpdateTunnelOptions,
@@ -1023,6 +1132,8 @@ export interface ReconfigureTunnelOptions {
   nginx: NginxDeps;
   certbot: CertbotDeps;
   state: TunnelStateDeps;
+  /** Which bound user surfaces the re-rendered vhost serves. */
+  userSurface: UserSurfaceDeps;
   logger: TunnelLogger;
 }
 
@@ -1030,11 +1141,13 @@ export interface ReconfigureTunnelOptions {
  * Change a tunnel's access mode and/or request body limit in place.
  *
  * Both live in the tunnel's nginx vhost, so the vhost is re-rendered from the
- * tunnel's full settings — keeping its enabled/disabled link state, and
- * restoring the previous file and link state if nginx rejects it — then the
- * state is saved. Gatekeeper watches the state file and picks up an
- * access-mode change on its own. Agent panel tunnels have a fixed mTLS vhost
- * and are not reconfigurable.
+ * tunnel's full settings — its user surfaces included, keeping its
+ * enabled/disabled link state, and restoring the previous file and link
+ * state if nginx rejects it — then the state is saved. Gatekeeper watches
+ * the state file and picks up an access-mode change on its own. Agent panel
+ * tunnels have a fixed mTLS vhost and are not reconfigurable. A tunnel bound
+ * as a user surface cannot be made public (`USER_SURFACE_CONFLICT`): a
+ * public host has no session to vouch for.
  */
 export function reconfigureTunnel(
   opts: ReconfigureTunnelOptions,
@@ -1084,7 +1197,6 @@ async function reconfigureTunnelLocked(
     return { ok: true as const, tunnel };
   }
   const subdomain = tunnel.subdomain;
-  const fqdn = tunnel.fqdn ?? `${subdomain}.${domain}`;
 
   const before = {
     accessMode: tunnel.accessMode ?? 'restricted',
@@ -1097,24 +1209,22 @@ async function reconfigureTunnelLocked(
   if (after.accessMode === before.accessMode && after.maxBodySizeMb === before.maxBodySizeMb) {
     return { ok: true as const, tunnel };
   }
-
-  let certPath: string | undefined;
-  try {
-    const cert = await certbot.issueTunnelCert(fqdn, email);
-    certPath = cert.certPath || undefined;
-  } catch (err: unknown) {
+  const bound = tunnelUserSurfaceRoutes(tunnel);
+  if (after.accessMode === 'public' && bound.length > 0) {
     throw new TunnelError(
-      `Certificate check failed: ${err instanceof Error ? err.message : String(err)}`,
-      'CERT_FAILED',
+      `This tunnel serves the user surface of ${bound.map((r) => `"${r}"`).join(', ')} ` +
+        'and cannot be made public — unbind it first',
+      'USER_SURFACE_CONFLICT',
     );
   }
 
-  const enabled = tunnel.enabled !== false;
+  const certPath = await tunnelCertPath(certbot, subdomain, tunnel, domain, email);
+  const served = bound.length > 0 ? await opts.userSurface.servedRoutes(bound) : [];
   const render = (settings: typeof after): Promise<void> =>
-    writeModeVhost(nginx, settings.accessMode, subdomain, domain, tunnel.port, certPath, {
-      ...(tunnel.pluginRoute ? { pathPrefix: tunnel.pluginRoute } : {}),
-      ...(settings.maxBodySizeMb !== undefined ? { maxBodySizeMb: settings.maxBodySizeMb } : {}),
-      enabled,
+    writeTunnelVhost(nginx, tunnel, subdomain, domain, certPath, {
+      accessMode: settings.accessMode,
+      maxBodySizeMb: settings.maxBodySizeMb,
+      userSurface: served,
     });
 
   try {
@@ -1145,6 +1255,272 @@ async function reconfigureTunnelLocked(
 
   logger.info({ subdomain, from: before, to: after }, 'Tunnel reconfigured');
   return { ok: true as const, tunnel };
+}
+
+// ---------------------------------------------------------------------------
+// User surface binding
+// ---------------------------------------------------------------------------
+
+export interface UserSurfaceBindingOptions {
+  /** The tunnel. */
+  id: string;
+  /** The plugin route. */
+  route: string;
+  domain: string;
+  email: string;
+  nginx: NginxDeps;
+  certbot: CertbotDeps;
+  state: TunnelStateDeps;
+  userSurface: UserSurfaceDeps;
+  logger: TunnelLogger;
+}
+
+export interface BindUserSurfaceOptions extends UserSurfaceBindingOptions {
+  /**
+   * Called under the lock before anything changes: throw to refuse the
+   * route (the panel requires an installed, agent-hosted plugin to hold it).
+   */
+  assertRoute(route: string): Promise<void>;
+}
+
+export interface UserSurfaceBindingResult {
+  readonly ok: true;
+  readonly tunnel: TunnelEntry;
+  /** False when the request changed nothing (the route was bound already). */
+  readonly changed: boolean;
+}
+
+/**
+ * Bind `route` as a user surface of tunnel `id`: its host serves
+ * `/api/<route>/app/*` once the plugin's installed, approved version
+ * declares `identity`. Before that its vhost has no location for the route
+ * and requests go down the tunnel as before — so binding a plugin whose
+ * next version brings `identity` makes that update the switch-over.
+ *
+ * Only an enabled app tunnel an agent carries, `authenticated` or
+ * `restricted`; a route on one host at most (`USER_SURFACE_CONFLICT`); at
+ * most {@link USER_SURFACE_MAX_ROUTES_PER_HOST} routes on a host.
+ * Idempotent. Under the tunnel lock: the vhost is rewritten first (when what
+ * it serves changes), then the state saved; a failed save restores the
+ * previous vhost.
+ */
+export function bindUserSurface(opts: BindUserSurfaceOptions): Promise<UserSurfaceBindingResult> {
+  return withTunnelLock(async () => {
+    const { id, route, logger } = opts;
+    if (!isUserSurfaceRoute(route)) {
+      throw new TunnelError(`Invalid plugin route '${String(route)}'`, 'INVALID_SETTING');
+    }
+    await opts.assertRoute(route);
+
+    const tunnels = await opts.state.readTunnels();
+    const tunnel = tunnels.find((t) => t.id === id);
+    if (!tunnel) {
+      throw new TunnelError('Tunnel not found', 'NOT_FOUND');
+    }
+    const subdomain = userSurfaceHostSubdomain(tunnel);
+    const current = tunnelUserSurfaceRoutes(tunnel);
+    if (current.includes(route)) {
+      return { ok: true as const, tunnel, changed: false };
+    }
+    const holder = tunnels.find((t) => t.id !== id && tunnelUserSurfaceRoutes(t).includes(route));
+    if (holder) {
+      throw new TunnelError(
+        `The user surface of '${route}' is already served on ${tunnelLabel(holder)} — a plugin's user surface is on one host at most`,
+        'USER_SURFACE_CONFLICT',
+      );
+    }
+    if (current.length >= USER_SURFACE_MAX_ROUTES_PER_HOST) {
+      throw new TunnelError(
+        `A host serves the user surfaces of at most ${USER_SURFACE_MAX_ROUTES_PER_HOST} plugins`,
+        'INVALID_SETTING',
+      );
+    }
+
+    await rebindUserSurfaceLocked(tunnels, tunnel, subdomain, [...current, route], opts);
+    logger.info({ tunnel: tunnelLabel(tunnel), route }, 'User surface bound');
+    return { ok: true as const, tunnel, changed: true };
+  });
+}
+
+/**
+ * Unbind `route` from tunnel `id` (`NOT_FOUND` when it is not bound there):
+ * the vhost loses the route's locations, then the state its binding — a
+ * failed save restores the previous vhost. Requests for the route go down
+ * the tunnel again.
+ */
+export function unbindUserSurface(
+  opts: UserSurfaceBindingOptions,
+): Promise<UserSurfaceBindingResult> {
+  return withTunnelLock(async () => {
+    const { id, route, logger } = opts;
+    const tunnels = await opts.state.readTunnels();
+    const tunnel = tunnels.find((t) => t.id === id);
+    if (!tunnel) {
+      throw new TunnelError('Tunnel not found', 'NOT_FOUND');
+    }
+    const current = tunnelUserSurfaceRoutes(tunnel);
+    if (!current.includes(route) || tunnel.subdomain === null) {
+      throw new TunnelError(
+        `This tunnel does not serve the user surface of '${String(route)}'`,
+        'NOT_FOUND',
+      );
+    }
+    await rebindUserSurfaceLocked(
+      tunnels,
+      tunnel,
+      tunnel.subdomain,
+      current.filter((r) => r !== route),
+      opts,
+    );
+    logger.info({ tunnel: tunnelLabel(tunnel), route }, 'User surface unbound');
+    return { ok: true as const, tunnel, changed: true };
+  });
+}
+
+export interface ReleaseUserSurfaceRouteOptions {
+  route: string;
+  state: TunnelStateDeps;
+  logger: TunnelLogger;
+}
+
+/**
+ * Remove `route` from every tunnel's user-surface binding — its plugin is
+ * gone. State only, so nothing outside the state can keep the binding
+ * alive: Gatekeeper and the panel both read it from there and refuse the
+ * route at once. The caller then re-renders the vhosts of the tunnels
+ * returned (their locations for the route go).
+ */
+export function releaseUserSurfaceRoute(
+  opts: ReleaseUserSurfaceRouteOptions,
+): Promise<{ released: TunnelEntry[] }> {
+  return withTunnelLock(async () => {
+    const { route, state, logger } = opts;
+    const tunnels = await state.readTunnels();
+    const released: TunnelEntry[] = [];
+    for (const tunnel of tunnels) {
+      // The stored list as it is, whatever the tunnel: a binding a reader
+      // would not honour still goes.
+      const stored: unknown = tunnel.userSurface?.routes;
+      if (!Array.isArray(stored) || !stored.includes(route)) continue;
+      setBoundRoutes(
+        tunnel,
+        stored.filter((r): r is string => typeof r === 'string' && r !== route),
+      );
+      released.push(tunnel);
+    }
+    if (released.length === 0) return { released };
+    await state.writeTunnels(tunnels);
+    logger.info(
+      { route, tunnels: released.map((t) => tunnelLabel(t)) },
+      'Released a user surface from every tunnel',
+    );
+    return { released };
+  });
+}
+
+/**
+ * The subdomain of a tunnel that may serve a plugin's user surface — an
+ * enabled app tunnel an agent carries, `authenticated` or `restricted` —
+ * or a refusal (`INVALID_SETTING`).
+ */
+function userSurfaceHostSubdomain(tunnel: TunnelEntry): string {
+  // Tunnels persisted before `type` existed are app tunnels.
+  const type: string | undefined = tunnel.type;
+  if (isInternalTunnel(tunnel) || tunnel.subdomain === null || (type ?? 'app') !== 'app') {
+    throw new TunnelError(
+      "Only an app tunnel's host can serve a plugin's user surface",
+      'INVALID_SETTING',
+    );
+  }
+  if (tunnel.enabled === false) {
+    throw new TunnelError(
+      "Enable the tunnel before it serves a plugin's user surface",
+      'INVALID_SETTING',
+    );
+  }
+  if (!tunnel.agentLabel) {
+    throw new TunnelError(
+      "Assign the tunnel to an agent before it serves a plugin's user surface",
+      'INVALID_SETTING',
+    );
+  }
+  if ((tunnel.accessMode ?? 'restricted') === 'public') {
+    throw new TunnelError(
+      'A public tunnel has no signed-in user to vouch for — make it authenticated or restricted first',
+      'INVALID_SETTING',
+    );
+  }
+  return tunnel.subdomain;
+}
+
+/** Store `routes` as the tunnel's binding — none leaves no `userSurface` at all. */
+function setBoundRoutes(tunnel: TunnelEntry, routes: string[]): void {
+  if (routes.length > 0) tunnel.userSurface = { routes };
+  else delete tunnel.userSurface;
+}
+
+function sameServedRoutes(
+  a: readonly UserSurfaceVhostRoute[],
+  b: readonly UserSurfaceVhostRoute[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every((r, i) => r.route === b[i]?.route && r.maxBodySizeMb === b[i]?.maxBodySizeMb)
+  );
+}
+
+/**
+ * Change `tunnel`'s binding to `next` under the held lock: rewrite the vhost
+ * when what it serves changes, then save the state; restore the vhost when
+ * the save fails.
+ */
+async function rebindUserSurfaceLocked(
+  tunnels: TunnelEntry[],
+  tunnel: TunnelEntry,
+  subdomain: string,
+  next: string[],
+  opts: UserSurfaceBindingOptions,
+): Promise<void> {
+  const { domain, email, nginx, certbot, state, logger } = opts;
+  const servedBefore = await opts.userSurface.servedRoutes(tunnelUserSurfaceRoutes(tunnel));
+  const servedAfter = await opts.userSurface.servedRoutes(next);
+
+  let render: ((served: readonly UserSurfaceVhostRoute[]) => Promise<void>) | null = null;
+  if (!sameServedRoutes(servedBefore, servedAfter)) {
+    const certPath = await tunnelCertPath(certbot, subdomain, tunnel, domain, email);
+    render = (served) =>
+      writeTunnelVhost(nginx, tunnel, subdomain, domain, certPath, {
+        accessMode: tunnel.accessMode ?? 'restricted',
+        maxBodySizeMb: tunnel.maxBodySizeMb,
+        userSurface: served,
+      });
+    try {
+      await render(servedAfter);
+    } catch (err: unknown) {
+      throw new TunnelError(
+        `Nginx configuration failed: ${err instanceof Error ? err.message : String(err)}`,
+        'NGINX_FAILED',
+      );
+    }
+  }
+
+  setBoundRoutes(tunnel, next);
+  try {
+    await state.writeTunnels(tunnels);
+  } catch (err: unknown) {
+    logger.error({ err }, 'Failed to save tunnel state; restoring previous vhost');
+    if (render) {
+      try {
+        await render(servedBefore);
+      } catch (rollbackErr: unknown) {
+        logger.error({ err: rollbackErr }, 'Rollback: failed to restore previous vhost');
+      }
+    }
+    throw new TunnelError(
+      `State persistence failed: ${err instanceof Error ? err.message : String(err)}`,
+      'STATE_FAILED',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

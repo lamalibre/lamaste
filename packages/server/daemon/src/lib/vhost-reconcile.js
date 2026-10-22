@@ -13,7 +13,11 @@
  *   Authelia-protected static site and of the auth portal named the client's
  *   `Host` header rather than the vhost's own hostname, so a request line for
  *   one hostname sent with the `Host` of another was authorized for the other
- *   (see `originalUrl` in nginx.js).
+ *   (see `originalUrl` in nginx.js);
+ * - from 4.5 the panel serves plugins' user surfaces to a relay assertion
+ *   Gatekeeper signs, so every vhost that proxies a browser to the panel —
+ *   the panel's own and the auth portal — clears one a client sent, and so
+ *   does every tunnel vhost that does not set Gatekeeper's.
  *
  * Each installed vhost is rendered again from state, on the certificate
  * directory the installed file names (a wildcard certificate stays a wildcard
@@ -23,15 +27,23 @@
  * A rewrite never adds or removes authentication: a vhost that disagrees with
  * its state on that is reported and left alone. The one exception is the
  * agent-panel vhost, whose mTLS check gains the panel's `auth_request`.
+ *
+ * A tunnel bound as plugins' user surface is rendered with the locations of
+ * the routes it serves now (`servedUserSurfaceRoutes`); the same reconcile,
+ * limited to the tunnels a route is bound to, follows the plugin's identity
+ * through approval, update and uninstall ({@link reconcileUserSurfaceVhosts}).
  */
 
+import { tunnelUserSurfaceRoutes } from '@lamalibre/lamaste';
 import { withTunnelLock } from '@lamalibre/lamaste/server';
 import {
+  PANEL_DOMAIN_VHOST,
   installVhost,
   isSiteEnabled,
   readInstalledVhost,
   renderAgentPanelVhost,
   renderAuthVhost,
+  renderPanelVhost,
   renderStaticSiteVhost,
   renderTunnelVhost,
   vhostCertDir,
@@ -44,14 +56,28 @@ const SITE_NAME_PART_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/;
 const AUTH_VHOST = 'lamalibre-lamaste-auth';
 
 /**
+ * Which of a tunnel's bound routes its vhost serves now — the panel's
+ * plugins decide (`lib/user-surface.js`), loaded when first needed so this
+ * module stays free of the plugin registry.
+ *
+ * @param {readonly string[]} routes
+ */
+async function servedUserSurface(routes) {
+  const { servedUserSurfaceRoutes } = await import('./user-surface.js');
+  return servedUserSurfaceRoutes(routes);
+}
+
+/**
  * The vhost a tunnel should have, rendered on `certDir`; null for tunnels
  * without one (internal plugin tunnels) or whose state cannot be rendered.
  *
  * @param {object} tunnel
  * @param {string} certDir
+ * @param {ReadonlyArray<{ route: string, maxBodySizeMb: number }>} [userSurface] - the user
+ *   surfaces its vhost serves (`servedUserSurfaceRoutes` of its bound routes)
  * @returns {{ name: string, fqdn: string, config: string } | null}
  */
-export function expectedTunnelVhost(tunnel, certDir) {
+export function expectedTunnelVhost(tunnel, certDir, userSurface = []) {
   if (!managedTunnelVhostName(tunnel) || typeof tunnel.fqdn !== 'string') return null;
   if (!tunnel.fqdn.startsWith(`${tunnel.subdomain}.`)) return null;
   const domain = tunnel.fqdn.slice(tunnel.subdomain.length + 1);
@@ -60,18 +86,16 @@ export function expectedTunnelVhost(tunnel, certDir) {
   }
   // As createTunnel and updateTunnel write it: the stored access mode
   // (restricted when absent, as Gatekeeper reads it), the plugin route of a
-  // plugin tunnel, and a body limit only when the tunnel has one.
-  return renderTunnelVhost(
-    tunnel.accessMode ?? 'restricted',
-    tunnel.subdomain,
-    domain,
-    tunnel.port,
-    certDir,
-    {
-      ...(tunnel.type === 'plugin' && tunnel.pluginRoute ? { pathPrefix: tunnel.pluginRoute } : {}),
-      ...(tunnel.maxBodySizeMb !== undefined ? { maxBodySizeMb: tunnel.maxBodySizeMb } : {}),
-    },
-  );
+  // plugin tunnel, a body limit only when the tunnel has one, and the user
+  // surfaces it serves (never on a public vhost: such state cannot be
+  // rendered, and a bound tunnel cannot be made public).
+  const accessMode = tunnel.accessMode ?? 'restricted';
+  if (accessMode === 'public' && userSurface.length > 0) return null;
+  return renderTunnelVhost(accessMode, tunnel.subdomain, domain, tunnel.port, certDir, {
+    ...(tunnel.type === 'plugin' && tunnel.pluginRoute ? { pathPrefix: tunnel.pluginRoute } : {}),
+    ...(tunnel.maxBodySizeMb !== undefined ? { maxBodySizeMb: tunnel.maxBodySizeMb } : {}),
+    ...(userSurface.length > 0 ? { userSurface } : {}),
+  });
 }
 
 /** Site name of a tunnel's vhost, or null for a tunnel without one. */
@@ -168,7 +192,45 @@ function logResult(log, what, result) {
   }
 }
 
-const defaultTunnelDeps = { readTunnels, readInstalledVhost, installVhost, isSiteEnabled };
+const defaultTunnelDeps = {
+  readTunnels,
+  readInstalledVhost,
+  installVhost,
+  isSiteEnabled,
+  servedUserSurface,
+};
+
+/**
+ * Reconcile one tunnel's vhost (see {@link reconcileOne}), with the user
+ * surfaces it serves now. The caller holds the tunnel lock.
+ */
+async function reconcileTunnel(tunnel, result, deps) {
+  const name = managedTunnelVhostName(tunnel);
+  if (!name) return;
+  const label = tunnel.fqdn ?? tunnel.subdomain;
+  const bound = tunnelUserSurfaceRoutes(tunnel);
+  let served;
+  try {
+    served = bound.length > 0 ? await deps.servedUserSurface(bound) : [];
+  } catch (err) {
+    result.failed.push({ vhost: label, error: err instanceof Error ? err.message : String(err) });
+    return;
+  }
+  await reconcileOne(
+    {
+      name,
+      label,
+      render: (certDir) => expectedTunnelVhost(tunnel, certDir, served),
+      // Linked only when it is now and the tunnel is enabled: a rewrite of
+      // the text never publishes a vhost someone unlinked, and unlinks a
+      // disabled tunnel's.
+      enabled: async () => tunnel.enabled !== false && (await deps.isSiteEnabled(name)),
+      keepAuthentication: tunnel.type !== 'panel',
+    },
+    result,
+    deps,
+  );
+}
 
 /**
  * Reconcile the vhost of every tunnel that has one: agent-panel, app and
@@ -184,24 +246,39 @@ export async function reconcileTunnelVhosts(log, deps = defaultTunnelDeps) {
   return withTunnelLock(async () => {
     const result = newResult();
     for (const tunnel of await deps.readTunnels()) {
-      const name = managedTunnelVhostName(tunnel);
-      if (!name) continue;
-      await reconcileOne(
-        {
-          name,
-          label: tunnel.fqdn ?? tunnel.subdomain,
-          render: (certDir) => expectedTunnelVhost(tunnel, certDir),
-          // Linked only when it is now and the tunnel is enabled: a rewrite of
-          // the text never publishes a vhost someone unlinked, and unlinks a
-          // disabled tunnel's.
-          enabled: async () => tunnel.enabled !== false && (await deps.isSiteEnabled(name)),
-          keepAuthentication: tunnel.type !== 'panel',
-        },
-        result,
-        deps,
-      );
+      await reconcileTunnel(tunnel, result, deps);
     }
     logResult(log, 'tunnel', result);
+    return result;
+  });
+}
+
+/**
+ * Reconcile the vhosts of the tunnels `route` is bound to as a user
+ * surface — after a change that decides whether they serve it: the
+ * plugin's installation, the approval of its version, an update or its
+ * reversal, its hosting. `ids` names tunnels to reconcile besides (the
+ * route's binding was just released from them). Under the tunnel lock.
+ *
+ * @param {Parameters<typeof logResult>[0]} log
+ * @param {string} route
+ * @param {{ ids?: readonly string[] }} [opts]
+ * @param {typeof defaultTunnelDeps} [deps]
+ * @returns {Promise<ReturnType<typeof newResult>>}
+ */
+export async function reconcileUserSurfaceVhosts(
+  log,
+  route,
+  { ids = [] } = {},
+  deps = defaultTunnelDeps,
+) {
+  return withTunnelLock(async () => {
+    const result = newResult();
+    for (const tunnel of await deps.readTunnels()) {
+      if (!ids.includes(tunnel.id) && !tunnelUserSurfaceRoutes(tunnel).includes(route)) continue;
+      await reconcileTunnel(tunnel, result, deps);
+    }
+    logResult(log, 'user-surface tunnel', result);
     return result;
   });
 }
@@ -209,9 +286,11 @@ export async function reconcileTunnelVhosts(log, deps = defaultTunnelDeps) {
 const defaultSiteDeps = { readSites, readInstalledVhost, installVhost, isSiteEnabled };
 
 /**
- * Reconcile the vhosts that ask Authelia directly: the auth portal
- * (`auth.<domain>`) and every static site. Site changes take no lock, so call
- * it before the panel listens — then nothing can change a site meanwhile.
+ * Reconcile the vhosts that proxy a browser to the panel or ask Authelia
+ * directly: the panel's own (`panel.<domain>`), the auth portal
+ * (`auth.<domain>`) and every static site. Site changes take no lock, so
+ * call it before the panel listens — then nothing can change a site
+ * meanwhile.
  *
  * @param {Parameters<typeof logResult>[0]} log
  * @param {string} domain
@@ -220,6 +299,17 @@ const defaultSiteDeps = { readSites, readInstalledVhost, installVhost, isSiteEna
  */
 export async function reconcileSiteVhosts(log, domain, deps = defaultSiteDeps) {
   const result = newResult();
+
+  await reconcileOne(
+    {
+      name: PANEL_DOMAIN_VHOST,
+      label: `panel.${domain}`,
+      render: (certDir) => renderPanelVhost(domain, certDir),
+      enabled: () => deps.isSiteEnabled(PANEL_DOMAIN_VHOST),
+    },
+    result,
+    deps,
+  );
 
   await reconcileOne(
     {

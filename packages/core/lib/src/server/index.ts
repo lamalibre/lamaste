@@ -81,6 +81,9 @@ export {
   reconfigureTunnel,
   updateTunnel,
   releaseAgentTunnels,
+  bindUserSurface,
+  unbindUserSurface,
+  releaseUserSurfaceRoute,
   withTunnelLock,
   TUNNEL_MAX_BODY_MB,
   tunnelsCarriedBy,
@@ -94,6 +97,7 @@ export type {
   TunnelExposure,
   AccessMode,
   TunnelEntry,
+  TunnelUserSurface,
   TunnelLogger,
   CertResult,
   NginxDeps,
@@ -101,6 +105,8 @@ export type {
   ChiselDeps,
   TunnelStateDeps,
   TunnelAgentDeps,
+  UserSurfaceDeps,
+  UserSurfaceVhostRoute,
   CreateTunnelOptions,
   DeleteTunnelOptions,
   ToggleTunnelOptions,
@@ -112,6 +118,10 @@ export type {
   AuthorizeTunnel,
   ReleaseAgentTunnelsOptions,
   ReleaseAgentTunnelsResult,
+  UserSurfaceBindingOptions,
+  BindUserSurfaceOptions,
+  UserSurfaceBindingResult,
+  ReleaseUserSurfaceRouteOptions,
 } from './tunnels.js';
 
 // --- Sites ---

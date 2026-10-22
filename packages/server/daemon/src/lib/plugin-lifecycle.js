@@ -91,6 +91,7 @@ import { recordAudit, recordAuditBestEffort } from './audit.js';
 import { notifyAdminsBestEffort } from './notifications.js';
 import { refreshPluginSettingsBestEffort, settingsBlockOf } from './plugin-settings.js';
 import { refreshPluginIdentity } from './identity-sync.js';
+import { refreshUserSurfaceVhosts } from './user-surface.js';
 
 /** Replaces the OIDC client sync (tests: there is no Authelia to write to). */
 let oidcSyncOverride = null;
@@ -833,6 +834,10 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
   // after a revert); the agent half of the installed version must answer
   // protocol 1 again before its users reach it.
   await refreshPluginIdentity(name, logger);
+  // So may whether it declares identity at all: the hosts its user surface
+  // is bound to serve it from the version that does — a plugin's
+  // switch-over to the relay's user surface is this update.
+  await refreshUserSurfaceVhosts(plugin.route, logger);
 
   // Hooks the new version no longer has: the old runner goes once the new
   // version is in place.

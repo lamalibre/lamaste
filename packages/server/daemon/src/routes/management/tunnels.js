@@ -5,6 +5,15 @@
  * under the tunnel-state lock. Read-only endpoints and HTTP-specific auth
  * checks remain here; checks that depend on the tunnel's current state run
  * inside the lock through the workflows' `authorize` hook.
+ *
+ * A tunnel may serve agent-hosted plugins' user surfaces (slice 6, admin
+ * only; `lib/user-surface.js`):
+ *
+ *   PUT    /tunnels/:id/user-surface          { route } — bind
+ *   DELETE /tunnels/:id/user-surface/:route   unbind
+ *
+ * Listings carry the binding (`userSurface: { routes }`) and how each bound
+ * route is served (`userSurfaceStatus`).
  */
 import { z } from 'zod';
 import {
@@ -30,6 +39,14 @@ import { buildChiselArgs } from '../../lib/chisel-args.js';
 import { listAgentPluginAssignments } from '../../lib/plugin-hosting.js';
 import { pendingAgentJobs } from '../../lib/agent-jobs.js';
 import { recordAgentContact } from '../../lib/agent-presence.js';
+import { actorFromRequest } from '../../lib/actor.js';
+import {
+  auditDeletedTunnelUserSurface,
+  bindTunnelUserSurface,
+  unbindTunnelUserSurface,
+  userSurfaceDeps,
+  withUserSurfaceStatus,
+} from '../../lib/user-surface.js';
 import {
   tunnelNginxDeps,
   tunnelCertbotDeps,
@@ -38,6 +55,20 @@ import {
 } from '../../lib/tunnel-deps.js';
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
+
+/** A plugin route, as a user surface is bound for it (core `isUserSurfaceRoute` decides the rest). */
+const UserSurfaceRouteSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'route must be a plugin route');
+
+const UserSurfaceBodySchema = z.object({ route: UserSurfaceRouteSchema }).strict();
+
+const UserSurfaceParamsSchema = z.object({ id: z.string().uuid(), route: UserSurfaceRouteSchema });
+
+/** Binding and unbinding rewrite a vhost and reload nginx. */
+const USER_SURFACE_WRITE_RATE_LIMIT = { rateLimit: { max: 30, timeWindow: '1 minute' } };
 
 const TunnelPortSchema = z
   .number()
@@ -215,9 +246,28 @@ function tunnelErrorStatus(code) {
       return 403;
     case 'NOT_FOUND':
       return 404;
+    case 'USER_SURFACE_CONFLICT':
+      return 409;
     default:
       return 500;
   }
+}
+
+/** A refused or failed user-surface change: the workflow's status, or a 500. */
+function sendUserSurfaceFailure(request, reply, err, fallback) {
+  if (err instanceof TunnelError) {
+    const status = tunnelErrorStatus(err.code);
+    return reply.code(status).send({
+      error: status === 500 ? fallback : err.message,
+      ...(status === 500 ? { details: err.message } : {}),
+      ...(err.code === 'USER_SURFACE_CONFLICT' ? { code: 'user_surface_conflict' } : {}),
+    });
+  }
+  if (Number.isInteger(err.statusCode)) {
+    return reply.code(err.statusCode).send({ error: err.message });
+  }
+  request.log.error(err, fallback);
+  return reply.code(500).send({ error: fallback, details: err.message });
 }
 
 export default async function tunnelRoutes(fastify, _opts) {
@@ -348,7 +398,9 @@ export default async function tunnelRoutes(fastify, _opts) {
       });
 
       const total = tunnels.length;
-      const windowed = tunnels.slice(offset, offset + limit);
+      const windowed = await Promise.all(
+        tunnels.slice(offset, offset + limit).map((t) => withUserSurfaceStatus(t)),
+      );
 
       return { tunnels: windowed, total, limit, offset };
     },
@@ -547,6 +599,7 @@ export default async function tunnelRoutes(fastify, _opts) {
           chisel: chiselDeps,
           state: stateDeps,
           agents: agentDeps,
+          userSurface: userSurfaceDeps,
           logger: request.log,
           authorize: authorizeFor(request, 'change'),
         });
@@ -577,13 +630,18 @@ export default async function tunnelRoutes(fastify, _opts) {
       const { id } = IdParamSchema.parse(request.params);
 
       try {
-        await deleteTunnel({
+        const { tunnel } = await deleteTunnel({
           id,
           nginx: nginxDeps,
           chisel: chiselDeps,
           state: stateDeps,
           logger: request.log,
           authorize: authorizeFor(request, 'delete'),
+        });
+        // Its user-surface bindings went with it.
+        await auditDeletedTunnelUserSurface(tunnel, {
+          actor: actorFromRequest(request),
+          logger: request.log,
         });
         return { ok: true };
       } catch (err) {
@@ -599,6 +657,44 @@ export default async function tunnelRoutes(fastify, _opts) {
           error: 'Failed to delete tunnel',
           details: err.message,
         });
+      }
+    },
+  );
+
+  // PUT /api/tunnels/:id/user-surface — serve a plugin's user surface on this
+  // tunnel's host (from when its installed, approved version declares identity)
+  fastify.put(
+    '/tunnels/:id/user-surface',
+    { preHandler: fastify.requireRole(['admin']), config: USER_SURFACE_WRITE_RATE_LIMIT },
+    async (request, reply) => {
+      const { id } = IdParamSchema.parse(request.params);
+      const { route } = UserSurfaceBodySchema.parse(request.body);
+      try {
+        const { changed, tunnel } = await bindTunnelUserSurface(id, route, {
+          actor: actorFromRequest(request),
+          logger: request.log,
+        });
+        return { ok: true, changed, tunnel };
+      } catch (err) {
+        return sendUserSurfaceFailure(request, reply, err, 'Failed to bind the user surface');
+      }
+    },
+  );
+
+  // DELETE /api/tunnels/:id/user-surface/:route — stop serving it there
+  fastify.delete(
+    '/tunnels/:id/user-surface/:route',
+    { preHandler: fastify.requireRole(['admin']), config: USER_SURFACE_WRITE_RATE_LIMIT },
+    async (request, reply) => {
+      const { id, route } = UserSurfaceParamsSchema.parse(request.params);
+      try {
+        const { tunnel } = await unbindTunnelUserSurface(id, route, {
+          actor: actorFromRequest(request),
+          logger: request.log,
+        });
+        return { ok: true, tunnel };
+      } catch (err) {
+        return sendUserSurfaceFailure(request, reply, err, 'Failed to unbind the user surface');
       }
     },
   );

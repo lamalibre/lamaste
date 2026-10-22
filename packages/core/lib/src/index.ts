@@ -226,14 +226,18 @@ export type {
 } from './identity.js';
 
 // The user surface: /api/<route>/app/* on the relay, /app/* on the agent
-// half — the path rules every check of it shares
+// half — the path rules every check of it shares, and how a host's binding
+// to it is read
 export {
   AGENT_HALF_APP_PREFIX,
   USER_SURFACE_API_PREFIX,
+  USER_SURFACE_MAX_ROUTES_PER_HOST,
   hasUnsafePathSegments,
   isAgentHalfAppPath,
   isUnderAgentHalfApp,
+  isUserSurfaceRoute,
   isUserSurfaceUrl,
+  tunnelUserSurfaceRoutes,
   userSurfaceApiPath,
 } from './user-surface.js';
 
@@ -423,6 +427,7 @@ export {
   RELAY_ASSERTION_VERSION,
   RELAY_SIGNING_KEY_FILE,
   RELAY_PANEL_AUDIENCE,
+  RELAY_PANEL_PORT,
   relayKeyId,
   relayVerifyKeyOf,
   parseRelayVerifyKey,

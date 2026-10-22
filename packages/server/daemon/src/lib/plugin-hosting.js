@@ -70,6 +70,7 @@ import { onHealthTransition } from './tunnel-hooks.js';
 import { agentLastSeenAt, agentPresenceMap } from './agent-presence.js';
 import { refreshPluginSettingsBestEffort } from './plugin-settings.js';
 import { refreshPluginIdentity } from './identity-sync.js';
+import { refreshUserSurfaceVhosts } from './user-surface.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
@@ -347,6 +348,9 @@ export async function hostPlugin(name, agentLabel, { actor, logger, sourceIp }) 
         // A plugin that declares identity learns its users now: its first
         // sync replays the whole audience.
         await refreshPluginIdentity(plugin.name, logger);
+        // Its user surface's locations take the body limit of the internal
+        // tunnel the hosting brought.
+        await refreshUserSurfaceVhosts(plugin.route, logger);
       }
       return result;
     },

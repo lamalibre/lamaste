@@ -7,7 +7,12 @@
  * relay end of the plugin's internal tunnel — with a caller assertion
  * (`caller-assertion.ts`) naming who the panel admitted. Only `/admin/*` of
  * the agent half is reachable this way; its `/app/*` (the user surface) is
- * not, because the forwarder prefixes `/admin` to whatever it is given.
+ * not, because the forwarder prefixes `/admin` to whatever it is given. Nor
+ * is the agent half's `/admin/app` or anything under it: on the panel,
+ * `/api/<route>/app` and `/api/<route>/app/*` are the user surface's routes
+ * ({@link userSurfacePlugin}, on the same router), which win over this
+ * forwarder's `/:route/*` as static segments win over a wildcard — an
+ * agent half keeps none of its admin routes there.
  * Within `/admin`, three subtrees are Lamaste's own and answered 404 however
  * they are spelled ({@link isAgentHalfReservedPath}): `/admin/hooks*`, the
  * lifecycle hook calls, `/admin/settings*`, where Lamaste writes the
@@ -1368,11 +1373,12 @@ export interface UserSurfaceOptions extends AgentForwardTimeouts {
    */
   verifyRelay(request: FastifyRequest): MaybePromise<UserSurfaceRelayVerification>;
   /**
-   * The forward target of a route with a user surface — bound to a host,
-   * its plugin declaring `identity` in its approved version, hosted — or
-   * null (404). Called on every request.
+   * The forward target of a route with a user surface — bound to a host, its
+   * plugin hosted — or why not: null or `not_found` (404: no user surface on
+   * the route), `disabled` or `not_hosted` (503: the plugin is not available
+   * right now). Called on every request.
    */
-  resolveTarget(route: string): MaybePromise<AgentForwardTarget | null>;
+  resolveTarget(route: string): MaybePromise<AgentForwardResolution | null>;
   /** The directory's user behind `username` for this plugin: id, username and roles. */
   resolveUserCaller(route: string, username: string): MaybePromise<UserCallerResolution>;
   /**
@@ -1385,6 +1391,11 @@ export interface UserSurfaceOptions extends AgentForwardTimeouts {
   /** The plugins' request hooks; without it every request streams through untouched. */
   readonly hooks?: RequestHookRuntime | undefined;
   readonly logger?: AgentForwarderLogger | undefined;
+  /**
+   * Fastify route config of the two routes (`config`) — the panel gives
+   * them a rate limit of their own there.
+   */
+  readonly routeConfig?: Readonly<Record<string, unknown>> | undefined;
 }
 
 /**
@@ -1397,7 +1408,8 @@ export interface UserSurfaceOptions extends AgentForwardTimeouts {
  * 1. the relay assertion must verify and be bound to the URL's route —
  *    else 401 `{ error: 'unauthenticated' }`, JSON (no redirect for an
  *    XHR), before anything is looked up;
- * 2. the route must have a user surface (`resolveTarget`) — else 404;
+ * 2. the route must have a user surface (`resolveTarget`) — else 404 — and
+ *    its plugin be available (enabled, hosted) — else 503;
  * 3. a request that may change something must carry `Origin` equal to the
  *    bound host's origin — else 403 `{ error: 'cross-origin request
  *    refused' }` (CSRF: the session cookie travels with any cross-site
@@ -1440,7 +1452,12 @@ export async function userSurfacePlugin(
       return reply.code(404).send({ error: 'Not found' });
     }
     const target = await opts.resolveTarget(route);
-    if (!target) return reply.code(404).send({ error: 'Not found' });
+    if (!target || ('kind' in target && target.kind === 'not_found')) {
+      return reply.code(404).send({ error: 'Not found' });
+    }
+    if ('kind' in target) {
+      return reply.code(503).send({ error: 'The plugin is not available right now' });
+    }
 
     const method = request.method.toUpperCase();
     if (hasRequestBody(method)) {
@@ -1496,6 +1513,7 @@ export async function userSurfacePlugin(
     );
   };
 
-  fastify.all('/:route/app', handler);
-  fastify.all('/:route/app/*', handler);
+  const routeOptions = { config: { ...opts.routeConfig } };
+  fastify.all('/:route/app', routeOptions, handler);
+  fastify.all('/:route/app/*', routeOptions, handler);
 }

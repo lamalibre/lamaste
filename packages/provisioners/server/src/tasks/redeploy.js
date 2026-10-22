@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { generateServiceUnit, generateSudoersContent } from '../lib/service-config.js';
 import { lookupId } from '../lib/accounts.js';
 import { ensureHttpRedirect } from '../lib/http-redirect.js';
+import { refreshIpPanelVhost } from '../lib/ip-panel-vhost.js';
 import { generateCertHelpPage } from '../lib/cert-help-page.js';
 import { ensureRootOwnedInstallDir, removeTree, writeFileNoFollow } from '../lib/ownership.js';
 import { provisionRelayServices } from '../lib/relay-services.js';
@@ -67,7 +68,10 @@ async function getLatestNpmVersion() {
  * self-update (`lamaste-priv self-update`). Updates the panel, CLI, UI, docs
  * and gatekeeper; installs the pinned chisel and Authelia releases, their
  * units, the sudoers rules and the programs they name; restarts what
- * changed. Does not touch OS hardening, mTLS certs or the panel's vhosts.
+ * changed. Does not touch OS hardening or mTLS certs. Of the panel's
+ * vhosts it refreshes only the IP-based one, which it installed and the
+ * panel cannot write (its text; the panel's 2FA owns its link) — the panel
+ * reconciles the others itself when it starts.
  *
  * Runs as root and may be started by a compromised panel, so it never
  * writes through a path the lamaste user controls (see lib/ownership.js).
@@ -387,6 +391,21 @@ export function redeployTasks(ctx, task) {
           subtask.output = changed
             ? 'Port 80 now redirects every host to https://'
             : 'Port 80 redirect already in place';
+        } catch (err) {
+          subtask.skip(`Skipped — ${err.message}`);
+        }
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Refreshing the IP panel vhost',
+      task: async (_ctx, subtask) => {
+        // Not fatal: the panel keeps working on the vhost it had.
+        try {
+          const { changed } = await refreshIpPanelVhost(ctx.pkiDir);
+          subtask.output = changed
+            ? 'IP panel vhost brought up to date'
+            : 'IP panel vhost already up to date (or not installed)';
         } catch (err) {
           subtask.skip(`Skipped — ${err.message}`);
         }

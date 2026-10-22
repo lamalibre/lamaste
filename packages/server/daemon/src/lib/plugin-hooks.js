@@ -590,10 +590,13 @@ export async function approveHookSet(
   });
   await ensureRelayHooksInstalled(plugin, logger);
   // An approved identity block lets the plugin's users through: its
-  // audience is computed and sent to its agent half (when it is hosted).
+  // audience is computed and sent to its agent half (when it is hosted), and
+  // the hosts its user surface is bound to start serving it.
   if (approval.identity) {
     const { refreshPluginIdentity } = await import('./identity-sync.js');
     await refreshPluginIdentity(plugin.name, logger);
+    const { refreshUserSurfaceVhosts } = await import('./user-surface.js');
+    await refreshUserSurfaceVhosts(plugin.route, logger);
   }
   return { target: 'installed', digest };
 }

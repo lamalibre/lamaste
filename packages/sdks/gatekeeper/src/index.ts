@@ -17,6 +17,8 @@ export type {
   GatekeeperSettings,
   AccessRequestEntry,
   TunnelInfo,
+  TunnelUserSurfaceInfo,
+  PluginTunnelTarget,
   AutheliaSession,
   GatekeeperLogger,
 } from './lib/types.js';
@@ -70,6 +72,9 @@ export {
 
 // Authorization
 export { checkAccess } from './lib/authz.js';
+
+// The tunnels Gatekeeper authorizes, as it reads them from tunnels.json
+export { tunnelInfoFromState } from './lib/tunnels.js';
 
 // Templates
 export { getAccessRequestTemplates, buildAccessRequestPage } from './lib/templates.js';
