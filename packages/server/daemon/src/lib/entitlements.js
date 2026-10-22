@@ -20,7 +20,7 @@
 import { KeyedPromiseChainMutex } from '@lamalibre/lamaste';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
-import { ensurePrincipalCleared, findDirectoryUser } from './directory.js';
+import { findDirectoryUser, withUsernamesForGrants } from './directory.js';
 import {
   createGatekeeperGrant,
   gatekeeperRequest,
@@ -171,9 +171,12 @@ export async function listEntitlements(plugin) {
  * Give `principal` exactly `roles` on installed plugin `plugin`: one grant
  * with those roles replaces every role grant the principal had on it
  * (created first, the others revoked after — a failure leaves the old
- * grants as they were). A user must be in the directory and not removed —
- * and an earlier holder's principal under the username is cleared first
- * (503 `gatekeeper_unavailable` when it cannot be); a group must exist in
+ * grants as they were). A user must hold the username now (404
+ * `user_not_found`; 409 `username_deleted` when a removed user held it and
+ * nobody holds it now), an earlier holder's pending Gatekeeper cleanup
+ * under it is completed first (503 `gatekeeper_unavailable` when it cannot
+ * be), and the grant is made holding the users lock — no deletion of the
+ * user runs between the check and the grant; a group must exist in
  * Gatekeeper. Gatekeeper's refusals come back with its
  * status — 503 at its grant limit. Audited, then the audiences recomputed.
  *
@@ -184,14 +187,7 @@ export async function listEntitlements(plugin) {
  */
 export async function setEntitlement(plugin, { principalType, principalId, roles }, opts) {
   const wanted = checkedRoles(plugin.identity, roles);
-  if (principalType === 'user') {
-    if (!(await findDirectoryUser(principalId))) {
-      throw httpError(`No user "${principalId}" in the directory`, 404, { code: 'user_not_found' });
-    }
-    // Whatever an earlier holder of the username left in Gatekeeper goes
-    // before this user is granted anything (503 when it cannot).
-    await ensurePrincipalCleared(principalId, opts);
-  } else {
+  if (principalType === 'group') {
     const group = await gatekeeperRequest('GET', `/api/groups/${encodeURIComponent(principalId)}`);
     if (!group.ok) {
       if (group.statusCode === 404) {
@@ -201,36 +197,45 @@ export async function setEntitlement(plugin, { principalType, principalId, roles
     }
   }
 
-  const outcome = await pluginMutex.run(plugin.name, async () => {
-    const current = await roleGrantsOf(plugin, principalType, principalId);
-    const same = current.find(
-      (g) => JSON.stringify(g.context) === JSON.stringify({ roles: wanted }),
-    );
-    let kept = same ?? null;
-    if (!kept) {
-      const created = await createGatekeeperGrant({
-        principalType,
-        principalId,
-        resourceType: 'plugin',
-        resourceId: plugin.route,
-        context: { roles: wanted },
-      });
-      if (!created.ok) throw gatekeeperError(created, 'the entitlement');
-      kept = created.grant;
-    }
-    const warnings = [];
-    for (const grant of current) {
-      if (grant.grantId === kept.grantId) continue;
-      const revoked = await revokeGatekeeperGrant(grant.grantId);
-      if (!revoked.ok && revoked.statusCode !== 404) {
-        warnings.push({
-          step: 'gatekeeper',
-          message: `An earlier grant (${grant.grantId}) was not revoked: ${revoked.error}`,
+  const replace = () =>
+    pluginMutex.run(plugin.name, async () => {
+      const current = await roleGrantsOf(plugin, principalType, principalId);
+      const same = current.find(
+        (g) => JSON.stringify(g.context) === JSON.stringify({ roles: wanted }),
+      );
+      let kept = same ?? null;
+      if (!kept) {
+        const created = await createGatekeeperGrant({
+          principalType,
+          principalId,
+          resourceType: 'plugin',
+          resourceId: plugin.route,
+          context: { roles: wanted },
         });
+        if (!created.ok) throw gatekeeperError(created, 'the entitlement');
+        kept = created.grant;
       }
-    }
-    return { grant: kept, changed: !same || current.length > 1, warnings };
-  });
+      const warnings = [];
+      for (const grant of current) {
+        if (grant.grantId === kept.grantId) continue;
+        const revoked = await revokeGatekeeperGrant(grant.grantId);
+        if (!revoked.ok && revoked.statusCode !== 404) {
+          warnings.push({
+            step: 'gatekeeper',
+            message: `An earlier grant (${grant.grantId}) was not revoked: ${revoked.error}`,
+          });
+        }
+      }
+      return { grant: kept, changed: !same || current.length > 1, warnings };
+    });
+  const outcome =
+    principalType === 'user'
+      ? await withUsernamesForGrants(
+          [principalId],
+          { actor: opts.actor, logger: opts.logger, requireUser: true },
+          replace,
+        )
+      : await replace();
 
   const principal = await auditedPrincipal(principalType, principalId);
   if (outcome.changed) {
@@ -336,5 +341,177 @@ export async function checkProxiedGrant(body) {
   return {
     ...body,
     context: { ...body.context, roles: checkedRoles(plugin.identity, body.context.roles) },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Roles a manifest no longer declares
+// ---------------------------------------------------------------------------
+
+/**
+ * What bringing role grants in line with `declared` takes: a grant whose
+ * roles all stay is left alone, one that keeps some is rewritten to those
+ * (`rewrite`), one that keeps none is revoked (`revoke`). Grants without
+ * roles are no entitlements and are never touched.
+ *
+ * @param {Array<{ grantId: string, context: Record<string, unknown> }>} grants
+ * @param {Set<string>} declared
+ */
+function planRoleChanges(grants, declared) {
+  const rewrite = [];
+  const revoke = [];
+  for (const grant of grants) {
+    const roles = grantRoles(grant);
+    if (!roles) continue;
+    const kept = roles.filter((role) => declared.has(role));
+    if (kept.length === roles.length) continue;
+    if (kept.length === 0) revoke.push(grant);
+    else rewrite.push({ grant, kept });
+  }
+  return { rewrite, revoke };
+}
+
+/**
+ * Drop from the role grants on installed plugin `plugin` every role its
+ * installed version does not declare — none at all when it declares no
+ * identity — so a role a manifest removed stays removed: a later version
+ * that declares it again finds nobody holding it. A grant left with no role
+ * is revoked; one with some is replaced by a grant with those (created
+ * first, then the old one revoked — Gatekeeper's duplicate refusal means the
+ * principal holds that grant already). Call it once the installed version
+ * is approved (an approval, an update that took). Audited
+ * (`plugin.entitlement.roles-removed`: the roles, how many grants were
+ * rewritten and revoked), then the audiences recomputed. Gatekeeper's
+ * failures are returned, never thrown: what was not done is done at the
+ * next refresh.
+ *
+ * @param {{ name: string, route: string | null, identity?: { roles: Array<{ id: string }> } | null }} plugin
+ * @param {{ actor: string, logger?: import('pino').Logger }} opts
+ * @returns {Promise<{ ok: true, rewritten: number, revoked: number, roles: string[] } | { ok: false, error: string }>}
+ */
+export async function pruneUndeclaredRoles(plugin, { actor, logger }) {
+  if (!plugin.route) return { ok: true, rewritten: 0, revoked: 0, roles: [] };
+  const declared = declaredRoleIds(plugin.identity);
+  const outcome = await pluginMutex.run(plugin.name, async () => {
+    const listed = await listPluginGrants(plugin.route);
+    if (!listed.ok) return { ok: false, error: listed.error };
+    const { rewrite, revoke } = planRoleChanges(listed.grants, declared);
+    const removed = new Set();
+    const errors = [];
+    /** Revoke `grant` (gone already is fine), noting the roles it loses; false when it stays. */
+    const revokeNoting = async (grant) => {
+      const gone = await revokeGatekeeperGrant(grant.grantId);
+      if (!gone.ok && gone.statusCode !== 404) {
+        errors.push(gone.error);
+        return false;
+      }
+      for (const role of grantRoles(grant) ?? []) if (!declared.has(role)) removed.add(role);
+      return true;
+    };
+    let rewritten = 0;
+    let revoked = 0;
+    for (const { grant, kept } of rewrite) {
+      const created = await createGatekeeperGrant({
+        principalType: grant.principalType,
+        principalId: grant.principalId,
+        resourceType: 'plugin',
+        resourceId: plugin.route,
+        context: { ...grant.context, roles: kept },
+      });
+      if (!created.ok && created.statusCode !== 409) {
+        errors.push(created.error);
+        continue;
+      }
+      if (await revokeNoting(grant)) rewritten += 1;
+    }
+    for (const grant of revoke) {
+      if (await revokeNoting(grant)) revoked += 1;
+    }
+    return { ok: true, rewritten, revoked, roles: [...removed].sort(), errors };
+  });
+  if (!outcome.ok) {
+    logger?.warn(
+      { plugin: plugin.name, err: outcome.error },
+      'Gatekeeper could not be read — undeclared roles are dropped at the next refresh',
+    );
+    return outcome;
+  }
+  const { errors, ...done } = outcome;
+  if (errors.length > 0) {
+    logger?.warn(
+      { plugin: plugin.name, failed: errors.length, err: errors[0] },
+      'Some grants still hold roles the plugin no longer declares — retried at the next refresh',
+    );
+  }
+  if (done.rewritten + done.revoked > 0) {
+    await recordAuditBestEffort(
+      {
+        actor,
+        action: 'plugin.entitlement.roles-removed',
+        plugin: plugin.name,
+        details: {
+          roles: done.roles,
+          grantsRewritten: done.rewritten,
+          grantsRevoked: done.revoked,
+        },
+      },
+      logger,
+    );
+    logger?.info(
+      { plugin: plugin.name, rewritten: done.rewritten, revoked: done.revoked },
+      'Dropped roles the plugin no longer declares from its grants',
+    );
+    await recompute(logger);
+  }
+  return done;
+}
+
+/**
+ * Revoke every role grant on plugin `plugin`'s route — an uninstall with
+ * purge: nothing of who held which role is kept for a later install.
+ * Grants without roles stay. Audited as {@link pruneUndeclaredRoles} does
+ * (every role removed); Gatekeeper's failures are returned, never thrown.
+ *
+ * @param {{ name: string, route: string | null }} plugin
+ * @param {{ actor: string, logger?: import('pino').Logger }} opts
+ * @returns {Promise<{ ok: true, revoked: number } | { ok: false, error: string }>}
+ */
+export async function revokePluginRoleGrants(plugin, opts) {
+  const outcome = await pruneUndeclaredRoles({ ...plugin, identity: null }, opts);
+  return outcome.ok ? { ok: true, revoked: outcome.revoked } : outcome;
+}
+
+/**
+ * How many role grants on `route` a staged identity block (`after`, null:
+ * none) would change — `{ rewritten, revoked }` — for the approval preview;
+ * null when Gatekeeper cannot be read.
+ *
+ * @param {string | null} route
+ * @param {{ roles: Array<{ id: string }> } | null} after
+ * @returns {Promise<{ rewritten: number, revoked: number } | null>}
+ */
+export async function identityGrantImpact(route, after) {
+  if (!route) return { rewritten: 0, revoked: 0 };
+  const listed = await listPluginGrants(route);
+  if (!listed.ok) return null;
+  const { rewrite, revoke } = planRoleChanges(listed.grants, declaredRoleIds(after));
+  return { rewritten: rewrite.length, revoked: revoke.length };
+}
+
+/**
+ * A pending update's view with `identity.grantsAffected` — how many role
+ * grants approving it would rewrite or revoke — when it removes roles (or
+ * the whole block); the view as it was otherwise.
+ *
+ * @param {object | null} view as `pendingUpdateView` builds it
+ * @param {string | null} route
+ */
+export async function withIdentityGrantImpact(view, route) {
+  const identity = view?.identity;
+  // A block dropped altogether removes every role it had (`identityDiff`).
+  if (!identity || identity.rolesRemoved.length === 0) return view;
+  return {
+    ...view,
+    identity: { ...identity, grantsAffected: await identityGrantImpact(route, identity.after) },
   };
 }

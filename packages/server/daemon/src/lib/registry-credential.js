@@ -158,14 +158,17 @@ export async function acquireAgentToken(agentLabel) {
 
 /**
  * Revoke a user's registry tokens after their `feria-*` groups changed or
- * they were deleted. Returns the number revoked, or `null` when nothing
- * needed doing (no credential configured, or no feria group lost).
+ * they were offboarded (`{ deleted: true }`: disabled or removed). Returns
+ * the number revoked, or `null` when nothing needed doing (no credential
+ * configured, or no feria group lost). The registry knows the user by
+ * username (`user:<username>`); the log line names them by `userId` alone.
  *
  * @param {string} username
  * @param {{ before: string[], after: string[] } | { deleted: true }} change
- * @param {import('pino').Logger} log
+ * @param {import('pino').Logger | undefined} log
+ * @param {{ userId?: string | null }} [who]
  */
-export async function revokeUserRegistryTokens(username, change, log) {
+export async function revokeUserRegistryTokens(username, change, log, { userId = null } = {}) {
   const config = await readRegistryCredentialConfig();
   if (!config) return null;
 
@@ -177,6 +180,6 @@ export async function revokeUserRegistryTokens(username, change, log) {
   const revoked = await revokeRegistryTokensForOwner(config, owner, {
     serviceToken: await serviceToken(config),
   });
-  log.info({ username, lost, revoked }, 'Revoked registry tokens after group change');
+  log?.info({ userId, lost, revoked }, 'Revoked a user’s registry tokens');
   return revoked;
 }

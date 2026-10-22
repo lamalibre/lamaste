@@ -16,6 +16,14 @@
  *   nginx-site disable <name>          unlink <name> from sites-enabled
  *   nginx-site remove <name>           delete <name>, its link and its backup
  *   authelia-totp <username>           stdin: base32 secret
+ *   authelia-user purge-second-factors <username>
+ *                                      delete the user's TOTP configuration and
+ *                                      every WebAuthn credential from Authelia's
+ *                                      storage (nothing there is fine)
+ *   authelia-user has-oidc-identifier <username>
+ *                                      print `yes` when Authelia's storage holds an
+ *                                      OpenID Connect opaque identifier for the
+ *                                      username, `no` otherwise — nothing else
  *   self-update <version>              run create-lamaste@<version> detached
  *   hooks install <route> <sha256|none>  stdin: the plugin's approved relay hook
  *                                      module (none: shared hooks only); start its runner
@@ -583,22 +591,25 @@ function lookupId(flag, name) {
   return id;
 }
 
+/** Same shape as the panel's username schema; a leading "-" would read as a flag. */
+const AUTHELIA_USERNAME_RE = /^[a-z0-9_][a-z0-9_-]{1,31}$/;
+
+function assertAutheliaUsername(username) {
+  if (typeof username !== 'string' || !AUTHELIA_USERNAME_RE.test(username)) {
+    throw new UsageError('invalid username');
+  }
+}
+
 /**
  * Store a TOTP secret in Authelia's database with Authelia's own CLI, run as
  * the Authelia service user (the database is its file).
  */
 function autheliaTotp(username) {
-  // Same shape as the panel's username schema; a leading "-" would read as a flag.
-  if (typeof username !== 'string' || !/^[a-z0-9_][a-z0-9_-]{1,31}$/.test(username)) {
-    throw new UsageError('invalid username');
-  }
+  assertAutheliaUsername(username);
   const secret = readStdin(1024).trim();
   if (!/^[A-Z2-7]{16,128}$/.test(secret)) throw new UsageError('invalid TOTP secret');
 
-  const uid = lookupId('-u', AUTHELIA_USER);
-  const gid = lookupId('-g', AUTHELIA_USER);
-  const result = spawnSync(
-    AUTHELIA_BIN,
+  const result = runAutheliaCli(
     [
       'storage',
       'user',
@@ -615,11 +626,35 @@ function autheliaTotp(username) {
       '6',
       '--period',
       '30',
-      '--config',
-      AUTHELIA_CONFIG,
-      '--',
-      username,
     ],
+    username,
+  );
+  if (result.status !== 0) {
+    // Authelia's error output does not echo the secret; its success output
+    // (a QR code / otpauth URI) does, so only failures are relayed.
+    throw new Error(
+      `authelia exited with status ${result.status}: ${(result.stderr || '').trim()}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Authelia's per-user storage
+// ---------------------------------------------------------------------------
+
+/**
+ * Run `authelia <args> --config <config> [-- <username>]` as the Authelia
+ * service account, with the environment the service has (its storage
+ * encryption key comes from the configuration).
+ * Opening the database as root would leave root-owned journal files the
+ * service cannot write.
+ */
+function runAutheliaCli(args, username) {
+  const uid = lookupId('-u', AUTHELIA_USER);
+  const gid = lookupId('-g', AUTHELIA_USER);
+  const result = spawnSync(
+    AUTHELIA_BIN,
+    [...args, '--config', AUTHELIA_CONFIG, ...(username === undefined ? [] : ['--', username])],
     {
       uid,
       gid,
@@ -630,13 +665,156 @@ function autheliaTotp(username) {
     },
   );
   if (result.error) throw result.error;
-  if (result.status !== 0) {
-    // Authelia's error output does not echo the secret; its success output
-    // (a QR code / otpauth URI) does, so only failures are relayed.
+  return result;
+}
+
+/** Everything Authelia printed, to match a known refusal in. */
+function cliOutput(result) {
+  return `${result.stderr || ''}\n${result.stdout || ''}`;
+}
+
+/** Authelia's output with the username taken out: what this helper says may end up in a log. */
+function redacted(text, username) {
+  return String(text || '')
+    .trim()
+    .split(username)
+    .join('<username>');
+}
+
+/**
+ * Delete the user's TOTP configuration and every WebAuthn credential from
+ * Authelia's storage. Authelia 4.39 refuses to delete a TOTP configuration
+ * that does not exist (`no TOTP configuration for user`), which here means
+ * there is nothing to delete; deleting WebAuthn credentials by username
+ * succeeds whatever number there are.
+ */
+function autheliaPurgeSecondFactors(username) {
+  assertAutheliaUsername(username);
+  const totp = runAutheliaCli(['storage', 'user', 'totp', 'delete'], username);
+  if (totp.status !== 0 && !/no TOTP configuration for user/.test(cliOutput(totp))) {
     throw new Error(
-      `authelia exited with status ${result.status}: ${(result.stderr || '').trim()}`,
+      `authelia storage user totp delete exited with status ${totp.status}: ${redacted(totp.stderr, username)}`,
     );
   }
+  const webauthn = runAutheliaCli(['storage', 'user', 'webauthn', 'delete', '--all'], username);
+  if (webauthn.status !== 0) {
+    throw new Error(
+      `authelia storage user webauthn delete exited with status ${webauthn.status}: ${redacted(webauthn.stderr, username)}`,
+    );
+  }
+}
+
+/** A YAML scalar as yaml.v3 writes a username: plain, or quoted when it would read as another type. */
+function yamlScalar(text) {
+  const value = text.trim();
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).split("''").join("'");
+  }
+  return value;
+}
+
+/**
+ * Whether the YAML of `authelia storage user identifiers export` (a list of
+ * `{ service, sector_id, username, identifier }` under `identifiers`) names
+ * `username`.
+ */
+function exportNamesUsername(text, username) {
+  for (const line of String(text).split('\n')) {
+    const match = /^\s*(?:-\s+)?username:(.*)$/.exec(line);
+    if (match && yamlScalar(match[1]) === username) return true;
+  }
+  return false;
+}
+
+/** Overwrite a file with zeros, flush it, and remove it. */
+function shred(file) {
+  let fd = null;
+  try {
+    fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW);
+    const { size } = fs.fstatSync(fd);
+    const zeros = Buffer.alloc(Math.min(size, 65536));
+    for (let written = 0; written < size; written += zeros.length) {
+      fs.writeSync(fd, zeros, 0, Math.min(zeros.length, size - written), written);
+    }
+    fs.fsyncSync(fd);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+  unlinkIfPresent(file);
+}
+
+/** The largest export read back: well beyond any opaque identifier table Lamaste serves. */
+const MAX_IDENTIFIERS_EXPORT_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Whether Authelia's storage holds an OpenID Connect opaque identifier for
+ * the username. Authelia's CLI has no lookup by username, so it exports the
+ * table (as the Authelia account) into a directory only that account and
+ * root can enter, on /run (memory, not disk); the file is read, checked,
+ * overwritten and removed, whatever happens. Prints `yes` or `no`.
+ */
+function autheliaHasOidcIdentifier(username) {
+  assertAutheliaUsername(username);
+  const uid = lookupId('-u', AUTHELIA_USER);
+  const gid = lookupId('-g', AUTHELIA_USER);
+  const dir = fs.mkdtempSync('/run/lamaste-priv-oidc-');
+  const file = path.join(dir, 'identifiers.yml');
+  try {
+    fs.chmodSync(dir, 0o700);
+    fs.chownSync(dir, uid, gid);
+    const result = runAutheliaCli(['storage', 'user', 'identifiers', 'export', '--file', file]);
+    if (result.status !== 0) {
+      // An empty table is not an export.
+      if (/no data to export/.test(cliOutput(result))) {
+        process.stdout.write('no\n');
+        return;
+      }
+      throw new Error(
+        `authelia storage user identifiers export exited with status ${result.status}: ${redacted(result.stderr, username)}`,
+      );
+    }
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.uid !== uid)
+      throw new Error('the export is not the file Authelia wrote');
+    if (st.size > MAX_IDENTIFIERS_EXPORT_BYTES) throw new Error('the export is too large');
+    const named = exportNamesUsername(fs.readFileSync(file, 'utf8'), username);
+    process.stdout.write(named ? 'yes\n' : 'no\n');
+  } finally {
+    shred(file);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const AUTHELIA_USER_ACTIONS = new Set(['purge-second-factors', 'has-oidc-identifier']);
+
+/** `authelia-user <action> <username>`, checked before anything runs. */
+function parseAutheliaUserArgs(rest) {
+  if (rest.length !== 2) {
+    throw new UsageError(
+      'usage: authelia-user purge-second-factors|has-oidc-identifier <username>',
+    );
+  }
+  const [action, username] = rest;
+  if (!AUTHELIA_USER_ACTIONS.has(action)) {
+    throw new UsageError(`unknown authelia-user action: ${String(action).slice(0, 40)}`);
+  }
+  assertAutheliaUsername(username);
+  return { action, username };
+}
+
+function autheliaUser(rest) {
+  const { action, username } = parseAutheliaUserArgs(rest);
+  if (action === 'purge-second-factors') autheliaPurgeSecondFactors(username);
+  else autheliaHasOidcIdentifier(username);
 }
 
 /**
@@ -879,6 +1057,9 @@ function main(argv) {
       if (rest.length !== 1) throw new UsageError('usage: authelia-totp <username>');
       autheliaTotp(rest[0]);
       return;
+    case 'authelia-user':
+      autheliaUser(rest);
+      return;
     case 'self-update':
       if (rest.length !== 1) throw new UsageError('usage: self-update <version>');
       selfUpdate(rest[0]);
@@ -910,6 +1091,9 @@ if (require.main === module) {
     AUTHELIA_CLI_ENV,
     assertHookRoute,
     HOOK_ROUTE_RE,
+    assertAutheliaUsername,
+    parseAutheliaUserArgs,
+    exportNamesUsername,
     main,
   };
 }

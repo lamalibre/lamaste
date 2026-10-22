@@ -2,8 +2,10 @@
  * `/api/<route>/*` for agent-hosted plugins with an agent half — forwarded
  * by the panel to the plugin's agent half over its internal tunnel, through
  * the plugin's approved request hooks (`request:pre-forward` /
- * `request:post-forward`) and, while it is down, its `tunnel:down` fallback.
- * See `createHookedForwarder` in `@lamalibre/lamaste/server`.
+ * `request:post-forward`). While its hosting is down nothing is forwarded:
+ * its `tunnel:down` fallback answers, or `502` with the reason
+ * (`resolveForwardTarget`). See `createHookedForwarder` in
+ * `@lamalibre/lamaste/server`.
  *
  * Registered after every other `/api` route: static routes win over its
  * `/:route/*`, so only what nothing else answers arrives here, and a route

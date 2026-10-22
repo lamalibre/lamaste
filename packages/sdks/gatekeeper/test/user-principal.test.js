@@ -4,8 +4,9 @@
  * under a username when it deletes the user — every grant naming the user
  * (any resource type, with roles or without) and its membership of every
  * Lamaste group — in one transaction. A group, or a group grant, that only
- * shares the name is left alone; a second removal removes nothing. Runs
- * against the build (`npm run build`).
+ * shares the name is left alone; a second removal removes nothing. The
+ * username travels in the body of a POST, never in a URL (request logs keep
+ * URLs). Runs against the build (`npm run build`).
  */
 
 import { test, before, after } from 'node:test';
@@ -42,6 +43,14 @@ after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+const remove = (body) =>
+  app.inject({
+    method: 'POST',
+    url: '/api/principals/user/remove',
+    headers: { 'content-type': 'application/json' },
+    payload: JSON.stringify(body),
+  });
+
 const grant = (principalType, principalId, resourceType, resourceId, context = {}) =>
   lib.createGrant({ principalType, principalId, resourceType, resourceId, context });
 
@@ -62,7 +71,7 @@ test('every grant to the user and every membership goes, in one call; the rest s
   await lib.addMembers('qa', ['mehmet']);
 
   const before = invalidations;
-  const res = await app.inject({ method: 'DELETE', url: '/api/principals/user/ayse' });
+  const res = await remove({ username: 'ayse' });
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.json(), { ok: true, grantsRemoved: 3, groupsLeft: 2 });
   assert.ok(invalidations > before, 'the authorization cache is told');
@@ -82,19 +91,24 @@ test('every grant to the user and every membership goes, in one call; the rest s
 test('a second removal, or of a username Gatekeeper never knew, removes nothing', async () => {
   const before = invalidations;
   for (const username of ['ayse', 'nobody']) {
-    const res = await app.inject({ method: 'DELETE', url: `/api/principals/user/${username}` });
+    const res = await remove({ username });
     assert.deepEqual(res.json(), { ok: true, grantsRemoved: 0, groupsLeft: 0 });
   }
   assert.equal(invalidations, before, 'nothing changed, nothing to invalidate');
 });
 
-test('a username longer than any grant or member is refused', async () => {
-  // Fastify's router stops at 100 characters a parameter (404); the route
-  // checks the same bound.
-  const res = await app.inject({
-    method: 'DELETE',
-    url: `/api/principals/user/${'a'.repeat(101)}`,
-  });
-  assert.ok(res.statusCode === 400 || res.statusCode === 404, String(res.statusCode));
+test('a body that is not { username } is refused; the URL form is gone', async () => {
+  for (const body of [
+    {},
+    { username: '' },
+    { username: 'a'.repeat(101) },
+    { username: 'ayse', x: 1 },
+  ]) {
+    const res = await remove(body);
+    assert.equal(res.statusCode, 400, JSON.stringify(body));
+    assert.ok(!res.body.includes('ayse'), 'the refusal names nobody');
+  }
+  const old = await app.inject({ method: 'DELETE', url: '/api/principals/user/mehmet' });
+  assert.equal(old.statusCode, 404);
   assert.equal((await lib.listGrants()).length, 3);
 });

@@ -148,6 +148,7 @@ ${b('2. Remove nginx configuration')}
   ${c('sudo rm /etc/nginx/sites-enabled/lamalibre-lamaste-*')}
   ${c('sudo rm /etc/nginx/sites-available/lamalibre-lamaste-*')}
   ${c('sudo rm /etc/nginx/snippets/lamalibre-lamaste-*')}
+  ${c('sudo rm /etc/nginx/conf.d/lamalibre-lamaste-*')}
   ${c('sudo nginx -t && sudo systemctl reload nginx')}
 
 ${b('3. Remove Lamaste directories and binaries')}

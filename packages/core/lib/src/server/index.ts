@@ -257,6 +257,12 @@ export type {
   OidcProviderOptions,
 } from './authelia.js';
 
+// --- Authelia's per-user storage (second factors, OIDC opaque identifiers) ---
+export {
+  purgeAutheliaSecondFactors,
+  autheliaHoldsOpaqueIdentifier,
+} from './authelia-user-storage.js';
+
 // --- OIDC client secrets (confidential clients) ---
 export {
   OIDC_CLIENTS_FILENAME,
@@ -430,9 +436,15 @@ export {
   isAgentHalfHooksPath,
   isAgentHalfReservedPath,
   isServiceWorkerRequest,
+  isSameOriginFetch,
   callerLabel,
   userSurfaceHalfPath,
   userSurfacePlugin,
+  userSurfaceErrorText,
+  userSurfaceResponseHeaders,
+  applyUserSurfaceResponseHeaders,
+  USER_SURFACE_RESPONSE_HEADERS,
+  USER_SURFACE_MAX_RESPONSE_MS,
 } from './agent-forwarder.js';
 export type {
   AgentForwardTarget,
@@ -449,6 +461,7 @@ export type {
   RequestHookPlan,
   RequestHookRuntime,
   RequestHookRun,
+  OpenUserSurfaceResponse,
   UserCallerResolution,
   UserSurfaceOptions,
   UserSurfaceRelayVerification,
@@ -562,6 +575,7 @@ export type { RelayHookCall, RelayHookOutcome, RelayHookFailureKind } from './ho
 export {
   HOOK_JSON_BODY_MAX_BYTES,
   HOOK_OUTPUT_MAX_BYTES,
+  METHOD_URL_OVERRIDE_HEADERS,
   isHookEditableHeader,
   validateHookDecision,
   decisionEffects,

@@ -5,7 +5,7 @@
  *     POST /admin/identity/notify   { protocol, directoryId, seq }
  *       → 200 { protocol, directoryId, cursor }
  *     POST /admin/identity/changes  { protocol, directoryId, from, to, reset,
- *                                     reconcile, pass, final, changes }
+ *                                     reconcile, pass, final, changes: sealed }
  *       → 200 { protocol, directoryId, cursor, mismatches? }
  *       → 409 { error: 'cursor_mismatch', protocol, directoryId, cursor }
  *
@@ -15,6 +15,11 @@
  * header over its exact bytes (`admin-handlers.ts`). The forwarder reserves
  * `/admin/identity*`, so no admin or agent reaches them through the panel,
  * and the caller verifier refuses a user caller anywhere but `/app`.
+ *
+ * A batch's `changes` arrive sealed to the request (`identity-seal.ts`):
+ * opened with the verified request's `openIdentityChanges` — the key comes
+ * from the installation secret, bound to the assertion's nonce and to the
+ * batch envelope — so the tunnel's loopback ends carry no member in clear.
  *
  * Nothing about a member is ever logged or echoed — not a username, not a
  * name, not an address: log lines carry the directory, the cursor and
@@ -28,6 +33,7 @@ import {
   IDENTITY_CURSOR_MISMATCH,
   IDENTITY_PROTOCOL_VERSION,
   parseIdentityChangesRequest,
+  parseIdentityChangesWire,
   parseIdentityNotifyRequest,
 } from '../identity.js';
 import { BODY_NOT_AS_RECEIVED, adminAnswer, rawBodyOf } from './admin-handlers.js';
@@ -76,7 +82,8 @@ function errorKind(err: unknown): string {
  * before verification, unsigned; 401 for an assertion that does not verify
  * or does not sign the body. Then, signed: 403 for any caller but Lamaste,
  * 400 for a body that is not JSON, of another protocol
- * (`{ error, protocol: 1 }`) or not the contract; a notification answers
+ * (`{ error, protocol: 1 }`), not the contract, or with changes that do not
+ * open for this request; a notification answers
  * what the projection holds, a batch is applied — 409 `cursor_mismatch`
  * when it does not continue from the cursor, 500 when the projection
  * failed (rolled back). Framework-agnostic, like `createSettingsHandler`:
@@ -140,7 +147,26 @@ export function createIdentityHandlers(opts: IdentityHandlersOptions): {
         }
       }
 
-      const batch = parseIdentityChangesRequest(parsed);
+      // The changes travel sealed to this request (`identity-seal.ts`): open
+      // them with the secret that verified it, bound to its nonce and to the
+      // envelope, then check the batch as a whole.
+      const wire = parseIdentityChangesWire(parsed);
+      if (!wire) return adminAnswer(400, { error: 'Malformed identity batch' }, verified);
+      let changes: unknown;
+      try {
+        changes = verified.openIdentityChanges(wire.sealed, wire.envelope);
+      } catch {
+        opts.logger?.warn(
+          { directoryId: wire.envelope.directoryId, from: wire.envelope.from },
+          'The changes of an identity batch could not be opened',
+        );
+        return adminAnswer(400, { error: 'The identity changes could not be opened' }, verified);
+      }
+      const batch = parseIdentityChangesRequest({
+        protocol: wire.protocol,
+        ...wire.envelope,
+        changes,
+      });
       if (!batch) return adminAnswer(400, { error: 'Malformed identity batch' }, verified);
       try {
         const answer = opts.projection.applyBatch(batch);

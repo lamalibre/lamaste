@@ -112,6 +112,8 @@ export function userSurfaceReasonText(reason) {
       return 'its installed version declares no identity — requests go down the tunnel until one does';
     case 'not_approved':
       return 'its installed version waits for approval — requests go down the tunnel until then';
+    case 'not_hosting_agent':
+      return 'the agent carrying this tunnel does not host the plugin (moved, revoked, or hosted elsewhere) — nothing of it is served here; requests go down the tunnel';
     default:
       return String(reason);
   }
@@ -120,7 +122,8 @@ export function userSurfaceReasonText(reason) {
 /**
  * Whether a tunnel's host can serve a plugin's user surface, and why not:
  * an enabled app tunnel an agent carries, `authenticated` or `restricted`
- * (the panel's rule; it refuses the rest).
+ * (the panel's rule; it refuses the rest). Which plugins it can serve is
+ * {@link userSurfaceCandidateBlock}'s: those its agent hosts.
  *
  * @param {{ exposure?: string, subdomain?: string | null, type?: string, enabled?: boolean, agentLabel?: string | null, accessMode?: string }} tunnel
  * @returns {{ eligible: boolean, reason: string | null }}
@@ -143,6 +146,28 @@ export function userSurfaceEligibility(tunnel) {
     };
   }
   return { eligible: true, reason: null };
+}
+
+/**
+ * Why plugin `plugin` cannot be bound to `tunnel` as a user surface, or
+ * null when it can: its route is served on another host (`servedOn`), or
+ * it is not hosted by the agent carrying the tunnel — the panel refuses a
+ * tunnel any other agent carries (the host whose sessions reach the
+ * plugin's users is its hosting agent's only).
+ *
+ * @param {{ route: string, agentHosting?: { agentLabel?: string } | null }} plugin
+ * @param {{ agentLabel?: string | null }} tunnel
+ * @param {Map<string, string>} servedOn route → the host already serving it
+ * @returns {string | null}
+ */
+export function userSurfaceCandidateBlock(plugin, tunnel, servedOn) {
+  if (servedOn.has(plugin.route)) return `served on ${servedOn.get(plugin.route)}`;
+  const hostingAgent = plugin.agentHosting?.agentLabel ?? null;
+  if (hostingAgent === null) return 'not hosted on an agent';
+  if (hostingAgent !== tunnel.agentLabel) {
+    return `hosted on ${hostingAgent}, not on ${tunnel.agentLabel}`;
+  }
+  return null;
 }
 
 /** The routes a tunnel is bound to as a user surface. */
@@ -232,12 +257,29 @@ export function toggledRoles(current, role, on) {
   return [...roles].sort();
 }
 
+/** The `role grants affected` entries of an identity diff that removes roles; none otherwise. */
+function grantsAffectedEntries(diff) {
+  if (!('grantsAffected' in diff) || !Array.isArray(diff.rolesRemoved)) return [];
+  if (diff.rolesRemoved.length === 0) return [];
+  const affected = diff.grantsAffected;
+  if (affected === null) return ['not known — Gatekeeper could not be read'];
+  const entries = [];
+  if (affected.revoked > 0) entries.push(`${affected.revoked} revoked`);
+  if (affected.rewritten > 0) {
+    entries.push(`${affected.rewritten} narrowed to the roles that stay`);
+  }
+  return entries.length > 0 ? entries : ['none'];
+}
+
 /**
  * What an update changes in a plugin's identity block (`pendingUpdate.
  * identity`: `{ before, after, rolesAdded, rolesRemoved, attributesAdded,
- * attributesRemoved, labelsChanged }`), as rows — roles added and removed
- * and attributes widened wait for an administrator (`approval`), narrowing
- * and label edits only change the digest. Null when it changes nothing.
+ * attributesRemoved, labelsChanged, grantsAffected? }`), as rows — roles
+ * added and removed and attributes widened wait for an administrator
+ * (`approval`), narrowing and label edits only change the digest. When it
+ * removes roles, `grantsAffected` (`{ rewritten, revoked }`, null when
+ * Gatekeeper could not be read) says how many role grants approving it
+ * changes: a removed role stays removed. Null when it changes nothing.
  *
  * @param {object | null | undefined} diff
  * @returns {{ rows: Array<{ label: string, entries: string[], approval: boolean }>, declaredBefore: boolean, declaredAfter: boolean } | null}
@@ -273,6 +315,10 @@ export function identityDiffRows(diff) {
       approval: false,
     },
   ].filter((row) => row.entries.length > 0);
+  const affected = grantsAffectedEntries(diff);
+  if (affected.length > 0) {
+    rows.push({ label: 'role grants affected', entries: affected, approval: true });
+  }
   const declaredBefore = diff.before != null;
   const declaredAfter = diff.after != null;
   if (rows.length === 0 && declaredBefore === declaredAfter) return null;

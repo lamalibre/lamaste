@@ -8,7 +8,9 @@ import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { logRequestMetadata } from '@lamalibre/lamaste';
 import { loadConfig } from './lib/config.js';
+import { panelRequestLogOptions } from './lib/request-logging.js';
 import mtlsMiddleware from './middleware/mtls.js';
 import twofaSession from './middleware/twofa-session.js';
 import roleGuard from './middleware/role-guard.js';
@@ -75,11 +77,18 @@ async function start() {
 
   const server = Fastify({
     logger: true,
+    // Fastify's own request lines carry every URL with its query and the
+    // client address; one metadata line per request replaces them (below).
+    disableRequestLogging: true,
     // Behind the local nginx: trust exactly that one loopback hop, so
     // request.ip is the client address nginx appended to X-Forwarded-For —
     // not a value the client sent, and nothing from a non-local peer.
     trustProxy: trustLocalNginxHop,
   });
+
+  // One metadata line per request, never a URL or a person's address
+  // (lib/request-logging.js).
+  logRequestMetadata(server, panelRequestLogOptions);
 
   // Wire ticket module to the Fastify root logger so any load-time warnings
   // (e.g. legacy tickets.json shape dropped on upgrade) reach journalctl.

@@ -495,6 +495,7 @@ If the authfile cannot be established, Chisel is **stopped and disabled** and th
 - Writes YAML configuration (bcrypt cost 12, file-based users, TOTP, session cookies) directly, without sudo: `/etc/authelia` is `lamaste:lamaste-authelia 2770` (setgid), files are written as a temp file + fsync + rename (`configuration.yml` 0640, `users.yml` 0660, `.secrets.json` 0600)
 - User CRUD: creates users with bcrypt-hashed passwords, reads/writes `users.yml`
 - Stores a user's TOTP secret with `sudo lamaste-priv authelia-totp <username>` (secret on stdin), which runs Authelia's CLI as `lamaste-authelia` — the database is that account's file
+- Deletes a removed user's second factors (`sudo lamaste-priv authelia-user purge-second-factors <username>`: TOTP configuration and WebAuthn credentials) and asks whether Authelia holds an OpenID Connect opaque identifier for a username (`… has-oidc-identifier <username>`, `yes`/`no`) before it gives the username to a new user — core `server/authelia-user-storage.ts`
 - TOTP generation: `crypto.randomBytes(20)` → base32-encoded secret → `otpauth://` URI (parameterized `generateTotpSecret(username, { issuer })` — reused by panel 2FA via `lib/totp.js`)
 - `base32Decode()` utility for decoding base32 TOTP secrets into raw bytes
 - Manages service lifecycle

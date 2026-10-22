@@ -21,6 +21,7 @@ import yaml from 'js-yaml';
 
 import { AudienceChangeSchema, normalizeIdentityBlock } from '@lamalibre/lamaste';
 
+import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
 
 const HASH = '$2b$12$abcdefghijklmnopqrstuuJ2s4L6rjpDLHi3qL7Nn5D0o3M6a1g2a';
@@ -39,6 +40,7 @@ let users;
 let lib;
 let app;
 let gatekeeper;
+let autheliaStorage;
 
 const registryEntry = (name, identity) => ({
   name,
@@ -121,9 +123,16 @@ before(async () => {
     ...(await import('../src/lib/plugins.js')),
     ...(await import('../src/lib/audit.js')),
     ...(await import('../src/lib/identity-sync.js')),
+    ...(await import('../src/lib/retained-data.js')),
   };
   await lib.loadConfig();
-  lib.setAutheliaForTests({ usersFile, restart: async () => {}, writeTotp: async () => {} });
+  autheliaStorage = createFakeAutheliaStorage();
+  lib.setAutheliaForTests({
+    usersFile,
+    restart: async () => {},
+    writeTotp: async () => {},
+    userStorage: autheliaStorage.storage,
+  });
   gatekeeper = installFakeGatekeeper(lib);
 
   users = {
@@ -132,6 +141,7 @@ before(async () => {
     mehmet: person('Mehmet Kaya', 'mehmet@relay.test'),
     zeynep: person('Zeynep Ak', 'zeynep@relay.test'),
     ali: person('Ali Veli', 'ali@relay.test'),
+    selin: person('Selin Kar', 'selin@relay.test'),
   };
   await saveUsers();
   await lib.writePlugins({
@@ -414,8 +424,25 @@ test('entitlements through the panel: roles checked, one grant per principal, au
     principalId: 'zeynep',
     roles: ['viewer'],
   });
-  assert.equal(noUser.statusCode, 404, 'zeynep was removed');
+  assert.equal(noUser.statusCode, 404, 'zeynep was erased: the username names nobody now');
   assert.equal(noUser.json().code, 'user_not_found');
+  // A deleted user's username, which nobody holds now: refused as such.
+  await lib.changeUsers(
+    async () => {
+      const data = await lib.readUsersRaw();
+      delete data.users.selin;
+      await lib.writeUsers(data);
+      delete users.selin;
+    },
+    { actor: 'admin', deleted: ['selin'], confirmDelayMs: 0 },
+  );
+  const deletedUser = await call('PUT', '/api/plugins/mx/entitlements', {
+    principalType: 'user',
+    principalId: 'selin',
+    roles: ['viewer'],
+  });
+  assert.equal(deletedUser.statusCode, 409);
+  assert.equal(deletedUser.json().code, 'username_deleted');
   const noGroup = await call('PUT', '/api/plugins/mx/entitlements', {
     principalType: 'group',
     principalId: 'nobody',
@@ -580,19 +607,62 @@ test('the Gatekeeper proxy: plugin roles checked and sorted; grant and group cha
   assert.equal(revoked.statusCode, 200);
   assert.equal((await rows('mx'))[ayse].change.reason, 'unentitled');
 
-  // A narrowed access-log purge reaches Gatekeeper with its query — without
-  // it the whole log would go.
+  // One user's access-log rows are purged by POST, the username in the
+  // body (never in a URL); DELETE clears the whole log and passes no query on.
   gatekeeper.accessLog.push(
     { username: 'ayse', timestamp: '2026-10-01T00:00:00.000Z' },
     { username: 'ali', timestamp: '2026-10-01T00:00:00.000Z' },
   );
-  const purged = await call('DELETE', '/api/gatekeeper/access-log?username=ayse');
+  const purged = await call('POST', '/api/gatekeeper/access-log/purge', { username: 'ayse' });
   assert.equal(purged.statusCode, 200, purged.body);
   assert.deepEqual(purged.json(), { ok: true, removed: 1 });
   assert.deepEqual(
     gatekeeper.accessLog.map((row) => row.username),
     ['ali'],
   );
+  assert.deepEqual(gatekeeper.calls.at(-1), {
+    method: 'POST',
+    path: '/api/access-log/purge',
+    body: { username: 'ayse' },
+  });
+  gatekeeper.calls.length = 0;
+  await call('DELETE', '/api/gatekeeper/access-log?username=ali');
+  assert.deepEqual(
+    gatekeeper.calls.map((c) => `${c.method} ${c.path}`),
+    ['DELETE /api/access-log'],
+  );
+
+  // A username a removed user held, which nobody holds now, takes no grant
+  // and no group membership: it would pass to whoever is given it next.
+  for (const [url, body] of [
+    [
+      '/api/gatekeeper/grants',
+      {
+        principalType: 'user',
+        principalId: 'selin',
+        resourceType: 'tunnel',
+        resourceId: 't1',
+      },
+    ],
+    ['/api/gatekeeper/groups/ops/members', { usernames: ['ali', 'selin'] }],
+  ]) {
+    const refused = await call('POST', url, body);
+    assert.equal(refused.statusCode, 409, url);
+    assert.equal(refused.json().code, 'username_deleted');
+  }
+  assert.equal(
+    gatekeeper.grants.some((g) => g.principalId === 'selin'),
+    false,
+  );
+  assert.equal(gatekeeper.groups.get('ops').members.includes('selin'), false);
+  // A username the directory never saw goes through: a user still to come.
+  const future = await call('POST', '/api/gatekeeper/grants', {
+    principalType: 'user',
+    principalId: 'newcomer',
+    resourceType: 'tunnel',
+    resourceId: 't1',
+  });
+  assert.equal(future.statusCode, 201, future.body);
 });
 
 test('the audience and identity views', async () => {
@@ -615,6 +685,100 @@ test('the audience and identity views', async () => {
   assert.equal((await call('GET', '/api/plugins/px/audience')).statusCode, 400);
 });
 
+test('roles a manifest no longer declares stay removed: grants rewritten or revoked, audited; the preview counts them', async () => {
+  const qx = {
+    name: 'qx',
+    route: 'qx',
+    identity: normalizeIdentityBlock({
+      roles: [
+        { id: 'viewer', label: 'Viewer' },
+        { id: 'editor', label: 'Editor' },
+      ],
+    }),
+  };
+  const roleGrant = (principalType, principalId, roles, extra = {}) =>
+    gatekeeper.addGrant({
+      principalType,
+      principalId,
+      resourceType: 'plugin',
+      resourceId: 'qx',
+      context: { roles, ...extra },
+    });
+  roleGrant('user', 'ayse', ['editor', 'viewer'], { note: 'kept' });
+  roleGrant('group', 'ops', ['editor']);
+  roleGrant('user', 'ali', ['viewer']);
+  gatekeeper.addGrant({
+    principalType: 'user',
+    principalId: 'mehmet',
+    resourceType: 'plugin',
+    resourceId: 'qx',
+    context: { target: 'local' },
+  });
+
+  // The approval preview of a version without `editor`: one grant narrowed, one revoked.
+  const narrowed = normalizeIdentityBlock({ roles: [{ id: 'viewer', label: 'Viewer' }] });
+  const view = {
+    version: '2.0.0',
+    identity: {
+      before: qx.identity,
+      after: narrowed,
+      rolesAdded: [],
+      rolesRemoved: ['editor'],
+      attributesAdded: [],
+      attributesRemoved: [],
+      labelsChanged: [],
+    },
+  };
+  assert.deepEqual((await lib.withIdentityGrantImpact(view, 'qx')).identity.grantsAffected, {
+    rewritten: 1,
+    revoked: 1,
+  });
+  const unchanged = { ...view, identity: { ...view.identity, rolesRemoved: [] } };
+  assert.equal(await lib.withIdentityGrantImpact(unchanged, 'qx'), unchanged);
+  gatekeeper.state.unreachable = true;
+  assert.equal((await lib.withIdentityGrantImpact(view, 'qx')).identity.grantsAffected, null);
+  gatekeeper.state.unreachable = false;
+
+  // That version installed and approved: `editor` goes from every grant.
+  const pruned = await lib.pruneUndeclaredRoles(
+    { ...qx, identity: narrowed },
+    { actor: 'lamaste' },
+  );
+  assert.deepEqual(pruned, { ok: true, rewritten: 1, revoked: 1, roles: ['editor'] });
+  const onQx = gatekeeper.grants.filter((g) => g.resourceId === 'qx');
+  assert.deepEqual(
+    onQx.map((g) => [g.principalId, g.context]).sort(),
+    [
+      ['ali', { roles: ['viewer'] }],
+      ['ayse', { roles: ['viewer'], note: 'kept' }],
+      ['mehmet', { target: 'local' }],
+    ].sort(),
+    'a roleless grant is no entitlement and stays',
+  );
+  const [audit] = await lib.listAudit({ action: 'plugin.entitlement.roles-removed' });
+  assert.equal(audit.plugin, 'qx');
+  assert.deepEqual(audit.details, { roles: ['editor'], grantsRewritten: 1, grantsRevoked: 1 });
+  // Nothing left to do: nothing done, nothing audited.
+  assert.deepEqual(
+    await lib.pruneUndeclaredRoles({ ...qx, identity: narrowed }, { actor: 'lamaste' }),
+    { ok: true, rewritten: 0, revoked: 0, roles: [] },
+  );
+  assert.equal((await lib.listAudit({ action: 'plugin.entitlement.roles-removed' })).length, 1);
+
+  // Uninstalled with purge: every role grant goes; the roleless one stays.
+  assert.deepEqual(await lib.revokePluginRoleGrants(qx, { actor: 'admin' }), {
+    ok: true,
+    revoked: 2,
+  });
+  assert.deepEqual(
+    gatekeeper.grants.filter((g) => g.resourceId === 'qx').map((g) => g.principalId),
+    ['mehmet'],
+  );
+  gatekeeper.state.unreachable = true;
+  assert.equal((await lib.revokePluginRoleGrants(qx, { actor: 'admin' })).ok, false);
+  gatekeeper.state.unreachable = false;
+});
+
 test('attributes a plugin stops declaring leave its members and its tombstones', async () => {
   const narrowed = normalizeIdentityBlock({ ...MX_IDENTITY, attributes: ['displayName'] });
   await lib.writePlugins({
@@ -635,8 +799,19 @@ test('attributes a plugin stops declaring leave its members and its tombstones',
     assert.equal(JSON.stringify(row).includes('@relay.test'), false);
 });
 
-test('a plugin that no longer declares identity loses its audience and feed state', async () => {
-  assert.ok((await lib.listAudience('mx')).length > 0);
+test('a plugin that stops declaring identity keeps its ledger: erasures alone reach it, pending and marked inactive', async () => {
+  const before = await rows('mx');
+  const erasedBefore = Object.values(before).find((r) => r.change.reason === 'erased');
+  const member = Object.values(before).find((r) => r.change.kind === 'upsert');
+  assert.ok(erasedBefore && member, 'a member and an erasure to start from');
+  const { userId: memberId, username } = member.change.member;
+  // Where its half stood: past the earlier erasure.
+  const db = await lib.getStateDb();
+  db.prepare(
+    `INSERT INTO plugin_identity_sync (plugin, directory_id, cursor, updated_at) VALUES ('mx', ?, ?, ?)
+     ON CONFLICT (plugin) DO UPDATE SET
+       directory_id = excluded.directory_id, cursor = excluded.cursor`,
+  ).run(await lib.getDirectoryId(), erasedBefore.seq, new Date().toISOString());
   await lib.writePlugins({
     plugins: [
       registryEntry('mx', null),
@@ -644,7 +819,67 @@ test('a plugin that no longer declares identity loses its audience and feed stat
       registryEntry('px', null),
     ],
   });
+  // Every grant goes: nothing reaches its rows — it takes no feed now.
+  gatekeeper.reset();
+  const quiet = await lib.recomputeAudiences();
+  assert.equal(
+    quiet.plugins.some((p) => p.plugin === 'mx'),
+    false,
+  );
+  assert.deepEqual(await rows('mx'), before, 'the ledger stays as it was');
+  assert.ok(await lib.readIdentitySyncState('mx'), 'and so does its feed state');
+
+  // Erasing a former member rewrites their row there too (a new seq): a
+  // plugin that comes back replays it.
+  await lib.changeUsers(
+    async () => {
+      const data = await lib.readUsersRaw();
+      delete data.users[username];
+      await lib.writeUsers(data);
+      delete users[username];
+    },
+    { actor: 'admin', deleted: [username], confirmDelayMs: 0 },
+  );
+  assert.equal((await rows('mx'))[memberId].change.kind, 'upsert', 'a deletion does not reach it');
+  await lib.eraseDirectoryUser(memberId, { actor: 'admin' });
+  const erased = (await rows('mx'))[memberId];
+  assert.deepEqual(erased.change, { kind: 'remove', userId: memberId, reason: 'erased' });
+  assert.ok(erased.seq > member.seq);
+  assert.equal(erased.version, member.version + 1);
+  assert.deepEqual(
+    await lib.pendingErasures('mx'),
+    [memberId],
+    'the earlier erasure was acknowledged',
+  );
+  assert.deepEqual((await lib.pendingErasuresByUser()).get(memberId), [
+    { plugin: 'mx', inactive: true },
+  ]);
+
+  // Uninstalled while an agent keeps its data: the ledger stays, the erasure
+  // pending on that agent from where its projection stood.
+  await lib.recordRetainedData({
+    agentLabel: 'vm1',
+    route: 'mx',
+    plugin: 'mx',
+    package: '@lamalibre/mx-agent',
+    operation: null,
+  });
+  await lib.writePlugins({
+    plugins: [registryEntry('nx', NX_IDENTITY), registryEntry('px', null)],
+  });
+  assert.equal(await lib.dropIdentityLedgerIfNoData('mx'), false);
   await lib.recomputeAudiences();
+  assert.ok((await lib.listAudience('mx')).length > 0);
+  assert.deepEqual(await lib.pendingErasures('mx'), [memberId]);
+  assert.deepEqual((await lib.pendingErasuresByUser()).get(memberId), [
+    { plugin: 'mx', inactive: true },
+  ]);
+
+  // Its data purged (or forgotten): nothing of it is left, nor owed.
+  await lib.forgetRetainedData('vm1', 'mx');
+  assert.equal(await lib.dropIdentityLedgerIfNoData('mx'), true);
   assert.deepEqual(await lib.listAudience('mx'), []);
-  assert.ok((await lib.listAudience('nx')).length > 0);
+  assert.equal(await lib.readIdentitySyncState('mx'), null);
+  assert.deepEqual(await lib.pendingErasures('mx'), []);
+  assert.equal((await lib.pendingErasuresByUser()).get(memberId), undefined);
 });

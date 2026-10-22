@@ -28,6 +28,15 @@
  * the cursor passing the erasure is the acknowledgement the panel waits
  * for.
  *
+ * **An erasure is sticky.** Once a row carries `erased_at`, nothing the
+ * feed sends brings the user back: a later `upsert`, or a `remove` with
+ * `deleted` or `unentitled` and its `last` attributes — what a relay
+ * restored from a backup taken before the erasure would replay — leaves the
+ * row scrubbed (`removed`, reason `erased`, no username, name, address or
+ * roles), calls no hook, and counts as a mismatch in a reconcile: the panel
+ * contradicted an erasure the half already performed. A user id is never
+ * reused, so an erased id is never a new member.
+ *
  * The database is anything shaped like `node:sqlite`'s `DatabaseSync`
  * ({@link IdentityProjectionDatabase}); this module does not load
  * `node:sqlite` itself.
@@ -128,7 +137,9 @@ export interface IdentityProjectionOptions {
    * `erased` change a batch carries, after the row was scrubbed — replays
    * repeat it (the daily reconcile replays every erasure), so it must be
    * idempotent; that is also how an erasure reaches data restored from a
-   * backup taken before it.
+   * backup taken before it — and whenever an erased row is found holding
+   * anything but its id and is scrubbed again. An erased row never reaches
+   * `onUpsert` or `onRemove`: erasure is sticky (see the module comment).
    */
   readonly onErase?: ((userId: string, db: IdentityProjectionDatabase) => void) | undefined;
 }
@@ -275,10 +286,9 @@ function sameUser(a: ProjectedUser, b: ProjectedUser): boolean {
   );
 }
 
-/** The row an `upsert` makes: the member as the feed carries it. */
+/** The row an `upsert` makes: the member as the feed carries it (never for an erased row). */
 function upsertedRow(
   change: Extract<AudienceChange, { kind: 'upsert' }>,
-  stored: ProjectedUser | null,
   now: string,
 ): ProjectedUser {
   const { member } = change;
@@ -291,9 +301,29 @@ function upsertedRow(
     status: member.status,
     removedReason: null,
     removedAt: null,
-    // Once scrubbed, the record of it stays.
-    erasedAt: stored?.erasedAt ?? null,
+    erasedAt: null,
     version: member.version,
+    updatedAt: now,
+  };
+}
+
+/**
+ * An erased row: the bare id, `removed` for reason `erased`, the time the
+ * user stopped being a member and the time of the erasure (both kept from
+ * `stored` when it has them) and the last member version.
+ */
+function erasedRow(userId: string, stored: ProjectedUser | null, now: string): ProjectedUser {
+  return {
+    userId,
+    username: null,
+    displayName: null,
+    email: null,
+    roles: [],
+    status: 'removed',
+    removedReason: 'erased',
+    removedAt: stored?.removedAt ?? now,
+    erasedAt: stored?.erasedAt ?? now,
+    version: stored?.version ?? 0,
     updatedAt: now,
   };
 }
@@ -302,15 +332,15 @@ function upsertedRow(
  * The row a `remove` makes: no roles, `removed`, the reason, and the time
  * the user stopped being a member (kept from an earlier removal). `deleted`
  * and `unentitled` keep the last known declared attributes; `erased` keeps
- * nothing but the id.
+ * nothing but the id (never for an erased row).
  */
 function removedRow(
   change: Extract<AudienceChange, { kind: 'remove' }>,
   stored: ProjectedUser | null,
   now: string,
 ): ProjectedUser {
-  const erased = change.reason === 'erased';
-  const last = erased ? undefined : change.last;
+  if (change.reason === 'erased') return erasedRow(change.userId, stored, now);
+  const last = change.last;
   return {
     userId: change.userId,
     username: last?.username ?? null,
@@ -320,7 +350,7 @@ function removedRow(
     status: 'removed',
     removedReason: change.reason,
     removedAt: stored?.removedAt ?? now,
-    erasedAt: stored?.erasedAt ?? (erased ? now : null),
+    erasedAt: null,
     version: stored?.version ?? 0,
     updatedAt: now,
   };
@@ -423,10 +453,23 @@ export function createIdentityProjection(opts: IdentityProjectionOptions): Ident
 
     for (const change of request.changes) {
       const userId = change.kind === 'upsert' ? change.member.userId : change.userId;
+      const erasure = change.kind === 'remove' && change.reason === 'erased';
       const stored = readUser(userId);
+      if (stored !== null && stored.user.erasedAt !== null) {
+        // Sticky: an erased row stays the bare id whatever the change says
+        // (scrubbed again should it hold anything else).
+        const next = erasedRow(userId, stored.user, now);
+        const scrubbed = !sameUser(stored.user, next);
+        if (scrubbed) writeUser(next, stamping ? request.pass : stored.seenPass, true);
+        else if (stamping && stored.seenPass !== request.pass) stampUser.run(request.pass, userId);
+        // Anything but the erasure itself contradicts it.
+        if (request.reconcile && (scrubbed || !erasure)) mismatches += 1;
+        if (erasure || scrubbed) synchronous(opts.onErase?.(userId, db));
+        continue;
+      }
       const next =
         change.kind === 'upsert'
-          ? upsertedRow(change, stored?.user ?? null, now)
+          ? upsertedRow(change, now)
           : removedRow(change, stored?.user ?? null, now);
       const changed = stored === null || !sameUser(stored.user, next);
       if (changed) {
@@ -437,9 +480,7 @@ export function createIdentityProjection(opts: IdentityProjectionOptions): Ident
       } else if (stamping && stored.seenPass !== request.pass) {
         stampUser.run(request.pass, userId);
       }
-      if (change.kind === 'remove' && change.reason === 'erased') {
-        synchronous(opts.onErase?.(userId, db));
-      }
+      if (erasure) synchronous(opts.onErase?.(userId, db));
     }
 
     if (request.final && stamping) {
@@ -447,6 +488,13 @@ export function createIdentityProjection(opts: IdentityProjectionOptions): Ident
       // listed as one is not.
       for (const raw of selectUnseen.all(request.pass)) {
         const stored = storedUserOf(raw);
+        mismatches += 1;
+        if (stored.user.erasedAt !== null) {
+          // Erased, yet listed as a member: scrubbed again.
+          writeUser(erasedRow(stored.user.userId, stored.user, now), stored.seenPass, true);
+          synchronous(opts.onErase?.(stored.user.userId, db));
+          continue;
+        }
         const removed: ProjectedUser = {
           ...stored.user,
           roles: [],
@@ -456,7 +504,6 @@ export function createIdentityProjection(opts: IdentityProjectionOptions): Ident
           updatedAt: now,
         };
         writeUser(removed, stored.seenPass, true);
-        mismatches += 1;
         synchronous(opts.onRemove?.(removed, 'deleted', db));
       }
     }

@@ -6,13 +6,20 @@
  *     POST /admin/identity/notify   { protocol, directoryId, seq: head }
  *       → { protocol, directoryId, cursor }      what the half holds
  *     POST /admin/identity/changes  { protocol, directoryId, from, to, reset,
- *                                     reconcile, pass, final, changes }
+ *                                     reconcile, pass, final, changes: sealed }
  *
  * Lamaste's own calls (`callAgentHalf`: caller `lamaste`, the body hash
  * bound, the answer authenticated by its responder signature over the
- * body). A half that answers the notification with protocol 1 is *ready*
- * for the installed version: users reach its `/app` only then
- * ({@link identityReadiness}). Then it gets what it lacks:
+ * body). A batch's `changes` are sealed to the request (core
+ * `sealIdentityChanges`: AES-256-GCM, a key derived from the installation
+ * secret, bound to the assertion's nonce and the envelope), so neither the
+ * chisel server nor anything holding a loopback end of the tunnel sees a
+ * member in clear. A half is *ready* for the installed version once it has
+ * applied everything up to the head — a sync that ends with its cursor at
+ * the head after at least one complete replay since it was hosted
+ * (`ready_version`): users reach its `/app` only then
+ * ({@link identityReadiness}), never with a half that answered the
+ * notification but is still behind. It gets what it lacks:
  *
  * - **incremental** — the rows stamped after its cursor, in batches of at
  *   most `IDENTITY_BATCH_MAX_CHANGES` changes and `IDENTITY_BATCH_MAX_BYTES`;
@@ -57,6 +64,7 @@ import {
   parseIdentityChangesAnswer,
   parseIdentityCursorConflict,
   parseIdentityNotifyAnswer,
+  sealIdentityChanges,
 } from '@lamalibre/lamaste';
 import { pluginHostingPhase, signingSecretFor } from '@lamalibre/lamaste/server';
 import { recordAuditBestEffort } from './audit.js';
@@ -71,6 +79,7 @@ import { getConfig } from './config.js';
 import { clearPendingPrincipals, getDirectoryId, reconcileDirectory } from './directory.js';
 import { installedVersionApproved } from './plugin-hooks.js';
 import { findPlugin, findPluginByRoute, readPlugins } from './plugins.js';
+import { retainedIdentityPositions } from './retained-data.js';
 import { getStateDb } from './state-db.js';
 
 /** How long the half may take to answer a notification. */
@@ -96,7 +105,8 @@ const SYNC_ATTEMPTS = 3;
  * @typedef {object} IdentitySyncState
  * @property {string | null} directoryId the directory the half follows, as it last answered
  * @property {number | null} cursor the seq it has applied up to, as it last answered
- * @property {string | null} readyVersion the plugin version that answered protocol 1
+ * @property {string | null} readyVersion the plugin version whose half applied everything up to
+ *   the head after a complete replay
  * @property {string | null} lastSyncAt the last sync that left the half up to date
  * @property {string | null} lastReconcileAt the last full replay
  * @property {number | null} lastMismatches what the last daily reconcile found
@@ -173,10 +183,11 @@ async function writeSyncState(name, patch) {
 
 /**
  * Forget what the panel knew of plugin `name`'s agent half: its hosting is
- * gone. The half of a later hosting must answer protocol 1 before users
- * reach it, gets the whole audience (a replay), and the erasures count as
- * pending until it acknowledges them. The audience itself stays: it is the
- * plugin's, not the hosting's.
+ * gone. The half of a later hosting gets the whole audience (a replay) and
+ * is ready for users only once it has applied it. Where the removed half's
+ * projection stood went with its data, when an agent retains that
+ * (`recordRetainedData`), so the erasures owed there stay pending. The
+ * audience itself stays: it is the plugin's ledger, not the hosting's.
  *
  * @param {string} name
  */
@@ -202,14 +213,17 @@ async function ownHostingOf(plugin) {
  * @property {boolean} approved the installed version is approved
  * @property {boolean} hostingActive its hosting is active
  * @property {string | null} version the installed version
- * @property {string | null} readyVersion the version whose half last answered protocol 1
+ * @property {string | null} readyVersion the version whose half last applied everything up to
+ *   the head after a complete replay
  * @property {'not_installed' | 'no_identity' | 'not_approved' | 'not_hosted' | 'not_answered' | null} reason
  */
 
 /**
  * Whether the plugin on `route` is ready for user callers: it declares
  * `identity`, its installed version is approved, its hosting is active, and
- * its agent half answered protocol 1 since this version was installed.
+ * its agent half — since this version was installed — applied every change
+ * up to the head after a complete replay (answering protocol 1 alone is not
+ * enough: a half that is still behind would serve stale roles and names).
  *
  * @param {string} route
  * @returns {Promise<IdentityReadiness>}
@@ -262,44 +276,65 @@ function acknowledgedCursor(state, directoryId) {
 }
 
 /**
- * The erasures plugin `name` has not acknowledged: the user ids of its
- * `remove/erased` rows stamped after its half's cursor.
+ * The erasures plugin `name` has not acknowledged — wherever its data is:
+ * while it is installed, the `remove/erased` rows of its ledger stamped
+ * after the cursor its hosting's agent half last answered (every one when
+ * no half has: the next hosting's half is sent them); for every agent that
+ * retains data of it, those stamped after the position recorded with that
+ * data (`retained-data.js`; every one when none was). User ids in `seq`
+ * order, each once. An uninstalled plugin no agent keeps data of owes
+ * nothing.
  *
  * @param {string} name
  * @returns {Promise<string[]>}
  */
 export async function pendingErasures(name) {
+  const directoryId = await getDirectoryId();
+  const cursors = [];
+  if (await findPlugin(name)) {
+    cursors.push(acknowledgedCursor(await readIdentitySyncState(name), directoryId));
+  }
+  for (const position of await retainedIdentityPositions(name)) {
+    cursors.push(
+      position.directoryId === directoryId && position.cursor !== null ? position.cursor : 0,
+    );
+  }
+  if (cursors.length === 0) return [];
   const db = await getStateDb();
-  const cursor = acknowledgedCursor(await readIdentitySyncState(name), await getDirectoryId());
   return db
     .prepare(
       `SELECT user_id FROM plugin_audience
        WHERE plugin = ? AND json_extract(change, '$.reason') = 'erased' AND seq > ?
        ORDER BY seq`,
     )
-    .all(name, cursor)
+    .all(name, Math.min(...cursors))
     .map((row) => row.user_id);
 }
 
 /**
  * For every erased user some plugin has not acknowledged yet, those
- * plugins' names.
+ * plugins: `{ plugin, inactive }` — `inactive` when the plugin is not
+ * installed or no longer declares identity, so the feed does not reach it:
+ * an agent keeps its data (retained, or a hosted half that no longer takes
+ * the feed), and the erasure reaches that data when the plugin comes back
+ * — or goes with it when the data is purged.
  *
- * @returns {Promise<Map<string, string[]>>}
+ * @returns {Promise<Map<string, Array<{ plugin: string, inactive: boolean }>>>}
  */
 export async function pendingErasuresByUser() {
   const db = await getStateDb();
   const plugins = db
     .prepare(
       `SELECT DISTINCT plugin FROM plugin_audience
-       WHERE json_extract(change, '$.reason') = 'erased'`,
+       WHERE json_extract(change, '$.reason') = 'erased' ORDER BY plugin`,
     )
     .all()
     .map((row) => row.plugin);
   const out = new Map();
   for (const plugin of plugins) {
+    const inactive = !(await findPlugin(plugin))?.identity;
     for (const userId of await pendingErasures(plugin)) {
-      out.set(userId, [...(out.get(userId) ?? []), plugin]);
+      out.set(userId, [...(out.get(userId) ?? []), { plugin, inactive }]);
     }
   }
   return out;
@@ -318,7 +353,14 @@ export async function identityView(name) {
   if (!plugin) return null;
   const readiness = await readinessOf(plugin);
   if (!plugin.identity) {
-    return { declared: null, readiness, sync: null, audience: null, pendingErasures: [] };
+    // A plugin that stopped declaring identity may still owe erasures (its ledger).
+    return {
+      declared: null,
+      readiness,
+      sync: null,
+      audience: null,
+      pendingErasures: await pendingErasures(name),
+    };
   }
   const directoryId = await getDirectoryId();
   const state = await readIdentitySyncState(name);
@@ -353,7 +395,10 @@ export async function identityView(name) {
 // One sync
 // ---------------------------------------------------------------------------
 
-/** The bytes of a batch envelope at its largest (numbers at their widest, flags `false`). */
+/**
+ * The bytes of a batch request at its largest without its ciphertext:
+ * numbers at their widest, flags `false`, the sealed changes' `v` and IV.
+ */
 function envelopeBytes(directoryId) {
   return Buffer.byteLength(
     JSON.stringify({
@@ -365,21 +410,33 @@ function envelopeBytes(directoryId) {
       reconcile: false,
       pass: crypto.randomUUID(),
       final: false,
-      changes: [],
+      changes: { v: 1, iv: 'A'.repeat(16), ct: '' },
     }),
   );
 }
 
 /**
+ * The largest JSON array of changes whose sealed request stays within
+ * `IDENTITY_BATCH_MAX_BYTES` (the ciphertext is base64url: four characters
+ * for every three bytes, the tag included).
+ */
+function maxChangesBytes(directoryId) {
+  const room = IDENTITY_BATCH_MAX_BYTES - envelopeBytes(directoryId);
+  // ceil((n + 16) * 4 / 3) <= room for this n (the 16 bytes: GCM's tag).
+  return Math.floor((room * 3) / 4) - 16;
+}
+
+/**
  * The stored rows as the feed's changes, in batches of at most
- * `IDENTITY_BATCH_MAX_CHANGES` changes whose request stays within
+ * `IDENTITY_BATCH_MAX_CHANGES` changes whose sealed request stays within
  * `IDENTITY_BATCH_MAX_BYTES`. Throws on a row that is not the contract.
  */
 function batchesOf(rows, directoryId) {
-  const envelope = envelopeBytes(directoryId);
+  const limit = maxChangesBytes(directoryId);
   const batches = [];
   let current = [];
-  let size = envelope;
+  // The array's brackets.
+  let size = 2;
   for (const row of rows) {
     const change = { seq: row.seq, ...row.change };
     if (!AudienceChangeSchema.safeParse(change).success) {
@@ -393,11 +450,11 @@ function batchesOf(rows, directoryId) {
     const bytes = Buffer.byteLength(JSON.stringify(change)) + 1;
     if (
       current.length > 0 &&
-      (current.length >= IDENTITY_BATCH_MAX_CHANGES || size + bytes > IDENTITY_BATCH_MAX_BYTES)
+      (current.length >= IDENTITY_BATCH_MAX_CHANGES || size + bytes > limit)
     ) {
       batches.push(current);
       current = [];
-      size = envelope;
+      size = 2;
     }
     current.push(change);
     size += bytes;
@@ -421,11 +478,16 @@ function describeFailure(result) {
 
 /**
  * Send `batches` from `from`: a replay (`replay`) resets with its first
- * batch and stamps `pass` with every batch, the last `final`. Returns
+ * batch and stamps `pass` with every batch, the last `final`. Each batch's
+ * changes are sealed (`seal`) to the request that carries them. Returns
  * `{ kind: 'done', cursor, mismatches }`, `{ kind: 'conflict', position }`
  * (a 409 with what the half holds) or `{ kind: 'failed', error }`.
  */
-async function sendBatches(call, { name, directoryId, batches, from, replay, reconcile, logger }) {
+async function sendBatches(
+  call,
+  seal,
+  { name, directoryId, batches, from, replay, reconcile, logger },
+) {
   const pass = crypto.randomUUID();
   let cursor = from;
   let mismatches = 0;
@@ -434,8 +496,7 @@ async function sendBatches(call, { name, directoryId, batches, from, replay, rec
   for (let i = 0; i < list.length; i += 1) {
     const changes = list[i];
     const to = changes.length > 0 ? changes[changes.length - 1].seq : cursor;
-    const request = {
-      protocol: IDENTITY_PROTOCOL_VERSION,
+    const envelope = {
       directoryId,
       from: cursor,
       to,
@@ -443,11 +504,15 @@ async function sendBatches(call, { name, directoryId, batches, from, replay, rec
       reconcile: replay && (reconcile || i > 0),
       pass,
       final: replay && i === list.length - 1,
-      changes,
     };
     const result = await call(
       AGENT_HALF_IDENTITY_CHANGES_PATH,
-      request,
+      // Sealed to the nonce of the very request that carries them.
+      (nonce) => ({
+        protocol: IDENTITY_PROTOCOL_VERSION,
+        ...envelope,
+        changes: seal(nonce, envelope, changes),
+      }),
       IDENTITY_CHANGES_TIMEOUT_MS,
     );
     if (result.ok && result.status === 409) {
@@ -470,7 +535,7 @@ async function sendBatches(call, { name, directoryId, batches, from, replay, rec
     mismatches += answer.mismatches ?? 0;
     await writeSyncState(name, { directoryId, cursor });
     logger?.info(
-      { plugin: name, from: request.from, to, changes: changes.length, replay, reconcile },
+      { plugin: name, from: envelope.from, to, changes: changes.length, replay, reconcile },
       'Sent an identity batch',
     );
   }
@@ -538,17 +603,21 @@ async function syncOnce(name, { reconcile, logger }) {
 
   const directoryId = await getDirectoryId();
   const before = await readIdentitySyncState(name);
+  // One secret for the whole sync: requests are signed and changes sealed with it.
+  const secret = signingSecretFor(record);
   const call = (path, body, timeoutMs) =>
     callAgentHalf({
       plugin: record.plugin,
       port: record.port,
-      secret: signingSecretFor(record),
+      secret,
       method: 'POST',
       path,
       body,
       timeoutMs,
       maxResponseBytes: IDENTITY_ANSWER_MAX_BYTES,
     });
+  const seal = (nonce, envelope, changes) =>
+    sealIdentityChanges({ secret, plugin: record.plugin, nonce, envelope, changes });
 
   const head = await audienceHead(name);
   const notified = await call(
@@ -567,12 +636,9 @@ async function syncOnce(name, { reconcile, logger }) {
       logger,
     );
   }
-  // Protocol 1 answered for the installed version: user callers may reach it.
-  await writeSyncState(name, {
-    readyVersion: plugin.version,
-    directoryId: answer.directoryId,
-    cursor: answer.cursor,
-  });
+  // What the half holds. It is not ready for user callers yet: that waits
+  // until it has applied everything up to the head (below).
+  await writeSyncState(name, { directoryId: answer.directoryId, cursor: answer.cursor });
 
   // A plugin that has not completed a full replay since it was installed
   // (its first sync), or since a replay was cut short, replays — whatever
@@ -588,9 +654,11 @@ async function syncOnce(name, { reconcile, logger }) {
       position.directoryId !== directoryId ||
       position.cursor > currentHead;
     if (!replay && position.cursor === currentHead) {
+      // At the head, a complete replay behind it: ready for this version.
       await writeSyncState(name, {
         directoryId,
         cursor: position.cursor,
+        readyVersion: plugin.version,
         lastSyncAt: new Date().toISOString(),
         lastError: null,
       });
@@ -608,7 +676,7 @@ async function syncOnce(name, { reconcile, logger }) {
     // A replay cut short leaves a half that was reset but never told which
     // rows the pass did not mention: until one completes, every sync replays.
     if (replay) await writeSyncState(name, { lastReconcileAt: null });
-    const sent = await sendBatches(call, {
+    const sent = await sendBatches(call, seal, {
       name,
       directoryId,
       batches,
@@ -631,9 +699,12 @@ async function syncOnce(name, { reconcile, logger }) {
       continue;
     }
     const now = new Date().toISOString();
+    // Every row up to the head applied (after a complete replay, this one or
+    // an earlier one): ready for this version.
     await writeSyncState(name, {
       directoryId,
       cursor: sent.cursor,
+      readyVersion: plugin.version,
       lastSyncAt: now,
       lastError: null,
       ...(replay
@@ -719,22 +790,28 @@ export function syncPluginIdentity(name, { reconcile = false, logger } = {}) {
 
 /**
  * After the plugin's identity may have changed (approval, a hosting, an
- * update or its revert): recompute the audiences — which also drops the
- * audience of a plugin that no longer declares identity — then sync the
- * plugin when it declares it. Never throws; null when nothing was synced.
+ * update or its revert): once its installed version is approved, drop from
+ * its role grants every role that version does not declare (a role a
+ * manifest removed stays removed — `pruneUndeclaredRoles`); recompute the
+ * audiences; then sync the plugin when it declares identity. Never throws;
+ * null when nothing was synced.
  *
  * @param {string} name
  * @param {import('pino').Logger} [logger]
  * @returns {Promise<IdentitySyncResult | null>}
  */
 export async function refreshPluginIdentity(name, logger) {
-  await recomputeAudiences({ logger });
   let plugin = null;
   try {
     plugin = await findPlugin(name);
+    if (plugin && (await installedVersionApproved(plugin).catch(() => false))) {
+      const { pruneUndeclaredRoles } = await import('./entitlements.js');
+      await pruneUndeclaredRoles(plugin, { actor: 'lamaste', logger });
+    }
   } catch (err) {
     logger?.warn({ plugin: name, err: err.message }, 'Could not read the plugin to sync its users');
   }
+  await recomputeAudiences({ logger });
   return plugin?.identity ? syncPluginIdentity(name, { logger }) : null;
 }
 

@@ -622,6 +622,9 @@ export async function runPurgeRetainedData(op, { retained, logger }) {
     });
     assertRemoved(result, 'Purging the retained data');
     await forgetRetainedData(retained.agentLabel, retained.route);
+    // The last data of an uninstalled plugin: its identity ledger goes too.
+    const { dropIdentityLedgerIfNoData } = await import('./audience.js');
+    await dropIdentityLedgerIfNoData(retained.plugin, logger);
   });
   await recordAuditBestEffort(
     {

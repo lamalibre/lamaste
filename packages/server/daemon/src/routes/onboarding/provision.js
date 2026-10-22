@@ -133,6 +133,8 @@ async function runProvisioning(log) {
       logger: log,
       creates: ['admin'],
       restartAuthelia: false,
+      // Authelia's storage does not exist before its first start.
+      autheliaStorage: false,
     });
     for (const warning of created.warnings) {
       log.warn({ step: warning.step }, warning.message);

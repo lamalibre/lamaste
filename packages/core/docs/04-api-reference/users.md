@@ -21,8 +21,10 @@ If onboarding is not complete, all endpoints return `503 Service Unavailable`.
 - **Password hashing:** Passwords are hashed with bcrypt (not argon2id — argon2id uses ~93MB per hash and causes OOM kills on a 512MB droplet).
 - **Authelia restart:** After every user change that modifies `users.yml` (create, update, delete), Authelia is restarted via `systemctl restart authelia` to pick up the changes. If the restart fails, the operation still succeeds — the failure is logged and listed in the response's `warnings`. Note: TOTP reset does **not** restart Authelia — it writes directly to Authelia's SQLite database via the `authelia storage user totp generate` CLI command, which takes effect immediately.
 - **Atomic writes:** The `users.yml` file is written atomically (write to temp file, then rename) to prevent Authelia from reading a partially written file.
-- **One lock for every user write:** creating, updating, disabling and deleting users, and accepting an invitation, are read-modify-writes of `users.yml` under one lock in the panel. Under the same lock the panel brings the directory in line with the file **before** Authelia restarts — so a disabled user is refused by plugins at once — then restarts Authelia, then recomputes the plugins' audiences. Concurrent user changes therefore run one after the other.
-- **The directory follows `users.yml`, read only:** at start, after onboarding and every minute the panel reconciles the directory with the file without writing it (Authelia's own password reset rewrites it; an operator may edit it): an unknown username gets a new `userId`, a changed display name, email or `disabled` is adopted, and a username gone from the file — seen missing in two reads, so a half-written file never tombstones anyone — is removed as `deleted-outside`. Every change is audited (`directory.user.created`, `.updated`, `.removed`) by `userId` alone; audit entries never name a user.
+- **One lock for every user write:** creating, updating, disabling and deleting users, and accepting an invitation, are read-modify-writes of `users.yml` under one lock in the panel. Under the same lock the panel brings the directory in line with the file **before** Authelia restarts — so a disabled user is refused by plugins at once — [offboards](#offboarding) every user that stopped being one, then restarts Authelia, then recomputes the plugins' audiences. Concurrent user changes therefore run one after the other.
+- **A change must stick:** Authelia's own password reset rewrites `users.yml` from what Authelia read when it started, so a change written just before its restart can be lost. After the restart the panel reads `users.yml` again and checks that it holds the change (the fields set, the user created or gone); when it does not, the change is made once more (and Authelia restarted again). When it still does not, the answer carries `"ok": false`, `"persisted": false` and a `persist` warning — never a silent success.
+- **The directory follows `users.yml`, read only:** at start, after onboarding and every minute the panel reconciles the directory with the file without writing it (Authelia's own password reset rewrites it; an operator may edit it): an unknown username gets a new `userId`, a changed display name, email or `disabled` is adopted, and a username gone from the file — seen missing in two reads, so a half-written file never tombstones anyone — is removed as `deleted-outside`. A user the reconcile sees disabled or removed is offboarded exactly as one disabled or deleted through the API. Every change is audited (`directory.user.created`, `.updated`, `.removed`) by `userId` alone; audit entries never name a user.
+- **Audit:** besides the directory's own entries, the users API records `user.password.set` (a password set through `PUT`), `user.groups.changed` (`added`, `removed` group names) and `user.totp.reset` — each by `userId` alone.
 - **Last user protection:** You cannot delete the last remaining user. At least one user must always exist.
 - **Last administrator protection:** You cannot disable the last enabled member of the `admins` group.
 
@@ -112,7 +114,7 @@ Creates a new Authelia user. The password is hashed with bcrypt before being sto
 | `password`    | `string`   | 8-128 chars                                                                                 | Plain-text password (hashed before storage) |
 | `groups`      | `string[]` | Optional, defaults to `[]`                                                                  | Authelia group memberships                  |
 
-**Username regex** (the same rule applies to invitations — a leading `-` would read as a flag to Authelia's CLI when a TOTP secret is stored):
+**Username regex** (the same rule applies to invitations — a leading `-` would read as a flag to Authelia's CLI, which the panel runs per username for TOTP secrets, second factors and OpenID Connect identities):
 
 ```
 ^[a-z0-9][a-z0-9_-]*$
@@ -143,18 +145,20 @@ curl -s --cert client.p12:password \
 }
 ```
 
-A new user gets a new `userId`, even when an earlier, deleted user had the same username. What that earlier user left in Gatekeeper under the username — grants and group memberships — is removed **before** the new user is created ([Usernames and Gatekeeper](#usernames-and-gatekeeper)), so a reused username inherits nothing. `warnings` (`[{ step, message }]`) lists what went wrong after `users.yml` was written — the directory not updated, Authelia not restarted.
+A new user gets a new `userId`, even when an earlier, deleted user had the same username. Before the new user is created ([Reused usernames](#reused-usernames)): the username is refused when Authelia holds an OpenID Connect identity for it; and when a deleted user held it, Gatekeeper drops everything it holds under the username (grants, group memberships) and Authelia the second factors (TOTP, WebAuthn) — always, not only when a cleanup was pending — so a reused username inherits no grant, group, role or second factor. `warnings` (`[{ step, message }]`) lists what went wrong after `users.yml` was written — the directory not updated, Authelia not restarted; a change that did not stick answers `200` with `"ok": false`, `"persisted": false`.
 
 **Errors:**
 
-| Status | Body                                                                    | When                                                                                                          |
-| ------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`              | Invalid username, email, or password length                                                                   |
-| 409    | `{"error":"Username already exists"}`                                   | A user with this username already exists                                                                      |
-| 503    | `{"error":"A removed user's grants …","code":"gatekeeper_unavailable"}` | An earlier user with this username left grants or groups in Gatekeeper, and Gatekeeper cannot remove them now |
-| 500    | `{"error":"Failed to read user database"}`                              | Cannot read `users.yml`                                                                                       |
-| 500    | `{"error":"Failed to hash password"}`                                   | bcrypt hashing failed                                                                                         |
-| 500    | `{"error":"Failed to update user database"}`                            | Cannot write `users.yml`                                                                                      |
+| Status | Body                                                                                          | When                                                                                                                                                                                                   |
+| ------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`                                    | Invalid username, email, or password length                                                                                                                                                            |
+| 409    | `{"error":"Username already exists"}`                                                         | A user with this username already exists                                                                                                                                                               |
+| 409    | `{"error":"Authelia holds an OpenID Connect identity …","code":"username_has_oidc_identity"}` | Authelia holds an OpenID Connect opaque identifier for the username: every relying party would take the new user for the earlier one ([Reused usernames](#reused-usernames)) — choose another username |
+| 503    | `{"error":"A removed user's grants …","code":"gatekeeper_unavailable"}`                       | An earlier user with this username left grants or groups in Gatekeeper, and Gatekeeper cannot remove them now                                                                                          |
+| 503    | `{"error":"Authelia's storage could not …","code":"authelia_storage_unavailable"}`            | Authelia's storage could not be checked for an OpenID Connect identity of the username, or an earlier user's second factors under it could not be deleted                                              |
+| 500    | `{"error":"Failed to read user database"}`                                                    | Cannot read `users.yml`                                                                                                                                                                                |
+| 500    | `{"error":"Failed to hash password"}`                                                         | bcrypt hashing failed                                                                                                                                                                                  |
+| 500    | `{"error":"Failed to update user database"}`                                                  | Cannot write `users.yml`                                                                                                                                                                               |
 
 ---
 
@@ -210,7 +214,7 @@ curl -s --cert client.p12:password \
 }
 ```
 
-`warnings` lists what did not happen after the write (the directory, Authelia's restart, ending the user's desktop sessions, revoking registry tokens). A change of `groups` revokes the user's registry (Feria) tokens, whose scopes were granted from `feria-*` groups at login.
+`warnings` lists what did not happen after the write (the directory, Authelia's restart, the steps of [offboarding](#offboarding)); `"ok": false` with `"persisted": false` and a `persist` warning says the change did not stick ([above](#important-behavior)). A change of `groups` revokes the user's registry (Feria) tokens, whose scopes were granted from `feria-*` groups at login.
 
 #### Disabling a user
 
@@ -218,8 +222,24 @@ curl -s --cert client.p12:password \
 
 - the directory marks the user `disabled`, so every plugin's [user surface](agent-hosted-plugins.md#the-user-surface) refuses them at once (`403`);
 - every plugin audience that holds them shows them `disabled`, and their agent halves are told;
+- the user is [offboarded](#offboarding): their desktop app sessions end and their registry tokens are revoked (best effort — `warnings` on failure).
 
-then, best effort (`warnings` on failure): their desktop app sessions end (a new per-user session epoch) and their registry tokens are revoked. The user keeps their `userId`, grants and group memberships; `{ "disabled": false }` enables them again with everything as it was. A disabled user still counts as a user (they can be deleted). The last enabled member of the `admins` group cannot be disabled.
+The user keeps their `userId`, grants and group memberships; `{ "disabled": false }` enables them again with everything as it was — except desktop sessions, which stay ended. A disabled user still counts as a user (they can be deleted). The last enabled member of the `admins` group cannot be disabled. A user disabled by editing `users.yml` is offboarded the same way when the next reconcile sees it.
+
+#### Offboarding
+
+One function, keyed by `userId`, for every way a user stops being one — disabled or deleted through this API, and disabled or gone from `users.yml` outside it (adopted by the minute's reconcile):
+
+| Step                                                                                              | Disabled | Removed |
+| ------------------------------------------------------------------------------------------------- | -------- | ------- |
+| Desktop app sessions end: the user's session epoch (`panel.json` `userEpochs`, keyed by `userId`) | ✓        | ✓       |
+| Registry (Feria) tokens revoked                                                                   | ✓        | ✓       |
+| Grants in the legacy `user-plugin-access.json` removed                                            |          | ✓       |
+| Gatekeeper drops every grant and group membership under the username (pending until it can)       |          | ✓       |
+| Authelia deletes the user's TOTP configuration and WebAuthn credentials                           |          | ✓       |
+| Gatekeeper's cached session verdicts dropped                                                      | ✓        | ✓       |
+
+Desktop sessions are bound to the `userId` as well as the username: one is valid only while its user still holds the username and is enabled, so a username given to someone else never revives a session. Sessions issued before 4.5 carry no `userId` and are refused — desktop users sign in again once after the upgrade. An epoch older than a session's longest life (12 hours) can reject nothing and is dropped; `panel.json` names nobody.
 
 **Errors:**
 
@@ -240,11 +260,12 @@ Deletes an Authelia user: the user is removed from `users.yml`, the directory tu
 
 You cannot delete the last remaining user. This safety check prevents accidentally locking out all users from tunneled applications.
 
-Then, never rolled back — what fails is reported in `warnings`:
+Then, never rolled back — what fails is reported in `warnings` — the user is [offboarded](#offboarding):
 
 1. Gatekeeper drops every grant naming the username (any resource type) and its membership of every Lamaste group, in one transaction ([Usernames and Gatekeeper](#usernames-and-gatekeeper)). When Gatekeeper cannot, the cleanup stays **pending** on the tombstone and is retried every minute; until it succeeds the username holds no role in any plugin and cannot be given to a new user.
-2. The user's registry (Feria) tokens are revoked, their grants in the legacy `user-plugin-access.json` removed, and their desktop app sessions ended.
-3. Every plugin that had the user as a member is sent `remove` with reason `deleted` and what it last received about them.
+2. Authelia deletes the user's TOTP configuration and WebAuthn credentials. When it cannot, the username cannot be given to a new user until it can ([Reused usernames](#reused-usernames)).
+3. The user's registry (Feria) tokens are revoked, their grants in the legacy `user-plugin-access.json` removed, and their desktop app sessions ended.
+4. Every plugin that had the user as a member is sent `remove` with reason `deleted` and what it last received about them.
 
 **Request:**
 
@@ -355,17 +376,18 @@ Every user the directory knows — members by username, then the removed, then t
 }
 ```
 
-| Field                              | Description                                                                                                           |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `userId`                           | Stable id (UUID v4); never reused                                                                                     |
-| `username`, `displayName`, `email` | As `users.yml` last had them; all `null` once erased                                                                  |
-| `status`                           | `active`, `disabled` or `removed`                                                                                     |
-| `removedReason`                    | `deleted` (through Lamaste) or `deleted-outside` (gone from `users.yml` without it); `null` unless removed            |
-| `removedAt`, `erasedAt`            | When the user was removed, and erased                                                                                 |
-| `principalClearedAt`               | When Gatekeeper dropped what it held under the removed user's username; `null` on a removed user: **cleanup pending** |
-| `version`                          | 1 at creation, + 1 on every change                                                                                    |
-| `erasure`                          | `{ requestedAt, requestedBy }` for an erased user, else `null`                                                        |
-| `pendingErasures`                  | Names of the plugins whose agent half has not yet acknowledged this user's erasure                                    |
+| Field                              | Description                                                                                                                                                                                                              |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `userId`                           | Stable id (UUID v4); never reused                                                                                                                                                                                        |
+| `username`, `displayName`, `email` | As `users.yml` last had them; all `null` once erased                                                                                                                                                                     |
+| `status`                           | `active`, `disabled` or `removed`                                                                                                                                                                                        |
+| `removedReason`                    | `deleted` (through Lamaste) or `deleted-outside` (gone from `users.yml` without it); `null` unless removed                                                                                                               |
+| `removedAt`, `erasedAt`            | When the user was removed, and erased                                                                                                                                                                                    |
+| `principalClearedAt`               | When Gatekeeper dropped what it held under the removed user's username; `null` on a removed user: **cleanup pending**                                                                                                    |
+| `version`                          | 1 at creation, + 1 on every change                                                                                                                                                                                       |
+| `erasure`                          | `{ requestedAt, requestedBy }` for an erased user, else `null`                                                                                                                                                           |
+| `pendingErasures`                  | Names of the plugins that have not yet acknowledged this user's erasure — their hosting's agent half, or an agent that retains their data                                                                                |
+| `pendingErasuresInactive`          | Among them, the plugins the feed does not reach now (uninstalled, or no longer declaring identity) whose data an agent keeps: the erasure reaches it when the plugin comes back, or goes with the data when it is purged |
 
 ### Erasing a removed user
 
@@ -373,11 +395,12 @@ Deleting keeps the tombstone; **erasing** scrubs it. An erasure of a removed use
 
 1. Gatekeeper's principal cleanup, if it is still pending.
 2. Gatekeeper's **access-request log**: the user's rows logged before they were removed (and those still queued for the log) are deleted.
-3. The user's **invitations** made before they were removed are deleted from `invitations.json`.
-4. The directory row is scrubbed to the bare `userId` (`username`, display name and email `NULL`, `erasedAt` set), who asked is recorded, and `directory.user.erased` is audited (`userId`, counts).
-5. The audiences are recomputed: every plugin that had the user as a member is sent `remove` with reason `erased` and no attributes; its agent half scrubs its own row and anonymises what the plugin keeps in the same transaction, and its cursor passing the change is the acknowledgement. Until then the plugin is listed in the user's `pendingErasures` (and the user in the plugin's — [Agent-Hosted Plugins](agent-hosted-plugins.md#erasure)). Delivery takes seconds while the hosting agent is online, and happens when it reconnects otherwise.
+3. Authelia's **second factors** for the username (TOTP, WebAuthn) are deleted, should their deletion at removal have failed.
+4. The user's **invitations** made before they were removed are deleted from `invitations.json`.
+5. The directory row is scrubbed to the bare `userId` (`username`, display name and email `NULL`, `erasedAt` set), who asked is recorded, and `directory.user.erased` is audited (`userId`, counts).
+6. The audiences are recomputed: **every** plugin that ever had the user as a member — including one uninstalled while an agent keeps its data, or one that no longer declares identity — has the user's row rewritten to `remove` with reason `erased` and no attributes. A plugin that takes the feed is sent it: its agent half scrubs its own row and anonymises what the plugin keeps in the same transaction, and its cursor passing the change is the acknowledgement. One that does not now replays it when it comes back. Until then the plugin is listed in the user's `pendingErasures` (marked in `pendingErasuresInactive` when the feed does not reach it now) and the user in the plugin's — [Agent-Hosted Plugins](agent-hosted-plugins.md#erasure). Delivery takes seconds while the hosting agent is online, and happens when it reconnects otherwise. An agent half never takes an erased user back: an erasure is sticky in its projection.
 
-**Outside Lamaste's reach:** Authelia's own authentication log and its database, nginx access logs, and backups taken before the erasure. Plugins replay erasures at their daily reconcile, which is how an erasure reaches an agent half's data restored from an older backup.
+**Outside Lamaste's reach:** Authelia keeps the username's OpenID Connect **opaque identifier** (Authelia 4.39 cannot delete one — which is why the username is never given to anyone again while it exists) and its own **authentication log**; nginx access logs and journald keep what they logged before (see [Monitoring](../05-operations/monitoring.md#logs-and-personal-data) for their retention); backups taken before the erasure keep everything. Plugins replay erasures at their daily reconcile, which is how an erasure reaches an agent half's data restored from an older backup; restoring the relay itself is covered in [Backup and Restore](../05-operations/backup-and-restore.md).
 
 ### `POST /api/identity/directory/:userId/erase`
 
@@ -397,31 +420,40 @@ Erases a removed user. 30 a minute.
 
 **Errors:**
 
-| Status | `code`                   | When                                                                                                                           |
-| ------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| 400    |                          | `userId` is not a UUID v4                                                                                                      |
-| 404    | `user_not_found`         | No user with this id                                                                                                           |
-| 409    | `user_not_removed`       | The user is active or disabled — delete them first, or delete and erase in one step (`DELETE /api/users/:username?erase=true`) |
-| 409    | `already_erased`         | Erased already                                                                                                                 |
-| 503    | `gatekeeper_unavailable` | Gatekeeper could not clear the principal or purge its log — nothing was erased; try again                                      |
+| Status | `code`                         | When                                                                                                                           |
+| ------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| 400    |                                | `userId` is not a UUID v4                                                                                                      |
+| 404    | `user_not_found`               | No user with this id                                                                                                           |
+| 409    | `user_not_removed`             | The user is active or disabled — delete them first, or delete and erase in one step (`DELETE /api/users/:username?erase=true`) |
+| 409    | `already_erased`               | Erased already                                                                                                                 |
+| 503    | `gatekeeper_unavailable`       | Gatekeeper could not clear the principal or purge its log — nothing was erased; try again                                      |
+| 503    | `authelia_storage_unavailable` | Authelia's storage could not delete the second factors — nothing was erased; try again                                         |
 
 ### Usernames and Gatekeeper
 
-Gatekeeper keys users by username too: the grants naming a user and their memberships of Lamaste groups would pass to anyone who later holds the username. So every removed user's **principal** is cleared in Gatekeeper — every grant naming the username, of any resource type, and its membership of every group, in one Gatekeeper transaction (`DELETE /api/principals/user/:username` on Gatekeeper's own API, which only the panel calls) — when the user is deleted through Lamaste, every minute while that is pending (Gatekeeper was down, or the user disappeared from `users.yml` outside Lamaste), before an erasure, and **before anything is created under the username again**: a new user, a grant or a group membership through the panel (refused with `503 gatekeeper_unavailable` while it cannot complete). While a username's cleanup is pending it holds no role in any plugin. Each cleanup is audited as `directory.user.principal-cleared` with the user ids.
+Gatekeeper keys users by username too: the grants naming a user and their memberships of Lamaste groups would pass to anyone who later holds the username. So every removed user's **principal** is cleared in Gatekeeper — every grant naming the username, of any resource type, and its membership of every group, in one Gatekeeper transaction (`POST /api/principals/user/remove { username }` on Gatekeeper's own API, which only the panel calls; the username travels in the body, never in a URL) — when the user is removed (through Lamaste or outside it), every minute while that is pending (Gatekeeper was down), before an erasure, and **whenever a user is created under the username** — always then, pending or not: a restored `gatekeeper.db`, or a grant that raced the deletion, may have brought something back. Each cleanup is audited as `directory.user.principal-cleared` with the user ids.
+
+A grant or a group membership given to a username through the panel (an entitlement, the Gatekeeper proxy) is given holding the users lock, so no deletion runs between the checks and the grant. A username a deleted user held and nobody holds now takes **nothing** — `409 username_deleted` (whatever it was given would pass to whoever is given the username next); a pending cleanup under a username is completed first (`503 gatekeeper_unavailable` while it cannot be). While a username's cleanup is pending it holds no role in any plugin. A username the directory never saw goes through: Gatekeeper may hold grants for a user still to come.
+
+### Reused usernames
+
+A new user under a username an earlier user held inherits **nothing**: not their `userId` (a new one), not their grants, group memberships or plugin roles (Gatekeeper's principal cleared at creation), not their second factors (Authelia's TOTP configuration and WebAuthn credentials deleted at removal and again at creation — `503 authelia_storage_unavailable` while they cannot be), not their desktop sessions (bound to the `userId`).
+
+One thing Lamaste cannot take away: the **OpenID Connect identity**. Authelia gives each user an opaque identifier (the `sub` claim relying parties see — plugins that sign users in through Lamaste's OpenID Connect provider, a registry) the first time they sign in to one, keyed by username, and Authelia 4.39 has no way to delete it. A new user under that username would be the old user to every relying party. So **a username Authelia holds an opaque identifier for is never given to a new user**: creating a user (or accepting an invitation) under it is refused with `409 username_has_oidc_identity` — choose another username. The panel checks with Authelia's own CLI (`lamaste-priv authelia-user has-oidc-identifier`, which answers yes or no and nothing else).
 
 ---
 
 ## Quick Reference
 
-| Method | Path                                    | Description                                                                    |
-| ------ | --------------------------------------- | ------------------------------------------------------------------------------ |
-| GET    | `/api/users`                            | List all users (alphabetical, no sensitive fields), with `userId` and `status` |
-| POST   | `/api/users`                            | Create user (bcrypt hash + Authelia reload)                                    |
-| PUT    | `/api/users/:username`                  | Update user fields (partial update); `disabled` disables/enables               |
-| DELETE | `/api/users/:username[?erase=true]`     | Delete user (not the last one); a tombstone stays unless erased                |
-| POST   | `/api/users/:username/reset-totp`       | Generate new TOTP secret                                                       |
-| GET    | `/api/identity/directory`               | Every user the directory knows, tombstones and erasures included               |
-| POST   | `/api/identity/directory/:userId/erase` | Erase a removed user                                                           |
+| Method | Path                                    | Description                                                                              |
+| ------ | --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| GET    | `/api/users`                            | List all users (alphabetical, no sensitive fields), with `userId` and `status`           |
+| POST   | `/api/users`                            | Create user (bcrypt hash + Authelia reload); a username with an OIDC identity is refused |
+| PUT    | `/api/users/:username`                  | Update user fields (partial update); `disabled` disables/enables                         |
+| DELETE | `/api/users/:username[?erase=true]`     | Delete user (not the last one); a tombstone stays unless erased                          |
+| POST   | `/api/users/:username/reset-totp`       | Generate new TOTP secret                                                                 |
+| GET    | `/api/identity/directory`               | Every user the directory knows, tombstones and erasures included                         |
+| POST   | `/api/identity/directory/:userId/erase` | Erase a removed user                                                                     |
 
 From the CLI (through the running panel, `--json` for NDJSON): `lamaste-server users list`, `users disable <username>`, `users enable <username>`, `users delete <username> [--erase]`, `users erase <userId>`, `users directory`. The panel's Users page and the desktop app (`AdminClient` `getUsers`, `disableUser`, `enableUser`, `deleteUser(username, { erase })`, `getUserDirectory`, `eraseDirectoryUser`) do the same — see [Managing Users](../02-guides/managing-users.md).
 

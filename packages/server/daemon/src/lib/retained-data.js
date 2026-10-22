@@ -38,18 +38,64 @@ function rowToRecord(row) {
  * agent package `pkg` of plugin `plugin`. A record that exists already keeps
  * its `since` — the data has been there since then.
  *
+ * With it goes how far the agent half's identity projection — part of that
+ * data — had applied the plugin's feed, as the half last answered (the
+ * plugin's feed state, read now, before the hosting's is forgotten): the
+ * erasures of the plugin's ledger after that cursor are pending on this
+ * agent (`pendingErasures` in `lib/identity-sync.js`). When the relay knows
+ * no position, a record that exists keeps the one it had — the projection
+ * did not move without a feed.
+ *
  * @param {{ agentLabel: string, route: string, plugin: string, package: string, operation?: string | null }} record
  */
 export async function recordRetainedData({ agentLabel, route, plugin, package: pkg, operation }) {
   const db = await getStateDb();
+  const feed = db
+    .prepare('SELECT directory_id, cursor FROM plugin_identity_sync WHERE plugin = ?')
+    .get(plugin);
+  const known = feed && feed.directory_id !== null && feed.cursor !== null;
   db.prepare(
-    `INSERT INTO retained_agent_data (agent_label, route, plugin, package, since, operation)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO retained_agent_data
+       (agent_label, route, plugin, package, since, operation, identity_directory_id, identity_cursor)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(agent_label, route) DO UPDATE SET
        plugin = excluded.plugin,
        package = excluded.package,
-       operation = excluded.operation`,
-  ).run(agentLabel, route, plugin, pkg, new Date().toISOString(), operation ?? null);
+       operation = excluded.operation,
+       identity_directory_id = CASE WHEN excluded.identity_cursor IS NULL
+         THEN identity_directory_id ELSE excluded.identity_directory_id END,
+       identity_cursor = COALESCE(excluded.identity_cursor, identity_cursor)`,
+  ).run(
+    agentLabel,
+    route,
+    plugin,
+    pkg,
+    new Date().toISOString(),
+    operation ?? null,
+    known ? feed.directory_id : null,
+    known ? Number(feed.cursor) : null,
+  );
+}
+
+/**
+ * Where the identity projection in each record's data stands, for plugin
+ * `plugin`: `[{ agentLabel, directoryId, cursor }]` (both null when unknown).
+ *
+ * @param {string} plugin
+ */
+export async function retainedIdentityPositions(plugin) {
+  const db = await getStateDb();
+  return db
+    .prepare(
+      `SELECT agent_label, identity_directory_id, identity_cursor FROM retained_agent_data
+       WHERE plugin = ? ORDER BY since, agent_label`,
+    )
+    .all(plugin)
+    .map((row) => ({
+      agentLabel: row.agent_label,
+      directoryId: row.identity_directory_id,
+      cursor: row.identity_cursor === null ? null : Number(row.identity_cursor),
+    }));
 }
 
 /** Drop the record of the data agent `agentLabel` keeps for route `route` (purged, or taken back). */

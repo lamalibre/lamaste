@@ -1,0 +1,1328 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 41,
+    "name": "App plugin identity ledger across an uninstall",
+    "suite": "e2e-three-vm",
+    "description": "41 — App plugin identity ledger across an uninstall (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {
+    "TEST_USER": {
+      "description": "TEST_USER"
+    }
+  },
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-ledger"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-ledger-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-ledger-agent"
+    },
+    "SERVICE_USER": {
+      "value": "lamaste-app-e2e-ledger"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-41"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-41-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "TEST_USER": {
+      "value": "${TEST_USER:-testuser}",
+      "expression": true
+    },
+    "CAROL": {
+      "value": "e2e41-carol"
+    },
+    "CAROL_NAME": {
+      "value": "E2E Carol"
+    },
+    "CAROL_EMAIL": {
+      "value": "e2e41-carol@example.test"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE users/${CAROL}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${CAROL}?erase=true"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "POST identity/directory/${CAROL_ID}/erase",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "identity/directory/${CAROL_ID}/erase",
+        "body": {}
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Set TEST_USER_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(listed_user \"${TEST_USER}\")\" '.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TEST_USER_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "${TEST_USER} has a directory id (${TEST_USER_ID})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${TEST_USER_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "${TEST_USER} has a directory id (${TEST_USER_ID})"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "DELETE /api/users/${CAROL}?erase=true",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "users/${CAROL}?erase=true"
+          },
+          "continueOnError": true
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nlog_info \"Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}\"\nif agent_has_node_sqlite; then\n  log_pass \"The agent VM's Node.js has node:sqlite, which the agent half's projection needs\"\nelse\n  log_fail \"The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run\"\n  end_test\n  exit $?\nfi\nTEST_USER_ID=$(json_get \"$(listed_user \"${TEST_USER}\")\" '.userId // empty')\nassert_eq \"$(is_uuid \"${TEST_USER_ID}\")\" \"true\" \"${TEST_USER} has a directory id (${TEST_USER_ID})\" || true\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\ndrop_plugin_grants \"${PLUGIN}\"\nhost_api_delete \"users/${CAROL}?erase=true\" > /dev/null 2>&1 || true\nif [ \"$(host_api_get_status \"plugins/${PLUGIN}\")\" = \"404\" ]; then\n  timed_exec 120 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"if [ -x ${APPHOST_HELPER} ]; then ${APPHOST_HELPER} remove ${AGENT_LABEL} ${PLUGIN} --purge > /dev/null 2>&1; fi; true\" > /dev/null 2>&1\n  forget_retained_record\nfi\n\n# ===========================================================================\n# 1. Entitled before it is hosted; ready means synced\n# ==========================================================================="
+    },
+    {
+      "id": "entitled-before-it-is-hosted-the-moment-it-is-ready-its-projection-holds-them",
+      "label": "Entitled before it is hosted; the moment it is ready, its projection holds them",
+      "steps": [
+        {
+          "id": "step-10",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-41-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Fixture built: ${SERVER_PACKAGE} (identity: viewer, editor; displayName, email) and its agent package",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixture built: ${SERVER_PACKAGE} (identity: viewer, editor; displayName, email) and its agent package"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${CAROL}\\\",\\\"displayname\\\":\\\"${CAROL_NAME}\\\",\\\"email\\\":\\\"${CAROL_EMAIL}\\\",\\\"password\\\":\\\"E2e-$(openssl rand -hex 12)\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "User ${CAROL} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${CAROL} created"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Set CAROL_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "CAROL_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "…with a directory id (${CAROL_ID})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${CAROL_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…with a directory id (${CAROL_ID})"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Set INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Installed ${SERVER_PACKAGE}@1.0.0, which declares identity; approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": "\"\\(.plugin.version) \\(.hooks.identity.declared)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0 true"
+              },
+              "message": "Installed ${SERVER_PACKAGE}@1.0.0, which declares identity; approved"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${who}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "${who} entitled as viewer, before the plugin is hosted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${who} entitled as viewer, before the plugin is hosted"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 360 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set INSTANCE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(host_api_get \"${PLUGIN}/ping\")\" '.data.instance // empty'"
+          },
+          "capture": [
+            {
+              "variable": "INSTANCE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "The agent half answers through the tunnel (its data: instance ${INSTANCE})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half answers through the tunnel (its data: instance ${INSTANCE})"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "INSTANCE"
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "The agent half does not answer through the tunnel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent half does not answer through the tunnel"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "INSTANCE"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "The relay's health of the hosting is up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The relay's health of the hosting is up"
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Ready: its agent half's first complete sync ended at the head of the audience",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Ready: its agent half's first complete sync ended at the head of the audience"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')"
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Set VIEW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "identity_view \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "VIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "1.0.0 is ready, nothing behind",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": "\"\\(.readiness.readyVersion) \\(.sync.behind)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0 0"
+              },
+              "message": "1.0.0 is ready, nothing behind"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Set PROJ",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "projection \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "PROJ",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"Entitled before it is hosted; the moment it is ready, its projection holds them\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-41-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/ledger\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none wide; then\n  log_fail \"The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE} (identity: viewer, editor; displayName, email) and its agent package\"\nship_agent_facts_probe\nship_identity_tamper\nship_identity_peek\nstart_stand_in_feria fixtures/ledger/server fixtures/ledger/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${CAROL}\\\",\\\"displayname\\\":\\\"${CAROL_NAME}\\\",\\\"email\\\":\\\"${CAROL_EMAIL}\\\",\\\"password\\\":\\\"E2e-$(openssl rand -hex 12)\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${CAROL} created\" || true\nCAROL_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nassert_eq \"$(is_uuid \"${CAROL_ID}\")\" \"true\" \"…with a directory id (${CAROL_ID})\" || true\n\nINSTALL=$(install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\")\nassert_json_field \"$INSTALL\" '\"\\(.plugin.version) \\(.hooks.identity.declared)\"' '1.0.0 true' \"Installed ${SERVER_PACKAGE}@1.0.0, which declares identity; approved\" || true\nfor who in \"${CAROL}\" \"${TEST_USER}\"; do\n  RESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${who}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\n  assert_eq \"$(status_of \"$RESP\")\" \"200\" \"${who} entitled as viewer, before the plugin is hosted\" || true\ndone\n\nOP=$(host_plugin \"${PLUGIN}\" 360 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nINSTANCE=$(json_get \"$(host_api_get \"${PLUGIN}/ping\")\" '.data.instance // empty')\nif [ -n \"$INSTANCE\" ]; then\n  log_pass \"The agent half answers through the tunnel (its data: instance ${INSTANCE})\"\nelse\n  log_fail \"The agent half does not answer through the tunnel\"\nfi\nif wait_for 60 health_up; then\n  log_pass \"The relay's health of the hosting is up\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\nif wait_for 120 identity_ready \"${PLUGIN}\"; then\n  log_pass \"Ready: its agent half's first complete sync ended at the head of the audience\"\nelse\n  log_fail \"Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')\"\nfi\nVIEW=$(identity_view \"${PLUGIN}\")\nassert_json_field \"$VIEW\" '\"\\(.readiness.readyVersion) \\(.sync.behind)\"' '1.0.0 0' \"1.0.0 is ready, nothing behind\" || true\n# Read once, at once: readiness promises the members are there.\nPROJ=$(projection \"${PLUGIN}\")\nassert_json_field \"$PROJ\" \"[.users[] | select(.userId == \\\"${CAROL_ID}\\\") | \\\"\\(.username) \\(.status) \\(.roles | join(\\\",\\\"))\\\"] | first\" \"${CAROL} active viewer\" \"The projection already holds ${CAROL}: active, viewer\" || true\nassert_json_field \"$PROJ\" \"[.users[] | select(.userId == \\\"${TEST_USER_ID}\\\") | \\\"\\(.username) \\(.status) \\(.roles | join(\\\",\\\"))\\\"] | first\" \"${TEST_USER} active viewer\" \"…and ${TEST_USER}\" || true\n\n# ===========================================================================\n# 2. Uninstalled without purge\n# ==========================================================================="
+    },
+    {
+      "id": "uninstalled-without-purge-the-data-stays-on-the-agent",
+      "label": "Uninstalled without purge: the data stays on the agent",
+      "steps": [
+        {
+          "id": "step-43",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "uninstall false"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Uninstalled without purge ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Uninstalled without purge ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "The plugin is gone from the relay",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_api_get_status \"plugins/${PLUGIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The plugin is gone from the relay"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "GET /api/plugins/${PLUGIN}/retained-data: ${HOST_AGENT_LABEL} keeps its agent half's data",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(retained_here)"
+              },
+              "path": "\"\\(.route) \\(.package)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${PLUGIN} ${AGENT_PACKAGE}"
+              },
+              "message": "GET /api/plugins/${PLUGIN}/retained-data: ${HOST_AGENT_LABEL} keeps its agent half's data"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "The projection in that data holds ${CAROL}, active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(kept_projection_user \"${PLUGIN}\" \"${CAROL_ID}\")"
+              },
+              "path": "\"\\(.username) \\(.status)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${CAROL} active"
+              },
+              "message": "The projection in that data holds ${CAROL}, active"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Uninstalled without purge: the data stays on the agent\"\n\nOP=$(uninstall false)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Uninstalled without purge ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nassert_eq \"$(host_api_get_status \"plugins/${PLUGIN}\")\" \"404\" \"The plugin is gone from the relay\" || true\nassert_json_field \"$(retained_here)\" '\"\\(.route) \\(.package)\"' \"${PLUGIN} ${AGENT_PACKAGE}\" \"GET /api/plugins/${PLUGIN}/retained-data: ${HOST_AGENT_LABEL} keeps its agent half's data\" || true\nassert_json_field \"$(kept_projection_user \"${PLUGIN}\" \"${CAROL_ID}\")\" '\"\\(.username) \\(.status)\"' \"${CAROL} active\" \"The projection in that data holds ${CAROL}, active\" || true\n\n# ===========================================================================\n# 3. Deleted and erased while no agent half runs\n# ==========================================================================="
+    },
+    {
+      "id": "deleted-and-erased-while-no-agent-half-runs-the-erasure-waits-for-the-kept-data",
+      "label": "Deleted and erased while no agent half runs: the erasure waits for the kept data",
+      "steps": [
+        {
+          "id": "step-48",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call DELETE \"users/${CAROL}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "${CAROL} deleted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.ok) \\(.userId)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "true ${CAROL_ID}"
+              },
+              "message": "${CAROL} deleted"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"identity/directory/${CAROL_ID}/erase\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "…and erased by their id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…and erased by their id"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "directory_user \"${CAROL_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "The directory scrubbed the tombstone to the bare id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.username) \\(.displayName) \\(.email)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null null"
+              },
+              "message": "The directory scrubbed the tombstone to the bare id"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "The kept projection still holds ${CAROL}'s name: nothing reached it yet",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(kept_projection_user \"${PLUGIN}\" \"${CAROL_ID}\")"
+              },
+              "path": "\"\\(.username) \\(.erasedAt)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${CAROL} null"
+              },
+              "message": "The kept projection still holds ${CAROL}'s name: nothing reached it yet"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Deleted and erased while no agent half runs: the erasure waits for the kept data\"\n\nRESP=$(users_call DELETE \"users/${CAROL}\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.ok) \\(.userId)\"' \"true ${CAROL_ID}\" \"${CAROL} deleted\" || true\nRESP=$(host_api_call POST \"identity/directory/${CAROL_ID}/erase\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"…and erased by their id\" || true\nROW=$(directory_user \"${CAROL_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.displayName) \\(.email)\"' 'null null null' \"The directory scrubbed the tombstone to the bare id\" || true\nassert_json_field \"$ROW\" \".pendingErasures | index(\\\"${PLUGIN}\\\") != null\" 'true' \"The erasure is pending for ${PLUGIN}, uninstalled as it is: its ledger stayed with its data\" || true\nassert_json_field \"$ROW\" \".pendingErasuresInactive | index(\\\"${PLUGIN}\\\") != null\" 'true' \"…marked inactive: no feed reaches the data until the plugin comes back\" || true\nassert_json_field \"$(kept_projection_user \"${PLUGIN}\" \"${CAROL_ID}\")\" '\"\\(.username) \\(.erasedAt)\"' \"${CAROL} null\" \"The kept projection still holds ${CAROL}'s name: nothing reached it yet\" || true\n\n# ===========================================================================\n# 4. Back: the kept data taken back, the erasure replayed\n# ==========================================================================="
+    },
+    {
+      "id": "installed-and-hosted-again-the-kept-data-taken-back-the-erasure-replayed",
+      "label": "Installed and hosted again: the kept data taken back, the erasure replayed",
+      "steps": [
+        {
+          "id": "step-57",
+          "label": "Set INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "${SERVER_PACKAGE}@1.0.0 installed again, approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "${SERVER_PACKAGE}@1.0.0 installed again, approved"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 360 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "Hosted on ${HOST_AGENT_LABEL} again ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Hosted on ${HOST_AGENT_LABEL} again ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "The agent half took back the data the uninstall kept (instance ${INSTANCE})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_get \"${PLUGIN}/ping\")"
+              },
+              "path": ".data.instance",
+              "expected": {
+                "kind": "var",
+                "name": "INSTANCE"
+              },
+              "message": "The agent half took back the data the uninstall kept (instance ${INSTANCE})"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "…and the relay no longer records it as retained",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(retained_here)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "…and the relay no longer records it as retained"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Ready again: the replay since the hosting reached the head",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Ready again: the replay since the hosting reached the head"
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')"
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "Set PROJ",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "projection \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "PROJ",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-66",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$PROJ\" | jq -c --arg id \"${CAROL_ID}\" '[.users[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo \"null\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-67",
+          "label": "Ready, the projection holds ${CAROL} as the bare id, erased: the replay delivered the erasure",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.username) \\(.displayName) \\(.email) \\(.status) \\(.removedReason)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null null removed erased"
+              },
+              "message": "Ready, the projection holds ${CAROL} as the bare id, erased: the replay delivered the erasure"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "…erased at $(json_get \"$ROW\" '.erasedAt')",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": ".erasedAt",
+              "message": "…erased at $(json_get \"$ROW\" '.erasedAt')"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "GET /api/plugins/${PLUGIN}/identity: no erasure pending",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(identity_view \"${PLUGIN}\")"
+              },
+              "path": ".pendingErasures | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "GET /api/plugins/${PLUGIN}/identity: no erasure pending"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "GET /api/identity/directory: none pending for ${CAROL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(directory_user \"${CAROL_ID}\")"
+              },
+              "path": "\"\\(.pendingErasures | length) \\(.pendingErasuresInactive | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "0 0"
+              },
+              "message": "GET /api/identity/directory: none pending for ${CAROL}"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Installed and hosted again: the kept data taken back, the erasure replayed\"\n\nINSTALL=$(install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"${SERVER_PACKAGE}@1.0.0 installed again, approved\" || true\nOP=$(host_plugin \"${PLUGIN}\" 360 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} again ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nassert_json_field \"$(host_api_get \"${PLUGIN}/ping\")\" '.data.instance' \"${INSTANCE}\" \"The agent half took back the data the uninstall kept (instance ${INSTANCE})\" || true\nassert_eq \"$(retained_here)\" \"null\" \"…and the relay no longer records it as retained\" || true\nif wait_for 120 identity_ready \"${PLUGIN}\"; then\n  log_pass \"Ready again: the replay since the hosting reached the head\"\nelse\n  log_fail \"Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')\"\nfi\nPROJ=$(projection \"${PLUGIN}\")\nROW=$(echo \"$PROJ\" | jq -c --arg id \"${CAROL_ID}\" '[.users[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo \"null\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.displayName) \\(.email) \\(.status) \\(.removedReason)\"' 'null null null removed erased' \"Ready, the projection holds ${CAROL} as the bare id, erased: the replay delivered the erasure\" || true\nassert_json_field_not_empty \"$ROW\" '.erasedAt' \"…erased at $(json_get \"$ROW\" '.erasedAt')\" || true\nassert_json_field \"$PROJ\" \".erased | index(\\\"${CAROL_ID}\\\") != null\" 'true' \"…and the plugin's anonymiser (onErase) ran for them\" || true\nassert_json_field \"$PROJ\" \"[.users[] | select(.userId == \\\"${TEST_USER_ID}\\\") | \\\"\\(.status) \\(.roles | join(\\\",\\\"))\\\"] | first\" 'active viewer' \"${TEST_USER} is still a viewer: Gatekeeper's grants outlived the uninstall\" || true\nassert_json_field \"$(identity_view \"${PLUGIN}\")\" '.pendingErasures | length' '0' \"GET /api/plugins/${PLUGIN}/identity: no erasure pending\" || true\nassert_json_field \"$(directory_user \"${CAROL_ID}\")\" '\"\\(.pendingErasures | length) \\(.pendingErasuresInactive | length)\"' '0 0' \"GET /api/identity/directory: none pending for ${CAROL}\" || true\n\n# ===========================================================================\n# 5. An erasure is sticky\n# ==========================================================================="
+    },
+    {
+      "id": "an-erasure-is-sticky-the-relay-s-upsert-never-brings-the-user-back",
+      "label": "An erasure is sticky: the relay's upsert never brings the user back",
+      "steps": [
+        {
+          "id": "step-73",
+          "label": "Set TAMPER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "tamper_projection \"${PLUGIN}\" \"${SERVICE_USER}\" \"${TEST_USER_ID}\" erase"
+          },
+          "capture": [
+            {
+              "variable": "TAMPER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "As ${SERVICE_USER}: ${TEST_USER}'s row scrubbed as an erasure leaves it — one the relay's ledger does not hold",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TAMPER"
+              },
+              "path": ".changed",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "As ${SERVICE_USER}: ${TEST_USER}'s row scrubbed as an erasure leaves it — one the relay's ledger does not hold"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Set SYNC",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reconcile"
+          },
+          "capture": [
+            {
+              "variable": "SYNC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-77",
+          "label": "Reconcile ${pass}: the relay's upsert of ${TEST_USER} contradicts the erasure — reported ($(json_get \"$SYNC\" '.result.mismatches') mismatch)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SYNC"
+              },
+              "path": "\"\\(.result.status) \\(.result.mismatches >= 1)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "synced true"
+              },
+              "message": "Reconcile ${pass}: the relay's upsert of ${TEST_USER} contradicts the erasure — reported ($(json_get \"$SYNC\" '.result.mismatches') mismatch)"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "…the row stays the bare id, erased",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")"
+              },
+              "path": "\"\\(.username) \\(.displayName) \\(.status) \\(.removedReason) \\(.roles | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null removed erased 0"
+              },
+              "message": "…the row stays the bare id, erased"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An erasure is sticky: the relay's upsert never brings the user back\"\n\nTAMPER=$(tamper_projection \"${PLUGIN}\" \"${SERVICE_USER}\" \"${TEST_USER_ID}\" erase)\nassert_json_field \"$TAMPER\" '.changed' '1' \"As ${SERVICE_USER}: ${TEST_USER}'s row scrubbed as an erasure leaves it — one the relay's ledger does not hold\" || true\nfor pass in 1 2; do\n  SYNC=$(reconcile)\n  assert_json_field \"$SYNC\" '\"\\(.result.status) \\(.result.mismatches >= 1)\"' 'synced true' \"Reconcile ${pass}: the relay's upsert of ${TEST_USER} contradicts the erasure — reported ($(json_get \"$SYNC\" '.result.mismatches') mismatch)\" || true\n  assert_json_field \"$(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")\" '\"\\(.username) \\(.displayName) \\(.status) \\(.removedReason) \\(.roles | length)\"' 'null null removed erased 0' \"…the row stays the bare id, erased\" || true\ndone\nassert_json_field \"$(projection \"${PLUGIN}\")\" \".erased | index(\\\"${TEST_USER_ID}\\\")\" 'null' \"…and no hook ran for it (the plugin's anonymiser was never called for ${TEST_USER})\" || true\n\n# ===========================================================================\n# 6. Uninstalled with purge: the ledger goes\n# ==========================================================================="
+    },
+    {
+      "id": "uninstalled-with-purge-no-data-left-anywhere-the-ledger-goes",
+      "label": "Uninstalled with purge: no data left anywhere, the ledger goes",
+      "steps": [
+        {
+          "id": "step-81",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "date +%s"
+          },
+          "capture": [
+            {
+              "variable": "SINCE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-82",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "uninstall true"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "Uninstalled with purge ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Uninstalled with purge ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "The plugin is gone from the relay",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_api_get_status \"plugins/${PLUGIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The plugin is gone from the relay"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "No agent keeps data of ${PLUGIN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(retained_here)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "No agent keeps data of ${PLUGIN}"
+            }
+          }
+        },
+        {
+          "id": "step-86",
+          "label": "…its data directory, the projection in it, and its account are gone from the agent VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")"
+              },
+              "path": "\"\\(.data.dir) \\(.account.user)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null"
+              },
+              "message": "…its data directory, the projection in it, and its account are gone from the agent VM"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "Set DROPPED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "ledger_dropped_lines \"${SINCE:-0}\""
+          },
+          "capture": [
+            {
+              "variable": "DROPPED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"Uninstalled with purge: no data left anywhere, the ledger goes\"\n\nSINCE=$(host_exec \"date +%s\" 2>/dev/null | tail -n 1 || echo \"\")\nOP=$(uninstall true)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Uninstalled with purge ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nassert_eq \"$(host_api_get_status \"plugins/${PLUGIN}\")\" \"404\" \"The plugin is gone from the relay\" || true\nassert_eq \"$(retained_here)\" \"null\" \"No agent keeps data of ${PLUGIN}\" || true\nassert_json_field \"$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\" '\"\\(.data.dir) \\(.account.user)\"' 'null null' \"…its data directory, the projection in it, and its account are gone from the agent VM\" || true\nDROPPED=$(ledger_dropped_lines \"${SINCE:-0}\")\nassert_json_field \"{\\\"n\\\":${DROPPED:-0}}\" '.n >= 1' 'true' \"The relay dropped the plugin's identity ledger (journal: Dropped the identity ledger of a plugin no agent keeps data of)\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 41 — App plugin identity ledger across an uninstall (Three-VM)\n# ============================================================================\n# Slice 6's erasure ledger: a plugin's audience rows are the record of\n# everyone its agent halves were sent, and so of the erasures it owes; they\n# outlive an uninstall for as long as an agent keeps the plugin's data. An\n# app plugin declaring identity (fixture @lamalibre/e2e-ledger-server,\n# helpers.sh: write_app_install_fixture … wide — its agent half keeps a\n# projection of its users in its data directory) is hosted on the agent VM\n# from the panel as in spec 39:\n#\n# 1. A new user and testuser entitled as viewers before the plugin is\n#    hosted. Hosted, the plugin is ready only once its agent half's first\n#    complete sync ended at the head — so the moment it is ready, its\n#    projection holds both, without waiting.\n# 2. Uninstalled without purge: the plugin is gone from the relay; its agent\n#    half's data — the projection among it — stays on the agent, and the\n#    relay records it (retained data).\n# 3. The user deleted, then erased, while no agent half runs: the directory\n#    scrubs the tombstone, and the erasure is pending for the uninstalled\n#    plugin (its ledger stayed), marked inactive; the projection the agent\n#    keeps still holds the user's name.\n# 4. Installed and hosted again on the same agent: its agent half takes the\n#    kept data back (the same instance; nothing retained any more) and is\n#    ready only once the replay since the hosting reached the head — by then\n#    the projection holds the user as the bare id, erased, the plugin's\n#    anonymiser ran, testuser is still a viewer (Gatekeeper's grants outlive\n#    an uninstall), and nothing is pending.\n# 5. An erasure is sticky: testuser's row scrubbed in the projection as the\n#    agent half's own account could (an erasure the relay's ledger does not\n#    hold — what a relay restored from a backup taken before an erasure\n#    would contradict): every reconcile reports the relay's upsert as a\n#    mismatch, the row stays the bare id, and no hook runs for it.\n# 6. Uninstalled with purge: no data of the plugin is left on any agent, and\n#    the relay drops its ledger (its journal says so).\n#\n# The agent's sync is nudged while operations run (the unit its timer\n# starts) so the spec stays inside rodeo's ten minutes.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-ledger\"\nSERVER_PACKAGE=\"@lamalibre/e2e-ledger-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-ledger-agent\"\nSERVICE_USER=\"lamaste-app-e2e-ledger\"\nPOLICY_ID=\"e2e-apphost-41\"\nREMOTE_DIR=\"/var/tmp/e2e-41-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nTEST_USER=\"${TEST_USER:-testuser}\"\nCAROL=\"e2e41-carol\"\nCAROL_NAME=\"E2E Carol\"\nCAROL_EMAIL=\"e2e41-carol@example.test\"\nCAROL_ID=\"\"\nTEST_USER_ID=\"\"\nINSTANCE=\"\"\n\nhealth_up() { [ \"$(hosting_field \"${PLUGIN}\" '.hosting.health.state')\" = \"up\" ]; }\n\n# retained_here — the relay's record of the data the agent VM's agent keeps\n# of the plugin's agent half ('null' when none)\nretained_here() {\n  host_api_get \"plugins/${PLUGIN}/retained-data\" 2>/dev/null | jq -c --arg a \"${HOST_AGENT_LABEL}\" '[.retainedData[]? | select(.agentLabel == $a)] | first // null' 2>/dev/null || echo \"null\"\n}\n\n# uninstall <purge: true | false> — disable and uninstall the hosted plugin\n# (its hosting removed first, by an operation); prints the operation once it\n# ended, or {\"refused\": <response>}\nuninstall() {\n  local response id\n  host_api_post \"plugins/${PLUGIN}/disable\" '{}' > /dev/null 2>&1 || true\n  if [ \"$1\" = \"true\" ]; then\n    response=$(host_api_delete \"plugins/${PLUGIN}?purge=true\")\n  else\n    response=$(host_api_delete \"plugins/${PLUGIN}\")\n  fi\n  id=$(json_get \"$response\" '.operation.id // empty')\n  if [ -z \"$id\" ]; then\n    echo \"{\\\"refused\\\":$(echo \"$response\" | jq -c . 2>/dev/null || echo null)}\"\n    return 0\n  fi\n  wait_operation \"${PLUGIN}\" \"$id\" 240 nudge\n}\n\n# reconcile — POST /api/plugins/<plugin>/identity/sync {reconcile: true}: its answer\nreconcile() { host_api_post \"plugins/${PLUGIN}/identity/sync\" '{\"reconcile\":true}'; }\n\n# ledger_dropped_lines <epoch> — lines of the panel's journal since then\n# saying it dropped the plugin's identity ledger\nledger_dropped_lines() {\n  host_exec \"journalctl -u lamalibre-lamaste-serverd --no-pager --since @$1 -o cat 2>/dev/null | grep 'Dropped the identity ledger of a plugin no agent keeps data of' | grep -c '\\\"plugin\\\":\\\"${PLUGIN}\\\"' || true\" 2>/dev/null | tail -n 1 || echo \"0\"\n}\n\n# forget_retained_record — drop the relay's record of data the agent keeps\n# of the plugin (the data itself purged on the agent VM with the helper),\n# and with it the plugin's identity ledger\nforget_retained_record() {\n  if [ -n \"${HOST_AGENT_LABEL:-}\" ]; then\n    host_api_delete \"plugins/${PLUGIN}/retained-data?agentLabel=${HOST_AGENT_LABEL}&forget=true\" > /dev/null 2>&1 || true\n  fi\n}\n\nbegin_test \"41 — App plugin identity ledger across an uninstall (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  # Gatekeeper's grants outlive the plugin.\n  drop_plugin_grants \"${PLUGIN}\"\n  # The user, whatever state the spec left them in: deleted and erased.\n  host_api_delete \"users/${CAROL}?erase=true\" > /dev/null 2>&1 || true\n  if [ -n \"${CAROL_ID}\" ]; then\n    host_api_post \"identity/directory/${CAROL_ID}/erase\" '{}' > /dev/null 2>&1 || true\n  fi\n  # Uninstalls the plugin and purges what is left of its route on the agent\n  # VM with the helper — the data an uninstall without purge kept too.\n  app_plugin_cleanup\n  forget_retained_record\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

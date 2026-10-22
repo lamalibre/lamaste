@@ -11,23 +11,30 @@
  * the plugin's user (`lib/user-caller.js`: 403 disabled, removed or not
  * entitled; 404 no identity; 503 not ready), the agent half gets it in the
  * caller assertion on `/app/<rest>`, and the plugin's approved request hooks
- * run as on its admin API. Its own rate limit; 503 before onboarding
- * completes, as every management route.
+ * run as on its admin API. Its own rate limit, no CORS; 503 before
+ * onboarding completes, as every management route. Every answer of the
+ * context — those refusals and the rate limit's included — carries the
+ * user surface's response headers (core `applyUserSurfaceResponseHeaders`:
+ * `Cross-Origin-Resource-Policy: same-origin`, `nosniff`,
+ * `Content-Security-Policy: sandbox; default-src 'none'`). Each response
+ * is tracked while it is sent and ended once its user may no longer use the
+ * plugin (`lib/user-surface.js` sweep), or after an hour.
  *
  * These routes are static where the admin forwarder's `/api/:route/*` is a
  * wildcard, so they win on the shared router: the admin forwarder never
  * reaches an agent half's `/admin/app` or anything under it.
  */
 
-import { userSurfacePlugin } from '@lamalibre/lamaste/server';
+import { applyUserSurfaceResponseHeaders, userSurfacePlugin } from '@lamalibre/lamaste/server';
 import errorHandler from '../middleware/errors.js';
 import { managementOnly } from '../middleware/onboarding-guard.js';
 import { requestHookRuntime } from '../lib/request-hooks.js';
 import { resolveUserCaller } from '../lib/user-caller.js';
 import {
-  USER_SURFACE_RATE_LIMIT,
+  USER_SURFACE_ROUTE_CONFIG,
   resolveUserSurfaceTarget,
   userSurfaceOrigin,
+  userSurfaceResponseTracker,
   verifyUserSurfaceRelay,
 } from '../lib/user-surface.js';
 
@@ -37,9 +44,10 @@ async function userSurfaceRoutes(fastify) {
     resolveTarget: resolveUserSurfaceTarget,
     resolveUserCaller,
     originFor: userSurfaceOrigin,
+    trackResponse: userSurfaceResponseTracker(fastify.log),
     hooks: requestHookRuntime,
     logger: fastify.log,
-    routeConfig: { rateLimit: USER_SURFACE_RATE_LIMIT },
+    routeConfig: USER_SURFACE_ROUTE_CONFIG,
   });
 }
 
@@ -51,6 +59,10 @@ async function userSurfaceRoutes(fastify) {
  * @param {import('fastify').FastifyInstance} app
  */
 export default async function userSurfaceContext(app) {
+  // First, before anything can answer: the user surface's response headers.
+  app.addHook('onRequest', async (_request, reply) => {
+    applyUserSurfaceResponseHeaders(reply.raw);
+  });
   app.addHook('onRequest', managementOnly());
   await app.register(errorHandler);
   await app.register(userSurfaceRoutes, { prefix: '/api' });

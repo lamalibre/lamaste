@@ -5,6 +5,15 @@
  * pipeline (header strips, signing, responder check, streaming, hooks) —
  * and `/admin/identity*` reserved on the admin forwarder. End to end
  * against a fake agent half that verifies like a real one.
+ *
+ * Also what a user surface adds to that pipeline: a request another site
+ * started is refused; every answer carries `Cross-Origin-Resource-Policy:
+ * same-origin`, `nosniff` and `Content-Security-Policy: sandbox;
+ * default-src 'none'`, and no `Access-Control-*`; the relay's own errors
+ * are fixed texts; nothing is forwarded while the hosting is down; and a
+ * response is ended when the panel's sweep says so or once it has lived its
+ * bound. Both entries strip `X-Accel-*` from answers and method/URL
+ * override headers from requests.
  */
 
 import { test, before, after } from 'node:test';
@@ -27,11 +36,16 @@ import {
 } from '@lamalibre/lamaste';
 import { createCallerAssertionVerifier, responderHeaderFor } from '@lamalibre/lamaste/agent';
 import {
+  METHOD_URL_OVERRIDE_HEADERS,
   agentForwarderPlugin,
   buildRequestHookPlan,
+  isHookEditableHeader,
   isAgentHalfReservedPath,
+  isSameOriginFetch,
+  userSurfaceErrorText,
   userSurfaceHalfPath,
   userSurfacePlugin,
+  userSurfaceResponseHeaders,
 } from '@lamalibre/lamaste/server';
 
 const PLUGIN = 'fx';
@@ -54,6 +68,8 @@ let squatter;
 let squatterPort;
 let relayKey;
 let relayKeys;
+/** The open `/app/stream` responses of the fake half: closed when the relay ends them. */
+const streams = [];
 
 function listen(server) {
   return new Promise((resolve) =>
@@ -74,12 +90,44 @@ function startFakeHalf() {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
-      halfSeen = { method: req.method, url: req.url, caller: result.payload.caller };
+      halfSeen = {
+        method: req.method,
+        url: req.url,
+        caller: result.payload.caller,
+        headers: Object.keys(req.headers),
+      };
       const head = (status, headers = {}) =>
         res.writeHead(status, { ...headers, ...responderHeaderFor(result, status) });
       if (req.url === '/app/forged') {
         res.writeHead(200, responderHeaderFor(result, 201));
         res.end('forged');
+        return;
+      }
+      if (req.url === '/app/stream' || req.url === '/admin/stream') {
+        // Server-sent events that never end on their own.
+        head(200, { 'content-type': 'text/event-stream' });
+        res.write('data: one\n\n');
+        const stream = { closed: false };
+        streams.push(stream);
+        res.on('close', () => {
+          stream.closed = true;
+        });
+        return;
+      }
+      if (req.url === '/app/headers' || req.url === '/admin/headers') {
+        // An application that tries to steer nginx and the browser.
+        head(200, {
+          'content-type': 'text/html',
+          'access-control-allow-origin': '*',
+          'access-control-allow-credentials': 'true',
+          'x-accel-redirect': '/internal/secret',
+          'x-accel-buffering': 'yes',
+          'x-accel-expires': '3600',
+          'content-security-policy': "frame-ancestors 'none'",
+          'cross-origin-resource-policy': 'cross-origin',
+          'x-content-type-options': 'sniff',
+        });
+        res.end('<script>alert(1)</script>');
         return;
       }
       head(200, { 'content-type': 'application/json', 'set-cookie': 'app=1; Path=/' });
@@ -181,6 +229,7 @@ async function userSurfaceApp(overrides = {}) {
           if (route === 'squat')
             return { plugin: PLUGIN, port: squatterPort, secret, maxBodyBytes: 1024 };
           if (route === 'dead') return { plugin: PLUGIN, port: 1, secret, maxBodyBytes: 1024 };
+          if (route === 'down') return { kind: 'down', reason: 'tunnel' };
           return null;
         },
         resolveUserCaller: async (_route, username) => {
@@ -192,7 +241,9 @@ async function userSurfaceApp(overrides = {}) {
           return { ok: true, caller: { ...AYSE, username, userId: 'not-a-uuid' } };
         },
         originFor: (route) =>
-          route === 'squat' || route === 'dead' || route === PLUGIN ? ORIGIN : null,
+          route === 'squat' || route === 'dead' || route === 'down' || route === PLUGIN
+            ? ORIGIN
+            : null,
         headersTimeoutMs: 1_000,
         logger: {
           info: (obj, msg) => lines.push({ obj, msg }),
@@ -231,6 +282,10 @@ test('paths: the user surface maps to /app on the agent half, and nowhere else',
     '/api/fx/app/a\\b',
     '/api/fx/app/x%2Ey',
     '/api/fx/app/%E0%A4%A',
+    // An encoded `%`: a router decoding twice would read `..` or `/`.
+    '/api/fx/app/%252e%252e/admin/x',
+    '/api/fx/app/a%252Fb',
+    '/api/fx/app/%25',
   ]) {
     assert.equal(userSurfaceHalfPath(refused, 'fx'), null, refused);
   }
@@ -496,6 +551,8 @@ test('user surface: only an authenticated answer passes — a squatter or a dead
       });
       assert.equal(res.statusCode, 502, route);
       assert.ok(!res.body.includes('alert(1)'), route);
+      // A fixed text: not which side failed, not how.
+      assert.deepEqual(res.json(), { error: 'The application is unavailable' }, route);
     }
     const forgedUrl = '/api/fx/app/forged';
     const forged = await app.inject({
@@ -593,6 +650,7 @@ test('user surface: request hooks see the user by id and roles — never the use
     });
     assert.equal(refused.statusCode, 503);
     assert.equal(refused.json().code, 'hooks_not_approved');
+    assert.equal(refused.json().error, userSurfaceErrorText(503), 'never the internal message');
   } finally {
     await app.close();
   }
@@ -618,4 +676,422 @@ test('user surface: served under /api only', async () => {
     /served under "\/api"/,
   );
   await app.close();
+});
+
+// ---------------------------------------------------------------------------
+// What a user surface adds: cross-site refusal, response headers, fixed
+// errors, the hosting being down, open responses ended
+// ---------------------------------------------------------------------------
+
+test('user surface: a request another site started is refused, whatever its method', async () => {
+  assert.equal(isSameOriginFetch({}), true);
+  const { app, calls } = await userSurfaceApp();
+  try {
+    const url = '/api/fx/app/me';
+    for (const method of ['GET', 'HEAD', 'OPTIONS', 'POST', 'DELETE']) {
+      for (const site of ['cross-site', 'same-site', 'same-origin, cross-site', 'bogus']) {
+        halfSeen = null;
+        const res = await app.inject({
+          method,
+          url,
+          headers: {
+            'sec-fetch-site': site,
+            origin: ORIGIN,
+            [RELAY_ASSERTION_HEADER]: vouch(method, url),
+          },
+        });
+        assert.equal(res.statusCode, 403, `${method} ${site}`);
+        if (method !== 'HEAD') {
+          assert.deepEqual(
+            res.json(),
+            { error: 'cross-site request refused' },
+            `${method} ${site}`,
+          );
+        }
+        assert.equal(halfSeen, null, `${method} ${site}: nothing reached the half`);
+      }
+    }
+    assert.equal(calls.resolveTarget, 0, 'refused before anything is looked up');
+    for (const site of ['same-origin', 'none', undefined]) {
+      const res = await app.inject({
+        method: 'GET',
+        url,
+        headers: {
+          ...(site ? { 'sec-fetch-site': site } : {}),
+          [RELAY_ASSERTION_HEADER]: vouch('GET', url),
+        },
+      });
+      assert.equal(res.statusCode, 200, String(site));
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+/** The three headers every user-surface answer carries. */
+function assertUserSurfaceHeaders(res, label) {
+  assert.equal(res.headers['cross-origin-resource-policy'], 'same-origin', label);
+  assert.equal(res.headers['x-content-type-options'], 'nosniff', label);
+  const csp = [res.headers['content-security-policy']].flat();
+  assert.equal(csp[0], "sandbox; default-src 'none'", label);
+  for (const name of Object.keys(res.headers)) {
+    assert.ok(!name.startsWith('access-control-'), `${label}: ${name}`);
+    assert.ok(!name.startsWith('x-accel-'), `${label}: ${name}`);
+  }
+}
+
+test('user surface: every answer — forwarded, refused, failed — carries the user-surface headers', async () => {
+  const { app } = await userSurfaceApp({
+    hooks: {
+      hooksFor: async () => ({ hooks: [] }),
+      run: async () => ({ ok: false }),
+      fallbackFor: () => null,
+    },
+  });
+  try {
+    const as = (method, url, headers = {}) =>
+      app.inject({
+        method,
+        url,
+        headers: { [RELAY_ASSERTION_HEADER]: vouch(method, url), ...headers },
+      });
+    assertUserSurfaceHeaders(await as('GET', '/api/fx/app/me'), 'forwarded');
+    assertUserSurfaceHeaders(
+      await app.inject({ method: 'GET', url: '/api/fx/app/me' }),
+      '401 unauthenticated',
+    );
+    assertUserSurfaceHeaders(
+      await app.inject({
+        method: 'GET',
+        url: '/api/fx/app/me',
+        headers: { 'sec-fetch-site': 'cross-site' },
+      }),
+      '403 cross-site',
+    );
+    assertUserSurfaceHeaders(await as('POST', '/api/fx/app/me'), '403 cross-origin');
+    const dead = '/api/dead/app/x';
+    assertUserSurfaceHeaders(
+      await app.inject({
+        method: 'GET',
+        url: dead,
+        headers: { [RELAY_ASSERTION_HEADER]: vouch('GET', dead, 'ayse', 'dead') },
+      }),
+      '502',
+    );
+
+    // The application's own headers cannot undo them, nor steer nginx.
+    const steered = await as('GET', '/api/fx/app/headers');
+    assert.equal(steered.statusCode, 200);
+    assertUserSurfaceHeaders(steered, 'the application’s answer');
+    assert.deepEqual(steered.headers['content-security-policy'], [
+      "sandbox; default-src 'none'",
+      "frame-ancestors 'none'",
+    ]);
+  } finally {
+    await app.close();
+  }
+
+  // Pure: the application's CSP stays as a further policy, ours first.
+  assert.deepEqual(
+    userSurfaceResponseHeaders({
+      'content-type': 'application/json',
+      'access-control-allow-origin': '*',
+      'cross-origin-resource-policy': 'cross-origin',
+      'x-content-type-options': 'off',
+      'content-security-policy': ["default-src 'self'", 'img-src *'],
+    }),
+    {
+      'content-type': 'application/json',
+      'cross-origin-resource-policy': 'same-origin',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': ["sandbox; default-src 'none'", "default-src 'self'", 'img-src *'],
+    },
+  );
+});
+
+test('both entries: no X-Accel-* reaches nginx, no method or URL override reaches the half', async () => {
+  const overrides = {
+    'x-http-method-override': 'DELETE',
+    'x-http-method': 'DELETE',
+    'x-method-override': 'DELETE',
+    'x-original-url': '/admin/settings',
+    'x-rewrite-url': '/admin/settings',
+    'x-forwarded-prefix': '/admin',
+    'x-forwarded-uri': '/admin/settings',
+    'x-original-method': 'DELETE',
+  };
+  const { default: Fastify } = await import('fastify');
+  const admin = Fastify({ logger: false });
+  await admin.register(
+    async (scope) => {
+      await scope.register(agentForwarderPlugin, {
+        resolveTarget: async () => ({ plugin: PLUGIN, port: halfPort, secret, maxBodyBytes: 1024 }),
+        authorize: async () => ({ type: 'admin' }),
+      });
+    },
+    { prefix: '/api' },
+  );
+  await admin.ready();
+  const { app: user } = await userSurfaceApp();
+  try {
+    halfSeen = null;
+    const adminRes = await admin.inject({
+      method: 'GET',
+      url: '/api/fx/headers',
+      headers: overrides,
+    });
+    assert.equal(adminRes.statusCode, 200);
+    for (const name of Object.keys(adminRes.headers)) {
+      assert.ok(!name.startsWith('x-accel-'), `admin answer: ${name}`);
+    }
+    for (const name of Object.keys(overrides)) {
+      assert.ok(!halfSeen.headers.includes(name), `admin request: ${name}`);
+    }
+
+    halfSeen = null;
+    const url = '/api/fx/app/me';
+    const userRes = await user.inject({
+      method: 'GET',
+      url,
+      headers: { ...overrides, [RELAY_ASSERTION_HEADER]: vouch('GET', url) },
+    });
+    assert.equal(userRes.statusCode, 200);
+    assert.equal(halfSeen.method, 'GET');
+    assert.equal(halfSeen.url, '/app/me');
+    for (const name of Object.keys(overrides)) {
+      assert.ok(!halfSeen.headers.includes(name), `user request: ${name}`);
+    }
+    // Nor may a request hook set one again.
+    assert.deepEqual([...METHOD_URL_OVERRIDE_HEADERS].sort(), Object.keys(overrides).sort());
+    for (const name of METHOD_URL_OVERRIDE_HEADERS) {
+      assert.equal(isHookEditableHeader(name), false, name);
+    }
+  } finally {
+    await admin.close();
+    await user.close();
+  }
+});
+
+test('user surface: the relay’s own errors are fixed texts, never an internal message', async () => {
+  const { app } = await userSurfaceApp({
+    resolveTarget: (route) => ({ plugin: route, port: halfPort, secret, maxBodyBytes: 16 }),
+  });
+  try {
+    const url = '/api/fx/app/notes';
+    const big = await app.inject({
+      method: 'POST',
+      url,
+      payload: 'x'.repeat(64),
+      headers: {
+        origin: ORIGIN,
+        'content-type': 'text/plain',
+        [RELAY_ASSERTION_HEADER]: vouch('POST', url),
+      },
+    });
+    assert.equal(big.statusCode, 413);
+    assert.deepEqual(big.json(), { error: 'Request body too large' });
+  } finally {
+    await app.close();
+  }
+  assert.equal(userSurfaceErrorText(502), 'The application is unavailable');
+  assert.equal(userSurfaceErrorText(504), 'The application did not answer in time');
+  assert.equal(userSurfaceErrorText(418), 'Request refused');
+});
+
+test('user surface: nothing is forwarded while the plugin’s hosting is down — 503', async () => {
+  const { app } = await userSurfaceApp();
+  try {
+    halfSeen = null;
+    const url = '/api/down/app/me';
+    const res = await app.inject({
+      method: 'GET',
+      url,
+      headers: { [RELAY_ASSERTION_HEADER]: vouch('GET', url, 'ayse', 'down') },
+    });
+    assert.equal(res.statusCode, 503);
+    assert.deepEqual(res.json(), { error: 'The plugin is not available right now' });
+    assert.equal(halfSeen, null);
+  } finally {
+    await app.close();
+  }
+});
+
+/** GET `path` from a listening app with headers; resolves with the response once its headers arrive. */
+function openStream(port, url, headers) {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ host: '127.0.0.1', port, path: url, headers }, resolve);
+    req.on('error', reject);
+  });
+}
+
+/** Read a response to its end (or until the connection is cut); resolves with what arrived. */
+function drain(res) {
+  return new Promise((resolve) => {
+    let data = '';
+    res.on('data', (chunk) => {
+      data += chunk.toString('utf-8');
+    });
+    const done = () => resolve(data);
+    res.on('end', done);
+    res.on('close', done);
+    res.on('error', done);
+  });
+}
+
+test('user surface: an open response is tracked, and ends when the panel ends it — down to the half', async () => {
+  const tracked = [];
+  const { app, lines } = await userSurfaceApp({
+    trackResponse: (response) => {
+      const entry = { response, untracked: false };
+      tracked.push(entry);
+      return () => {
+        entry.untracked = true;
+      };
+    },
+  });
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  try {
+    const url = '/api/fx/app/stream';
+    const before = streams.length;
+    const res = await openStream(app.server.address().port, url, {
+      [RELAY_ASSERTION_HEADER]: vouch('GET', url),
+    });
+    assert.equal(res.statusCode, 200);
+    assert.match(res.headers['content-type'], /text\/event-stream/);
+    assert.equal(res.headers['content-security-policy'], "sandbox; default-src 'none'");
+    const body = drain(res);
+    // The first event arrives; the response stays open.
+    for (let i = 0; i < 100 && streams.length === before; i += 1) await sleep(5);
+    assert.equal(tracked.length, 1);
+    const [{ response }] = tracked;
+    assert.equal(response.route, PLUGIN);
+    assert.equal(response.plugin, PLUGIN);
+    assert.deepEqual(response.caller, AYSE);
+    assert.ok(Math.abs(response.startedAt - Date.now()) < 5_000);
+    assert.equal(tracked[0].untracked, false);
+
+    // The panel's sweep found the user may no longer use the plugin.
+    response.end('access_revoked');
+    response.end('access_revoked'); // idempotent
+    assert.match(await body, /data: one/);
+    const stream = streams[before];
+    for (let i = 0; i < 200 && !stream.closed; i += 1) await sleep(5);
+    assert.equal(stream.closed, true, 'the request to the agent half is gone too');
+    for (let i = 0; i < 200 && !tracked[0].untracked; i += 1) await sleep(5);
+    assert.equal(tracked[0].untracked, true, 'no longer tracked');
+    const ended = () => lines.find((l) => /ended by the relay: access_revoked/.test(l.obj.error));
+    for (let i = 0; i < 200 && !ended(); i += 1) await sleep(5);
+    assert.ok(ended(), 'the log line says why');
+    assert.ok(!JSON.stringify(lines).includes('ayse'));
+  } finally {
+    await app.close();
+  }
+});
+
+test('user surface: no response outlives its bound', async () => {
+  const tracked = [];
+  const { app, lines } = await userSurfaceApp({
+    maxResponseMs: 150,
+    trackResponse: (response) => {
+      tracked.push(response);
+      return () => {};
+    },
+  });
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  try {
+    const url = '/api/fx/app/stream';
+    const before = streams.length;
+    const startedAt = Date.now();
+    const res = await openStream(app.server.address().port, url, {
+      [RELAY_ASSERTION_HEADER]: vouch('GET', url),
+    });
+    assert.match(await drain(res), /data: one/);
+    const lived = Date.now() - startedAt;
+    assert.ok(lived >= 140 && lived < 5_000, `ended after ${lived} ms`);
+    const stream = streams[before];
+    for (let i = 0; i < 200 && !stream.closed; i += 1) await sleep(5);
+    assert.equal(stream.closed, true);
+    const ended = () => lines.find((l) => /ended by the relay: lifetime/.test(l.obj.error));
+    for (let i = 0; i < 200 && !ended(); i += 1) await sleep(5);
+    assert.ok(ended());
+    // A short answer is never cut: it is over long before the bound.
+    const quick = await app.inject({
+      method: 'GET',
+      url: '/api/fx/app/me',
+      headers: { [RELAY_ASSERTION_HEADER]: vouch('GET', '/api/fx/app/me') },
+    });
+    assert.equal(quick.statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+test('admin forwarder: nothing is forwarded while the hosting is down — a dead tunnel’s answer, or the fallback', async () => {
+  const { default: Fastify } = await import('fastify');
+  let down = { kind: 'down', reason: 'tunnel' };
+  let fallback = null;
+  let callerAllowed = true;
+  const lines = [];
+  const app = Fastify({ logger: false });
+  await app.register(
+    async (scope) => {
+      await scope.register(agentForwarderPlugin, {
+        resolveTarget: async () =>
+          down ?? { plugin: PLUGIN, port: halfPort, secret, maxBodyBytes: 1024 },
+        authorize: async () => (callerAllowed ? { type: 'admin' } : null),
+        hooks: {
+          hooksFor: async () => ({ hooks: [] }),
+          run: async () => ({ ok: false }),
+          fallbackFor: () => fallback,
+        },
+        logger: {
+          info: (obj, msg) => lines.push({ obj, msg }),
+          warn: (obj, msg) => lines.push({ obj, msg }),
+        },
+      });
+    },
+    { prefix: '/api' },
+  );
+  await app.ready();
+  try {
+    halfSeen = null;
+    const tunnel = await app.inject({ method: 'POST', url: '/api/fx/status', payload: '{"a":1}' });
+    assert.equal(tunnel.statusCode, 502);
+    assert.deepEqual(tunnel.json(), {
+      error: 'The hosting agent is unreachable',
+      reason: 'tunnel',
+    });
+    down = { kind: 'down', reason: 'app' };
+    const app502 = await app.inject({ method: 'GET', url: '/api/fx/status' });
+    assert.equal(app502.statusCode, 502);
+    assert.deepEqual(app502.json(), { error: 'The agent half is not responding', reason: 'app' });
+    assert.equal(halfSeen, null, 'nothing reached the port');
+
+    // The plugin's tunnel:down fallback answers instead, as for a dead tunnel.
+    fallback = { status: 503, body: { error: 'maintenance' }, retryAfter: 30 };
+    const fell = await app.inject({ method: 'GET', url: '/api/fx/status' });
+    assert.equal(fell.statusCode, 503);
+    assert.deepEqual(fell.json(), { error: 'maintenance' });
+    assert.equal(fell.headers['retry-after'], '30');
+    fallback = null;
+
+    // Only an authorized caller learns anything; a reserved path stays a 404.
+    callerAllowed = false;
+    assert.equal((await app.inject({ method: 'GET', url: '/api/fx/status' })).statusCode, 403);
+    callerAllowed = true;
+    assert.equal((await app.inject({ method: 'GET', url: '/api/fx/settings' })).statusCode, 404);
+    assert.ok(lines.some((l) => l.obj.status === 502 && l.obj.path === '/admin/status'));
+
+    // Up again: forwarded as before.
+    down = null;
+    const up = await app.inject({ method: 'GET', url: '/api/fx/status' });
+    assert.equal(up.statusCode, 200, up.body);
+    assert.equal(halfSeen.url, '/admin/status');
+  } finally {
+    await app.close();
+  }
 });

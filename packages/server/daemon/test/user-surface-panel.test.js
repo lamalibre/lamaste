@@ -17,6 +17,15 @@
  * without identity and an unbound route; the Origin rule; the restricted
  * tunnel's grant; the user surface's own rate limit; and that `/api/<route>/app`
  * is never the admin forwarder's, while its other routes still are.
+ *
+ * And the wave-A hardening, end to end: a host whose tunnel is carried by
+ * another agent than the plugin's hosting agent serves nothing of it
+ * (Gatekeeper refuses, and so does the panel for an assertion it got
+ * anyway); nothing reaches the half while its hosting is down (503); two
+ * session cookies are a 401; an encoded `%` never passes; every answer
+ * carries the user surface's headers; and an open response — a stream — is
+ * ended by the panel's sweep once its user is disabled or loses the
+ * entitlement.
  */
 
 import { test, before, after } from 'node:test';
@@ -26,6 +35,7 @@ import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
@@ -44,6 +54,9 @@ import {
   createIdentityProjection,
   responderHeaderFor,
 } from '@lamalibre/lamaste/agent';
+
+import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
+import { updatePluginHostingHealth, withTunnelLock } from '@lamalibre/lamaste/server';
 
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
 import { installFakeNpm } from './fake-npm.js';
@@ -76,12 +89,15 @@ let usersFile;
 let users;
 let lib;
 let gatekeeper;
+let autheliaStorage;
 let gk;
 let panel;
 let relayKey;
 let previousDispatcher;
 let piyasa;
 const halves = {};
+/** The open `/app/stream` responses of the fake halves: closed when the relay ends them. */
+const streams = [];
 
 function listen(server) {
   return new Promise((resolve) =>
@@ -142,6 +158,20 @@ async function startFakeHalf(route) {
       if (!verified.ok) {
         res.writeHead(401, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: 'caller assertion refused', reason: verified.reason }));
+        return;
+      }
+      if (req.url === '/app/stream') {
+        // Server-sent events that never end on their own.
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          ...responderHeaderFor(verified, 200),
+        });
+        res.write('data: hello\n\n');
+        const stream = { route, caller: verified.payload.caller, closed: false };
+        streams.push(stream);
+        res.on('close', () => {
+          stream.closed = true;
+        });
         return;
       }
       const seen = {
@@ -342,15 +372,52 @@ before(async () => {
   };
   await lib.loadConfig();
   lib.setOidcSyncForTests(async () => null);
-  lib.setAutheliaForTests({ usersFile, restart: async () => {}, writeTotp: async () => {} });
+  autheliaStorage = createFakeAutheliaStorage();
+  lib.setAutheliaForTests({
+    usersFile,
+    restart: async () => {},
+    writeTotp: async () => {},
+    userStorage: autheliaStorage.storage,
+  });
   lib.setUserSurfaceReconcileDepsForTests(sudo.reconcileDeps(lib));
   gatekeeper = installFakeGatekeeper(lib);
+  // Hosting's internal tunnel, written to tunnels.json as createTunnel
+  // writes it — on the fake half's port (no chisel here to grant it).
   lib.setTunnelOpsForTests({
     async create(ctx) {
-      return { id: `tunnel-${ctx.route}`, port: halves[ctx.route].port };
+      const entry = {
+        id: `tunnel-${ctx.route}`,
+        subdomain: null,
+        fqdn: null,
+        port: halves[ctx.route].port,
+        description: `Internal tunnel of plugin ${ctx.plugin.name}`,
+        type: 'plugin',
+        exposure: 'internal',
+        enabled: false,
+        createdAt: new Date().toISOString(),
+        pluginName: ctx.plugin.packageName,
+        pluginRoute: ctx.route,
+        agentLabel: ctx.agentLabel,
+        maxBodySizeMb: 10,
+      };
+      await withTunnelLock(async () => {
+        await lib.writeTunnels([...(await lib.readTunnels()), entry]);
+      });
+      return entry;
     },
-    async enable() {},
-    async remove() {},
+    async enable(ctx) {
+      await withTunnelLock(async () => {
+        const tunnels = await lib.readTunnels();
+        await lib.writeTunnels(
+          tunnels.map((t) => (t.id === ctx.tunnelId ? { ...t, enabled: true } : t)),
+        );
+      });
+    },
+    async remove(ctx) {
+      await withTunnelLock(async () => {
+        await lib.writeTunnels((await lib.readTunnels()).filter((t) => t.id !== ctx.tunnelId));
+      });
+    },
     async waitForAgentHalf(record) {
       await halves[record.plugin].writeConfig(record.current.secret);
     },
@@ -695,4 +762,248 @@ test('/api/<route>/app is the user surface’s, never the admin forwarder’s �
   assert.equal(agent.statusCode, 403);
   assert.equal(agent.json().error, 'Insufficient scope for plugin route');
   assert.equal(agent.headers['x-ratelimit-limit'], '100');
+});
+
+// ---------------------------------------------------------------------------
+// Wave A: the hosting agent, a hosting that is down, cookies, paths, headers
+// and open responses
+// ---------------------------------------------------------------------------
+
+/** Rewrite one tunnel in tunnels.json under the tunnel lock. */
+async function patchTunnel(id, patch) {
+  await withTunnelLock(async () => {
+    const tunnels = await lib.readTunnels();
+    await lib.writeTunnels(tunnels.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  });
+}
+
+test('a host whose tunnel another agent carries serves nothing of the plugin — Gatekeeper and the panel refuse', async () => {
+  await enroll('vm9');
+  await patchTunnel(piyasa.id, { agentLabel: 'vm9' });
+  try {
+    const before = halves.ux.requests.length;
+    // Gatekeeper reads the same tunnels.json: the route is bound, not served.
+    const refused = await viaNginx('GET', '/api/ux/app/me');
+    assert.equal(refused.statusCode, 403);
+    assert.equal(refused.headers[RELAY_ASSERTION_HEADER], undefined);
+    // An assertion it got anyway (a vhost not yet re-rendered): the panel refuses.
+    const target = '/api/ux/app/me';
+    const direct404 = await direct('GET', target, {
+      [RELAY_ASSERTION_HEADER]: vouch('GET', target),
+    });
+    assert.equal(direct404.statusCode, 404);
+    assert.equal(halves.ux.requests.length, before, 'nothing reached the half');
+    const tunnel = await lib.withUserSurfaceStatus(
+      (await lib.readTunnels()).find((t) => t.id === piyasa.id),
+    );
+    assert.deepEqual(
+      tunnel.userSurfaceStatus.find((st) => st.route === 'ux'),
+      { route: 'ux', served: false, reason: 'not_hosting_agent' },
+    );
+  } finally {
+    await patchTunnel(piyasa.id, { agentLabel: 'vm1' });
+  }
+  assert.equal((await viaNginx('GET', '/api/ux/app/me')).statusCode, 200);
+});
+
+test('nothing reaches the agent half while its hosting is down — not a user’s request, not an administrator’s', async () => {
+  const stateDir = process.env.LAMALIBRE_LAMASTE_STATE_DIR;
+  const before = halves.ux.requests.length;
+  for (const reason of ['app', 'tunnel']) {
+    await updatePluginHostingHealth(stateDir, 'ux', {
+      state: 'down',
+      since: new Date().toISOString(),
+      reason,
+    });
+    try {
+      // The user surface: 503.
+      const res = await viaNginx('GET', '/api/ux/app/me');
+      assert.equal(res.statusCode, 503, reason);
+      assert.deepEqual(res.json(), { error: 'The plugin is not available right now' });
+      // The admin API: what a request into a dead tunnel gets, with the reason.
+      const admin = await direct('GET', '/api/ux/status', ADMIN_CERT);
+      assert.equal(admin.statusCode, 502, reason);
+      assert.equal(admin.json().reason, reason);
+      // Without a certificate it still learns nothing.
+      assert.equal((await direct('GET', '/api/ux/status')).statusCode, 403);
+      assert.equal(halves.ux.requests.length, before, `${reason}: nothing reached the port`);
+    } finally {
+      await updatePluginHostingHealth(stateDir, 'ux', {
+        state: 'up',
+        since: new Date().toISOString(),
+      });
+    }
+  }
+  assert.equal((await viaNginx('GET', '/api/ux/app/me')).statusCode, 200);
+  assert.equal((await direct('GET', '/api/ux/status', ADMIN_CERT)).statusCode, 200);
+});
+
+test('two session cookies are a 401; an encoded % never passes; every answer carries the user-surface headers', async () => {
+  const twice = await viaNginx('GET', '/api/ux/app/me', {
+    cookie: 'authelia_session=ayse; authelia_session=mehmet',
+  });
+  assert.equal(twice.statusCode, 401);
+  assert.deepEqual(twice.json(), { error: 'unauthenticated' });
+
+  for (const target of ['/api/ux/app/%252e%252e/admin/x', '/api/ux/app/%25']) {
+    const res = await viaNginx('GET', target);
+    assert.equal(res.statusCode, 403, target);
+    // No relay assertion can even be signed for it.
+    assert.throws(() => vouch('GET', target), /not on the route's user surface/, target);
+  }
+
+  for (const [label, res] of [
+    ['forwarded', await viaNginx('GET', '/api/ux/app/me')],
+    ['401', await direct('GET', '/api/ux/app/me')],
+    ['403', await viaNginx('GET', '/api/ux/app/me', { cookie: 'authelia_session=deniz' })],
+    ['404', await viaNginx('GET', '/api/nx/app/me')],
+  ]) {
+    assert.equal(res.headers['cross-origin-resource-policy'], 'same-origin', label);
+    assert.equal(res.headers['x-content-type-options'], 'nosniff', label);
+    assert.equal(res.headers['content-security-policy'], "sandbox; default-src 'none'", label);
+    for (const name of Object.keys(res.headers)) {
+      assert.ok(!name.startsWith('access-control-'), `${label}: ${name}`);
+    }
+  }
+  // The panel's CORS never answers for a user surface — not even its own origin.
+  const preflight = await direct('OPTIONS', '/api/ux/app/me', {
+    origin: 'https://panel.relay.test',
+    'access-control-request-method': 'POST',
+  });
+  assert.equal(preflight.headers['access-control-allow-origin'], undefined);
+});
+
+/**
+ * Open a stream on `/api/<route>/app/stream` as `username`, the way nginx
+ * passes it: Gatekeeper's assertion, then the panel over a real connection.
+ */
+async function openStream(port, route, username) {
+  const target = `/api/${route}/app/stream`;
+  const authz = await gk.inject({
+    method: 'GET',
+    url: `/authz/user-surface/${HOST}`,
+    headers: {
+      host: HOST,
+      'x-original-url': `https://${HOST}${target}`,
+      'x-original-method': 'GET',
+      cookie: `authelia_session=${username}`,
+    },
+  });
+  assert.equal(authz.statusCode, 200, authz.body);
+  const res = await new Promise((resolve, reject) => {
+    const req = http.get(
+      {
+        host: '127.0.0.1',
+        port,
+        path: target,
+        headers: {
+          host: HOST,
+          'x-forwarded-for': CLIENT,
+          [RELAY_ASSERTION_HEADER]: authz.headers[RELAY_ASSERTION_HEADER],
+        },
+      },
+      resolve,
+    );
+    req.on('error', reject);
+  });
+  assert.equal(res.statusCode, 200);
+  let data = '';
+  const ended = new Promise((resolve) => {
+    res.on('data', (chunk) => {
+      data += chunk.toString('utf-8');
+    });
+    res.on('end', () => resolve(data));
+    res.on('close', () => resolve(data));
+  });
+  return { res, ended, data: () => data };
+}
+
+async function waitFor(check, label) {
+  for (let i = 0; i < 400; i += 1) {
+    if (await check()) return;
+    await sleep(10);
+  }
+  assert.fail(`timed out waiting for ${label}`);
+}
+
+test('an open response is ended once its user is disabled, loses the entitlement or other roles, or the host stops serving it — and the half’s request with it', async () => {
+  await panel.listen({ port: 0, host: '127.0.0.1' });
+  const port = panel.server.address().port;
+  const ayse = await lib.findDirectoryUser('ayse');
+  const ended = [];
+  /** A response tracked as the user surface tracks one, to see what the sweep makes of it. */
+  const track = (caller) => {
+    const response = {
+      route: 'ux',
+      plugin: 'ux',
+      caller,
+      startedAt: Date.now(),
+      end: (reason) => ended.push({ caller, reason }),
+    };
+    return lib.trackUserSurfaceResponse(response);
+  };
+  try {
+    // Two streams of ayse's; nothing changed — the sweep ends nothing.
+    const first = streams.length;
+    const one = await openStream(port, 'ux', 'ayse');
+    const two = await openStream(port, 'ux', 'ayse');
+    await waitFor(() => streams.length >= first + 2, 'both streams at the half');
+    assert.equal(lib.openUserSurfaceResponseCount(), 2);
+    assert.equal(await lib.sweepOpenUserSurfaceResponses(logger), 0);
+    assert.equal(streams[first].closed, false);
+
+    // Disabled: every response of hers ends at the next sweep, the half's too.
+    users.ayse.disabled = true;
+    await saveUsers();
+    assert.equal(await lib.sweepOpenUserSurfaceResponses(logger), 2);
+    assert.match(await one.ended, /data: hello/);
+    await two.ended;
+    await waitFor(
+      () => streams[first].closed && streams[first + 1].closed,
+      'the half’s side closed',
+    );
+    await waitFor(() => lib.openUserSurfaceResponseCount() === 0, 'no response tracked');
+    users.ayse.disabled = false;
+    await saveUsers();
+
+    // Her entitlement withdrawn (Gatekeeper's grant gone, the audience recomputed).
+    const third = streams.length;
+    const three = await openStream(port, 'ux', 'ayse');
+    await waitFor(() => streams.length > third, 'the stream at the half');
+    const index = gatekeeper.grants.findIndex(
+      (g) => g.principalId === 'ayse' && g.resourceType === 'plugin',
+    );
+    const [grant] = gatekeeper.grants.splice(index, 1);
+    await lib.recomputeAudiences({ logger });
+    assert.equal(await lib.sweepOpenUserSurfaceResponses(logger), 1);
+    await three.ended;
+    await waitFor(() => streams[third].closed, 'the half’s side closed');
+    gatekeeper.grants.push(grant);
+    await lib.recomputeAudiences({ logger });
+
+    // Other roles than the response started with; and a host that stopped
+    // serving the route (its tunnel moved to another agent).
+    const caller = { type: 'user', userId: ayse.userId, username: 'ayse', roles: ['viewer'] };
+    const untrackOther = track({ ...caller, roles: ['viewer', 'editor'] });
+    const untrackSame = track(caller);
+    assert.equal(await lib.sweepOpenUserSurfaceResponses(logger), 1);
+    assert.deepEqual(
+      ended.map((e) => [e.caller.roles.join(','), e.reason]),
+      [['viewer,editor', 'roles_changed']],
+    );
+    untrackOther();
+    await enroll('vm8');
+    await patchTunnel(piyasa.id, { agentLabel: 'vm8' });
+    try {
+      assert.equal(await lib.sweepOpenUserSurfaceResponses(logger), 1);
+      assert.deepEqual(ended.at(-1), { caller, reason: 'surface_withdrawn' });
+    } finally {
+      await patchTunnel(piyasa.id, { agentLabel: 'vm1' });
+    }
+    untrackSame();
+    assert.equal(lib.openUserSurfaceResponseCount(), 0);
+  } finally {
+    users.ayse.disabled = false;
+    await saveUsers();
+  }
 });

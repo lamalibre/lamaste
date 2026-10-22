@@ -109,6 +109,7 @@ TEST_SCRIPTS=(
   "38-app-plugin-offline.sh"
   "39-app-plugin-identity-feed.sh"
   "40-app-plugin-user-surface.sh"
+  "41-app-plugin-identity-ledger.sh"
 )
 
 PASSED=0

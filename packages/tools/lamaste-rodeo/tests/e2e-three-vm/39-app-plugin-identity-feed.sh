@@ -11,8 +11,10 @@
 # (createIdentityProjection over node:sqlite, createIdentityHandlers), and
 # @lamalibre/e2e-idplain-server, the same without identity. Then:
 #
-# 1. Approved and hosted, the identity plugin's agent half answers protocol
-#    1 and follows the panel's directory; nothing is entitled yet.
+# 1. Approved and hosted, the identity plugin is ready only once its agent
+#    half's first complete sync ended at the head of its audience (answering
+#    protocol 1 is not enough); it follows the panel's directory, and
+#    nothing is entitled yet.
 # 2. testuser entitled as viewer and a Lamaste group as editor, with a
 #    second user in it: the agent half's projection holds both — the
 #    directory's ids, their roles, the declared attributes from the
@@ -37,8 +39,9 @@
 #    along, and the identity plugin was fed throughout.
 #
 # The user surface (a visitor's session reaching /app) is spec 40; the
-# directory itself — ids, disable, delete, erase, the approval gate — is
-# single-VM spec 32.
+# ledger across an uninstall (an erasure replayed to data an agent kept) and
+# a sticky erasure are spec 41; the directory itself — ids, disable, delete,
+# erase, the approval gate — is single-VM spec 32.
 # ============================================================================
 
 set -euo pipefail
@@ -184,10 +187,10 @@ for p in "${PLUGIN}" "${PLAIN}"; do
 done
 
 # ===========================================================================
-# 2. Ready: protocol 1, the directory followed
+# 2. Ready: synced to the head, the directory followed
 # ===========================================================================
 
-log_section "Ready: its agent half answered protocol 1 and follows the directory"
+log_section "Ready: its agent half's first complete sync reached the head; it follows the directory"
 
 if wait_for 120 identity_ready "${PLUGIN}"; then
   log_pass "${PLUGIN} is ready for its users"
@@ -195,7 +198,8 @@ else
   log_fail "Not ready: $(identity_view "${PLUGIN}")"
 fi
 VIEW=$(identity_view "${PLUGIN}")
-assert_json_field "$VIEW" '"\(.readiness.readyVersion) \(.sync.halfDirectoryId)"' "1.0.0 ${DIRECTORY_ID}" "1.0.0 answered protocol 1; its agent half follows directory ${DIRECTORY_ID}" || true
+assert_json_field "$VIEW" '"\(.readiness.readyVersion) \(.sync.halfDirectoryId)"' "1.0.0 ${DIRECTORY_ID}" "1.0.0 is ready; its agent half follows directory ${DIRECTORY_ID}" || true
+assert_json_field "$VIEW" '"\(.sync.behind) \(.sync.cursor == .sync.head)"' '0 true' "…its cursor at the head of the audience: ready means synced, not merely answering" || true
 assert_json_field_not_empty "$VIEW" '.sync.lastSyncAt' "The panel synced it at $(json_get "$VIEW" '.sync.lastSyncAt')" || true
 PROJ=$(projection "${PLUGIN}")
 assert_json_field "$PROJ" '.state.directoryId' "${DIRECTORY_ID}" "GET /api/${PLUGIN}/e2e/projection: the agent half's projection follows the same directory" || true

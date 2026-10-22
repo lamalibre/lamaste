@@ -3,6 +3,8 @@ import { readFile, writeFile, rename, open } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { z } from 'zod';
+import { isIdentityUuid } from '@lamalibre/lamaste';
+import { SESSION_MAX_AGE } from './user-access-session.js';
 
 const ConfigSchema = z.object({
   ip: z.string().min(1),
@@ -25,11 +27,13 @@ const ConfigSchema = z.object({
     .optional()
     .default({ enabled: false, secret: null, setupComplete: false }),
   sessionSecret: z.string().nullable().optional().default(null),
-  // Per-user invalidation epochs (Unix seconds). When a user is deleted from
-  // Authelia, their epoch is bumped so any in-flight user-access session token
-  // issued before that timestamp is rejected by the session middleware. The
-  // entry is preserved (never deleted) so that re-creating the same username
-  // does not resurrect old sessions.
+  // Per-user invalidation epochs (Unix seconds), keyed by the directory's
+  // user id — never by username, so panel.json names nobody. Offboarding a
+  // user (disable, delete) bumps theirs, and the session middleware rejects
+  // every user-access session issued before it. Sessions are bound to the
+  // user id too, so a username given to someone else later never revives
+  // one. An epoch older than a session's longest life can reject nothing and
+  // is dropped (`pruneUserEpochs`).
   userEpochs: z.record(z.string(), z.number().int().nonnegative()).optional().default({}),
   onboarding: z.object({
     status: z.enum(['FRESH', 'DOMAIN_SET', 'DNS_READY', 'PROVISIONING', 'COMPLETED']),
@@ -45,8 +49,8 @@ let configPath = null;
 
 /**
  * Promise-chain mutex serializing all panel.json writes so concurrent
- * updateConfig() calls cannot race (e.g. two simultaneous user deletes both
- * bumping userEpochs).
+ * updateConfig() / bumpUserEpoch() calls cannot race (e.g. two simultaneous
+ * user deletes both bumping userEpochs).
  */
 let configWriteLock = Promise.resolve();
 function withConfigLock(fn) {
@@ -56,6 +60,36 @@ function withConfigLock(fn) {
     resolve = r;
   });
   return prev.then(fn).finally(resolve);
+}
+
+/**
+ * The epochs worth keeping: keyed by a user id (keys of earlier versions
+ * were usernames — dropped, as the sessions they guarded no longer
+ * validate: a session now names its user id) and younger than a session's
+ * longest life.
+ *
+ * @param {Record<string, number>} epochs
+ * @param {number} nowSeconds
+ */
+export function pruneUserEpochs(epochs, nowSeconds) {
+  const out = {};
+  for (const [userId, epoch] of Object.entries(epochs ?? {})) {
+    if (isIdentityUuid(userId) && epoch > nowSeconds - SESSION_MAX_AGE) out[userId] = epoch;
+  }
+  return out;
+}
+
+/** Write `validated` to panel.json atomically (temp → fsync → rename), 0600. */
+async function persistConfig(validated) {
+  const tmpPath = `${configPath}.tmp`;
+  await writeFile(tmpPath, JSON.stringify(validated, null, 2) + '\n', {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
+  const fd = await open(tmpPath, 'r');
+  await fd.sync();
+  await fd.close();
+  await rename(tmpPath, configPath);
 }
 
 function resolveConfigPath() {
@@ -95,18 +129,18 @@ export async function loadConfig() {
   const validated = ConfigSchema.parse(parsed);
 
   // Auto-generate serverId if missing — used as bucket prefix for multi-server isolation
+  let rewrite = false;
   if (!validated.serverId) {
     validated.serverId = crypto.randomUUID();
-    const tmpPath = `${configPath}.tmp`;
-    await writeFile(tmpPath, JSON.stringify(validated, null, 2) + '\n', {
-      encoding: 'utf-8',
-      mode: 0o600,
-    });
-    const fd = await open(tmpPath, 'r');
-    await fd.sync();
-    await fd.close();
-    await rename(tmpPath, configPath);
+    rewrite = true;
   }
+  // Epochs keyed by username (before 4.5) or too old to reject anything go.
+  const epochs = pruneUserEpochs(validated.userEpochs, Math.floor(Date.now() / 1000));
+  if (Object.keys(epochs).length !== Object.keys(validated.userEpochs).length) {
+    validated.userEpochs = epochs;
+    rewrite = true;
+  }
+  if (rewrite) await persistConfig(validated);
 
   config = validated;
   return structuredClone(config);
@@ -140,28 +174,13 @@ export function updateConfig(patch) {
         patch.panel2fa !== null
       ) {
         merged.panel2fa = { ...merged.panel2fa, ...patch.panel2fa };
-      } else if (
-        key === 'userEpochs' &&
-        typeof patch.userEpochs === 'object' &&
-        patch.userEpochs !== null
-      ) {
-        merged.userEpochs = { ...(merged.userEpochs ?? {}), ...patch.userEpochs };
       } else {
         merged[key] = patch[key];
       }
     }
 
     const validated = ConfigSchema.parse(merged);
-
-    const tmpPath = `${configPath}.tmp`;
-    await writeFile(tmpPath, JSON.stringify(validated, null, 2) + '\n', {
-      encoding: 'utf-8',
-      mode: 0o600,
-    });
-    const fd = await open(tmpPath, 'r');
-    await fd.sync();
-    await fd.close();
-    await rename(tmpPath, configPath);
+    await persistConfig(validated);
 
     config = validated;
     return structuredClone(config);
@@ -169,20 +188,26 @@ export function updateConfig(patch) {
 }
 
 /**
- * Bump a user's session-invalidation epoch to "now" (Unix seconds). Any
- * user-access session whose `iat` (issued-at) is older than this epoch
- * is considered revoked by the session middleware.
+ * Bump a user's session-invalidation epoch to "now" (Unix seconds): every
+ * user-access session of `userId` issued before it is revoked (the session
+ * middleware). Epochs that can no longer reject anything are dropped in
+ * the same write ({@link pruneUserEpochs}). Idempotent.
  *
- * Idempotent: calling twice in quick succession is safe (the later
- * timestamp simply replaces the earlier one).
- *
- * @param {string} username
+ * @param {string} userId the directory's id of the user
  * @returns {Promise<number>} The new epoch (Unix seconds)
  */
-export async function bumpUserEpoch(username) {
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  await updateConfig({ userEpochs: { [username]: nowSeconds } });
-  return nowSeconds;
+export function bumpUserEpoch(userId) {
+  if (!isIdentityUuid(userId)) throw new Error('A session epoch is keyed by a directory user id');
+  if (config === null) throw new Error('Config not loaded. Call loadConfig() first.');
+  return withConfigLock(async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const next = structuredClone(config);
+    next.userEpochs = { ...pruneUserEpochs(next.userEpochs, nowSeconds), [userId]: nowSeconds };
+    const validated = ConfigSchema.parse(next);
+    await persistConfig(validated);
+    config = validated;
+    return nowSeconds;
+  });
 }
 
 export function getConfigPath() {

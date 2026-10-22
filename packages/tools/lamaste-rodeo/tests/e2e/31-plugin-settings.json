@@ -3097,7 +3097,67 @@
           }
         },
         {
+          "id": "step-355",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_call GET \"${PLUGIN}/ping\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
           "id": "step-356",
+          "label": "Health down, a forwarded page request: 502…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "502"
+              },
+              "message": "Health down, a forwarded page request: 502…"
+            }
+          }
+        },
+        {
+          "id": "step-357",
+          "label": "…reason app, the hosting's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".reason",
+              "expected": {
+                "kind": "literal",
+                "value": "app"
+              },
+              "message": "…reason app, the hosting's"
+            }
+          }
+        },
+        {
+          "id": "step-360",
           "label": "The squatter gone, the agent half is back and health up",
           "target": "local",
           "op": {
@@ -3107,7 +3167,7 @@
           }
         },
         {
-          "id": "step-357",
+          "id": "step-361",
           "label": "The agent half did not come back: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -3117,7 +3177,7 @@
           }
         },
         {
-          "id": "step-358",
+          "id": "step-362",
           "label": "Set PROBE",
           "target": "local",
           "op": {
@@ -3134,7 +3194,7 @@
           ]
         },
         {
-          "id": "step-359",
+          "id": "step-363",
           "label": "The change the squatter was sent never reached the agent half: revision 2, verbose true…",
           "target": "local",
           "continueOnError": true,
@@ -3156,7 +3216,7 @@
           }
         },
         {
-          "id": "step-360",
+          "id": "step-364",
           "label": "…and it holds secret A, not S",
           "target": "local",
           "continueOnError": true,
@@ -3178,14 +3238,14 @@
           }
         }
       ],
-      "bash": "log_section \"A squatter on the agent half's port gets nothing and serves nothing\"\n\n# Test secret S, for the change the squatter will be sent.\n(umask 077 && openssl rand -hex 24 > \"${PRIV}/secret-s\")\ncat \"${PRIV}/secret-s\" >> \"${PRIV}/patterns\"\n(umask 077 && jq -c -n --rawfile k \"${PRIV}/secret-s\" '{revision: 2, values: {verbose: false}, secrets: {apiKey: ($k | rtrimstr(\"\\n\"))}}' > \"${PRIV}/put-s.json\")\nrm -rf \"${SQUAT_DIR}\"\ninstall -d -m 0755 \"${SQUAT_DIR}\"\ninstall -d -m 0700 -o \"${SQUATTER_USER}\" \"${SQUAT_DIR}/log\"\nwrite_squatter \"${SQUAT_DIR}/squatter.mjs\"\nchmod 0644 \"${SQUAT_DIR}/squatter.mjs\"\nif wait_health up 45; then\n  log_pass \"Health is up: the relay sends changes to the hosting\"\nelse\n  log_fail \"Health is not up before the squatter: $(hosting_field '.hosting.health')\"\nfi\n\n# Timing: the health monitor probes every 10 s and reports down after three\n# failed probes in a row. The agent half is stopped right after a probe it\n# answered, so the squatter's answers can turn health down no sooner than\n# the third probe after it, ~30 s later (20 s at the very least). The change\n# goes out within a few seconds of the squatter taking the port — while the\n# relay still holds the hosting up and sends it: the moment a squatter could\n# have been handed a secret.\nCALLS=$(health_calls)\ndeadline=$((SECONDS + 15))\nwhile [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(health_calls)\" -le \"${CALLS:-0}\" ]; do\n  sleep 1\ndone\npkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\nTOOK_AT=$SECONDS\nif start_squatter; then\n  log_pass \"Right after a health probe the agent half answered, it stopped and ${SQUATTER_USER} took port ${PORT}\"\nelse\n  log_fail \"The squatter did not take port ${PORT}\"\nfi\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" \"@${PRIV}/put-s.json\")\nSENT_AFTER=$((SECONDS - TOOK_AT))\nrm -f \"${PRIV}/put-s.json\"\nif [ \"$(status_of \"$RESP\")\" = \"503\" ]; then\n  log_info \"503: health was down already, ${SENT_AFTER}s after the squatter took the port — this section needs the change sent well within 20 s of it\"\nfi\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"A settings change with secret S, sent ${SENT_AFTER}s after the squatter took the port, health still up: 502\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'unauthenticated' \"…unauthenticated: the answer could not prove it was the agent half's\" || true\nRESP=$(settings_call GET \"${PLUGIN}/ping\")\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"A forwarded page request (/api/${PLUGIN}/ping): 502…\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.reason' 'app' \"…reason app…\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"${SQUAT_MARK}\" \"…never the squatter's answer\" || true\nRESP=$(settings_call GET \"${PLUGIN}/panel.js\")\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"The plugin's panel bundle (/api/${PLUGIN}/panel.js): 502…\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"${SQUAT_MARK}\" \"…not the squatter's content\" || true\n\n# What the squatter was sent, as counts: never a body.\nSQUATTED=$(jq -s -c '[.[] | select(.method == \"PUT\" and .url == \"/admin/settings\")] as $puts | {puts: ($puts | length), sealed: [$puts[] | (.body | fromjson? // {}) | .secrets.apiKey | select(type == \"object\" and .v == 1 and (.iv | type) == \"string\" and (.ct | type) == \"string\")] | length, pings: [.[] | select(.url | startswith(\"/admin/ping\"))] | length, bundles: [.[] | select(.url == \"/admin/panel.js\")] | length}' \"${SQUAT_LOG}\" 2>/dev/null || echo '{}')\nassert_json_field \"$SQUATTED\" '\"\\(.pings) \\(.bundles)\"' '1 1' \"The forwarder did send the squatter the page and the bundle requests — and refused its answers\" || true\nassert_json_field \"$SQUATTED\" '.puts' '1' \"The relay sent the squatter the settings change…\" || true\nassert_json_field \"$SQUATTED\" '.sealed' '1' \"…with secret S sealed ({ v, iv, ct }: AES-256-GCM under the installation secret)…\" || true\nassert_eq \"$(stat -c '%a %U' \"${SQUAT_LOG}\" 2>/dev/null || echo \"\")\" \"600 ${SQUATTER_USER}\" \"(the squatter's log: 0600, ${SQUATTER_USER}'s)\" || true\nassert_eq \"$(secret_lines \"${SQUAT_LOG}\")\" \"0\" \"…and secret S (or A) in clear nowhere in what it received\" || true\n\nif wait_health down 45; then\n  log_pass \"Health reports down: the squatter's answers to the probe do not authenticate\"\nelse\n  log_fail \"Health did not report down: $(hosting_field '.hosting.health')\"\nfi\nassert_eq \"$(hosting_field '.hosting.health.reason')\" \"app\" \"…reason app: something answers on the port, not the agent half\" || true\n\npkill -f '[s]quatter.mjs' 2>/dev/null || true\nif start_half && wait_health up 45; then\n  log_pass \"The squatter gone, the agent half is back and health up\"\nelse\n  log_fail \"The agent half did not come back: $(hosting_field '.hosting.health')\"\nfi\nPROBE=$(body_of \"$(settings_call GET \"${PLUGIN}/probe/settings\")\")\nassert_json_field \"$PROBE\" '\"\\(.revision) \\(.values.verbose)\"' '2 true' \"The change the squatter was sent never reached the agent half: revision 2, verbose true…\" || true\nassert_json_field \"$PROBE\" '.secretDigests.apiKey' \"${DIGEST_A}\" \"…and it holds secret A, not S\" || true\n\n# ===========================================================================\n# 10. The relay keeps no secret\n# ==========================================================================="
+      "bash": "log_section \"A squatter on the agent half's port gets nothing and serves nothing\"\n\n# Test secret S, for the change the squatter will be sent.\n(umask 077 && openssl rand -hex 24 > \"${PRIV}/secret-s\")\ncat \"${PRIV}/secret-s\" >> \"${PRIV}/patterns\"\n(umask 077 && jq -c -n --rawfile k \"${PRIV}/secret-s\" '{revision: 2, values: {verbose: false}, secrets: {apiKey: ($k | rtrimstr(\"\\n\"))}}' > \"${PRIV}/put-s.json\")\nrm -rf \"${SQUAT_DIR}\"\ninstall -d -m 0755 \"${SQUAT_DIR}\"\ninstall -d -m 0700 -o \"${SQUATTER_USER}\" \"${SQUAT_DIR}/log\"\nwrite_squatter \"${SQUAT_DIR}/squatter.mjs\"\nchmod 0644 \"${SQUAT_DIR}/squatter.mjs\"\nif wait_health up 45; then\n  log_pass \"Health is up: the relay sends changes to the hosting\"\nelse\n  log_fail \"Health is not up before the squatter: $(hosting_field '.hosting.health')\"\nfi\n\n# Timing: the health monitor probes every 10 s and reports down after three\n# failed probes in a row. The agent half is stopped right after a probe it\n# answered, so the squatter's answers can turn health down no sooner than\n# the third probe after it, ~30 s later (20 s at the very least). The change\n# goes out within a few seconds of the squatter taking the port — while the\n# relay still holds the hosting up and sends it: the moment a squatter could\n# have been handed a secret.\nCALLS=$(health_calls)\ndeadline=$((SECONDS + 15))\nwhile [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(health_calls)\" -le \"${CALLS:-0}\" ]; do\n  sleep 1\ndone\npkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\nTOOK_AT=$SECONDS\nif start_squatter; then\n  log_pass \"Right after a health probe the agent half answered, it stopped and ${SQUATTER_USER} took port ${PORT}\"\nelse\n  log_fail \"The squatter did not take port ${PORT}\"\nfi\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" \"@${PRIV}/put-s.json\")\nSENT_AFTER=$((SECONDS - TOOK_AT))\nrm -f \"${PRIV}/put-s.json\"\nif [ \"$(status_of \"$RESP\")\" = \"503\" ]; then\n  log_info \"503: health was down already, ${SENT_AFTER}s after the squatter took the port — this section needs the change sent well within 20 s of it\"\nfi\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"A settings change with secret S, sent ${SENT_AFTER}s after the squatter took the port, health still up: 502\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'unauthenticated' \"…unauthenticated: the answer could not prove it was the agent half's\" || true\nRESP=$(settings_call GET \"${PLUGIN}/ping\")\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"A forwarded page request (/api/${PLUGIN}/ping): 502…\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.reason' 'app' \"…reason app…\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"${SQUAT_MARK}\" \"…never the squatter's answer\" || true\nRESP=$(settings_call GET \"${PLUGIN}/panel.js\")\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"The plugin's panel bundle (/api/${PLUGIN}/panel.js): 502…\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"${SQUAT_MARK}\" \"…not the squatter's content\" || true\n\n# What the squatter was sent, as counts: never a body.\nSQUATTED=$(jq -s -c '[.[] | select(.method == \"PUT\" and .url == \"/admin/settings\")] as $puts | {puts: ($puts | length), sealed: [$puts[] | (.body | fromjson? // {}) | .secrets.apiKey | select(type == \"object\" and .v == 1 and (.iv | type) == \"string\" and (.ct | type) == \"string\")] | length, pings: [.[] | select(.url | startswith(\"/admin/ping\"))] | length, bundles: [.[] | select(.url == \"/admin/panel.js\")] | length}' \"${SQUAT_LOG}\" 2>/dev/null || echo '{}')\nassert_json_field \"$SQUATTED\" '\"\\(.pings) \\(.bundles)\"' '1 1' \"The forwarder did send the squatter the page and the bundle requests — and refused its answers\" || true\nassert_json_field \"$SQUATTED\" '.puts' '1' \"The relay sent the squatter the settings change…\" || true\nassert_json_field \"$SQUATTED\" '.sealed' '1' \"…with secret S sealed ({ v, iv, ct }: AES-256-GCM under the installation secret)…\" || true\nassert_eq \"$(stat -c '%a %U' \"${SQUAT_LOG}\" 2>/dev/null || echo \"\")\" \"600 ${SQUATTER_USER}\" \"(the squatter's log: 0600, ${SQUATTER_USER}'s)\" || true\nassert_eq \"$(secret_lines \"${SQUAT_LOG}\")\" \"0\" \"…and secret S (or A) in clear nowhere in what it received\" || true\n\nif wait_health down 45; then\n  log_pass \"Health reports down: the squatter's answers to the probe do not authenticate\"\nelse\n  log_fail \"Health did not report down: $(hosting_field '.hosting.health')\"\nfi\nassert_eq \"$(hosting_field '.hosting.health.reason')\" \"app\" \"…reason app: something answers on the port, not the agent half\" || true\nRESP=$(settings_call GET \"${PLUGIN}/ping\")\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"Health down, a forwarded page request: 502…\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.reason' 'app' \"…reason app, the hosting's\" || true\nassert_eq \"$(jq -s '[.[] | select(.url | startswith(\"/admin/ping\"))] | length' \"${SQUAT_LOG}\" 2>/dev/null || echo \"-1\")\" \"1\" \"…answered without connecting: the squatter was sent no page request after the first\" || true\n\npkill -f '[s]quatter.mjs' 2>/dev/null || true\nif start_half && wait_health up 45; then\n  log_pass \"The squatter gone, the agent half is back and health up\"\nelse\n  log_fail \"The agent half did not come back: $(hosting_field '.hosting.health')\"\nfi\nPROBE=$(body_of \"$(settings_call GET \"${PLUGIN}/probe/settings\")\")\nassert_json_field \"$PROBE\" '\"\\(.revision) \\(.values.verbose)\"' '2 true' \"The change the squatter was sent never reached the agent half: revision 2, verbose true…\" || true\nassert_json_field \"$PROBE\" '.secretDigests.apiKey' \"${DIGEST_A}\" \"…and it holds secret A, not S\" || true\n\n# ===========================================================================\n# 10. The relay keeps no secret\n# ==========================================================================="
     },
     {
       "id": "the-relay-keeps-no-secret",
       "label": "The relay keeps no secret",
       "steps": [
         {
-          "id": "step-365",
+          "id": "step-369",
           "label": "state.db, dumped ($(wc -l < \"${PRIV}/state.sql\" | tr -d ' ') lines), holds no secret",
           "target": "local",
           "continueOnError": true,
@@ -3206,7 +3266,7 @@
           }
         },
         {
-          "id": "step-366",
+          "id": "step-370",
           "label": "…the dump holds plugin_settings",
           "target": "local",
           "continueOnError": true,
@@ -3227,7 +3287,7 @@
           }
         },
         {
-          "id": "step-368",
+          "id": "step-372",
           "label": "The journal since the spec started ($(wc -l < \"${PRIV}/journal.txt\" | tr -d ' ') lines) holds none",
           "target": "local",
           "continueOnError": true,
@@ -3248,7 +3308,7 @@
           }
         },
         {
-          "id": "step-369",
+          "id": "step-373",
           "label": "Set FILES",
           "target": "local",
           "op": {
@@ -3265,7 +3325,7 @@
           ]
         },
         {
-          "id": "step-370",
+          "id": "step-374",
           "label": "No file under /etc/lamalibre, /var/lib/lamalibre or /opt/lamalibre holds it",
           "target": "local",
           "continueOnError": true,
@@ -3286,7 +3346,7 @@
           }
         },
         {
-          "id": "step-371",
+          "id": "step-375",
           "label": "No answer read holds it ($(grep -c '^### ' \"${PRIV}/responses.log\") answers, the audit log among them)",
           "target": "local",
           "continueOnError": true,
@@ -3307,7 +3367,7 @@
           }
         },
         {
-          "id": "step-372",
+          "id": "step-376",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -3324,7 +3384,7 @@
           ]
         },
         {
-          "id": "step-374",
+          "id": "step-378",
           "label": "The relay's cache (plugin_settings): revision 2, configured, and only when apiKey was set",
           "target": "local",
           "continueOnError": true,
@@ -3353,7 +3413,7 @@
       "label": "Uninstalling drops the cached settings",
       "steps": [
         {
-          "id": "step-376",
+          "id": "step-380",
           "label": "POST /api/plugins/${PLUGIN}/disable",
           "target": "host",
           "op": {
@@ -3363,7 +3423,7 @@
           }
         },
         {
-          "id": "step-377",
+          "id": "step-381",
           "label": "DELETE /api/plugins/${PLUGIN}",
           "target": "host",
           "op": {
@@ -3381,7 +3441,7 @@
           ]
         },
         {
-          "id": "step-378",
+          "id": "step-382",
           "label": "Set UNINSTALL_OP",
           "target": "local",
           "op": {
@@ -3398,7 +3458,7 @@
           ]
         },
         {
-          "id": "step-379",
+          "id": "step-383",
           "label": "Plugin uninstalled",
           "target": "local",
           "continueOnError": true,
@@ -3420,7 +3480,7 @@
           }
         },
         {
-          "id": "step-380",
+          "id": "step-384",
           "label": "GET settings: 404",
           "target": "local",
           "continueOnError": true,
@@ -3441,7 +3501,7 @@
           }
         },
         {
-          "id": "step-381",
+          "id": "step-385",
           "label": "Set LEFT",
           "target": "local",
           "op": {
@@ -3458,7 +3518,7 @@
           ]
         },
         {
-          "id": "step-382",
+          "id": "step-386",
           "label": "No plugin_settings row left",
           "target": "local",
           "continueOnError": true,
@@ -3483,7 +3543,7 @@
     }
   ],
   "apiHelpers": ["agent_api_get", "agent_api_post"],
-  "headerRaw": "# ============================================================================\n# 31 — Plugin settings: manifest refusals, the panel's checks, the agent half\n# ============================================================================\n# Slice 4 on one VM, with fixtures served by a stand-in registry on the VM\n# (helpers.sh, write_settings_fixture_plugins):\n# - a manifest's settings block is checked at install: settings without an\n#   agent block, a default on a secret, a pattern that does not compile and\n#   51 fields are each refused (400, naming the issue) and leave nothing; a\n#   plugin without a settings block has none to read (404 no_settings)\n# - installed but not hosted, the plugin shows its fields and refuses a\n#   change (503 hosting_offline)\n# - hosted, with its agent half on the relay loopback as spec 29 runs it\n#   (write_app_plugin_half --manifest: Lamaste's createSettingsStore and\n#   createSettingsHandler): GET settings is live; each rule of the panel's\n#   checks refuses with a message per field that never repeats the value\n#   (a setting the schema does not know is counted, never named), without a\n#   call to the agent half; a pattern is refused by the agent half (422), a\n#   stale revision with 409; a secret PUT from a 0600 file reads back as\n#   { set: true } and the agent half proves it holds it by digest; its files\n#   are 0600 and the secret is in secrets.json alone\n# - /api/<route>/settings and everything under it is not forwarded (404)\n# - the agent half stopped: a change is 502 (refused) until the health\n#   monitor reports it down, then 503 hosting_offline while GET reads the\n#   cache; an agent half without settings (its authenticated 404) is 502\n#   settings_unsupported; back with its settings, it reloads its files and\n#   changes are accepted\n# - a squatter takes the agent half's port the moment it lets go — an\n#   unprivileged process (nobody) answering 200 to everything, with a\n#   forged X-Lamalibre-Responder, and logging every request: a settings\n#   change carrying a new test secret, sent while the relay still believes\n#   the hosting up, is 502 unauthenticated; the squatter got the secret\n#   sealed, never in clear; health turns down (reason app) and a forwarded\n#   page or the panel bundle is 502, never the squatter's answer; the agent\n#   half back, it never saw that change\n# - the relay keeps no secret: state.db (dumped), the journal since the\n#   spec started, the files under /etc/lamalibre, /var/lib/lamalibre and\n#   /opt/lamalibre, every answer read; uninstalling drops the cached settings\n#\n# The test secrets are made on the VM into 0600 files and only ever compared\n# by digest or counted. Settings reaching an agent half Lamaste installed on\n# another machine, through the tunnel, are three-VM spec 37; the hosting\n# agent offline is spec 38; what systemd's socket leaves a squatter on the\n# agent's side is spec 35.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 31 — Plugin settings: manifest refusals, the panel's checks, the agent half\n# ============================================================================\n# Slice 4 on one VM, with fixtures served by a stand-in registry on the VM\n# (helpers.sh, write_settings_fixture_plugins):\n# - a manifest's settings block is checked at install: settings without an\n#   agent block, a default on a secret, a pattern that does not compile and\n#   51 fields are each refused (400, naming the issue) and leave nothing; a\n#   plugin without a settings block has none to read (404 no_settings)\n# - installed but not hosted, the plugin shows its fields and refuses a\n#   change (503 hosting_offline)\n# - hosted, with its agent half on the relay loopback as spec 29 runs it\n#   (write_app_plugin_half --manifest: Lamaste's createSettingsStore and\n#   createSettingsHandler): GET settings is live; each rule of the panel's\n#   checks refuses with a message per field that never repeats the value\n#   (a setting the schema does not know is counted, never named), without a\n#   call to the agent half; a pattern is refused by the agent half (422), a\n#   stale revision with 409; a secret PUT from a 0600 file reads back as\n#   { set: true } and the agent half proves it holds it by digest; its files\n#   are 0600 and the secret is in secrets.json alone\n# - /api/<route>/settings and everything under it is not forwarded (404)\n# - the agent half stopped: a change is 502 (refused) until the health\n#   monitor reports it down, then 503 hosting_offline while GET reads the\n#   cache; an agent half without settings (its authenticated 404) is 502\n#   settings_unsupported; back with its settings, it reloads its files and\n#   changes are accepted\n# - a squatter takes the agent half's port the moment it lets go — an\n#   unprivileged process (nobody) answering 200 to everything, with a\n#   forged X-Lamalibre-Responder, and logging every request: a settings\n#   change carrying a new test secret, sent while the relay still believes\n#   the hosting up, is 502 unauthenticated; the squatter got the secret\n#   sealed, never in clear; a forwarded page or the panel bundle is 502,\n#   never the squatter's answer; health turns down (reason app), and from\n#   then on a page request is answered 502 without being sent to the port;\n#   the agent half back, it never saw that change\n# - the relay keeps no secret: state.db (dumped), the journal since the\n#   spec started, the files under /etc/lamalibre, /var/lib/lamalibre and\n#   /opt/lamalibre, every answer read; uninstalling drops the cached settings\n#\n# The test secrets are made on the VM into 0600 files and only ever compared\n# by digest or counted. Settings reaching an agent half Lamaste installed on\n# another machine, through the tunnel, are three-VM spec 37; the hosting\n# agent offline is spec 38; what systemd's socket leaves a squatter on the\n# agent's side is spec 35.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm openssl sqlite3 runuser\n\nbegin_test \"31 — Plugin settings: manifest refusals, the panel's checks, the agent half\"\n\n# The journal is scanned from here on.\nSPEC_START=$(date +%s)\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

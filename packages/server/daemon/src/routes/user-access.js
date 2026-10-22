@@ -3,6 +3,7 @@ import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamal
 import { getConfig } from '../lib/config.js';
 import { ensureSessionSecret } from '../lib/session.js';
 import { createUserSession } from '../lib/user-access-session.js';
+import { findDirectoryUser, reconcileDirectory } from '../lib/directory.js';
 import {
   createGrant,
   listGrants,
@@ -236,8 +237,19 @@ export async function userAccessPublicRoutes(fastify, _opts) {
 
     try {
       const { username } = await validateAndConsumeOTP(body.token, body.verifier);
+      // The session is bound to the user's directory id; an enabled user the
+      // directory does not know yet (created outside Lamaste a moment ago) is
+      // adopted first.
+      let user = await findDirectoryUser(username);
+      if (!user) {
+        await reconcileDirectory({ actor: 'lamaste', logger: request.log });
+        user = await findDirectoryUser(username);
+      }
+      if (!user || user.status !== 'active') {
+        throw Object.assign(new Error('Invalid or expired token'), { statusCode: 401 });
+      }
       const sessionSecret = await ensureSessionSecret();
-      const session = createUserSession(sessionSecret, username);
+      const session = createUserSession(sessionSecret, { username, userId: user.userId });
 
       return {
         ok: true,

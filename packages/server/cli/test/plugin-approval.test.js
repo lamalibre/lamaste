@@ -208,6 +208,24 @@ test('an identity diff: what waits for approval, what only changes the digest', 
   );
   assert.match(
     identityDiffLines({ ...unchanged, after: null, rolesRemoved: ['editor', 'viewer'] }).headline,
-    /^no longer declares identity/,
+    /^no longer declares identity — it is sent no users, its role grants are revoked/,
+  );
+  // A removed role stays removed: how many grants approving it changes.
+  const removing = { ...unchanged, after, rolesRemoved: ['editor'] };
+  assert.deepEqual(
+    identityDiffLines({ ...removing, grantsAffected: { rewritten: 2, revoked: 3 } }).lines.at(-1),
+    {
+      text: 'role grants affected: 3 revoked, 2 narrowed to the roles that stay — waits for approval',
+      approval: true,
+    },
+  );
+  assert.equal(
+    identityDiffLines({ ...removing, grantsAffected: { rewritten: 0, revoked: 0 } }).lines.at(-1)
+      .text,
+    'role grants affected: none — waits for approval',
+  );
+  assert.match(
+    identityDiffLines({ ...removing, grantsAffected: null }).lines.at(-1).text,
+    /not known/,
   );
 });

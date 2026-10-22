@@ -164,7 +164,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-46",
           "label": "Sleep 15s",
           "target": "local",
           "op": {
@@ -173,7 +173,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-59",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -182,7 +182,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-71",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -191,7 +191,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-77",
           "label": "GET /api/plugins/${PLUGIN}/hosting",
           "target": "host",
           "op": {
@@ -201,7 +201,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-83",
           "label": "GET /api/plugins/${PLUGIN}/audience",
           "target": "host",
           "op": {
@@ -211,7 +211,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-86",
           "label": "GET /api/identity/directory",
           "target": "host",
           "op": {
@@ -221,7 +221,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-110",
           "label": "GET /api/gatekeeper/access-log?limit=1000",
           "target": "host",
           "op": {
@@ -245,14 +245,14 @@
           }
         ]
       },
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping identity tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Domain: ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-identity\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_identity_00000000000000\"\n# Transient units (systemd-run) for what runs in the background\nSTUB_UNIT=\"lamalibre-lamaste-e2e-32-stub\"\nHALF_UNIT=\"lamalibre-lamaste-e2e-32-half\"\nPLUGIN=\"e2e-ident\"\nPACKAGE=\"@lamalibre/e2e-ident-server\"\nAGENT_LABEL=\"e2e-idhost-$(date +%s)\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nHALF_CONFIG=\"${WORK_DIR}/plugin-config.json\"\nHALF_LOG=\"${WORK_DIR}/half.log\"\nHALF_DB=\"${WORK_DIR}/half-data/identity.db\"\nLAMASTE_LIB=\"/opt/lamalibre/lamaste/serverd/node_modules/@lamalibre/lamaste\"\nGATEKEEPER_DB=\"${STATE_DIR}/gatekeeper.db\"\nUSER_A=\"e2e32-alice\"\n# A test credential for this run only: alice signs in once, at the first factor\nUSER_A_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nGROUP=\"e2e32-team\"\nTUNNEL_RESOURCE=\"e2e32-tunnel-0001\"\nAUTH_RESOLVE=\"--resolve auth.${DOMAIN}:443:127.0.0.1\"\n# Marks the requests the forwarder must never pass on (their query)\nMARK=\"e2e32mark$(date +%s)\"\nUUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'\nPORT=\"\"\nALICE_ID=\"\"\nNEW_ALICE_ID=\"\"\nROLELESS_GRANT_ID=\"\"\nTUNNEL_GRANT_ID=\"\"\n\ncleanup() {\n  systemctl stop \"${HALF_UNIT}\" \"${STUB_UNIT}\" > /dev/null 2>&1 || true\n  # Gatekeeper's grants and group outlive the plugin: every grant on it (an\n  # interrupted run's would make someone a member of the next run's audience)\n  local gid\n  for gid in $(api_get \"gatekeeper/grants?resourceType=plugin&resourceId=${PLUGIN}\" | jq -r '.grants[]?.grantId // empty' 2>/dev/null || true); do\n    api_delete \"gatekeeper/grants/${gid}\" > /dev/null 2>&1 || true\n  done\n  if [ -n \"${TUNNEL_GRANT_ID}\" ]; then api_delete \"gatekeeper/grants/${TUNNEL_GRANT_ID}\" > /dev/null 2>&1 || true; fi\n  api_delete \"gatekeeper/groups/${GROUP}\" > /dev/null 2>&1 || true\n  # Alice, whatever state the spec left her in: deleted and erased.\n  api_delete \"users/${USER_A}?erase=true\" > /dev/null 2>&1 || true\n  local id\n  for id in ${ALICE_ID} ${NEW_ALICE_ID}; do\n    api_post \"identity/directory/${id}/erase\" > /dev/null 2>&1 || true\n  done\n  # Uninstalling tears a hosting down first (an operation); one still\n  # running refuses it until it ends.\n  api_post \"plugins/${PLUGIN}/disable\" > /dev/null 2>&1 || true\n  local deadline=$((SECONDS + 180)) name\n  while [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(api_get_status \"plugins/${PLUGIN}\")\" != \"404\" ]; do\n    api_delete \"plugins/${PLUGIN}?force=true\" > /dev/null 2>&1 || true\n    sleep 3\n  done\n  # Refused at install, so never there — unless a refusal regressed.\n  for name in e2e-ident-serverhosted e2e-ident-noagent e2e-ident-badrole e2e-ident-badattr; do\n    api_delete \"plugins/${name}?force=true\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\n# call <method> <api path> [<json>] — one panel API call as the admin: the\n# body, then the HTTP status on a line of its own\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\n# users_call <method> <api path> [<json>] — call, waiting out the users\n# API's rate limit (5 creations or updates a minute): retried on 429\nusers_call() {\n  local out deadline=$((SECONDS + 75))\n  while :; do\n    out=$(call \"$@\")\n    if [ \"$(status_of \"$out\")\" != \"429\" ] || [ \"$SECONDS\" -ge \"$deadline\" ]; then\n      echo \"$out\"\n      return 0\n    fi\n    sleep 15\n  done\n}\n\n# agent_api_get path / agent_api_post path json — as the test agent (its certificate)\nagent_api_get() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -H 'Accept: application/json' \"${BASE_URL}/api/$1\"\n}\nagent_api_post() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \"$2\" \"${BASE_URL}/api/$1\"\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 2 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\n# wait_operation <operation id> <seconds> — prints the operation once it ended\n# (still running after <seconds>: printed as is; the caller asserts its status)\nwait_operation() {\n  local id=\"$1\" deadline=$((SECONDS + $2)) op='{}'\n  if [ -z \"$id\" ]; then\n    echo '{}'\n    return 0\n  fi\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    op=$(api_get \"plugins/${PLUGIN}/operations/${id}\" | jq -c '.operation // {}' 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$op\" | jq -r '.status // \"running\"' 2>/dev/null)\" != \"running\" ]; then\n      echo \"$op\"\n      return 0\n    fi\n    sleep 2\n  done\n  echo \"$op\"\n  return 0\n}\n\n# hosting_field jq-expr — a field of GET /api/plugins/<plugin>/hosting\nhosting_field() {\n  api_get \"plugins/${PLUGIN}/hosting\" | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\nhealth_up() { [ \"$(hosting_field '.hosting.health.state')\" = \"up\" ]; }\n\n# identity_view — GET /api/plugins/<plugin>/identity's `identity`\nidentity_view() { api_get \"plugins/${PLUGIN}/identity\" | jq -c '.identity // {}' 2>/dev/null || echo '{}'; }\nidentity_ready() { [ \"$(json_get \"$(identity_view)\" '.readiness.ready')\" = \"true\" ]; }\n\n# audience_row <userId> — the plugin's audience row of that user ('null' when none)\naudience_row() {\n  api_get \"plugins/${PLUGIN}/audience\" | jq -c --arg id \"$1\" '[.audience[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo \"null\"\n}\n\n# directory_row <userId> — the directory's record of that user ('null' when none)\ndirectory_row() {\n  api_get \"identity/directory\" | jq -c --arg id \"$1\" '[.users[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo \"null\"\n}\n\n# projection — what the agent half's projection holds (GET\n# /admin/e2e/projection through the forwarder, as the admin)\nprojection() { api_get \"${PLUGIN}/e2e/projection\" 2>/dev/null || echo '{}'; }\n\n# projection_has <jq filter> — the agent half's projection satisfies it\nprojection_has() { projection | jq -e \"$1\" > /dev/null 2>&1; }\n\n# projected_user <userId> — the projection's row of that user ('null' when none)\nprojected_user() { projection | jq -c --arg id \"$1\" '[.users[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo \"null\"; }\n\n# first_factor <username> <password> — Authelia's first factor for the user:\n# its answer's status (OK, KO), \"none\" when Authelia does not answer\nfirst_factor() {\n  local body\n  body=$(jq -c -n --arg u \"$1\" --arg p \"$2\" --arg t \"https://${DOMAIN}/\" '{username: $u, password: $p, keepMeLoggedIn: false, targetURL: $t}')\n  # shellcheck disable=SC2086 # AUTH_RESOLVE is two words on purpose\n  curl -sk --max-time 15 ${AUTH_RESOLVE} -X POST -H 'Content-Type: application/json' -d \"$body\" \\\n    \"https://auth.${DOMAIN}/api/firstfactor\" 2>/dev/null | jq -r '.status // \"none\"' 2>/dev/null || echo \"none\"\n}\nfirst_factor_ok() { [ \"$(first_factor \"${USER_A}\" \"${USER_A_PASSWORD}\")\" = \"OK\" ]; }\n# first_factor_answered — Authelia answers again (after a restart): OK or KO\nfirst_factor_answered() {\n  local s\n  s=$(first_factor \"${USER_A}\" \"${USER_A_PASSWORD}\")\n  [ \"$s\" = \"OK\" ] || [ \"$s\" = \"KO\" ]\n}\n\n# gatekeeper_log_rows <username> — Gatekeeper's access-request log rows of the username\ngatekeeper_log_rows() {\n  api_get \"gatekeeper/access-log?limit=1000\" | jq --arg u \"$1\" '[.entries[]? | select(.username == $u)] | length' 2>/dev/null || echo \"-1\"\n}\n\n# seed_access_log <username> — a row in Gatekeeper's access-request log for\n# the username, now, as Gatekeeper writes one for a denied request (written\n# as the database's owner, so its WAL files stay Gatekeeper's)\nseed_access_log() {\n  local owner now\n  owner=$(stat -c %U \"${GATEKEEPER_DB}\")\n  now=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)\n  runuser -u \"${owner}\" -- sqlite3 \"${GATEKEEPER_DB}\" \\\n    \"PRAGMA busy_timeout = 5000; INSERT INTO access_request_log (timestamp, username, resource_type, resource_id, resource_fqdn) VALUES ('${now}', '$1', 'tunnel', '${TUNNEL_RESOURCE}', 'e2e32.${DOMAIN}');\" > /dev/null\n}\n\n# relay_assertion <method> <path> <username> — a relay assertion for the\n# panel, signed with the relay's own key (what Gatekeeper sends nginx for a\n# user-surface request): valid once, for 60 seconds\nrelay_assertion() {\n  node \"${WORK_DIR}/sign-relay.mjs\" \"${LAMASTE_LIB}\" \"${STATE_DIR}/relay-signing-key.json\" \"$1\" \"$2\" \"$3\" 2>/dev/null || true\n}\n\n# panel_direct <path> <assertion> — the request nginx would pass the panel's\n# loopback listener: the body, then the status\npanel_direct() {\n  curl -s --max-time 15 -H \"X-Lamalibre-Relay-Assertion: $2\" -w '\\n%{http_code}' \"${PANEL_DIRECT_URL}$1\" 2>/dev/null || true\n}\n\n# ===========================================================================\n# 1. Stand-in registry with the fixtures\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping identity tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Domain: ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-identity\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_identity_00000000000000\"\n# Transient units (systemd-run) for what runs in the background\nSTUB_UNIT=\"lamalibre-lamaste-e2e-32-stub\"\nHALF_UNIT=\"lamalibre-lamaste-e2e-32-half\"\nPLUGIN=\"e2e-ident\"\nPACKAGE=\"@lamalibre/e2e-ident-server\"\nAGENT_LABEL=\"e2e-idhost-$(date +%s)\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nHALF_CONFIG=\"${WORK_DIR}/plugin-config.json\"\nHALF_LOG=\"${WORK_DIR}/half.log\"\nHALF_DB=\"${WORK_DIR}/half-data/identity.db\"\nLAMASTE_LIB=\"/opt/lamalibre/lamaste/serverd/node_modules/@lamalibre/lamaste\"\nGATEKEEPER_DB=\"${STATE_DIR}/gatekeeper.db\"\nUSER_A=\"e2e32-alice\"\n# A test credential for this run only: alice signs in once, at the first factor\nUSER_A_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nGROUP=\"e2e32-team\"\n# A username an OpenID Connect identity is added for: never usable again on\n# this VM (Authelia cannot delete an opaque identifier), so a new one each run\nUSER_O=\"e2e32-oidc-$(date +%s)\"\nTUNNEL_RESOURCE=\"e2e32-tunnel-0001\"\nAUTH_RESOLVE=\"--resolve auth.${DOMAIN}:443:127.0.0.1\"\n# Marks the requests the forwarder must never pass on (their query)\nMARK=\"e2e32mark$(date +%s)\"\nUUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'\nPORT=\"\"\nALICE_ID=\"\"\nNEW_ALICE_ID=\"\"\nROLELESS_GRANT_ID=\"\"\nTUNNEL_GRANT_ID=\"\"\n\ncleanup() {\n  systemctl stop \"${HALF_UNIT}\" \"${STUB_UNIT}\" > /dev/null 2>&1 || true\n  # Gatekeeper's grants and group outlive the plugin: every grant on it (an\n  # interrupted run's would make someone a member of the next run's audience)\n  local gid\n  for gid in $(api_get \"gatekeeper/grants?resourceType=plugin&resourceId=${PLUGIN}\" | jq -r '.grants[]?.grantId // empty' 2>/dev/null || true); do\n    api_delete \"gatekeeper/grants/${gid}\" > /dev/null 2>&1 || true\n  done\n  if [ -n \"${TUNNEL_GRANT_ID}\" ]; then api_delete \"gatekeeper/grants/${TUNNEL_GRANT_ID}\" > /dev/null 2>&1 || true; fi\n  api_delete \"gatekeeper/groups/${GROUP}\" > /dev/null 2>&1 || true\n  # Alice, whatever state the spec left her in: deleted and erased.\n  api_delete \"users/${USER_A}?erase=true\" > /dev/null 2>&1 || true\n  local id\n  for id in ${ALICE_ID} ${NEW_ALICE_ID}; do\n    api_post \"identity/directory/${id}/erase\" > /dev/null 2>&1 || true\n  done\n  # Uninstalling tears a hosting down first (an operation); one still\n  # running refuses it until it ends.\n  api_post \"plugins/${PLUGIN}/disable\" > /dev/null 2>&1 || true\n  local deadline=$((SECONDS + 180)) name\n  while [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(api_get_status \"plugins/${PLUGIN}\")\" != \"404\" ]; do\n    api_delete \"plugins/${PLUGIN}?force=true\" > /dev/null 2>&1 || true\n    sleep 3\n  done\n  # Refused at install, so never there — unless a refusal regressed.\n  for name in e2e-ident-serverhosted e2e-ident-noagent e2e-ident-badrole e2e-ident-badattr; do\n    api_delete \"plugins/${name}?force=true\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\n# call <method> <api path> [<json>] — one panel API call as the admin: the\n# body, then the HTTP status on a line of its own\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\n# users_call <method> <api path> [<json>] — call, waiting out the users\n# API's rate limit (5 creations or updates a minute): retried on 429\nusers_call() {\n  local out deadline=$((SECONDS + 75))\n  while :; do\n    out=$(call \"$@\")\n    if [ \"$(status_of \"$out\")\" != \"429\" ] || [ \"$SECONDS\" -ge \"$deadline\" ]; then\n      echo \"$out\"\n      return 0\n    fi\n    sleep 15\n  done\n}\n\n# agent_api_get path / agent_api_post path json — as the test agent (its certificate)\nagent_api_get() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -H 'Accept: application/json' \"${BASE_URL}/api/$1\"\n}\nagent_api_post() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \"$2\" \"${BASE_URL}/api/$1\"\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 2 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\n# wait_operation <operation id> <seconds> — prints the operation once it ended\n# (still running after <seconds>: printed as is; the caller asserts its status)\nwait_operation() {\n  local id=\"$1\" deadline=$((SECONDS + $2)) op='{}'\n  if [ -z \"$id\" ]; then\n    echo '{}'\n    return 0\n  fi\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    op=$(api_get \"plugins/${PLUGIN}/operations/${id}\" | jq -c '.operation // {}' 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$op\" | jq -r '.status // \"running\"' 2>/dev/null)\" != \"running\" ]; then\n      echo \"$op\"\n      return 0\n    fi\n    sleep 2\n  done\n  echo \"$op\"\n  return 0\n}\n\n# hosting_field jq-expr — a field of GET /api/plugins/<plugin>/hosting\nhosting_field() {\n  api_get \"plugins/${PLUGIN}/hosting\" | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\nhealth_up() { [ \"$(hosting_field '.hosting.health.state')\" = \"up\" ]; }\n\n# identity_view — GET /api/plugins/<plugin>/identity's `identity`\nidentity_view() { api_get \"plugins/${PLUGIN}/identity\" | jq -c '.identity // {}' 2>/dev/null || echo '{}'; }\nidentity_ready() { [ \"$(json_get \"$(identity_view)\" '.readiness.ready')\" = \"true\" ]; }\n\n# audience_row <userId> — the plugin's audience row of that user ('null' when none)\naudience_row() {\n  api_get \"plugins/${PLUGIN}/audience\" | jq -c --arg id \"$1\" '[.audience[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo \"null\"\n}\n\n# directory_row <userId> — the directory's record of that user ('null' when none)\ndirectory_row() {\n  api_get \"identity/directory\" | jq -c --arg id \"$1\" '[.users[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo \"null\"\n}\n\n# projection — what the agent half's projection holds (GET\n# /admin/e2e/projection through the forwarder, as the admin)\nprojection() { api_get \"${PLUGIN}/e2e/projection\" 2>/dev/null || echo '{}'; }\n\n# projection_has <jq filter> — the agent half's projection satisfies it\nprojection_has() { projection | jq -e \"$1\" > /dev/null 2>&1; }\n\n# projected_user <userId> — the projection's row of that user ('null' when none)\nprojected_user() { projection | jq -c --arg id \"$1\" '[.users[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo \"null\"; }\n\n# first_factor <username> <password> — Authelia's first factor for the user:\n# its answer's status (OK, KO), \"none\" when Authelia does not answer\nfirst_factor() {\n  local body\n  body=$(jq -c -n --arg u \"$1\" --arg p \"$2\" --arg t \"https://${DOMAIN}/\" '{username: $u, password: $p, keepMeLoggedIn: false, targetURL: $t}')\n  # shellcheck disable=SC2086 # AUTH_RESOLVE is two words on purpose\n  curl -sk --max-time 15 ${AUTH_RESOLVE} -X POST -H 'Content-Type: application/json' -d \"$body\" \\\n    \"https://auth.${DOMAIN}/api/firstfactor\" 2>/dev/null | jq -r '.status // \"none\"' 2>/dev/null || echo \"none\"\n}\nfirst_factor_ok() { [ \"$(first_factor \"${USER_A}\" \"${USER_A_PASSWORD}\")\" = \"OK\" ]; }\n# first_factor_answered — Authelia answers again (after a restart): OK or KO\nfirst_factor_answered() {\n  local s\n  s=$(first_factor \"${USER_A}\" \"${USER_A_PASSWORD}\")\n  [ \"$s\" = \"OK\" ] || [ \"$s\" = \"KO\" ]\n}\n\n# add_opaque_identifier <username> — what Authelia stores the first time a\n# user signs in to an OpenID Connect relying party: an opaque identifier for\n# the username (the `sub` relying parties know them by), written with\n# Authelia's own CLI as its service account with its configuration, the way\n# lamaste-priv runs it. Prints Authelia's output; fails when it does.\nadd_opaque_identifier() {\n  (cd / && runuser -u lamaste-authelia -- env -i PATH=/usr/bin:/bin HOME=/nonexistent X_AUTHELIA_CONFIG_FILTERS=template \\\n    /usr/local/bin/authelia storage user identifiers add --config /etc/authelia/configuration.yml -- \"$1\") 2>&1\n}\n\n# oidc_identity_held <username> — lamaste-priv's check: yes, no (\"error\" when it fails)\noidc_identity_held() { /usr/local/sbin/lamaste-priv authelia-user has-oidc-identifier \"$1\" 2>/dev/null || echo \"error\"; }\n\n# gatekeeper_direct <method> <path> — Gatekeeper's management API on its\n# loopback port, as the panel calls it (its shared secret in a header read\n# from a 0600 file, never on a command line): the body, then the status\ngatekeeper_direct() {\n  curl -s --max-time 15 -X \"$1\" -H @\"${WORK_DIR}/gatekeeper-header\" -w '\\n%{http_code}' \"http://127.0.0.1:9294$2\" 2>/dev/null || true\n}\n\n# gatekeeper_log_rows <username> — Gatekeeper's access-request log rows of the username\ngatekeeper_log_rows() {\n  api_get \"gatekeeper/access-log?limit=1000\" | jq --arg u \"$1\" '[.entries[]? | select(.username == $u)] | length' 2>/dev/null || echo \"-1\"\n}\n\n# seed_access_log <username> — a row in Gatekeeper's access-request log for\n# the username, now, as Gatekeeper writes one for a denied request (written\n# as the database's owner, so its WAL files stay Gatekeeper's)\nseed_access_log() {\n  local owner now\n  owner=$(stat -c %U \"${GATEKEEPER_DB}\")\n  now=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)\n  runuser -u \"${owner}\" -- sqlite3 \"${GATEKEEPER_DB}\" \\\n    \"PRAGMA busy_timeout = 5000; INSERT INTO access_request_log (timestamp, username, resource_type, resource_id, resource_fqdn) VALUES ('${now}', '$1', 'tunnel', '${TUNNEL_RESOURCE}', 'e2e32.${DOMAIN}');\" > /dev/null\n}\n\n# relay_assertion <method> <path> <username> — a relay assertion for the\n# panel, signed with the relay's own key (what Gatekeeper sends nginx for a\n# user-surface request): valid once, for 60 seconds\nrelay_assertion() {\n  node \"${WORK_DIR}/sign-relay.mjs\" \"${LAMASTE_LIB}\" \"${STATE_DIR}/relay-signing-key.json\" \"$1\" \"$2\" \"$3\" 2>/dev/null || true\n}\n\n# panel_direct <path> <assertion> — the request nginx would pass the panel's\n# loopback listener: the body, then the status\npanel_direct() {\n  curl -s --max-time 15 -H \"X-Lamalibre-Relay-Assertion: $2\" -w '\\n%{http_code}' \"${PANEL_DIRECT_URL}$1\" 2>/dev/null || true\n}\n\n# ===========================================================================\n# 1. Stand-in registry with the fixtures\n# ==========================================================================="
     },
     {
       "id": "stand-in-registry-with-the-identity-fixtures",
       "label": "Stand-in registry with the identity fixtures",
       "steps": [
         {
-          "id": "step-141",
+          "id": "step-149",
           "label": "Stand-in registry is up on ${STUB_URL}",
           "target": "local",
           "op": {
@@ -262,7 +262,7 @@
           }
         },
         {
-          "id": "step-142",
+          "id": "step-150",
           "label": "Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)",
           "target": "local",
           "op": {
@@ -272,7 +272,7 @@
           }
         },
         {
-          "id": "step-145",
+          "id": "step-154",
           "label": "GET /api/audit?limit=1",
           "target": "host",
           "op": {
@@ -290,14 +290,14 @@
           ]
         }
       ],
-      "bash": "log_section \"Stand-in registry with the identity fixtures\"\n\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\ncleanup\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\" \"${AGENT_CERT_DIR}\" \"$(dirname \"${HALF_DB}\")\"\nchmod 700 \"${AGENT_CERT_DIR}\" \"$(dirname \"${HALF_DB}\")\"\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_identity_fixture_plugins \"${WORK_DIR}/fixtures\"\nwrite_app_plugin_half \"${WORK_DIR}/app-plugin-half.mjs\"\ncat > \"${WORK_DIR}/sign-relay.mjs\" <<'SIGN_EOF'\n// sign-relay.mjs <@lamalibre/lamaste dir> <relay key file> <method> <path> <username>\n// A relay assertion for the panel's user surface, as Gatekeeper signs one.\nimport path from 'node:path';\nimport { pathToFileURL } from 'node:url';\nconst [lib, keyFile, method, target, username] = process.argv.slice(2);\nconst core = await import(pathToFileURL(path.join(lib, 'dist', 'index.js')).href);\nconst key = await core.createRelaySigner(keyFile, { create: false }).current();\nif (!key) throw new Error('no relay signing key');\nconst route = target.split('/')[2];\nprocess.stdout.write(\n  core.signRelayAssertion(\n    { aud: core.RELAY_PANEL_AUDIENCE, port: core.RELAY_PANEL_PORT, caller: { type: 'user', username }, method, target: { route, path: target } },\n    key,\n  ),\n);\nSIGN_EOF\nsystemctl stop \"${STUB_UNIT}\" > /dev/null 2>&1 || true\nsystemd-run --quiet --collect --unit \"${STUB_UNIT}\" --setenv=PATH=\"${PATH}\" --setenv=HOME=/root \\\n  \"$(command -v node)\" \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" \\\n  --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json \\\n  --package \"${WORK_DIR}/fixtures/v1\" --package \"${WORK_DIR}/fixtures/v2\" --package \"${WORK_DIR}/fixtures/v3\" \\\n  --package \"${WORK_DIR}/fixtures/v4\" --package \"${WORK_DIR}/fixtures/v5\" --package \"${WORK_DIR}/fixtures/serverhosted\" \\\n  --package \"${WORK_DIR}/fixtures/noagent\" --package \"${WORK_DIR}/fixtures/badrole\" --package \"${WORK_DIR}/fixtures/badattr\"\nif wait_for_http \"${STUB_URL}/-/ping\" 60; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)\"\n  end_test\n  exit $?\nfi\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nAUDIT_BASE=$(api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 2. Every user has a directory id\n# ==========================================================================="
+      "bash": "log_section \"Stand-in registry with the identity fixtures\"\n\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\ncleanup\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\" \"${AGENT_CERT_DIR}\" \"$(dirname \"${HALF_DB}\")\"\nchmod 700 \"${AGENT_CERT_DIR}\" \"$(dirname \"${HALF_DB}\")\"\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_identity_fixture_plugins \"${WORK_DIR}/fixtures\"\nwrite_app_plugin_half \"${WORK_DIR}/app-plugin-half.mjs\"\ncat > \"${WORK_DIR}/sign-relay.mjs\" <<'SIGN_EOF'\n// sign-relay.mjs <@lamalibre/lamaste dir> <relay key file> <method> <path> <username>\n// A relay assertion for the panel's user surface, as Gatekeeper signs one.\nimport path from 'node:path';\nimport { pathToFileURL } from 'node:url';\nconst [lib, keyFile, method, target, username] = process.argv.slice(2);\nconst core = await import(pathToFileURL(path.join(lib, 'dist', 'index.js')).href);\nconst key = await core.createRelaySigner(keyFile, { create: false }).current();\nif (!key) throw new Error('no relay signing key');\nconst route = target.split('/')[2];\nprocess.stdout.write(\n  core.signRelayAssertion(\n    { aud: core.RELAY_PANEL_AUDIENCE, port: core.RELAY_PANEL_PORT, caller: { type: 'user', username }, method, target: { route, path: target } },\n    key,\n  ),\n);\nSIGN_EOF\nsystemctl stop \"${STUB_UNIT}\" > /dev/null 2>&1 || true\nsystemd-run --quiet --collect --unit \"${STUB_UNIT}\" --setenv=PATH=\"${PATH}\" --setenv=HOME=/root \\\n  \"$(command -v node)\" \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" \\\n  --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json \\\n  --package \"${WORK_DIR}/fixtures/v1\" --package \"${WORK_DIR}/fixtures/v2\" --package \"${WORK_DIR}/fixtures/v3\" \\\n  --package \"${WORK_DIR}/fixtures/v4\" --package \"${WORK_DIR}/fixtures/v5\" --package \"${WORK_DIR}/fixtures/serverhosted\" \\\n  --package \"${WORK_DIR}/fixtures/noagent\" --package \"${WORK_DIR}/fixtures/badrole\" --package \"${WORK_DIR}/fixtures/badattr\"\nif wait_for_http \"${STUB_URL}/-/ping\" 60; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)\"\n  end_test\n  exit $?\nfi\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\n(umask 077 && printf 'X-Gatekeeper-Secret: %s\\n' \"$(jq -r '.secret // empty' \"${STATE_DIR}/gatekeeper-secret.json\" 2>/dev/null || true)\" > \"${WORK_DIR}/gatekeeper-header\")\nAUDIT_BASE=$(api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 2. Every user has a directory id\n# ==========================================================================="
     },
     {
       "id": "every-user-has-a-directory-id-and-a-status-the-same-after-a-panel-restart",
       "label": "Every user has a directory id and a status, the same after a panel restart",
       "steps": [
         {
-          "id": "step-146",
+          "id": "step-155",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -315,7 +315,7 @@
           ]
         },
         {
-          "id": "step-147",
+          "id": "step-156",
           "label": "Set USER_COUNT",
           "target": "local",
           "op": {
@@ -332,7 +332,7 @@
           ]
         },
         {
-          "id": "step-148",
+          "id": "step-157",
           "label": "GET /api/users lists ${USER_COUNT} users",
           "target": "local",
           "continueOnError": true,
@@ -354,7 +354,7 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-159",
           "label": "…and a status, active or disabled",
           "target": "local",
           "continueOnError": true,
@@ -376,7 +376,7 @@
           }
         },
         {
-          "id": "step-151",
+          "id": "step-160",
           "label": "…no two users share an id",
           "target": "local",
           "continueOnError": true,
@@ -398,7 +398,7 @@
           }
         },
         {
-          "id": "step-152",
+          "id": "step-161",
           "label": "GET /api/identity/directory",
           "target": "host",
           "op": {
@@ -416,7 +416,7 @@
           ]
         },
         {
-          "id": "step-153",
+          "id": "step-162",
           "label": "Set DIRECTORY_ID",
           "target": "local",
           "op": {
@@ -433,7 +433,7 @@
           ]
         },
         {
-          "id": "step-154",
+          "id": "step-163",
           "label": "GET /api/identity/directory: the directory's own id is a UUID v4",
           "target": "local",
           "continueOnError": true,
@@ -454,7 +454,7 @@
           }
         },
         {
-          "id": "step-155",
+          "id": "step-164",
           "label": "Set IDS_BEFORE",
           "target": "local",
           "op": {
@@ -471,7 +471,7 @@
           ]
         },
         {
-          "id": "step-162",
+          "id": "step-171",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -480,7 +480,7 @@
           }
         },
         {
-          "id": "step-164",
+          "id": "step-173",
           "label": "The panel is back after a restart",
           "target": "local",
           "continueOnError": true,
@@ -501,7 +501,7 @@
           }
         },
         {
-          "id": "step-166",
+          "id": "step-175",
           "label": "…and the directory its id",
           "target": "local",
           "continueOnError": true,
@@ -530,7 +530,7 @@
       "label": "A manifest's identity block is checked at install",
       "steps": [
         {
-          "id": "step-173",
+          "id": "step-182",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -547,7 +547,7 @@
           ]
         },
         {
-          "id": "step-174",
+          "id": "step-183",
           "label": "Installing ${name} (${what}) is refused: 400",
           "target": "local",
           "continueOnError": true,
@@ -568,7 +568,7 @@
           }
         },
         {
-          "id": "step-175",
+          "id": "step-184",
           "label": "…${issue}",
           "target": "local",
           "continueOnError": true,
@@ -589,7 +589,7 @@
           }
         },
         {
-          "id": "step-177",
+          "id": "step-186",
           "label": "…and its package was removed",
           "target": "local",
           "continueOnError": true,
@@ -617,7 +617,7 @@
       "label": "The approval gate: identity added, a role added, attributes widened and narrowed",
       "steps": [
         {
-          "id": "step-179",
+          "id": "step-188",
           "label": "POST /api/plugins/install",
           "target": "host",
           "op": {
@@ -636,7 +636,7 @@
           ]
         },
         {
-          "id": "step-180",
+          "id": "step-189",
           "label": "${PACKAGE}@1.0.0 installed: agent-hosted, no identity block",
           "target": "local",
           "continueOnError": true,
@@ -658,7 +658,7 @@
           }
         },
         {
-          "id": "step-181",
+          "id": "step-190",
           "label": "…nothing to approve: no digest",
           "target": "local",
           "continueOnError": true,
@@ -680,7 +680,7 @@
           }
         },
         {
-          "id": "step-182",
+          "id": "step-191",
           "label": "GET /api/plugins/${PLUGIN}/identity: no identity declared",
           "target": "local",
           "continueOnError": true,
@@ -702,7 +702,7 @@
           }
         },
         {
-          "id": "step-183",
+          "id": "step-192",
           "label": "…and no audience (400 no_identity)",
           "target": "local",
           "continueOnError": true,
@@ -723,7 +723,7 @@
           }
         },
         {
-          "id": "step-184",
+          "id": "step-193",
           "label": "POST /api/plugins/${PLUGIN}/enable",
           "target": "host",
           "op": {
@@ -733,7 +733,7 @@
           }
         },
         {
-          "id": "step-185",
+          "id": "step-194",
           "label": "POST /api/plugins/${PLUGIN}/update",
           "target": "host",
           "op": {
@@ -754,7 +754,7 @@
           ]
         },
         {
-          "id": "step-186",
+          "id": "step-195",
           "label": "2.0.0, which adds identity, waits for approval",
           "target": "local",
           "continueOnError": true,
@@ -776,7 +776,7 @@
           }
         },
         {
-          "id": "step-187",
+          "id": "step-196",
           "label": "Set CODES",
           "target": "local",
           "op": {
@@ -793,7 +793,7 @@
           ]
         },
         {
-          "id": "step-188",
+          "id": "step-197",
           "label": "…as digest.unapproved and identity.changed",
           "target": "local",
           "continueOnError": true,
@@ -814,7 +814,7 @@
           }
         },
         {
-          "id": "step-189",
+          "id": "step-198",
           "label": "The preview: no identity before, role viewer added",
           "target": "local",
           "continueOnError": true,
@@ -836,7 +836,7 @@
           }
         },
         {
-          "id": "step-190",
+          "id": "step-199",
           "label": "…receiving displayName, the default",
           "target": "local",
           "continueOnError": true,
@@ -858,7 +858,7 @@
           }
         },
         {
-          "id": "step-191",
+          "id": "step-200",
           "label": "…with a digest to approve",
           "target": "local",
           "continueOnError": true,
@@ -876,7 +876,7 @@
           }
         },
         {
-          "id": "step-192",
+          "id": "step-201",
           "label": "1.0.0 stays until it is approved",
           "target": "local",
           "continueOnError": true,
@@ -898,7 +898,7 @@
           }
         },
         {
-          "id": "step-193",
+          "id": "step-202",
           "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
           "target": "host",
           "op": {
@@ -917,7 +917,7 @@
           ]
         },
         {
-          "id": "step-194",
+          "id": "step-203",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -934,7 +934,7 @@
           ]
         },
         {
-          "id": "step-195",
+          "id": "step-204",
           "label": "Approved, the update to 2.0.0 succeeded ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -956,7 +956,7 @@
           }
         },
         {
-          "id": "step-196",
+          "id": "step-205",
           "label": "GET /api/plugins/${PLUGIN}/hooks",
           "target": "host",
           "op": {
@@ -974,7 +974,7 @@
           ]
         },
         {
-          "id": "step-197",
+          "id": "step-206",
           "label": "2.0.0 declares identity, approved",
           "target": "local",
           "continueOnError": true,
@@ -996,7 +996,7 @@
           }
         },
         {
-          "id": "step-198",
+          "id": "step-207",
           "label": "Set AUTO",
           "target": "local",
           "op": {
@@ -1013,7 +1013,7 @@
           ]
         },
         {
-          "id": "step-199",
+          "id": "step-208",
           "label": "Auto-approve is on for ${PLUGIN}",
           "target": "local",
           "continueOnError": true,
@@ -1035,7 +1035,7 @@
           }
         },
         {
-          "id": "step-200",
+          "id": "step-209",
           "label": "POST /api/plugins/${PLUGIN}/update",
           "target": "host",
           "op": {
@@ -1056,7 +1056,7 @@
           ]
         },
         {
-          "id": "step-201",
+          "id": "step-210",
           "label": "3.0.0 adds a role: it waits, auto-approve on",
           "target": "local",
           "continueOnError": true,
@@ -1074,173 +1074,6 @@
                 "value": "3.0.0"
               },
               "message": "3.0.0 adds a role: it waits, auto-approve on"
-            }
-          }
-        },
-        {
-          "id": "step-202",
-          "label": "…identity.changed",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "UPDATE"
-              },
-              "path": "[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null",
-              "expected": {
-                "kind": "literal",
-                "value": "true"
-              },
-              "message": "…identity.changed"
-            }
-          }
-        },
-        {
-          "id": "step-203",
-          "label": "The preview: role editor added, no attribute",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "UPDATE"
-              },
-              "path": "\"\\(.pendingUpdate.identity.rolesAdded | join(\",\")) \\(.pendingUpdate.identity.attributesAdded | length)\"",
-              "expected": {
-                "kind": "literal",
-                "value": "editor 0"
-              },
-              "message": "The preview: role editor added, no attribute"
-            }
-          }
-        },
-        {
-          "id": "step-204",
-          "label": "Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join(",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "UPDATE"
-              },
-              "path": "(.pendingUpdate.autoApproveWithheld // []) | length > 0",
-              "expected": {
-                "kind": "literal",
-                "value": "true"
-              },
-              "message": "Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join("
-            }
-          }
-        },
-        {
-          "id": "step-206",
-          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
-          "target": "host",
-          "op": {
-            "type": "api",
-            "method": "POST",
-            "path": "plugins/${PLUGIN}/hooks/approve",
-            "body": "{\\"
-          },
-          "capture": [
-            {
-              "variable": "APPROVED",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-207",
-          "label": "Set OP",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120"
-          },
-          "capture": [
-            {
-              "variable": "OP",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-208",
-          "label": "Approved by the admin, 3.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "OP"
-              },
-              "path": ".status",
-              "expected": {
-                "kind": "literal",
-                "value": "succeeded"
-              },
-              "message": "Approved by the admin, 3.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))"
-            }
-          }
-        },
-        {
-          "id": "step-209",
-          "label": "POST /api/plugins/${PLUGIN}/update",
-          "target": "host",
-          "op": {
-            "type": "api",
-            "method": "POST",
-            "path": "plugins/${PLUGIN}/update",
-            "body": {
-              "version": "4.0.0"
-            }
-          },
-          "capture": [
-            {
-              "variable": "UPDATE",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-210",
-          "label": "4.0.0 widens the attributes: it waits, auto-approve on",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "UPDATE"
-              },
-              "path": ".pendingUpdate.version",
-              "expected": {
-                "kind": "literal",
-                "value": "4.0.0"
-              },
-              "message": "4.0.0 widens the attributes: it waits, auto-approve on"
             }
           }
         },
@@ -1268,6 +1101,173 @@
         },
         {
           "id": "step-212",
+          "label": "The preview: role editor added, no attribute",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "\"\\(.pendingUpdate.identity.rolesAdded | join(\",\")) \\(.pendingUpdate.identity.attributesAdded | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "editor 0"
+              },
+              "message": "The preview: role editor added, no attribute"
+            }
+          }
+        },
+        {
+          "id": "step-213",
+          "label": "Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join(",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "(.pendingUpdate.autoApproveWithheld // []) | length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join("
+            }
+          }
+        },
+        {
+          "id": "step-215",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-216",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-217",
+          "label": "Approved by the admin, 3.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Approved by the admin, 3.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-218",
+          "label": "POST /api/plugins/${PLUGIN}/update",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/update",
+            "body": {
+              "version": "4.0.0"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPDATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-219",
+          "label": "4.0.0 widens the attributes: it waits, auto-approve on",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": ".pendingUpdate.version",
+              "expected": {
+                "kind": "literal",
+                "value": "4.0.0"
+              },
+              "message": "4.0.0 widens the attributes: it waits, auto-approve on"
+            }
+          }
+        },
+        {
+          "id": "step-220",
+          "label": "…identity.changed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…identity.changed"
+            }
+          }
+        },
+        {
+          "id": "step-221",
           "label": "The preview: email added, no role",
           "target": "local",
           "continueOnError": true,
@@ -1289,7 +1289,7 @@
           }
         },
         {
-          "id": "step-214",
+          "id": "step-223",
           "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
           "target": "host",
           "op": {
@@ -1308,7 +1308,7 @@
           ]
         },
         {
-          "id": "step-215",
+          "id": "step-224",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -1325,7 +1325,7 @@
           ]
         },
         {
-          "id": "step-216",
+          "id": "step-225",
           "label": "Approved, 4.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -1347,7 +1347,7 @@
           }
         },
         {
-          "id": "step-217",
+          "id": "step-226",
           "label": "POST /api/plugins/${PLUGIN}/update",
           "target": "host",
           "op": {
@@ -1368,7 +1368,7 @@
           ]
         },
         {
-          "id": "step-218",
+          "id": "step-227",
           "label": "5.0.0 narrows the attributes and edits a label: no pending update…",
           "target": "local",
           "continueOnError": true,
@@ -1390,7 +1390,7 @@
           }
         },
         {
-          "id": "step-219",
+          "id": "step-228",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -1407,7 +1407,7 @@
           ]
         },
         {
-          "id": "step-220",
+          "id": "step-229",
           "label": "…auto-approved, the update ran at once ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -1429,7 +1429,7 @@
           }
         },
         {
-          "id": "step-221",
+          "id": "step-230",
           "label": "GET /api/audit?plugin=${PLUGIN}&action=hooks.approved&limit=50",
           "target": "host",
           "op": {
@@ -1447,7 +1447,7 @@
           ]
         },
         {
-          "id": "step-222",
+          "id": "step-231",
           "label": "Audit: hooks.approved by auto-approve, for the digest alone",
           "target": "local",
           "continueOnError": true,
@@ -1469,7 +1469,7 @@
           }
         },
         {
-          "id": "step-223",
+          "id": "step-232",
           "label": "GET /api/plugins/${PLUGIN}/hooks",
           "target": "host",
           "op": {
@@ -1487,7 +1487,7 @@
           ]
         },
         {
-          "id": "step-224",
+          "id": "step-233",
           "label": "5.0.0: roles editor and viewer (relabelled Reader), displayName alone",
           "target": "local",
           "continueOnError": true,
@@ -1509,7 +1509,7 @@
           }
         },
         {
-          "id": "step-225",
+          "id": "step-234",
           "label": "${PLUGIN} is at 5.0.0",
           "target": "local",
           "continueOnError": true,
@@ -1531,14 +1531,14 @@
           }
         }
       ],
-      "bash": "log_section \"The approval gate: identity added, a role added, attributes widened and narrowed\"\n\nINSTALL=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"${PACKAGE}@1.0.0 installed: agent-hosted, no identity block\" || true\nassert_json_field \"$INSTALL\" '\"\\(.hooks.identity.declared) \\(.hooks.approval.state) \\(.hooks.approval.digest)\"' 'false not-required null' \"…nothing to approve: no digest\" || true\nassert_json_field \"$(identity_view)\" '\"\\(.declared) \\(.readiness.reason)\"' 'null no_identity' \"GET /api/plugins/${PLUGIN}/identity: no identity declared\" || true\nassert_eq \"$(status_of \"$(call GET \"plugins/${PLUGIN}/audience\")\")\" \"400\" \"…and no audience (400 no_identity)\" || true\napi_post \"plugins/${PLUGIN}/enable\" > /dev/null\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"2.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '2.0.0' \"2.0.0, which adds identity, waits for approval\" || true\nCODES=$(json_get \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | sort | join(\",\")')\nassert_eq \"$CODES\" \"digest.unapproved,identity.changed\" \"…as digest.unapproved and identity.changed\" || true\nassert_json_field \"$UPDATE\" '\"\\(.pendingUpdate.identity.before) \\(.pendingUpdate.identity.rolesAdded | join(\",\"))\"' 'null viewer' \"The preview: no identity before, role viewer added\" || true\nassert_json_field \"$UPDATE\" '.pendingUpdate.identity.after.attributes | join(\",\")' 'displayName' \"…receiving displayName, the default\" || true\nassert_json_field_not_empty \"$UPDATE\" '.pendingUpdate.digest' \"…with a digest to approve\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '1.0.0' \"1.0.0 stays until it is approved\" || true\nAPPROVED=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved, the update to 2.0.0 succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nHOOKS=$(api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '\"\\(.hooks.identity.declared) \\(.hooks.identity.approved) \\(.hooks.approval.state)\"' 'true true approved' \"2.0.0 declares identity, approved\" || true\n\nAUTO=$(call PUT \"plugins/${PLUGIN}/hooks/auto-approve\" '{\"enabled\":true}')\nassert_json_field \"$(body_of \"$AUTO\")\" '.autoApprove' 'true' \"Auto-approve is on for ${PLUGIN}\" || true\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"3.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '3.0.0' \"3.0.0 adds a role: it waits, auto-approve on\" || true\nassert_json_field \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null' 'true' \"…identity.changed\" || true\nassert_json_field \"$UPDATE\" '\"\\(.pendingUpdate.identity.rolesAdded | join(\",\")) \\(.pendingUpdate.identity.attributesAdded | length)\"' 'editor 0' \"The preview: role editor added, no attribute\" || true\nassert_json_field \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | length > 0' 'true' \"Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join(\"; \")')\" || true\nassert_eq \"$(api_get \"audit?plugin=${PLUGIN}&action=hooks.auto-approve.withheld&limit=50\" | jq \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.version == \\\"3.0.0\\\" and ((.details.codes // []) | index(\\\"identity.changed\\\")) != null)] | length\" 2>/dev/null || echo \"-1\")\" \"1\" \"Audit: hooks.auto-approve.withheld, identity.changed\" || true\nAPPROVED=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved by the admin, 3.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))\" || true\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"4.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '4.0.0' \"4.0.0 widens the attributes: it waits, auto-approve on\" || true\nassert_json_field \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null' 'true' \"…identity.changed\" || true\nassert_json_field \"$UPDATE\" '\"\\(.pendingUpdate.identity.attributesAdded | join(\",\")) \\(.pendingUpdate.identity.rolesAdded | length)\"' 'email 0' \"The preview: email added, no role\" || true\nassert_eq \"$(api_get \"audit?plugin=${PLUGIN}&action=hooks.auto-approve.withheld&limit=50\" | jq \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.version == \\\"4.0.0\\\" and ((.details.codes // []) | index(\\\"identity.changed\\\")) != null)] | length\" 2>/dev/null || echo \"-1\")\" \"1\" \"Audit: hooks.auto-approve.withheld for 4.0.0\" || true\nAPPROVED=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved, 4.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))\" || true\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"5.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate // \"none\"' 'none' \"5.0.0 narrows the attributes and edits a label: no pending update…\" || true\nOP=$(wait_operation \"$(json_get \"$UPDATE\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"…auto-approved, the update ran at once ($(json_get \"$OP\" '.error // \"\"'))\" || true\nAPPROVAL=$(api_get \"audit?plugin=${PLUGIN}&action=hooks.approved&limit=50\" | jq -c \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.version == \\\"5.0.0\\\")] | first // {}\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$APPROVAL\" '\"\\(.actor) \\(.details.codes | join(\",\"))\"' 'auto-approve digest.unapproved' \"Audit: hooks.approved by auto-approve, for the digest alone\" || true\nHOOKS=$(api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '\"\\(.hooks.identity.block.roles | map(\"\\(.id)=\\(.label)\") | join(\",\")) \\(.hooks.identity.block.attributes | join(\",\"))\"' 'editor=Editor,viewer=Reader displayName' \"5.0.0: roles editor and viewer (relabelled Reader), displayName alone\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '5.0.0' \"${PLUGIN} is at 5.0.0\" || true\n\n# ===========================================================================\n# 5. Hosted: the agent half answers protocol 1\n# ==========================================================================="
+      "bash": "log_section \"The approval gate: identity added, a role added, attributes widened and narrowed\"\n\nINSTALL=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"${PACKAGE}@1.0.0 installed: agent-hosted, no identity block\" || true\nassert_json_field \"$INSTALL\" '\"\\(.hooks.identity.declared) \\(.hooks.approval.state) \\(.hooks.approval.digest)\"' 'false not-required null' \"…nothing to approve: no digest\" || true\nassert_json_field \"$(identity_view)\" '\"\\(.declared) \\(.readiness.reason)\"' 'null no_identity' \"GET /api/plugins/${PLUGIN}/identity: no identity declared\" || true\nassert_eq \"$(status_of \"$(call GET \"plugins/${PLUGIN}/audience\")\")\" \"400\" \"…and no audience (400 no_identity)\" || true\napi_post \"plugins/${PLUGIN}/enable\" > /dev/null\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"2.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '2.0.0' \"2.0.0, which adds identity, waits for approval\" || true\nCODES=$(json_get \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | sort | join(\",\")')\nassert_eq \"$CODES\" \"digest.unapproved,identity.changed\" \"…as digest.unapproved and identity.changed\" || true\nassert_json_field \"$UPDATE\" '\"\\(.pendingUpdate.identity.before) \\(.pendingUpdate.identity.rolesAdded | join(\",\"))\"' 'null viewer' \"The preview: no identity before, role viewer added\" || true\nassert_json_field \"$UPDATE\" '.pendingUpdate.identity.after.attributes | join(\",\")' 'displayName' \"…receiving displayName, the default\" || true\nassert_json_field_not_empty \"$UPDATE\" '.pendingUpdate.digest' \"…with a digest to approve\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '1.0.0' \"1.0.0 stays until it is approved\" || true\nAPPROVED=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved, the update to 2.0.0 succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nHOOKS=$(api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '\"\\(.hooks.identity.declared) \\(.hooks.identity.approved) \\(.hooks.approval.state)\"' 'true true approved' \"2.0.0 declares identity, approved\" || true\n\nAUTO=$(call PUT \"plugins/${PLUGIN}/hooks/auto-approve\" '{\"enabled\":true}')\nassert_json_field \"$(body_of \"$AUTO\")\" '.autoApprove' 'true' \"Auto-approve is on for ${PLUGIN}\" || true\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"3.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '3.0.0' \"3.0.0 adds a role: it waits, auto-approve on\" || true\nassert_json_field \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null' 'true' \"…identity.changed\" || true\nassert_json_field \"$UPDATE\" '\"\\(.pendingUpdate.identity.rolesAdded | join(\",\")) \\(.pendingUpdate.identity.attributesAdded | length)\"' 'editor 0' \"The preview: role editor added, no attribute\" || true\nassert_json_field \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | length > 0' 'true' \"Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join(\"; \")')\" || true\nassert_eq \"$(api_get \"audit?plugin=${PLUGIN}&action=hooks.auto-approve.withheld&limit=50\" | jq \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.version == \\\"3.0.0\\\" and ((.details.codes // []) | index(\\\"identity.changed\\\")) != null)] | length\" 2>/dev/null || echo \"-1\")\" \"1\" \"Audit: hooks.auto-approve.withheld, identity.changed\" || true\nAPPROVED=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved by the admin, 3.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))\" || true\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"4.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '4.0.0' \"4.0.0 widens the attributes: it waits, auto-approve on\" || true\nassert_json_field \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null' 'true' \"…identity.changed\" || true\nassert_json_field \"$UPDATE\" '\"\\(.pendingUpdate.identity.attributesAdded | join(\",\")) \\(.pendingUpdate.identity.rolesAdded | length)\"' 'email 0' \"The preview: email added, no role\" || true\nassert_eq \"$(api_get \"audit?plugin=${PLUGIN}&action=hooks.auto-approve.withheld&limit=50\" | jq \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.version == \\\"4.0.0\\\" and ((.details.codes // []) | index(\\\"identity.changed\\\")) != null)] | length\" 2>/dev/null || echo \"-1\")\" \"1\" \"Audit: hooks.auto-approve.withheld for 4.0.0\" || true\nAPPROVED=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved, 4.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))\" || true\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"5.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate // \"none\"' 'none' \"5.0.0 narrows the attributes and edits a label: no pending update…\" || true\nOP=$(wait_operation \"$(json_get \"$UPDATE\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"…auto-approved, the update ran at once ($(json_get \"$OP\" '.error // \"\"'))\" || true\nAPPROVAL=$(api_get \"audit?plugin=${PLUGIN}&action=hooks.approved&limit=50\" | jq -c \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.version == \\\"5.0.0\\\")] | first // {}\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$APPROVAL\" '\"\\(.actor) \\(.details.codes | join(\",\"))\"' 'auto-approve digest.unapproved' \"Audit: hooks.approved by auto-approve, for the digest alone\" || true\nHOOKS=$(api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '\"\\(.hooks.identity.block.roles | map(\"\\(.id)=\\(.label)\") | join(\",\")) \\(.hooks.identity.block.attributes | join(\",\"))\"' 'editor=Editor,viewer=Reader displayName' \"5.0.0: roles editor and viewer (relabelled Reader), displayName alone\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '5.0.0' \"${PLUGIN} is at 5.0.0\" || true\n\n# ===========================================================================\n# 5. Hosted: ready once the agent half synced to the head\n# ==========================================================================="
     },
     {
-      "id": "hosted-the-agent-half-on-the-relay-loopback-answers-protocol-1",
-      "label": "Hosted, the agent half on the relay loopback answers protocol 1",
+      "id": "hosted-the-agent-half-on-the-relay-loopback-ready-once-it-synced-to-the-head",
+      "label": "Hosted, the agent half on the relay loopback; ready once it synced to the head",
       "steps": [
         {
-          "id": "step-226",
+          "id": "step-235",
           "label": "POST /api/certs/agent",
           "target": "host",
           "op": {
@@ -1557,7 +1557,7 @@
           ]
         },
         {
-          "id": "step-227",
+          "id": "step-236",
           "label": "Agent certificate issued for ${AGENT_LABEL}",
           "target": "local",
           "continueOnError": true,
@@ -1579,7 +1579,7 @@
           }
         },
         {
-          "id": "step-228",
+          "id": "step-237",
           "label": "Extract P12_PASS",
           "target": "local",
           "op": {
@@ -1596,7 +1596,7 @@
           }
         },
         {
-          "id": "step-233",
+          "id": "step-242",
           "label": "POST /api/plugins/${PLUGIN}/hosting",
           "target": "host",
           "op": {
@@ -1615,7 +1615,7 @@
           ]
         },
         {
-          "id": "step-234",
+          "id": "step-243",
           "label": "Hosting on ${AGENT_LABEL} started",
           "target": "local",
           "op": {
@@ -1636,7 +1636,7 @@
           }
         },
         {
-          "id": "step-235",
+          "id": "step-244",
           "label": "Set HOST_OP_ID",
           "target": "local",
           "op": {
@@ -1653,7 +1653,7 @@
           ]
         },
         {
-          "id": "step-238",
+          "id": "step-247",
           "label": "GET /api/agents/me/plugin-config/${PLUGIN}",
           "target": "agent",
           "op": {
@@ -1671,7 +1671,7 @@
           ]
         },
         {
-          "id": "step-239",
+          "id": "step-248",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -1680,7 +1680,7 @@
           }
         },
         {
-          "id": "step-241",
+          "id": "step-250",
           "label": "Set PORT",
           "target": "local",
           "op": {
@@ -1697,7 +1697,7 @@
           ]
         },
         {
-          "id": "step-245",
+          "id": "step-254",
           "label": "POST /api/agents/me/plugin-config/${PLUGIN}/ack",
           "target": "agent",
           "op": {
@@ -1716,7 +1716,7 @@
           ]
         },
         {
-          "id": "step-246",
+          "id": "step-255",
           "label": "The agent fetched and acknowledged the plugin config (port ${PORT})",
           "target": "local",
           "continueOnError": true,
@@ -1738,7 +1738,7 @@
           }
         },
         {
-          "id": "step-250",
+          "id": "step-259",
           "label": "The agent half listens on 127.0.0.1:${PORT}, with its identity projection",
           "target": "local",
           "op": {
@@ -1748,7 +1748,7 @@
           }
         },
         {
-          "id": "step-251",
+          "id": "step-260",
           "label": "The agent half did not start: $(journalctl -u \"${HALF_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)",
           "target": "local",
           "op": {
@@ -1758,7 +1758,7 @@
           }
         },
         {
-          "id": "step-252",
+          "id": "step-261",
           "label": "Set HOST_OP",
           "target": "local",
           "op": {
@@ -1775,7 +1775,7 @@
           ]
         },
         {
-          "id": "step-253",
+          "id": "step-262",
           "label": "The hosting operation succeeded",
           "target": "local",
           "continueOnError": true,
@@ -1797,7 +1797,7 @@
           }
         },
         {
-          "id": "step-254",
+          "id": "step-263",
           "label": "Health is up",
           "target": "local",
           "op": {
@@ -1807,7 +1807,7 @@
           }
         },
         {
-          "id": "step-255",
+          "id": "step-264",
           "label": "Health did not reach up: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -1817,17 +1817,17 @@
           }
         },
         {
-          "id": "step-256",
-          "label": "The plugin is ready for its users: its agent half answered protocol 1",
+          "id": "step-265",
+          "label": "The plugin is ready for its users: its agent half's first complete sync ended at the head",
           "target": "local",
           "op": {
             "type": "log",
             "level": "pass",
-            "message": "The plugin is ready for its users: its agent half answered protocol 1"
+            "message": "The plugin is ready for its users: its agent half's first complete sync ended at the head"
           }
         },
         {
-          "id": "step-257",
+          "id": "step-266",
           "label": "Not ready: $(identity_view)",
           "target": "local",
           "op": {
@@ -1837,7 +1837,7 @@
           }
         },
         {
-          "id": "step-258",
+          "id": "step-267",
           "label": "Set VIEW",
           "target": "local",
           "op": {
@@ -1854,8 +1854,8 @@
           ]
         },
         {
-          "id": "step-259",
-          "label": "5.0.0 answered, and follows this directory",
+          "id": "step-268",
+          "label": "5.0.0 is ready, and its agent half follows this directory",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1871,12 +1871,34 @@
                 "kind": "expr",
                 "template": "5.0.0 ${DIRECTORY_ID}"
               },
-              "message": "5.0.0 answered, and follows this directory"
+              "message": "5.0.0 is ready, and its agent half follows this directory"
             }
           }
         },
         {
-          "id": "step-260",
+          "id": "step-269",
+          "label": "…its cursor at the head: ready means synced, not merely answering",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": "\"\\(.sync.behind) \\(.sync.cursor == .sync.head)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "0 true"
+              },
+              "message": "…its cursor at the head: ready means synced, not merely answering"
+            }
+          }
+        },
+        {
+          "id": "step-270",
           "label": "The agent half was notified with Lamaste's own caller assertion",
           "target": "local",
           "continueOnError": true,
@@ -1897,7 +1919,7 @@
           }
         },
         {
-          "id": "step-261",
+          "id": "step-271",
           "label": "Its projection follows the panel's directory",
           "target": "local",
           "continueOnError": true,
@@ -1919,14 +1941,14 @@
           }
         }
       ],
-      "bash": "log_section \"Hosted, the agent half on the relay loopback answers protocol 1\"\n\nCERT_RESPONSE=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"Agent certificate issued for ${AGENT_LABEL}\" || true\nP12_PASS=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.crt\" -clcerts -nokeys -passin pass:\"${P12_PASS}\" 2>/dev/null\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.key\" -nocerts -nodes -passin pass:\"${P12_PASS}\" 2>/dev/null\nchmod 600 \"${AGENT_CERT_DIR}/client.key\"\nunset P12_PASS\n\nHOST_RESPONSE=$(api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$HOST_RESPONSE\" '.operation.kind' 'host' \"Hosting on ${AGENT_LABEL} started\" || log_info \"The panel answered: ${HOST_RESPONSE}\"\nHOST_OP_ID=$(json_get \"$HOST_RESPONSE\" '.operation.id // empty')\n# What the agent's sync does: fetch the plugin config, acknowledge it, start\n# the agent half — here on the relay loopback, as in spec 31.\nPLUGIN_CONFIG=\"{}\"\nfor _ in $(seq 1 60); do\n  PLUGIN_CONFIG=$(agent_api_get \"agents/me/plugin-config/${PLUGIN}\" 2>/dev/null || echo '{}')\n  if [ -n \"$(json_get \"$PLUGIN_CONFIG\" '.port // empty')\" ]; then break; fi\n  sleep 1\ndone\nPORT=$(json_get \"$PLUGIN_CONFIG\" '.port // empty')\necho \"$PLUGIN_CONFIG\" | jq '. + {fetchedAt: (now | todate), acknowledged: false}' > \"${HALF_CONFIG}.tmp\"\nchmod 600 \"${HALF_CONFIG}.tmp\"\nmv \"${HALF_CONFIG}.tmp\" \"${HALF_CONFIG}\"\nACK=$(agent_api_post \"agents/me/plugin-config/${PLUGIN}/ack\" \"{\\\"issuedAt\\\":\\\"$(json_get \"$PLUGIN_CONFIG\" '.issuedAt')\\\"}\")\nassert_json_field \"$ACK\" '.acknowledged' 'true' \"The agent fetched and acknowledged the plugin config (port ${PORT})\" || true\nsystemctl stop \"${HALF_UNIT}\" > /dev/null 2>&1 || true\nsystemd-run --quiet --collect --unit \"${HALF_UNIT}\" \"$(command -v node)\" \"${WORK_DIR}/app-plugin-half.mjs\" \\\n  --config \"${HALF_CONFIG}\" --plugin \"${PLUGIN}\" --lamaste \"${LAMASTE_LIB}\" --log \"${HALF_LOG}\" --identity-db \"${HALF_DB}\"\nhalf_listens() { [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \"http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null || true)\" = \"401\" ]; }\nif wait_for 30 half_listens; then\n  log_pass \"The agent half listens on 127.0.0.1:${PORT}, with its identity projection\"\nelse\n  log_fail \"The agent half did not start: $(journalctl -u \"${HALF_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)\"\nfi\nHOST_OP=$(wait_operation \"${HOST_OP_ID}\" 180)\nassert_json_field \"$HOST_OP\" '.status' 'succeeded' \"The hosting operation succeeded\" || true\nif wait_for 60 health_up; then\n  log_pass \"Health is up\"\nelse\n  log_fail \"Health did not reach up: $(hosting_field '.hosting.health')\"\nfi\nif wait_for 90 identity_ready; then\n  log_pass \"The plugin is ready for its users: its agent half answered protocol 1\"\nelse\n  log_fail \"Not ready: $(identity_view)\"\nfi\nVIEW=$(identity_view)\nassert_json_field \"$VIEW\" '\"\\(.readiness.readyVersion) \\(.sync.halfDirectoryId)\"' \"5.0.0 ${DIRECTORY_ID}\" \"5.0.0 answered, and follows this directory\" || true\nassert_contains \"$(cat \"${HALF_LOG}\" 2>/dev/null)\" \"POST /admin/identity/notify 200 identity-call\" \"The agent half was notified with Lamaste's own caller assertion\" || true\nassert_json_field \"$(projection)\" '.state.directoryId' \"${DIRECTORY_ID}\" \"Its projection follows the panel's directory\" || true\n\n# ===========================================================================\n# 6. Entitlements\n# ==========================================================================="
+      "bash": "log_section \"Hosted, the agent half on the relay loopback; ready once it synced to the head\"\n\nCERT_RESPONSE=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"Agent certificate issued for ${AGENT_LABEL}\" || true\nP12_PASS=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.crt\" -clcerts -nokeys -passin pass:\"${P12_PASS}\" 2>/dev/null\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.key\" -nocerts -nodes -passin pass:\"${P12_PASS}\" 2>/dev/null\nchmod 600 \"${AGENT_CERT_DIR}/client.key\"\nunset P12_PASS\n\nHOST_RESPONSE=$(api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$HOST_RESPONSE\" '.operation.kind' 'host' \"Hosting on ${AGENT_LABEL} started\" || log_info \"The panel answered: ${HOST_RESPONSE}\"\nHOST_OP_ID=$(json_get \"$HOST_RESPONSE\" '.operation.id // empty')\n# What the agent's sync does: fetch the plugin config, acknowledge it, start\n# the agent half — here on the relay loopback, as in spec 31.\nPLUGIN_CONFIG=\"{}\"\nfor _ in $(seq 1 60); do\n  PLUGIN_CONFIG=$(agent_api_get \"agents/me/plugin-config/${PLUGIN}\" 2>/dev/null || echo '{}')\n  if [ -n \"$(json_get \"$PLUGIN_CONFIG\" '.port // empty')\" ]; then break; fi\n  sleep 1\ndone\nPORT=$(json_get \"$PLUGIN_CONFIG\" '.port // empty')\necho \"$PLUGIN_CONFIG\" | jq '. + {fetchedAt: (now | todate), acknowledged: false}' > \"${HALF_CONFIG}.tmp\"\nchmod 600 \"${HALF_CONFIG}.tmp\"\nmv \"${HALF_CONFIG}.tmp\" \"${HALF_CONFIG}\"\nACK=$(agent_api_post \"agents/me/plugin-config/${PLUGIN}/ack\" \"{\\\"issuedAt\\\":\\\"$(json_get \"$PLUGIN_CONFIG\" '.issuedAt')\\\"}\")\nassert_json_field \"$ACK\" '.acknowledged' 'true' \"The agent fetched and acknowledged the plugin config (port ${PORT})\" || true\nsystemctl stop \"${HALF_UNIT}\" > /dev/null 2>&1 || true\nsystemd-run --quiet --collect --unit \"${HALF_UNIT}\" \"$(command -v node)\" \"${WORK_DIR}/app-plugin-half.mjs\" \\\n  --config \"${HALF_CONFIG}\" --plugin \"${PLUGIN}\" --lamaste \"${LAMASTE_LIB}\" --log \"${HALF_LOG}\" --identity-db \"${HALF_DB}\"\nhalf_listens() { [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \"http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null || true)\" = \"401\" ]; }\nif wait_for 30 half_listens; then\n  log_pass \"The agent half listens on 127.0.0.1:${PORT}, with its identity projection\"\nelse\n  log_fail \"The agent half did not start: $(journalctl -u \"${HALF_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)\"\nfi\nHOST_OP=$(wait_operation \"${HOST_OP_ID}\" 180)\nassert_json_field \"$HOST_OP\" '.status' 'succeeded' \"The hosting operation succeeded\" || true\nif wait_for 60 health_up; then\n  log_pass \"Health is up\"\nelse\n  log_fail \"Health did not reach up: $(hosting_field '.hosting.health')\"\nfi\nif wait_for 90 identity_ready; then\n  log_pass \"The plugin is ready for its users: its agent half's first complete sync ended at the head\"\nelse\n  log_fail \"Not ready: $(identity_view)\"\nfi\nVIEW=$(identity_view)\nassert_json_field \"$VIEW\" '\"\\(.readiness.readyVersion) \\(.sync.halfDirectoryId)\"' \"5.0.0 ${DIRECTORY_ID}\" \"5.0.0 is ready, and its agent half follows this directory\" || true\nassert_json_field \"$VIEW\" '\"\\(.sync.behind) \\(.sync.cursor == .sync.head)\"' '0 true' \"…its cursor at the head: ready means synced, not merely answering\" || true\nassert_contains \"$(cat \"${HALF_LOG}\" 2>/dev/null)\" \"POST /admin/identity/notify 200 identity-call\" \"The agent half was notified with Lamaste's own caller assertion\" || true\nassert_json_field \"$(projection)\" '.state.directoryId' \"${DIRECTORY_ID}\" \"Its projection follows the panel's directory\" || true\n\n# ===========================================================================\n# 6. Entitlements\n# ==========================================================================="
     },
     {
       "id": "entitlements-declared-roles-only-a-grant-without-roles-makes-no-member",
       "label": "Entitlements: declared roles only; a grant without roles makes no member",
       "steps": [
         {
-          "id": "step-262",
+          "id": "step-272",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1943,7 +1965,7 @@
           ]
         },
         {
-          "id": "step-263",
+          "id": "step-273",
           "label": "User ${USER_A} created",
           "target": "local",
           "continueOnError": true,
@@ -1964,7 +1986,7 @@
           }
         },
         {
-          "id": "step-264",
+          "id": "step-274",
           "label": "Set ALICE_ID",
           "target": "local",
           "op": {
@@ -1981,7 +2003,7 @@
           ]
         },
         {
-          "id": "step-265",
+          "id": "step-275",
           "label": "…with a directory id (${ALICE_ID})",
           "target": "local",
           "continueOnError": true,
@@ -2002,7 +2024,7 @@
           }
         },
         {
-          "id": "step-266",
+          "id": "step-276",
           "label": "…active",
           "target": "local",
           "continueOnError": true,
@@ -2024,7 +2046,7 @@
           }
         },
         {
-          "id": "step-267",
+          "id": "step-277",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2041,7 +2063,7 @@
           ]
         },
         {
-          "id": "step-268",
+          "id": "step-278",
           "label": "A role the plugin does not declare is refused: 400",
           "target": "local",
           "continueOnError": true,
@@ -2062,7 +2084,7 @@
           }
         },
         {
-          "id": "step-269",
+          "id": "step-279",
           "label": "…unknown_roles: owner",
           "target": "local",
           "continueOnError": true,
@@ -2084,7 +2106,7 @@
           }
         },
         {
-          "id": "step-270",
+          "id": "step-280",
           "label": "No roles at all: 400",
           "target": "local",
           "continueOnError": true,
@@ -2105,7 +2127,7 @@
           }
         },
         {
-          "id": "step-271",
+          "id": "step-281",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2122,7 +2144,7 @@
           ]
         },
         {
-          "id": "step-272",
+          "id": "step-282",
           "label": "The same through the Gatekeeper proxy: 400",
           "target": "local",
           "continueOnError": true,
@@ -2143,7 +2165,7 @@
           }
         },
         {
-          "id": "step-273",
+          "id": "step-283",
           "label": "…unknown_roles",
           "target": "local",
           "continueOnError": true,
@@ -2165,7 +2187,7 @@
           }
         },
         {
-          "id": "step-274",
+          "id": "step-284",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2182,7 +2204,7 @@
           ]
         },
         {
-          "id": "step-275",
+          "id": "step-285",
           "label": "Set ROLELESS_GRANT_ID",
           "target": "local",
           "op": {
@@ -2199,7 +2221,7 @@
           ]
         },
         {
-          "id": "step-276",
+          "id": "step-286",
           "label": "A plugin grant without roles is taken by Gatekeeper",
           "target": "local",
           "continueOnError": true,
@@ -2217,7 +2239,7 @@
           }
         },
         {
-          "id": "step-277",
+          "id": "step-287",
           "label": "GET /api/plugins/${PLUGIN}/entitlements",
           "target": "host",
           "op": {
@@ -2235,7 +2257,7 @@
           ]
         },
         {
-          "id": "step-278",
+          "id": "step-288",
           "label": "…counted as roleless ($(json_get \"$ENTITLEMENTS\" '.roleless'))",
           "target": "local",
           "continueOnError": true,
@@ -2257,7 +2279,7 @@
           }
         },
         {
-          "id": "step-280",
+          "id": "step-290",
           "label": "It makes ${USER_A} no member of the audience",
           "target": "local",
           "continueOnError": true,
@@ -2278,7 +2300,7 @@
           }
         },
         {
-          "id": "step-281",
+          "id": "step-291",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2295,7 +2317,7 @@
           ]
         },
         {
-          "id": "step-282",
+          "id": "step-292",
           "label": "${USER_A} entitled as viewer",
           "target": "local",
           "continueOnError": true,
@@ -2316,7 +2338,7 @@
           }
         },
         {
-          "id": "step-283",
+          "id": "step-293",
           "label": "…named by her directory id, the role once",
           "target": "local",
           "continueOnError": true,
@@ -2338,7 +2360,7 @@
           }
         },
         {
-          "id": "step-284",
+          "id": "step-294",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2355,7 +2377,7 @@
           ]
         },
         {
-          "id": "step-285",
+          "id": "step-295",
           "label": "Group ${GROUP} created",
           "target": "local",
           "continueOnError": true,
@@ -2377,7 +2399,7 @@
           }
         },
         {
-          "id": "step-286",
+          "id": "step-296",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2394,7 +2416,7 @@
           ]
         },
         {
-          "id": "step-287",
+          "id": "step-297",
           "label": "…with ${USER_A} in it",
           "target": "local",
           "continueOnError": true,
@@ -2416,7 +2438,7 @@
           }
         },
         {
-          "id": "step-288",
+          "id": "step-298",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2433,7 +2455,7 @@
           ]
         },
         {
-          "id": "step-289",
+          "id": "step-299",
           "label": "The group entitled as editor",
           "target": "local",
           "continueOnError": true,
@@ -2454,7 +2476,7 @@
           }
         },
         {
-          "id": "step-290",
+          "id": "step-300",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -2471,7 +2493,7 @@
           ]
         },
         {
-          "id": "step-291",
+          "id": "step-301",
           "label": "The audience: ${USER_A} active, her roles and her group's (editor, viewer)",
           "target": "local",
           "continueOnError": true,
@@ -2493,7 +2515,7 @@
           }
         },
         {
-          "id": "step-292",
+          "id": "step-302",
           "label": "…her display name, never the address 5.0.0 does not declare",
           "target": "local",
           "continueOnError": true,
@@ -2515,7 +2537,7 @@
           }
         },
         {
-          "id": "step-293",
+          "id": "step-303",
           "label": "The agent half's projection holds her, with both roles",
           "target": "local",
           "op": {
@@ -2525,7 +2547,7 @@
           }
         },
         {
-          "id": "step-294",
+          "id": "step-304",
           "label": "The projection does not hold her: $(projected_user \"${ALICE_ID}\")",
           "target": "local",
           "op": {
@@ -2542,7 +2564,7 @@
       "label": "Disabled: Authelia refuses her first factor; enabled: takes it again",
       "steps": [
         {
-          "id": "step-295",
+          "id": "step-305",
           "label": "Authelia's first factor takes ${USER_A}'s password",
           "target": "local",
           "op": {
@@ -2552,7 +2574,7 @@
           }
         },
         {
-          "id": "step-296",
+          "id": "step-306",
           "label": "Authelia's first factor refused ${USER_A} before she was disabled",
           "target": "local",
           "op": {
@@ -2562,7 +2584,7 @@
           }
         },
         {
-          "id": "step-297",
+          "id": "step-307",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2579,7 +2601,7 @@
           ]
         },
         {
-          "id": "step-298",
+          "id": "step-308",
           "label": "${USER_A} disabled",
           "target": "local",
           "continueOnError": true,
@@ -2600,7 +2622,7 @@
           }
         },
         {
-          "id": "step-299",
+          "id": "step-309",
           "label": "…status disabled, her id unchanged",
           "target": "local",
           "continueOnError": true,
@@ -2622,7 +2644,7 @@
           }
         },
         {
-          "id": "step-301",
+          "id": "step-311",
           "label": "The directory: disabled",
           "target": "local",
           "continueOnError": true,
@@ -2644,7 +2666,7 @@
           }
         },
         {
-          "id": "step-303",
+          "id": "step-313",
           "label": "Authelia's first factor refuses her",
           "target": "local",
           "continueOnError": true,
@@ -2665,7 +2687,7 @@
           }
         },
         {
-          "id": "step-304",
+          "id": "step-314",
           "label": "The audience keeps her as a member, disabled",
           "target": "local",
           "continueOnError": true,
@@ -2687,7 +2709,7 @@
           }
         },
         {
-          "id": "step-305",
+          "id": "step-315",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2704,7 +2726,7 @@
           ]
         },
         {
-          "id": "step-306",
+          "id": "step-316",
           "label": "${USER_A} enabled again",
           "target": "local",
           "continueOnError": true,
@@ -2726,7 +2748,7 @@
           }
         },
         {
-          "id": "step-307",
+          "id": "step-317",
           "label": "Authelia's first factor takes her password again",
           "target": "local",
           "op": {
@@ -2736,7 +2758,7 @@
           }
         },
         {
-          "id": "step-308",
+          "id": "step-318",
           "label": "Authelia's first factor still refuses ${USER_A} once enabled",
           "target": "local",
           "op": {
@@ -2746,7 +2768,7 @@
           }
         },
         {
-          "id": "step-309",
+          "id": "step-319",
           "label": "The audience: active again",
           "target": "local",
           "continueOnError": true,
@@ -2768,7 +2790,7 @@
           }
         },
         {
-          "id": "step-310",
+          "id": "step-320",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -2786,7 +2808,7 @@
           ]
         },
         {
-          "id": "step-311",
+          "id": "step-321",
           "label": "Set LAST_ADMIN",
           "target": "local",
           "op": {
@@ -2803,7 +2825,7 @@
           ]
         },
         {
-          "id": "step-312",
+          "id": "step-322",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2820,7 +2842,7 @@
           ]
         },
         {
-          "id": "step-313",
+          "id": "step-323",
           "label": "The last enabled administrator (${LAST_ADMIN}) cannot be disabled: 400",
           "target": "local",
           "continueOnError": true,
@@ -2841,7 +2863,7 @@
           }
         },
         {
-          "id": "step-314",
+          "id": "step-324",
           "label": "…last_admin",
           "target": "local",
           "continueOnError": true,
@@ -2863,7 +2885,7 @@
           }
         },
         {
-          "id": "step-316",
+          "id": "step-326",
           "label": "Last enabled administrator: ${ADMINS} — not exactly one enabled administrator on this VM",
           "target": "local",
           "op": {
@@ -2880,7 +2902,7 @@
       "label": "Deleted: a tombstone, her grants and memberships gone",
       "steps": [
         {
-          "id": "step-317",
+          "id": "step-327",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2897,7 +2919,7 @@
           ]
         },
         {
-          "id": "step-318",
+          "id": "step-328",
           "label": "Set TUNNEL_GRANT_ID",
           "target": "local",
           "op": {
@@ -2914,7 +2936,7 @@
           ]
         },
         {
-          "id": "step-319",
+          "id": "step-329",
           "label": "${USER_A} holds a tunnel grant too",
           "target": "local",
           "continueOnError": true,
@@ -2932,7 +2954,7 @@
           }
         },
         {
-          "id": "step-321",
+          "id": "step-331",
           "label": "…and a row in Gatekeeper's access-request log",
           "target": "local",
           "continueOnError": true,
@@ -2953,7 +2975,7 @@
           }
         },
         {
-          "id": "step-322",
+          "id": "step-332",
           "label": "Gatekeeper holds three grants of hers: the tunnel, the roleless plugin grant, her role",
           "target": "local",
           "continueOnError": true,
@@ -2975,7 +2997,7 @@
           }
         },
         {
-          "id": "step-323",
+          "id": "step-333",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2992,7 +3014,7 @@
           ]
         },
         {
-          "id": "step-324",
+          "id": "step-334",
           "label": "${USER_A} deleted",
           "target": "local",
           "continueOnError": true,
@@ -3013,7 +3035,7 @@
           }
         },
         {
-          "id": "step-325",
+          "id": "step-335",
           "label": "…her id named, Gatekeeper's principal cleared",
           "target": "local",
           "continueOnError": true,
@@ -3035,7 +3057,7 @@
           }
         },
         {
-          "id": "step-326",
+          "id": "step-336",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -3052,7 +3074,7 @@
           ]
         },
         {
-          "id": "step-327",
+          "id": "step-337",
           "label": "The directory keeps a tombstone: removed, deleted",
           "target": "local",
           "continueOnError": true,
@@ -3074,7 +3096,7 @@
           }
         },
         {
-          "id": "step-328",
+          "id": "step-338",
           "label": "…with her username, name and address",
           "target": "local",
           "continueOnError": true,
@@ -3096,7 +3118,7 @@
           }
         },
         {
-          "id": "step-329",
+          "id": "step-339",
           "label": "…and when Gatekeeper dropped what it held of her",
           "target": "local",
           "continueOnError": true,
@@ -3114,7 +3136,7 @@
           }
         },
         {
-          "id": "step-331",
+          "id": "step-341",
           "label": "No Gatekeeper grant names her username",
           "target": "local",
           "continueOnError": true,
@@ -3136,7 +3158,7 @@
           }
         },
         {
-          "id": "step-332",
+          "id": "step-342",
           "label": "…the roleless plugin grant gone with the others",
           "target": "local",
           "continueOnError": true,
@@ -3157,7 +3179,7 @@
           }
         },
         {
-          "id": "step-334",
+          "id": "step-344",
           "label": "GET /api/plugins/${PLUGIN}/entitlements",
           "target": "host",
           "op": {
@@ -3175,7 +3197,7 @@
           ]
         },
         {
-          "id": "step-335",
+          "id": "step-345",
           "label": "The plugin's entitlements: the group's alone",
           "target": "local",
           "continueOnError": true,
@@ -3197,7 +3219,7 @@
           }
         },
         {
-          "id": "step-336",
+          "id": "step-346",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -3214,7 +3236,7 @@
           ]
         },
         {
-          "id": "step-337",
+          "id": "step-347",
           "label": "The audience: remove/deleted, with the last display name",
           "target": "local",
           "continueOnError": true,
@@ -3236,7 +3258,7 @@
           }
         },
         {
-          "id": "step-338",
+          "id": "step-348",
           "label": "The agent half's projection: removed, deleted, her name kept, no roles",
           "target": "local",
           "op": {
@@ -3246,7 +3268,7 @@
           }
         },
         {
-          "id": "step-339",
+          "id": "step-349",
           "label": "The projection: $(projected_user \"${ALICE_ID}\")",
           "target": "local",
           "op": {
@@ -3254,16 +3276,218 @@
             "level": "fail",
             "message": "The projection: $(projected_user \"${ALICE_ID}\")"
           }
+        },
+        {
+          "id": "step-350",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"tunnel\\\",\\\"resourceId\\\":\\\"${TUNNEL_RESOURCE}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-351",
+          "label": "A grant to ${USER_A}, which nobody holds since her deletion: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "A grant to ${USER_A}, which nobody holds since her deletion: 409"
+            }
+          }
+        },
+        {
+          "id": "step-352",
+          "label": "…username_deleted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "username_deleted"
+              },
+              "message": "…username_deleted"
+            }
+          }
+        },
+        {
+          "id": "step-353",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"gatekeeper/groups/${GROUP}/members\" \"{\\\"usernames\\\":[\\\"${USER_A}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-354",
+          "label": "Adding ${USER_A} to ${GROUP}: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Adding ${USER_A} to ${GROUP}: 409"
+            }
+          }
+        },
+        {
+          "id": "step-355",
+          "label": "…username_deleted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "username_deleted"
+              },
+              "message": "…username_deleted"
+            }
+          }
+        },
+        {
+          "id": "step-356",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-357",
+          "label": "Entitling ${USER_A} in ${PLUGIN}: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Entitling ${USER_A} in ${PLUGIN}: 409"
+            }
+          }
+        },
+        {
+          "id": "step-358",
+          "label": "…username_deleted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "username_deleted"
+              },
+              "message": "…username_deleted"
+            }
+          }
+        },
+        {
+          "id": "step-359",
+          "label": "Nothing was given: no grant names ${USER_A}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")"
+              },
+              "path": ".grants | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Nothing was given: no grant names ${USER_A}"
+            }
+          }
         }
       ],
-      "bash": "log_section \"Deleted: a tombstone, her grants and memberships gone\"\n\nRESP=$(call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"tunnel\\\",\\\"resourceId\\\":\\\"${TUNNEL_RESOURCE}\\\"}\")\nTUNNEL_GRANT_ID=$(json_get \"$(body_of \"$RESP\")\" '.grant.grantId // empty')\nassert_json_field_not_empty \"$(body_of \"$RESP\")\" '.grant.grantId' \"${USER_A} holds a tunnel grant too\" || true\nseed_access_log \"${USER_A}\"\nassert_eq \"$(gatekeeper_log_rows \"${USER_A}\")\" \"1\" \"…and a row in Gatekeeper's access-request log\" || true\nassert_json_field \"$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")\" '.grants | length' '3' \"Gatekeeper holds three grants of hers: the tunnel, the roleless plugin grant, her role\" || true\n\nRESP=$(call DELETE \"users/${USER_A}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${USER_A} deleted\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.userId) \\(.principalCleared)\"' \"${ALICE_ID} true\" \"…her id named, Gatekeeper's principal cleared\" || true\nROW=$(directory_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.status) \\(.removedReason) \\(.erasedAt)\"' 'removed deleted null' \"The directory keeps a tombstone: removed, deleted\" || true\nassert_json_field \"$ROW\" '\"\\(.username) \\(.displayName) \\(.email)\"' \"${USER_A} E2E Alice ${USER_A}@example.test\" \"…with her username, name and address\" || true\nassert_json_field_not_empty \"$ROW\" '.principalClearedAt' \"…and when Gatekeeper dropped what it held of her\" || true\nassert_json_field \"$(api_get \"users\")\" \"[.users[] | select(.username == \\\"${USER_A}\\\")] | length\" '0' \"GET /api/users no longer lists her\" || true\nassert_json_field \"$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")\" '.grants | length' '0' \"No Gatekeeper grant names her username\" || true\nassert_eq \"$(api_get_status \"gatekeeper/grants/${ROLELESS_GRANT_ID}\")\" \"404\" \"…the roleless plugin grant gone with the others\" || true\nassert_json_field \"$(api_get \"gatekeeper/groups/${GROUP}\")\" \".group.members | index(\\\"${USER_A}\\\")\" 'null' \"${GROUP} no longer has her\" || true\nENTITLEMENTS=$(api_get \"plugins/${PLUGIN}/entitlements\")\nassert_json_field \"$ENTITLEMENTS\" '[.entitlements[] | \"\\(.principalType):\\(.principalId)\"] | join(\",\")' \"group:${GROUP}\" \"The plugin's entitlements: the group's alone\" || true\nROW=$(audience_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.change.kind) \\(.change.reason) \\(.change.last.displayName) \\(.change.last.username)\"' \"remove deleted E2E Alice ${USER_A}\" \"The audience: remove/deleted, with the last display name\" || true\nif wait_for 30 projection_has \"[.users[] | select(.userId == \\\"${ALICE_ID}\\\" and .status == \\\"removed\\\" and .removedReason == \\\"deleted\\\" and .displayName == \\\"E2E Alice\\\" and .roles == [])] | length == 1\"; then\n  log_pass \"The agent half's projection: removed, deleted, her name kept, no roles\"\nelse\n  log_fail \"The projection: $(projected_user \"${ALICE_ID}\")\"\nfi\n\n# ===========================================================================\n# 9. The same username again: a new user\n# ==========================================================================="
+      "bash": "log_section \"Deleted: a tombstone, her grants and memberships gone\"\n\nRESP=$(call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"tunnel\\\",\\\"resourceId\\\":\\\"${TUNNEL_RESOURCE}\\\"}\")\nTUNNEL_GRANT_ID=$(json_get \"$(body_of \"$RESP\")\" '.grant.grantId // empty')\nassert_json_field_not_empty \"$(body_of \"$RESP\")\" '.grant.grantId' \"${USER_A} holds a tunnel grant too\" || true\nseed_access_log \"${USER_A}\"\nassert_eq \"$(gatekeeper_log_rows \"${USER_A}\")\" \"1\" \"…and a row in Gatekeeper's access-request log\" || true\nassert_json_field \"$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")\" '.grants | length' '3' \"Gatekeeper holds three grants of hers: the tunnel, the roleless plugin grant, her role\" || true\n\nRESP=$(call DELETE \"users/${USER_A}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${USER_A} deleted\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.userId) \\(.principalCleared)\"' \"${ALICE_ID} true\" \"…her id named, Gatekeeper's principal cleared\" || true\nROW=$(directory_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.status) \\(.removedReason) \\(.erasedAt)\"' 'removed deleted null' \"The directory keeps a tombstone: removed, deleted\" || true\nassert_json_field \"$ROW\" '\"\\(.username) \\(.displayName) \\(.email)\"' \"${USER_A} E2E Alice ${USER_A}@example.test\" \"…with her username, name and address\" || true\nassert_json_field_not_empty \"$ROW\" '.principalClearedAt' \"…and when Gatekeeper dropped what it held of her\" || true\nassert_json_field \"$(api_get \"users\")\" \"[.users[] | select(.username == \\\"${USER_A}\\\")] | length\" '0' \"GET /api/users no longer lists her\" || true\nassert_json_field \"$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")\" '.grants | length' '0' \"No Gatekeeper grant names her username\" || true\nassert_eq \"$(api_get_status \"gatekeeper/grants/${ROLELESS_GRANT_ID}\")\" \"404\" \"…the roleless plugin grant gone with the others\" || true\nassert_json_field \"$(api_get \"gatekeeper/groups/${GROUP}\")\" \".group.members | index(\\\"${USER_A}\\\")\" 'null' \"${GROUP} no longer has her\" || true\nENTITLEMENTS=$(api_get \"plugins/${PLUGIN}/entitlements\")\nassert_json_field \"$ENTITLEMENTS\" '[.entitlements[] | \"\\(.principalType):\\(.principalId)\"] | join(\",\")' \"group:${GROUP}\" \"The plugin's entitlements: the group's alone\" || true\nROW=$(audience_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.change.kind) \\(.change.reason) \\(.change.last.displayName) \\(.change.last.username)\"' \"remove deleted E2E Alice ${USER_A}\" \"The audience: remove/deleted, with the last display name\" || true\nif wait_for 30 projection_has \"[.users[] | select(.userId == \\\"${ALICE_ID}\\\" and .status == \\\"removed\\\" and .removedReason == \\\"deleted\\\" and .displayName == \\\"E2E Alice\\\" and .roles == [])] | length == 1\"; then\n  log_pass \"The agent half's projection: removed, deleted, her name kept, no roles\"\nelse\n  log_fail \"The projection: $(projected_user \"${ALICE_ID}\")\"\nfi\n\n# Nothing is given to the username while nobody holds it: it would pass to\n# whoever is given the username next.\nRESP=$(call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"tunnel\\\",\\\"resourceId\\\":\\\"${TUNNEL_RESOURCE}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"A grant to ${USER_A}, which nobody holds since her deletion: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'username_deleted' \"…username_deleted\" || true\nRESP=$(call POST \"gatekeeper/groups/${GROUP}/members\" \"{\\\"usernames\\\":[\\\"${USER_A}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Adding ${USER_A} to ${GROUP}: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'username_deleted' \"…username_deleted\" || true\nRESP=$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Entitling ${USER_A} in ${PLUGIN}: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'username_deleted' \"…username_deleted\" || true\nassert_json_field \"$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")\" '.grants | length' '0' \"Nothing was given: no grant names ${USER_A}\" || true\nassert_json_field \"$(api_get \"gatekeeper/groups/${GROUP}\")\" \".group.members | index(\\\"${USER_A}\\\")\" 'null' \"…and ${GROUP} does not have her\" || true\n\n# ===========================================================================\n# 9. The same username again: a new user\n# ==========================================================================="
     },
     {
       "id": "the-same-username-created-again-is-a-new-user-with-no-roles",
       "label": "The same username created again is a new user, with no roles",
       "steps": [
         {
-          "id": "step-340",
+          "id": "step-361",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3280,7 +3504,7 @@
           ]
         },
         {
-          "id": "step-341",
+          "id": "step-362",
           "label": "${USER_A} created again",
           "target": "local",
           "continueOnError": true,
@@ -3301,7 +3525,7 @@
           }
         },
         {
-          "id": "step-342",
+          "id": "step-363",
           "label": "Set NEW_ALICE_ID",
           "target": "local",
           "op": {
@@ -3318,7 +3542,7 @@
           ]
         },
         {
-          "id": "step-343",
+          "id": "step-364",
           "label": "…with a directory id",
           "target": "local",
           "continueOnError": true,
@@ -3339,7 +3563,7 @@
           }
         },
         {
-          "id": "step-344",
+          "id": "step-365",
           "label": "…a new one: not the deleted user's",
           "target": "local",
           "continueOnError": true,
@@ -3360,7 +3584,7 @@
           }
         },
         {
-          "id": "step-345",
+          "id": "step-366",
           "label": "The earlier user stays a tombstone",
           "target": "local",
           "continueOnError": true,
@@ -3382,7 +3606,7 @@
           }
         },
         {
-          "id": "step-346",
+          "id": "step-367",
           "label": "She inherits no grant",
           "target": "local",
           "continueOnError": true,
@@ -3404,7 +3628,7 @@
           }
         },
         {
-          "id": "step-348",
+          "id": "step-369",
           "label": "…so no role in ${PLUGIN}: not in its audience",
           "target": "local",
           "continueOnError": true,
@@ -3425,14 +3649,164 @@
           }
         }
       ],
-      "bash": "log_section \"The same username created again is a new user, with no roles\"\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${USER_A}\\\",\\\"displayname\\\":\\\"E2E Alice Two\\\",\\\"email\\\":\\\"${USER_A}-two@example.test\\\",\\\"password\\\":\\\"${USER_A_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"${USER_A} created again\" || true\nNEW_ALICE_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nassert_eq \"$(echo \"$NEW_ALICE_ID\" | grep -cE \"${UUID_RE}\" || true)\" \"1\" \"…with a directory id\" || true\nassert_not_eq \"${NEW_ALICE_ID}\" \"${ALICE_ID}\" \"…a new one: not the deleted user's\" || true\nassert_json_field \"$(directory_row \"${ALICE_ID}\")\" '.status' 'removed' \"The earlier user stays a tombstone\" || true\nassert_json_field \"$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")\" '.grants | length' '0' \"She inherits no grant\" || true\nassert_json_field \"$(api_get \"gatekeeper/groups/${GROUP}\")\" \".group.members | index(\\\"${USER_A}\\\")\" 'null' \"…and no group\" || true\nassert_eq \"$(audience_row \"${NEW_ALICE_ID}\")\" \"null\" \"…so no role in ${PLUGIN}: not in its audience\" || true\nseed_access_log \"${USER_A}\"\n\n# ===========================================================================\n# 10. Erase\n# ==========================================================================="
+      "bash": "log_section \"The same username created again is a new user, with no roles\"\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${USER_A}\\\",\\\"displayname\\\":\\\"E2E Alice Two\\\",\\\"email\\\":\\\"${USER_A}-two@example.test\\\",\\\"password\\\":\\\"${USER_A_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"${USER_A} created again\" || true\nNEW_ALICE_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nassert_eq \"$(echo \"$NEW_ALICE_ID\" | grep -cE \"${UUID_RE}\" || true)\" \"1\" \"…with a directory id\" || true\nassert_not_eq \"${NEW_ALICE_ID}\" \"${ALICE_ID}\" \"…a new one: not the deleted user's\" || true\nassert_json_field \"$(directory_row \"${ALICE_ID}\")\" '.status' 'removed' \"The earlier user stays a tombstone\" || true\nassert_json_field \"$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")\" '.grants | length' '0' \"She inherits no grant\" || true\nassert_json_field \"$(api_get \"gatekeeper/groups/${GROUP}\")\" \".group.members | index(\\\"${USER_A}\\\")\" 'null' \"…and no group\" || true\nassert_eq \"$(audience_row \"${NEW_ALICE_ID}\")\" \"null\" \"…so no role in ${PLUGIN}: not in its audience\" || true\nseed_access_log \"${USER_A}\"\n\n# ===========================================================================\n# 10. A username a relying party knows is never given again\n# ==========================================================================="
+    },
+    {
+      "id": "a-username-authelia-holds-an-openid-connect-identity-for-is-never-given-to-a-new-user",
+      "label": "A username Authelia holds an OpenID Connect identity for is never given to a new user",
+      "steps": [
+        {
+          "id": "step-371",
+          "label": "lamaste-priv: Authelia holds no OpenID Connect identity for ${USER_O}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(oidc_identity_held \"${USER_O}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "no"
+              },
+              "message": "lamaste-priv: Authelia holds no OpenID Connect identity for ${USER_O}"
+            }
+          }
+        },
+        {
+          "id": "step-372",
+          "label": "Authelia's CLI stored an opaque identifier for ${USER_O}, as a first sign-in to a relying party would",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia's CLI stored an opaque identifier for ${USER_O}, as a first sign-in to a relying party would"
+          }
+        },
+        {
+          "id": "step-373",
+          "label": "authelia storage user identifiers add failed: $(echo \"$OUT\" | tail -n 3)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "authelia storage user identifiers add failed: $(echo \"$OUT\" | tail -n 3)"
+          }
+        },
+        {
+          "id": "step-374",
+          "label": "lamaste-priv: now it holds one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(oidc_identity_held \"${USER_O}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "lamaste-priv: now it holds one"
+            }
+          }
+        },
+        {
+          "id": "step-375",
+          "label": "…and none for ${USER_A}, who never signed in to a relying party",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(oidc_identity_held \"${USER_A}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "no"
+              },
+              "message": "…and none for ${USER_A}, who never signed in to a relying party"
+            }
+          }
+        },
+        {
+          "id": "step-376",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${USER_O}\\\",\\\"displayname\\\":\\\"E2E OIDC\\\",\\\"email\\\":\\\"${USER_O}@example.test\\\",\\\"password\\\":\\\"E2e-$(openssl rand -hex 12)\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-377",
+          "label": "Creating a user named ${USER_O}: 409 — every relying party would take them for the earlier holder",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Creating a user named ${USER_O}: 409 — every relying party would take them for the earlier holder"
+            }
+          }
+        },
+        {
+          "id": "step-378",
+          "label": "…username_has_oidc_identity",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "username_has_oidc_identity"
+              },
+              "message": "…username_has_oidc_identity"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A username Authelia holds an OpenID Connect identity for is never given to a new user\"\n\nassert_eq \"$(oidc_identity_held \"${USER_O}\")\" \"no\" \"lamaste-priv: Authelia holds no OpenID Connect identity for ${USER_O}\" || true\nif OUT=$(add_opaque_identifier \"${USER_O}\"); then\n  log_pass \"Authelia's CLI stored an opaque identifier for ${USER_O}, as a first sign-in to a relying party would\"\nelse\n  log_fail \"authelia storage user identifiers add failed: $(echo \"$OUT\" | tail -n 3)\"\nfi\nassert_eq \"$(oidc_identity_held \"${USER_O}\")\" \"yes\" \"lamaste-priv: now it holds one\" || true\nassert_eq \"$(oidc_identity_held \"${USER_A}\")\" \"no\" \"…and none for ${USER_A}, who never signed in to a relying party\" || true\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${USER_O}\\\",\\\"displayname\\\":\\\"E2E OIDC\\\",\\\"email\\\":\\\"${USER_O}@example.test\\\",\\\"password\\\":\\\"E2e-$(openssl rand -hex 12)\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Creating a user named ${USER_O}: 409 — every relying party would take them for the earlier holder\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'username_has_oidc_identity' \"…username_has_oidc_identity\" || true\nassert_json_field \"$(api_get \"users\")\" \"[.users[] | select(.username == \\\"${USER_O}\\\")] | length\" '0' \"…GET /api/users has no such user\" || true\nassert_json_field \"$(api_get \"identity/directory\")\" \"[.users[] | select(.username == \\\"${USER_O}\\\")] | length\" '0' \"…nor does the directory\" || true\n\n# ===========================================================================\n# 11. Erase\n# ==========================================================================="
     },
     {
       "id": "erased-the-tombstone-scrubbed-the-access-request-log-purged-the-plugin-told",
       "label": "Erased: the tombstone scrubbed, the access-request log purged, the plugin told",
       "steps": [
         {
-          "id": "step-350",
+          "id": "step-381",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3449,7 +3823,7 @@
           ]
         },
         {
-          "id": "step-351",
+          "id": "step-382",
           "label": "An active user is not erased: 409",
           "target": "local",
           "continueOnError": true,
@@ -3470,7 +3844,7 @@
           }
         },
         {
-          "id": "step-352",
+          "id": "step-383",
           "label": "…user_not_removed",
           "target": "local",
           "continueOnError": true,
@@ -3492,7 +3866,7 @@
           }
         },
         {
-          "id": "step-353",
+          "id": "step-384",
           "label": "Gatekeeper's access-request log holds two rows of ${USER_A}: the deleted user's and the new one's",
           "target": "local",
           "continueOnError": true,
@@ -3513,7 +3887,105 @@
           }
         },
         {
-          "id": "step-354",
+          "id": "step-385",
+          "label": "GET /api/gatekeeper/access-log?limit=1000",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "gatekeeper/access-log?limit=1000"
+          },
+          "capture": [
+            {
+              "variable": "LOG_TOTAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-386",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "gatekeeper_direct DELETE \"/api/access-log?username=${USER_A}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-387",
+          "label": "Gatekeeper: DELETE /api/access-log narrowed by a query, as an older caller would purge one user: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Gatekeeper: DELETE /api/access-log narrowed by a query, as an older caller would purge one user: 400"
+            }
+          }
+        },
+        {
+          "id": "step-388",
+          "label": "…naming POST /api/access-log/purge, the username in the body",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(body_of \"$RESP\")\" '.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "POST /api/access-log/purge"
+              },
+              "message": "…naming POST /api/access-log/purge, the username in the body"
+            }
+          }
+        },
+        {
+          "id": "step-389",
+          "label": "…and the log is as it was: nothing cleared, ${USER_A}'s rows or anyone's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get \"gatekeeper/access-log?limit=1000\" | jq '.entries | length' 2>/dev/null || echo \"-2\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "LOG_TOTAL"
+              },
+              "message": "…and the log is as it was: nothing cleared, ${USER_A}'s rows or anyone's"
+            }
+          }
+        },
+        {
+          "id": "step-390",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3530,7 +4002,7 @@
           ]
         },
         {
-          "id": "step-355",
+          "id": "step-391",
           "label": "The deleted user erased by her id",
           "target": "local",
           "continueOnError": true,
@@ -3551,7 +4023,7 @@
           }
         },
         {
-          "id": "step-356",
+          "id": "step-392",
           "label": "…her access-request log row purged",
           "target": "local",
           "continueOnError": true,
@@ -3573,7 +4045,7 @@
           }
         },
         {
-          "id": "step-357",
+          "id": "step-393",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -3590,7 +4062,7 @@
           ]
         },
         {
-          "id": "step-358",
+          "id": "step-394",
           "label": "The tombstone is scrubbed to the bare id",
           "target": "local",
           "continueOnError": true,
@@ -3612,7 +4084,7 @@
           }
         },
         {
-          "id": "step-359",
+          "id": "step-395",
           "label": "…erased at $(json_get \"$ROW\" '.erasedAt')",
           "target": "local",
           "continueOnError": true,
@@ -3630,7 +4102,7 @@
           }
         },
         {
-          "id": "step-360",
+          "id": "step-396",
           "label": "The new ${USER_A}'s row stays: the erasure is the deleted user's",
           "target": "local",
           "continueOnError": true,
@@ -3651,7 +4123,7 @@
           }
         },
         {
-          "id": "step-361",
+          "id": "step-397",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -3668,7 +4140,7 @@
           ]
         },
         {
-          "id": "step-362",
+          "id": "step-398",
           "label": "The audience: remove/erased, nothing but the id",
           "target": "local",
           "continueOnError": true,
@@ -3690,7 +4162,7 @@
           }
         },
         {
-          "id": "step-363",
+          "id": "step-399",
           "label": "The agent half's projection scrubbed her row to the bare id",
           "target": "local",
           "op": {
@@ -3700,7 +4172,7 @@
           }
         },
         {
-          "id": "step-364",
+          "id": "step-400",
           "label": "The projection: $(projected_user \"${ALICE_ID}\")",
           "target": "local",
           "op": {
@@ -3710,7 +4182,7 @@
           }
         },
         {
-          "id": "step-367",
+          "id": "step-403",
           "label": "Its cursor passed the erasure: no plugin has it pending",
           "target": "local",
           "op": {
@@ -3720,7 +4192,7 @@
           }
         },
         {
-          "id": "step-368",
+          "id": "step-404",
           "label": "Still pending: $(directory_row \"${ALICE_ID}\" | jq -c '.pendingErasures')",
           "target": "local",
           "op": {
@@ -3730,7 +4202,7 @@
           }
         },
         {
-          "id": "step-369",
+          "id": "step-405",
           "label": "GET /api/plugins/${PLUGIN}/identity: no pending erasure",
           "target": "local",
           "continueOnError": true,
@@ -3752,7 +4224,7 @@
           }
         },
         {
-          "id": "step-370",
+          "id": "step-406",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3769,7 +4241,7 @@
           ]
         },
         {
-          "id": "step-371",
+          "id": "step-407",
           "label": "A second erasure: 409",
           "target": "local",
           "continueOnError": true,
@@ -3790,7 +4262,7 @@
           }
         },
         {
-          "id": "step-372",
+          "id": "step-408",
           "label": "…already_erased",
           "target": "local",
           "continueOnError": true,
@@ -3812,14 +4284,14 @@
           }
         }
       ],
-      "bash": "log_section \"Erased: the tombstone scrubbed, the access-request log purged, the plugin told\"\n\nRESP=$(call POST \"identity/directory/${NEW_ALICE_ID}/erase\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"An active user is not erased: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'user_not_removed' \"…user_not_removed\" || true\nassert_eq \"$(gatekeeper_log_rows \"${USER_A}\")\" \"2\" \"Gatekeeper's access-request log holds two rows of ${USER_A}: the deleted user's and the new one's\" || true\n\nRESP=$(call POST \"identity/directory/${ALICE_ID}/erase\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The deleted user erased by her id\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.userId) \\(.accessLogPurged)\"' \"${ALICE_ID} 1\" \"…her access-request log row purged\" || true\nROW=$(directory_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.displayName) \\(.email)\"' 'null null null' \"The tombstone is scrubbed to the bare id\" || true\nassert_json_field_not_empty \"$ROW\" '.erasedAt' \"…erased at $(json_get \"$ROW\" '.erasedAt')\" || true\nassert_eq \"$(gatekeeper_log_rows \"${USER_A}\")\" \"1\" \"The new ${USER_A}'s row stays: the erasure is the deleted user's\" || true\nROW=$(audience_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.change.kind) \\(.change.reason) \\(.change | has(\"last\"))\"' 'remove erased false' \"The audience: remove/erased, nothing but the id\" || true\nif wait_for 30 projection_has \"[.users[] | select(.userId == \\\"${ALICE_ID}\\\" and .username == null and .displayName == null and .email == null and .removedReason == \\\"erased\\\" and .erasedAt != null)] | length == 1\"; then\n  log_pass \"The agent half's projection scrubbed her row to the bare id\"\nelse\n  log_fail \"The projection: $(projected_user \"${ALICE_ID}\")\"\nfi\nassert_json_field \"$(projection)\" \".erased | index(\\\"${ALICE_ID}\\\") != null\" 'true' \"…and the plugin's anonymiser (onErase) ran for her\" || true\nerasure_acknowledged() { [ \"$(directory_row \"${ALICE_ID}\" | jq -r '.pendingErasures | length' 2>/dev/null)\" = \"0\" ]; }\nif wait_for 30 erasure_acknowledged; then\n  log_pass \"Its cursor passed the erasure: no plugin has it pending\"\nelse\n  log_fail \"Still pending: $(directory_row \"${ALICE_ID}\" | jq -c '.pendingErasures')\"\nfi\nassert_json_field \"$(identity_view)\" '.pendingErasures | length' '0' \"GET /api/plugins/${PLUGIN}/identity: no pending erasure\" || true\nRESP=$(call POST \"identity/directory/${ALICE_ID}/erase\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"A second erasure: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'already_erased' \"…already_erased\" || true\n\n# ===========================================================================\n# 11. The forwarder's reserved paths\n# ==========================================================================="
+      "bash": "log_section \"Erased: the tombstone scrubbed, the access-request log purged, the plugin told\"\n\nRESP=$(call POST \"identity/directory/${NEW_ALICE_ID}/erase\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"An active user is not erased: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'user_not_removed' \"…user_not_removed\" || true\nassert_eq \"$(gatekeeper_log_rows \"${USER_A}\")\" \"2\" \"Gatekeeper's access-request log holds two rows of ${USER_A}: the deleted user's and the new one's\" || true\nLOG_TOTAL=$(api_get \"gatekeeper/access-log?limit=1000\" | jq '.entries | length' 2>/dev/null || echo \"-1\")\nRESP=$(gatekeeper_direct DELETE \"/api/access-log?username=${USER_A}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"Gatekeeper: DELETE /api/access-log narrowed by a query, as an older caller would purge one user: 400\" || true\nassert_contains \"$(json_get \"$(body_of \"$RESP\")\" '.error')\" \"POST /api/access-log/purge\" \"…naming POST /api/access-log/purge, the username in the body\" || true\nassert_eq \"$(api_get \"gatekeeper/access-log?limit=1000\" | jq '.entries | length' 2>/dev/null || echo \"-2\")\" \"${LOG_TOTAL}\" \"…and the log is as it was: nothing cleared, ${USER_A}'s rows or anyone's\" || true\n\nRESP=$(call POST \"identity/directory/${ALICE_ID}/erase\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The deleted user erased by her id\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.userId) \\(.accessLogPurged)\"' \"${ALICE_ID} 1\" \"…her access-request log row purged\" || true\nROW=$(directory_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.displayName) \\(.email)\"' 'null null null' \"The tombstone is scrubbed to the bare id\" || true\nassert_json_field_not_empty \"$ROW\" '.erasedAt' \"…erased at $(json_get \"$ROW\" '.erasedAt')\" || true\nassert_eq \"$(gatekeeper_log_rows \"${USER_A}\")\" \"1\" \"The new ${USER_A}'s row stays: the erasure is the deleted user's\" || true\nROW=$(audience_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.change.kind) \\(.change.reason) \\(.change | has(\"last\"))\"' 'remove erased false' \"The audience: remove/erased, nothing but the id\" || true\nif wait_for 30 projection_has \"[.users[] | select(.userId == \\\"${ALICE_ID}\\\" and .username == null and .displayName == null and .email == null and .removedReason == \\\"erased\\\" and .erasedAt != null)] | length == 1\"; then\n  log_pass \"The agent half's projection scrubbed her row to the bare id\"\nelse\n  log_fail \"The projection: $(projected_user \"${ALICE_ID}\")\"\nfi\nassert_json_field \"$(projection)\" \".erased | index(\\\"${ALICE_ID}\\\") != null\" 'true' \"…and the plugin's anonymiser (onErase) ran for her\" || true\nerasure_acknowledged() { [ \"$(directory_row \"${ALICE_ID}\" | jq -r '.pendingErasures | length' 2>/dev/null)\" = \"0\" ]; }\nif wait_for 30 erasure_acknowledged; then\n  log_pass \"Its cursor passed the erasure: no plugin has it pending\"\nelse\n  log_fail \"Still pending: $(directory_row \"${ALICE_ID}\" | jq -c '.pendingErasures')\"\nfi\nassert_json_field \"$(identity_view)\" '.pendingErasures | length' '0' \"GET /api/plugins/${PLUGIN}/identity: no pending erasure\" || true\nRESP=$(call POST \"identity/directory/${ALICE_ID}/erase\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"A second erasure: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'already_erased' \"…already_erased\" || true\n\n# ===========================================================================\n# 12. The forwarder's reserved paths\n# ==========================================================================="
     },
     {
       "id": "the-admin-forwarder-never-reaches-admin-identity-or-admin-app",
       "label": "The admin forwarder never reaches /admin/identity* or /admin/app*",
       "steps": [
         {
-          "id": "step-373",
+          "id": "step-409",
           "label": "(an admin reaches the agent half's /admin through the forwarder)",
           "target": "local",
           "continueOnError": true,
@@ -3840,7 +4312,7 @@
           }
         },
         {
-          "id": "step-375",
+          "id": "step-411",
           "label": "POST /api/${PLUGIN}/${path}: 404",
           "target": "local",
           "continueOnError": true,
@@ -3861,7 +4333,7 @@
           }
         },
         {
-          "id": "step-376",
+          "id": "step-412",
           "label": "GET /api/${PLUGIN}/${path}: 404",
           "target": "local",
           "continueOnError": true,
@@ -3882,7 +4354,7 @@
           }
         },
         {
-          "id": "step-379",
+          "id": "step-415",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3899,7 +4371,7 @@
           ]
         },
         {
-          "id": "step-380",
+          "id": "step-416",
           "label": "GET /api/${PLUGIN}/${path} with the admin certificate: 401 — the user surface's, without a relay assertion",
           "target": "local",
           "continueOnError": true,
@@ -3920,7 +4392,7 @@
           }
         },
         {
-          "id": "step-381",
+          "id": "step-417",
           "label": "…JSON, unauthenticated",
           "target": "local",
           "continueOnError": true,
@@ -3942,7 +4414,7 @@
           }
         },
         {
-          "id": "step-383",
+          "id": "step-419",
           "label": "POST /api/${PLUGIN}/app/echo: 401",
           "target": "local",
           "continueOnError": true,
@@ -3963,7 +4435,7 @@
           }
         },
         {
-          "id": "step-384",
+          "id": "step-420",
           "label": "The agent half saw none of them",
           "target": "local",
           "continueOnError": true,
@@ -3984,14 +4456,14 @@
           }
         }
       ],
-      "bash": "log_section \"The admin forwarder never reaches /admin/identity* or /admin/app*\"\n\nassert_eq \"$(_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/${PLUGIN}/e2e/projection\" 2>/dev/null || true)\" \"200\" \"(an admin reaches the agent half's /admin through the forwarder)\" || true\nfor path in identity identity/notify identity/changes IDENTITY/changes %69dentity/notify identity.json identity-v2/notify; do\n  assert_eq \"$(_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' \"${BASE_URL}/api/${PLUGIN}/${path}?e2e=${MARK}\" 2>/dev/null || true)\" \"404\" \"POST /api/${PLUGIN}/${path}: 404\" || true\n  assert_eq \"$(_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/${PLUGIN}/${path}?e2e=${MARK}\" 2>/dev/null || true)\" \"404\" \"GET /api/${PLUGIN}/${path}: 404\" || true\ndone\nfor path in app app/ app/echo app/me; do\n  RESP=$(call GET \"${PLUGIN}/${path}?e2e=${MARK}\")\n  assert_eq \"$(status_of \"$RESP\")\" \"401\" \"GET /api/${PLUGIN}/${path} with the admin certificate: 401 — the user surface's, without a relay assertion\" || true\n  assert_json_field \"$(body_of \"$RESP\")\" '.error' 'unauthenticated' \"…JSON, unauthenticated\" || true\ndone\nassert_eq \"$(status_of \"$(call POST \"${PLUGIN}/app/echo?e2e=${MARK}\" '{}')\")\" \"401\" \"POST /api/${PLUGIN}/app/echo: 401\" || true\nassert_eq \"$(grep -c \"${MARK}\" \"${HALF_LOG}\" 2>/dev/null || true)\" \"0\" \"The agent half saw none of them\" || true\n\n# ===========================================================================\n# 12. A client's relay assertion never passes the panel vhost\n# ==========================================================================="
+      "bash": "log_section \"The admin forwarder never reaches /admin/identity* or /admin/app*\"\n\nassert_eq \"$(_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/${PLUGIN}/e2e/projection\" 2>/dev/null || true)\" \"200\" \"(an admin reaches the agent half's /admin through the forwarder)\" || true\nfor path in identity identity/notify identity/changes IDENTITY/changes %69dentity/notify identity.json identity-v2/notify; do\n  assert_eq \"$(_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' \"${BASE_URL}/api/${PLUGIN}/${path}?e2e=${MARK}\" 2>/dev/null || true)\" \"404\" \"POST /api/${PLUGIN}/${path}: 404\" || true\n  assert_eq \"$(_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/${PLUGIN}/${path}?e2e=${MARK}\" 2>/dev/null || true)\" \"404\" \"GET /api/${PLUGIN}/${path}: 404\" || true\ndone\nfor path in app app/ app/echo app/me; do\n  RESP=$(call GET \"${PLUGIN}/${path}?e2e=${MARK}\")\n  assert_eq \"$(status_of \"$RESP\")\" \"401\" \"GET /api/${PLUGIN}/${path} with the admin certificate: 401 — the user surface's, without a relay assertion\" || true\n  assert_json_field \"$(body_of \"$RESP\")\" '.error' 'unauthenticated' \"…JSON, unauthenticated\" || true\ndone\nassert_eq \"$(status_of \"$(call POST \"${PLUGIN}/app/echo?e2e=${MARK}\" '{}')\")\" \"401\" \"POST /api/${PLUGIN}/app/echo: 401\" || true\nassert_eq \"$(grep -c \"${MARK}\" \"${HALF_LOG}\" 2>/dev/null || true)\" \"0\" \"The agent half saw none of them\" || true\n\n# ===========================================================================\n# 13. A client's relay assertion never passes the panel vhost\n# ==========================================================================="
     },
     {
       "id": "the-panel-vhost-clears-a-client-sent-x-lamalibre-relay-assertion",
       "label": "The panel vhost clears a client-sent X-Lamalibre-Relay-Assertion",
       "steps": [
         {
-          "id": "step-385",
+          "id": "step-421",
           "label": "Set ASSERTION_A",
           "target": "local",
           "op": {
@@ -4008,7 +4480,7 @@
           ]
         },
         {
-          "id": "step-386",
+          "id": "step-422",
           "label": "Set ASSERTION_B",
           "target": "local",
           "op": {
@@ -4025,7 +4497,7 @@
           ]
         },
         {
-          "id": "step-387",
+          "id": "step-423",
           "label": "Two relay assertions for the panel, signed with the relay's own key",
           "target": "local",
           "continueOnError": true,
@@ -4046,7 +4518,7 @@
           }
         },
         {
-          "id": "step-388",
+          "id": "step-424",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -4063,7 +4535,7 @@
           ]
         },
         {
-          "id": "step-389",
+          "id": "step-425",
           "label": "Sent through the panel vhost with the admin certificate: 401 — nginx cleared it",
           "target": "local",
           "continueOnError": true,
@@ -4084,7 +4556,7 @@
           }
         },
         {
-          "id": "step-390",
+          "id": "step-426",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -4101,7 +4573,7 @@
           ]
         },
         {
-          "id": "step-391",
+          "id": "step-427",
           "label": "The other, sent to the panel's loopback listener: accepted — 404, no host serves the route",
           "target": "local",
           "continueOnError": true,
@@ -4122,7 +4594,7 @@
           }
         },
         {
-          "id": "step-392",
+          "id": "step-428",
           "label": "…and refused when replayed (401)",
           "target": "local",
           "continueOnError": true,
@@ -4143,7 +4615,7 @@
           }
         },
         {
-          "id": "step-393",
+          "id": "step-429",
           "label": "The first one, sent there now, is accepted too: it never reached the panel before",
           "target": "local",
           "continueOnError": true,
@@ -4168,7 +4640,7 @@
     }
   ],
   "apiHelpers": ["agent_api_get", "agent_api_post"],
-  "headerRaw": "# ============================================================================\n# 32 — Identity: the user directory, entitlements and the approval gate\n# ============================================================================\n# Slice 6 on one VM, with fixtures served by a stand-in registry on the VM\n# (helpers.sh, write_identity_fixture_plugins) and the agent half of\n# e2e-ident on the relay loopback, as spec 31 runs one\n# (write_app_plugin_half --identity-db):\n# - every user has a directory id (a UUID v4) and a status; the ids and the\n#   directory's own id are the same after the panel restarts\n# - a manifest's identity block is checked at install: on a server-hosted\n#   plugin, on an agent-hosted one without an agent block, a role id that\n#   is not one and an attribute outside displayName/email are each refused\n#   (400, naming the issue) and leave nothing\n# - the approval gate: a plugin without identity needs no approval (no\n#   digest); the update that adds identity waits for an administrator\n#   (digest.unapproved, identity.changed); with auto-approve on, a role\n#   added and an attribute widened still wait (identity.changed, the\n#   withholding audited), while narrowing the attributes with a label edit\n#   only changes the digest — auto-approved\n# - hosted and approved, the agent half answers protocol 1 and follows the\n#   panel's directory\n# - entitlements: a role the plugin does not declare is refused (400\n#   unknown_roles, through the plugin's entitlements and the Gatekeeper\n#   proxy alike); a plugin grant without roles makes no one a member; a\n#   user's roles are their own and their groups' — and the plugin receives\n#   only the attributes it declares\n# - disable and enable: Authelia's first factor refuses a disabled user and\n#   takes them back once enabled; the audience shows them disabled; the last\n#   enabled administrator cannot be disabled (400 last_admin)\n# - delete: a tombstone in the directory keeping the id, the name and the\n#   address; every Gatekeeper grant of the username and its group\n#   memberships gone; the audience and the agent half's projection say\n#   removed/deleted with the last display name\n# - the same username created again is a new user (a new id) with no roles\n# - erase: an active user is not erased (409); the tombstone is scrubbed to\n#   the bare id, Gatekeeper's access-request log loses the removed user's\n#   rows (not the later holder's), the plugin is told remove/erased, its\n#   anonymiser runs, the erasure stops pending once its cursor passed it,\n#   and a second erasure is refused\n# - the admin forwarder reserves /admin/identity* however it is spelled\n#   (404, the agent half never asked) and never reaches /admin/app*\n#   (/api/<route>/app is the user surface's: 401 without a relay assertion)\n# - a client-sent X-Lamalibre-Relay-Assertion never passes the panel vhost:\n#   a valid one sent with the admin certificate is 401, while the same\n#   assertion, sent to the panel's loopback listener directly, is accepted\n#   (404: no host serves the route) — and refused when replayed\n#\n# Users reaching an agent half through a bound host (Gatekeeper, a visitor's\n# session) and the feed through a real tunnel are three-VM specs 40 and 39.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 32 — Identity: the user directory, entitlements and the approval gate\n# ============================================================================\n# Slice 6 on one VM, with fixtures served by a stand-in registry on the VM\n# (helpers.sh, write_identity_fixture_plugins) and the agent half of\n# e2e-ident on the relay loopback, as spec 31 runs one\n# (write_app_plugin_half --identity-db):\n# - every user has a directory id (a UUID v4) and a status; the ids and the\n#   directory's own id are the same after the panel restarts\n# - a manifest's identity block is checked at install: on a server-hosted\n#   plugin, on an agent-hosted one without an agent block, a role id that\n#   is not one and an attribute outside displayName/email are each refused\n#   (400, naming the issue) and leave nothing\n# - the approval gate: a plugin without identity needs no approval (no\n#   digest); the update that adds identity waits for an administrator\n#   (digest.unapproved, identity.changed); with auto-approve on, a role\n#   added and an attribute widened still wait (identity.changed, the\n#   withholding audited), while narrowing the attributes with a label edit\n#   only changes the digest — auto-approved\n# - hosted and approved, the plugin is ready only once its agent half's\n#   first complete sync ended at the head of its audience (answering\n#   protocol 1 is not enough), and the half follows the panel's directory\n# - entitlements: a role the plugin does not declare is refused (400\n#   unknown_roles, through the plugin's entitlements and the Gatekeeper\n#   proxy alike); a plugin grant without roles makes no one a member; a\n#   user's roles are their own and their groups' — and the plugin receives\n#   only the attributes it declares\n# - disable and enable: Authelia's first factor refuses a disabled user and\n#   takes them back once enabled; the audience shows them disabled; the last\n#   enabled administrator cannot be disabled (400 last_admin)\n# - delete: a tombstone in the directory keeping the id, the name and the\n#   address; every Gatekeeper grant of the username and its group\n#   memberships gone; the audience and the agent half's projection say\n#   removed/deleted with the last display name; while nobody holds the\n#   username nothing is given to it — a grant, a group membership or an\n#   entitlement is 409 username_deleted\n# - the same username created again is a new user (a new id) with no roles\n# - a username Authelia holds an OpenID Connect opaque identifier for (added\n#   with Authelia's own CLI, as a first sign-in to a relying party leaves\n#   one) is never given to a new user: 409 username_has_oidc_identity, and\n#   lamaste-priv's check says yes for it, no for a username without one\n# - erase: an active user is not erased (409); Gatekeeper refuses a\n#   DELETE /api/access-log that carries a query (400 — a purge of one\n#   user's rows is POST /api/access-log/purge, the username in the body,\n#   and never clears everything); the tombstone is scrubbed to the bare id,\n#   Gatekeeper's access-request log loses the removed user's rows (not the\n#   later holder's), the plugin is told remove/erased, its\n#   anonymiser runs, the erasure stops pending once its cursor passed it,\n#   and a second erasure is refused\n# - the admin forwarder reserves /admin/identity* however it is spelled\n#   (404, the agent half never asked) and never reaches /admin/app*\n#   (/api/<route>/app is the user surface's: 401 without a relay assertion)\n# - a client-sent X-Lamalibre-Relay-Assertion never passes the panel vhost:\n#   a valid one sent with the admin certificate is 401, while the same\n#   assertion, sent to the panel's loopback listener directly, is accepted\n#   (404: no host serves the route) — and refused when replayed\n#\n# Users reaching an agent half through a bound host (Gatekeeper, a visitor's\n# session) and the feed through a real tunnel are three-VM specs 40 and 39;\n# an erasure reaching data an agent kept across an uninstall, and a sticky\n# erasure, are three-VM spec 41.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm openssl sqlite3 runuser systemd-run\n\nbegin_test \"32 — Identity: the user directory, entitlements and the approval gate\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

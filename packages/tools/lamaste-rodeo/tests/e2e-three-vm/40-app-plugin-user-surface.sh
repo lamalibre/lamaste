@@ -8,27 +8,40 @@
 # write_app_install_fixture … wide — its agent half answers a user caller
 # on /app/echo and /app/me) is installed from the panel, and an
 # authenticated app tunnel the agent VM carries — its own backend a static
-# server there — is bound as the plugin's user surface. From the visitor VM:
+# server there, which also echoes the Cookie headers it receives — is bound
+# as the plugin's user surface. From the visitor VM:
 #
-# 1. Binding refusals: a route no plugin holds, a public tunnel, a second
-#    tunnel for the same route (409); a bound tunnel cannot be made public.
-# 2. Bound but not approved, the host serves no user-surface location:
+# 1. Binding refusals: a route no plugin holds, the plugin before it is
+#    hosted on the agent that carries the tunnel (a user surface is served
+#    only from its hosting agent's tunnel), a public tunnel, a second tunnel
+#    for the same route (409); a bound tunnel cannot be made public.
+# 2. Not bound yet, the host serves no user-surface location:
 #    /api/<route>/app/echo goes down the tunnel to its own backend, and
 #    without a session Authelia's redirect answers, as for any page of it.
-# 3. Approved: the location is there — without a session a JSON 401, never
-#    a redirect; not hosted yet, a 503. Hosted, once its agent half answered
-#    protocol 1: a signed-in user without a role in the plugin gets 403;
-#    with the viewer role, /app/echo answers with the caller the panel
-#    signed — the directory's userId, the username, the roles — and
-#    /app/me with what the agent half's projection holds of them.
-# 4. What a browser cannot do: change something without the bound host's
-#    Origin (no Origin, a foreign one: 403; the bound one: forwarded); get
-#    the application's Set-Cookie; pass its own X-Lamalibre-Relay-Assertion,
-#    Remote-User or X-Lamalibre-Caller for the relay's; replay what
-#    Gatekeeper vouched (an assertion taken from Gatekeeper on the host VM
-#    with the visitor's cookie, sent twice to the panel's loopback
-#    listener: the second is 401); reach a path with dot segments or
-#    encoded separators (403/400 — the agent half never sees one).
+#    Signed in, the backend receives the browser's other cookies but never
+#    authelia_session, wherever it stands in the header (nginx's backend
+#    cookie map) — and no Cookie header when it was the only one.
+# 3. Approved and hosted on the tunnel's agent, and ready — its agent
+#    half's first complete sync ended at the head: bound, the location is
+#    there at once — without a session a JSON 401, never a redirect; a
+#    signed-in user without a role in the plugin gets 403; with the viewer
+#    role, /app/echo answers with the caller the panel signed — the
+#    directory's userId, the username, the roles — and /app/me with what
+#    the agent half's projection holds of them.
+# 4. What a browser cannot do: send a request another site started
+#    (Sec-Fetch-Site: cross-site, 403); change something without the bound
+#    host's Origin (no Origin, a foreign one: 403; the bound one:
+#    forwarded); read an answer as a page or from another origin (CSP
+#    sandbox, CORP same-origin, no CORS); present a second authelia_session
+#    beside its own (another host under the domain could plant one, even an
+#    empty one — Gatekeeper does not guess which Authelia would read: 401);
+#    get the application's Set-Cookie; pass its own
+#    X-Lamalibre-Relay-Assertion, Remote-User or X-Lamalibre-Caller for the
+#    relay's; replay what Gatekeeper vouched (an assertion taken from
+#    Gatekeeper on the host VM with the visitor's cookie, sent twice to the
+#    panel's loopback listener: the second is 401); reach a path with dot
+#    segments, encoded separators or an encoded % (403/400 — the agent half
+#    never sees one).
 # 5. A restricted tunnel lets through only a user with a grant for it.
 # 6. Unbound, the location is gone: the request reaches the tunnel's own
 #    backend again; bound again, it is served again.
@@ -182,6 +195,49 @@ tunnel_entry() {
   host_api_get "tunnels?limit=500" 2>/dev/null | jq -c --arg id "$1" '[.tunnels[]? | select(.id == $id)] | first // null' 2>/dev/null || echo "null"
 }
 
+# write_cookie_backend <file> — cookie-backend.py, the bound tunnel's own
+# backend: the files under a directory, and GET /e2e-cookies answering the
+# Cookie headers it was sent ({"cookies": [...]}) — what nginx passed on of
+# the browser's cookies.
+#
+#   python3 cookie-backend.py <port> <directory>
+write_cookie_backend() {
+  cat > "$1" <<'BACKEND_EOF'
+import json
+import sys
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+
+class Handler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.split("?", 1)[0] == "/e2e-cookies":
+            body = json.dumps({"cookies": self.headers.get_all("Cookie") or []}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
+
+    def log_message(self, format, *args):
+        pass
+
+
+port, directory = int(sys.argv[1]), sys.argv[2]
+ThreadingHTTPServer(("127.0.0.1", port), partial(Handler, directory=directory)).serve_forever()
+BACKEND_EOF
+}
+
+# backend_cookies <Cookie header> — what the tunnel's own backend says it was
+# sent for a request carrying that Cookie header: the status, then its JSON
+backend_cookies() {
+  local resp
+  resp=$(visit - -H "Cookie: $1" "https://${FQDN}/e2e-cookies")
+  printf '%s %s\n' "$(visit_status "$resp")" "$(visit_body "$resp" | jq -c '.cookies' 2>/dev/null || echo "-")"
+}
+
 # backend_reachable — the bound tunnel's own backend answers through chisel
 backend_reachable() {
   [ "$(host_exec "curl -s --max-time 3 http://127.0.0.1:${PORT_A}${APP}/echo || true" 2>/dev/null | tr -d '\r\n')" = "${MARKER}" ]
@@ -300,7 +356,9 @@ assert_json_field "$RESP" '.tunnel.accessMode' 'authenticated' "Tunnel ${SUB_S}:
 agent_exec "grep -q 'tunnel.${DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${DOMAIN}' >> /etc/hosts" > /dev/null 2>&1 || true
 visitor_exec "grep -q '${FQDN}' /etc/hosts || echo '${HOST_IP} ${FQDN}' >> /etc/hosts" > /dev/null 2>&1 || true
 agent_exec "systemctl stop ${BACKEND_UNIT} > /dev/null 2>&1; rm -rf ${BACKEND_DIR} && mkdir -p ${BACKEND_DIR}${APP} && printf '%s\n' ${MARKER} > ${BACKEND_DIR}${APP}/echo && chmod -R a+rX ${BACKEND_DIR}" > /dev/null 2>&1 || true
-agent_exec "systemd-run --quiet --collect --unit ${BACKEND_UNIT} --uid=nobody --gid=nogroup python3 -m http.server ${PORT_A} --bind 127.0.0.1 --directory ${BACKEND_DIR}" > /dev/null 2>&1 || true
+write_cookie_backend "${LOCAL_TMP}/cookie-backend.py"
+multipass transfer "${LOCAL_TMP}/cookie-backend.py" "${AGENT_VM}:${REMOTE_DIR}/cookie-backend.py"
+agent_exec "chmod 0644 ${REMOTE_DIR}/cookie-backend.py && systemd-run --quiet --collect --unit ${BACKEND_UNIT} --uid=nobody --gid=nogroup python3 ${REMOTE_DIR}/cookie-backend.py ${PORT_A} ${BACKEND_DIR}" > /dev/null 2>&1 || true
 nudge_sync
 if wait_for 120 backend_reachable; then
   log_pass "The tunnel's own backend answers through chisel (${APP}/echo is a file of it)"
@@ -309,18 +367,60 @@ else
 fi
 
 # ===========================================================================
-# 3. Binding, and what is refused
+# 3. Not bound yet: what is refused, and the tunnel's own backend
 # ===========================================================================
 
-log_section "Bound as the plugin's user surface; the refusals"
+log_section "Not hosted, not bound: the refusals; requests go down the tunnel"
 
 RESP=$(host_api_call PUT "tunnels/${TUNNEL_A}/user-surface" '{"route":"e2e-no-such-plugin"}')
 assert_eq "$(status_of "$RESP")" "400" "A route no installed plugin holds cannot be bound (400)" || true
 RESP=$(host_api_call PUT "tunnels/${TUNNEL_A}/user-surface" "{\"route\":\"${PLUGIN}\"}")
+assert_eq "$(status_of "$RESP")" "400" "Not hosted on the agent carrying the tunnel, the plugin cannot be bound (400)" || true
+assert_contains "$(json_get "$(body_of "$RESP")" '.error')" "not hosted" "…$(json_get "$(body_of "$RESP")" '.error')" || true
+assert_json_field "$(tunnel_entry "${TUNNEL_A}")" '.userSurface // "none"' 'none' "…the tunnel carries no binding" || true
+
+RESP=$(visit - "https://${FQDN}${APP}/echo")
+assert_eq "$(visit_status "$RESP")" "302" "Without a session: Authelia's redirect, as for any page of the tunnel" || true
+assert_contains "$(visit_headers "$RESP")" "auth.${DOMAIN}" "…to the sign-in portal" || true
+
+sign_in_both
+RESP=$(visit "${JAR_VIEWER}" "https://${FQDN}${APP}/echo")
+assert_eq "$(visit_status "$RESP")" "200" "Signed in: 200" || true
+assert_contains "$(visit_body "$RESP")" "${MARKER}" "…from the tunnel's own backend: no user-surface location" || true
+SESSION=$(session_cookie "${JAR_VIEWER}")
+assert_not_eq "${SESSION}" "" "The viewer's session cookie, read from the visitor's jar" || true
+assert_eq "$(backend_cookies "e2e40pref=dark; authelia_session=${SESSION}; e2e40lang=tr")" '200 ["e2e40pref=dark; e2e40lang=tr"]' "Signed in with two other cookies around the session: the backend gets both, never authelia_session" || true
+assert_eq "$(backend_cookies "authelia_session=${SESSION}; e2e40pref=dark")" '200 ["e2e40pref=dark"]' "…the session first: the other alone" || true
+assert_eq "$(backend_cookies "authelia_session=${SESSION}")" '200 []' "…the session alone: no Cookie header at all" || true
+SESSION=""
+
+# ===========================================================================
+# 4. Approved, hosted, ready — then bound
+# ===========================================================================
+
+log_section "Approved and hosted on the tunnel's agent; bound, its users are let through"
+
+APPROVED=$(host_api_post "plugins/${PLUGIN}/hooks/approve" "{\"digest\":\"${DIGEST}\"}")
+assert_json_field "$APPROVED" '"\(.hooks.approval.state) \(.hooks.identity.approved)"' 'approved true' "Approved: its agent half and identity block" || true
+host_api_post "plugins/${PLUGIN}/enable" '{}' > /dev/null
+OP=$(host_plugin "${PLUGIN}" 300 nudge)
+assert_json_field "$OP" '.status' 'succeeded' "Hosted on ${HOST_AGENT_LABEL} ($(json_get "$OP" '.error // .refused.error // ""'))" || true
+if wait_for 60 health_up; then
+  log_pass "The relay's health of the hosting is up"
+else
+  log_fail "Health: $(hosting_field "${PLUGIN}" '.hosting.health')"
+fi
+if wait_for 120 identity_ready "${PLUGIN}"; then
+  log_pass "Ready: its agent half's first complete sync ended at the head"
+else
+  log_fail "Not ready: $(identity_view "${PLUGIN}" | jq -c '.readiness')"
+fi
+
+RESP=$(host_api_call PUT "tunnels/${TUNNEL_A}/user-surface" "{\"route\":\"${PLUGIN}\"}")
 assert_eq "$(status_of "$RESP")" "200" "PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}" || true
 BOUND=$(body_of "$RESP")
 assert_json_field "$BOUND" '"\(.changed) \(.tunnel.userSurface.routes | join(","))"' "true ${PLUGIN}" "…bound" || true
-assert_json_field "$BOUND" '.tunnel.userSurfaceStatus[0] | "\(.route) \(.served) \(.reason)"' "${PLUGIN} false not_approved" "…not served yet: its identity is not approved" || true
+assert_json_field "$BOUND" '.tunnel.userSurfaceStatus[0] | "\(.route) \(.served) \(.reason)"' "${PLUGIN} true null" "…served at once: approved, declares identity, hosted by the tunnel's agent" || true
 assert_json_field "$(body_of "$(host_api_call PUT "tunnels/${TUNNEL_A}/user-surface" "{\"route\":\"${PLUGIN}\"}")")" '.changed' 'false' "Binding it again changes nothing" || true
 RESP=$(host_api_call PUT "tunnels/${TUNNEL_P}/user-surface" "{\"route\":\"${PLUGIN}\"}")
 assert_eq "$(status_of "$RESP")" "400" "A public tunnel cannot be bound (400)" || true
@@ -332,31 +432,6 @@ RESP=$(host_api_call PATCH "tunnels/${TUNNEL_A}" '{"accessMode":"public"}')
 assert_eq "$(status_of "$RESP")" "409" "The bound tunnel cannot be made public (409)" || true
 assert_json_field "$(tunnel_entry "${TUNNEL_A}")" '.accessMode' 'authenticated' "…it stays authenticated" || true
 
-# ===========================================================================
-# 4. Before approval: the tunnel's own backend
-# ===========================================================================
-
-log_section "Bound, not approved: requests go down the tunnel as before"
-
-RESP=$(visit - "https://${FQDN}${APP}/echo")
-assert_eq "$(visit_status "$RESP")" "302" "Without a session: Authelia's redirect, as for any page of the tunnel" || true
-assert_contains "$(visit_headers "$RESP")" "auth.${DOMAIN}" "…to the sign-in portal" || true
-
-sign_in_both
-RESP=$(visit "${JAR_VIEWER}" "https://${FQDN}${APP}/echo")
-assert_eq "$(visit_status "$RESP")" "200" "Signed in: 200" || true
-assert_contains "$(visit_body "$RESP")" "${MARKER}" "…from the tunnel's own backend: no user-surface location yet" || true
-
-# ===========================================================================
-# 5. Approved, hosted, ready
-# ===========================================================================
-
-log_section "Approved: the location is there; hosted, its users are let through"
-
-APPROVED=$(host_api_post "plugins/${PLUGIN}/hooks/approve" "{\"digest\":\"${DIGEST}\"}")
-assert_json_field "$APPROVED" '"\(.hooks.approval.state) \(.hooks.identity.approved)"' 'approved true' "Approved: its agent half and identity block" || true
-host_api_post "plugins/${PLUGIN}/enable" '{}' > /dev/null
-assert_json_field "$(tunnel_entry "${TUNNEL_A}")" '.userSurfaceStatus[0] | "\(.served) \(.reason)"' 'true null' "The bound host serves ${APP} now" || true
 if wait_for 30 anonymous_gets 401; then
   log_pass "Without a session: 401"
 else
@@ -365,22 +440,6 @@ fi
 RESP=$(visit - "https://${FQDN}${APP}/echo")
 assert_json_field "$(visit_body "$RESP")" '.error' 'unauthenticated' "…JSON (unauthenticated) for the application to act on" || true
 assert_not_contains "$(visit_headers "$RESP" | tr '[:upper:]' '[:lower:]')" "location:" "…never a redirect" || true
-RESP=$(visit "${JAR_VIEWER}" "https://${FQDN}${APP}/echo")
-assert_eq "$(visit_status "$RESP")" "503" "Signed in, the plugin not hosted yet: 503" || true
-assert_not_contains "$(visit_body "$RESP")" "${MARKER}" "…the tunnel's backend is no longer asked" || true
-
-OP=$(host_plugin "${PLUGIN}" 300 nudge)
-assert_json_field "$OP" '.status' 'succeeded' "Hosted on ${HOST_AGENT_LABEL} ($(json_get "$OP" '.error // .refused.error // ""'))" || true
-if wait_for 60 health_up; then
-  log_pass "The relay's health of the hosting is up"
-else
-  log_fail "Health: $(hosting_field "${PLUGIN}" '.hosting.health')"
-fi
-if wait_for 120 identity_ready "${PLUGIN}"; then
-  log_pass "Ready: its agent half answered protocol 1"
-else
-  log_fail "Not ready: $(identity_view "${PLUGIN}" | jq -c '.readiness')"
-fi
 if [ "$(viewer_echo_status)" = "401" ]; then
   # Something restarted Authelia since (a users.yml write would): sign in again.
   log_info "The sessions ended while the plugin was hosted — signing in again"
@@ -399,7 +458,7 @@ else
 fi
 
 # ===========================================================================
-# 6. The user surface
+# 5. The user surface
 # ===========================================================================
 
 log_section "Signed in with a role: the agent half sees the directory's user"
@@ -412,6 +471,9 @@ assert_json_field "$ECHO" '"\(.path) \(.method)"' '/app/echo GET' "…for the ag
 HEADERS=$(visit_headers "$RESP" | tr '[:upper:]' '[:lower:]')
 assert_not_contains "$HEADERS" "app-session" "The application's Set-Cookie never reaches the browser" || true
 assert_not_contains "$HEADERS" "x-lamalibre-" "…nor any X-Lamalibre-* header (the responder signature is the relay's)" || true
+assert_contains "$HEADERS" "content-security-policy: sandbox; default-src 'none'" "…every answer is a sandboxed document (CSP)" || true
+assert_contains "$HEADERS" "cross-origin-resource-policy: same-origin" "…readable by the bound host's own pages only (CORP)" || true
+assert_not_contains "$HEADERS" "access-control-" "…and no CORS header" || true
 if wait_for 60 projection_has "${PLUGIN}" "[.users[] | select(.userId == \"${VIEWER_ID}\" and .status == \"active\")] | length == 1"; then
   log_pass "The agent half's projection holds ${VIEWER} (the feed delivered the entitlement)"
 else
@@ -427,6 +489,10 @@ assert_eq "$(visit_status "$RESP")" "403" "${NOROLE}, signed in without a role i
 assert_json_field "$(visit_body "$RESP")" '.error' 'This user may not use this plugin' "…not entitled" || true
 
 log_section "What a browser cannot do"
+
+RESP=$(visit "${JAR_VIEWER}" -H 'Sec-Fetch-Site: cross-site' "https://${FQDN}${APP}/echo")
+assert_eq "$(visit_status "$RESP")" "403" "A request another site started (Sec-Fetch-Site: cross-site), even a GET: 403" || true
+assert_json_field "$(visit_body "$RESP")" '.error' 'cross-site request refused' "…cross-site request refused" || true
 
 BODY='{"note":"e2e 40"}'
 RESP=$(visit "${JAR_VIEWER}" -X POST -H 'Content-Type: application/json' -d "$BODY" "https://${FQDN}${APP}/echo")
@@ -446,6 +512,18 @@ assert_json_field "$ECHO" '.headers.marker' 'e2e-40-marker' "…while an ordinar
 
 COOKIE=$(session_cookie "${JAR_VIEWER}")
 assert_not_eq "${COOKIE}" "" "The viewer's session cookie, read from the visitor's jar" || true
+assert_eq "$(visit_status "$(visit - -H "Cookie: authelia_session=${COOKIE}" "https://${FQDN}${APP}/echo")")" "200" "That cookie alone, sent as a header: 200" || true
+for planted in twice empty-first planted-after; do
+  case "$planted" in
+    twice) HEADER="authelia_session=${COOKIE}; authelia_session=${COOKIE}" ;;
+    empty-first) HEADER="authelia_session=; authelia_session=${COOKIE}" ;;
+    *) HEADER="authelia_session=${COOKIE}; authelia_session=e2e40planted" ;;
+  esac
+  RESP=$(visit - -H "Cookie: ${HEADER}" "https://${FQDN}${APP}/echo")
+  assert_eq "$(visit_status "$RESP")" "401" "authelia_session presented twice (${planted}): 401 — Gatekeeper does not guess which one Authelia would read" || true
+  assert_json_field "$(visit_body "$RESP")" '.error' 'unauthenticated' "…unauthenticated" || true
+done
+HEADER=""
 ASSERTION=$(gatekeeper_assertion GET "${APP}/echo" "${COOKIE}")
 assert_eq "$(echo "${ASSERTION}" | grep -cE '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$' || true)" "1" "On the host VM, Gatekeeper vouches for that session (/authz/user-surface/${FQDN})" || true
 RESP=$(panel_direct GET "${APP}/echo" "${ASSERTION}")
@@ -457,10 +535,10 @@ assert_json_field "$(body_of "$RESP")" '.error' 'unauthenticated' "…unauthenti
 assert_eq "$(status_of "$(panel_direct POST "${APP}/echo" "$(gatekeeper_assertion GET "${APP}/echo" "${COOKIE}")")")" "401" "An assertion for GET does not carry a POST (401)" || true
 
 # Each resolves (by nginx's reading) under the user surface; Gatekeeper
-# checks the raw target, which may not hold a dot segment or an encoded
-# separator.
-PATHS_BEFORE=$(half_requests "${PLUGIN}" '(%2[fFeE]|%5[cC]|/\.\.?(/|$))')
-for path in "${APP}/../app/echo" "${APP}/./echo" "${APP}/%2e/echo" "${APP}/a%2fb" "${APP}/a%5cb"; do
+# checks the raw target, which may not hold a dot segment, an encoded
+# separator or an encoded % (a router decoding twice would read `..`).
+PATHS_BEFORE=$(half_requests "${PLUGIN}" '(%2[fFeE5]|%5[cC]|/\.\.?(/|$))')
+for path in "${APP}/../app/echo" "${APP}/./echo" "${APP}/%2e/echo" "${APP}/a%2fb" "${APP}/a%5cb" "${APP}/%252e%252e/echo"; do
   STATUS=$(visit_status "$(visit "${JAR_VIEWER}" --path-as-is "https://${FQDN}${path}")")
   if [ "$STATUS" = "403" ] || [ "$STATUS" = "400" ]; then
     log_pass "${path}: refused (${STATUS})"
@@ -468,10 +546,10 @@ for path in "${APP}/../app/echo" "${APP}/./echo" "${APP}/%2e/echo" "${APP}/a%2fb
     log_fail "${path}: expected 403 or 400, got ${STATUS}"
   fi
 done
-assert_eq "$(half_requests "${PLUGIN}" '(%2[fFeE]|%5[cC]|/\.\.?(/|$))')" "${PATHS_BEFORE}" "The agent half saw none of them (its request log)" || true
+assert_eq "$(half_requests "${PLUGIN}" '(%2[fFeE5]|%5[cC]|/\.\.?(/|$))')" "${PATHS_BEFORE}" "The agent half saw none of them (its request log)" || true
 
 # ===========================================================================
-# 7. A restricted tunnel
+# 6. A restricted tunnel
 # ===========================================================================
 
 log_section "Restricted: a grant for the tunnel is needed too"
@@ -503,7 +581,7 @@ else
 fi
 
 # ===========================================================================
-# 8. Unbound, bound again
+# 7. Unbound, bound again
 # ===========================================================================
 
 log_section "Unbound: the location is gone; bound again: served"
@@ -527,7 +605,7 @@ else
 fi
 
 # ===========================================================================
-# 9. Disabled
+# 8. Disabled
 # ===========================================================================
 
 log_section "Disabled: refused at once"

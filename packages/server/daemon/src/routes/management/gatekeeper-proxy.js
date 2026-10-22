@@ -13,14 +13,18 @@
  * (slice 6): a plugin grant whose context names `roles` is an entitlement,
  * checked against the roles the plugin declares and passed on sorted
  * (`checkProxiedGrant`), and every grant or group change that went through
- * recomputes the audiences. Before a grant or a group membership is given
- * to a username, whatever a removed user who held it left in Gatekeeper is
- * cleared (503 `gatekeeper_unavailable` when it cannot be): a reused
- * username inherits nothing.
+ * recomputes the audiences. A grant or a group membership is given to a
+ * username holding the users lock (`withUsernamesForGrants`), so no
+ * deletion races it: a username a removed user held and nobody holds now is
+ * refused (409 `username_deleted`), and whatever a removed user who held it
+ * left in Gatekeeper is cleared first (503 `gatekeeper_unavailable` when it
+ * cannot be) — a reused username inherits nothing. The access log is purged
+ * for one username by POST, its name in the body (never in a URL, which
+ * logs keep).
  */
 
 import { recomputeAudiences } from '../../lib/audience.js';
-import { ensurePrincipalCleared } from '../../lib/directory.js';
+import { withUsernamesForGrants } from '../../lib/directory.js';
 import { checkProxiedGrant } from '../../lib/entitlements.js';
 import { actorFromRequest } from '../../lib/actor.js';
 import { gatekeeperRequest } from '../../lib/gatekeeper-client.js';
@@ -51,33 +55,37 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
     };
   };
 
-  /**
-   * Clear what removed users left in Gatekeeper under `usernames` before
-   * something is given to those usernames; the refusal to answer, or null.
-   */
-  const clearBeforeGiving = async (request, usernames) => {
-    for (const username of usernames) {
-      try {
-        await ensurePrincipalCleared(username, {
-          actor: actorFromRequest(request),
-          logger: request.log,
-        });
-      } catch (err) {
-        if (!Number.isInteger(err.statusCode)) throw err;
-        return { statusCode: err.statusCode, data: { error: err.message, code: err.code } };
-      }
-    }
-    return null;
+  /** When Gatekeeper took a grant or group change, the plugin audiences follow it. */
+  const followAudiences = async (request, answer) => {
+    if (answer.statusCode < 400) await recomputeAudiences({ logger: request.log });
+    return answer;
   };
 
   /**
    * A grant or group change: forwarded, and when Gatekeeper took it, the
    * plugin audiences follow it before the answer goes back.
    */
-  const proxyChange = async (request, method, gatekeeperPath, body) => {
-    const answer = await proxy(method, gatekeeperPath, body);
-    if (answer.statusCode < 400) await recomputeAudiences({ logger: request.log });
-    return answer;
+  const proxyChange = async (request, method, gatekeeperPath, body) =>
+    followAudiences(request, await proxy(method, gatekeeperPath, body));
+
+  /**
+   * Give something to `usernames` in Gatekeeper: forwarded holding the
+   * users lock, after the usernames' checks (`withUsernamesForGrants`); a
+   * refusal of those checks is the answer. The audiences follow.
+   */
+  const proxyGive = async (request, usernames, method, gatekeeperPath, body) => {
+    let answer;
+    try {
+      answer = await withUsernamesForGrants(
+        usernames,
+        { actor: actorFromRequest(request), logger: request.log },
+        () => proxy(method, gatekeeperPath, body),
+      );
+    } catch (err) {
+      if (!Number.isInteger(err.statusCode)) throw err;
+      return { statusCode: err.statusCode, data: { error: err.message, code: err.code } };
+    }
+    return followAudiences(request, answer);
   };
 
   // --- Groups ---
@@ -124,10 +132,9 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
     const usernames = Array.isArray(request.body?.usernames)
       ? request.body.usernames.filter((u) => typeof u === 'string')
       : [];
-    const refused = await clearBeforeGiving(request, usernames);
-    if (refused) return reply.code(refused.statusCode).send(refused.data);
-    const { statusCode, data } = await proxyChange(
+    const { statusCode, data } = await proxyGive(
       request,
+      usernames,
       'POST',
       `/api/groups/${encodeURIComponent(name)}/members`,
       request.body,
@@ -166,11 +173,11 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
         ...(Array.isArray(err.unknown) ? { unknown: err.unknown } : {}),
       });
     }
-    if (body?.principalType === 'user' && typeof body.principalId === 'string') {
-      const refused = await clearBeforeGiving(request, [body.principalId]);
-      if (refused) return reply.code(refused.statusCode).send(refused.data);
-    }
-    const { statusCode, data } = await proxyChange(request, 'POST', '/api/grants', body);
+    const usernames =
+      body?.principalType === 'user' && typeof body.principalId === 'string'
+        ? [body.principalId]
+        : [];
+    const { statusCode, data } = await proxyGive(request, usernames, 'POST', '/api/grants', body);
     return reply.code(statusCode).send(data);
   });
 
@@ -229,10 +236,16 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
     return reply.code(statusCode).send(data);
   });
 
-  // The query narrows the purge (`username`, `before`): dropping it would
-  // clear the whole log instead.
-  fastify.delete('/gatekeeper/access-log', async (request, reply) => {
-    const { statusCode, data } = await proxy('DELETE', withQuery('/api/access-log', request));
+  // DELETE clears the whole log. One username's rows (before a time, when
+  // given) are purged by POST with `{ username, before? }` in the body — a
+  // username in a query string would be in every access log on the way.
+  fastify.delete('/gatekeeper/access-log', async (_request, reply) => {
+    const { statusCode, data } = await proxy('DELETE', '/api/access-log');
+    return reply.code(statusCode).send(data);
+  });
+
+  fastify.post('/gatekeeper/access-log/purge', async (request, reply) => {
+    const { statusCode, data } = await proxy('POST', '/api/access-log/purge', request.body);
     return reply.code(statusCode).send(data);
   });
 }

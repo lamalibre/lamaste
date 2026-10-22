@@ -29,8 +29,26 @@ const HEADER_NAME_RE = /^[a-z0-9!#$%&'*+.^_`|~-]{1,100}$/;
 // eslint-disable-next-line no-control-regex
 const HEADER_VALUE_RE = /^[^\r\n\u0000]{0,8192}$/;
 
+/**
+ * Request headers that tell some frameworks to take the request for another
+ * method or another path than the one on its request line — the method and
+ * path the caller assertion signs. The forwarder strips them from every
+ * request it sends an agent half, and no hook may set them.
+ */
+export const METHOD_URL_OVERRIDE_HEADERS: readonly string[] = Object.freeze([
+  'x-http-method-override',
+  'x-http-method',
+  'x-method-override',
+  'x-original-url',
+  'x-rewrite-url',
+  'x-forwarded-prefix',
+  'x-forwarded-uri',
+  'x-original-method',
+]);
+
 /** Headers a hook may never set or remove, on a request or a response. */
 const PROTECTED_HEADERS = new Set([
+  ...METHOD_URL_OVERRIDE_HEADERS,
   'host',
   'content-length',
   'transfer-encoding',

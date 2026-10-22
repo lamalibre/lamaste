@@ -190,11 +190,13 @@ async function removeServices() {
  * @param {Record<string, unknown> | null} _config
  */
 async function removeNginxConfigs(_config) {
-  // Remove lamaste-specific sites
+  // Remove lamaste-specific sites, then the snippets and http-level maps
+  // they use (the sites go first: a site naming a removed map fails nginx)
   const patterns = [
     '/etc/nginx/sites-enabled/lamalibre-lamaste-*',
     '/etc/nginx/sites-available/lamalibre-lamaste-*',
     '/etc/nginx/snippets/lamalibre-lamaste-*',
+    '/etc/nginx/conf.d/lamalibre-lamaste-*',
   ];
 
   for (const pattern of patterns) {

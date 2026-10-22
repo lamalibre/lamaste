@@ -129,3 +129,65 @@ test('hooks: refused unless run as root', () => {
   if (process.getuid?.() === 0) return;
   assert.throws(() => priv.main(['hooks', 'install', 'fx', 'none']), /must run as root/);
 });
+
+test('authelia-user: the action and the username are validated before anything runs', () => {
+  for (const action of ['purge-second-factors', 'has-oidc-identifier']) {
+    assert.deepEqual(priv.parseAutheliaUserArgs([action, 'ayse']), { action, username: 'ayse' });
+    assert.deepEqual(priv.parseAutheliaUserArgs([action, '0_x-1']), {
+      action,
+      username: '0_x-1',
+    });
+  }
+  for (const bad of [
+    [],
+    ['purge-second-factors'],
+    ['purge-second-factors', 'ayse', 'extra'],
+    ['delete', 'ayse'],
+    ['identifiers', 'ayse'],
+    ['purge-second-factors', '-all'],
+    ['purge-second-factors', '--config=/tmp/x'],
+    ['has-oidc-identifier', 'Ayse'],
+    ['has-oidc-identifier', 'a'],
+    ['has-oidc-identifier', 'x'.repeat(33)],
+    ['has-oidc-identifier', 'ay se'],
+    ['has-oidc-identifier', 'ayse\n'],
+    ['has-oidc-identifier', '../ayse'],
+  ]) {
+    assert.throws(() => priv.parseAutheliaUserArgs(bad), priv.UsageError, JSON.stringify(bad));
+  }
+});
+
+test('authelia-user: refused unless run as root', () => {
+  if (process.getuid?.() === 0) return;
+  assert.throws(
+    () => priv.main(['authelia-user', 'purge-second-factors', 'ayse']),
+    /must run as root/,
+  );
+});
+
+test('authelia-user has-oidc-identifier: a username in Authelia’s identifiers export, plain or quoted', () => {
+  const exported = [
+    '---',
+    '# yaml-language-server: $schema=https://www.authelia.com/schemas/v4.39/json-schema/export.identifiers.json',
+    'identifiers:',
+    '  - service: openid',
+    '    sector_id: ""',
+    '    username: ayse',
+    '    identifier: 3b1f0c2e-1d4a-4f6b-9a8c-7e5d4c3b2a10',
+    '  - username: "123"',
+    '    service: openid',
+    '    sector_id: example.com',
+    '    identifier: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d',
+    '  - service: openid',
+    "    sector_id: ''",
+    "    username: 'true'",
+    '    identifier: 0f1e2d3c-4b5a-4968-8776-655443322110',
+  ].join('\n');
+  assert.equal(priv.exportNamesUsername(exported, 'ayse'), true);
+  assert.equal(priv.exportNamesUsername(exported, '123'), true);
+  assert.equal(priv.exportNamesUsername(exported, 'true'), true);
+  for (const absent of ['ays', 'ayse2', 'openid', 'mehmet', '3b1f0c2e']) {
+    assert.equal(priv.exportNamesUsername(exported, absent), false, absent);
+  }
+  assert.equal(priv.exportNamesUsername('identifiers: []\n', 'ayse'), false);
+});

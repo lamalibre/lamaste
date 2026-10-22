@@ -39,6 +39,7 @@
 | `/etc/nginx/sites-available/lamalibre-lamaste-*`                   | nginx conf | root:root                | 0644 | Vhost configurations (the panel's are installed by `lamaste-priv`)                                                                                                                                                                                                                                                                                                   |
 | `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`                  | nginx conf | root:root                | 0644 | mTLS snippet                                                                                                                                                                                                                                                                                                                                                         |
 | `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf`           | nginx conf | root:root                | 0644 | Gatekeeper proxy_cache zone                                                                                                                                                                                                                                                                                                                                          |
+| `/etc/nginx/conf.d/lamalibre-lamaste-backend-cookie.conf`          | nginx conf | root:root                | 0644 | http-level map defining `$lamaste_backend_cookie` — the browser's cookies without `authelia_session`, which every tunnel and agent-panel vhost sends its backend; written by `create-lamaste` (install and redeploy)                                                                                                                                                 |
 | `/etc/systemd/system/lamalibre-lamaste-gatekeeper.service`         | systemd    | root:root                | 0644 | Gatekeeper systemd unit                                                                                                                                                                                                                                                                                                                                              |
 | `/etc/systemd/system/chisel.service`                               | systemd    | root:root                | 0644 | Chisel unit, written by `create-lamaste`                                                                                                                                                                                                                                                                                                                             |
 | `/etc/systemd/system/authelia.service`                             | systemd    | root:root                | 0644 | Authelia unit, written by `create-lamaste`                                                                                                                                                                                                                                                                                                                           |
@@ -465,7 +466,7 @@ Gatekeeper's SQLite store (WAL; 0600 with its `-wal` and `-shm` files; numbered 
 | `access_grants`      | `grant_id` (UUID), `principal_type` (`user` \| `group`), `principal_id`, `resource_type` (`tunnel`, `plugin`, …), `resource_id`, `context` (JSON object — `{ "roles": [...] }` on an agent-hosted plugin's entitlement), `used`, `created_at`, `used_at` — at most 1000 grants, consumed ones kept 90 days |
 | `access_request_log` | `timestamp`, `username`, `resource_type`, `resource_id`, `resource_fqdn` — denied attempts, when `accessLoggingEnabled` is on                                                                                                                                                                              |
 
-Removing a user principal (`DELETE /api/principals/user/:username`, the panel's call when a user is deleted) deletes their grants and their membership of every group in one transaction; erasing a removed user deletes their access-request log rows from before their removal.
+Removing a user principal (`POST /api/principals/user/remove { username }`, the panel's call when a user is removed or created under a username a removed user held) deletes their grants and their membership of every group in one transaction; erasing a removed user deletes their access-request log rows from before their removal.
 
 ---
 
@@ -1015,6 +1016,12 @@ proxy_cache_path /var/cache/nginx/authz levels=1:2 keys_zone=lamaste_authz:1m ma
 ```
 
 This cache zone is available for nginx-level caching of Gatekeeper authorization responses. However, the generated vhosts (`buildGatekeeperVhost()`) do not currently include `proxy_cache` directives. Authorization caching relies on the Gatekeeper's in-memory session cache (30-second default TTL).
+
+---
+
+## `/etc/nginx/conf.d/lamalibre-lamaste-backend-cookie.conf`
+
+The http-level map every location proxying to a tunnel or agent backend sets `Cookie` from (`proxy_set_header Cookie $lamaste_backend_cookie;`): the browser's cookies with every `authelia_session` pair removed, at most four, and no `Cookie` at all when one is still there. Rendered by core `renderBackendCookieMap()` from the session cookie name Authelia is configured with, written root-owned 0644 by `create-lamaste` on install and as the first step of every redeploy (`nginx -t`, previous file restored on failure), removed by `lamaste-server uninstall`. Not edited by hand: a redeploy rewrites it. See [nginx Configuration](../03-architecture/nginx-configuration.md#the-backend-cookie-map).
 
 ---
 

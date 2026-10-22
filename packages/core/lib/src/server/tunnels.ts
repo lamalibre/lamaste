@@ -12,11 +12,14 @@
  * another; {@link updateTunnel} composes the PATCH steps under one hold.
  *
  * An app tunnel may be *bound* as the user surface of agent-hosted plugins
- * ({@link bindUserSurface}): its host then serves `/api/<route>/app/*` for
- * each bound route whose plugin's installed, approved version declares
- * `identity` — the panel's {@link UserSurfaceDeps} decides which — through
- * locations in its vhost that ask Gatekeeper and pass the request to the
- * panel. Every workflow that renders the vhost carries them.
+ * ({@link bindUserSurface}) — only a tunnel the plugin's hosting agent
+ * carries: its host then serves `/api/<route>/app/*` for each bound route
+ * whose plugin's installed, approved version declares `identity` and is
+ * hosted by the agent that carries the tunnel — the panel's
+ * {@link UserSurfaceDeps} decides which — through locations in its vhost
+ * that ask Gatekeeper and pass the request to the panel. Every workflow that
+ * renders the vhost carries them, and moving a bound tunnel to another
+ * agent re-renders it.
  */
 
 import crypto from 'node:crypto';
@@ -143,17 +146,28 @@ export interface UserSurfaceVhostRoute {
 }
 
 /**
- * Which of a tunnel's bound user-surface routes its vhost serves. The
- * panel's: it knows the plugins.
+ * Which of a tunnel's bound user-surface routes its vhost serves, and which
+ * agent hosts a plugin. The panel's: it knows the plugins and their
+ * hostings.
  */
 export interface UserSurfaceDeps {
   /**
-   * Of `routes` (bound to one tunnel), the ones served — an installed
-   * plugin holds the route and its installed, approved version declares
-   * `identity` — each with its body limit, in the order given. Called under
-   * the tunnel lock: it must not take it.
+   * Of `routes` (bound to `tunnel`), the ones served — an installed plugin
+   * holds the route, its installed, approved version declares `identity`,
+   * and its hosting agent is the agent carrying `tunnel` — each with its
+   * body limit, in the order given. Called under the tunnel lock: it must
+   * not take it.
    */
-  servedRoutes(routes: readonly string[]): Promise<UserSurfaceVhostRoute[]>;
+  servedRoutes(
+    routes: readonly string[],
+    tunnel: Pick<TunnelEntry, 'agentLabel'>,
+  ): Promise<UserSurfaceVhostRoute[]>;
+  /**
+   * The agent hosting the plugin of `route` — the agent half and its
+   * internal tunnel — or null when it is not hosted. Called under the
+   * tunnel lock: it must not take it.
+   */
+  hostingAgent(route: string): Promise<string | null>;
 }
 
 /** Writes an nginx vhost config based on tunnel type and access mode. */
@@ -1064,9 +1078,16 @@ async function toggleTunnelLocked(
 export interface AssignTunnelOptions {
   id: string;
   agentLabel: string;
+  /** For a tunnel bound as a user surface, whose vhost is rewritten. */
+  domain: string;
+  email: string;
+  nginx: NginxDeps;
+  certbot: CertbotDeps;
   chisel: ChiselDeps;
   state: TunnelStateDeps;
   agents: TunnelAgentDeps;
+  /** Which bound user surfaces the re-rendered vhost serves. */
+  userSurface: UserSurfaceDeps;
   logger: TunnelLogger;
 }
 
@@ -1076,6 +1097,11 @@ export interface AssignTunnelOptions {
  * The previous owner loses the port grant in the same chisel sync that gives
  * it to the new owner. Each agent picks the change up on its next
  * `lamaste-agent sync` (at most 30 seconds on an agent that runs the timer).
+ *
+ * A tunnel bound as a user surface keeps its binding, but its host serves a
+ * route only while the new agent hosts the plugin: when that changes what
+ * the vhost serves, the vhost is rewritten first (its link state kept),
+ * then the state saved — a failed save restores the previous vhost.
  */
 export function assignTunnel(
   opts: AssignTunnelOptions,
@@ -1108,8 +1134,20 @@ async function assignTunnelLocked(
   }
 
   const previous = tunnel.agentLabel;
+  const bound = tunnelUserSurfaceRoutes(tunnel);
+  let restoreVhost: (() => Promise<void>) | null = null;
+  if (bound.length > 0 && tunnel.subdomain !== null && !isInternalTunnel(tunnel)) {
+    restoreVhost = await rewriteServedRoutes(
+      tunnel,
+      tunnel.subdomain,
+      await opts.userSurface.servedRoutes(bound, { agentLabel: previous }),
+      await opts.userSurface.servedRoutes(bound, { agentLabel }),
+      opts,
+    );
+  }
+
   tunnel.agentLabel = agentLabel;
-  await state.writeTunnels(tunnels);
+  await saveTunnelsOrRestoreVhost(state, tunnels, restoreVhost, logger);
   logger.info(
     { tunnel: tunnelLabel(tunnel), from: previous ?? null, to: agentLabel },
     'Tunnel reassigned',
@@ -1219,7 +1257,7 @@ async function reconfigureTunnelLocked(
   }
 
   const certPath = await tunnelCertPath(certbot, subdomain, tunnel, domain, email);
-  const served = bound.length > 0 ? await opts.userSurface.servedRoutes(bound) : [];
+  const served = bound.length > 0 ? await opts.userSurface.servedRoutes(bound, tunnel) : [];
   const render = (settings: typeof after): Promise<void> =>
     writeTunnelVhost(nginx, tunnel, subdomain, domain, certPath, {
       accessMode: settings.accessMode,
@@ -1238,20 +1276,7 @@ async function reconfigureTunnelLocked(
 
   tunnel.accessMode = after.accessMode;
   tunnel.maxBodySizeMb = after.maxBodySizeMb;
-  try {
-    await state.writeTunnels(tunnels);
-  } catch (err: unknown) {
-    logger.error({ err }, 'Failed to save tunnel state; restoring previous vhost');
-    try {
-      await render(before);
-    } catch (rollbackErr: unknown) {
-      logger.error({ err: rollbackErr }, 'Rollback: failed to restore previous vhost');
-    }
-    throw new TunnelError(
-      `State persistence failed: ${err instanceof Error ? err.message : String(err)}`,
-      'STATE_FAILED',
-    );
-  }
+  await saveTunnelsOrRestoreVhost(state, tunnels, () => render(before), logger);
 
   logger.info({ subdomain, from: before, to: after }, 'Tunnel reconfigured');
   return { ok: true as const, tunnel };
@@ -1297,12 +1322,15 @@ export interface UserSurfaceBindingResult {
  * and requests go down the tunnel as before — so binding a plugin whose
  * next version brings `identity` makes that update the switch-over.
  *
- * Only an enabled app tunnel an agent carries, `authenticated` or
- * `restricted`; a route on one host at most (`USER_SURFACE_CONFLICT`); at
- * most {@link USER_SURFACE_MAX_ROUTES_PER_HOST} routes on a host.
- * Idempotent. Under the tunnel lock: the vhost is rewritten first (when what
- * it serves changes), then the state saved; a failed save restores the
- * previous vhost.
+ * Only an enabled app tunnel, `authenticated` or `restricted`, carried by
+ * the agent that hosts the plugin (`INVALID_SETTING` otherwise — the host
+ * whose sessions reach the plugin's users is never another agent's); a
+ * route on one host at most (`USER_SURFACE_CONFLICT`); at most
+ * {@link USER_SURFACE_MAX_ROUTES_PER_HOST} routes on a host. Idempotent.
+ * Under the tunnel lock: the vhost is rewritten first (when what it serves
+ * changes), then the state saved; a failed save restores the previous
+ * vhost. The binding stays when the tunnel moves to another agent or the
+ * plugin to another host, but is served only while the two agree.
  */
 export function bindUserSurface(opts: BindUserSurfaceOptions): Promise<UserSurfaceBindingResult> {
   return withTunnelLock(async () => {
@@ -1321,6 +1349,19 @@ export function bindUserSurface(opts: BindUserSurfaceOptions): Promise<UserSurfa
     const current = tunnelUserSurfaceRoutes(tunnel);
     if (current.includes(route)) {
       return { ok: true as const, tunnel, changed: false };
+    }
+    const hostingAgent = await opts.userSurface.hostingAgent(route);
+    if (hostingAgent === null) {
+      throw new TunnelError(
+        `Plugin '${route}' is not hosted on an agent — host it on the agent that carries this tunnel ('${tunnel.agentLabel}') first`,
+        'INVALID_SETTING',
+      );
+    }
+    if (hostingAgent !== tunnel.agentLabel) {
+      throw new TunnelError(
+        `Plugin '${route}' is hosted on agent '${hostingAgent}', but this tunnel is carried by '${tunnel.agentLabel}' — a plugin's user surface is served only from a tunnel its hosting agent carries`,
+        'INVALID_SETTING',
+      );
     }
     const holder = tunnels.find((t) => t.id !== id && tunnelUserSurfaceRoutes(t).includes(route));
     if (holder) {
@@ -1470,6 +1511,67 @@ function sameServedRoutes(
 }
 
 /**
+ * Rewrite `tunnel`'s vhost to serve `after` when that differs from what it
+ * serves now (`before`), keeping its other settings — `NGINX_FAILED` when
+ * nginx refuses it. Returns what puts the previous vhost back, or null when
+ * nothing was rewritten. Under the held tunnel lock.
+ */
+async function rewriteServedRoutes(
+  tunnel: TunnelEntry,
+  subdomain: string,
+  before: readonly UserSurfaceVhostRoute[],
+  after: readonly UserSurfaceVhostRoute[],
+  deps: { domain: string; email: string; nginx: NginxDeps; certbot: CertbotDeps },
+): Promise<(() => Promise<void>) | null> {
+  if (sameServedRoutes(before, after)) return null;
+  const { domain, nginx } = deps;
+  const certPath = await tunnelCertPath(deps.certbot, subdomain, tunnel, domain, deps.email);
+  const render = (served: readonly UserSurfaceVhostRoute[]): Promise<void> =>
+    writeTunnelVhost(nginx, tunnel, subdomain, domain, certPath, {
+      accessMode: tunnel.accessMode ?? 'restricted',
+      maxBodySizeMb: tunnel.maxBodySizeMb,
+      userSurface: served,
+    });
+  try {
+    await render(after);
+  } catch (err: unknown) {
+    throw new TunnelError(
+      `Nginx configuration failed: ${err instanceof Error ? err.message : String(err)}`,
+      'NGINX_FAILED',
+    );
+  }
+  return () => render(before);
+}
+
+/**
+ * Save `tunnels` — `STATE_FAILED` when that fails, after putting the
+ * previous vhost back (`restoreVhost`) when one was rewritten.
+ */
+async function saveTunnelsOrRestoreVhost(
+  state: TunnelStateDeps,
+  tunnels: TunnelEntry[],
+  restoreVhost: (() => Promise<void>) | null,
+  logger: TunnelLogger,
+): Promise<void> {
+  try {
+    await state.writeTunnels(tunnels);
+  } catch (err: unknown) {
+    if (restoreVhost) {
+      logger.error({ err }, 'Failed to save tunnel state; restoring previous vhost');
+      try {
+        await restoreVhost();
+      } catch (rollbackErr: unknown) {
+        logger.error({ err: rollbackErr }, 'Rollback: failed to restore previous vhost');
+      }
+    }
+    throw new TunnelError(
+      `State persistence failed: ${err instanceof Error ? err.message : String(err)}`,
+      'STATE_FAILED',
+    );
+  }
+}
+
+/**
  * Change `tunnel`'s binding to `next` under the held lock: rewrite the vhost
  * when what it serves changes, then save the state; restore the vhost when
  * the save fails.
@@ -1481,46 +1583,15 @@ async function rebindUserSurfaceLocked(
   next: string[],
   opts: UserSurfaceBindingOptions,
 ): Promise<void> {
-  const { domain, email, nginx, certbot, state, logger } = opts;
-  const servedBefore = await opts.userSurface.servedRoutes(tunnelUserSurfaceRoutes(tunnel));
-  const servedAfter = await opts.userSurface.servedRoutes(next);
-
-  let render: ((served: readonly UserSurfaceVhostRoute[]) => Promise<void>) | null = null;
-  if (!sameServedRoutes(servedBefore, servedAfter)) {
-    const certPath = await tunnelCertPath(certbot, subdomain, tunnel, domain, email);
-    render = (served) =>
-      writeTunnelVhost(nginx, tunnel, subdomain, domain, certPath, {
-        accessMode: tunnel.accessMode ?? 'restricted',
-        maxBodySizeMb: tunnel.maxBodySizeMb,
-        userSurface: served,
-      });
-    try {
-      await render(servedAfter);
-    } catch (err: unknown) {
-      throw new TunnelError(
-        `Nginx configuration failed: ${err instanceof Error ? err.message : String(err)}`,
-        'NGINX_FAILED',
-      );
-    }
-  }
-
+  const restoreVhost = await rewriteServedRoutes(
+    tunnel,
+    subdomain,
+    await opts.userSurface.servedRoutes(tunnelUserSurfaceRoutes(tunnel), tunnel),
+    await opts.userSurface.servedRoutes(next, tunnel),
+    opts,
+  );
   setBoundRoutes(tunnel, next);
-  try {
-    await state.writeTunnels(tunnels);
-  } catch (err: unknown) {
-    logger.error({ err }, 'Failed to save tunnel state; restoring previous vhost');
-    if (render) {
-      try {
-        await render(servedBefore);
-      } catch (rollbackErr: unknown) {
-        logger.error({ err: rollbackErr }, 'Rollback: failed to restore previous vhost');
-      }
-    }
-    throw new TunnelError(
-      `State persistence failed: ${err instanceof Error ? err.message : String(err)}`,
-      'STATE_FAILED',
-    );
-  }
+  await saveTunnelsOrRestoreVhost(opts.state, tunnels, restoreVhost, opts.logger);
 }
 
 // ---------------------------------------------------------------------------
@@ -1538,6 +1609,8 @@ export interface ReleaseAgentTunnelsOptions {
 export interface ReleaseAgentTunnelsResult {
   /** App and plugin tunnels that lost their owner (now unassigned, dark). */
   readonly released: readonly string[];
+  /** Their ids — the caller re-renders the vhosts of those bound as a user surface. */
+  readonly releasedIds: readonly string[];
   /** The agent's own panel tunnel, removed with its vhost. */
   readonly removedPanels: readonly string[];
 }
@@ -1548,6 +1621,11 @@ export interface ReleaseAgentTunnelsResult {
  * administrator assigns them), and its panel tunnel — which exposes that
  * agent's own management panel — is removed. Without this, a later
  * enrollment reusing the label would silently inherit the old tunnels.
+ *
+ * A released tunnel bound as a user surface keeps its binding, but no
+ * agent carries it: it serves none of it from the state written here on
+ * (Gatekeeper and the panel refuse at once); the caller re-renders its
+ * vhost (`releasedIds`) so the locations go too.
  */
 export function releaseAgentTunnels(
   opts: ReleaseAgentTunnelsOptions,
@@ -1558,6 +1636,7 @@ export function releaseAgentTunnels(
     const panelSubdomain = `agent-${agentLabel}`;
 
     const released: string[] = [];
+    const releasedIds: string[] = [];
     const removedPanels: string[] = [];
     const next: TunnelEntry[] = [];
     for (const t of tunnels) {
@@ -1567,6 +1646,7 @@ export function releaseAgentTunnels(
       }
       if (t.agentLabel === agentLabel) {
         released.push(tunnelLabel(t));
+        releasedIds.push(t.id);
         const { agentLabel: _dropped, ...rest } = t;
         next.push(rest);
         continue;
@@ -1574,7 +1654,7 @@ export function releaseAgentTunnels(
       next.push(t);
     }
     if (released.length === 0 && removedPanels.length === 0) {
-      return { released, removedPanels };
+      return { released, releasedIds, removedPanels };
     }
 
     await state.writeTunnels(next);
@@ -1587,7 +1667,7 @@ export function releaseAgentTunnels(
     }
     await syncOrThrow(chisel);
     logger.info({ agentLabel, released, removedPanels }, 'Released the tunnels of a revoked agent');
-    return { released, removedPanels };
+    return { released, releasedIds, removedPanels };
   });
 }
 

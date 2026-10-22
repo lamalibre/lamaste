@@ -5,7 +5,12 @@ import rateLimit from '@fastify/rate-limit';
 import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { atomicWriteJSON, createRelaySigner, RELAY_SIGNING_KEY_FILE } from '@lamalibre/lamaste';
+import {
+  atomicWriteJSON,
+  createRelaySigner,
+  logRequestMetadata,
+  RELAY_SIGNING_KEY_FILE,
+} from '@lamalibre/lamaste';
 import type { RelaySigner } from '@lamalibre/lamaste';
 import {
   DEFAULT_DATA_DIR,
@@ -137,21 +142,28 @@ function watchFile(
 export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   const server = Fastify({
     logger: true,
+    // Fastify's own request lines carry every URL (a tunnel's hostname, a
+    // diagnostic query naming a user) — one metadata line per request
+    // replaces them (below). Every caller is local (nginx, the panel): no
+    // client address is logged.
+    disableRequestLogging: true,
     // Forwarding headers are honoured only from loopback: the gatekeeper
     // listens on 127.0.0.1 and its callers (nginx, the panel proxy) are
     // local. Trust by address, not hop count — a hop count cannot tell a
-    // proxy from a direct client spoofing X-Forwarded-*.
+    // proxy from a direct client spoofing X-Forwarded-*. nginx sets
+    // X-Forwarded-For to `$remote_addr` on every authorization subrequest,
+    // so there `request.ip` is the browser's address as nginx accepted it.
     trustProxy: '127.0.0.1',
   });
 
-  // Global rate limit. The gatekeeper binds to 127.0.0.1 and is reached
-  // exclusively by nginx auth_request and the panel proxy — both are
-  // local services. Because every caller arrives from 127.0.0.1, a
-  // per-IP limiter would collapse them into a single bucket and either
-  // be useless or punish legitimate nginx traffic. We collapse the key
-  // explicitly to one shared bucket and set a high ceiling; the hot
-  // authorization routes then override this with their own ceiling that
-  // makes the "nginx-only" assumption explicit.
+  // Method, route pattern, status and duration: never a URL or an address.
+  logRequestMetadata(server);
+
+  // Global rate limit, for the management API and health: reached only by
+  // the panel proxy and local tooling, every caller from 127.0.0.1 — one
+  // shared bucket with a high ceiling. The authorization routes nginx calls
+  // on every protected request override it with buckets per client address
+  // and tunnel host (`authzRoutes`), so one client cannot starve the rest.
   await server.register(rateLimit, {
     max: 1000,
     timeWindow: '1 minute',

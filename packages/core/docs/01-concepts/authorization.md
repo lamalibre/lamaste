@@ -116,23 +116,29 @@ The request flow for a restricted tunnel:
    (127.0.0.1:9294/authz/tunnel/staging.example.com) with
    - X-Original-URL https://staging.example.com<request URI> and
      Host staging.example.com — the vhost's own hostname, from its configuration
-   - X-Original-Method and the visitor's Cookie header
+   - X-Original-Method, X-Forwarded-For (the visitor's address, as nginx
+     accepted it) and the visitor's Cookie header
 3. Gatekeeper takes the tunnel named in the path (X-Original-URL and Host
-   must agree) and validates the Authelia session cookie with Authelia for
-   that URL:
+   must agree), takes the visitor's authelia_session cookie — refusing a
+   request with more than one — and validates it with Authelia for that
+   URL, sending Authelia that cookie alone:
    a. No valid session -> 401 -> nginx redirects to
       auth.example.com/?rd=https://staging.example.com<request URI>
-   b. Valid session -> the user (cached, see Session caching)
+   b. Valid session -> the user (cached per session and host, see Session caching)
 4. Gatekeeper checks for a matching grant:
    a. Grant exists (user or group match) -> 200 with Remote-User, Remote-Groups,
       Remote-Name and Remote-Email
-   b. No grant -> 403 with access request HTML page
-5. On 200 nginx proxies to the tunnel backend with those identity headers
+   b. No grant -> 403 with access request HTML page (logged with the tunnel
+      and the reason, never the username)
+5. On 200 nginx proxies to the tunnel backend with those identity headers —
+   and the visitor's cookies without authelia_session
 ```
+
+The backend never receives Authelia's session cookie: nginx sets its `Cookie` from a map that removes every `authelia_session` pair, or sends none when it cannot ([nginx Configuration](../03-architecture/nginx-configuration.md#the-backend-cookie-map)). Gatekeeper's authorization routes are rate-limited per visitor address and tunnel host (6000 a minute each): nginx is their only caller and sets `X-Forwarded-For` to the visitor's address, which Gatekeeper trusts from `127.0.0.1` only, so one visitor exhausting its bucket leaves every other visitor theirs.
 
 Public tunnel vhosts have no `auth_request`. For authenticated tunnels Gatekeeper answers 200 for any valid session without looking for a grant.
 
-A tunnel bound as an agent-hosted plugin's user surface has a second subrequest for `/api/<route>/app*` — `/authz/user-surface/<fqdn>` — where Gatekeeper checks the session (and, on a restricted tunnel, the grant) as above, then answers with a single-use relay assertion for the panel instead of `Remote-*` headers, and a missing session with a JSON 401 instead of a login redirect ([Gatekeeper API](../04-api-reference/gatekeeper.md#user-surface-authorization-nginx-auth-request)).
+A tunnel bound as an agent-hosted plugin's user surface has a second subrequest for `/api/<route>/app*` — `/authz/user-surface/<fqdn>` — where Gatekeeper checks that the tunnel's agent hosts the plugin (it carries the plugin's internal tunnel, as `tunnels.json` records it), the session (and, on a restricted tunnel, the grant) as above, then answers with a single-use relay assertion for the panel instead of `Remote-*` headers, and a missing session with a JSON 401 instead of a login redirect ([Gatekeeper API](../04-api-reference/gatekeeper.md#user-surface-authorization-nginx-auth-request)).
 
 ### Which tunnel is authorized
 
@@ -171,7 +177,7 @@ Authorization checks happen on every request to a restricted tunnel. A page load
 
 Gatekeeper uses an in-memory session cache to solve this:
 
-**Gatekeeper in-memory session cache.** When Gatekeeper receives a request, it extracts the user identity from the Authelia session. Validated sessions are cached in memory for 30 seconds (configurable via `sessionCacheTtlMs` in `gatekeeper.json`), keyed by the session cookie value. This means repeated Gatekeeper calls for the same session do not re-validate against Authelia.
+**Gatekeeper in-memory session cache.** When Gatekeeper receives a request, it extracts the user identity from the Authelia session. Validated sessions are cached in memory for 30 seconds (configurable via `sessionCacheTtlMs` in `gatekeeper.json`), keyed by the session cookie value **and the tunnel host** (an HMAC under a per-process key). Repeated Gatekeeper calls for the same session on the same host do not re-validate against Authelia; on another host they do — Authelia decides per host (a static site's or plugin tunnel's rules name users), so a session it accepted for one host proves nothing on another.
 
 > **Note:** The installer also writes an nginx `proxy_cache_path` snippet (`/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf`) for optional nginx-level caching, but the generated vhosts do not currently include `proxy_cache` directives. All authorization caching relies on the Gatekeeper's in-memory session cache.
 
@@ -244,9 +250,9 @@ The HTML is self-contained (inline CSS, no external dependencies) so it renders 
 
 ### Cache TTLs
 
-| Layer                        | TTL | Key                  |
-| ---------------------------- | --- | -------------------- |
-| Gatekeeper in-memory session | 30s | Session cookie value |
+| Layer                        | TTL | Key                                  |
+| ---------------------------- | --- | ------------------------------------ |
+| Gatekeeper in-memory session | 30s | Session cookie value and tunnel host |
 
 ### Group comparison
 

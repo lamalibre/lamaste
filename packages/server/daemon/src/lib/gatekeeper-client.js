@@ -286,16 +286,14 @@ export function revokeGatekeeperGrant(grantId) {
 /**
  * Remove everything Gatekeeper holds under `username` — every grant naming
  * the user (any resource type) and its membership of every group — in one
- * transaction. Idempotent.
+ * transaction. Idempotent. The username goes in the body (a URL is what
+ * request logs keep).
  *
  * @param {string} username
  * @returns {Promise<{ ok: true, grantsRemoved: number, groupsLeft: number } | Extract<GatekeeperResult, { ok: false }>>}
  */
 export async function removeUserPrincipal(username) {
-  const result = await gatekeeperRequest(
-    'DELETE',
-    `/api/principals/user/${encodeURIComponent(username)}`,
-  );
+  const result = await gatekeeperRequest('POST', '/api/principals/user/remove', { username });
   if (!result.ok) return result;
   const data = isRecord(result.data) ? result.data : {};
   if (
@@ -324,14 +322,17 @@ export async function bustGatekeeperSessions() {
 /**
  * Delete the access-request log rows of `username` (logged before
  * `before`, an ISO 8601 time, when given) — part of erasing a removed user.
+ * The username goes in the body (a URL is what request logs keep).
  *
  * @param {string} username
  * @param {{ before?: string }} [opts]
  * @returns {Promise<{ ok: true, removed: number } | Extract<GatekeeperResult, { ok: false }>>}
  */
 export async function purgeAccessLogForUser(username, { before } = {}) {
-  const qs = new URLSearchParams({ username, ...(before ? { before } : {}) }).toString();
-  const result = await gatekeeperRequest('DELETE', `/api/access-log?${qs}`);
+  const result = await gatekeeperRequest('POST', '/api/access-log/purge', {
+    username,
+    ...(before ? { before } : {}),
+  });
   if (!result.ok) return result;
   const removed = isRecord(result.data) ? result.data.removed : undefined;
   if (!Number.isSafeInteger(removed) || removed < 0) return malformed('the purge');

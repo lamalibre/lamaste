@@ -113,8 +113,8 @@ test('the tunnel the vhost names is the one authorized', async () => {
   assert.equal(denied.headers['remote-user'], undefined);
   assert.match(denied.body, /other\.example\.com/);
 
-  // Authelia is asked about the URL of the tunnel named (once per session).
-  sessions.clear();
+  // Authelia is asked about the URL of the tunnel named — once per session
+  // and host: a session it accepted for one tunnel is not taken for another.
   await check('other.example.com');
   assert.deepEqual(askedAuthelia, [
     'https://granted.example.com/reports?year=2026',

@@ -176,6 +176,10 @@ test('readiness and user-surface status, in words', () => {
     userSurfaceStatusText({ route: 'fx', served: false, reason: 'no_identity' }),
     /requests go down the tunnel/,
   );
+  assert.match(
+    userSurfaceStatusText({ route: 'fx', served: false, reason: 'not_hosting_agent' }),
+    /does not host the plugin/,
+  );
 });
 
 test('audience rows: members, users who left, erased users', () => {
@@ -314,6 +318,21 @@ test('users directory: a tombstone, a pending cleanup, a pending erasure', () =>
   );
   assert.equal(erased.who, 'erased');
   assert.equal(erased.pending, 'erasure not yet acknowledged by market-indicators');
+  // A plugin the feed does not reach now, whose data an agent keeps, is marked.
+  const inactive = removedUserText(
+    {
+      ...base,
+      username: null,
+      erasedAt: '2026-10-22T11:30:00.000Z',
+      pendingErasures: ['market-indicators', 'old-plugin'],
+      pendingErasuresInactive: ['old-plugin'],
+    },
+    now,
+  );
+  assert.equal(
+    inactive.pending,
+    'erasure not yet acknowledged by market-indicators, old-plugin (not taking the feed; an agent keeps its data)',
+  );
   assert.equal(
     removedUserText({ ...base, username: null, erasedAt: '2026-10-22T11:30:00.000Z' }, now).pending,
     null,

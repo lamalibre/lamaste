@@ -111,8 +111,10 @@ lamaste ALL=(root) NOPASSWD: /usr/sbin/nginx -t
 # --- root-owned programs that validate their own arguments ---
 # lamaste-priv: install/enable/remove the panel's nginx vhosts (every directive
 # checked against an allow-list — nginx opens the files a vhost names as
-# root), store a TOTP secret with Authelia's CLI as the Authelia user, and
-# start a self-update (create-lamaste@<version>) in a transient unit.
+# root); with Authelia's CLI as the Authelia user, store a TOTP secret, delete
+# a user's second factors and check for a user's OIDC opaque identifier
+# (usernames validated); and start a self-update (create-lamaste@<version>)
+# in a transient unit.
 lamaste ALL=(root) NOPASSWD: /usr/local/sbin/lamaste-priv
 # Let's Encrypt: certbot and openssl with fixed flags, hostnames and email
 # validated. See scripts/lamaste-certbot, scripts/lamaste-cert-info.
@@ -203,7 +205,7 @@ export const AUTHELIA_OIDC_KEY_PATH = `${AUTHELIA_CONFIG_DIR}/oidc-issuer.pem`;
  * Authelia's configuration is rendered as a Go template: that is how it
  * reads the OIDC issuer key (`{{ secret "…" }}`) without the panel, which
  * writes the configuration, ever holding the key. Set on the unit and on
- * every `authelia` CLI invocation (lamaste-priv authelia-totp).
+ * every `authelia` CLI invocation (lamaste-priv authelia-totp, authelia-user).
  */
 export const AUTHELIA_CONFIG_FILTERS_ENV = 'X_AUTHELIA_CONFIG_FILTERS=template';
 export const AUTHELIA_LOG_DIR = '/var/log/authelia';

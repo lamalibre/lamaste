@@ -143,11 +143,21 @@ export default async function inviteRoutes(fastify, _opts) {
             hashedPassword,
           );
         },
-        // A removed user's grants and groups under the username go first.
-        { actor: 'invitation', logger: request.log, creates: [invitation.username] },
+        {
+          actor: 'invitation',
+          logger: request.log,
+          // A removed user's grants, groups and second factors under the
+          // username go first; a username with an OIDC identity is refused.
+          creates: [invitation.username],
+          expect: (users) => users[invitation.username]?.password === hashedPassword,
+        },
       );
     } catch (err) {
-      if (err.statusCode === 409) return reply.code(409).send({ error: err.message });
+      if (err.statusCode === 409) {
+        return reply
+          .code(409)
+          .send({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+      }
       if (err.statusCode === 503) {
         return reply.code(503).send({ error: err.message, code: err.code });
       }

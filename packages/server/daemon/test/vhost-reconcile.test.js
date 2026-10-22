@@ -455,13 +455,17 @@ test('a bound tunnel’s vhost carries the user surfaces served now, and loses t
   );
   const asked = [];
   const served = first.deps.servedUserSurface;
-  first.deps.servedUserSurface = async (routes) => {
-    asked.push(routes);
+  first.deps.servedUserSurface = async (routes, tunnel) => {
+    asked.push([routes, tunnel.id, tunnel.agentLabel]);
     return served(routes);
   };
   const result = await reconcileTunnelVhosts(log, first.deps);
   assert.deepEqual(result.rewritten, ['piyasa.example.com']);
-  assert.deepEqual(asked, [['market-indicators', 'fx']], 'asked about its bound routes');
+  assert.deepEqual(
+    asked,
+    [[['market-indicators', 'fx'], piyasa.id, piyasa.agentLabel]],
+    'asked about its bound routes — and which agent carries it',
+  );
   const [write] = first.writes;
   assert.equal(write.enabled, true);
   assert.equal(write.config, piyasaVhost([{ route: 'market-indicators', maxBodySizeMb: 10 }]));
@@ -530,6 +534,28 @@ test('reconcileUserSurfaceVhosts rewrites only the tunnels the route is bound to
   const noneResult = await reconcileUserSurfaceVhosts(log, 'other', {}, none.deps);
   assert.deepEqual(none.writes, []);
   assert.equal(noneResult.unchanged, 0);
+
+  // Its agent revoked: the tunnel keeps its binding, no agent carries it,
+  // and it serves nothing — reconciled by id, for no route in particular.
+  const revoked = fakeDeps(
+    {
+      'lamalibre-lamaste-app-piyasa': piyasaVhost([
+        { route: 'market-indicators', maxBodySizeMb: 10 },
+      ]),
+    },
+    {
+      tunnels: [{ ...piyasa, agentLabel: undefined }, kamera],
+      served: () => [],
+    },
+  );
+  const revokedResult = await reconcileUserSurfaceVhosts(
+    log,
+    null,
+    { ids: [piyasa.id] },
+    revoked.deps,
+  );
+  assert.deepEqual(revokedResult.rewritten, ['piyasa.example.com']);
+  assert.equal(revoked.writes[0].config, piyasaVhost(null));
 });
 
 test('state a vhost cannot carry is reported, and a failed lookup does not stop the others', async () => {

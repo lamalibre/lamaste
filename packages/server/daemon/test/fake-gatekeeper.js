@@ -2,8 +2,8 @@
  * A stand-in for Gatekeeper's admin API, for tests of what the panel asks
  * it: grants (with its duplicate rule — same principal, resource and
  * context JSON — and its grant limit), groups and their members, a user
- * principal's removal (its grants and memberships), and the access-request
- * log purge. It answers the way `lib/gatekeeper-client.js`
+ * principal's removal (its grants and memberships; the username in the
+ * body), and the access-request log purge (likewise). It answers the way `lib/gatekeeper-client.js`
  * reports Gatekeeper's answers (`{ ok, statusCode, data }` or `{ ok: false,
  * statusCode, error, reason }`) and records every call; `unreachable`
  * plays a Gatekeeper that does not answer.
@@ -134,8 +134,13 @@ function createFakeGatekeeper({ maxGrants = 1000 } = {}) {
       }
     }
 
-    if (parts[1] === 'principals' && parts[2] === 'user' && method === 'DELETE') {
-      const username = parts[3];
+    if (
+      parts[1] === 'principals' &&
+      parts[2] === 'user' &&
+      parts[3] === 'remove' &&
+      method === 'POST'
+    ) {
+      const username = body.username;
       let grantsRemoved = 0;
       for (let i = grants.length - 1; i >= 0; i -= 1) {
         if (grants[i].principalType === 'user' && grants[i].principalId === username) {
@@ -158,11 +163,14 @@ function createFakeGatekeeper({ maxGrants = 1000 } = {}) {
       return ok(200, { ok: true });
     }
 
-    if (parts[1] === 'access-log' && method === 'DELETE') {
+    if (parts[1] === 'access-log' && parts[2] === 'purge' && method === 'POST') {
       let removed = 0;
       for (let i = accessLog.length - 1; i >= 0; i -= 1) {
         const row = accessLog[i];
-        if (row.username === q.username && (q.before === undefined || row.timestamp < q.before)) {
+        if (
+          row.username === body.username &&
+          (body.before === undefined || row.timestamp < body.before)
+        ) {
           accessLog.splice(i, 1);
           removed += 1;
         }

@@ -11,13 +11,14 @@
 #    sync's GET /api/tunnels/agent-config — as agentLastSeenAt on the
 #    hosting and lastSeenAt on GET /api/certs/agent, and it advances.
 # 2. The agent VM stopped: the health monitor reports the hosting down,
-#    reason tunnel; the forwarder answers 502 (tunnel); agentLastSeenAt
-#    stays at the agent's last sync before it went down (read again 70
-#    seconds later); GET settings answers from the relay's cache (source
-#    cache, the secret { set: true }); a change is refused with 503
-#    hosting_offline — one carrying a new secret too, which is then on no
-#    relay file, row, journal line or answer: the relay keeps nothing to
-#    deliver later.
+#    reason tunnel; while it is down the forwarder answers 502 (tunnel)
+#    without connecting to the port (the plugin declares no tunnel:down
+#    fallback); agentLastSeenAt stays at the agent's last sync before it
+#    went down (read again 70 seconds later); GET settings answers from the
+#    relay's cache (source cache, the secret { set: true }); a change is
+#    refused with 503 hosting_offline — one carrying a new secret too, which
+#    is then on no relay file, row, journal line or answer: the relay keeps
+#    nothing to deliver later.
 # 3. The agent VM started again: the hosting is up, the pages answer, GET
 #    settings is live again, a change is accepted and reaches the agent
 #    half, agentLastSeenAt advances; the offline write never arrives.
@@ -201,8 +202,8 @@ assert_json_field "$HOSTING" '.hosting.health | "\(.state) \(.reason)"' 'down tu
 assert_epoch_le "${STOP_BEGIN}" "$(iso_epoch "$(json_get "$HOSTING" '.hosting.health.since')")" "…since the agent went down ($(json_get "$HOSTING" '.hosting.health.since'))" || true
 assert_json_field "$HOSTING" '.hosting.agentLastSeenAt' "${SEEN_DOWN}" "…its agentLastSeenAt still the last sync" || true
 PING=$(host_api_call GET "${PLUGIN}/ping")
-assert_eq "$(status_of "$PING")" "502" "The pages answer 502…" || true
-assert_json_field "$(body_of "$PING")" '.reason' 'tunnel' "…reason tunnel" || true
+assert_eq "$(status_of "$PING")" "502" "The pages answer 502 while the hosting is down…" || true
+assert_json_field "$(body_of "$PING")" '.reason' 'tunnel' "…reason tunnel: the hosting agent is unreachable" || true
 LISTED=$(host_api_get "plugins" | jq -c ".plugins[]? | select(.name == \"${PLUGIN}\")" 2>/dev/null || echo '{}')
 assert_json_field "$LISTED" '.agentHosting.health.state' 'down' "GET /api/plugins shows the hosting down" || true
 assert_json_field "$LISTED" '.settings.configured' 'true' "…and the plugin configured, from the cache" || true

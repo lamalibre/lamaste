@@ -4,8 +4,10 @@
  * is valid only for a path under `/app`, read literally, and every other
  * caller is never valid for a path a router could take for `/app`. Signing
  * refuses either mistake; a verifier answers `wrong_request` for a
- * correctly signed one. Assertions as 4.4 signed them still verify, byte
- * for byte, extra fields and all.
+ * correctly signed one. Whatever the caller, a path is in origin form — one
+ * leading `/`, no scheme, no host — and an encoded `%` (`%25`) never
+ * reaches `/app`. Assertions as 4.4 signed them still verify, byte for
+ * byte, extra fields and all.
  */
 
 import { test, before, after } from 'node:test';
@@ -135,6 +137,10 @@ test('a user caller is never valid outside /app: refused at signing and at verif
     '/app/a\\b',
     '/app/./x',
     '/app/%E0%A4%A',
+    // An encoded `%`: a router decoding twice would read `..` or `/`.
+    '/app/%252e%252e/admin/x',
+    '/app/a%252Fb',
+    '/app/%25',
   ]) {
     assert.throws(
       () => signCallerAssertion({ plugin: PLUGIN, caller: USER, method: 'GET', path: p }, secret),
@@ -148,15 +154,7 @@ test('a user caller is never valid outside /app: refused at signing and at verif
 test('admin, agent and Lamaste are never valid under /app, however it is spelled', () => {
   const others = [{ type: 'admin' }, { type: 'agent', label: 'vm1' }, { type: 'lamaste' }];
   for (const caller of others) {
-    for (const p of [
-      '/app',
-      '/app/me',
-      '/app?x=1',
-      '/App/me',
-      '/%61pp/me',
-      '//app/me',
-      '/app.json',
-    ]) {
+    for (const p of ['/app', '/app/me', '/app?x=1', '/App/me', '/%61pp/me', '/app.json']) {
       assert.throws(
         () => signCallerAssertion({ plugin: PLUGIN, caller, method: 'GET', path: p }, secret),
         /Only a user caller is valid for a path under \/app/,
@@ -171,6 +169,45 @@ test('admin, agent and Lamaste are never valid under /app, however it is spelled
       secret,
     );
     assert.equal(verify(header, 'GET', '/admin/app/x').ok, true, caller.type);
+  }
+});
+
+test('every caller is signed and verified for an origin-form path only — no scheme, no host', () => {
+  const callers = [USER, { type: 'admin' }, { type: 'agent', label: 'vm1' }, { type: 'lamaste' }];
+  for (const caller of callers) {
+    for (const p of [
+      'http://x/app/me',
+      'https://evil.example.com/admin/health',
+      '//app/x',
+      '//evil.example.com/admin/x',
+      '/\\evil.example.com/app/x',
+      'app/me',
+      'admin/health',
+      '*',
+      '?x=1',
+      '',
+    ]) {
+      assert.throws(
+        () => signCallerAssertion({ plugin: PLUGIN, caller, method: 'GET', path: p }, secret),
+        /origin form/,
+        `${caller.type} ${JSON.stringify(p)}`,
+      );
+      assert.equal(
+        verify(forged(payloadFor(caller, 'GET', p)), 'GET', p).reason,
+        'wrong_request',
+        `${caller.type} ${JSON.stringify(p)}`,
+      );
+    }
+  }
+  // One leading slash is all it takes — the paths every caller uses still verify.
+  for (const [caller, p] of [
+    [USER, '/app/me'],
+    [{ type: 'admin' }, '/admin/status'],
+    [{ type: 'lamaste' }, '/admin/health'],
+    [{ type: 'agent', label: 'vm1' }, '/admin//x'],
+  ]) {
+    const header = signCallerAssertion({ plugin: PLUGIN, caller, method: 'GET', path: p }, secret);
+    assert.equal(verify(header, 'GET', p).ok, true, `${caller.type} ${p}`);
   }
 });
 

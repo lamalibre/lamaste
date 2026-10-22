@@ -538,6 +538,9 @@ export async function purgeRetainedData(name, agentLabel, { actor, logger, sourc
       plugin: name,
       details: { agentLabel, route: retained.route, package: retained.package },
     });
+    // The last data of an uninstalled plugin: its identity ledger goes too.
+    const { dropIdentityLedgerIfNoData } = await import('./audience.js');
+    await dropIdentityLedgerIfNoData(name, logger);
     return { forgotten: retained };
   }
   if (!(await isActiveAgent(agentLabel))) {
@@ -623,7 +626,19 @@ export async function acknowledgeAgentPluginConfig(label, route, issuedAt) {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve a route to a forward target (see `agentForwarderPlugin`).
+ * Resolve a route to a forward target — of the admin forwarder
+ * (`agentForwarderPlugin`) and the user surface alike.
+ *
+ * While the hosting's health is `down` — the monitor's probes found nothing
+ * on the relay-loopback port that answers with the installation secret —
+ * this refuses with `down` and the health's reason (`tunnel` or `app`), so
+ * nothing of an administrator's, an agent's or a user's request reaches
+ * whatever holds that port: the admin forwarder answers as for a dead
+ * tunnel (the `tunnel:down` fallback, or `502` with the reason), the user
+ * surface `503`. Lamaste's own calls — the health probe, settings, hooks,
+ * the identity feed — do not come this way, so the monitor still finds the
+ * agent half when it is back and the hosting comes up again.
+ *
  * @param {string} route
  */
 export async function resolveForwardTarget(route) {
@@ -633,6 +648,9 @@ export async function resolveForwardTarget(route) {
   if (plugin.status !== 'enabled') return { kind: 'disabled' };
   const record = await ownHosting(plugin);
   if (!record || pluginHostingPhase(record) !== 'active') return { kind: 'not_hosted' };
+  if (record.health?.state === 'down') {
+    return { kind: 'down', reason: record.health.reason === 'app' ? 'app' : 'tunnel' };
+  }
   const tunnels = await readTunnels();
   const tunnel = tunnels.find((t) => t.id === record.tunnelId);
   const maxBodyMb = tunnel?.maxBodySizeMb ?? TUNNEL_MAX_BODY_MB.default;

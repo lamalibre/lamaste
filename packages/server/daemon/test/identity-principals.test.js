@@ -20,6 +20,7 @@ import yaml from 'js-yaml';
 
 import { isIdentityUuid, normalizeIdentityBlock } from '@lamalibre/lamaste';
 
+import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
 
 const HASH = '$2b$12$abcdefghijklmnopqrstuuJ2s4L6rjpDLHi3qL7Nn5D0o3M6a1g2a';
@@ -48,6 +49,7 @@ let usersFile;
 let lib;
 let app;
 let gatekeeper;
+let autheliaStorage;
 
 async function call(method, url, payload) {
   return app.inject({
@@ -166,7 +168,13 @@ before(async () => {
     ...(await import('../src/lib/identity-sync.js')),
   };
   await lib.loadConfig();
-  lib.setAutheliaForTests({ usersFile, restart: async () => {}, writeTotp: async () => {} });
+  autheliaStorage = createFakeAutheliaStorage();
+  lib.setAutheliaForTests({
+    usersFile,
+    restart: async () => {},
+    writeTotp: async () => {},
+    userStorage: autheliaStorage.storage,
+  });
   gatekeeper = installFakeGatekeeper(lib);
   await lib.writePlugins({
     plugins: [
@@ -304,19 +312,21 @@ test('Gatekeeper down at a deletion: pending, nothing created under the username
   assert.equal(accepted.statusCode, 503);
   assert.equal(accepted.json().code, 'gatekeeper_unavailable');
   assert.equal((await lib.readInvitations())[0].used, false);
-  // Nor a grant or a membership through the proxy.
+  // Nor a grant or a membership through the proxy: nobody holds the
+  // username, and whatever it was given would pass to its next holder.
   const proxied = await call('POST', '/api/gatekeeper/grants', {
     principalType: 'user',
     principalId: 'zeynep',
     resourceType: 'tunnel',
     resourceId: 'reports-id',
   });
-  assert.equal(proxied.statusCode, 503);
+  assert.equal(proxied.statusCode, 409);
+  assert.equal(proxied.json().code, 'username_deleted');
   const member = await call('POST', '/api/gatekeeper/groups/ops/members', {
     usernames: ['zeynep'],
   });
-  assert.equal(member.statusCode, 503);
-  assert.equal(member.json().code, 'gatekeeper_unavailable');
+  assert.equal(member.statusCode, 409);
+  assert.equal(member.json().code, 'username_deleted');
   // Nor an erasure, which would lose the username the cleanup needs.
   const erase = await call('POST', `/api/identity/directory/${tomb.userId}/erase`);
   assert.equal(erase.statusCode, 503);
@@ -403,10 +413,14 @@ test('erasure clears a pending principal before it scrubs the username', async (
   gatekeeper.calls.length = 0;
   const erased = await call('POST', `/api/identity/directory/${tomb.userId}/erase`);
   assert.equal(erased.statusCode, 200, erased.body);
-  assert.deepEqual(gatekeeper.calls.map((c) => `${c.method} ${c.path.split('?')[0]}`).slice(0, 2), [
-    'DELETE /api/principals/user/can',
-    'DELETE /api/access-log',
-  ]);
+  // The username travels in the bodies, never in a URL.
+  assert.deepEqual(
+    gatekeeper.calls.slice(0, 2).map((c) => [c.method, c.path, c.body?.username]),
+    [
+      ['POST', '/api/principals/user/remove', 'can'],
+      ['POST', '/api/access-log/purge', 'can'],
+    ],
+  );
   assert.deepEqual(heldBy('can'), { grants: [], groups: [] });
   const scrubbed = await lib.getDirectoryUser(tomb.userId);
   assert.equal(scrubbed.username, null);

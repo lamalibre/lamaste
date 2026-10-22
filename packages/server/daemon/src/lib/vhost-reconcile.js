@@ -29,9 +29,14 @@
  * agent-panel vhost, whose mTLS check gains the panel's `auth_request`.
  *
  * A tunnel bound as plugins' user surface is rendered with the locations of
- * the routes it serves now (`servedUserSurfaceRoutes`); the same reconcile,
+ * the routes it serves now (`servedUserSurfaceRoutes`: identity declared and
+ * approved, and the tunnel's agent hosting the plugin); the same reconcile,
  * limited to the tunnels a route is bound to, follows the plugin's identity
- * through approval, update and uninstall ({@link reconcileUserSurfaceVhosts}).
+ * through approval, update and uninstall, its hosting, and the tunnels'
+ * agents ({@link reconcileUserSurfaceVhosts}). Every location proxying to a
+ * tunnel or agent backend keeps Authelia's session cookie from it
+ * (`$lamaste_backend_cookie`), so an installed vhost from before that is
+ * rewritten too.
  */
 
 import { tunnelUserSurfaceRoutes } from '@lamalibre/lamaste';
@@ -57,14 +62,15 @@ const AUTH_VHOST = 'lamalibre-lamaste-auth';
 
 /**
  * Which of a tunnel's bound routes its vhost serves now — the panel's
- * plugins decide (`lib/user-surface.js`), loaded when first needed so this
- * module stays free of the plugin registry.
+ * plugins and their hostings decide (`lib/user-surface.js`), loaded when
+ * first needed so this module stays free of the plugin registry.
  *
  * @param {readonly string[]} routes
+ * @param {{ agentLabel?: string }} tunnel
  */
-async function servedUserSurface(routes) {
+async function servedUserSurface(routes, tunnel) {
   const { servedUserSurfaceRoutes } = await import('./user-surface.js');
-  return servedUserSurfaceRoutes(routes);
+  return servedUserSurfaceRoutes(routes, tunnel);
 }
 
 /**
@@ -211,7 +217,7 @@ async function reconcileTunnel(tunnel, result, deps) {
   const bound = tunnelUserSurfaceRoutes(tunnel);
   let served;
   try {
-    served = bound.length > 0 ? await deps.servedUserSurface(bound) : [];
+    served = bound.length > 0 ? await deps.servedUserSurface(bound, tunnel) : [];
   } catch (err) {
     result.failed.push({ vhost: label, error: err instanceof Error ? err.message : String(err) });
     return;
@@ -258,10 +264,11 @@ export async function reconcileTunnelVhosts(log, deps = defaultTunnelDeps) {
  * surface — after a change that decides whether they serve it: the
  * plugin's installation, the approval of its version, an update or its
  * reversal, its hosting. `ids` names tunnels to reconcile besides (the
- * route's binding was just released from them). Under the tunnel lock.
+ * route's binding was just released from them, or their agent was
+ * revoked — `route` null then). Under the tunnel lock.
  *
  * @param {Parameters<typeof logResult>[0]} log
- * @param {string} route
+ * @param {string | null} route
  * @param {{ ids?: readonly string[] }} [opts]
  * @param {typeof defaultTunnelDeps} [deps]
  * @returns {Promise<ReturnType<typeof newResult>>}
@@ -275,7 +282,12 @@ export async function reconcileUserSurfaceVhosts(
   return withTunnelLock(async () => {
     const result = newResult();
     for (const tunnel of await deps.readTunnels()) {
-      if (!ids.includes(tunnel.id) && !tunnelUserSurfaceRoutes(tunnel).includes(route)) continue;
+      if (
+        !ids.includes(tunnel.id) &&
+        (route === null || !tunnelUserSurfaceRoutes(tunnel).includes(route))
+      ) {
+        continue;
+      }
       await reconcileTunnel(tunnel, result, deps);
     }
     logResult(log, 'user-surface tunnel', result);

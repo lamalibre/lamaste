@@ -1,7 +1,13 @@
 import { execa } from 'execa';
 import { access, lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { RELAY_PANEL_PORT, isUserSurfaceRoute, userSurfaceApiPath } from '@lamalibre/lamaste';
+import {
+  BACKEND_COOKIE_VARIABLE,
+  RELAY_PANEL_PORT,
+  USER_SURFACE_MAX_RESPONSE_SECONDS,
+  isUserSurfaceRoute,
+  userSurfaceApiPath,
+} from '@lamalibre/lamaste';
 
 const SITES_AVAILABLE = '/etc/nginx/sites-available';
 const SITES_ENABLED = '/etc/nginx/sites-enabled';
@@ -477,6 +483,23 @@ export async function writeTunnelVhost(domain) {
 }
 
 /**
+ * The `Cookie` a tunnel or agent backend receives: the browser's cookies
+ * without Authelia's session cookie. Authelia scopes that cookie to the base
+ * domain, so the browser sends it to every tunnel host; a backend that got
+ * it — any application on any agent, or whatever holds a tunnel port on the
+ * relay — could replay it as the visitor on every authenticated host and
+ * every plugin's user surface. `$lamaste_backend_cookie` is defined by the
+ * http-level map create-lamaste installs (core `renderBackendCookieMap`,
+ * `/etc/nginx/conf.d/lamalibre-lamaste-backend-cookie.conf`): every
+ * `authelia_session` pair removed, or no `Cookie` at all when one could not
+ * be. A vhost written before the map exists fails `nginx -t` and is rolled
+ * back — never served with the cookie.
+ */
+const BACKEND_COOKIE_HEADER = `
+        # Never Authelia's session cookie: the browser's other cookies only
+        proxy_set_header Cookie ${BACKEND_COOKIE_VARIABLE};`;
+
+/**
  * Request headers every tunnel location sends upstream.
  *
  * They are declared inside each `location`, not at server level: nginx
@@ -487,7 +510,8 @@ export async function writeTunnelVhost(domain) {
  * The client-certificate headers are cleared. The panel trusts
  * `X-SSL-Client-*` from nginx as proof of an mTLS client certificate; a
  * tunnel vhost must never pass client-supplied values through, whatever
- * listens on its port.
+ * listens on its port. Authelia's session cookie never reaches the backend
+ * ({@link BACKEND_COOKIE_HEADER}).
  */
 const TUNNEL_PROXY_HEADERS = `
         proxy_set_header Host $host;
@@ -499,6 +523,7 @@ const TUNNEL_PROXY_HEADERS = `
         proxy_set_header X-SSL-Client-Verify "";
         proxy_set_header X-SSL-Client-DN "";
         proxy_set_header X-SSL-Client-Serial "";
+${BACKEND_COOKIE_HEADER}
 
         # WebSocket support
         proxy_set_header Upgrade $http_upgrade;
@@ -606,8 +631,11 @@ function gatekeeperSubrequest(check, fqdn) {
  * browser's credentials ({@link USER_SURFACE_PROXY_HEADERS}), to the panel
  * with `proxy_pass` naming no URI: the panel receives the request target
  * exactly as the browser sent it — the target the assertion is bound to.
- * The body limit is the plugin's (its internal tunnel's); timeouts are long
- * for server-sent events, which the panel streams unbuffered.
+ * The body limit is the plugin's (its internal tunnel's); the timeouts are
+ * the longest a user-surface response lives (`USER_SURFACE_MAX_RESPONSE_SECONDS`,
+ * one hour — the panel ends one still open then, and ends it at once when
+ * its user loses access), long enough for server-sent events, which the
+ * panel streams unbuffered.
  *
  * @param {string} fqdn
  * @param {ReadonlyArray<{ route: string, maxBodySizeMb: number }>} userSurface
@@ -633,8 +661,9 @@ ${USER_SURFACE_PROXY_HEADERS}
         proxy_http_version 1.1;
 
         client_max_body_size ${maxBodySizeMb}m;
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
+        # No response lives longer (the panel ends one then)
+        proxy_read_timeout ${USER_SURFACE_MAX_RESPONSE_SECONDS}s;
+        proxy_send_timeout ${USER_SURFACE_MAX_RESPONSE_SECONDS}s;
 
         # No session: a JSON 401, never a redirect
         error_page 401 = /internal/lamaste/user-surface-401;
@@ -663,6 +692,8 @@ ${USER_SURFACE_PROXY_HEADERS}
         proxy_set_header Content-Length "";
         proxy_set_header Cookie "";
         proxy_set_header Authorization "";
+        # Gatekeeper's rate limit counts the client nginx saw, never one a client named
+        proxy_set_header X-Forwarded-For $remote_addr;
 
         proxy_http_version 1.1;
     }
@@ -1344,7 +1375,9 @@ export async function writeAgentPanelVhost(
  * reached without going through nginx, so a header proves nothing to it.
  *
  * `X-SSL-Client-*` still go upstream for agents older than 4.3, which read
- * them; lamaste-agentd from 4.3 removes them unread.
+ * them; lamaste-agentd from 4.3 removes them unread. Authelia's session
+ * cookie never does ({@link BACKEND_COOKIE_HEADER}): the agent panel's host
+ * is under the base domain like every other.
  *
  * @param {string} subdomain - `agent-<label>`
  * @param {string} domain
@@ -1433,6 +1466,7 @@ export function renderAgentPanelVhost(subdomain, domain, port, certPath) {
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
         proxy_set_header Remote-Email "";
+${BACKEND_COOKIE_HEADER}
 
         # Standard proxy headers
         proxy_set_header Host $host;

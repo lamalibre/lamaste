@@ -104,29 +104,30 @@ Per agent label, on the agent machine (user-level, no root):
 
 ### Configuration
 
-| Path                                                     | Description                                                                         |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `/etc/lamalibre/lamaste/panel.json`                      | Panel server configuration                                                          |
-| `/etc/lamalibre/lamaste/tunnels.json`                    | Tunnel definitions                                                                  |
-| `/etc/lamalibre/lamaste/sites.json`                      | Static site definitions                                                             |
-| `/etc/lamalibre/lamaste/chisel-credentials.json`         | Per-agent Chisel credentials                                                        |
-| `/etc/lamalibre/lamaste/chisel-users`                    | Chisel authfile: per-agent credentials + port grants (0640, group `lamaste-chisel`) |
-| `/etc/lamalibre/lamaste/chisel-sentinel`                 | Sentinel Chisel user password                                                       |
-| `/etc/lamalibre/lamaste/ticket-scopes.json`              | Ticket scope registry (scopes, instances, assignments)                              |
-| `/etc/lamalibre/lamaste/tickets.json`                    | Ticket and session store                                                            |
-| `/etc/lamalibre/lamaste/gatekeeper.db`                   | Gatekeeper (SQLite): groups, access grants, denied-access log                       |
-| `/etc/lamalibre/lamaste/gatekeeper.json`                 | Gatekeeper settings (cache TTL, logging)                                            |
-| `/etc/authelia/configuration.yml`                        | Authelia server configuration                                                       |
-| `/etc/authelia/users.yml`                                | Authelia user database                                                              |
-| `/etc/authelia/.secrets.json`                            | Authelia secrets (JWT, session, encryption)                                         |
-| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`        | mTLS configuration snippet                                                          |
-| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition                                              |
-| `/etc/sudoers.d/lamaste`                                 | Sudo rules for lamaste user (fixed command lines, no wildcards)                     |
-| `/usr/local/sbin/lamaste-priv`                           | Root-owned helper: panel vhosts (allow-listed), Authelia TOTP, self-update          |
-| `/usr/local/sbin/lamaste-certbot`                        | Root-owned certbot wrapper (validated, fixed argv)                                  |
-| `/usr/local/sbin/lamaste-cert-info`                      | Root-owned read-only Let's Encrypt certificate queries                              |
-| `/etc/fail2ban/jail.d/lamaste.conf`                      | fail2ban jail configuration                                                         |
-| `/etc/sysctl.d/99-lamaste.conf`                          | Kernel parameter (swappiness)                                                       |
+| Path                                                      | Description                                                                         |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `/etc/lamalibre/lamaste/panel.json`                       | Panel server configuration                                                          |
+| `/etc/lamalibre/lamaste/tunnels.json`                     | Tunnel definitions                                                                  |
+| `/etc/lamalibre/lamaste/sites.json`                       | Static site definitions                                                             |
+| `/etc/lamalibre/lamaste/chisel-credentials.json`          | Per-agent Chisel credentials                                                        |
+| `/etc/lamalibre/lamaste/chisel-users`                     | Chisel authfile: per-agent credentials + port grants (0640, group `lamaste-chisel`) |
+| `/etc/lamalibre/lamaste/chisel-sentinel`                  | Sentinel Chisel user password                                                       |
+| `/etc/lamalibre/lamaste/ticket-scopes.json`               | Ticket scope registry (scopes, instances, assignments)                              |
+| `/etc/lamalibre/lamaste/tickets.json`                     | Ticket and session store                                                            |
+| `/etc/lamalibre/lamaste/gatekeeper.db`                    | Gatekeeper (SQLite): groups, access grants, denied-access log                       |
+| `/etc/lamalibre/lamaste/gatekeeper.json`                  | Gatekeeper settings (cache TTL, logging)                                            |
+| `/etc/authelia/configuration.yml`                         | Authelia server configuration                                                       |
+| `/etc/authelia/users.yml`                                 | Authelia user database                                                              |
+| `/etc/authelia/.secrets.json`                             | Authelia secrets (JWT, session, encryption)                                         |
+| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`         | mTLS configuration snippet                                                          |
+| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf`  | Gatekeeper proxy_cache zone definition                                              |
+| `/etc/nginx/conf.d/lamalibre-lamaste-backend-cookie.conf` | http-level map: the backends' `Cookie` without Authelia's session cookie            |
+| `/etc/sudoers.d/lamaste`                                  | Sudo rules for lamaste user (fixed command lines, no wildcards)                     |
+| `/usr/local/sbin/lamaste-priv`                            | Root-owned helper: panel vhosts (allow-listed), Authelia TOTP, self-update          |
+| `/usr/local/sbin/lamaste-certbot`                         | Root-owned certbot wrapper (validated, fixed argv)                                  |
+| `/usr/local/sbin/lamaste-cert-info`                       | Root-owned read-only Let's Encrypt certificate queries                              |
+| `/etc/fail2ban/jail.d/lamaste.conf`                       | fail2ban jail configuration                                                         |
+| `/etc/sysctl.d/99-lamaste.conf`                           | Kernel parameter (swappiness)                                                       |
 
 ### PKI Certificates
 

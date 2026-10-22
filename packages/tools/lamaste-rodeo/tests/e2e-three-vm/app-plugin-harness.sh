@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # ============================================================================
-# App plugin harness — what the three-VM specs 34 to 38 share
+# App plugin harness — what the three-VM specs 34 to 41 share
 # ============================================================================
 # Sourced after ../e2e/helpers.sh by the specs in which Lamaste installs an
 # app plugin's agent half onto the agent VM from the panel (slice 3):
@@ -32,11 +32,12 @@
 #   host VM, the settings API called through a script there that never
 #   prints a response holding one, and scans of the relay and the agent VM
 #   that report counts, never a secret;
-# - identity (slice 6, specs 39 and 40): the panel's view of a plugin's
+# - identity (slice 6, specs 39 to 41): the panel's view of a plugin's
 #   identity feed, what the agent half's projection holds (its
-#   /admin/e2e/projection, through the forwarder as the admin), its request
-#   log, the users API waiting out its rate limit, and a way to tamper with
-#   the projection as the agent half's own account could;
+#   /admin/e2e/projection, through the forwarder as the admin, or — while no
+#   agent half runs — read from the data the agent keeps), its request log,
+#   the users API waiting out its rate limit, and a way to tamper with the
+#   projection as the agent half's own account could;
 # - app_plugin_cleanup: what the specs' cleanup traps run.
 #
 # Runs on the machine driving the VMs, under bash 3.2 (macOS): no arrays.
@@ -1251,7 +1252,7 @@ iso_epoch() {
 }
 
 # ---------------------------------------------------------------------------
-# Identity (slice 6) — specs 39 and 40
+# Identity (slice 6) — specs 39 to 41
 # ---------------------------------------------------------------------------
 #
 # The fixtures are write_app_install_fixture … <identity> (helpers.sh): an
@@ -1275,8 +1276,9 @@ identity_view() {
 }
 
 # identity_ready <plugin> — users may reach it: its installed version
-# declares identity and is approved, its hosting is active, and its agent
-# half answered protocol 1 since that version was installed
+# declares identity and is approved, its hosting is active, and since that
+# version was installed its agent half applied everything up to the head
+# after a complete replay (answering protocol 1 alone is not ready)
 identity_ready() { [ "$(json_get "$(identity_view "$1")" '.readiness.ready')" = "true" ]; }
 
 # identity_caught_up <plugin> — its agent half follows this directory and
@@ -1352,26 +1354,44 @@ half_requests() {
 # agent half's own account could do to its projection, as one SQLite
 # transaction from outside the running half — the given user gets the
 # editor role, and a member the directory never named (e2e-phantom, active,
-# viewer) is slipped in. Prints {"changed": n, "inserted": n}.
+# viewer) is slipped in. With `erase`, the given user's row is scrubbed to
+# the bare id instead, as the agent half's own erasure leaves it (removed,
+# erased, no name, address or roles): the projection then holds an erasure
+# the relay's ledger does not — what a relay restored from a backup taken
+# before the erasure would contradict. Prints {"changed": n, "inserted": n}.
 #
-#   node identity-tamper.mjs <identity.db> <userId>
+#   node identity-tamper.mjs <identity.db> <userId> [erase]
 write_identity_tamper() {
   cat > "$1" <<'TAMPER_EOF'
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
-const [file, userId] = process.argv.slice(2);
+const [file, userId, mode] = process.argv.slice(2);
 const db = new DatabaseSync(file);
+const now = new Date().toISOString();
 db.exec('PRAGMA busy_timeout = 10000');
 db.exec('BEGIN IMMEDIATE');
-const changed = db.prepare('UPDATE lamaste_users SET roles = ? WHERE user_id = ?').run('["editor"]', userId).changes;
-const inserted = db
-  .prepare(
-    `INSERT INTO lamaste_users (user_id, username, display_name, email, roles, status, removed_reason,
-       removed_at, erased_at, version, seen_pass, updated_at)
-     VALUES (?, 'e2e-phantom', 'E2E Phantom', NULL, '["viewer"]', 'active', NULL, NULL, NULL, 1, NULL, ?)`,
-  )
-  .run(crypto.randomUUID(), new Date().toISOString()).changes;
+let changed = 0;
+let inserted = 0;
+if (mode === 'erase') {
+  changed = db
+    .prepare(
+      `UPDATE lamaste_users SET username = NULL, display_name = NULL, email = NULL, roles = '[]',
+         status = 'removed', removed_reason = 'erased', removed_at = COALESCE(removed_at, ?),
+         erased_at = ?, updated_at = ?
+       WHERE user_id = ?`,
+    )
+    .run(now, now, now, userId).changes;
+} else {
+  changed = db.prepare('UPDATE lamaste_users SET roles = ? WHERE user_id = ?').run('["editor"]', userId).changes;
+  inserted = db
+    .prepare(
+      `INSERT INTO lamaste_users (user_id, username, display_name, email, roles, status, removed_reason,
+         removed_at, erased_at, version, seen_pass, updated_at)
+       VALUES (?, 'e2e-phantom', 'E2E Phantom', NULL, '["viewer"]', 'active', NULL, NULL, NULL, 1, NULL, ?)`,
+    )
+    .run(crypto.randomUUID(), now).changes;
+}
 db.exec('COMMIT');
 db.close();
 process.stdout.write(`${JSON.stringify({ changed: Number(changed), inserted: Number(inserted) })}\n`);
@@ -1386,11 +1406,69 @@ ship_identity_tamper() {
   agent_exec "chmod 0644 ${REMOTE_DIR}/identity-tamper.mjs" > /dev/null 2>&1 || true
 }
 
-# tamper_projection <route> <service user> <userId> — run it on the agent
-# half's database as the agent half's own account (its files stay its own);
-# prints its answer ('{}' when it failed)
+# tamper_projection <route> <service user> <userId> [erase] — run it on the
+# agent half's database as the agent half's own account (its files stay its
+# own); prints its answer ('{}' when it failed)
 tamper_projection() {
-  agent_exec "runuser -u $2 -- node ${REMOTE_DIR}/identity-tamper.mjs /var/lib/lamalibre/apps/$1/identity.db $3 2>/dev/null" 2>/dev/null | grep -E '^\{' | tail -n 1 || echo '{}'
+  agent_exec "runuser -u $2 -- node ${REMOTE_DIR}/identity-tamper.mjs /var/lib/lamalibre/apps/$1/identity.db $3 ${4:-} 2>/dev/null" 2>/dev/null | grep -E '^\{' | tail -n 1 || echo '{}'
+}
+
+# write_identity_peek <file> — identity-peek.mjs: the row an agent half's
+# projection holds of one user, read from the data an agent keeps while no
+# agent half runs (an uninstall without purge). It reads a copy — the
+# database and its -wal and -shm files, taken together into a directory of
+# its own and removed after — so the files the next agent half opens stay
+# its account's, untouched. Prints the row ({userId, username, displayName,
+# status, removedReason, erasedAt}) or null.
+#
+#   node identity-peek.mjs <identity.db> <userId>
+write_identity_peek() {
+  cat > "$1" <<'PEEK_EOF'
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+
+const [file, userId] = process.argv.slice(2);
+if (!fs.existsSync(file)) {
+  process.stderr.write(`no projection at ${file}\n`);
+  process.exit(1);
+}
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-identity-peek-'));
+try {
+  const copy = path.join(dir, 'identity.db');
+  for (const suffix of ['', '-wal', '-shm']) {
+    if (fs.existsSync(`${file}${suffix}`)) fs.copyFileSync(`${file}${suffix}`, `${copy}${suffix}`);
+  }
+  const db = new DatabaseSync(copy);
+  const row = db
+    .prepare(
+      `SELECT user_id AS userId, username, display_name AS displayName, status,
+         removed_reason AS removedReason, erased_at AS erasedAt
+       FROM lamaste_users WHERE user_id = ?`,
+    )
+    .get(userId);
+  db.close();
+  process.stdout.write(`${JSON.stringify(row ?? null)}\n`);
+} finally {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+PEEK_EOF
+}
+
+# ship_identity_peek — write identity-peek.mjs and put it in the agent VM's
+# REMOTE_DIR, after ship_agent_facts_probe (which makes it)
+ship_identity_peek() {
+  write_identity_peek "${LOCAL_TMP}/identity-peek.mjs"
+  multipass transfer "${LOCAL_TMP}/identity-peek.mjs" "${AGENT_VM}:${REMOTE_DIR}/identity-peek.mjs"
+  agent_exec "chmod 0644 ${REMOTE_DIR}/identity-peek.mjs" > /dev/null 2>&1 || true
+}
+
+# kept_projection_user <route> <userId> — the row the projection in the data
+# the agent keeps for <route> holds of that user ('null' when none, '{}' when
+# it cannot be read); as root, on a copy (write_identity_peek)
+kept_projection_user() {
+  agent_exec "node ${REMOTE_DIR}/identity-peek.mjs /var/lib/lamalibre/apps/$1/identity.db $2 2>/dev/null" 2>/dev/null | grep -E '^(\{|null)' | tail -n 1 || echo '{}'
 }
 
 # agent_has_node_sqlite — the agent VM's Node.js has node:sqlite unflagged

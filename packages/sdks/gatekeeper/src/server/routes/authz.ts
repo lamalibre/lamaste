@@ -2,9 +2,11 @@ import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { request as undiciRequest } from 'undici';
 import {
+  AUTHELIA_SESSION_COOKIE,
   RELAY_ASSERTION_HEADER,
   RELAY_PANEL_AUDIENCE,
   RELAY_PANEL_PORT,
+  autheliaSessionCookies,
   isUserSurfaceUrl,
   signRelayAssertion,
 } from '@lamalibre/lamaste';
@@ -32,37 +34,51 @@ const AUTHELIA_VERIFY_TIMEOUT_MS = 2_500;
 const COOKIE_HMAC_KEY = crypto.randomBytes(32);
 
 /**
- * Extract the Authelia session cookie value from the full cookie header.
- *
- * Returns null when the cookie header is missing the `authelia_session=`
- * pair. The Authelia session cookie is the only auth signal we accept on
- * this path — any other cookie (CSRF tokens, analytics, etc.) carries no
- * identity. Falling back to the raw header would let unrelated cookies
- * drive the cache key, which would either pollute the cache or — once a
- * future refactor caches negative results — let an unauthenticated request
- * poison a downstream entry.
+ * The Authelia session a request presents: its `authelia_session` cookie —
+ * the only auth signal accepted here; any other cookie (CSRF tokens,
+ * analytics, etc.) carries no identity and never reaches Authelia or the
+ * cache key — or `none`, or `many` when the browser sent more than one.
+ * Another host under the relay's domain can plant a second
+ * `authelia_session` (another path or domain attribute), and which one
+ * Authelia would read is not Gatekeeper's to guess: such a request is
+ * refused (401 — the user surface's single reload bounds the retry).
  */
-function extractAutheliaCookie(cookie: string): string | null {
-  const match = cookie.match(/(?:^|;\s*)authelia_session=([^;]*)/);
-  return match?.[1] ?? null;
+type PresentedSession =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'one'; readonly value: string }
+  | { readonly kind: 'many' };
+
+function presentedSession(cookieHeader: string | string[] | undefined): PresentedSession {
+  // Every pair counts towards "more than one", an empty one too: a planted
+  // `authelia_session=` beside the real cookie is still a second cookie.
+  const values = autheliaSessionCookies(cookieHeader);
+  if (values.length > 1) return { kind: 'many' };
+  const [value] = values;
+  return value ? { kind: 'one', value } : { kind: 'none' };
 }
 
 /**
- * Derive a session cache key from a cookie string using HMAC-SHA256.
- *
- * The HMAC key is per-process random — keys are not predictable from cookie
- * values alone, which prevents an outsider from probing/seeding the cache.
+ * The session cache key of a session cookie on one tunnel host —
+ * HMAC-SHA256 under a per-process random key, so keys are not predictable
+ * from cookie values, and nobody can probe or seed the cache. Keyed by the
+ * host too: Authelia decides per host (a site's or plugin tunnel's rules
+ * name users), so a session it accepted for one host proves nothing on
+ * another.
  */
-function hashCookie(cookie: string): string {
-  return crypto.createHmac('sha256', COOKIE_HMAC_KEY).update(cookie).digest('hex');
+function sessionCacheKey(session: string, host: string): string {
+  return crypto
+    .createHmac('sha256', COOKIE_HMAC_KEY)
+    .update(`${host.toLowerCase()}\n${session}`)
+    .digest('hex');
 }
 
 /**
- * Forward the request's cookies to Authelia's verify endpoint
- * and extract the identity headers from the response.
+ * Ask Authelia's verify endpoint about one session cookie for one URL, and
+ * take the identity headers from its answer. Authelia is sent that cookie
+ * alone (`authelia_session=<value>`), never the browser's others.
  */
 async function validateWithAuthelia(
-  cookie: string,
+  session: string,
   originalUrl: string,
   requestId: string,
 ): Promise<AutheliaSession | null> {
@@ -74,7 +90,7 @@ async function validateWithAuthelia(
     const { statusCode, headers } = await undiciRequest(AUTHELIA_VERIFY_URL, {
       method: 'GET',
       headers: {
-        Cookie: cookie,
+        Cookie: `${AUTHELIA_SESSION_COOKIE}=${session}`,
         'X-Original-URL': originalUrl,
         'X-Original-Method': 'GET',
         'X-Forwarded-For': '127.0.0.1',
@@ -147,20 +163,36 @@ const TUNNEL_FQDN_RE =
   /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
 
 /**
- * nginx is the only client of the authorization routes (Gatekeeper binds
- * 127.0.0.1) and calls them on every protected request. Per-IP throttling
- * would punish legitimate traffic because every caller arrives as
- * 127.0.0.1, so the key is one bucket with an effectively-unlimited 10k/min
- * ceiling: the rate limit is structurally present (CodeQL
- * js/missing-rate-limiting) without breaking the hot path.
+ * How many authorization subrequests one client may cause on one tunnel
+ * host per minute. nginx asks on every request a protected host serves — a
+ * page and its assets, an application's polling — so the bound is
+ * generous; what it stops is one client (a script hammering Authelia with
+ * made-up session cookies, each an Authelia round trip) starving the
+ * others.
  */
-const INTERNAL_RATE_LIMIT = {
-  rateLimit: {
-    max: 10_000,
-    timeWindow: '1 minute',
-    keyGenerator: () => 'gatekeeper-internal',
-  },
-};
+export const AUTHZ_RATE_LIMIT_PER_CLIENT = 6_000;
+
+/**
+ * The bucket of an authorization subrequest: the client's address and the
+ * tunnel host. nginx is the only client of these routes (Gatekeeper binds
+ * 127.0.0.1) and sets `X-Forwarded-For` to `$remote_addr` on every
+ * subrequest; Gatekeeper trusts that header from 127.0.0.1 only
+ * (`trustProxy` in `server/index.ts`), so `request.ip` is the address nginx
+ * accepted the browser's connection from — never one the browser named.
+ * The host is the tunnel the vhost names in the path (or its `Host`).
+ */
+function authzRateLimitKey(request: FastifyRequest): string {
+  const fqdn = (request.params as { fqdn?: unknown } | undefined)?.fqdn;
+  const host =
+    typeof fqdn === 'string' ? fqdn : ((request.headers['host'] as string | undefined) ?? '');
+  return `${request.ip}|${host.toLowerCase()}`;
+}
+
+/** Options of {@link authzRoutes}. */
+export interface AuthzRoutesOptions {
+  /** Per-client, per-host requests a minute (default {@link AUTHZ_RATE_LIMIT_PER_CLIENT}). */
+  readonly rateLimitPerClient?: number | undefined;
+}
 
 /**
  * Parse an X-Original-URL header into its hostname and host components.
@@ -179,7 +211,18 @@ function parseOriginalUrl(originalUrl: string): { hostname: string; host: string
 // Route plugin
 // ---------------------------------------------------------------------------
 
-export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
+export async function authzRoutes(
+  fastify: FastifyInstance,
+  opts: AuthzRoutesOptions = {},
+): Promise<void> {
+  const authzRateLimit = {
+    rateLimit: {
+      max: opts.rateLimitPerClient ?? AUTHZ_RATE_LIMIT_PER_CLIENT,
+      timeWindow: '1 minute',
+      keyGenerator: authzRateLimitKey,
+    },
+  };
+
   /**
    * GET /authz/tunnel/:fqdn — the nginx auth_request target of a tunnel vhost
    *
@@ -201,7 +244,7 @@ export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
    */
   fastify.get<{ Params: { fqdn: string } }>(
     '/authz/tunnel/:fqdn',
-    { config: INTERNAL_RATE_LIMIT },
+    { config: authzRateLimit },
     async (request, reply) => authorizeTunnelRequest(fastify, request, reply, request.params.fqdn),
   );
 
@@ -226,7 +269,7 @@ export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
    */
   fastify.get<{ Params: { fqdn: string } }>(
     '/authz/user-surface/:fqdn',
-    { config: INTERNAL_RATE_LIMIT },
+    { config: authzRateLimit },
     async (request, reply) =>
       authorizeUserSurfaceRequest(fastify, request, reply, request.params.fqdn),
   );
@@ -238,7 +281,7 @@ export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
    */
   fastify.get(
     '/authz/user-surface-unauthenticated',
-    { config: INTERNAL_RATE_LIMIT },
+    { config: authzRateLimit },
     async (_request, reply) =>
       reply.code(401).header('Cache-Control', 'no-store').send({ error: 'unauthenticated' }),
   );
@@ -251,7 +294,7 @@ export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
    * such a vhost (it does when it starts) its tunnel is closed, rather than
    * open to the users of every other tunnel.
    */
-  fastify.get('/authz/check', { config: INTERNAL_RATE_LIMIT }, async (request, reply) => {
+  fastify.get('/authz/check', { config: authzRateLimit }, async (request, reply) => {
     request.log.error(
       {
         requestId: request.id,
@@ -269,31 +312,36 @@ export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
 }
 
 /**
- * The Authelia session behind the request's cookies, or null (no
- * `authelia_session` cookie, or Authelia refused it). The session cache is
- * keyed by the Authelia session cookie only, so unrelated cookies (CSRF
- * tokens, analytics) cannot pollute it; one shared by every route here.
+ * The Authelia session behind the request's `authelia_session` cookie, or
+ * null: none, more than one (refused — see {@link presentedSession}), or
+ * Authelia refused it. The session cache — one shared by every route here
+ * — is keyed by that cookie's value and the tunnel host, so unrelated
+ * cookies (CSRF tokens, analytics) cannot pollute it, and a session Authelia
+ * accepted on one host is never taken for another.
  */
 async function authenticatedSession(
   fastify: FastifyInstance,
   request: FastifyRequest,
-  cookie: string,
+  cookieHeader: string | string[] | undefined,
   originalUrl: string,
   hostname: string,
 ): Promise<AutheliaSession | null> {
   const requestId = request.id;
-  const autheliaCookie = extractAutheliaCookie(cookie);
-  if (!autheliaCookie) {
-    // No authelia_session — short-circuit before any cache work or the
-    // upstream Authelia /verify call. Without this, an unauthenticated
-    // request would still cost us an Authelia round-trip.
+  const presented = presentedSession(cookieHeader);
+  if (presented.kind !== 'one') {
+    // Short-circuit before any cache work or the upstream Authelia /verify
+    // call: an unauthenticated request costs no Authelia round-trip.
     request.log.info(
-      { requestId, reason: 'missing_authelia_cookie', fqdn: hostname },
+      {
+        requestId,
+        reason: presented.kind === 'none' ? 'missing_authelia_cookie' : 'duplicate_authelia_cookie',
+        fqdn: hostname,
+      },
       'authz denied',
     );
     return null;
   }
-  const cacheKey = hashCookie(autheliaCookie);
+  const cacheKey = sessionCacheKey(presented.value, hostname);
   const sessionCache = fastify.getSessionCache();
   const cached = sessionCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached;
@@ -301,7 +349,7 @@ async function authenticatedSession(
     // Lazy TTL eviction — one stale entry pruned per request.
     sessionCache.delete(cacheKey);
   }
-  const validated = await validateWithAuthelia(cookie, originalUrl, requestId);
+  const validated = await validateWithAuthelia(presented.value, originalUrl, requestId);
   if (!validated) {
     request.log.info({ requestId, reason: 'authelia_rejected', fqdn: hostname }, 'authz denied');
     return null;
@@ -334,7 +382,7 @@ async function authorizeTunnelRequest(
     return reply.code(401).send();
   }
 
-  const cookie = request.headers['cookie'] ?? '';
+  const cookie = request.headers['cookie'];
   const originalUrl = (request.headers['x-original-url'] as string) ?? '';
   if (!cookie || !originalUrl) {
     return reply.code(401).send();
@@ -386,15 +434,14 @@ async function authorizeTunnelRequest(
     return allow(fastify, request, reply, tunnel, session);
   }
 
+  // The tunnel and the reason only — never who was refused.
   request.log.info(
     {
       requestId,
       reason: 'no_matching_grant',
-      username: session.username,
+      tunnel: fqdn,
       resourceType: 'tunnel',
       resourceId: tunnel.id,
-      requiredGrant: `tunnel:${tunnel.id}`,
-      fqdn: parsed.hostname,
     },
     'authz denied',
   );
@@ -472,11 +519,14 @@ async function authorizeUserSurfaceRequest(
   const target = originalUrl.slice(prefix.length);
   const route = tunnel.userSurface.routes.find((r) => isUserSurfaceUrl(target, r));
   if (!route) return refuse('not_on_user_surface');
+  // Bound, but its plugin is not hosted by the agent carrying this tunnel
+  // (moved, revoked, hosted elsewhere): nothing of it is served here.
+  if (!tunnel.userSurface.served.includes(route)) return refuse('not_hosting_agent', { route });
 
   const session = await authenticatedSession(
     fastify,
     request,
-    request.headers['cookie'] ?? '',
+    request.headers['cookie'],
     originalUrl,
     parsed.hostname,
   );
@@ -489,11 +539,8 @@ async function authorizeUserSurfaceRequest(
       adminName: fastify.getSettings().adminName,
     });
     if (!result.allowed) {
-      return refuse('no_matching_grant', {
-        username: session.username,
-        resourceType: 'tunnel',
-        resourceId: tunnel.id,
-      });
+      // The tunnel and the reason only — never who was refused.
+      return refuse('no_matching_grant', { resourceType: 'tunnel', resourceId: tunnel.id });
     }
   }
 

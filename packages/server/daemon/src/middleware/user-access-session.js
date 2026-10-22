@@ -1,5 +1,6 @@
 import fp from 'fastify-plugin';
 import { getConfig } from '../lib/config.js';
+import { findDirectoryUser } from '../lib/directory.js';
 import {
   REFRESH_THRESHOLD,
   validateUserSession,
@@ -34,6 +35,14 @@ async function userAccessSessionPlugin(fastify, _opts) {
     });
 
     if (!result.valid) {
+      return reply.code(401).send({ error: 'user_session_required' });
+    }
+
+    // The session's user must still hold the username, and be enabled: a
+    // deleted user's username given to someone else never inherits it, and
+    // a disabled user is out at once.
+    const holder = await findDirectoryUser(result.payload.username);
+    if (!holder || holder.userId !== result.payload.userId || holder.status !== 'active') {
       return reply.code(401).send({ error: 'user_session_required' });
     }
 

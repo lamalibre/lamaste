@@ -30,9 +30,10 @@
 #   forged X-Lamalibre-Responder, and logging every request: a settings
 #   change carrying a new test secret, sent while the relay still believes
 #   the hosting up, is 502 unauthenticated; the squatter got the secret
-#   sealed, never in clear; health turns down (reason app) and a forwarded
-#   page or the panel bundle is 502, never the squatter's answer; the agent
-#   half back, it never saw that change
+#   sealed, never in clear; a forwarded page or the panel bundle is 502,
+#   never the squatter's answer; health turns down (reason app), and from
+#   then on a page request is answered 502 without being sent to the port;
+#   the agent half back, it never saw that change
 # - the relay keeps no secret: state.db (dumped), the journal since the
 #   spec started, the files under /etc/lamalibre, /var/lib/lamalibre and
 #   /opt/lamalibre, every answer read; uninstalling drops the cached settings
@@ -637,6 +638,10 @@ else
   log_fail "Health did not report down: $(hosting_field '.hosting.health')"
 fi
 assert_eq "$(hosting_field '.hosting.health.reason')" "app" "…reason app: something answers on the port, not the agent half" || true
+RESP=$(settings_call GET "${PLUGIN}/ping")
+assert_eq "$(status_of "$RESP")" "502" "Health down, a forwarded page request: 502…" || true
+assert_json_field "$(body_of "$RESP")" '.reason' 'app' "…reason app, the hosting's" || true
+assert_eq "$(jq -s '[.[] | select(.url | startswith("/admin/ping"))] | length' "${SQUAT_LOG}" 2>/dev/null || echo "-1")" "1" "…answered without connecting: the squatter was sent no page request after the first" || true
 
 pkill -f '[s]quatter.mjs' 2>/dev/null || true
 if start_half && wait_health up 45; then

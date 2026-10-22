@@ -121,7 +121,9 @@ The user's status turns **disabled**. From that moment:
 - every plugin they use sees them as `disabled` in its audience (its agent half is told within seconds while it is online);
 - their desktop app sessions end and their registry (Feria) tokens are revoked.
 
-Their `userId`, grants and group memberships stay, so **Enable** brings everything back as it was. The last enabled member of the `admins` group cannot be disabled — the panel refuses with "Cannot disable the last enabled administrator".
+Their `userId`, grants and group memberships stay, so **Enable** brings everything back as it was (their desktop app signs in again). The last enabled member of the `admins` group cannot be disabled — the panel refuses with "Cannot disable the last enabled administrator". A user disabled by editing `users.yml` directly is offboarded the same way within a minute, when the panel notices.
+
+If Authelia rewrites `users.yml` at the very moment you disable someone (a password reset it handles writes the whole file), the panel notices after Authelia restarts and disables the user again; should that not stick either, the panel says the change did not persist instead of reporting success — check the user and disable them again.
 
 ```bash
 lamaste-server users disable alice
@@ -142,7 +144,10 @@ lamaste-server users enable alice
 1. The panel removes the user from `users.yml` (atomic write, under the panel's one lock for user changes) and restarts Authelia.
 2. The user directory keeps a **tombstone**: the user's `userId` and their last username, display name and email, marked `removed`. Plugins that had the user as a member are told the user was deleted and keep what they last received, so a plugin's history — "approved by Alice Smith" — stays readable.
 3. Gatekeeper drops every grant naming the username and its membership of every Lamaste group. If Gatekeeper is unreachable, the panel says so and retries every minute; until it succeeds, the username holds no role in any plugin and cannot be given to a new user.
-4. The user's registry tokens and desktop sessions end.
+4. Authelia deletes the user's second factors — their TOTP configuration and WebAuthn security keys.
+5. The user's registry tokens, desktop sessions and legacy plugin-access grants end.
+
+A user removed from `users.yml` by hand is offboarded the same way within a minute, when the panel notices.
 
 After deletion, the user can no longer log in to any tunneled app.
 
@@ -158,7 +163,9 @@ A tombstone keeps a name and an address. When a person asks for their personal d
 1. Go to the **Users** page and scroll to **Deleted users** — every tombstone the directory keeps, with its `userId`, when it was removed and whether Gatekeeper's cleanup is still pending.
 2. Click **Erase** on the user and confirm.
 
-Erasing deletes the user's invitations and Gatekeeper's access-request log entries for them, then scrubs the tombstone to the bare `userId`. Every plugin that had the user as a member is sent an erasure: its agent half scrubs its own row and anonymises what the plugin keeps about the user. Until each plugin's agent half has acknowledged it, **Deleted users** lists that plugin under the user as a pending erasure — seconds while the hosting agent is online, or when it reconnects. Erasure cannot be undone. It cannot reach Authelia's own authentication log, nginx's access logs or backups taken before it.
+Erasing deletes the user's invitations, Gatekeeper's access-request log entries for them and any second factors Authelia still holds, then scrubs the tombstone to the bare `userId`. Every plugin that ever had the user as a member is sent an erasure: its agent half scrubs its own row and anonymises what the plugin keeps about the user — and never takes the user back afterwards, whatever it is sent later. Until each plugin has acknowledged it, **Deleted users** lists that plugin under the user as a pending erasure — seconds while the hosting agent is online, or when it reconnects. A plugin that was uninstalled while an agent keeps its data, or that no longer declares users, is listed too, marked as not taking the feed: the erasure reaches its data when it comes back, or goes with the data when you purge it (Plugins page, Retained data).
+
+Erasure cannot be undone. It cannot reach what Authelia keeps on its own — the user's OpenID Connect identity (the reason a username that ever signed in to an OpenID Connect application cannot be given to anyone else) and its authentication log — nor nginx's access logs, the system journal's older entries or backups taken before it ([what the logs keep](../05-operations/monitoring.md#logs-and-personal-data)).
 
 ```bash
 lamaste-server users directory              # every user the directory knows, tombstones and pending erasures
@@ -175,7 +182,9 @@ lamaste-server users erase 7d9e1a2b-3c4d-4e5f-8a6b-7c8d9e0f1a2b
 
 ### Re-created usernames
 
-A username that comes back after a deletion — re-created by hand, through an invitation, or edited into `users.yml` — is a **new user with a new `userId`**. Plugins key their data on the `userId`, so the new person sees nothing of the old one's, and Gatekeeper's cleanup has run before the new user exists: no grant, group membership or plugin role passes from one person to the next. If that cleanup cannot complete (Gatekeeper down), creating the user is refused with a message saying so — try again once Gatekeeper answers.
+A username that comes back after a deletion — re-created by hand, through an invitation, or edited into `users.yml` — is a **new user with a new `userId`**. Plugins key their data on the `userId`, so the new person sees nothing of the old one's. Before the panel creates the user, Gatekeeper drops everything it holds under the username and Authelia deletes any second factors under it — every time, even when nothing should be left: no grant, group membership, plugin role, TOTP or security key passes from one person to the next, nor a desktop session. If that cannot be done now (Gatekeeper or Authelia's storage unavailable), creating the user is refused with a message saying so — try again later. While a deleted user's username is not held by anyone, nothing can be granted to it (refused with "username_deleted").
+
+**A username that has signed in to an OpenID Connect application cannot be reused.** When a user signs in to an application through Lamaste's OpenID Connect provider (a plugin's login, a registry), Authelia gives them an identifier tied to their username, which it cannot delete. A new person under that username would be the old person to every such application — so the panel refuses to create a user, or accept an invitation, under it (`username_has_oidc_identity`): choose another username, such as `alice2`.
 
 ## For Developers
 

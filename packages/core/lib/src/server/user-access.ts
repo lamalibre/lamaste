@@ -267,7 +267,8 @@ export function createGrant(
 
     state.grants.push(grant);
     await saveState(dataDir, state);
-    logger.info({ grantId, username, pluginName, target }, 'Created user plugin access grant');
+    // Never the username: log lines are metadata (the grant id names it for whoever needs to).
+    logger.info({ grantId, pluginName, target }, 'Created user plugin access grant');
 
     return {
       grantId,
@@ -347,10 +348,7 @@ export function removeGrantsForUser(
     const removed = before - state.grants.length;
     if (removed > 0) {
       await saveState(dataDir, state);
-      logger.info(
-        { username, removed },
-        'Cascade-removed user-plugin-access grants for deleted user',
-      );
+      logger.info({ removed }, 'Cascade-removed user-plugin-access grants for deleted user');
     }
     return removed;
   });
@@ -385,10 +383,7 @@ export function consumeGrant(
     grant.usedAt = new Date().toISOString();
 
     await saveState(dataDir, state);
-    logger.info(
-      { grantId, username, pluginName: grant.pluginName },
-      'Consumed user plugin access grant',
-    );
+    logger.info({ grantId, pluginName: grant.pluginName }, 'Consumed user plugin access grant');
 
     return {
       grantId: grant.grantId,
@@ -455,7 +450,7 @@ export function createOTP(
     };
 
     await saveState(dataDir, state);
-    logger.info({ username }, 'Created user access OTP');
+    logger.info({}, 'Created user access OTP');
 
     return { token, nonce: input.nonce, expiresAt };
   });

@@ -21,13 +21,29 @@
  * longer declares): what the directory learns about someone who left is no
  * longer the plugin's.
  *
+ * **The rows are the plugin's ledger** of everyone its agent halves were
+ * ever sent, and so of the erasures it owes. They stay when the plugin is
+ * uninstalled or stops declaring identity — its data stays on an agent
+ * (retained data, or a hosted half that no longer takes the feed) — and go
+ * only once no data of the plugin is left anywhere: it is not installed and
+ * no agent retains its data ({@link dropIdentityLedgerIfNoData}: an
+ * uninstall with purge, a purge or forget of retained data). Such an
+ * *inactive* plugin's rows are recomputed for erasures alone: erasing a
+ * user rewrites the user's row in every plugin that has one, inactive ones
+ * included (a new `seq`), so a plugin that comes back — reinstalled, its
+ * half reusing the data an agent kept, or declaring identity again —
+ * replays the erasure (its next hosting replays everything). The erasures an
+ * inactive plugin has not acknowledged stay pending, marked as such
+ * (`lib/identity-sync.js` `pendingErasuresByUser`).
+ *
  * Recomputed after every change of users, of the directory and of
  * entitlements made through the panel (the Gatekeeper proxy included), on
  * plugin install, update and approval, every minute (Gatekeeper's own CLI
- * edits), and at start. Recomputes are serialised and coalesce. When
- * Gatekeeper cannot be read the stored audience stays as it is, and the next
- * recompute tries again. A plugin whose rows changed is synced to its agent
- * half (`lib/identity-sync.js`).
+ * edits), and at start. Recomputes are serialised and coalesce. Erasures
+ * reach every ledger first, whatever Gatekeeper answers; when Gatekeeper
+ * cannot be read the rest of the stored audience stays as it is, and the
+ * next recompute tries again. A declaring plugin whose rows changed is
+ * synced to its agent half (`lib/identity-sync.js`).
  */
 
 import {
@@ -39,7 +55,7 @@ import {
 import { listDirectoryUsers, pendingPrincipalCleanups } from './directory.js';
 import { declaredRoleIds, grantRoles } from './entitlements.js';
 import { listGatekeeperGroups, listPluginGrants } from './gatekeeper-client.js';
-import { readPlugins } from './plugins.js';
+import { findPlugin, readPlugins } from './plugins.js';
 import { getStateDb } from './state-db.js';
 
 // ---------------------------------------------------------------------------
@@ -341,6 +357,81 @@ function writeAudience(db, plugin, desired, stored, logger) {
   return written;
 }
 
+/**
+ * Erasures reach every ledger: each row of an erased user that is not yet
+ * their `remove/erased` is rewritten to it (version + 1, a new `seq`), in
+ * every plugin that has one — those that no longer take the feed included.
+ * Needs nothing from Gatekeeper. Returns how many rows each plugin got.
+ *
+ * @returns {Map<string, number>}
+ */
+function writeErasures(db) {
+  const rows = db
+    .prepare(
+      `SELECT a.plugin, a.user_id, a.version FROM plugin_audience a
+       JOIN directory_users u ON u.user_id = a.user_id
+       WHERE u.erased_at IS NOT NULL
+         AND (json_extract(a.change, '$.kind') <> 'remove'
+              OR json_extract(a.change, '$.reason') IS NOT 'erased')`,
+    )
+    .all();
+  const written = new Map();
+  if (rows.length === 0) return written;
+  const now = new Date().toISOString();
+  const update = db.prepare(
+    'UPDATE plugin_audience SET change = ?, version = ?, updated_at = ? WHERE plugin = ? AND user_id = ?',
+  );
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const row of rows) {
+      const change = JSON.stringify({ kind: 'remove', userId: row.user_id, reason: 'erased' });
+      update.run(change, row.version + 1, now, row.plugin, row.user_id);
+      written.set(row.plugin, (written.get(row.plugin) ?? 0) + 1);
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  return written;
+}
+
+/**
+ * Drop plugin `name`'s ledger — its audience rows and its feed's state —
+ * once no data of it is left on any agent: it is not installed and no
+ * agent retains its data. Called after an uninstall and after retained
+ * data is purged or forgotten; a plugin with data somewhere keeps its
+ * ledger, and the erasures it owes with it. Returns whether it went.
+ *
+ * @param {string} name
+ * @param {import('pino').Logger} [logger]
+ */
+export async function dropIdentityLedgerIfNoData(name, logger) {
+  if (await findPlugin(name)) return false;
+  const db = await getStateDb();
+  const retained = db
+    .prepare('SELECT COUNT(*) AS n FROM retained_agent_data WHERE plugin = ?')
+    .get(name);
+  if (Number(retained.n) > 0) return false;
+  db.exec('BEGIN IMMEDIATE');
+  let rows = 0;
+  try {
+    rows = Number(db.prepare('DELETE FROM plugin_audience WHERE plugin = ?').run(name).changes);
+    db.prepare('DELETE FROM plugin_identity_sync WHERE plugin = ?').run(name);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  if (rows > 0) {
+    logger?.info(
+      { plugin: name, rows },
+      'Dropped the identity ledger of a plugin no agent keeps data of',
+    );
+  }
+  return true;
+}
+
 /** Ineligible users last logged per plugin, so a steady count is logged once. */
 const loggedIneligible = new Map();
 
@@ -351,27 +442,27 @@ const loggedIneligible = new Map();
  * @returns {Promise<{ plugins: Array<{ plugin: string, written: number }>, error?: string }>}
  */
 async function recomputeOnce(logger) {
-  const out = { plugins: [] };
+  /** plugin → rows written by this recompute */
+  const written = new Map();
+  const summary = () => ({
+    plugins: [...written].map(([plugin, count]) => ({ plugin, written: count })),
+  });
+  let declaring = new Set();
   try {
     const db = await getStateDb();
     const plugins = (await readPlugins()).plugins.filter((p) => p.identity && p.route);
-    const declaring = new Set(plugins.map((p) => p.name));
+    declaring = new Set(plugins.map((p) => p.name));
 
-    // A plugin that no longer declares identity (or is gone) takes no feed:
-    // its audience and sync state go.
-    const leftovers = db
-      .prepare(
-        'SELECT DISTINCT plugin FROM plugin_audience UNION SELECT plugin FROM plugin_identity_sync',
-      )
-      .all()
-      .map((row) => row.plugin)
-      .filter((name) => !declaring.has(name));
-    for (const name of leftovers) {
-      db.prepare('DELETE FROM plugin_audience WHERE plugin = ?').run(name);
-      db.prepare('DELETE FROM plugin_identity_sync WHERE plugin = ?').run(name);
-      logger?.info({ plugin: name }, 'Dropped the audience of a plugin that declares no identity');
+    // Erasures first, into every ledger — inactive plugins' too (a plugin
+    // that no longer takes the feed keeps its rows: they are what it owes).
+    for (const [plugin, count] of writeErasures(db)) {
+      written.set(plugin, count);
+      logger?.info(
+        { plugin, erasures: count, active: declaring.has(plugin) },
+        'Erasures written to a plugin audience',
+      );
     }
-    if (plugins.length === 0) return out;
+    if (plugins.length === 0) return summary();
 
     const groupsResult = await listGatekeeperGroups();
     if (!groupsResult.ok) {
@@ -379,7 +470,8 @@ async function recomputeOnce(logger) {
         { reason: groupsResult.reason, status: groupsResult.statusCode },
         'Gatekeeper groups could not be read — plugin audiences kept as they are',
       );
-      return { ...out, error: groupsResult.error };
+      await syncChanged(written, declaring, logger);
+      return { ...summary(), error: groupsResult.error };
     }
     const groups = new Map(groupsResult.groups.map((g) => [g.name, g]));
     const users = await listDirectoryUsers();
@@ -412,27 +504,31 @@ async function recomputeOnce(logger) {
           );
         }
       }
-      const written = writeAudience(db, plugin.name, desired, stored, logger);
-      out.plugins.push({ plugin: plugin.name, written });
-      if (written > 0) {
-        logger?.info({ plugin: plugin.name, written }, 'Plugin audience changed');
+      const count = writeAudience(db, plugin.name, desired, stored, logger);
+      written.set(plugin.name, (written.get(plugin.name) ?? 0) + count);
+      if (count > 0) {
+        logger?.info({ plugin: plugin.name, written: count }, 'Plugin audience changed');
       }
     }
   } catch (err) {
     logger?.error({ err: err.message }, 'Recomputing the plugin audiences failed');
-    return { ...out, error: err.message };
+    return { ...summary(), error: err.message };
   }
 
-  const changed = out.plugins.filter((p) => p.written > 0).map((p) => p.plugin);
-  if (changed.length > 0) {
-    try {
-      const { syncPluginIdentity } = await import('./identity-sync.js');
-      for (const name of changed) void syncPluginIdentity(name, { logger });
-    } catch (err) {
-      logger?.error({ err: err.message }, 'Could not start the identity sync of changed audiences');
-    }
+  await syncChanged(written, declaring, logger);
+  return summary();
+}
+
+/** Start the sync of every declaring plugin whose rows changed (inactive ones take no feed). */
+async function syncChanged(written, declaring, logger) {
+  const changed = [...written].filter(([name, count]) => count > 0 && declaring.has(name));
+  if (changed.length === 0) return;
+  try {
+    const { syncPluginIdentity } = await import('./identity-sync.js');
+    for (const [name] of changed) void syncPluginIdentity(name, { logger });
+  } catch (err) {
+    logger?.error({ err: err.message }, 'Could not start the identity sync of changed audiences');
   }
-  return out;
 }
 
 /** The end of the last recompute started (settled, never rejected). */

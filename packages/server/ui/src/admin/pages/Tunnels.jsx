@@ -16,6 +16,7 @@ import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import {
   boundRoutes,
+  userSurfaceCandidateBlock,
   userSurfaceEligibility,
   userSurfaceReasonText,
   userSurfaceStatusOf,
@@ -555,8 +556,9 @@ function UserSurfaceBadges({ tunnel }) {
 /**
  * Bind the tunnel's host as agent-hosted plugins' user surface — where
  * their users reach `/api/<route>/app/*`, with their identity — or unbind
- * it. A route is served on one host at most; a plugin may be bound before
- * it declares identity (it is served from the update that brings it).
+ * it. A route is served on one host at most, and only from a tunnel the
+ * plugin's hosting agent carries; a plugin may be bound before it declares
+ * identity (it is served from the update that brings it).
  */
 function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
   const client = useAdminClient();
@@ -621,8 +623,9 @@ function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
           Agent-hosted plugins bound here are reached at{' '}
           <span className="font-mono text-zinc-400">/api/&lt;route&gt;/app/</span> on this host by
           signed-in users: Gatekeeper vouches for the session, the panel passes the user&apos;s id
-          and roles to the plugin&apos;s agent half. Until a plugin&apos;s installed, approved
-          version declares identity, those requests still go down the tunnel.
+          and roles to the plugin&apos;s agent half. Only a plugin hosted on this tunnel&apos;s
+          agent ({tunnel.agentLabel ?? 'none'}) is served here. Until a plugin&apos;s installed,
+          approved version declares identity, those requests still go down the tunnel.
         </p>
 
         <p className="text-xs text-zinc-400 mb-1">Bound here</p>
@@ -669,16 +672,19 @@ function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
               <option value="">
                 {pluginsQuery.isLoading ? 'Loading plugins…' : 'Select an agent-hosted plugin'}
               </option>
-              {candidates.map((p) => (
-                <option key={p.route} value={p.route} disabled={servedOn.has(p.route)}>
-                  {p.route}
-                  {servedOn.has(p.route)
-                    ? ` — served on ${servedOn.get(p.route)}`
-                    : p.identity
-                      ? ''
-                      : ' — declares no identity yet'}
-                </option>
-              ))}
+              {candidates.map((p) => {
+                const blocked = userSurfaceCandidateBlock(p, tunnel, servedOn);
+                return (
+                  <option key={p.route} value={p.route} disabled={blocked !== null}>
+                    {p.route}
+                    {blocked !== null
+                      ? ` — ${blocked}`
+                      : p.identity
+                        ? ''
+                        : ' — declares no identity yet'}
+                  </option>
+                );
+              })}
             </select>
             <button
               type="button"

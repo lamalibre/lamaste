@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isIdentityUuid } from '@lamalibre/lamaste';
 
 const SESSION_MAX_AGE = 12 * 60 * 60; // 12 hours in seconds
 const INACTIVITY_TIMEOUT = 2 * 60 * 60; // 2 hours in seconds
@@ -21,19 +22,23 @@ function signPayload(payloadB64, secretHex) {
 }
 
 /**
- * Create a signed user-access session token.
+ * Create a signed user-access session token, bound to the user's directory
+ * id as well as their username: a later user given the same username never
+ * holds this session (the middleware checks the username's current holder).
  *
  * @param {string} sessionSecret - Hex-encoded session secret
- * @param {string} username - Authelia username to bind the session to
+ * @param {{ username: string, userId: string }} user - the Authelia username and its directory id
  * @returns {{ value: string, maxAge: number, expiresAt: string }}
  */
-export function createUserSession(sessionSecret, username) {
+export function createUserSession(sessionSecret, { username, userId }) {
+  if (!isIdentityUuid(userId)) throw new Error('A user session names a directory user id');
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iat: now,
     exp: now + SESSION_MAX_AGE,
     lastActivity: now,
     username,
+    userId,
     type: 'user-access',
   };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -52,10 +57,12 @@ export function createUserSession(sessionSecret, username) {
  * @param {string} tokenValue - The token (payload.sig)
  * @param {string} sessionSecret - Hex-encoded session secret
  * @param {{ userEpochs?: Record<string, number> }} [options]
- *   userEpochs maps username → Unix-second epoch. If the session's `iat`
- *   is older than the user's epoch, the session is rejected as revoked.
- *   This is how Authelia user deletions invalidate live sessions whose
- *   HMAC signature is otherwise still valid.
+ *   userEpochs maps a directory user id → Unix-second epoch. If the
+ *   session's `iat` is older than its user's epoch, the session is rejected
+ *   as revoked. This is how offboarding (disable, delete) invalidates live
+ *   sessions whose HMAC signature is otherwise still valid. A session
+ *   without a user id (issued before 4.5) is rejected: it could not be
+ *   told from a later user's.
  * @returns {{ valid: boolean, payload?: object, reason?: string }}
  */
 export function validateUserSession(tokenValue, sessionSecret, options = {}) {
@@ -96,6 +103,10 @@ export function validateUserSession(tokenValue, sessionSecret, options = {}) {
     return { valid: false, reason: 'missing_username' };
   }
 
+  if (!isIdentityUuid(payload.userId)) {
+    return { valid: false, reason: 'missing_user_id' };
+  }
+
   const now = Math.floor(Date.now() / 1000);
 
   if (payload.exp && now > payload.exp) {
@@ -106,12 +117,11 @@ export function validateUserSession(tokenValue, sessionSecret, options = {}) {
     return { valid: false, reason: 'inactive' };
   }
 
-  // Per-user invalidation epoch (set when a user is deleted from Authelia).
-  // Reject sessions issued before that epoch — they belong to a user who no
-  // longer exists, even if a same-named user is later re-created.
+  // Per-user invalidation epoch (set when a user is offboarded). Reject
+  // sessions issued before it.
   const userEpochs = options.userEpochs;
   if (userEpochs && typeof userEpochs === 'object') {
-    const epoch = userEpochs[payload.username];
+    const epoch = userEpochs[payload.userId];
     if (typeof epoch === 'number' && typeof payload.iat === 'number' && payload.iat < epoch) {
       return { valid: false, reason: 'revoked' };
     }

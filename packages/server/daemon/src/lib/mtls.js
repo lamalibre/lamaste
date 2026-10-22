@@ -854,16 +854,20 @@ export async function revokeAgentCert(label, logger) {
 
     // 7. Detach the agent from its tunnels, so a later enrollment that reuses
     // the label inherits nothing. Runs after the credential removal, whose
-    // chisel restart already ended the agent's sessions.
+    // chisel restart already ended the agent's sessions. A released tunnel
+    // bound as a plugin's user surface serves none of it from now on: its
+    // vhost loses those locations.
     if (!label.startsWith(PLUGIN_AGENT_CN_PREFIX)) {
       try {
-        await releaseAgentTunnels({
+        const { releasedIds } = await releaseAgentTunnels({
           agentLabel: label,
           nginx: tunnelNginxDeps,
           chisel: tunnelChiselDeps,
           state: tunnelStateDeps,
           logger,
         });
+        const { refreshTunnelUserSurfaceVhosts } = await import('./user-surface.js');
+        await refreshTunnelUserSurfaceVhosts(releasedIds, logger);
       } catch (err) {
         logger.error(
           { err, label },

@@ -85,8 +85,8 @@ CREATE INDEX directory_users_principal_pending ON directory_users (username)
 -- or a `remove` with its reason and, but for `erased`, the last known
 -- declared attributes), its version (+1 whenever the change differs) and the
 -- `seq` the triggers below stamp. Rows are written only when the change
--- differs; users who were never members have none. Removed with the plugin,
--- or once its installed version no longer declares identity.
+-- differs; users who were never members have none. The plugin's ledger: kept
+-- while any agent keeps data of the plugin (see 0014).
 CREATE TABLE plugin_audience (
   plugin      TEXT NOT NULL,
   user_id     TEXT NOT NULL REFERENCES directory_users (user_id),
@@ -119,15 +119,17 @@ END;
 --   directory_id       the directory the half follows, as it last answered
 --   cursor             the seq it has applied up to, as it last answered
 --   ready_version      the plugin version installed when the half last
---                      answered protocol 1 — user callers go to the half only
---                      while it is the installed version
+--                      applied every change up to the head after a complete
+--                      replay — user callers go to the half only while it is
+--                      the installed version
 --   last_sync_at       the last sync that ended with the half up to date
 --   last_reconcile_at  the last full replay (a reset or the daily reconcile);
 --                      cleared when one starts, so one cut short is owed
 --   last_mismatches    what the last daily reconcile found (null otherwise)
 --   last_error         why the last sync did not finish (or was not tried)
--- Removed with the plugin, and when its hosting is removed: the half of a
--- later hosting answers protocol 1 again and is sent everything.
+-- Removed when its hosting is removed (the half of a later hosting is sent
+-- everything, and is ready only once it has applied it) and with the
+-- plugin's ledger (0014); kept when the plugin stops declaring identity.
 CREATE TABLE plugin_identity_sync (
   plugin             TEXT PRIMARY KEY,
   directory_id       TEXT,

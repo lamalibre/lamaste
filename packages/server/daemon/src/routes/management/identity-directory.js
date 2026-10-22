@@ -3,8 +3,9 @@
  *
  *   GET  /identity/directory                 every user the directory knows —
  *                                            tombstones and erased ones too — with
- *                                            the plugins whose agent half has not
- *                                            yet acknowledged an erasure
+ *                                            the plugins that have not yet
+ *                                            acknowledged an erasure (those the
+ *                                            feed does not reach now marked)
  *   POST /identity/directory/:userId/erase   erase a removed user
  *
  * Business logic lives in `lib/directory.js` and `lib/identity-sync.js`.
@@ -35,11 +36,17 @@ export default async function identityDirectoryRoutes(fastify, _opts) {
     ]);
     return {
       directoryId,
-      users: users.map((user) => ({
-        ...user,
-        erasure: erasures.get(user.userId) ?? null,
-        pendingErasures: pending.get(user.userId) ?? [],
-      })),
+      users: users.map((user) => {
+        const waiting = pending.get(user.userId) ?? [];
+        return {
+          ...user,
+          erasure: erasures.get(user.userId) ?? null,
+          pendingErasures: waiting.map((p) => p.plugin),
+          // Among them, the plugins the feed does not reach now (uninstalled,
+          // or no longer declaring identity) whose data an agent keeps.
+          pendingErasuresInactive: waiting.filter((p) => p.inactive).map((p) => p.plugin),
+        };
+      }),
     };
   });
 

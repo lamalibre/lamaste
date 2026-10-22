@@ -173,6 +173,16 @@ export async function uninstallPluginWithHosting(
       }
       await op.step('remove the package', () => uninstallPlugin(name, logger));
       setPluginCapabilities(await getPluginCapabilities());
+      // With purge nothing of the plugin is kept — not who held its roles.
+      if (purge) {
+        const { revokePluginRoleGrants } = await import('./entitlements.js');
+        const revoked = await revokePluginRoleGrants(plugin, { actor, logger });
+        if (!revoked.ok) {
+          op.warn(
+            `The plugin's role grants were not revoked (${revoked.error}) — revoke them in Gatekeeper`,
+          );
+        }
+      }
       await recordAuditBestEffort(
         { actor, action: 'plugin.uninstalled', plugin: name, details: { operation: op.id } },
         logger,
@@ -723,7 +733,10 @@ async function awaitApproval({
     },
     logger,
   );
-  return { pendingUpdate: pendingUpdateView(pendingUpdate) };
+  const { withIdentityGrantImpact } = await import('./entitlements.js');
+  return {
+    pendingUpdate: await withIdentityGrantImpact(pendingUpdateView(pendingUpdate), plugin.route),
+  };
 }
 
 async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {

@@ -217,7 +217,22 @@ export {
   parseIdentityChangesRequest,
   parseIdentityChangesAnswer,
   parseIdentityCursorConflict,
+  parseIdentityChangesWire,
 } from './identity.js';
+
+// The feed's changes sealed to one request (installation-secret key,
+// domain-separated from the settings secrets').
+export {
+  IDENTITY_CHANGES_SEAL_VERSION,
+  sealIdentityChanges,
+  openIdentityChanges,
+  parseSealedIdentityChanges,
+} from './identity-seal.js';
+export type {
+  SealedIdentityChanges,
+  IdentityChangesEnvelope,
+  IdentityChangesSealContext,
+} from './identity-seal.js';
 
 export type {
   IdentityAttribute,
@@ -235,23 +250,38 @@ export type {
   IdentityChangesRequest,
   IdentityChangesAnswer,
   IdentityCursorConflict,
+  IdentityChangesWire,
 } from './identity.js';
 
 // The user surface: /api/<route>/app/* on the relay, /app/* on the agent
-// half — the path rules every check of it shares, and how a host's binding
-// to it is read
+// half — the path rules every check of it shares, how a host's binding to
+// it is read, and which bound routes a host serves (its agent hosts them)
 export {
   AGENT_HALF_APP_PREFIX,
   USER_SURFACE_API_PREFIX,
   USER_SURFACE_MAX_ROUTES_PER_HOST,
+  USER_SURFACE_MAX_RESPONSE_SECONDS,
   hasUnsafePathSegments,
   isAgentHalfAppPath,
   isUnderAgentHalfApp,
   isUserSurfaceRoute,
   isUserSurfaceUrl,
   tunnelUserSurfaceRoutes,
+  tunnelServedUserSurfaceRoutes,
   userSurfaceApiPath,
+  userSurfaceHostingAgent,
 } from './user-surface.js';
+
+// Authelia's session cookie: its name, how Gatekeeper reads it, and the
+// nginx map that keeps it from every tunnel and agent backend
+export {
+  AUTHELIA_SESSION_COOKIE,
+  BACKEND_COOKIE_MAP_FILE,
+  BACKEND_COOKIE_STRIP_ROUNDS,
+  BACKEND_COOKIE_VARIABLE,
+  autheliaSessionCookies,
+  renderBackendCookieMap,
+} from './authelia-session.js';
 
 // Settings secrets on the wire: sealed by the relay to the one request that
 // carries them, opened by the agent half with the verified request
@@ -392,6 +422,7 @@ export {
   generateCallerAssertionNonce,
   assertHostingSecret,
   bodySha256Hex,
+  isOriginFormPath,
   parseCallerIdentity,
   signCallerAssertion,
   verifyCallerAssertion,
@@ -471,6 +502,10 @@ export type {
 export { pluginHostPlugin, invalidatePluginHostCache } from './plugin-host.js';
 
 export type { PluginHostAuthStrategy, PluginHostOptions } from './plugin-host.js';
+
+// Request logging without personal data (the panel, Gatekeeper)
+export { logRequestMetadata, UNMATCHED_ROUTE } from './request-log.js';
+export type { RequestMetadataLogOptions } from './request-log.js';
 
 // Branding primitives
 export * from './branding.js';

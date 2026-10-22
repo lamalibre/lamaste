@@ -559,7 +559,7 @@ DELETE /api/gatekeeper/access-log
 
 **Auth:** Admin only
 
-Delete all access log entries.
+Delete all access log entries. It takes no query: Gatekeeper refuses one (`400`), so a narrowing query from an older caller never clears the whole log instead.
 
 **Response (200):**
 
@@ -570,7 +570,19 @@ Delete all access log entries.
 }
 ```
 
-Gatekeeper's own API also takes `?username=<u>` and `&before=<ISO 8601 UTC>`: only that user's entries — logged before they were removed, since a later user may have the same username — and the entries still queued for the log, so none of them is written afterwards. The panel calls it when it [erases](users.md#erasing-a-removed-user) a removed user; the proxy always clears everything.
+### Purge One User's Access-Log Entries
+
+```
+POST /api/gatekeeper/access-log/purge
+```
+
+**Auth:** Admin only
+
+```json
+{ "username": "alice", "before": "2026-10-22T08:00:00.000Z" }
+```
+
+Deletes only that user's entries — logged before `before` (ISO 8601 UTC, optional) when given, since a later user may have the same username — and the entries still queued for the log, so none of them is written afterwards. `{ "ok": true, "removed": 3 }`; `400` for a body that is not `{ username, before? }`. The username travels in the body, never in a URL that request logs keep. The panel calls Gatekeeper's `POST /api/access-log/purge` itself when it [erases](users.md#erasing-a-removed-user) a removed user.
 
 ---
 
@@ -587,6 +599,12 @@ GET /authz/tunnel/:fqdn
 **Host:** `127.0.0.1:9294`
 
 This is the nginx `auth_request` target. nginx calls this endpoint on every request to a Gatekeeper-protected resource. The tunnel vhost names its tunnel in the path (`proxy_pass http://127.0.0.1:9294/authz/tunnel/<fqdn>;`) and sends the same hostname in `X-Original-URL` (with the request's path and query) and `Host`; a request whose `X-Original-URL` or `Host` names another hostname, or has no `Host`, is refused with 401. Gatekeeper validates the user's Authelia session cookie for that URL and checks the corresponding grant.
+
+**The session cookie.** Of the browser's `Cookie` header Gatekeeper reads the `authelia_session` pair alone (core `autheliaSessionCookies`: a pair whose name, spaces and tabs trimmed, is exactly `authelia_session`) and sends Authelia `Cookie: authelia_session=<value>` — never the browser's other cookies. A request carrying **more than one** `authelia_session` is refused with `401` before Authelia is asked (logged `duplicate_authelia_cookie`): another host under the domain can plant a second one under another path, and which one Authelia would read is not Gatekeeper's to guess. A validated session is cached for `sessionCacheTtlMs` (30 s) under an HMAC of the cookie value **and the tunnel host** — Authelia decides per host, so a session accepted on one host is asked about again on another.
+
+**Rate limit.** Every authorization route (`/authz/tunnel/:fqdn`, `/authz/user-surface/:fqdn`, `/authz/user-surface-unauthenticated`, `/authz/check`) allows 6000 requests a minute per client address and tunnel host (`AUTHZ_RATE_LIMIT_PER_CLIENT`), `429` past it. The client address is `X-Forwarded-For`, which nginx sets to `$remote_addr` on every subrequest and Gatekeeper trusts from `127.0.0.1` only (`trustProxy`) — one client exhausting its bucket leaves the others theirs. The management API keeps one shared bucket (1000 a minute): only the panel and local tooling reach it.
+
+**Logs.** A refusal is logged with the tunnel, the reason and the request id — never the username (`no_matching_grant` included). The access-request log (`accessLoggingEnabled`) is the one place Gatekeeper records who asked.
 
 `GET /authz/check` — what tunnel vhosts written before 4.3 call, with `X-Original-URL` and `Host` taken from the client's `Host` header — answers `403` (logged as `vhost_predates_host_binding`): such a vhost closes its tunnel until the panel rewrites it, which it does at startup. See [nginx Configuration](../03-architecture/nginx-configuration.md#authorization-subrequests-name-their-own-hostname).
 
@@ -608,21 +626,24 @@ GET /authz/user-surface/:fqdn
 
 **Host:** `127.0.0.1:9294`
 
-The `auth_request` target of a plugin's user surface — `/api/<route>/app` and everything under it on the host of a tunnel bound to the plugin ([Tunnels API](tunnels.md#user-surface-binding)). The vhost names its tunnel in the path, `X-Original-URL` and `Host`, as for `/authz/tunnel/:fqdn`, and sends `X-Original-Method`. Gatekeeper checks, in order: the hostnames agree; the tunnel is known, enabled, not public and has a user surface; the raw request target — what follows `https://<fqdn>` in `X-Original-URL`, never re-encoded by a URL parser — lies on the user surface of a route bound to the tunnel, with no `.` or `..` segment, backslash, percent-encoded `.`, `/` or `\`, or escape that does not decode; the Authelia session; on a `restricted` tunnel, the user's grant for the tunnel. Then it signs a **relay assertion for the panel**: Ed25519 with the relay signing key, audience `@panel`, port 3100, caller `{ type: "user", username }` — the username alone; the panel takes everything else about the user from its directory — bound to the method and the raw target (`{ route, path }`).
+The `auth_request` target of a plugin's user surface — `/api/<route>/app` and everything under it on the host of a tunnel bound to the plugin ([Tunnels API](tunnels.md#user-surface-binding)). The vhost names its tunnel in the path, `X-Original-URL` and `Host`, as for `/authz/tunnel/:fqdn`, and sends `X-Original-Method`. Gatekeeper checks, in order: the hostnames agree; the tunnel is known, enabled, not public and has a user surface; the raw request target — what follows `https://<fqdn>` in `X-Original-URL`, never re-encoded by a URL parser — lies on the user surface of a route bound to the tunnel, with no `.` or `..` segment, backslash, percent-encoded `.`, `/`, `\` or `%` (`%25`), or escape that does not decode; the tunnel's agent hosts the plugin — it carries the plugin's internal tunnel, the one `tunnels.json` records for the route (core `tunnelServedUserSurfaceRoutes`; refused `not_hosting_agent` otherwise: the tunnel moved or its agent revoked, the plugin hosted elsewhere or not at all); the Authelia session, read as for `/authz/tunnel/:fqdn` (one `authelia_session` only); on a `restricted` tunnel, the user's grant for the tunnel. Then it signs a **relay assertion for the panel**: Ed25519 with the relay signing key, audience `@panel`, port 3100, caller `{ type: "user", username }` — the username alone; the panel takes everything else about the user from its directory — bound to the method and the raw target (`{ route, path }`).
 
-| Status | Meaning                                                                                                                                                                                 |
-| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 200    | `X-Lamalibre-Relay-Assertion` for this one request; `Cache-Control: no-store`; no `Remote-*` headers                                                                                    |
-| 401    | No valid session — nginx answers with `GET /authz/user-surface-unauthenticated`: a JSON `401 { "error": "unauthenticated" }`, never a redirect (the caller is an application's request) |
-| 403    | Anything else refused, with an empty body — never the access-request page; the reason is logged (`user-surface authz denied`)                                                           |
-| 503    | The relay signing key is unusable                                                                                                                                                       |
+| Status | Meaning                                                                                                                                                                                                                   |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 200    | `X-Lamalibre-Relay-Assertion` for this one request; `Cache-Control: no-store`; no `Remote-*` headers                                                                                                                      |
+| 401    | No valid session (or more than one session cookie) — nginx answers with `GET /authz/user-surface-unauthenticated`: a JSON `401 { "error": "unauthenticated" }`, never a redirect (the caller is an application's request) |
+| 403    | Anything else refused, with an empty body — never the access-request page; the reason is logged (`user-surface authz denied`)                                                                                             |
+| 503    | The relay signing key is unusable                                                                                                                                                                                         |
 
 ### Principals (Gatekeeper's own API)
 
 ```
-DELETE /api/principals/user/:username
+POST /api/principals/user/remove
+{ "username": "alice" }
 ```
 
 **Host:** `127.0.0.1:9294`, with the panel's secret. Not proxied.
 
-Removes a user principal everywhere — every grant naming the username, of any resource type, and its membership of every group — in one transaction, holding the groups lock and then the grants lock. Idempotent. `{ "ok": true, "grantsRemoved": 2, "groupsLeft": 1 }`. The panel calls it when it deletes a user, retries it every minute while it is pending, and calls it before it creates a user, a grant or a membership under a username a removed user held ([Usernames and Gatekeeper](users.md#usernames-and-gatekeeper)).
+Removes a user principal everywhere — every grant naming the username, of any resource type, and its membership of every group — in one transaction, holding the groups lock and then the grants lock. Idempotent. `{ "ok": true, "grantsRemoved": 2, "groupsLeft": 1 }`; `400` for a body that is not `{ username }` (1–100 characters), never echoing it. The username travels in the body, never in a URL that request logs keep (the `DELETE /api/principals/user/:username` of earlier 4.5 builds is gone). The panel calls it when a user is removed, retries it every minute while it is pending, and calls it before it creates a user under a username a removed user held — always then — and before it gives a grant or a membership to a username whose cleanup is pending ([Usernames and Gatekeeper](users.md#usernames-and-gatekeeper)).
+
+**Request logging.** Gatekeeper logs one metadata line per request — method, route pattern (`/authz/tunnel/:fqdn`, never the URL), status, duration — and no client address; Fastify's own request lines are off.

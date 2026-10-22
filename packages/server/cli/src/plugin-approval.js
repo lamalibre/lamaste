@@ -81,7 +81,9 @@ export function identityBlockLines(block) {
 /**
  * How an update changes a plugin's identity block (`pendingUpdate.
  * identity`: `{ before, after, rolesAdded, rolesRemoved, attributesAdded,
- * attributesRemoved, labelsChanged }`): a headline and a line per kind of
+ * attributesRemoved, labelsChanged, grantsAffected? }` — `grantsAffected`:
+ * how many role grants approving it rewrites or revokes, null when unknown):
+ * a headline and a line per kind of
  * change — roles added or removed and attributes widened wait for an
  * administrator (`approval`), narrowing and label edits only change the
  * digest. Null when neither version declares a block, or it is unchanged.
@@ -114,13 +116,27 @@ export function identityDiffLines(diff) {
   add('receives more about its users', list(diff.attributesAdded).map(attributeWords), true);
   add('receives less about its users', list(diff.attributesRemoved).map(attributeWords), false);
   add('role labels changed', list(diff.labelsChanged).map(role(diff.after)), false);
+  // A removed role stays removed: approving revokes it from the grants that hold it.
+  if (list(diff.rolesRemoved).length > 0 && 'grantsAffected' in diff) {
+    const affected = diff.grantsAffected;
+    const parts =
+      affected === null || typeof affected !== 'object'
+        ? ['not known (Gatekeeper could not be read)']
+        : [
+            ...(affected.revoked > 0 ? [`${affected.revoked} revoked`] : []),
+            ...(affected.rewritten > 0
+              ? [`${affected.rewritten} narrowed to the roles that stay`]
+              : []),
+          ];
+    add('role grants affected', parts.length > 0 ? parts : ['none'], true);
+  }
   const before = diff.before != null;
   const after = diff.after != null;
   if (lines.length === 0 && before === after) return null;
   const headline = !before
     ? 'declares identity for the first time'
     : !after
-      ? 'no longer declares identity — its audience is dropped and its user surface is no longer served'
+      ? 'no longer declares identity — it is sent no users, its role grants are revoked and its user surface is no longer served'
       : 'changes its identity';
   return { headline, lines };
 }

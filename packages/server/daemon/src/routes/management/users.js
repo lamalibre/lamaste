@@ -8,11 +8,10 @@ import {
   generateTotpSecret,
   writeTotpToDatabase,
 } from '../../lib/authelia.js';
-import { removeGrantsForUser } from '../../lib/user-access.js';
 import { revokeUserRegistryTokens } from '../../lib/registry-credential.js';
-import { bumpUserEpoch } from '../../lib/config.js';
 import { httpError } from '../../lib/app-error.js';
 import { actorFromRequest } from '../../lib/actor.js';
+import { recordAuditBestEffort } from '../../lib/audit.js';
 import {
   ADMIN_GROUP,
   changeUsers,
@@ -83,6 +82,16 @@ async function writeUsersOrFail(usersData) {
   } catch (err) {
     throw httpError('Failed to update user database', 500, { cause: err });
   }
+}
+
+/** The user's groups as a sorted list (users.yml may hold none). */
+function groupsOf(entry) {
+  return Array.isArray(entry?.groups) ? [...entry.groups].sort() : [];
+}
+
+/** Whether two lists hold the same strings. */
+function sameList(a, b) {
+  return a.length === b.length && a.every((value, i) => value === b[i]);
 }
 
 /** An enabled member of the administrators' group. */
@@ -169,8 +178,9 @@ export default async function usersRoutes(fastify, _opts) {
       }
 
       let warnings;
+      let persisted;
       try {
-        ({ warnings } = await changeUsers(
+        ({ warnings, persisted } = await changeUsers(
           async () => {
             const usersData = await readUsersOrFail();
             if (usersData.users[body.username]) throw httpError('Username already exists', 409);
@@ -182,16 +192,23 @@ export default async function usersRoutes(fastify, _opts) {
             };
             await writeUsersOrFail(usersData);
           },
-          // A removed user's grants and groups under the username go first.
-          { actor: actorFromRequest(request), logger: request.log, creates: [body.username] },
+          {
+            actor: actorFromRequest(request),
+            logger: request.log,
+            // A removed user's grants, groups and second factors under the
+            // username go first; a username with an OIDC identity is refused.
+            creates: [body.username],
+            expect: (users) => users[body.username]?.password === hash,
+          },
         ));
       } catch (err) {
         return sendFailure(request, reply, err, 'Failed to update user database');
       }
 
       const created = await findDirectoryUser(body.username);
-      return reply.code(201).send({
-        ok: true,
+      return reply.code(persisted ? 201 : 200).send({
+        ok: persisted,
+        ...(persisted ? {} : { persisted: false }),
         user: {
           username: body.username,
           displayname: body.displayname,
@@ -231,15 +248,26 @@ export default async function usersRoutes(fastify, _opts) {
         }
       }
 
+      /** Whether users.yml's entry holds every field this request set. */
+      const intended = (entry) =>
+        entry !== undefined &&
+        entry !== null &&
+        (body.displayname === undefined || entry.displayname === body.displayname) &&
+        (body.email === undefined || entry.email === body.email) &&
+        (body.groups === undefined || sameList(groupsOf(entry), [...body.groups].sort())) &&
+        (passwordHash === undefined || entry.password === passwordHash) &&
+        (body.disabled === undefined || (entry.disabled === true) === body.disabled);
+
       let outcome;
+      let before = null;
       try {
         outcome = await changeUsers(
           async () => {
             const usersData = await readUsersOrFail();
             const user = usersData.users[username];
             if (!user) throw httpError('User not found', 404);
-            const groupsBefore = Array.isArray(user.groups) ? [...user.groups] : [];
-            const wasDisabled = user.disabled === true;
+            // As it was before this request (a second attempt finds it changed already).
+            before ??= { groups: groupsOf(user), disabled: user.disabled === true };
             if (body.disabled === true && isEnabledAdmin(user)) {
               const enabledAdmins = Object.values(usersData.users).filter(isEnabledAdmin).length;
               if (enabledAdmins <= 1) {
@@ -257,60 +285,75 @@ export default async function usersRoutes(fastify, _opts) {
             if (body.disabled === false) delete user.disabled;
 
             await writeUsersOrFail(usersData);
-            return { user, groupsBefore, wasDisabled };
+            return user;
           },
-          { actor: actorFromRequest(request), logger: request.log },
+          {
+            actor: actorFromRequest(request),
+            logger: request.log,
+            // Authelia's own password reset may rewrite users.yml under the
+            // change: it is checked after the restart, and made once more.
+            expect: (users) => intended(users[username]),
+          },
         );
       } catch (err) {
         return sendFailure(request, reply, err, 'Failed to update user database');
       }
 
-      const { user, groupsBefore, wasDisabled } = outcome.result;
+      const user = outcome.result;
       const disabled = user.disabled === true;
-      const justDisabled = disabled && !wasDisabled;
       const warnings = [...outcome.warnings];
+      const known = await findDirectoryUser(username);
+      const userId = known?.userId ?? null;
 
-      // Disabling is offboarding: the user's desktop sessions and registry
-      // tokens end with it. Registry scopes are granted at login from
-      // feria-* groups; losing a group must not leave a valid token behind
-      // either. Best effort — the user update itself is already done.
-      if (justDisabled) {
+      // Disabling is offboarding, which the change did as the directory saw
+      // the user become disabled (`changeUsers`): sessions ended, registry
+      // tokens revoked. Registry scopes are granted at login from feria-*
+      // groups too: losing one must not leave a valid token behind either.
+      const groupsAfter = groupsOf(user);
+      const groupsChanged = body.groups !== undefined && !sameList(before.groups, groupsAfter);
+      if (groupsChanged && !(disabled && !before.disabled)) {
         try {
-          await bumpUserEpoch(username);
+          await revokeUserRegistryTokens(
+            username,
+            { before: before.groups, after: groupsAfter },
+            request.log,
+            { userId },
+          );
         } catch (err) {
-          request.log.warn({ err: err.message }, 'Failed to end the sessions of a disabled user');
+          request.log.warn({ userId, err: err.message }, 'Failed to revoke registry tokens');
           warnings.push({
-            step: 'session-epoch',
-            message: `Live desktop sessions were not ended: ${err.message}`,
+            step: 'registry',
+            message: `Registry tokens were not revoked: ${err.message}`,
           });
         }
       }
-      const tokenChange = justDisabled
-        ? { deleted: true }
-        : body.groups !== undefined
-          ? { before: groupsBefore, after: user.groups || [] }
-          : null;
-      if (tokenChange) {
-        try {
-          await revokeUserRegistryTokens(username, tokenChange, request.log);
-        } catch (err) {
-          request.log.warn({ username, err: err.message }, 'Failed to revoke registry tokens');
-          warnings.push(`registry tokens were not revoked: ${err.message}`);
-        }
+
+      // The directory audits status and attributes; these are the users API's own.
+      const audit = (action, details = {}) =>
+        recordAuditBestEffort(
+          { actor: actorFromRequest(request), action, details: { userId, ...details } },
+          request.log,
+        );
+      if (passwordHash !== undefined) await audit('user.password.set');
+      if (groupsChanged) {
+        await audit('user.groups.changed', {
+          added: groupsAfter.filter((g) => !before.groups.includes(g)),
+          removed: before.groups.filter((g) => !groupsAfter.includes(g)),
+        });
       }
 
-      const known = await findDirectoryUser(username);
       return {
-        ok: true,
+        ok: outcome.persisted,
         user: {
           username,
           displayname: user.displayname,
           email: user.email,
           groups: user.groups || [],
           disabled,
-          userId: known?.userId ?? null,
+          userId,
           status: disabled ? 'disabled' : 'active',
         },
+        ...(outcome.persisted ? {} : { persisted: false }),
         ...(warnings.length > 0 ? { warnings } : {}),
       };
     },
@@ -345,7 +388,12 @@ export default async function usersRoutes(fastify, _opts) {
             delete usersData.users[username];
             await writeUsersOrFail(usersData);
           },
-          { actor, logger: request.log, deleted: [username] },
+          {
+            actor,
+            logger: request.log,
+            deleted: [username],
+            expect: (users) => !Object.hasOwn(users, username),
+          },
         );
       } catch (err) {
         return sendFailure(request, reply, err, 'Failed to update user database');
@@ -353,66 +401,16 @@ export default async function usersRoutes(fastify, _opts) {
       const userId =
         outcome.directory?.removed.find((removed) => removed.username === username)?.userId ?? null;
 
-      // ---------------------------------------------------------------
-      // Cascade cleanup. The user is already gone from users.yml; from
-      // here on we never roll back. Failures collect into `warnings` so
-      // the admin sees a partial-success response and can investigate.
-      // ---------------------------------------------------------------
+      // The user was offboarded as the directory saw them go (`changeUsers`):
+      // desktop sessions ended, registry tokens revoked, legacy
+      // user-plugin-access grants removed, Gatekeeper's grants and group
+      // memberships under the username dropped, Authelia's second factors
+      // deleted. What failed is among the warnings; the tombstone keeps a
+      // Gatekeeper cleanup pending until it succeeds.
       const warnings = [...outcome.warnings];
 
-      // 0. Registry (Feria) tokens the user holds — their groups are gone.
-      try {
-        await revokeUserRegistryTokens(username, { deleted: true }, request.log);
-      } catch (err) {
-        request.log.warn(
-          { username, err: err.message },
-          'Cascade: registry token revocation failed',
-        );
-        warnings.push(`registry tokens were not revoked: ${err.message}`);
-      }
-
-      // 1. Legacy user-plugin-access.json grants (pre-gatekeeper migration)
-      try {
-        const removed = await removeGrantsForUser(username, request.log);
-        if (removed > 0) {
-          request.log.info(
-            { username, removed },
-            'Cascade: removed legacy user-plugin-access grants',
-          );
-        }
-      } catch (err) {
-        request.log.warn(
-          { err, username },
-          'Cascade: failed to remove legacy user-plugin-access grants',
-        );
-        warnings.push({
-          step: 'user-plugin-access',
-          message: `Failed to remove legacy grants: ${err.message}`,
-        });
-      }
-
-      // 2. Gatekeeper grants and group memberships went with the deletion
-      //    (`changeUsers`): a failure there is among the warnings, and the
-      //    tombstone keeps the cleanup pending until it succeeds.
-
-      // 3. Live user-access sessions — bump per-user epoch in panel.json so
-      //    middleware rejects every session token with iat < epoch.
-      try {
-        const epoch = await bumpUserEpoch(username);
-        request.log.info({ username, epoch }, 'Cascade: bumped user-access session epoch');
-      } catch (err) {
-        request.log.warn(
-          { err, username },
-          'Cascade: failed to bump user-access session epoch — old session tokens may still validate',
-        );
-        warnings.push({
-          step: 'session-epoch',
-          message: `Failed to invalidate live sessions: ${err.message}. Old session tokens for this username may still validate until their natural expiry.`,
-        });
-      }
-
-      // 4. Erase the tombstone, when asked to. Its failure leaves the
-      //    tombstone in place, to be erased later by its id.
+      // Erase the tombstone, when asked to. Its failure leaves the tombstone
+      // in place, to be erased later by its id.
       let erased = false;
       if (erase === 'true') {
         if (userId === null) {
@@ -434,7 +432,8 @@ export default async function usersRoutes(fastify, _opts) {
 
       const tombstone = userId ? await getDirectoryUser(userId) : null;
       const response = {
-        ok: true,
+        ok: outcome.persisted,
+        ...(outcome.persisted ? {} : { persisted: false }),
         userId,
         // Gatekeeper dropped the grants and group memberships under the username.
         principalCleared: tombstone?.principalClearedAt != null,
@@ -476,6 +475,15 @@ export default async function usersRoutes(fastify, _opts) {
         return reply.code(500).send({ error: 'Failed to write TOTP configuration' });
       }
 
+      const known = await findDirectoryUser(username);
+      await recordAuditBestEffort(
+        {
+          actor: actorFromRequest(request),
+          action: 'user.totp.reset',
+          details: { userId: known?.userId ?? null },
+        },
+        request.log,
+      );
       return { ok: true, totpUri: uri };
     },
   );

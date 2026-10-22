@@ -136,6 +136,45 @@ Each log line contains an ISO timestamp and the log message:
 - **authelia** logs show authentication attempts, including failed TOTP entries
 - **lamalibre-lamaste-serverd** logs show API requests and any server-side errors
 
+### Logs and Personal Data
+
+What each log on the server keeps about people, and for how long — what an [erasure](../04-api-reference/users.md#erasing-a-removed-user) cannot reach:
+
+| Log                                               | What it keeps                                                                                                                                                                                                                                                                                                            | Retention                                                              |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| Panel and Gatekeeper (journald)                   | One metadata line per request: method, the **route pattern** (`/api/users/:username` — never the URL, never a query), status, duration, the caller's certificate role. The client address only for certificate holders (administrators, agents) — never for a person. The panel's own lines name users by `userId` alone | journald's limits (below)                                              |
+| nginx access log (`/var/log/nginx/access.log`)    | Every request's client address and full URL — an administrator's request names the user it changes (`/api/users/alice`), a desktop user's or a tunneled app's request is logged with its address                                                                                                                         | Ubuntu's logrotate: daily, 14 files (`/etc/logrotate.d/nginx`)         |
+| Authelia (`/var/log/authelia/authelia.log`)       | Sign-in attempts with the username and the client address; Authelia also keeps an authentication log in its database                                                                                                                                                                                                     | **Not rotated** by Lamaste: the file grows until you rotate it (below) |
+| Other units (journald: chisel, the agents' sync…) | Connections by agent label; no user data                                                                                                                                                                                                                                                                                 | journald's limits (below)                                              |
+
+**journald** keeps entries until its size limit (by default 10% of the file system, at most 4 GiB) — on a small droplet that can be months. To keep at most two weeks:
+
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nMaxRetentionSec=14day\n' | sudo tee /etc/systemd/journald.conf.d/lamaste-retention.conf
+sudo systemctl restart systemd-journald
+sudo journalctl --vacuum-time=14d    # drop what is older now
+```
+
+**nginx**: shorten `rotate 14` in `/etc/logrotate.d/nginx` to keep fewer days, or `sudo truncate -s 0 /var/log/nginx/access.log.*` after an erasure that must reach them now.
+
+**Authelia's log file**: rotate it, e.g. `/etc/logrotate.d/authelia`:
+
+```
+/var/log/authelia/authelia.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su lamaste-authelia lamaste-authelia
+}
+```
+
+Backups taken before an erasure keep everything they copied; age them out on the same schedule.
+
 ### What Metrics to Watch
 
 For day-to-day monitoring, these are the most important signals:

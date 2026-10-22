@@ -684,7 +684,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-49",
           "label": "The tunnel's own backend answers through chisel (${APP}/echo is a file of it)",
           "target": "local",
           "op": {
@@ -694,7 +694,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-50",
           "label": "The tunnel's backend is not reachable through chisel on the host VM's port ${PORT_A}",
           "target": "local",
           "op": {
@@ -704,14 +704,14 @@
           }
         }
       ],
-      "bash": "log_section \"An authenticated app tunnel with its own backend, and two others\"\n\nRESP=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_A}\\\",\\\"port\\\":${PORT_A},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nTUNNEL_A=$(json_get \"$RESP\" '.tunnel.id // empty')\nassert_json_field \"$RESP\" '\"\\(.tunnel.fqdn) \\(.tunnel.accessMode) \\(.tunnel.agentLabel)\"' \"${FQDN} authenticated ${HOST_AGENT_LABEL}\" \"Tunnel ${FQDN}: authenticated, carried by ${HOST_AGENT_LABEL}\" || true\nRESP=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_P}\\\",\\\"port\\\":${PORT_P},\\\"accessMode\\\":\\\"public\\\",\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nTUNNEL_P=$(json_get \"$RESP\" '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.accessMode' 'public' \"Tunnel ${SUB_P}: public\" || true\nRESP=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_S}\\\",\\\"port\\\":${PORT_S},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nTUNNEL_S=$(json_get \"$RESP\" '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.accessMode' 'authenticated' \"Tunnel ${SUB_S}: authenticated\" || true\n\nagent_exec \"grep -q 'tunnel.${DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${DOMAIN}' >> /etc/hosts\" > /dev/null 2>&1 || true\nvisitor_exec \"grep -q '${FQDN}' /etc/hosts || echo '${HOST_IP} ${FQDN}' >> /etc/hosts\" > /dev/null 2>&1 || true\nagent_exec \"systemctl stop ${BACKEND_UNIT} > /dev/null 2>&1; rm -rf ${BACKEND_DIR} && mkdir -p ${BACKEND_DIR}${APP} && printf '%s\\n' ${MARKER} > ${BACKEND_DIR}${APP}/echo && chmod -R a+rX ${BACKEND_DIR}\" > /dev/null 2>&1 || true\nagent_exec \"systemd-run --quiet --collect --unit ${BACKEND_UNIT} --uid=nobody --gid=nogroup python3 -m http.server ${PORT_A} --bind 127.0.0.1 --directory ${BACKEND_DIR}\" > /dev/null 2>&1 || true\nnudge_sync\nif wait_for 120 backend_reachable; then\n  log_pass \"The tunnel's own backend answers through chisel (${APP}/echo is a file of it)\"\nelse\n  log_fail \"The tunnel's backend is not reachable through chisel on the host VM's port ${PORT_A}\"\nfi\n\n# ===========================================================================\n# 3. Binding, and what is refused\n# ==========================================================================="
+      "bash": "log_section \"An authenticated app tunnel with its own backend, and two others\"\n\nRESP=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_A}\\\",\\\"port\\\":${PORT_A},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nTUNNEL_A=$(json_get \"$RESP\" '.tunnel.id // empty')\nassert_json_field \"$RESP\" '\"\\(.tunnel.fqdn) \\(.tunnel.accessMode) \\(.tunnel.agentLabel)\"' \"${FQDN} authenticated ${HOST_AGENT_LABEL}\" \"Tunnel ${FQDN}: authenticated, carried by ${HOST_AGENT_LABEL}\" || true\nRESP=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_P}\\\",\\\"port\\\":${PORT_P},\\\"accessMode\\\":\\\"public\\\",\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nTUNNEL_P=$(json_get \"$RESP\" '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.accessMode' 'public' \"Tunnel ${SUB_P}: public\" || true\nRESP=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_S}\\\",\\\"port\\\":${PORT_S},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nTUNNEL_S=$(json_get \"$RESP\" '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.accessMode' 'authenticated' \"Tunnel ${SUB_S}: authenticated\" || true\n\nagent_exec \"grep -q 'tunnel.${DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${DOMAIN}' >> /etc/hosts\" > /dev/null 2>&1 || true\nvisitor_exec \"grep -q '${FQDN}' /etc/hosts || echo '${HOST_IP} ${FQDN}' >> /etc/hosts\" > /dev/null 2>&1 || true\nagent_exec \"systemctl stop ${BACKEND_UNIT} > /dev/null 2>&1; rm -rf ${BACKEND_DIR} && mkdir -p ${BACKEND_DIR}${APP} && printf '%s\\n' ${MARKER} > ${BACKEND_DIR}${APP}/echo && chmod -R a+rX ${BACKEND_DIR}\" > /dev/null 2>&1 || true\nwrite_cookie_backend \"${LOCAL_TMP}/cookie-backend.py\"\nmultipass transfer \"${LOCAL_TMP}/cookie-backend.py\" \"${AGENT_VM}:${REMOTE_DIR}/cookie-backend.py\"\nagent_exec \"chmod 0644 ${REMOTE_DIR}/cookie-backend.py && systemd-run --quiet --collect --unit ${BACKEND_UNIT} --uid=nobody --gid=nogroup python3 ${REMOTE_DIR}/cookie-backend.py ${PORT_A} ${BACKEND_DIR}\" > /dev/null 2>&1 || true\nnudge_sync\nif wait_for 120 backend_reachable; then\n  log_pass \"The tunnel's own backend answers through chisel (${APP}/echo is a file of it)\"\nelse\n  log_fail \"The tunnel's backend is not reachable through chisel on the host VM's port ${PORT_A}\"\nfi\n\n# ===========================================================================\n# 3. Not bound yet: what is refused, and the tunnel's own backend\n# ==========================================================================="
     },
     {
-      "id": "bound-as-the-plugin-s-user-surface-the-refusals",
-      "label": "Bound as the plugin's user surface; the refusals",
+      "id": "not-hosted-not-bound-the-refusals-requests-go-down-the-tunnel",
+      "label": "Not hosted, not bound: the refusals; requests go down the tunnel",
       "steps": [
         {
-          "id": "step-49",
+          "id": "step-51",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -728,7 +728,7 @@
           ]
         },
         {
-          "id": "step-50",
+          "id": "step-52",
           "label": "A route no installed plugin holds cannot be bound (400)",
           "target": "local",
           "continueOnError": true,
@@ -749,7 +749,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-53",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -766,129 +766,8 @@
           ]
         },
         {
-          "id": "step-52",
-          "label": "PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "expr",
-                "template": "$(status_of \"$RESP\")"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "200"
-              },
-              "message": "PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}"
-            }
-          }
-        },
-        {
-          "id": "step-53",
-          "label": "Set BOUND",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "body_of \"$RESP\""
-          },
-          "capture": [
-            {
-              "variable": "BOUND",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
           "id": "step-54",
-          "label": "…bound",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "BOUND"
-              },
-              "path": "\"\\(.changed) \\(.tunnel.userSurface.routes | join(\",\"))\"",
-              "expected": {
-                "kind": "expr",
-                "template": "true ${PLUGIN}"
-              },
-              "message": "…bound"
-            }
-          }
-        },
-        {
-          "id": "step-55",
-          "label": "…not served yet: its identity is not approved",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "BOUND"
-              },
-              "path": ".tunnel.userSurfaceStatus[0] | \"\\(.route) \\(.served) \\(.reason)\"",
-              "expected": {
-                "kind": "expr",
-                "template": "${PLUGIN} false not_approved"
-              },
-              "message": "…not served yet: its identity is not approved"
-            }
-          }
-        },
-        {
-          "id": "step-56",
-          "label": "Binding it again changes nothing",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "expr",
-                "template": "$(body_of \"$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\")"
-              },
-              "path": ".changed",
-              "expected": {
-                "kind": "literal",
-                "value": "false"
-              },
-              "message": "Binding it again changes nothing"
-            }
-          }
-        },
-        {
-          "id": "step-57",
-          "label": "Set RESP",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "host_api_call PUT \"tunnels/${TUNNEL_P}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\""
-          },
-          "capture": [
-            {
-              "variable": "RESP",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-58",
-          "label": "A public tunnel cannot be bound (400)",
+          "label": "Not hosted on the agent carrying the tunnel, the plugin cannot be bound (400)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -903,12 +782,12 @@
                 "kind": "literal",
                 "value": "400"
               },
-              "message": "A public tunnel cannot be bound (400)"
+              "message": "Not hosted on the agent carrying the tunnel, the plugin cannot be bound (400)"
             }
           }
         },
         {
-          "id": "step-59",
+          "id": "step-55",
           "label": "…$(json_get \"$(body_of \"$RESP\")\" '.error')",
           "target": "local",
           "continueOnError": true,
@@ -922,113 +801,15 @@
               },
               "substring": {
                 "kind": "literal",
-                "value": "public"
+                "value": "not hosted"
               },
               "message": "…$(json_get \"$(body_of \"$RESP\")\" '.error')"
             }
           }
         },
         {
-          "id": "step-60",
-          "label": "Set RESP",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "host_api_call PUT \"tunnels/${TUNNEL_S}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\""
-          },
-          "capture": [
-            {
-              "variable": "RESP",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-61",
-          "label": "A second tunnel for the same route is refused (409)",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "expr",
-                "template": "$(status_of \"$RESP\")"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "409"
-              },
-              "message": "A second tunnel for the same route is refused (409)"
-            }
-          }
-        },
-        {
-          "id": "step-62",
-          "label": "…user_surface_conflict",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "expr",
-                "template": "$(body_of \"$RESP\")"
-              },
-              "path": ".code",
-              "expected": {
-                "kind": "literal",
-                "value": "user_surface_conflict"
-              },
-              "message": "…user_surface_conflict"
-            }
-          }
-        },
-        {
-          "id": "step-63",
-          "label": "Set RESP",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"public\"}'"
-          },
-          "capture": [
-            {
-              "variable": "RESP",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-64",
-          "label": "The bound tunnel cannot be made public (409)",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "expr",
-                "template": "$(status_of \"$RESP\")"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "409"
-              },
-              "message": "The bound tunnel cannot be made public (409)"
-            }
-          }
-        },
-        {
-          "id": "step-65",
-          "label": "…it stays authenticated",
+          "id": "step-56",
+          "label": "…the tunnel carries no binding",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1039,24 +820,17 @@
                 "kind": "expr",
                 "template": "$(tunnel_entry \"${TUNNEL_A}\")"
               },
-              "path": ".accessMode",
+              "path": ".userSurface // \"none\"",
               "expected": {
                 "kind": "literal",
-                "value": "authenticated"
+                "value": "none"
               },
-              "message": "…it stays authenticated"
+              "message": "…the tunnel carries no binding"
             }
           }
-        }
-      ],
-      "bash": "log_section \"Bound as the plugin's user surface; the refusals\"\n\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" '{\"route\":\"e2e-no-such-plugin\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A route no installed plugin holds cannot be bound (400)\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}\" || true\nBOUND=$(body_of \"$RESP\")\nassert_json_field \"$BOUND\" '\"\\(.changed) \\(.tunnel.userSurface.routes | join(\",\"))\"' \"true ${PLUGIN}\" \"…bound\" || true\nassert_json_field \"$BOUND\" '.tunnel.userSurfaceStatus[0] | \"\\(.route) \\(.served) \\(.reason)\"' \"${PLUGIN} false not_approved\" \"…not served yet: its identity is not approved\" || true\nassert_json_field \"$(body_of \"$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\")\" '.changed' 'false' \"Binding it again changes nothing\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_P}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A public tunnel cannot be bound (400)\" || true\nassert_contains \"$(json_get \"$(body_of \"$RESP\")\" '.error')\" \"public\" \"…$(json_get \"$(body_of \"$RESP\")\" '.error')\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_S}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"A second tunnel for the same route is refused (409)\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'user_surface_conflict' \"…user_surface_conflict\" || true\nRESP=$(host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"public\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"The bound tunnel cannot be made public (409)\" || true\nassert_json_field \"$(tunnel_entry \"${TUNNEL_A}\")\" '.accessMode' 'authenticated' \"…it stays authenticated\" || true\n\n# ===========================================================================\n# 4. Before approval: the tunnel's own backend\n# ==========================================================================="
-    },
-    {
-      "id": "bound-not-approved-requests-go-down-the-tunnel-as-before",
-      "label": "Bound, not approved: requests go down the tunnel as before",
-      "steps": [
+        },
         {
-          "id": "step-66",
+          "id": "step-57",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1073,7 +847,7 @@
           ]
         },
         {
-          "id": "step-67",
+          "id": "step-58",
           "label": "Without a session: Authelia's redirect, as for any page of the tunnel",
           "target": "local",
           "continueOnError": true,
@@ -1094,7 +868,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-59",
           "label": "…to the sign-in portal",
           "target": "local",
           "continueOnError": true,
@@ -1115,7 +889,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-61",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1132,7 +906,7 @@
           ]
         },
         {
-          "id": "step-71",
+          "id": "step-62",
           "label": "Signed in: 200",
           "target": "local",
           "continueOnError": true,
@@ -1153,8 +927,8 @@
           }
         },
         {
-          "id": "step-72",
-          "label": "…from the tunnel's own backend: no user-surface location yet",
+          "id": "step-63",
+          "label": "…from the tunnel's own backend: no user-surface location",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1169,19 +943,120 @@
                 "kind": "var",
                 "name": "MARKER"
               },
-              "message": "…from the tunnel's own backend: no user-surface location yet"
+              "message": "…from the tunnel's own backend: no user-surface location"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Set SESSION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "session_cookie \"${JAR_VIEWER}\""
+          },
+          "capture": [
+            {
+              "variable": "SESSION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "The viewer's session cookie, read from the visitor's jar",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "SESSION"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "The viewer's session cookie, read from the visitor's jar"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "Signed in with two other cookies around the session: the backend gets both, never authelia_session",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(backend_cookies \"e2e40pref=dark; authelia_session=${SESSION}; e2e40lang=tr\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200 [\"e2e40pref=dark; e2e40lang=tr\"]"
+              },
+              "message": "Signed in with two other cookies around the session: the backend gets both, never authelia_session"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "…the session first: the other alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(backend_cookies \"authelia_session=${SESSION}; e2e40pref=dark\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200 [\"e2e40pref=dark\"]"
+              },
+              "message": "…the session first: the other alone"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "…the session alone: no Cookie header at all",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(backend_cookies \"authelia_session=${SESSION}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200 []"
+              },
+              "message": "…the session alone: no Cookie header at all"
             }
           }
         }
       ],
-      "bash": "log_section \"Bound, not approved: requests go down the tunnel as before\"\n\nRESP=$(visit - \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"302\" \"Without a session: Authelia's redirect, as for any page of the tunnel\" || true\nassert_contains \"$(visit_headers \"$RESP\")\" \"auth.${DOMAIN}\" \"…to the sign-in portal\" || true\n\nsign_in_both\nRESP=$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"Signed in: 200\" || true\nassert_contains \"$(visit_body \"$RESP\")\" \"${MARKER}\" \"…from the tunnel's own backend: no user-surface location yet\" || true\n\n# ===========================================================================\n# 5. Approved, hosted, ready\n# ==========================================================================="
+      "bash": "log_section \"Not hosted, not bound: the refusals; requests go down the tunnel\"\n\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" '{\"route\":\"e2e-no-such-plugin\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A route no installed plugin holds cannot be bound (400)\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"Not hosted on the agent carrying the tunnel, the plugin cannot be bound (400)\" || true\nassert_contains \"$(json_get \"$(body_of \"$RESP\")\" '.error')\" \"not hosted\" \"…$(json_get \"$(body_of \"$RESP\")\" '.error')\" || true\nassert_json_field \"$(tunnel_entry \"${TUNNEL_A}\")\" '.userSurface // \"none\"' 'none' \"…the tunnel carries no binding\" || true\n\nRESP=$(visit - \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"302\" \"Without a session: Authelia's redirect, as for any page of the tunnel\" || true\nassert_contains \"$(visit_headers \"$RESP\")\" \"auth.${DOMAIN}\" \"…to the sign-in portal\" || true\n\nsign_in_both\nRESP=$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"Signed in: 200\" || true\nassert_contains \"$(visit_body \"$RESP\")\" \"${MARKER}\" \"…from the tunnel's own backend: no user-surface location\" || true\nSESSION=$(session_cookie \"${JAR_VIEWER}\")\nassert_not_eq \"${SESSION}\" \"\" \"The viewer's session cookie, read from the visitor's jar\" || true\nassert_eq \"$(backend_cookies \"e2e40pref=dark; authelia_session=${SESSION}; e2e40lang=tr\")\" '200 [\"e2e40pref=dark; e2e40lang=tr\"]' \"Signed in with two other cookies around the session: the backend gets both, never authelia_session\" || true\nassert_eq \"$(backend_cookies \"authelia_session=${SESSION}; e2e40pref=dark\")\" '200 [\"e2e40pref=dark\"]' \"…the session first: the other alone\" || true\nassert_eq \"$(backend_cookies \"authelia_session=${SESSION}\")\" '200 []' \"…the session alone: no Cookie header at all\" || true\nSESSION=\"\"\n\n# ===========================================================================\n# 4. Approved, hosted, ready — then bound\n# ==========================================================================="
     },
     {
-      "id": "approved-the-location-is-there-hosted-its-users-are-let-through",
-      "label": "Approved: the location is there; hosted, its users are let through",
+      "id": "approved-and-hosted-on-the-tunnel-s-agent-bound-its-users-are-let-through",
+      "label": "Approved and hosted on the tunnel's agent; bound, its users are let through",
       "steps": [
         {
-          "id": "step-73",
+          "id": "step-70",
           "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
           "target": "host",
           "op": {
@@ -1200,7 +1075,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-71",
           "label": "Approved: its agent half and identity block",
           "target": "local",
           "continueOnError": true,
@@ -1222,7 +1097,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-72",
           "label": "POST /api/plugins/${PLUGIN}/enable",
           "target": "host",
           "op": {
@@ -1233,168 +1108,7 @@
           }
         },
         {
-          "id": "step-76",
-          "label": "The bound host serves ${APP} now",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "expr",
-                "template": "$(tunnel_entry \"${TUNNEL_A}\")"
-              },
-              "path": ".userSurfaceStatus[0] | \"\\(.served) \\(.reason)\"",
-              "expected": {
-                "kind": "literal",
-                "value": "true null"
-              },
-              "message": "The bound host serves ${APP} now"
-            }
-          }
-        },
-        {
-          "id": "step-77",
-          "label": "Without a session: 401",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "Without a session: 401"
-          }
-        },
-        {
-          "id": "step-78",
-          "label": "Without a session: $(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "Without a session: $(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")"
-          }
-        },
-        {
-          "id": "step-79",
-          "label": "Set RESP",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "visit - \"https://${FQDN}${APP}/echo\""
-          },
-          "capture": [
-            {
-              "variable": "RESP",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-80",
-          "label": "…JSON (unauthenticated) for the application to act on",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "expr",
-                "template": "$(visit_body \"$RESP\")"
-              },
-              "path": ".error",
-              "expected": {
-                "kind": "literal",
-                "value": "unauthenticated"
-              },
-              "message": "…JSON (unauthenticated) for the application to act on"
-            }
-          }
-        },
-        {
-          "id": "step-81",
-          "label": "…never a redirect",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "not_contains",
-              "actual": {
-                "kind": "expr",
-                "template": "$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')"
-              },
-              "substring": {
-                "kind": "literal",
-                "value": "location:"
-              },
-              "message": "…never a redirect"
-            }
-          }
-        },
-        {
-          "id": "step-82",
-          "label": "Set RESP",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\""
-          },
-          "capture": [
-            {
-              "variable": "RESP",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-83",
-          "label": "Signed in, the plugin not hosted yet: 503",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "expr",
-                "template": "$(visit_status \"$RESP\")"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "503"
-              },
-              "message": "Signed in, the plugin not hosted yet: 503"
-            }
-          }
-        },
-        {
-          "id": "step-84",
-          "label": "…the tunnel's backend is no longer asked",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "not_contains",
-              "actual": {
-                "kind": "expr",
-                "template": "$(visit_body \"$RESP\")"
-              },
-              "substring": {
-                "kind": "var",
-                "name": "MARKER"
-              },
-              "message": "…the tunnel's backend is no longer asked"
-            }
-          }
-        },
-        {
-          "id": "step-85",
+          "id": "step-73",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -1411,7 +1125,7 @@
           ]
         },
         {
-          "id": "step-86",
+          "id": "step-74",
           "label": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -1433,7 +1147,7 @@
           }
         },
         {
-          "id": "step-87",
+          "id": "step-75",
           "label": "The relay's health of the hosting is up",
           "target": "local",
           "op": {
@@ -1443,7 +1157,7 @@
           }
         },
         {
-          "id": "step-88",
+          "id": "step-76",
           "label": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')",
           "target": "local",
           "op": {
@@ -1453,17 +1167,17 @@
           }
         },
         {
-          "id": "step-89",
-          "label": "Ready: its agent half answered protocol 1",
+          "id": "step-77",
+          "label": "Ready: its agent half's first complete sync ended at the head",
           "target": "local",
           "op": {
             "type": "log",
             "level": "pass",
-            "message": "Ready: its agent half answered protocol 1"
+            "message": "Ready: its agent half's first complete sync ended at the head"
           }
         },
         {
-          "id": "step-90",
+          "id": "step-78",
           "label": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')",
           "target": "local",
           "op": {
@@ -1473,7 +1187,387 @@
           }
         },
         {
+          "id": "step-79",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "Set BOUND",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "body_of \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "BOUND",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-82",
+          "label": "…bound",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BOUND"
+              },
+              "path": "\"\\(.changed) \\(.tunnel.userSurface.routes | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "true ${PLUGIN}"
+              },
+              "message": "…bound"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "…served at once: approved, declares identity, hosted by the tunnel's agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BOUND"
+              },
+              "path": ".tunnel.userSurfaceStatus[0] | \"\\(.route) \\(.served) \\(.reason)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${PLUGIN} true null"
+              },
+              "message": "…served at once: approved, declares identity, hosted by the tunnel's agent"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Binding it again changes nothing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\")"
+              },
+              "path": ".changed",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Binding it again changes nothing"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"tunnels/${TUNNEL_P}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-86",
+          "label": "A public tunnel cannot be bound (400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A public tunnel cannot be bound (400)"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "…$(json_get \"$(body_of \"$RESP\")\" '.error')",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(body_of \"$RESP\")\" '.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "public"
+              },
+              "message": "…$(json_get \"$(body_of \"$RESP\")\" '.error')"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"tunnels/${TUNNEL_S}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-89",
+          "label": "A second tunnel for the same route is refused (409)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "A second tunnel for the same route is refused (409)"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "…user_surface_conflict",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "user_surface_conflict"
+              },
+              "message": "…user_surface_conflict"
+            }
+          }
+        },
+        {
           "id": "step-91",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"public\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-92",
+          "label": "The bound tunnel cannot be made public (409)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "The bound tunnel cannot be made public (409)"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "…it stays authenticated",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(tunnel_entry \"${TUNNEL_A}\")"
+              },
+              "path": ".accessMode",
+              "expected": {
+                "kind": "literal",
+                "value": "authenticated"
+              },
+              "message": "…it stays authenticated"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Without a session: 401",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Without a session: 401"
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "Without a session: $(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Without a session: $(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")"
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-97",
+          "label": "…JSON (unauthenticated) for the application to act on",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "unauthenticated"
+              },
+              "message": "…JSON (unauthenticated) for the application to act on"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "…never a redirect",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location:"
+              },
+              "message": "…never a redirect"
+            }
+          }
+        },
+        {
+          "id": "step-99",
           "label": "The sessions ended while the plugin was hosted — signing in again",
           "target": "local",
           "op": {
@@ -1483,7 +1577,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-101",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1500,7 +1594,7 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-102",
           "label": "${VIEWER}, before any entitlement: 403",
           "target": "local",
           "continueOnError": true,
@@ -1521,7 +1615,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-103",
           "label": "…not entitled",
           "target": "local",
           "continueOnError": true,
@@ -1543,7 +1637,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-104",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1560,7 +1654,7 @@
           ]
         },
         {
-          "id": "step-97",
+          "id": "step-105",
           "label": "${VIEWER} entitled as viewer",
           "target": "local",
           "continueOnError": true,
@@ -1581,7 +1675,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-106",
           "label": "…an active member of the audience",
           "target": "local",
           "op": {
@@ -1591,7 +1685,7 @@
           }
         },
         {
-          "id": "step-99",
+          "id": "step-107",
           "label": "The audience: $(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\")",
           "target": "local",
           "op": {
@@ -1601,14 +1695,14 @@
           }
         }
       ],
-      "bash": "log_section \"Approved: the location is there; hosted, its users are let through\"\n\nAPPROVED=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"${DIGEST}\\\"}\")\nassert_json_field \"$APPROVED\" '\"\\(.hooks.approval.state) \\(.hooks.identity.approved)\"' 'approved true' \"Approved: its agent half and identity block\" || true\nhost_api_post \"plugins/${PLUGIN}/enable\" '{}' > /dev/null\nassert_json_field \"$(tunnel_entry \"${TUNNEL_A}\")\" '.userSurfaceStatus[0] | \"\\(.served) \\(.reason)\"' 'true null' \"The bound host serves ${APP} now\" || true\nif wait_for 30 anonymous_gets 401; then\n  log_pass \"Without a session: 401\"\nelse\n  log_fail \"Without a session: $(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")\"\nfi\nRESP=$(visit - \"https://${FQDN}${APP}/echo\")\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'unauthenticated' \"…JSON (unauthenticated) for the application to act on\" || true\nassert_not_contains \"$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\" \"location:\" \"…never a redirect\" || true\nRESP=$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"503\" \"Signed in, the plugin not hosted yet: 503\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"${MARKER}\" \"…the tunnel's backend is no longer asked\" || true\n\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nif wait_for 60 health_up; then\n  log_pass \"The relay's health of the hosting is up\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\nif wait_for 120 identity_ready \"${PLUGIN}\"; then\n  log_pass \"Ready: its agent half answered protocol 1\"\nelse\n  log_fail \"Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')\"\nfi\nif [ \"$(viewer_echo_status)\" = \"401\" ]; then\n  # Something restarted Authelia since (a users.yml write would): sign in again.\n  log_info \"The sessions ended while the plugin was hosted — signing in again\"\n  sign_in_both\nfi\nRESP=$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${VIEWER}, before any entitlement: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'This user may not use this plugin' \"…not entitled\" || true\n\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${VIEWER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${VIEWER} entitled as viewer\" || true\nif wait_for 30 viewer_in_audience; then\n  log_pass \"…an active member of the audience\"\nelse\n  log_fail \"The audience: $(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\")\"\nfi\n\n# ===========================================================================\n# 6. The user surface\n# ==========================================================================="
+      "bash": "log_section \"Approved and hosted on the tunnel's agent; bound, its users are let through\"\n\nAPPROVED=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"${DIGEST}\\\"}\")\nassert_json_field \"$APPROVED\" '\"\\(.hooks.approval.state) \\(.hooks.identity.approved)\"' 'approved true' \"Approved: its agent half and identity block\" || true\nhost_api_post \"plugins/${PLUGIN}/enable\" '{}' > /dev/null\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nif wait_for 60 health_up; then\n  log_pass \"The relay's health of the hosting is up\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\nif wait_for 120 identity_ready \"${PLUGIN}\"; then\n  log_pass \"Ready: its agent half's first complete sync ended at the head\"\nelse\n  log_fail \"Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')\"\nfi\n\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}\" || true\nBOUND=$(body_of \"$RESP\")\nassert_json_field \"$BOUND\" '\"\\(.changed) \\(.tunnel.userSurface.routes | join(\",\"))\"' \"true ${PLUGIN}\" \"…bound\" || true\nassert_json_field \"$BOUND\" '.tunnel.userSurfaceStatus[0] | \"\\(.route) \\(.served) \\(.reason)\"' \"${PLUGIN} true null\" \"…served at once: approved, declares identity, hosted by the tunnel's agent\" || true\nassert_json_field \"$(body_of \"$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\")\" '.changed' 'false' \"Binding it again changes nothing\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_P}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A public tunnel cannot be bound (400)\" || true\nassert_contains \"$(json_get \"$(body_of \"$RESP\")\" '.error')\" \"public\" \"…$(json_get \"$(body_of \"$RESP\")\" '.error')\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_S}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"A second tunnel for the same route is refused (409)\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'user_surface_conflict' \"…user_surface_conflict\" || true\nRESP=$(host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"public\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"The bound tunnel cannot be made public (409)\" || true\nassert_json_field \"$(tunnel_entry \"${TUNNEL_A}\")\" '.accessMode' 'authenticated' \"…it stays authenticated\" || true\n\nif wait_for 30 anonymous_gets 401; then\n  log_pass \"Without a session: 401\"\nelse\n  log_fail \"Without a session: $(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")\"\nfi\nRESP=$(visit - \"https://${FQDN}${APP}/echo\")\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'unauthenticated' \"…JSON (unauthenticated) for the application to act on\" || true\nassert_not_contains \"$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\" \"location:\" \"…never a redirect\" || true\nif [ \"$(viewer_echo_status)\" = \"401\" ]; then\n  # Something restarted Authelia since (a users.yml write would): sign in again.\n  log_info \"The sessions ended while the plugin was hosted — signing in again\"\n  sign_in_both\nfi\nRESP=$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${VIEWER}, before any entitlement: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'This user may not use this plugin' \"…not entitled\" || true\n\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${VIEWER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${VIEWER} entitled as viewer\" || true\nif wait_for 30 viewer_in_audience; then\n  log_pass \"…an active member of the audience\"\nelse\n  log_fail \"The audience: $(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\")\"\nfi\n\n# ===========================================================================\n# 5. The user surface\n# ==========================================================================="
     },
     {
       "id": "signed-in-with-a-role-the-agent-half-sees-the-directory-s-user",
       "label": "Signed in with a role: the agent half sees the directory's user",
       "steps": [
         {
-          "id": "step-100",
+          "id": "step-108",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1625,7 +1719,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-109",
           "label": "GET ${APP}/echo as ${VIEWER}: 200",
           "target": "local",
           "continueOnError": true,
@@ -1646,7 +1740,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-110",
           "label": "Set ECHO",
           "target": "local",
           "op": {
@@ -1663,7 +1757,7 @@
           ]
         },
         {
-          "id": "step-103",
+          "id": "step-111",
           "label": "The caller the panel signed: user, the directory's id, the username, the roles",
           "target": "local",
           "continueOnError": true,
@@ -1685,7 +1779,7 @@
           }
         },
         {
-          "id": "step-104",
+          "id": "step-112",
           "label": "…for the agent half's /app/echo",
           "target": "local",
           "continueOnError": true,
@@ -1707,7 +1801,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-113",
           "label": "Set HEADERS",
           "target": "local",
           "op": {
@@ -1724,7 +1818,7 @@
           ]
         },
         {
-          "id": "step-106",
+          "id": "step-114",
           "label": "The application's Set-Cookie never reaches the browser",
           "target": "local",
           "continueOnError": true,
@@ -1745,7 +1839,7 @@
           }
         },
         {
-          "id": "step-107",
+          "id": "step-115",
           "label": "…nor any X-Lamalibre-* header (the responder signature is the relay's)",
           "target": "local",
           "continueOnError": true,
@@ -1766,7 +1860,70 @@
           }
         },
         {
-          "id": "step-108",
+          "id": "step-116",
+          "label": "…every answer is a sandboxed document (CSP)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HEADERS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "content-security-policy: sandbox; default-src 'none'"
+              },
+              "message": "…every answer is a sandboxed document (CSP)"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "…readable by the bound host's own pages only (CORP)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HEADERS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "cross-origin-resource-policy: same-origin"
+              },
+              "message": "…readable by the bound host's own pages only (CORP)"
+            }
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "…and no CORS header",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "HEADERS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "access-control-"
+              },
+              "message": "…and no CORS header"
+            }
+          }
+        },
+        {
+          "id": "step-119",
           "label": "The agent half's projection holds ${VIEWER} (the feed delivered the entitlement)",
           "target": "local",
           "op": {
@@ -1776,7 +1933,7 @@
           }
         },
         {
-          "id": "step-109",
+          "id": "step-120",
           "label": "The projection: $(projected_user \"${PLUGIN}\" \"${VIEWER_ID}\")",
           "target": "local",
           "op": {
@@ -1786,7 +1943,7 @@
           }
         },
         {
-          "id": "step-110",
+          "id": "step-121",
           "label": "Set ME",
           "target": "local",
           "op": {
@@ -1803,7 +1960,7 @@
           ]
         },
         {
-          "id": "step-111",
+          "id": "step-122",
           "label": "GET ${APP}/me: what the agent half's projection holds of them",
           "target": "local",
           "continueOnError": true,
@@ -1825,7 +1982,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-123",
           "label": "POST ${APP}/me: the agent half's own 405, signed, passes",
           "target": "local",
           "continueOnError": true,
@@ -1846,7 +2003,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-124",
           "label": "${APP}/nothing: the agent half's own 404",
           "target": "local",
           "continueOnError": true,
@@ -1867,7 +2024,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-125",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1884,7 +2041,7 @@
           ]
         },
         {
-          "id": "step-115",
+          "id": "step-126",
           "label": "${NOROLE}, signed in without a role in the plugin: 403",
           "target": "local",
           "continueOnError": true,
@@ -1905,7 +2062,7 @@
           }
         },
         {
-          "id": "step-116",
+          "id": "step-127",
           "label": "…not entitled",
           "target": "local",
           "continueOnError": true,
@@ -1927,14 +2084,74 @@
           }
         }
       ],
-      "bash": "log_section \"Signed in with a role: the agent half sees the directory's user\"\n\nRESP=$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"GET ${APP}/echo as ${VIEWER}: 200\" || true\nECHO=$(visit_body \"$RESP\")\nassert_json_field \"$ECHO\" '\"\\(.caller.type) \\(.caller.userId) \\(.caller.username) \\(.caller.roles | join(\",\"))\"' \"user ${VIEWER_ID} ${VIEWER} viewer\" \"The caller the panel signed: user, the directory's id, the username, the roles\" || true\nassert_json_field \"$ECHO\" '\"\\(.path) \\(.method)\"' '/app/echo GET' \"…for the agent half's /app/echo\" || true\nHEADERS=$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\nassert_not_contains \"$HEADERS\" \"app-session\" \"The application's Set-Cookie never reaches the browser\" || true\nassert_not_contains \"$HEADERS\" \"x-lamalibre-\" \"…nor any X-Lamalibre-* header (the responder signature is the relay's)\" || true\nif wait_for 60 projection_has \"${PLUGIN}\" \"[.users[] | select(.userId == \\\"${VIEWER_ID}\\\" and .status == \\\"active\\\")] | length == 1\"; then\n  log_pass \"The agent half's projection holds ${VIEWER} (the feed delivered the entitlement)\"\nelse\n  log_fail \"The projection: $(projected_user \"${PLUGIN}\" \"${VIEWER_ID}\")\"\nfi\nME=$(visit_body \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/me\")\")\nassert_json_field \"$ME\" '\"\\(.member.userId) \\(.member.displayName) \\(.member.email) \\(.member.roles | join(\",\"))\"' \"${VIEWER_ID} E2E Viewer ${VIEWER}@example.test viewer\" \"GET ${APP}/me: what the agent half's projection holds of them\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_VIEWER}\" -X POST -H \"Origin: ${ORIGIN}\" \"https://${FQDN}${APP}/me\")\")\" \"405\" \"POST ${APP}/me: the agent half's own 405, signed, passes\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/nothing\")\")\" \"404\" \"${APP}/nothing: the agent half's own 404\" || true\n\nRESP=$(visit \"${JAR_NOROLE}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${NOROLE}, signed in without a role in the plugin: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'This user may not use this plugin' \"…not entitled\" || true"
+      "bash": "log_section \"Signed in with a role: the agent half sees the directory's user\"\n\nRESP=$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"GET ${APP}/echo as ${VIEWER}: 200\" || true\nECHO=$(visit_body \"$RESP\")\nassert_json_field \"$ECHO\" '\"\\(.caller.type) \\(.caller.userId) \\(.caller.username) \\(.caller.roles | join(\",\"))\"' \"user ${VIEWER_ID} ${VIEWER} viewer\" \"The caller the panel signed: user, the directory's id, the username, the roles\" || true\nassert_json_field \"$ECHO\" '\"\\(.path) \\(.method)\"' '/app/echo GET' \"…for the agent half's /app/echo\" || true\nHEADERS=$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\nassert_not_contains \"$HEADERS\" \"app-session\" \"The application's Set-Cookie never reaches the browser\" || true\nassert_not_contains \"$HEADERS\" \"x-lamalibre-\" \"…nor any X-Lamalibre-* header (the responder signature is the relay's)\" || true\nassert_contains \"$HEADERS\" \"content-security-policy: sandbox; default-src 'none'\" \"…every answer is a sandboxed document (CSP)\" || true\nassert_contains \"$HEADERS\" \"cross-origin-resource-policy: same-origin\" \"…readable by the bound host's own pages only (CORP)\" || true\nassert_not_contains \"$HEADERS\" \"access-control-\" \"…and no CORS header\" || true\nif wait_for 60 projection_has \"${PLUGIN}\" \"[.users[] | select(.userId == \\\"${VIEWER_ID}\\\" and .status == \\\"active\\\")] | length == 1\"; then\n  log_pass \"The agent half's projection holds ${VIEWER} (the feed delivered the entitlement)\"\nelse\n  log_fail \"The projection: $(projected_user \"${PLUGIN}\" \"${VIEWER_ID}\")\"\nfi\nME=$(visit_body \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/me\")\")\nassert_json_field \"$ME\" '\"\\(.member.userId) \\(.member.displayName) \\(.member.email) \\(.member.roles | join(\",\"))\"' \"${VIEWER_ID} E2E Viewer ${VIEWER}@example.test viewer\" \"GET ${APP}/me: what the agent half's projection holds of them\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_VIEWER}\" -X POST -H \"Origin: ${ORIGIN}\" \"https://${FQDN}${APP}/me\")\")\" \"405\" \"POST ${APP}/me: the agent half's own 405, signed, passes\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/nothing\")\")\" \"404\" \"${APP}/nothing: the agent half's own 404\" || true\n\nRESP=$(visit \"${JAR_NOROLE}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${NOROLE}, signed in without a role in the plugin: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'This user may not use this plugin' \"…not entitled\" || true"
     },
     {
       "id": "what-a-browser-cannot-do",
       "label": "What a browser cannot do",
       "steps": [
         {
-          "id": "step-118",
+          "id": "step-128",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_VIEWER}\" -H 'Sec-Fetch-Site: cross-site' \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-129",
+          "label": "A request another site started (Sec-Fetch-Site: cross-site), even a GET: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "A request another site started (Sec-Fetch-Site: cross-site), even a GET: 403"
+            }
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "…cross-site request refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "cross-site request refused"
+              },
+              "message": "…cross-site request refused"
+            }
+          }
+        },
+        {
+          "id": "step-132",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1951,7 +2168,7 @@
           ]
         },
         {
-          "id": "step-119",
+          "id": "step-133",
           "label": "POST without an Origin: 403",
           "target": "local",
           "continueOnError": true,
@@ -1972,7 +2189,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-134",
           "label": "…cross-origin request refused",
           "target": "local",
           "continueOnError": true,
@@ -1994,7 +2211,7 @@
           }
         },
         {
-          "id": "step-121",
+          "id": "step-135",
           "label": "POST from a foreign Origin: 403",
           "target": "local",
           "continueOnError": true,
@@ -2015,7 +2232,7 @@
           }
         },
         {
-          "id": "step-122",
+          "id": "step-136",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2032,7 +2249,7 @@
           ]
         },
         {
-          "id": "step-123",
+          "id": "step-137",
           "label": "POST from the bound host's Origin: forwarded",
           "target": "local",
           "continueOnError": true,
@@ -2053,7 +2270,7 @@
           }
         },
         {
-          "id": "step-124",
+          "id": "step-138",
           "label": "…the agent half got the POST, its Origin and all ${#BODY} bytes",
           "target": "local",
           "continueOnError": true,
@@ -2075,7 +2292,7 @@
           }
         },
         {
-          "id": "step-125",
+          "id": "step-139",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2092,7 +2309,7 @@
           ]
         },
         {
-          "id": "step-126",
+          "id": "step-140",
           "label": "Sent with its own X-Lamalibre-Relay-Assertion, Remote-User and X-Lamalibre-Caller: 200",
           "target": "local",
           "continueOnError": true,
@@ -2113,7 +2330,7 @@
           }
         },
         {
-          "id": "step-127",
+          "id": "step-141",
           "label": "Set ECHO",
           "target": "local",
           "op": {
@@ -2130,7 +2347,7 @@
           ]
         },
         {
-          "id": "step-128",
+          "id": "step-142",
           "label": "…the caller is still the one Gatekeeper vouched for",
           "target": "local",
           "continueOnError": true,
@@ -2152,7 +2369,7 @@
           }
         },
         {
-          "id": "step-129",
+          "id": "step-143",
           "label": "…no Remote-User or relay assertion reached the agent half",
           "target": "local",
           "continueOnError": true,
@@ -2174,7 +2391,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-144",
           "label": "…while an ordinary header did",
           "target": "local",
           "continueOnError": true,
@@ -2196,7 +2413,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-145",
           "label": "Set COOKIE",
           "target": "local",
           "op": {
@@ -2213,7 +2430,7 @@
           ]
         },
         {
-          "id": "step-132",
+          "id": "step-146",
           "label": "The viewer's session cookie, read from the visitor's jar",
           "target": "local",
           "continueOnError": true,
@@ -2234,7 +2451,88 @@
           }
         },
         {
-          "id": "step-133",
+          "id": "step-147",
+          "label": "That cookie alone, sent as a header: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit - -H \"Cookie: authelia_session=${COOKIE}\" \"https://${FQDN}${APP}/echo\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "That cookie alone, sent as a header: 200"
+            }
+          }
+        },
+        {
+          "id": "step-154",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - -H \"Cookie: ${HEADER}\" \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-155",
+          "label": "authelia_session presented twice (${planted}): 401 — Gatekeeper does not guess which one Authelia would read",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "authelia_session presented twice (${planted}): 401 — Gatekeeper does not guess which one Authelia would read"
+            }
+          }
+        },
+        {
+          "id": "step-156",
+          "label": "…unauthenticated",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "unauthenticated"
+              },
+              "message": "…unauthenticated"
+            }
+          }
+        },
+        {
+          "id": "step-159",
           "label": "Set ASSERTION",
           "target": "local",
           "op": {
@@ -2251,7 +2549,7 @@
           ]
         },
         {
-          "id": "step-134",
+          "id": "step-160",
           "label": "On the host VM, Gatekeeper vouches for that session (/authz/user-surface/${FQDN})",
           "target": "local",
           "continueOnError": true,
@@ -2272,7 +2570,7 @@
           }
         },
         {
-          "id": "step-135",
+          "id": "step-161",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2289,7 +2587,7 @@
           ]
         },
         {
-          "id": "step-136",
+          "id": "step-162",
           "label": "Its assertion, sent to the panel's listener: 200",
           "target": "local",
           "continueOnError": true,
@@ -2310,7 +2608,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-163",
           "label": "…as ${VIEWER}",
           "target": "local",
           "continueOnError": true,
@@ -2332,7 +2630,7 @@
           }
         },
         {
-          "id": "step-138",
+          "id": "step-164",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2349,7 +2647,7 @@
           ]
         },
         {
-          "id": "step-139",
+          "id": "step-165",
           "label": "The same assertion again: 401 — replay refused",
           "target": "local",
           "continueOnError": true,
@@ -2370,7 +2668,7 @@
           }
         },
         {
-          "id": "step-140",
+          "id": "step-166",
           "label": "…unauthenticated",
           "target": "local",
           "continueOnError": true,
@@ -2392,7 +2690,7 @@
           }
         },
         {
-          "id": "step-141",
+          "id": "step-167",
           "label": "An assertion for GET does not carry a POST (401)",
           "target": "local",
           "continueOnError": true,
@@ -2413,12 +2711,12 @@
           }
         },
         {
-          "id": "step-142",
+          "id": "step-168",
           "label": "Set PATHS_BEFORE",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "half_requests \"${PLUGIN}\" '(%2[fFeE]|%5[cC]|/\\.\\.?(/|$))'"
+            "command": "half_requests \"${PLUGIN}\" '(%2[fFeE5]|%5[cC]|/\\.\\.?(/|$))'"
           },
           "capture": [
             {
@@ -2430,7 +2728,7 @@
           ]
         },
         {
-          "id": "step-144",
+          "id": "step-170",
           "label": "Set STATUS",
           "target": "local",
           "op": {
@@ -2447,7 +2745,7 @@
           ]
         },
         {
-          "id": "step-145",
+          "id": "step-171",
           "label": "${path}: refused (${STATUS})",
           "target": "local",
           "op": {
@@ -2472,7 +2770,7 @@
           }
         },
         {
-          "id": "step-146",
+          "id": "step-172",
           "label": "${path}: expected 403 or 400, got ${STATUS}",
           "target": "local",
           "op": {
@@ -2497,7 +2795,7 @@
           }
         },
         {
-          "id": "step-148",
+          "id": "step-174",
           "label": "The agent half saw none of them (its request log)",
           "target": "local",
           "continueOnError": true,
@@ -2507,7 +2805,7 @@
               "kind": "eq",
               "actual": {
                 "kind": "expr",
-                "template": "$(half_requests \"${PLUGIN}\" '(%2[fFeE]|%5[cC]|/\\.\\.?(/|$))')"
+                "template": "$(half_requests \"${PLUGIN}\" '(%2[fFeE5]|%5[cC]|/\\.\\.?(/|$))')"
               },
               "expected": {
                 "kind": "var",
@@ -2518,14 +2816,14 @@
           }
         }
       ],
-      "bash": "log_section \"What a browser cannot do\"\n\nBODY='{\"note\":\"e2e 40\"}'\nRESP=$(visit \"${JAR_VIEWER}\" -X POST -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"POST without an Origin: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'cross-origin request refused' \"…cross-origin request refused\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_VIEWER}\" -X POST -H 'Origin: https://evil.example.test' -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\")\")\" \"403\" \"POST from a foreign Origin: 403\" || true\nRESP=$(visit \"${JAR_VIEWER}\" -X POST -H \"Origin: ${ORIGIN}\" -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"POST from the bound host's Origin: forwarded\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.method) \\(.origin) \\(.bytes)\"' \"POST ${ORIGIN} ${#BODY}\" \"…the agent half got the POST, its Origin and all ${#BODY} bytes\" || true\n\nRESP=$(visit \"${JAR_VIEWER}\" -H 'X-Lamalibre-Relay-Assertion: e2e.forged' -H 'Remote-User: admin' -H 'X-Lamalibre-Caller: e2e.forged' -H 'X-E2E-Marker: e2e-40-marker' \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"Sent with its own X-Lamalibre-Relay-Assertion, Remote-User and X-Lamalibre-Caller: 200\" || true\nECHO=$(visit_body \"$RESP\")\nassert_json_field \"$ECHO\" '\"\\(.caller.username) \\(.caller.userId)\"' \"${VIEWER} ${VIEWER_ID}\" \"…the caller is still the one Gatekeeper vouched for\" || true\nassert_json_field \"$ECHO\" '\"\\(.headers.remoteUser) \\(.headers.relayAssertion)\"' 'null null' \"…no Remote-User or relay assertion reached the agent half\" || true\nassert_json_field \"$ECHO\" '.headers.marker' 'e2e-40-marker' \"…while an ordinary header did\" || true\n\nCOOKIE=$(session_cookie \"${JAR_VIEWER}\")\nassert_not_eq \"${COOKIE}\" \"\" \"The viewer's session cookie, read from the visitor's jar\" || true\nASSERTION=$(gatekeeper_assertion GET \"${APP}/echo\" \"${COOKIE}\")\nassert_eq \"$(echo \"${ASSERTION}\" | grep -cE '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$' || true)\" \"1\" \"On the host VM, Gatekeeper vouches for that session (/authz/user-surface/${FQDN})\" || true\nRESP=$(panel_direct GET \"${APP}/echo\" \"${ASSERTION}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Its assertion, sent to the panel's listener: 200\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.caller.userId' \"${VIEWER_ID}\" \"…as ${VIEWER}\" || true\nRESP=$(panel_direct GET \"${APP}/echo\" \"${ASSERTION}\")\nassert_eq \"$(status_of \"$RESP\")\" \"401\" \"The same assertion again: 401 — replay refused\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.error' 'unauthenticated' \"…unauthenticated\" || true\nassert_eq \"$(status_of \"$(panel_direct POST \"${APP}/echo\" \"$(gatekeeper_assertion GET \"${APP}/echo\" \"${COOKIE}\")\")\")\" \"401\" \"An assertion for GET does not carry a POST (401)\" || true\n\n# Each resolves (by nginx's reading) under the user surface; Gatekeeper\n# checks the raw target, which may not hold a dot segment or an encoded\n# separator.\nPATHS_BEFORE=$(half_requests \"${PLUGIN}\" '(%2[fFeE]|%5[cC]|/\\.\\.?(/|$))')\nfor path in \"${APP}/../app/echo\" \"${APP}/./echo\" \"${APP}/%2e/echo\" \"${APP}/a%2fb\" \"${APP}/a%5cb\"; do\n  STATUS=$(visit_status \"$(visit \"${JAR_VIEWER}\" --path-as-is \"https://${FQDN}${path}\")\")\n  if [ \"$STATUS\" = \"403\" ] || [ \"$STATUS\" = \"400\" ]; then\n    log_pass \"${path}: refused (${STATUS})\"\n  else\n    log_fail \"${path}: expected 403 or 400, got ${STATUS}\"\n  fi\ndone\nassert_eq \"$(half_requests \"${PLUGIN}\" '(%2[fFeE]|%5[cC]|/\\.\\.?(/|$))')\" \"${PATHS_BEFORE}\" \"The agent half saw none of them (its request log)\" || true\n\n# ===========================================================================\n# 7. A restricted tunnel\n# ==========================================================================="
+      "bash": "log_section \"What a browser cannot do\"\n\nRESP=$(visit \"${JAR_VIEWER}\" -H 'Sec-Fetch-Site: cross-site' \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"A request another site started (Sec-Fetch-Site: cross-site), even a GET: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'cross-site request refused' \"…cross-site request refused\" || true\n\nBODY='{\"note\":\"e2e 40\"}'\nRESP=$(visit \"${JAR_VIEWER}\" -X POST -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"POST without an Origin: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'cross-origin request refused' \"…cross-origin request refused\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_VIEWER}\" -X POST -H 'Origin: https://evil.example.test' -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\")\")\" \"403\" \"POST from a foreign Origin: 403\" || true\nRESP=$(visit \"${JAR_VIEWER}\" -X POST -H \"Origin: ${ORIGIN}\" -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"POST from the bound host's Origin: forwarded\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.method) \\(.origin) \\(.bytes)\"' \"POST ${ORIGIN} ${#BODY}\" \"…the agent half got the POST, its Origin and all ${#BODY} bytes\" || true\n\nRESP=$(visit \"${JAR_VIEWER}\" -H 'X-Lamalibre-Relay-Assertion: e2e.forged' -H 'Remote-User: admin' -H 'X-Lamalibre-Caller: e2e.forged' -H 'X-E2E-Marker: e2e-40-marker' \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"Sent with its own X-Lamalibre-Relay-Assertion, Remote-User and X-Lamalibre-Caller: 200\" || true\nECHO=$(visit_body \"$RESP\")\nassert_json_field \"$ECHO\" '\"\\(.caller.username) \\(.caller.userId)\"' \"${VIEWER} ${VIEWER_ID}\" \"…the caller is still the one Gatekeeper vouched for\" || true\nassert_json_field \"$ECHO\" '\"\\(.headers.remoteUser) \\(.headers.relayAssertion)\"' 'null null' \"…no Remote-User or relay assertion reached the agent half\" || true\nassert_json_field \"$ECHO\" '.headers.marker' 'e2e-40-marker' \"…while an ordinary header did\" || true\n\nCOOKIE=$(session_cookie \"${JAR_VIEWER}\")\nassert_not_eq \"${COOKIE}\" \"\" \"The viewer's session cookie, read from the visitor's jar\" || true\nassert_eq \"$(visit_status \"$(visit - -H \"Cookie: authelia_session=${COOKIE}\" \"https://${FQDN}${APP}/echo\")\")\" \"200\" \"That cookie alone, sent as a header: 200\" || true\nfor planted in twice empty-first planted-after; do\n  case \"$planted\" in\n    twice) HEADER=\"authelia_session=${COOKIE}; authelia_session=${COOKIE}\" ;;\n    empty-first) HEADER=\"authelia_session=; authelia_session=${COOKIE}\" ;;\n    *) HEADER=\"authelia_session=${COOKIE}; authelia_session=e2e40planted\" ;;\n  esac\n  RESP=$(visit - -H \"Cookie: ${HEADER}\" \"https://${FQDN}${APP}/echo\")\n  assert_eq \"$(visit_status \"$RESP\")\" \"401\" \"authelia_session presented twice (${planted}): 401 — Gatekeeper does not guess which one Authelia would read\" || true\n  assert_json_field \"$(visit_body \"$RESP\")\" '.error' 'unauthenticated' \"…unauthenticated\" || true\ndone\nHEADER=\"\"\nASSERTION=$(gatekeeper_assertion GET \"${APP}/echo\" \"${COOKIE}\")\nassert_eq \"$(echo \"${ASSERTION}\" | grep -cE '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$' || true)\" \"1\" \"On the host VM, Gatekeeper vouches for that session (/authz/user-surface/${FQDN})\" || true\nRESP=$(panel_direct GET \"${APP}/echo\" \"${ASSERTION}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Its assertion, sent to the panel's listener: 200\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.caller.userId' \"${VIEWER_ID}\" \"…as ${VIEWER}\" || true\nRESP=$(panel_direct GET \"${APP}/echo\" \"${ASSERTION}\")\nassert_eq \"$(status_of \"$RESP\")\" \"401\" \"The same assertion again: 401 — replay refused\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.error' 'unauthenticated' \"…unauthenticated\" || true\nassert_eq \"$(status_of \"$(panel_direct POST \"${APP}/echo\" \"$(gatekeeper_assertion GET \"${APP}/echo\" \"${COOKIE}\")\")\")\" \"401\" \"An assertion for GET does not carry a POST (401)\" || true\n\n# Each resolves (by nginx's reading) under the user surface; Gatekeeper\n# checks the raw target, which may not hold a dot segment, an encoded\n# separator or an encoded % (a router decoding twice would read `..`).\nPATHS_BEFORE=$(half_requests \"${PLUGIN}\" '(%2[fFeE5]|%5[cC]|/\\.\\.?(/|$))')\nfor path in \"${APP}/../app/echo\" \"${APP}/./echo\" \"${APP}/%2e/echo\" \"${APP}/a%2fb\" \"${APP}/a%5cb\" \"${APP}/%252e%252e/echo\"; do\n  STATUS=$(visit_status \"$(visit \"${JAR_VIEWER}\" --path-as-is \"https://${FQDN}${path}\")\")\n  if [ \"$STATUS\" = \"403\" ] || [ \"$STATUS\" = \"400\" ]; then\n    log_pass \"${path}: refused (${STATUS})\"\n  else\n    log_fail \"${path}: expected 403 or 400, got ${STATUS}\"\n  fi\ndone\nassert_eq \"$(half_requests \"${PLUGIN}\" '(%2[fFeE5]|%5[cC]|/\\.\\.?(/|$))')\" \"${PATHS_BEFORE}\" \"The agent half saw none of them (its request log)\" || true\n\n# ===========================================================================\n# 6. A restricted tunnel\n# ==========================================================================="
     },
     {
       "id": "restricted-a-grant-for-the-tunnel-is-needed-too",
       "label": "Restricted: a grant for the tunnel is needed too",
       "steps": [
         {
-          "id": "step-149",
+          "id": "step-175",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2542,7 +2840,7 @@
           ]
         },
         {
-          "id": "step-150",
+          "id": "step-176",
           "label": "The bound tunnel made restricted",
           "target": "local",
           "continueOnError": true,
@@ -2563,7 +2861,7 @@
           }
         },
         {
-          "id": "step-151",
+          "id": "step-177",
           "label": "${VIEWER}, entitled to the plugin but without a grant for the tunnel: 403",
           "target": "local",
           "op": {
@@ -2573,7 +2871,7 @@
           }
         },
         {
-          "id": "step-152",
+          "id": "step-178",
           "label": "${VIEWER} on the restricted tunnel: $(viewer_echo_status)",
           "target": "local",
           "op": {
@@ -2583,7 +2881,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-179",
           "label": "POST /api/gatekeeper/grants",
           "target": "host",
           "op": {
@@ -2602,7 +2900,7 @@
           ]
         },
         {
-          "id": "step-154",
+          "id": "step-180",
           "label": "Set TUNNEL_GRANT_ID",
           "target": "local",
           "op": {
@@ -2619,7 +2917,7 @@
           ]
         },
         {
-          "id": "step-155",
+          "id": "step-181",
           "label": "${VIEWER} granted the tunnel",
           "target": "local",
           "continueOnError": true,
@@ -2637,7 +2935,7 @@
           }
         },
         {
-          "id": "step-156",
+          "id": "step-182",
           "label": "POST /api/gatekeeper/cache/bust",
           "target": "host",
           "op": {
@@ -2649,7 +2947,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-157",
+          "id": "step-183",
           "label": "…200 with the grant",
           "target": "local",
           "op": {
@@ -2659,7 +2957,7 @@
           }
         },
         {
-          "id": "step-158",
+          "id": "step-184",
           "label": "${VIEWER} with the grant: $(viewer_echo_status)",
           "target": "local",
           "op": {
@@ -2669,7 +2967,7 @@
           }
         },
         {
-          "id": "step-159",
+          "id": "step-185",
           "label": "DELETE /api/gatekeeper/grants/${TUNNEL_GRANT_ID}",
           "target": "host",
           "op": {
@@ -2680,7 +2978,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-161",
+          "id": "step-187",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2697,7 +2995,7 @@
           ]
         },
         {
-          "id": "step-162",
+          "id": "step-188",
           "label": "The grant revoked, the tunnel authenticated again",
           "target": "local",
           "continueOnError": true,
@@ -2718,7 +3016,7 @@
           }
         },
         {
-          "id": "step-163",
+          "id": "step-189",
           "label": "${VIEWER}: 200 again",
           "target": "local",
           "op": {
@@ -2728,7 +3026,7 @@
           }
         },
         {
-          "id": "step-164",
+          "id": "step-190",
           "label": "${VIEWER}: $(viewer_echo_status)",
           "target": "local",
           "op": {
@@ -2738,14 +3036,14 @@
           }
         }
       ],
-      "bash": "log_section \"Restricted: a grant for the tunnel is needed too\"\n\nRESP=$(host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"restricted\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The bound tunnel made restricted\" || true\nif wait_for 30 viewer_gets 403; then\n  log_pass \"${VIEWER}, entitled to the plugin but without a grant for the tunnel: 403\"\nelse\n  log_fail \"${VIEWER} on the restricted tunnel: $(viewer_echo_status)\"\nfi\nRESP=$(host_api_post \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${VIEWER}\\\",\\\"resourceType\\\":\\\"tunnel\\\",\\\"resourceId\\\":\\\"${TUNNEL_A}\\\"}\")\nTUNNEL_GRANT_ID=$(json_get \"$RESP\" '.grant.grantId // empty')\nassert_json_field_not_empty \"$RESP\" '.grant.grantId' \"${VIEWER} granted the tunnel\" || true\nhost_api_post \"gatekeeper/cache/bust\" '{}' > /dev/null 2>&1 || true\nif wait_for 30 viewer_gets 200; then\n  log_pass \"…200 with the grant\"\nelse\n  log_fail \"${VIEWER} with the grant: $(viewer_echo_status)\"\nfi\nhost_api_delete \"gatekeeper/grants/${TUNNEL_GRANT_ID}\" > /dev/null 2>&1 || true\nTUNNEL_GRANT_ID=\"\"\nRESP=$(host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"authenticated\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The grant revoked, the tunnel authenticated again\" || true\nif wait_for 30 viewer_gets 200; then\n  log_pass \"${VIEWER}: 200 again\"\nelse\n  log_fail \"${VIEWER}: $(viewer_echo_status)\"\nfi\n\n# ===========================================================================\n# 8. Unbound, bound again\n# ==========================================================================="
+      "bash": "log_section \"Restricted: a grant for the tunnel is needed too\"\n\nRESP=$(host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"restricted\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The bound tunnel made restricted\" || true\nif wait_for 30 viewer_gets 403; then\n  log_pass \"${VIEWER}, entitled to the plugin but without a grant for the tunnel: 403\"\nelse\n  log_fail \"${VIEWER} on the restricted tunnel: $(viewer_echo_status)\"\nfi\nRESP=$(host_api_post \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${VIEWER}\\\",\\\"resourceType\\\":\\\"tunnel\\\",\\\"resourceId\\\":\\\"${TUNNEL_A}\\\"}\")\nTUNNEL_GRANT_ID=$(json_get \"$RESP\" '.grant.grantId // empty')\nassert_json_field_not_empty \"$RESP\" '.grant.grantId' \"${VIEWER} granted the tunnel\" || true\nhost_api_post \"gatekeeper/cache/bust\" '{}' > /dev/null 2>&1 || true\nif wait_for 30 viewer_gets 200; then\n  log_pass \"…200 with the grant\"\nelse\n  log_fail \"${VIEWER} with the grant: $(viewer_echo_status)\"\nfi\nhost_api_delete \"gatekeeper/grants/${TUNNEL_GRANT_ID}\" > /dev/null 2>&1 || true\nTUNNEL_GRANT_ID=\"\"\nRESP=$(host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"authenticated\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The grant revoked, the tunnel authenticated again\" || true\nif wait_for 30 viewer_gets 200; then\n  log_pass \"${VIEWER}: 200 again\"\nelse\n  log_fail \"${VIEWER}: $(viewer_echo_status)\"\nfi\n\n# ===========================================================================\n# 7. Unbound, bound again\n# ==========================================================================="
     },
     {
       "id": "unbound-the-location-is-gone-bound-again-served",
       "label": "Unbound: the location is gone; bound again: served",
       "steps": [
         {
-          "id": "step-165",
+          "id": "step-191",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2762,7 +3060,7 @@
           ]
         },
         {
-          "id": "step-166",
+          "id": "step-192",
           "label": "DELETE /api/tunnels/${TUNNEL_A}/user-surface/${PLUGIN}",
           "target": "local",
           "continueOnError": true,
@@ -2783,7 +3081,7 @@
           }
         },
         {
-          "id": "step-167",
+          "id": "step-193",
           "label": "…the tunnel carries no binding",
           "target": "local",
           "continueOnError": true,
@@ -2805,7 +3103,7 @@
           }
         },
         {
-          "id": "step-169",
+          "id": "step-195",
           "label": "Signed in, ${APP}/echo reaches the tunnel's own backend again",
           "target": "local",
           "op": {
@@ -2815,7 +3113,7 @@
           }
         },
         {
-          "id": "step-170",
+          "id": "step-196",
           "label": "${APP}/echo after unbinding: $(viewer_echo_status)",
           "target": "local",
           "op": {
@@ -2825,7 +3123,7 @@
           }
         },
         {
-          "id": "step-171",
+          "id": "step-197",
           "label": "…and without a session Authelia redirects, as for any page of it",
           "target": "local",
           "continueOnError": true,
@@ -2846,7 +3144,7 @@
           }
         },
         {
-          "id": "step-172",
+          "id": "step-198",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2863,7 +3161,7 @@
           ]
         },
         {
-          "id": "step-173",
+          "id": "step-199",
           "label": "Bound again: served at once (approved, hosted)",
           "target": "local",
           "continueOnError": true,
@@ -2885,7 +3183,7 @@
           }
         },
         {
-          "id": "step-174",
+          "id": "step-200",
           "label": "${VIEWER}: the agent half answers again",
           "target": "local",
           "op": {
@@ -2895,7 +3193,7 @@
           }
         },
         {
-          "id": "step-175",
+          "id": "step-201",
           "label": "${VIEWER} after binding again: $(viewer_echo_status)",
           "target": "local",
           "op": {
@@ -2905,14 +3203,14 @@
           }
         }
       ],
-      "bash": "log_section \"Unbound: the location is gone; bound again: served\"\n\nRESP=$(host_api_call DELETE \"tunnels/${TUNNEL_A}/user-surface/${PLUGIN}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"DELETE /api/tunnels/${TUNNEL_A}/user-surface/${PLUGIN}\" || true\nassert_json_field \"$(tunnel_entry \"${TUNNEL_A}\")\" '.userSurface // \"none\"' 'none' \"…the tunnel carries no binding\" || true\nbackend_answers() { [[ \"$(visit_body \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\")\" == *\"${MARKER}\"* ]]; }\nif wait_for 30 backend_answers; then\n  log_pass \"Signed in, ${APP}/echo reaches the tunnel's own backend again\"\nelse\n  log_fail \"${APP}/echo after unbinding: $(viewer_echo_status)\"\nfi\nassert_eq \"$(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")\" \"302\" \"…and without a session Authelia redirects, as for any page of it\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.tunnel.userSurfaceStatus[0].served)\"' 'true true' \"Bound again: served at once (approved, hosted)\" || true\nif wait_for 30 viewer_gets 200; then\n  log_pass \"${VIEWER}: the agent half answers again\"\nelse\n  log_fail \"${VIEWER} after binding again: $(viewer_echo_status)\"\nfi\n\n# ===========================================================================\n# 9. Disabled\n# ==========================================================================="
+      "bash": "log_section \"Unbound: the location is gone; bound again: served\"\n\nRESP=$(host_api_call DELETE \"tunnels/${TUNNEL_A}/user-surface/${PLUGIN}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"DELETE /api/tunnels/${TUNNEL_A}/user-surface/${PLUGIN}\" || true\nassert_json_field \"$(tunnel_entry \"${TUNNEL_A}\")\" '.userSurface // \"none\"' 'none' \"…the tunnel carries no binding\" || true\nbackend_answers() { [[ \"$(visit_body \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\")\" == *\"${MARKER}\"* ]]; }\nif wait_for 30 backend_answers; then\n  log_pass \"Signed in, ${APP}/echo reaches the tunnel's own backend again\"\nelse\n  log_fail \"${APP}/echo after unbinding: $(viewer_echo_status)\"\nfi\nassert_eq \"$(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")\" \"302\" \"…and without a session Authelia redirects, as for any page of it\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.tunnel.userSurfaceStatus[0].served)\"' 'true true' \"Bound again: served at once (approved, hosted)\" || true\nif wait_for 30 viewer_gets 200; then\n  log_pass \"${VIEWER}: the agent half answers again\"\nelse\n  log_fail \"${VIEWER} after binding again: $(viewer_echo_status)\"\nfi\n\n# ===========================================================================\n# 8. Disabled\n# ==========================================================================="
     },
     {
       "id": "disabled-refused-at-once",
       "label": "Disabled: refused at once",
       "steps": [
         {
-          "id": "step-176",
+          "id": "step-202",
           "label": "Set COOKIE",
           "target": "local",
           "op": {
@@ -2929,7 +3227,7 @@
           ]
         },
         {
-          "id": "step-177",
+          "id": "step-203",
           "label": "Set ASSERTION",
           "target": "local",
           "op": {
@@ -2946,7 +3244,7 @@
           ]
         },
         {
-          "id": "step-178",
+          "id": "step-204",
           "label": "Gatekeeper vouches for ${VIEWER}'s session once more",
           "target": "local",
           "continueOnError": true,
@@ -2967,7 +3265,7 @@
           }
         },
         {
-          "id": "step-179",
+          "id": "step-205",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2984,7 +3282,7 @@
           ]
         },
         {
-          "id": "step-180",
+          "id": "step-206",
           "label": "${VIEWER} disabled",
           "target": "local",
           "continueOnError": true,
@@ -3006,7 +3304,7 @@
           }
         },
         {
-          "id": "step-181",
+          "id": "step-207",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3023,7 +3321,7 @@
           ]
         },
         {
-          "id": "step-182",
+          "id": "step-208",
           "label": "That assertion, still valid, sent to the panel: 403",
           "target": "local",
           "continueOnError": true,
@@ -3044,7 +3342,7 @@
           }
         },
         {
-          "id": "step-183",
+          "id": "step-209",
           "label": "…This user is disabled",
           "target": "local",
           "continueOnError": true,
@@ -3066,7 +3364,7 @@
           }
         },
         {
-          "id": "step-184",
+          "id": "step-210",
           "label": "Set STATUS",
           "target": "local",
           "op": {
@@ -3083,7 +3381,7 @@
           ]
         },
         {
-          "id": "step-185",
+          "id": "step-211",
           "label": "From the visitor VM: ${STATUS} — the session ended with Authelia's restart, or the panel refuses it",
           "target": "local",
           "op": {
@@ -3108,7 +3406,7 @@
           }
         },
         {
-          "id": "step-186",
+          "id": "step-212",
           "label": "From the visitor VM, disabled: ${STATUS}",
           "target": "local",
           "op": {
@@ -3137,8 +3435,8 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 40 — App plugin user surface (Three-VM)\n# ============================================================================\n# Slice 6's user path: a person signed in to Authelia reaches an\n# agent-hosted plugin's /app through the relay. An app plugin whose manifest\n# declares identity (fixture @lamalibre/e2e-idsurf-server, helpers.sh:\n# write_app_install_fixture … wide — its agent half answers a user caller\n# on /app/echo and /app/me) is installed from the panel, and an\n# authenticated app tunnel the agent VM carries — its own backend a static\n# server there — is bound as the plugin's user surface. From the visitor VM:\n#\n# 1. Binding refusals: a route no plugin holds, a public tunnel, a second\n#    tunnel for the same route (409); a bound tunnel cannot be made public.\n# 2. Bound but not approved, the host serves no user-surface location:\n#    /api/<route>/app/echo goes down the tunnel to its own backend, and\n#    without a session Authelia's redirect answers, as for any page of it.\n# 3. Approved: the location is there — without a session a JSON 401, never\n#    a redirect; not hosted yet, a 503. Hosted, once its agent half answered\n#    protocol 1: a signed-in user without a role in the plugin gets 403;\n#    with the viewer role, /app/echo answers with the caller the panel\n#    signed — the directory's userId, the username, the roles — and\n#    /app/me with what the agent half's projection holds of them.\n# 4. What a browser cannot do: change something without the bound host's\n#    Origin (no Origin, a foreign one: 403; the bound one: forwarded); get\n#    the application's Set-Cookie; pass its own X-Lamalibre-Relay-Assertion,\n#    Remote-User or X-Lamalibre-Caller for the relay's; replay what\n#    Gatekeeper vouched (an assertion taken from Gatekeeper on the host VM\n#    with the visitor's cookie, sent twice to the panel's loopback\n#    listener: the second is 401); reach a path with dot segments or\n#    encoded separators (403/400 — the agent half never sees one).\n# 5. A restricted tunnel lets through only a user with a grant for it.\n# 6. Unbound, the location is gone: the request reaches the tunnel's own\n#    backend again; bound again, it is served again.\n# 7. A user disabled while an assertion Gatekeeper gave for them is still\n#    valid: the panel refuses it at once (403, disabled).\n#\n# Every write of users.yml restarts Authelia and ends every session: both\n# users are created before anyone signs in, and disabling one is the last\n# step. The identity feed itself is spec 39.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-idsurf\"\nSERVER_PACKAGE=\"@lamalibre/e2e-idsurf-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-idsurf-agent\"\nAPP=\"/api/${PLUGIN}/app\"\nPOLICY_ID=\"e2e-apphost-40\"\nREMOTE_DIR=\"/var/tmp/e2e-40-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nVISITOR_VM=\"lamaste-visitor\"\nVIEWER=\"e2e40-viewer\"\nNOROLE=\"e2e40-norole\"\n# Test credentials for this run only, never printed\nVIEWER_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nNOROLE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR_VIEWER=\"/tmp/e2e-40-viewer.cookies\"\nJAR_NOROLE=\"/tmp/e2e-40-norole.cookies\"\n# The bound tunnel (A), a public one (P) and a second authenticated one (S)\nSUB_A=\"e2e40us\"\nSUB_P=\"e2e40pub\"\nSUB_S=\"e2e40two\"\nPORT_A=18440\nPORT_P=18441\nPORT_S=18442\nTUNNEL_A=\"\"\nTUNNEL_P=\"\"\nTUNNEL_S=\"\"\nFQDN=\"\"\nORIGIN=\"\"\nBACKEND_UNIT=\"e2e-40-backend\"\nBACKEND_DIR=\"/var/tmp/e2e-40-backend\"\nMARKER=\"E2E_40_TUNNEL_BACKEND_$(date +%s)\"\nVIEWER_ID=\"\"\nNOROLE_ID=\"\"\nTUNNEL_GRANT_ID=\"\"\n\n# ---------------------------------------------------------------------------\n# The visitor VM\n# ---------------------------------------------------------------------------\n\nvisitor_exec() { multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"$1\"; }\n\n# q <arguments...> — each quoted for the remote shell (printf %q), joined by spaces\nq() {\n  local out=\"\" a\n  for a in \"$@\"; do out=\"${out} $(printf %q \"$a\")\"; done\n  printf '%s' \"${out# }\"\n}\n\n# visit <cookie jar | -> <curl arguments...> — one request from the visitor\n# VM: the response headers, a blank line, the body, then the HTTP status on\n# a line of its own (visit_status, visit_headers, visit_body split them)\nvisit() {\n  local jar=\"$1\" cookies=\"\"\n  shift\n  if [ \"$jar\" != \"-\" ]; then cookies=\"-b $(printf %q \"$jar\")\"; fi\n  visitor_exec \"curl -sk --max-time 20 -D - -w '\\n%{http_code}' ${cookies} $(q \"$@\") || true\" 2>/dev/null || echo \"000\"\n}\nvisit_status() { printf '%s\\n' \"$1\" | tail -n 1; }\n# Read to the end (no early exit): under pipefail the writer must not die of SIGPIPE.\nvisit_headers() { printf '%s\\n' \"$1\" | sed '$d' | tr -d '\\r' | awk 'f == 0 && /^$/ {f = 1} f == 0 {print}'; }\nvisit_body() { printf '%s\\n' \"$1\" | sed '$d' | tr -d '\\r' | awk 'f == 1 {print} f == 0 && /^$/ {f = 1}'; }\n\n# viewer_echo_status — the HTTP status of the viewer's GET /api/<route>/app/echo\nviewer_echo_status() { visit_status \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\"; }\nviewer_gets() { [ \"$(viewer_echo_status)\" = \"$1\" ]; }\n# anonymous_gets <status> — the same without a session\nanonymous_gets() { [ \"$(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")\" = \"$1\" ]; }\n\n# reset_totp <username> — a fresh TOTP secret for the user (the panel's\n# reset, as the admin); prints the base32 secret\nreset_totp() {\n  host_api_post \"users/$1/reset-totp\" '{}' 2>/dev/null | jq -r '.totpUri // empty' 2>/dev/null | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p' || true\n}\n\n# sign_in <username> <password> <totp secret> <cookie jar> — Authelia's two\n# factors from the visitor VM into <jar>; prints \"<first> <second>\" (OK OK)\nsign_in() {\n  local body first code second\n  visitor_exec \"rm -f $(printf %q \"$4\")\" > /dev/null 2>&1 || true\n  body=$(jq -c -n --arg u \"$1\" --arg p \"$2\" --arg t \"https://${FQDN}/\" '{username: $u, password: $p, keepMeLoggedIn: false, targetURL: $t}')\n  first=$(visitor_exec \"curl -sk --max-time 15 -c $(q \"$4\" -X POST -H 'Content-Type: application/json' -d \"$body\" \"https://auth.${DOMAIN}/api/firstfactor\") || true\" 2>/dev/null | jq -r '.status // \"none\"' 2>/dev/null || true)\n  code=$(visitor_exec \"oathtool --totp --base32 $(printf %q \"$3\")\" 2>/dev/null | tail -n 1 || true)\n  body=$(jq -c -n --arg c \"$code\" --arg t \"https://${FQDN}/\" '{token: $c, targetURL: $t}')\n  second=$(visitor_exec \"curl -sk --max-time 15 -b $(q \"$4\") -c $(q \"$4\" -X POST -H 'Content-Type: application/json' -d \"$body\" \"https://auth.${DOMAIN}/api/secondfactor/totp\") || true\" 2>/dev/null | jq -r '.status // \"none\"' 2>/dev/null || true)\n  echo \"${first:-none} ${second:-none}\"\n}\n\n# sign_in_both — both users, after one wait into a fresh TOTP window (a code\n# already used in the current one is refused); logs the outcome\nsign_in_both() {\n  local secret_v secret_n\n  secret_v=$(reset_totp \"${VIEWER}\")\n  secret_n=$(reset_totp \"${NOROLE}\")\n  if [ -z \"$secret_v\" ] || [ -z \"$secret_n\" ]; then\n    log_fail \"The TOTP secrets could not be reset\"\n    return 0\n  fi\n  wait_for_next_totp_window\n  assert_eq \"$(sign_in \"${VIEWER}\" \"${VIEWER_PASSWORD}\" \"${secret_v}\" \"${JAR_VIEWER}\")\" \"OK OK\" \"${VIEWER} signed in from the visitor VM (password, TOTP)\" || true\n  assert_eq \"$(sign_in \"${NOROLE}\" \"${NOROLE_PASSWORD}\" \"${secret_n}\" \"${JAR_NOROLE}\")\" \"OK OK\" \"${NOROLE} signed in from the visitor VM\" || true\n}\n\n# session_cookie <jar> — the authelia_session cookie in a visitor's jar\nsession_cookie() {\n  # shellcheck disable=SC2016 # an awk program, for the remote shell to pass on as it is\n  visitor_exec \"awk $(printf %q '$6 == \"authelia_session\" {print $7}') $(printf %q \"$1\") || true\" 2>/dev/null | tail -n 1 || true\n}\n\n# gatekeeper_assertion <method> <path> <cookie> — on the host VM, what\n# Gatekeeper answers nginx's user-surface subrequest for this request with\n# the session's cookie: its X-Lamalibre-Relay-Assertion (\"\" when none)\ngatekeeper_assertion() {\n  host_exec \"curl -s --max-time 10 -o /dev/null -D - $(q -H \"Host: ${FQDN}\" -H \"X-Original-URL: https://${FQDN}$2\" -H \"X-Original-Method: $1\" -H \"Cookie: authelia_session=$3\" \"http://127.0.0.1:9294/authz/user-surface/${FQDN}\") || true\" 2>/dev/null |\n    tr -d '\\r' | awk -F': ' 'tolower($1) == \"x-lamalibre-relay-assertion\" {v = $2} END {print v}' || true\n}\n\n# panel_direct <method> <path> <assertion> — the request as nginx passes it,\n# sent to the panel's loopback listener on the host VM: the body, then the status\npanel_direct() {\n  host_exec \"curl -s --max-time 15 -X $1 -w '\\n%{http_code}' $(q -H \"X-Lamalibre-Relay-Assertion: $3\" \"http://127.0.0.1:3100$2\") || true\" 2>/dev/null || echo \"000\"\n}\n\n# tunnel_entry <id> — the tunnel as GET /api/tunnels lists it ('null' when gone)\ntunnel_entry() {\n  host_api_get \"tunnels?limit=500\" 2>/dev/null | jq -c --arg id \"$1\" '[.tunnels[]? | select(.id == $id)] | first // null' 2>/dev/null || echo \"null\"\n}\n\n# backend_reachable — the bound tunnel's own backend answers through chisel\nbackend_reachable() {\n  [ \"$(host_exec \"curl -s --max-time 3 http://127.0.0.1:${PORT_A}${APP}/echo || true\" 2>/dev/null | tr -d '\\r\\n')\" = \"${MARKER}\" ]\n}\n\nhealth_up() { [ \"$(hosting_field \"${PLUGIN}\" '.hosting.health.state')\" = \"up\" ]; }\n\n# viewer_in_audience — the audience holds the viewer as an active member\nviewer_in_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\nbegin_test \"40 — App plugin user surface (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  if [ -n \"${TUNNEL_GRANT_ID}\" ]; then host_api_delete \"gatekeeper/grants/${TUNNEL_GRANT_ID}\" > /dev/null 2>&1 || true; fi\n  # Gatekeeper's grants outlive the plugin.\n  drop_plugin_grants \"${PLUGIN}\"\n  for id in ${TUNNEL_A} ${TUNNEL_P} ${TUNNEL_S}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  timed_exec 60 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"systemctl stop ${BACKEND_UNIT} > /dev/null 2>&1; rm -rf ${BACKEND_DIR}; sed -i '/${SUB_A}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR_VIEWER} ${JAR_NOROLE}; sed -i '/${SUB_A}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  for id in \"${VIEWER}\" \"${NOROLE}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  for id in ${VIEWER_ID} ${NOROLE_ID}; do\n    host_api_post \"identity/directory/${id}/erase\" '{}' > /dev/null 2>&1 || true\n  done\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "headerRaw": "# ============================================================================\n# 40 — App plugin user surface (Three-VM)\n# ============================================================================\n# Slice 6's user path: a person signed in to Authelia reaches an\n# agent-hosted plugin's /app through the relay. An app plugin whose manifest\n# declares identity (fixture @lamalibre/e2e-idsurf-server, helpers.sh:\n# write_app_install_fixture … wide — its agent half answers a user caller\n# on /app/echo and /app/me) is installed from the panel, and an\n# authenticated app tunnel the agent VM carries — its own backend a static\n# server there, which also echoes the Cookie headers it receives — is bound\n# as the plugin's user surface. From the visitor VM:\n#\n# 1. Binding refusals: a route no plugin holds, the plugin before it is\n#    hosted on the agent that carries the tunnel (a user surface is served\n#    only from its hosting agent's tunnel), a public tunnel, a second tunnel\n#    for the same route (409); a bound tunnel cannot be made public.\n# 2. Not bound yet, the host serves no user-surface location:\n#    /api/<route>/app/echo goes down the tunnel to its own backend, and\n#    without a session Authelia's redirect answers, as for any page of it.\n#    Signed in, the backend receives the browser's other cookies but never\n#    authelia_session, wherever it stands in the header (nginx's backend\n#    cookie map) — and no Cookie header when it was the only one.\n# 3. Approved and hosted on the tunnel's agent, and ready — its agent\n#    half's first complete sync ended at the head: bound, the location is\n#    there at once — without a session a JSON 401, never a redirect; a\n#    signed-in user without a role in the plugin gets 403; with the viewer\n#    role, /app/echo answers with the caller the panel signed — the\n#    directory's userId, the username, the roles — and /app/me with what\n#    the agent half's projection holds of them.\n# 4. What a browser cannot do: send a request another site started\n#    (Sec-Fetch-Site: cross-site, 403); change something without the bound\n#    host's Origin (no Origin, a foreign one: 403; the bound one:\n#    forwarded); read an answer as a page or from another origin (CSP\n#    sandbox, CORP same-origin, no CORS); present a second authelia_session\n#    beside its own (another host under the domain could plant one, even an\n#    empty one — Gatekeeper does not guess which Authelia would read: 401);\n#    get the application's Set-Cookie; pass its own\n#    X-Lamalibre-Relay-Assertion, Remote-User or X-Lamalibre-Caller for the\n#    relay's; replay what Gatekeeper vouched (an assertion taken from\n#    Gatekeeper on the host VM with the visitor's cookie, sent twice to the\n#    panel's loopback listener: the second is 401); reach a path with dot\n#    segments, encoded separators or an encoded % (403/400 — the agent half\n#    never sees one).\n# 5. A restricted tunnel lets through only a user with a grant for it.\n# 6. Unbound, the location is gone: the request reaches the tunnel's own\n#    backend again; bound again, it is served again.\n# 7. A user disabled while an assertion Gatekeeper gave for them is still\n#    valid: the panel refuses it at once (403, disabled).\n#\n# Every write of users.yml restarts Authelia and ends every session: both\n# users are created before anyone signs in, and disabling one is the last\n# step. The identity feed itself is spec 39.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-idsurf\"\nSERVER_PACKAGE=\"@lamalibre/e2e-idsurf-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-idsurf-agent\"\nAPP=\"/api/${PLUGIN}/app\"\nPOLICY_ID=\"e2e-apphost-40\"\nREMOTE_DIR=\"/var/tmp/e2e-40-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nVISITOR_VM=\"lamaste-visitor\"\nVIEWER=\"e2e40-viewer\"\nNOROLE=\"e2e40-norole\"\n# Test credentials for this run only, never printed\nVIEWER_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nNOROLE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR_VIEWER=\"/tmp/e2e-40-viewer.cookies\"\nJAR_NOROLE=\"/tmp/e2e-40-norole.cookies\"\n# The bound tunnel (A), a public one (P) and a second authenticated one (S)\nSUB_A=\"e2e40us\"\nSUB_P=\"e2e40pub\"\nSUB_S=\"e2e40two\"\nPORT_A=18440\nPORT_P=18441\nPORT_S=18442\nTUNNEL_A=\"\"\nTUNNEL_P=\"\"\nTUNNEL_S=\"\"\nFQDN=\"\"\nORIGIN=\"\"\nBACKEND_UNIT=\"e2e-40-backend\"\nBACKEND_DIR=\"/var/tmp/e2e-40-backend\"\nMARKER=\"E2E_40_TUNNEL_BACKEND_$(date +%s)\"\nVIEWER_ID=\"\"\nNOROLE_ID=\"\"\nTUNNEL_GRANT_ID=\"\"\n\n# ---------------------------------------------------------------------------\n# The visitor VM\n# ---------------------------------------------------------------------------\n\nvisitor_exec() { multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"$1\"; }\n\n# q <arguments...> — each quoted for the remote shell (printf %q), joined by spaces\nq() {\n  local out=\"\" a\n  for a in \"$@\"; do out=\"${out} $(printf %q \"$a\")\"; done\n  printf '%s' \"${out# }\"\n}\n\n# visit <cookie jar | -> <curl arguments...> — one request from the visitor\n# VM: the response headers, a blank line, the body, then the HTTP status on\n# a line of its own (visit_status, visit_headers, visit_body split them)\nvisit() {\n  local jar=\"$1\" cookies=\"\"\n  shift\n  if [ \"$jar\" != \"-\" ]; then cookies=\"-b $(printf %q \"$jar\")\"; fi\n  visitor_exec \"curl -sk --max-time 20 -D - -w '\\n%{http_code}' ${cookies} $(q \"$@\") || true\" 2>/dev/null || echo \"000\"\n}\nvisit_status() { printf '%s\\n' \"$1\" | tail -n 1; }\n# Read to the end (no early exit): under pipefail the writer must not die of SIGPIPE.\nvisit_headers() { printf '%s\\n' \"$1\" | sed '$d' | tr -d '\\r' | awk 'f == 0 && /^$/ {f = 1} f == 0 {print}'; }\nvisit_body() { printf '%s\\n' \"$1\" | sed '$d' | tr -d '\\r' | awk 'f == 1 {print} f == 0 && /^$/ {f = 1}'; }\n\n# viewer_echo_status — the HTTP status of the viewer's GET /api/<route>/app/echo\nviewer_echo_status() { visit_status \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\"; }\nviewer_gets() { [ \"$(viewer_echo_status)\" = \"$1\" ]; }\n# anonymous_gets <status> — the same without a session\nanonymous_gets() { [ \"$(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")\" = \"$1\" ]; }\n\n# reset_totp <username> — a fresh TOTP secret for the user (the panel's\n# reset, as the admin); prints the base32 secret\nreset_totp() {\n  host_api_post \"users/$1/reset-totp\" '{}' 2>/dev/null | jq -r '.totpUri // empty' 2>/dev/null | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p' || true\n}\n\n# sign_in <username> <password> <totp secret> <cookie jar> — Authelia's two\n# factors from the visitor VM into <jar>; prints \"<first> <second>\" (OK OK)\nsign_in() {\n  local body first code second\n  visitor_exec \"rm -f $(printf %q \"$4\")\" > /dev/null 2>&1 || true\n  body=$(jq -c -n --arg u \"$1\" --arg p \"$2\" --arg t \"https://${FQDN}/\" '{username: $u, password: $p, keepMeLoggedIn: false, targetURL: $t}')\n  first=$(visitor_exec \"curl -sk --max-time 15 -c $(q \"$4\" -X POST -H 'Content-Type: application/json' -d \"$body\" \"https://auth.${DOMAIN}/api/firstfactor\") || true\" 2>/dev/null | jq -r '.status // \"none\"' 2>/dev/null || true)\n  code=$(visitor_exec \"oathtool --totp --base32 $(printf %q \"$3\")\" 2>/dev/null | tail -n 1 || true)\n  body=$(jq -c -n --arg c \"$code\" --arg t \"https://${FQDN}/\" '{token: $c, targetURL: $t}')\n  second=$(visitor_exec \"curl -sk --max-time 15 -b $(q \"$4\") -c $(q \"$4\" -X POST -H 'Content-Type: application/json' -d \"$body\" \"https://auth.${DOMAIN}/api/secondfactor/totp\") || true\" 2>/dev/null | jq -r '.status // \"none\"' 2>/dev/null || true)\n  echo \"${first:-none} ${second:-none}\"\n}\n\n# sign_in_both — both users, after one wait into a fresh TOTP window (a code\n# already used in the current one is refused); logs the outcome\nsign_in_both() {\n  local secret_v secret_n\n  secret_v=$(reset_totp \"${VIEWER}\")\n  secret_n=$(reset_totp \"${NOROLE}\")\n  if [ -z \"$secret_v\" ] || [ -z \"$secret_n\" ]; then\n    log_fail \"The TOTP secrets could not be reset\"\n    return 0\n  fi\n  wait_for_next_totp_window\n  assert_eq \"$(sign_in \"${VIEWER}\" \"${VIEWER_PASSWORD}\" \"${secret_v}\" \"${JAR_VIEWER}\")\" \"OK OK\" \"${VIEWER} signed in from the visitor VM (password, TOTP)\" || true\n  assert_eq \"$(sign_in \"${NOROLE}\" \"${NOROLE_PASSWORD}\" \"${secret_n}\" \"${JAR_NOROLE}\")\" \"OK OK\" \"${NOROLE} signed in from the visitor VM\" || true\n}\n\n# session_cookie <jar> — the authelia_session cookie in a visitor's jar\nsession_cookie() {\n  # shellcheck disable=SC2016 # an awk program, for the remote shell to pass on as it is\n  visitor_exec \"awk $(printf %q '$6 == \"authelia_session\" {print $7}') $(printf %q \"$1\") || true\" 2>/dev/null | tail -n 1 || true\n}\n\n# gatekeeper_assertion <method> <path> <cookie> — on the host VM, what\n# Gatekeeper answers nginx's user-surface subrequest for this request with\n# the session's cookie: its X-Lamalibre-Relay-Assertion (\"\" when none)\ngatekeeper_assertion() {\n  host_exec \"curl -s --max-time 10 -o /dev/null -D - $(q -H \"Host: ${FQDN}\" -H \"X-Original-URL: https://${FQDN}$2\" -H \"X-Original-Method: $1\" -H \"Cookie: authelia_session=$3\" \"http://127.0.0.1:9294/authz/user-surface/${FQDN}\") || true\" 2>/dev/null |\n    tr -d '\\r' | awk -F': ' 'tolower($1) == \"x-lamalibre-relay-assertion\" {v = $2} END {print v}' || true\n}\n\n# panel_direct <method> <path> <assertion> — the request as nginx passes it,\n# sent to the panel's loopback listener on the host VM: the body, then the status\npanel_direct() {\n  host_exec \"curl -s --max-time 15 -X $1 -w '\\n%{http_code}' $(q -H \"X-Lamalibre-Relay-Assertion: $3\" \"http://127.0.0.1:3100$2\") || true\" 2>/dev/null || echo \"000\"\n}\n\n# tunnel_entry <id> — the tunnel as GET /api/tunnels lists it ('null' when gone)\ntunnel_entry() {\n  host_api_get \"tunnels?limit=500\" 2>/dev/null | jq -c --arg id \"$1\" '[.tunnels[]? | select(.id == $id)] | first // null' 2>/dev/null || echo \"null\"\n}\n\n# write_cookie_backend <file> — cookie-backend.py, the bound tunnel's own\n# backend: the files under a directory, and GET /e2e-cookies answering the\n# Cookie headers it was sent ({\"cookies\": [...]}) — what nginx passed on of\n# the browser's cookies.\n#\n#   python3 cookie-backend.py <port> <directory>\nwrite_cookie_backend() {\n  cat > \"$1\" <<'BACKEND_EOF'\nimport json\nimport sys\nfrom functools import partial\nfrom http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer\n\n\nclass Handler(SimpleHTTPRequestHandler):\n    def do_GET(self):\n        if self.path.split(\"?\", 1)[0] == \"/e2e-cookies\":\n            body = json.dumps({\"cookies\": self.headers.get_all(\"Cookie\") or []}).encode()\n            self.send_response(200)\n            self.send_header(\"Content-Type\", \"application/json\")\n            self.send_header(\"Content-Length\", str(len(body)))\n            self.end_headers()\n            self.wfile.write(body)\n            return\n        super().do_GET()\n\n    def log_message(self, format, *args):\n        pass\n\n\nport, directory = int(sys.argv[1]), sys.argv[2]\nThreadingHTTPServer((\"127.0.0.1\", port), partial(Handler, directory=directory)).serve_forever()\nBACKEND_EOF\n}\n\n# backend_cookies <Cookie header> — what the tunnel's own backend says it was\n# sent for a request carrying that Cookie header: the status, then its JSON\nbackend_cookies() {\n  local resp\n  resp=$(visit - -H \"Cookie: $1\" \"https://${FQDN}/e2e-cookies\")\n  printf '%s %s\\n' \"$(visit_status \"$resp\")\" \"$(visit_body \"$resp\" | jq -c '.cookies' 2>/dev/null || echo \"-\")\"\n}\n\n# backend_reachable — the bound tunnel's own backend answers through chisel\nbackend_reachable() {\n  [ \"$(host_exec \"curl -s --max-time 3 http://127.0.0.1:${PORT_A}${APP}/echo || true\" 2>/dev/null | tr -d '\\r\\n')\" = \"${MARKER}\" ]\n}\n\nhealth_up() { [ \"$(hosting_field \"${PLUGIN}\" '.hosting.health.state')\" = \"up\" ]; }\n\n# viewer_in_audience — the audience holds the viewer as an active member\nviewer_in_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\nbegin_test \"40 — App plugin user surface (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  if [ -n \"${TUNNEL_GRANT_ID}\" ]; then host_api_delete \"gatekeeper/grants/${TUNNEL_GRANT_ID}\" > /dev/null 2>&1 || true; fi\n  # Gatekeeper's grants outlive the plugin.\n  drop_plugin_grants \"${PLUGIN}\"\n  for id in ${TUNNEL_A} ${TUNNEL_P} ${TUNNEL_S}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  timed_exec 60 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"systemctl stop ${BACKEND_UNIT} > /dev/null 2>&1; rm -rf ${BACKEND_DIR}; sed -i '/${SUB_A}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR_VIEWER} ${JAR_NOROLE}; sed -i '/${SUB_A}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  for id in \"${VIEWER}\" \"${NOROLE}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  for id in ${VIEWER_ID} ${NOROLE_ID}; do\n    host_api_post \"identity/directory/${id}/erase\" '{}' > /dev/null 2>&1 || true\n  done\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

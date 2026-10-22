@@ -9,10 +9,12 @@
  * directory or a cursor ahead means a reset; the daily reconcile finds no
  * mismatch on a healthy half and counts (and audits) a tampered one; a 409
  * restarts from the cursor the half reports; erasures stay pending until
- * the half's cursor passes them; a half answering protocol 1 for the
- * installed version is what makes the plugin ready for user callers
- * (`resolveUserCaller`); and a plugin that does not declare identity never
- * receives an identity call.
+ * the half's cursor passes them; a half that applied everything up to the
+ * head after a complete replay since the installed version came — not one
+ * that merely answered the notification — is what makes the plugin ready
+ * for user callers (`resolveUserCaller`); a batch's changes cross the
+ * tunnel sealed (nothing of a member in clear); and a plugin that does not
+ * declare identity never receives an identity call.
  */
 
 import { test, before, after } from 'node:test';
@@ -25,13 +27,18 @@ import path from 'node:path';
 import yaml from 'js-yaml';
 
 import { DatabaseSync } from 'node:sqlite';
-import { IDENTITY_BATCH_MAX_BYTES, IDENTITY_BATCH_MAX_CHANGES } from '@lamalibre/lamaste';
+import {
+  IDENTITY_BATCH_MAX_BYTES,
+  IDENTITY_BATCH_MAX_CHANGES,
+  openIdentityChanges,
+} from '@lamalibre/lamaste';
 import {
   createCallerAssertionVerifier,
   createIdentityHandlers,
   createIdentityProjection,
 } from '@lamalibre/lamaste/agent';
 
+import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
 import { installFakeNpm } from './fake-npm.js';
 
@@ -70,6 +77,7 @@ let npm;
 let lib;
 let core;
 let gatekeeper;
+let autheliaStorage;
 const halves = {};
 
 function listen(server) {
@@ -82,7 +90,9 @@ function listen(server) {
  * A fake agent half: core's identity projection over its own SQLite
  * database and core's identity handlers, verifying Lamaste's caller
  * assertions with the hosting's secret as a real half does. Every request
- * is recorded (path, parsed body, the status answered). `failing` answers
+ * is recorded (path, the parsed body as it travelled, its size, the status
+ * answered); a batch also opened (`batch`: the envelope with its changes
+ * unsealed, null when they do not open), as the test's eyes. `failing` answers
  * identity calls with an unsigned 500 (`batchesBeforeFailing` lets that
  * many batches through first); `afterNotify` runs once, right after a
  * notification is answered.
@@ -106,6 +116,7 @@ async function startFakeHalf(route) {
     onErase: (userId) => half.erased.push(userId),
   });
   half.writeConfig = async (secret) => {
+    half.secret = secret;
     await writeFile(
       half.configPath,
       JSON.stringify({
@@ -121,8 +132,8 @@ async function startFakeHalf(route) {
     const verifier = createCallerAssertionVerifier({ configPath: half.configPath, plugin: route });
     half.handlers = createIdentityHandlers({ verifier, projection: half.projection });
   };
-  half.batches = () =>
-    half.requests.filter((r) => r.path === '/admin/identity/changes').map((r) => r.body);
+  half.wire = () => half.requests.filter((r) => r.path === '/admin/identity/changes');
+  half.batches = () => half.wire().map((r) => r.batch);
   half.server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -134,7 +145,37 @@ async function startFakeHalf(route) {
       } catch {
         parsed = null;
       }
-      const entry = { method: req.method, path: req.url, body: parsed, status: null };
+      const entry = {
+        method: req.method,
+        path: req.url,
+        body: parsed,
+        bytes: body.length,
+        raw: body.toString('utf-8'),
+        batch: null,
+        status: null,
+      };
+      if (req.url === '/admin/identity/changes' && parsed) {
+        const { protocol, changes, ...envelope } = parsed;
+        const assertion = String(req.headers['x-lamalibre-caller'] ?? '');
+        try {
+          const { nonce } = JSON.parse(
+            Buffer.from(assertion.split('.')[0], 'base64url').toString('utf-8'),
+          );
+          entry.batch = {
+            protocol,
+            ...envelope,
+            changes: openIdentityChanges({
+              secret: half.secret,
+              plugin: route,
+              nonce,
+              envelope,
+              sealed: changes,
+            }),
+          };
+        } catch {
+          entry.batch = null;
+        }
+      }
       half.requests.push(entry);
       if (req.url === '/admin/identity/changes') {
         if (half.batchesBeforeFailing <= 0) half.failing = true;
@@ -266,7 +307,13 @@ before(async () => {
   core = await import('@lamalibre/lamaste/server');
   await lib.loadConfig();
   lib.setOidcSyncForTests(async () => null);
-  lib.setAutheliaForTests({ usersFile, restart: async () => {}, writeTotp: async () => {} });
+  autheliaStorage = createFakeAutheliaStorage();
+  lib.setAutheliaForTests({
+    usersFile,
+    restart: async () => {},
+    writeTotp: async () => {},
+    userStorage: autheliaStorage.storage,
+  });
   gatekeeper = installFakeGatekeeper(lib);
   lib.setTunnelOpsForTests({
     async create(ctx) {
@@ -352,6 +399,12 @@ test('the identity block is approved before anything happens; the first sync aft
   assert.equal(batch.final, true);
   assert.equal(batch.reconcile, false);
   assert.equal(batch.changes.length, 2);
+  // On the wire the changes are sealed: no member in clear.
+  const [wire] = halves.ix.wire();
+  assert.deepEqual(Object.keys(wire.body.changes).sort(), ['ct', 'iv', 'v']);
+  for (const personal of ['ayse', 'mehmet', 'Ayşe', 'Mehmet', await userId('ayse')]) {
+    assert.ok(!wire.raw.includes(personal), `${personal} is not on the wire in clear`);
+  }
   assert.deepEqual(halves.ix.projection.state(), { directoryId, cursor: head });
   assert.deepEqual(
     halves.ix.projection.listUsers().map((u) => [u.username, u.displayName, u.email, u.roles]),
@@ -457,10 +510,8 @@ test('batches: at most 500 changes and 1 MiB each, chained from cursor to cursor
   );
   assert.equal(batches[0].from, cursor);
   assert.equal(batches[1].from, batches[0].to);
-  for (const b of batches) {
-    assert.ok(Buffer.byteLength(JSON.stringify(b)) <= IDENTITY_BATCH_MAX_BYTES);
-    assert.equal(b.reset, false);
-  }
+  for (const b of batches) assert.equal(b.reset, false);
+  for (const w of halves.ix.wire()) assert.ok(w.bytes <= IDENTITY_BATCH_MAX_BYTES);
   assert.equal(halves.ix.projection.state().cursor, await lib.audienceHead('ix'));
   assert.equal(halves.ix.projection.listUsers().length, 623);
 });
@@ -609,7 +660,9 @@ test('erasures wait for the half: pending until its cursor passes them, and the 
   await lib.eraseDirectoryUser(ali, { actor: 'admin', logger });
   await lib.identityIdle();
   assert.deepEqual(await lib.pendingErasures('ix'), [ali]);
-  assert.deepEqual((await lib.pendingErasuresByUser()).get(ali), ['ix']);
+  assert.deepEqual((await lib.pendingErasuresByUser()).get(ali), [
+    { plugin: 'ix', inactive: false },
+  ]);
   assert.match((await lib.readIdentitySyncState('ix')).lastError, /down/);
   assert.equal(halves.ix.projection.getUser(ali).username, 'ali', 'not told yet');
 
@@ -623,7 +676,7 @@ test('erasures wait for the half: pending until its cursor passes them, and the 
   assert.ok(halves.ix.erased.includes(ali), 'the plugin anonymised its own data');
 });
 
-test('an update: user callers wait until the new version’s half has answered protocol 1', async () => {
+test('an update: user callers wait until the new version’s half has applied up to the head', async () => {
   await npm.publish('@lamalibre/ix-server', '1.0.1', {
     'lamaste-plugin.json': JSON.stringify(manifests.ix('1.0.1')),
   });
@@ -656,10 +709,39 @@ test('the hosting removed: the half is forgotten; the next hosting’s half answ
   assert.equal((await lib.identityReadiness('ix')).reason, 'not_hosted');
   assert.ok((await lib.listAudience('ix')).length > 0, 'the audience is the plugin’s');
 
+  // The next hosting's half answers the notification but takes no batch:
+  // answering is not enough — users wait until it holds the whole audience.
   halves.ix.requests.length = 0;
+  halves.ix.batchesBeforeFailing = 0;
   await host('ix');
   assert.equal(halves.ix.requests[0].path, '/admin/identity/notify');
+  assert.equal(halves.ix.requests[0].status, 200);
+  const behind = await lib.identityReadiness('ix');
+  assert.deepEqual(
+    [behind.ready, behind.reason, behind.readyVersion],
+    [false, 'not_answered', null],
+  );
+  assert.equal((await lib.resolveUserCaller('ix', 'ayse')).status, 503);
+
+  halves.ix.failing = false;
+  halves.ix.batchesBeforeFailing = Infinity;
+  halves.ix.requests.length = 0;
+  await lib.syncPluginIdentity('ix', { logger });
   assert.equal(halves.ix.batches()[0].reset, true);
+  assert.equal(halves.ix.batches().at(-1).final, true);
+  // The replay carries every erasure the plugin's ledger holds: a half that
+  // comes back with data from before an erasure scrubs it.
+  const erased = (await lib.listAudience('ix'))
+    .filter((row) => row.change.reason === 'erased')
+    .map((row) => row.userId);
+  assert.ok(erased.length > 0);
+  const replayed = halves.ix
+    .batches()
+    .flatMap((b) => b.changes)
+    .filter((c) => c.kind === 'remove' && c.reason === 'erased')
+    .map((c) => c.userId);
+  assert.deepEqual(replayed.sort(), erased.sort());
+  assert.equal(halves.ix.projection.state().cursor, await lib.audienceHead('ix'));
   assert.equal((await lib.identityReadiness('ix')).ready, true);
 });
 

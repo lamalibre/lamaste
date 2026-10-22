@@ -78,8 +78,6 @@ async function getStmts() {
     deleteByName: db.prepare('DELETE FROM plugins WHERE name = ?'),
     // The plugin's audience and the state of its identity feed
     // (lib/audience.js, lib/identity-sync.js) go with its row.
-    deleteAudienceByName: db.prepare('DELETE FROM plugin_audience WHERE plugin = ?'),
-    deleteIdentitySyncByName: db.prepare('DELETE FROM plugin_identity_sync WHERE plugin = ?'),
     // The relay's cache of the plugin's settings (lib/plugin-settings.js)
     // goes with its row, and follows its settings schema.
     deleteSettingsByName: db.prepare('DELETE FROM plugin_settings WHERE plugin = ?'),
@@ -619,18 +617,26 @@ export function uninstallPlugin(name, logger) {
 
     // Remove from registry, with the cache of its settings (the agent half
     // holds the settings themselves; a purge removed them, or they stay with
-    // the data an agent keeps of it), its audience and its feed's state (a
-    // later install starts both afresh: its first sync replays everything)
+    // the data an agent keeps of it)
     s.begin.run();
     try {
       s.deleteByName.run(name);
       s.deleteSettingsByName.run(name);
-      s.deleteAudienceByName.run(name);
-      s.deleteIdentitySyncByName.run(name);
       s.commit.run();
     } catch (err) {
       s.rollback.run();
       throw err;
+    }
+
+    // Its identity ledger — everyone its agent halves were sent, and the
+    // erasures it owes — stays while an agent keeps its data (an uninstall
+    // without purge); with no data left anywhere it goes. A later install
+    // replays whatever is left of it at its first hosting.
+    try {
+      const { dropIdentityLedgerIfNoData } = await import('./audience.js');
+      await dropIdentityLedgerIfNoData(name, logger);
+    } catch (err) {
+      logger.warn({ name, err: err.message }, 'Could not settle the identity ledger on uninstall');
     }
 
     // Sweep this plugin's capabilities off every agent so re-installing the

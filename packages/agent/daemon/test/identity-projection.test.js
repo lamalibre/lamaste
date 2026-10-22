@@ -6,7 +6,9 @@
  * reset adopts a new directory; removals keep the last known attributes
  * while an erasure scrubs the row and runs the plugin's anonymiser on every
  * pass; a reconcile counts what differed, and its final batch removes the
- * rows it did not mention; replaying the same snapshot changes nothing.
+ * rows it did not mention; replaying the same snapshot changes nothing; an
+ * erasure is sticky — no later upsert or removal writes the user back, and a
+ * reconcile that tries counts a mismatch.
  */
 
 import { test } from 'node:test';
@@ -491,4 +493,155 @@ test('rows are updated in place, never replaced: the plugin’s foreign keys hol
   );
   projection.applyBatch(batch({ from: 4, to: 5, changes: [remove(5, U1, 'erased')] }));
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM readings').get().n, 1);
+});
+
+test('an erasure is sticky: no later upsert or removal writes the user back', () => {
+  const { db, projection, seen } = fresh();
+  projection.applyBatch(
+    batch({
+      reset: true,
+      final: true,
+      to: 2,
+      changes: [
+        upsert(1, U1, { username: 'ayse', displayName: 'Ayşe', email: 'a@example.com' }),
+        upsert(2, U2, { username: 'mehmet' }),
+      ],
+    }),
+  );
+  projection.applyBatch(batch({ from: 2, to: 3, changes: [remove(3, U1, 'erased')] }));
+  const erased = projection.getUser(U1);
+  seen.upserts.length = 0;
+  seen.removes.length = 0;
+  seen.erases.length = 0;
+
+  // What a relay restored from a backup taken before the erasure would send.
+  projection.applyBatch(
+    batch({
+      from: 3,
+      to: 6,
+      changes: [
+        upsert(4, U1, {
+          username: 'ayse',
+          displayName: 'Ayşe',
+          email: 'a@example.com',
+          version: 2,
+        }),
+        remove(5, U1, 'deleted', { username: 'ayse', displayName: 'Ayşe' }),
+        remove(6, U1, 'unentitled', { username: 'ayse', email: 'a@example.com' }),
+      ],
+    }),
+  );
+  const after = projection.getUser(U1);
+  assert.equal(after.username, null);
+  assert.equal(after.displayName, null);
+  assert.equal(after.email, null);
+  assert.deepEqual(after.roles, []);
+  assert.equal(after.status, 'removed');
+  assert.equal(after.removedReason, 'erased');
+  assert.equal(after.erasedAt, erased.erasedAt);
+  assert.equal(after.version, erased.version);
+  assert.deepEqual(seen.upserts, [], 'an erased row reaches no hook but onErase');
+  assert.deepEqual(seen.removes, []);
+  assert.deepEqual(seen.erases, []);
+  assert.deepEqual(
+    projection.listUsers().map((u) => u.userId),
+    [U2],
+  );
+  const raw = JSON.stringify(db.prepare('SELECT * FROM lamaste_users WHERE user_id = ?').get(U1));
+  assert.ok(!raw.includes('ayse') && !raw.includes('Ayşe') && !raw.includes('example.com'));
+  assert.deepEqual(projection.state(), { directoryId: DIR_A, cursor: 6 });
+});
+
+test('a reconcile that contradicts an erasure counts it as a mismatch; the erasure itself does not', () => {
+  const { projection, seen } = fresh();
+  projection.applyBatch(
+    batch({
+      reset: true,
+      final: true,
+      to: 3,
+      changes: [
+        upsert(1, U1, { username: 'ayse' }),
+        upsert(2, U2, { username: 'mehmet' }),
+        remove(3, U3, 'erased'),
+      ],
+    }),
+  );
+  projection.applyBatch(batch({ from: 3, to: 4, changes: [remove(4, U1, 'erased')] }));
+  seen.erases.length = 0;
+
+  // A healthy replay repeats the erasures: no mismatch, onErase again.
+  const healthy = projection.applyBatch(
+    batch({
+      reset: true,
+      reconcile: true,
+      final: true,
+      to: 4,
+      changes: [
+        upsert(2, U2, { username: 'mehmet' }),
+        remove(3, U3, 'erased'),
+        remove(4, U1, 'erased'),
+      ],
+    }),
+  );
+  assert.equal(healthy.mismatches, 0);
+  assert.deepEqual(seen.erases.sort(), [U1, U3].sort());
+
+  // A restored relay's replay: Ayşe a member again, Zeynep's tombstone with
+  // a name. Both contradict an erasure; neither is written.
+  seen.erases.length = 0;
+  const restored = projection.applyBatch(
+    batch({
+      reset: true,
+      reconcile: true,
+      final: true,
+      to: 3,
+      changes: [
+        upsert(1, U1, { username: 'ayse', displayName: 'Ayşe' }),
+        upsert(2, U2, { username: 'mehmet' }),
+        remove(3, U3, 'deleted', { username: 'zeynep' }),
+      ],
+    }),
+  );
+  assert.equal(restored.mismatches, 2);
+  assert.equal(projection.getUser(U1).username, null);
+  assert.equal(projection.getUser(U1).status, 'removed');
+  assert.equal(projection.getUser(U3).username, null);
+  assert.equal(projection.getUser(U3).removedReason, 'erased');
+  assert.deepEqual(seen.erases, [], 'nothing was scrubbed again: nothing had come back');
+  assert.deepEqual(
+    projection.listUsers().map((u) => u.userId),
+    [U2],
+  );
+});
+
+test('an erased row found holding anything but its id is scrubbed again, with onErase', () => {
+  const { db, projection, seen } = fresh();
+  projection.applyBatch(
+    batch({ reset: true, final: true, to: 2, changes: [upsert(1, U1), remove(2, U2, 'erased')] }),
+  );
+  // What a projection written before erasure became sticky could hold.
+  db.prepare(
+    "UPDATE lamaste_users SET username = 'zeynep', roles = '[\"viewer\"]', status = 'active' WHERE user_id = ?",
+  ).run(U2);
+  seen.erases.length = 0;
+  const answer = projection.applyBatch(
+    batch({ reset: true, reconcile: true, final: true, to: 2, changes: [upsert(1, U1)] }),
+  );
+  // Not mentioned, listed as a member, erased: scrubbed, counted.
+  assert.equal(answer.mismatches, 1);
+  const row = projection.getUser(U2);
+  assert.equal(row.username, null);
+  assert.equal(row.status, 'removed');
+  assert.equal(row.removedReason, 'erased');
+  assert.deepEqual(row.roles, []);
+  assert.deepEqual(seen.erases, [U2]);
+
+  db.prepare("UPDATE lamaste_users SET email = 'z@example.com' WHERE user_id = ?").run(U2);
+  seen.erases.length = 0;
+  projection.applyBatch(
+    batch({ from: 2, to: 3, changes: [remove(3, U2, 'deleted', { username: 'zeynep' })] }),
+  );
+  assert.equal(projection.getUser(U2).email, null);
+  assert.equal(projection.getUser(U2).username, null);
+  assert.deepEqual(seen.erases, [U2]);
 });

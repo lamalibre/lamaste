@@ -19,10 +19,16 @@
  *
  * Hysteresis: `down` after `downAfter` consecutive failures, `up` after
  * `upAfter` consecutive successes, so one missed probe changes nothing. Each
- * transition is reported once (persisted by the caller; later it drives the
- * `tunnel:down` / `tunnel:up` hooks). The forwarder does not consult this
- * state — a request is always attempted, and the real connection is the
- * truth — so the monitor is for what the panel shows and for the hooks.
+ * transition is reported once (persisted by the caller; it drives the
+ * `tunnel:down` / `tunnel:up` hooks). While a hosting is `down`, neither
+ * forwarder — the admin API nor the user surface — connects to the port:
+ * whatever holds it then is not known to be the agent half, so the admin
+ * forwarder answers as a dead tunnel does (or with the plugin's
+ * `tunnel:down` fallback) and the user surface 503. Lamaste's own calls —
+ * these probes, settings, hooks, the identity feed — keep reaching the
+ * port, each authenticated by its responder signature, so the half coming
+ * back is seen. While a hosting is `up`, a request is attempted and the
+ * real connection is the truth.
  */
 
 import net from 'node:net';

@@ -18,8 +18,9 @@
 #   added and an attribute widened still wait (identity.changed, the
 #   withholding audited), while narrowing the attributes with a label edit
 #   only changes the digest — auto-approved
-# - hosted and approved, the agent half answers protocol 1 and follows the
-#   panel's directory
+# - hosted and approved, the plugin is ready only once its agent half's
+#   first complete sync ended at the head of its audience (answering
+#   protocol 1 is not enough), and the half follows the panel's directory
 # - entitlements: a role the plugin does not declare is refused (400
 #   unknown_roles, through the plugin's entitlements and the Gatekeeper
 #   proxy alike); a plugin grant without roles makes no one a member; a
@@ -31,11 +32,20 @@
 # - delete: a tombstone in the directory keeping the id, the name and the
 #   address; every Gatekeeper grant of the username and its group
 #   memberships gone; the audience and the agent half's projection say
-#   removed/deleted with the last display name
+#   removed/deleted with the last display name; while nobody holds the
+#   username nothing is given to it — a grant, a group membership or an
+#   entitlement is 409 username_deleted
 # - the same username created again is a new user (a new id) with no roles
-# - erase: an active user is not erased (409); the tombstone is scrubbed to
-#   the bare id, Gatekeeper's access-request log loses the removed user's
-#   rows (not the later holder's), the plugin is told remove/erased, its
+# - a username Authelia holds an OpenID Connect opaque identifier for (added
+#   with Authelia's own CLI, as a first sign-in to a relying party leaves
+#   one) is never given to a new user: 409 username_has_oidc_identity, and
+#   lamaste-priv's check says yes for it, no for a username without one
+# - erase: an active user is not erased (409); Gatekeeper refuses a
+#   DELETE /api/access-log that carries a query (400 — a purge of one
+#   user's rows is POST /api/access-log/purge, the username in the body,
+#   and never clears everything); the tombstone is scrubbed to the bare id,
+#   Gatekeeper's access-request log loses the removed user's rows (not the
+#   later holder's), the plugin is told remove/erased, its
 #   anonymiser runs, the erasure stops pending once its cursor passed it,
 #   and a second erasure is refused
 # - the admin forwarder reserves /admin/identity* however it is spelled
@@ -47,7 +57,9 @@
 #   (404: no host serves the route) — and refused when replayed
 #
 # Users reaching an agent half through a bound host (Gatekeeper, a visitor's
-# session) and the feed through a real tunnel are three-VM specs 40 and 39.
+# session) and the feed through a real tunnel are three-VM specs 40 and 39;
+# an erasure reaching data an agent kept across an uninstall, and a sticky
+# erasure, are three-VM spec 41.
 # ============================================================================
 
 set -euo pipefail
@@ -99,6 +111,9 @@ USER_A="e2e32-alice"
 # A test credential for this run only: alice signs in once, at the first factor
 USER_A_PASSWORD="E2e-$(openssl rand -hex 12)"
 GROUP="e2e32-team"
+# A username an OpenID Connect identity is added for: never usable again on
+# this VM (Authelia cannot delete an opaque identifier), so a new one each run
+USER_O="e2e32-oidc-$(date +%s)"
 TUNNEL_RESOURCE="e2e32-tunnel-0001"
 AUTH_RESOLVE="--resolve auth.${DOMAIN}:443:127.0.0.1"
 # Marks the requests the forwarder must never pass on (their query)
@@ -258,6 +273,26 @@ first_factor_answered() {
   [ "$s" = "OK" ] || [ "$s" = "KO" ]
 }
 
+# add_opaque_identifier <username> — what Authelia stores the first time a
+# user signs in to an OpenID Connect relying party: an opaque identifier for
+# the username (the `sub` relying parties know them by), written with
+# Authelia's own CLI as its service account with its configuration, the way
+# lamaste-priv runs it. Prints Authelia's output; fails when it does.
+add_opaque_identifier() {
+  (cd / && runuser -u lamaste-authelia -- env -i PATH=/usr/bin:/bin HOME=/nonexistent X_AUTHELIA_CONFIG_FILTERS=template \
+    /usr/local/bin/authelia storage user identifiers add --config /etc/authelia/configuration.yml -- "$1") 2>&1
+}
+
+# oidc_identity_held <username> — lamaste-priv's check: yes, no ("error" when it fails)
+oidc_identity_held() { /usr/local/sbin/lamaste-priv authelia-user has-oidc-identifier "$1" 2>/dev/null || echo "error"; }
+
+# gatekeeper_direct <method> <path> — Gatekeeper's management API on its
+# loopback port, as the panel calls it (its shared secret in a header read
+# from a 0600 file, never on a command line): the body, then the status
+gatekeeper_direct() {
+  curl -s --max-time 15 -X "$1" -H @"${WORK_DIR}/gatekeeper-header" -w '\n%{http_code}' "http://127.0.0.1:9294$2" 2>/dev/null || true
+}
+
 # gatekeeper_log_rows <username> — Gatekeeper's access-request log rows of the username
 gatekeeper_log_rows() {
   api_get "gatekeeper/access-log?limit=1000" | jq --arg u "$1" '[.entries[]? | select(.username == $u)] | length' 2>/dev/null || echo "-1"
@@ -334,6 +369,7 @@ else
 fi
 printf '@lamalibre:registry=%s/\n//127.0.0.1:%s/:_authToken=%s\n' "${STUB_URL}" "${STUB_PORT}" "${STUB_ADMIN_TOKEN}" > "${WORK_DIR}/npmrc"
 install -o lamaste -g lamaste -m 0600 "${WORK_DIR}/npmrc" "${STATE_DIR}/.npmrc"
+(umask 077 && printf 'X-Gatekeeper-Secret: %s\n' "$(jq -r '.secret // empty' "${STATE_DIR}/gatekeeper-secret.json" 2>/dev/null || true)" > "${WORK_DIR}/gatekeeper-header")
 AUDIT_BASE=$(api_get "audit?limit=1" | jq '.entries[0].id // 0' 2>/dev/null || echo "0")
 
 # ===========================================================================
@@ -450,10 +486,10 @@ assert_json_field "$HOOKS" '"\(.hooks.identity.block.roles | map("\(.id)=\(.labe
 assert_json_field "$(api_get "plugins/${PLUGIN}")" '.plugin.version' '5.0.0' "${PLUGIN} is at 5.0.0" || true
 
 # ===========================================================================
-# 5. Hosted: the agent half answers protocol 1
+# 5. Hosted: ready once the agent half synced to the head
 # ===========================================================================
 
-log_section "Hosted, the agent half on the relay loopback answers protocol 1"
+log_section "Hosted, the agent half on the relay loopback; ready once it synced to the head"
 
 CERT_RESPONSE=$(api_post "certs/agent" "{\"label\":\"${AGENT_LABEL}\",\"capabilities\":[\"tunnels:read\"]}")
 assert_json_field "$CERT_RESPONSE" '.ok' 'true' "Agent certificate issued for ${AGENT_LABEL}" || true
@@ -497,12 +533,13 @@ else
   log_fail "Health did not reach up: $(hosting_field '.hosting.health')"
 fi
 if wait_for 90 identity_ready; then
-  log_pass "The plugin is ready for its users: its agent half answered protocol 1"
+  log_pass "The plugin is ready for its users: its agent half's first complete sync ended at the head"
 else
   log_fail "Not ready: $(identity_view)"
 fi
 VIEW=$(identity_view)
-assert_json_field "$VIEW" '"\(.readiness.readyVersion) \(.sync.halfDirectoryId)"' "5.0.0 ${DIRECTORY_ID}" "5.0.0 answered, and follows this directory" || true
+assert_json_field "$VIEW" '"\(.readiness.readyVersion) \(.sync.halfDirectoryId)"' "5.0.0 ${DIRECTORY_ID}" "5.0.0 is ready, and its agent half follows this directory" || true
+assert_json_field "$VIEW" '"\(.sync.behind) \(.sync.cursor == .sync.head)"' '0 true' "…its cursor at the head: ready means synced, not merely answering" || true
 assert_contains "$(cat "${HALF_LOG}" 2>/dev/null)" "POST /admin/identity/notify 200 identity-call" "The agent half was notified with Lamaste's own caller assertion" || true
 assert_json_field "$(projection)" '.state.directoryId' "${DIRECTORY_ID}" "Its projection follows the panel's directory" || true
 
@@ -624,6 +661,20 @@ else
   log_fail "The projection: $(projected_user "${ALICE_ID}")"
 fi
 
+# Nothing is given to the username while nobody holds it: it would pass to
+# whoever is given the username next.
+RESP=$(call POST "gatekeeper/grants" "{\"principalType\":\"user\",\"principalId\":\"${USER_A}\",\"resourceType\":\"tunnel\",\"resourceId\":\"${TUNNEL_RESOURCE}\"}")
+assert_eq "$(status_of "$RESP")" "409" "A grant to ${USER_A}, which nobody holds since her deletion: 409" || true
+assert_json_field "$(body_of "$RESP")" '.code' 'username_deleted' "…username_deleted" || true
+RESP=$(call POST "gatekeeper/groups/${GROUP}/members" "{\"usernames\":[\"${USER_A}\"]}")
+assert_eq "$(status_of "$RESP")" "409" "Adding ${USER_A} to ${GROUP}: 409" || true
+assert_json_field "$(body_of "$RESP")" '.code' 'username_deleted' "…username_deleted" || true
+RESP=$(call PUT "plugins/${PLUGIN}/entitlements" "{\"principalType\":\"user\",\"principalId\":\"${USER_A}\",\"roles\":[\"viewer\"]}")
+assert_eq "$(status_of "$RESP")" "409" "Entitling ${USER_A} in ${PLUGIN}: 409" || true
+assert_json_field "$(body_of "$RESP")" '.code' 'username_deleted' "…username_deleted" || true
+assert_json_field "$(api_get "gatekeeper/grants?principalType=user&principalId=${USER_A}")" '.grants | length' '0' "Nothing was given: no grant names ${USER_A}" || true
+assert_json_field "$(api_get "gatekeeper/groups/${GROUP}")" ".group.members | index(\"${USER_A}\")" 'null' "…and ${GROUP} does not have her" || true
+
 # ===========================================================================
 # 9. The same username again: a new user
 # ===========================================================================
@@ -642,7 +693,27 @@ assert_eq "$(audience_row "${NEW_ALICE_ID}")" "null" "…so no role in ${PLUGIN}
 seed_access_log "${USER_A}"
 
 # ===========================================================================
-# 10. Erase
+# 10. A username a relying party knows is never given again
+# ===========================================================================
+
+log_section "A username Authelia holds an OpenID Connect identity for is never given to a new user"
+
+assert_eq "$(oidc_identity_held "${USER_O}")" "no" "lamaste-priv: Authelia holds no OpenID Connect identity for ${USER_O}" || true
+if OUT=$(add_opaque_identifier "${USER_O}"); then
+  log_pass "Authelia's CLI stored an opaque identifier for ${USER_O}, as a first sign-in to a relying party would"
+else
+  log_fail "authelia storage user identifiers add failed: $(echo "$OUT" | tail -n 3)"
+fi
+assert_eq "$(oidc_identity_held "${USER_O}")" "yes" "lamaste-priv: now it holds one" || true
+assert_eq "$(oidc_identity_held "${USER_A}")" "no" "…and none for ${USER_A}, who never signed in to a relying party" || true
+RESP=$(users_call POST "users" "{\"username\":\"${USER_O}\",\"displayname\":\"E2E OIDC\",\"email\":\"${USER_O}@example.test\",\"password\":\"E2e-$(openssl rand -hex 12)\",\"groups\":[]}")
+assert_eq "$(status_of "$RESP")" "409" "Creating a user named ${USER_O}: 409 — every relying party would take them for the earlier holder" || true
+assert_json_field "$(body_of "$RESP")" '.code' 'username_has_oidc_identity' "…username_has_oidc_identity" || true
+assert_json_field "$(api_get "users")" "[.users[] | select(.username == \"${USER_O}\")] | length" '0' "…GET /api/users has no such user" || true
+assert_json_field "$(api_get "identity/directory")" "[.users[] | select(.username == \"${USER_O}\")] | length" '0' "…nor does the directory" || true
+
+# ===========================================================================
+# 11. Erase
 # ===========================================================================
 
 log_section "Erased: the tombstone scrubbed, the access-request log purged, the plugin told"
@@ -651,6 +722,11 @@ RESP=$(call POST "identity/directory/${NEW_ALICE_ID}/erase" '{}')
 assert_eq "$(status_of "$RESP")" "409" "An active user is not erased: 409" || true
 assert_json_field "$(body_of "$RESP")" '.code' 'user_not_removed' "…user_not_removed" || true
 assert_eq "$(gatekeeper_log_rows "${USER_A}")" "2" "Gatekeeper's access-request log holds two rows of ${USER_A}: the deleted user's and the new one's" || true
+LOG_TOTAL=$(api_get "gatekeeper/access-log?limit=1000" | jq '.entries | length' 2>/dev/null || echo "-1")
+RESP=$(gatekeeper_direct DELETE "/api/access-log?username=${USER_A}")
+assert_eq "$(status_of "$RESP")" "400" "Gatekeeper: DELETE /api/access-log narrowed by a query, as an older caller would purge one user: 400" || true
+assert_contains "$(json_get "$(body_of "$RESP")" '.error')" "POST /api/access-log/purge" "…naming POST /api/access-log/purge, the username in the body" || true
+assert_eq "$(api_get "gatekeeper/access-log?limit=1000" | jq '.entries | length' 2>/dev/null || echo "-2")" "${LOG_TOTAL}" "…and the log is as it was: nothing cleared, ${USER_A}'s rows or anyone's" || true
 
 RESP=$(call POST "identity/directory/${ALICE_ID}/erase" '{}')
 assert_eq "$(status_of "$RESP")" "200" "The deleted user erased by her id" || true
@@ -679,7 +755,7 @@ assert_eq "$(status_of "$RESP")" "409" "A second erasure: 409" || true
 assert_json_field "$(body_of "$RESP")" '.code' 'already_erased' "…already_erased" || true
 
 # ===========================================================================
-# 11. The forwarder's reserved paths
+# 12. The forwarder's reserved paths
 # ===========================================================================
 
 log_section "The admin forwarder never reaches /admin/identity* or /admin/app*"
@@ -698,7 +774,7 @@ assert_eq "$(status_of "$(call POST "${PLUGIN}/app/echo?e2e=${MARK}" '{}')")" "4
 assert_eq "$(grep -c "${MARK}" "${HALF_LOG}" 2>/dev/null || true)" "0" "The agent half saw none of them" || true
 
 # ===========================================================================
-# 12. A client's relay assertion never passes the panel vhost
+# 13. A client's relay assertion never passes the panel vhost
 # ===========================================================================
 
 log_section "The panel vhost clears a client-sent X-Lamalibre-Relay-Assertion"

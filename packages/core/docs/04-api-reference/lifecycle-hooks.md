@@ -238,7 +238,7 @@ What a request hook sees: method, path (on the agent half), query, the caller (`
 
 ### Tunnel state
 
-When the [health monitor](agent-hosted-plugins.md#health) sees a hosting go `down` (reason `tunnel` or `app`), Lamaste runs the relay's `tunnel:down`; its `fallback` (`{ status, retryAfter?, contentType?, body? }`) answers forwarded requests that fail while the plugin is down. `tunnel:up` runs when it is back after a `down` (not on the first `up`), and clears the fallback.
+When the [health monitor](agent-hosted-plugins.md#health) sees a hosting go `down` (reason `tunnel` or `app`), Lamaste runs the relay's `tunnel:down`; its `fallback` (`{ status, retryAfter?, contentType?, body? }`) answers the plugin's admin API while the plugin is down — no request is forwarded to the port then (without a fallback: `502` with the reason). `tunnel:up` runs when it is back after a `down` (not on the first `up`), and clears the fallback.
 
 The agent cannot see its own chisel session; `agent-config` carries the relay's view (`appPlugins[].health`), and the agent's sync calls the agent half's `tunnel:down` / `tunnel:up` once per change. The panel unreachable for 90 s counts as `tunnel` down on the agent.
 

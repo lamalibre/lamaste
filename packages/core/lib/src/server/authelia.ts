@@ -21,6 +21,7 @@ import crypto from 'node:crypto';
 import { access, chmod, constants, copyFile, open, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import yaml from 'js-yaml';
+import { AUTHELIA_SESSION_COOKIE } from '../authelia-session.js';
 
 import type { OidcClientDeclaration } from '../schemas.js';
 
@@ -208,15 +209,12 @@ export async function writeAutheliaConfig(
       default_policy: 'two_factor',
     },
     session: {
-      // Authelia's default cookie name. Keep this in sync with the rest of
-      // the stack — the nginx `lamaste_authz` cache key reads
-      // `$cookie_authelia_session`, Gatekeeper's cookie extractor looks
-      // for `authelia_session=`, and the e2e cookie-jar fixtures write
-      // `authelia_session`. Renaming it here (e.g. to `lamaste_session`)
-      // silently breaks forward-auth: nginx forwards the cookie unchanged,
-      // Gatekeeper fails to find it, returns 401, and nginx redirects to
-      // the Authelia portal — even for freshly-authenticated sessions.
-      name: 'authelia_session',
+      // Authelia's default cookie name, from the one constant everything
+      // that reads or strips it uses: Gatekeeper reads the session from it
+      // alone, and the nginx map create-lamaste installs removes it from
+      // every request a tunnel or agent backend receives
+      // (`authelia-session.ts`). The e2e cookie-jar fixtures write it too.
+      name: AUTHELIA_SESSION_COOKIE,
       secret: sessionSecret,
       cookies: [
         {

@@ -14,6 +14,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import crypto from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +22,7 @@ import yaml from 'js-yaml';
 
 import { isIdentityUuid } from '@lamalibre/lamaste';
 
+import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
 
 const MIGRATIONS = path.join(
@@ -39,7 +41,10 @@ let usersFile;
 let lib;
 let app;
 let gatekeeper;
+let autheliaStorage;
 let restarts = 0;
+/** What "Authelia" does when it restarts (a test's stand-in for its own rewrite of users.yml). */
+let onRestart = null;
 /** Every log line the routes wrote. */
 const logLines = [];
 
@@ -115,14 +120,18 @@ before(async () => {
     ...(await import('../src/lib/directory.js')),
     ...(await import('../src/lib/audit.js')),
     ...(await import('../src/lib/state.js')),
+    ...(await import('../src/lib/user-access.js')),
   };
   await lib.loadConfig();
+  autheliaStorage = createFakeAutheliaStorage();
   lib.setAutheliaForTests({
     usersFile,
     restart: async () => {
       restarts += 1;
+      if (onRestart) await onRestart();
     },
     writeTotp: async () => {},
+    userStorage: autheliaStorage.storage,
   });
   gatekeeper = installFakeGatekeeper(lib);
 
@@ -268,8 +277,8 @@ test('reconcile: unknown usernames get ids, `disabled` is adopted, drift bumps t
   // Nothing changed: nothing written.
   const again = await lib.reconcileDirectory({ confirmDelayMs: 0 });
   assert.deepEqual(
-    { ...again, removed: again.removed.length },
-    { created: 0, updated: 0, removed: 0 },
+    { ...again, removed: again.removed.length, disabled: again.disabled.length },
+    { created: 0, updated: 0, removed: 0, disabled: 0 },
   );
   assert.equal((await directoryRow('ayse')).version, 1);
 
@@ -380,8 +389,9 @@ test('users API: ids and status; disable and enable; the last enabled administra
   assert.equal((await readUsersFile()).ayse.disabled, true);
   assert.equal((await directoryRow('ayse')).status, 'disabled');
   assert.equal(restarts, restartsBefore + 1, 'Authelia restarted once, after the directory');
-  // Disabling ends the user's desktop sessions.
-  assert.ok(lib.getConfig().userEpochs?.ayse > 0);
+  // Disabling ends the user's desktop sessions: an epoch keyed by the user's id.
+  assert.ok(lib.getConfig().userEpochs?.[ayse.userId] > 0);
+  assert.equal('ayse' in lib.getConfig().userEpochs, false, 'panel.json names nobody');
 
   const enabled = await call('PUT', '/api/users/ayse', { disabled: false });
   assert.equal(enabled.json().user.status, 'active');
@@ -521,10 +531,11 @@ test('erase: a live user is refused; a tombstone is scrubbed with its invitation
   assert.equal(erased.json().invitationsPurged, 1);
   assert.equal(erased.json().accessLogPurged, 1);
   const purge = gatekeeper.calls.filter((c) => c.path.startsWith('/api/access-log'));
+  // The username in the body, never in a URL.
   assert.deepEqual(purge.at(-1), {
-    method: 'DELETE',
-    path: `/api/access-log?username=ali&before=${encodeURIComponent(removedAt)}`,
-    body: undefined,
+    method: 'POST',
+    path: '/api/access-log/purge',
+    body: { username: 'ali', before: removedAt },
   });
   assert.deepEqual(
     (await lib.readInvitations()).map((inv) => inv.id),
@@ -608,6 +619,267 @@ test('an accepted invitation creates the user through the lock: an id at once, t
   const [created] = await lib.listAudit({ action: 'directory.user.created' });
   assert.equal(created.actor, 'invitation');
   assert.deepEqual(created.details, { userId: can.user_id, status: 'active' });
+});
+
+const newUser = (username, extra = {}) =>
+  call('POST', '/api/users', {
+    username,
+    displayname: username.toUpperCase(),
+    email: `${username}@relay.test`,
+    password: 'correct-horse-battery',
+    ...extra,
+  });
+
+test('a reused username never inherits: Gatekeeper and Authelia’s second factors cleared at every creation over a tombstone; an OIDC identity refuses it', async () => {
+  assert.equal((await newUser('gul')).statusCode, 201);
+  autheliaStorage.state.purged.length = 0;
+  const deleted = await call('DELETE', '/api/users/gul');
+  assert.equal(deleted.statusCode, 200, deleted.body);
+  assert.deepEqual(autheliaStorage.state.purged, ['gul'], 'second factors go with the user');
+  const first = deleted.json().userId;
+  assert.ok((await lib.getDirectoryUser(first)).principalClearedAt);
+
+  // A restored gatekeeper.db brings a grant and a membership back: no
+  // cleanup is pending, and the next creation clears them all the same.
+  gatekeeper.addGrant({
+    principalType: 'user',
+    principalId: 'gul',
+    resourceType: 'tunnel',
+    resourceId: 'wiki',
+  });
+  gatekeeper.setGroup('ops', ['gul']);
+  assert.equal(await lib.principalCleanupPending('gul'), false);
+  autheliaStorage.state.purged.length = 0;
+  gatekeeper.calls.length = 0;
+  const again = await newUser('gul');
+  assert.equal(again.statusCode, 201, again.body);
+  assert.deepEqual(
+    gatekeeper.calls.filter((c) => c.path === '/api/principals/user/remove').map((c) => c.body),
+    [{ username: 'gul' }],
+  );
+  assert.equal(
+    gatekeeper.grants.some((g) => g.principalId === 'gul'),
+    false,
+  );
+  assert.deepEqual(gatekeeper.groups.get('ops').members, []);
+  assert.deepEqual(autheliaStorage.state.purged, ['gul'], 'and Authelia’s, before the new user');
+  assert.notEqual(again.json().user.userId, first);
+
+  // Authelia's second factors that could not be deleted at removal keep
+  // the username from anyone until they can be.
+  autheliaStorage.state.failPurge = true;
+  const failed = await call('DELETE', '/api/users/gul');
+  assert.equal(failed.statusCode, 200);
+  assert.ok(failed.json().warnings.some((w) => w.step === 'authelia-storage'));
+  const blocked = await newUser('gul');
+  assert.equal(blocked.statusCode, 503);
+  assert.equal(blocked.json().code, 'authelia_storage_unavailable');
+  assert.equal((await readUsersFile()).gul, undefined, 'users.yml untouched');
+  autheliaStorage.state.failPurge = false;
+
+  // A username Authelia holds an OpenID Connect identity for is never given.
+  autheliaStorage.state.identifiers.add('hakan');
+  const refused = await newUser('hakan');
+  assert.equal(refused.statusCode, 409);
+  assert.equal(refused.json().code, 'username_has_oidc_identity');
+  assert.equal((await readUsersFile()).hakan, undefined);
+  // Nor one that cannot be checked.
+  autheliaStorage.state.failCheck = true;
+  const unchecked = await newUser('irem');
+  assert.equal(unchecked.statusCode, 503);
+  assert.equal(unchecked.json().code, 'authelia_storage_unavailable');
+  assert.equal((await readUsersFile()).irem, undefined);
+  autheliaStorage.state.failCheck = false;
+  assert.equal(
+    JSON.stringify(unchecked.json()).includes('irem'),
+    false,
+    'the refusal names nobody',
+  );
+});
+
+test('offboarding is one function: a disable or deletion made outside Lamaste is adopted and offboarded like one made through it', async () => {
+  assert.equal((await newUser('kaan')).statusCode, 201);
+  const kaan = (await lib.findDirectoryUser('kaan')).userId;
+  await lib.createGrant('kaan', '@lamalibre/herd-server', { info() {}, warn() {} });
+  gatekeeper.addGrant({
+    principalType: 'user',
+    principalId: 'kaan',
+    resourceType: 'tunnel',
+    resourceId: 'wiki',
+  });
+
+  // Disabled by hand in users.yml: the reconcile adopts it and offboards.
+  const busts = gatekeeper.state.sessionBusts;
+  const file = await readUsersFile();
+  file.kaan.disabled = true;
+  await writeUsersFile(file);
+  await lib.reconcileDirectory({ confirmDelayMs: 0 });
+  assert.equal((await directoryRow('kaan')).status, 'disabled');
+  assert.ok(lib.getConfig().userEpochs[kaan] > 0, 'desktop sessions end');
+  assert.equal(gatekeeper.state.sessionBusts, busts + 1, 'cached session verdicts go');
+  assert.equal((await lib.listGrantsForUser('kaan')).length, 1, 'a disabled user keeps grants');
+  assert.ok(gatekeeper.grants.some((g) => g.principalId === 'kaan'));
+
+  // Gone from users.yml by hand: tombstoned, and offboarded as a deletion.
+  autheliaStorage.state.purged.length = 0;
+  delete file.kaan;
+  await writeUsersFile(file);
+  const warned = [];
+  const quiet = { info() {}, warn: (obj, msg) => warned.push(msg), error() {} };
+  await lib.reconcileDirectory({ confirmDelayMs: 0, logger: quiet });
+  assert.deepEqual(warned, [], 'every offboarding step went through');
+  const tomb = await lib.getDirectoryUser(kaan);
+  assert.equal(tomb.removedReason, 'deleted-outside');
+  assert.ok(tomb.principalClearedAt, 'Gatekeeper cleared at once, not at the next tick');
+  assert.equal(
+    gatekeeper.grants.some((g) => g.principalId === 'kaan'),
+    false,
+  );
+  assert.deepEqual(autheliaStorage.state.purged, ['kaan']);
+  assert.deepEqual(await lib.listGrantsForUser('kaan'), [], 'legacy grants go');
+  assert.equal(
+    (await lib.getDirectoryUser(kaan)).username,
+    'kaan',
+    'the tombstone keeps the name until an erasure',
+  );
+});
+
+test('a change Authelia rewrites away is made again; one that never sticks is not reported as done', async () => {
+  // Authelia's password reset rewrites users.yml from what it read at
+  // start — here once, just before its restart.
+  let rewrites = 1;
+  onRestart = async () => {
+    if (rewrites <= 0) return;
+    rewrites -= 1;
+    const current = await readUsersFile();
+    delete current.ayse.disabled;
+    await writeUsersFile(current);
+  };
+  const before = restarts;
+  const made = await call('PUT', '/api/users/ayse', { disabled: true });
+  assert.equal(made.statusCode, 200, made.body);
+  assert.equal(made.json().ok, true);
+  assert.equal(made.json().warnings, undefined);
+  assert.equal((await readUsersFile()).ayse.disabled, true);
+  assert.equal(restarts, before + 2, 'made again, and Authelia restarted again');
+  onRestart = null;
+  await call('PUT', '/api/users/ayse', { disabled: false });
+
+  // Rewritten every time: not done, and the answer says so.
+  onRestart = async () => {
+    const current = await readUsersFile();
+    delete current.ayse.disabled;
+    await writeUsersFile(current);
+  };
+  const lost = await call('PUT', '/api/users/ayse', { disabled: true });
+  onRestart = null;
+  assert.equal(lost.statusCode, 200);
+  assert.equal(lost.json().ok, false);
+  assert.equal(lost.json().persisted, false);
+  assert.ok(lost.json().warnings.some((w) => w.step === 'persist'));
+  // The directory follows the file as it is.
+  await lib.reconcileDirectory({ confirmDelayMs: 0 });
+  assert.equal((await directoryRow('ayse')).status, 'active');
+});
+
+test('the users API audits a password set, a TOTP reset and a groups change by user id only', async () => {
+  const ayse = (await lib.findDirectoryUser('ayse')).userId;
+  assert.equal(
+    (await call('PUT', '/api/users/ayse', { password: 'another-long-one' })).statusCode,
+    200,
+  );
+  assert.equal(
+    (await call('PUT', '/api/users/ayse', { groups: ['staff', 'ops'] })).statusCode,
+    200,
+  );
+  // The same groups again change nothing, and are not audited.
+  await call('PUT', '/api/users/ayse', { groups: ['ops', 'staff'] });
+  assert.equal((await call('POST', '/api/users/ayse/reset-totp')).statusCode, 200);
+  await call('PUT', '/api/users/ayse', { groups: ['staff'] });
+  // The newest four (earlier tests changed groups too).
+  const entries = (await lib.listAudit({ action: 'user.', limit: 4 })).reverse();
+  assert.deepEqual(
+    entries.map((e) => [e.action, e.details]),
+    [
+      ['user.password.set', { userId: ayse }],
+      ['user.groups.changed', { userId: ayse, added: ['ops'], removed: [] }],
+      ['user.totp.reset', { userId: ayse }],
+      ['user.groups.changed', { userId: ayse, added: [], removed: ['ops'] }],
+    ],
+  );
+  assert.equal(JSON.stringify(entries).includes('ayse'), false);
+});
+
+test('desktop sessions are bound to the user id: a disabled, deleted or reused username’s sessions end', async () => {
+  const secret = crypto.randomBytes(32).toString('hex');
+  await lib.updateConfig({ sessionSecret: secret });
+  const { default: Fastify } = await import('fastify');
+  const { default: sessionPlugin } = await import('../src/middleware/user-access-session.js');
+  const desk = Fastify({ logger: false });
+  await desk.register(async (scope) => {
+    await scope.register(sessionPlugin);
+    scope.get('/me', async (request) => ({ username: request.userAccessUsername }));
+  });
+  await desk.ready();
+  /** A session token as the panel signs one, issued `age` seconds ago. */
+  const token = (fields, age = 10) => {
+    const now = Math.floor(Date.now() / 1000);
+    const payload = Buffer.from(
+      JSON.stringify({
+        iat: now - age,
+        exp: now - age + 12 * 3600,
+        lastActivity: now - age,
+        type: 'user-access',
+        ...fields,
+      }),
+    ).toString('base64url');
+    const sig = crypto
+      .createHmac('sha256', Buffer.from(secret, 'hex'))
+      .update(payload)
+      .digest('base64url');
+    return `${payload}.${sig}`;
+  };
+  const me = async (t) =>
+    (await desk.inject({ method: 'GET', url: '/me', headers: { authorization: `Bearer ${t}` } }))
+      .statusCode;
+  try {
+    assert.equal((await newUser('leyla')).statusCode, 201);
+    const leyla = (await lib.findDirectoryUser('leyla')).userId;
+    const session = token({ username: 'leyla', userId: leyla });
+    assert.equal(await me(session), 200);
+    assert.equal(await me(token({ username: 'leyla' })), 401, 'no user id: issued before 4.5');
+    assert.equal(await me(token({ username: 'leyla', userId: crypto.randomUUID() })), 401);
+
+    await call('PUT', '/api/users/leyla', { disabled: true });
+    assert.equal(await me(session), 401, 'disabled');
+    await call('PUT', '/api/users/leyla', { disabled: false });
+    assert.equal(await me(session), 401, 'its epoch outlives the disable');
+    const fresh = token({ username: 'leyla', userId: leyla }, -1);
+    assert.equal(await me(fresh), 200, 'a session issued after it is fine');
+
+    await call('DELETE', '/api/users/leyla');
+    assert.equal(await me(fresh), 401, 'deleted');
+    assert.equal((await newUser('leyla')).statusCode, 201);
+    assert.equal(await me(fresh), 401, 'the username given to someone else');
+    await call('DELETE', '/api/users/leyla');
+    assert.equal(
+      Object.keys(lib.getConfig().userEpochs).every(isIdentityUuid),
+      true,
+      'panel.json keys epochs by user id',
+    );
+  } finally {
+    await desk.close();
+  }
+});
+
+test('session epochs: usernames (keys before 4.5) and epochs too old to reject anything are dropped', () => {
+  const now = 1_800_000_000;
+  const kept = crypto.randomUUID();
+  const old = crypto.randomUUID();
+  assert.deepEqual(
+    lib.pruneUserEpochs({ ayse: now, [kept]: now - 60, [old]: now - 12 * 3600 - 1 }, now),
+    { [kept]: now - 60 },
+  );
 });
 
 test('an unreadable users file is never written over, and its content never logged', async () => {

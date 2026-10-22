@@ -169,8 +169,18 @@ export interface DirectoryUserView {
   readonly updatedAt: string;
   /** Who erased the user, and when. */
   readonly erasure: { readonly requestedAt: string; readonly requestedBy: string } | null;
-  /** The plugins whose agent half has not acknowledged the user's erasure yet. */
+  /**
+   * The plugins that have not acknowledged the user's erasure yet — their
+   * hosting's agent half, or an agent that retains their data.
+   */
   readonly pendingErasures: readonly string[];
+  /**
+   * Among {@link pendingErasures}, the plugins the feed does not reach now
+   * (uninstalled, or no longer declaring identity) whose data an agent
+   * keeps: the erasure reaches that data when the plugin comes back, or
+   * goes with it when the data is purged.
+   */
+  readonly pendingErasuresInactive: readonly string[];
 }
 
 /** Why users cannot reach an agent-hosted plugin's `/app` yet; null when they can. */
@@ -321,7 +331,13 @@ export interface IdentitySyncResult {
 export interface UserSurfaceRouteStatus {
   readonly route: string;
   readonly served: boolean;
-  readonly reason: 'not_installed' | 'no_identity' | 'not_approved' | null;
+  /**
+   * Why not, null when served: no installed plugin holds the route, its
+   * installed version declares no identity or waits for approval, or the
+   * tunnel is not carried by the agent hosting the plugin (moved, revoked,
+   * or the plugin hosted elsewhere or not at all).
+   */
+  readonly reason: 'not_installed' | 'no_identity' | 'not_approved' | 'not_hosting_agent' | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -22,7 +22,10 @@
  *
  * Both are Lamaste's own calls (`callAgentHalf`: caller `lamaste`, the body
  * hash bound, the responder over the answer body); the forwarder reserves
- * `/admin/identity*`. Each change is the member's full state (`upsert`) or
+ * `/admin/identity*`. A batch's `changes` travel sealed to the request
+ * (`identity-seal.ts`, {@link parseIdentityChangesWire}): the tunnel's
+ * loopback ends never carry a member's attributes in clear. Each change is
+ * the member's full state (`upsert`) or
  * a `remove` with its reason: `deleted` and `unentitled` carry the last
  * known declared attributes (`last`), so history stays readable; `erased`
  * carries none, and the half scrubs the row to the bare `userId`. Changes
@@ -43,6 +46,8 @@
 import { z } from 'zod';
 
 import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from './constants.js';
+import { parseSealedIdentityChanges } from './identity-seal.js';
+import type { IdentityChangesEnvelope, SealedIdentityChanges } from './identity-seal.js';
 import { displayText } from './plugin-settings.js';
 
 // ---------------------------------------------------------------------------
@@ -390,6 +395,48 @@ export const IdentityChangesRequestSchema = z
   });
 
 export type IdentityChangesRequest = z.infer<typeof IdentityChangesRequestSchema>;
+
+/**
+ * A batch as it travels: the envelope in clear, its `changes` sealed to the
+ * request (`identity-seal.ts` — the array {@link IdentityChangesRequestSchema}
+ * describes, encrypted with a key derived from the installation secret and
+ * bound to the caller assertion's nonce and to this envelope). The panel
+ * builds it with `sealIdentityChanges`; the half opens it with the verified
+ * request's `openIdentityChanges`, then parses the batch.
+ */
+export interface IdentityChangesWire {
+  readonly protocol: typeof IDENTITY_PROTOCOL_VERSION;
+  readonly envelope: IdentityChangesEnvelope;
+  readonly sealed: SealedIdentityChanges;
+}
+
+const IdentityChangesWireSchema = z
+  .object({
+    protocol: z.literal(IDENTITY_PROTOCOL_VERSION),
+    directoryId: UuidSchema,
+    from: CursorSchema,
+    to: CursorSchema,
+    reset: z.boolean(),
+    reconcile: z.boolean(),
+    pass: UuidSchema,
+    final: z.boolean(),
+    changes: z.unknown(),
+  })
+  .strict();
+
+/** A batch as the half receives it, its changes still sealed; null when it is not one. */
+export function parseIdentityChangesWire(raw: unknown): IdentityChangesWire | null {
+  const parsed = IdentityChangesWireSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const sealed = parseSealedIdentityChanges(parsed.data.changes);
+  if (!sealed) return null;
+  const { directoryId, from, to, reset, reconcile, pass, final } = parsed.data;
+  return {
+    protocol: IDENTITY_PROTOCOL_VERSION,
+    envelope: { directoryId, from, to, reset, reconcile, pass, final },
+    sealed,
+  };
+}
 
 /**
  * The half's answer to a batch: its directory and cursor (`to`) after

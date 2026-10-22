@@ -79,7 +79,8 @@ ${b('Subcommands:')}
   ${c('unbind-user-surface')} <tunnel> <plugin>              Stop serving it there
 
   A tunnel is named by its id, subdomain or FQDN; a plugin by its name or route. A user
-  surface needs an enabled, agent-carried tunnel that is authenticated or restricted.
+  surface needs an enabled tunnel that is authenticated or restricted, carried by the
+  agent that hosts the plugin — it is served only while that agent carries the tunnel.
 
 ${b('Create options:')}
   --subdomain <name>    Tunnel subdomain (required)

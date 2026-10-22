@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { writeFile, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { ensureBackendCookieMap } from '../lib/backend-cookie.js';
 import { ensureHttpRedirect } from '../lib/http-redirect.js';
 import { IP_PANEL_SITE, generateIpPanelVhost } from '../lib/ip-panel-vhost.js';
 
@@ -89,6 +90,17 @@ ssl_verify_client optional;
         } else {
           subtask.output = 'Site enabled';
         }
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: "Keeping Authelia's session cookie from tunnel backends",
+      task: async (_ctx, subtask) => {
+        // Before the panel writes its first tunnel vhost, each of which sets
+        // the backend's Cookie from this map's variable. nginx is
+        // (re)started by the last task; no reload here.
+        await ensureBackendCookieMap({ reload: false });
+        subtask.output = 'nginx map installed: backends never receive the authelia_session cookie';
       },
       rendererOptions: { persistentOutput: true },
     },

@@ -27,7 +27,11 @@
  * (the session's username) and forwarded to `/app/*` with a `user` caller
  * — the directory's user id, username and the plugin's roles. Both entries
  * share one pipeline: the same header strips, body limit, signing,
- * responder check, streaming and request hooks.
+ * responder check, streaming and request hooks. A user surface's answers
+ * also carry {@link USER_SURFACE_RESPONSE_HEADERS} and never
+ * `Access-Control-*`, its own errors are fixed texts, a request another
+ * site started is refused, and a response is ended when its user loses
+ * access or after {@link USER_SURFACE_MAX_RESPONSE_MS}.
  *
  * Every answer must authenticate itself: the agent half signs it with
  * `X-Lamalibre-Responder` (the `-` form: the request's nonce and the
@@ -50,23 +54,34 @@
  *   `text/event-stream`, which may stay quiet as long as the application
  *   keeps the connection;
  * - a clean 502 when nothing listens on the port (the tunnel is down) or the
- *   connection drops before the response headers.
+ *   connection drops before the response headers — and, once the health
+ *   monitor has marked the hosting down, the same answer (or the plugin's
+ *   `tunnel:down` fallback) without connecting at all: whatever took the
+ *   port meanwhile receives nothing.
  *
  * What never reaches the agent half: the caller's cookies and
  * `Authorization` header (the panel's own session must not leak to an
  * application), the client-certificate headers nginx set, anything the
- * client sent under `X-Lamalibre-*` or `Remote-*`, and hop-by-hop headers.
+ * client sent under `X-Lamalibre-*` or `Remote-*`, hop-by-hop headers, and
+ * the headers that make some frameworks take a request for another method
+ * or path than the one the caller assertion signs
+ * (`METHOD_URL_OVERRIDE_HEADERS`: `X-HTTP-Method-Override`,
+ * `X-Original-URL`, `X-Forwarded-Prefix`, …).
  * What never reaches the client: `Set-Cookie` from the application (the
  * assertion is the authentication; a cookie on the panel's origin would be
  * the application's, not the panel's), `Service-Worker-Allowed` and
  * `Clear-Site-Data` (a plugin's answer must not widen a service worker's
- * scope over the panel or wipe the panel's storage), and anything under
+ * scope over the panel or wipe the panel's storage), anything under
  * `X-Lamalibre-*` (the responder signature is the relay's to check, not the
- * client's to see). A request that fetches a service worker's script
- * (`Service-Worker: script`) is refused with 403 before it enters the
- * tunnel: no plugin installs a service worker on the panel's origin. Plugin
- * admin bundles share the panel's document — a documented boundary until
- * plugin UIs are isolated in sandboxed frames.
+ * client's to see) and anything under `X-Accel-*` — nginx in front of the
+ * panel obeys `X-Accel-Redirect` and its kin from 3100, so an application
+ * could otherwise have nginx serve a file or an internal location; the
+ * forwarder sets `X-Accel-Buffering: no` itself on an event stream. A
+ * request that fetches a service worker's script (`Service-Worker: script`)
+ * is refused with 403 before it enters the tunnel: no plugin installs a
+ * service worker on the panel's origin. Plugin admin bundles share the
+ * panel's document — a documented boundary until plugin UIs are isolated
+ * in sandboxed frames.
  *
  * Nothing of a body is ever logged — one metadata line per request:
  * plugin, caller (a user as `user:<userId>`, never by name), method, path
@@ -112,11 +127,12 @@ import { AGENT_HALF_SETTINGS_PATH } from '../plugin-settings.js';
 import {
   AGENT_HALF_APP_PREFIX,
   USER_SURFACE_API_PREFIX,
+  USER_SURFACE_MAX_RESPONSE_SECONDS,
   isUserSurfaceUrl,
   routerSegment,
   userSurfaceApiPath,
 } from '../user-surface.js';
-import { isHookEditableHeader } from './hook-decisions.js';
+import { METHOD_URL_OVERRIDE_HEADERS, isHookEditableHeader } from './hook-decisions.js';
 import type { ValidatedDecision } from './hook-decisions.js';
 
 /** The path prefix on the agent half every forwarded request goes under. */
@@ -140,11 +156,21 @@ export interface AgentForwardTarget {
   readonly maxBodyBytes: number;
 }
 
-/** Why a route cannot be forwarded right now. */
+/**
+ * Why a route cannot be forwarded right now. `down`: its hosting's health
+ * is down, for `reason` — nothing answered on the relay-loopback port
+ * (`tunnel`), or something did that is not the agent half (`app`).
+ * Whatever holds that port may not be the agent half, so neither entry
+ * forwards then: nothing of an administrator's, an agent's or a user's
+ * request reaches it. Lamaste's own calls (health probes, settings, hooks,
+ * the identity feed) never come this way and still find the half when it
+ * is back.
+ */
 export type AgentForwardRefusal =
   | { readonly kind: 'not_found' }
   | { readonly kind: 'disabled' }
-  | { readonly kind: 'not_hosted' };
+  | { readonly kind: 'not_hosted' }
+  | { readonly kind: 'down'; readonly reason: 'tunnel' | 'app' };
 
 export type AgentForwardResolution = AgentForwardTarget | AgentForwardRefusal;
 
@@ -172,7 +198,10 @@ export interface AgentForwarderOptions extends AgentForwardTimeouts {
   /**
    * Resolve the route of a request to a target, or say why not. Called on
    * every request so a hosting created or rotated a moment ago takes effect
-   * at once.
+   * at once. `down` is answered — after the guard and the caller's
+   * authorization — as a request into a dead tunnel is (the plugin's
+   * `tunnel:down` fallback, or `502` with the reason), without sending
+   * anything to the port.
    */
   resolveTarget(route: string): Promise<AgentForwardResolution>;
   /**
@@ -244,7 +273,11 @@ const HOP_BY_HOP = new Set([
   'upgrade',
 ]);
 
-/** Request headers that carry the caller's credentials or nginx's verdicts. */
+/**
+ * Request headers that carry the caller's credentials or nginx's verdicts,
+ * and those that would make the agent half's framework take the request for
+ * another method or path than the one the caller assertion signs.
+ */
 const STRIPPED_REQUEST_HEADERS = new Set([
   'host',
   'content-length',
@@ -256,6 +289,7 @@ const STRIPPED_REQUEST_HEADERS = new Set([
   'x-forwarded-proto',
   'x-real-ip',
   'forwarded',
+  ...METHOD_URL_OVERRIDE_HEADERS,
 ]);
 
 /**
@@ -273,6 +307,21 @@ const STRIPPED_RESPONSE_HEADERS = new Set([
 
 /** What a forwarded answer that does not authenticate itself gets instead. */
 const UNAUTHENTICATED_ANSWER = 'The agent half did not authenticate its answer';
+
+/**
+ * The admin API's answer while the plugin's hosting is down — the answer a
+ * request forwarded into a dead tunnel gets (`502`, with the reason), never
+ * sent to the port: the `tunnel:down` fallback when the plugin has one.
+ */
+function downFailure(reason: 'tunnel' | 'app'): Extract<UpstreamResult, { ok: false }> {
+  return {
+    ok: false,
+    status: 502,
+    error:
+      reason === 'tunnel' ? 'The hosting agent is unreachable' : 'The agent half is not responding',
+    extra: { reason },
+  };
+}
 
 function isStrippedRequestHeader(name: string): boolean {
   return (
@@ -304,9 +353,11 @@ export function forwardedRequestHeaders(
 
 /**
  * The response headers passed back to the client: without hop-by-hop
- * headers, the ones the panel keeps to itself, and anything under
- * `X-Lamalibre-*` (the responder signature among them). Pure; exported for
- * tests.
+ * headers, the ones the panel keeps to itself, anything under
+ * `X-Lamalibre-*` (the responder signature among them) and anything under
+ * `X-Accel-*` (nginx obeys `X-Accel-Redirect`, `X-Accel-Buffering` and the
+ * rest from the panel's port — an application must never steer it). Pure;
+ * exported for tests.
  */
 export function forwardedResponseHeaders(incoming: IncomingHttpHeaders): OutgoingHttpHeaders {
   const out: OutgoingHttpHeaders = {};
@@ -315,11 +366,67 @@ export function forwardedResponseHeaders(incoming: IncomingHttpHeaders): Outgoin
       value === undefined ||
       HOP_BY_HOP.has(name) ||
       STRIPPED_RESPONSE_HEADERS.has(name) ||
-      name.startsWith('x-lamalibre-')
+      name.startsWith('x-lamalibre-') ||
+      name.startsWith('x-accel-')
     ) {
       continue;
     }
     out[name] = value;
+  }
+  return out;
+}
+
+/**
+ * What every answer on a plugin's user surface carries — the agent half's,
+ * a hook's, and the panel's own refusals alike: it may be read only by the
+ * bound host's own pages (`Cross-Origin-Resource-Policy: same-origin`), its
+ * type is never sniffed (`nosniff`), and a document rendered from it runs
+ * nothing and loads nothing (`sandbox; default-src 'none'`) — so an answer
+ * from a compromised application cannot act as a page of the host whose
+ * session cookie reaches the plugin's users.
+ */
+export const USER_SURFACE_RESPONSE_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  'cross-origin-resource-policy': 'same-origin',
+  'x-content-type-options': 'nosniff',
+  'content-security-policy': "sandbox; default-src 'none'",
+});
+
+/**
+ * Set {@link USER_SURFACE_RESPONSE_HEADERS} on a response before anything
+ * is written: Node merges them into whatever `writeHead` sends later, so
+ * every answer of the request carries them — an early refusal, a rate
+ * limit, an error, a forwarded answer.
+ */
+export function applyUserSurfaceResponseHeaders(res: ServerResponse): void {
+  if (res.headersSent) return;
+  for (const [name, value] of Object.entries(USER_SURFACE_RESPONSE_HEADERS)) {
+    res.setHeader(name, value);
+  }
+}
+
+/**
+ * The headers of an answer forwarded from (or written by a hook for) a
+ * user surface: the forwarded headers ({@link forwardedResponseHeaders})
+ * without `Access-Control-*` (no other origin reads a user's data — the
+ * panel's CORS and the application's alike), with
+ * {@link USER_SURFACE_RESPONSE_HEADERS}' resource policy and `nosniff` in
+ * place of the application's, and its `Content-Security-Policy` sent first
+ * — the application's own policies stay as further ones, which can only
+ * restrict more. Pure; exported for tests.
+ */
+export function userSurfaceResponseHeaders(headers: OutgoingHttpHeaders): OutgoingHttpHeaders {
+  const out: OutgoingHttpHeaders = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const lower = name.toLowerCase();
+    if (value === undefined || lower.startsWith('access-control-')) continue;
+    if (lower in USER_SURFACE_RESPONSE_HEADERS) continue;
+    out[lower] = value;
+  }
+  const csp = headers['content-security-policy'];
+  const theirs = csp === undefined ? [] : Array.isArray(csp) ? csp : [String(csp)];
+  for (const [name, value] of Object.entries(USER_SURFACE_RESPONSE_HEADERS)) {
+    out[name] =
+      name === 'content-security-policy' && theirs.length > 0 ? [value, ...theirs] : value;
   }
   return out;
 }
@@ -430,8 +537,37 @@ function isEventStream(headers: IncomingHttpHeaders): boolean {
   return typeof type === 'string' && type.toLowerCase().startsWith('text/event-stream');
 }
 
-function errorBody(error: string, extra: Record<string, unknown> = {}): string {
-  return JSON.stringify({ error, ...extra });
+/**
+ * Which entry a request came through: the admin API (`/api/<route>/*` →
+ * `/admin/*`, administrators and agents) or a plugin's user surface
+ * (`/api/<route>/app/*` → `/app/*`, people).
+ */
+type ForwardSurface = 'admin' | 'user';
+
+/**
+ * What a person on a user surface is told when the relay — not the
+ * application — answers with an error: one fixed text per status, never an
+ * internal message (a socket error, a timeout, which side failed).
+ */
+const USER_SURFACE_ERROR_TEXTS: Readonly<Record<number, string>> = Object.freeze({
+  400: 'Bad request',
+  401: 'unauthenticated',
+  403: 'Forbidden',
+  404: 'Not found',
+  413: 'Request body too large',
+  499: 'Request cancelled',
+  500: 'Internal error',
+  502: 'The application is unavailable',
+  503: 'The application is unavailable right now',
+  504: 'The application did not answer in time',
+});
+
+/** The fixed error text of a user-surface answer with `status`. Pure; exported for tests. */
+export function userSurfaceErrorText(status: number): string {
+  return (
+    USER_SURFACE_ERROR_TEXTS[status] ??
+    (status >= 500 ? 'The application is unavailable' : 'Request refused')
+  );
 }
 
 /** A body that stops at `limit` bytes; the stream errors past it. */
@@ -561,12 +697,16 @@ function openUpstream(params: {
       });
     });
 
-    // The client went away before the response was complete: stop the
-    // upstream request too. Watched on the response, not the request — an
-    // IncomingMessage emits 'close' as soon as its body has been read, which
-    // for a piped request body is long before the reply exists.
+    // The client went away — or the relay ended the response (a user
+    // surface's lifetime, a revoked user) — before the response was
+    // complete: stop the upstream request too, and stop waiting for its
+    // headers. Watched on the response, not the request — an IncomingMessage
+    // emits 'close' as soon as its body has been read, which for a piped
+    // request body is long before the reply exists.
     clientRes.once('close', () => {
-      if (!clientRes.writableFinished) upstream.destroy();
+      if (clientRes.writableFinished) return;
+      upstream.destroy();
+      fail(499, 'The client closed the connection');
     });
 
     upstream.once('response', (res: IncomingMessage) => {
@@ -611,11 +751,36 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(json);
 }
 
+/**
+ * A forwarded answer's headers as `surface` sends them: on a user surface,
+ * {@link userSurfaceResponseHeaders}.
+ */
+function clientResponseHeaders(
+  headers: OutgoingHttpHeaders,
+  surface: ForwardSurface,
+): OutgoingHttpHeaders {
+  return surface === 'user' ? userSurfaceResponseHeaders(headers) : headers;
+}
+
+/**
+ * Write the relay's own error answer: `body` on the admin API, the fixed
+ * text of its status ({@link userSurfaceErrorText}) on a user surface.
+ */
+function writeError(
+  res: ServerResponse,
+  surface: ForwardSurface,
+  status: number,
+  body: Readonly<Record<string, unknown>>,
+): void {
+  writeJson(res, status, surface === 'user' ? { error: userSurfaceErrorText(status) } : body);
+}
+
 /** Answer a forwarding failure — or, while the plugin is down, its `tunnel:down` fallback. */
 function answerFailure(
   res: ServerResponse,
   failure: Extract<UpstreamResult, { ok: false }>,
   fallback: TunnelFallback | null,
+  surface: ForwardSurface,
 ): ForwardOutcome {
   const tunnelOrApp = failure.status === 502 && failure.extra['reason'] !== undefined;
   if (fallback && tunnelOrApp && !res.headersSent) {
@@ -635,7 +800,7 @@ function answerFailure(
     res.end(payload);
     return { status: fallback.status, error: failure.error, hook: 'fallback' };
   }
-  writeJson(res, failure.status, { error: failure.error, ...failure.extra });
+  writeError(res, surface, failure.status, { error: failure.error, ...failure.extra });
   return { status: failure.status, error: failure.error };
 }
 
@@ -648,15 +813,20 @@ function streamResponse(
   upstreamRes: IncomingMessage,
   res: ServerResponse,
   timeouts: AgentForwardTimeouts,
+  surface: ForwardSurface,
   prefix: Buffer | null = null,
 ): Promise<ForwardOutcome> {
   const bodyIdleTimeoutMs = timeouts.bodyIdleTimeoutMs ?? AGENT_FORWARD_DEFAULTS.bodyIdleTimeoutMs;
   const status = upstreamRes.statusCode ?? 502;
-  const responseHeaders = forwardedResponseHeaders(upstreamRes.headers);
+  const responseHeaders = clientResponseHeaders(
+    forwardedResponseHeaders(upstreamRes.headers),
+    surface,
+  );
   const eventStream = isEventStream(upstreamRes.headers);
   if (eventStream) {
-    // nginx in front of the panel buffers responses; this header turns
-    // that off for this response so events reach the browser as sent.
+    // nginx in front of the panel buffers responses; this header — the
+    // only X-Accel-* the panel ever sends, set here, never the
+    // application's — turns that off so events reach the browser as sent.
     responseHeaders['x-accel-buffering'] = 'no';
     responseHeaders['cache-control'] = 'no-cache';
   }
@@ -830,7 +1000,7 @@ export async function forwardToAgentHalf(
   targetPath: string,
   opts: AgentForwardTimeouts = {},
 ): Promise<ForwardOutcome> {
-  return forward(request, reply, target, caller, targetPath, opts, null);
+  return forward(request, reply, target, caller, targetPath, opts, null, 'admin');
 }
 
 /** A request hook that matched a request, and the route pattern it matched with. */
@@ -885,29 +1055,27 @@ async function forward(
   targetPath: string,
   opts: AgentForwardTimeouts,
   plan: RequestHookPlan | null,
+  surface: ForwardSurface,
 ): Promise<ForwardOutcome> {
   const method = request.method.toUpperCase();
   const bodyIdleTimeoutMs = opts.bodyIdleTimeoutMs ?? AGENT_FORWARD_DEFAULTS.bodyIdleTimeoutMs;
   const fallback = plan?.runtime.fallbackFor(target.plugin) ?? null;
 
   if (isServiceWorkerRequest(request.headers)) {
-    return answer(reply, 403, errorBody('A plugin route cannot serve a service worker'));
+    return answer(reply, surface, 403, { error: 'A plugin route cannot serve a service worker' });
   }
 
   const declared = request.headers['content-length'];
   if (declared !== undefined) {
     const length = Number(declared);
     if (!Number.isFinite(length) || length < 0) {
-      return answer(reply, 400, errorBody('Invalid Content-Length'));
+      return answer(reply, surface, 400, { error: 'Invalid Content-Length' });
     }
     if (length > target.maxBodyBytes) {
-      return answer(
-        reply,
-        413,
-        errorBody('Request body exceeds the plugin tunnel body limit', {
-          maxBodyBytes: target.maxBodyBytes,
-        }),
-      );
+      return answer(reply, surface, 413, {
+        error: 'Request body exceeds the plugin tunnel body limit',
+        maxBodyBytes: target.maxBodyBytes,
+      });
     }
   }
 
@@ -934,7 +1102,7 @@ async function forward(
           bodyIdleTimeoutMs,
         );
       } catch (err: unknown) {
-        writeJson(res, 400, { error: 'The request body could not be read' });
+        writeError(res, surface, 400, { error: 'The request body could not be read' });
         return { status: 400, error: err instanceof Error ? err.message : String(err) };
       }
       seen = { bytes: read.bytes, complete: read.complete };
@@ -946,7 +1114,7 @@ async function forward(
             rest: request.raw,
           };
       if (!read.complete && wanted >= target.maxBodyBytes) {
-        writeJson(res, 413, {
+        writeError(res, surface, 413, {
           error: 'Request body exceeds the plugin tunnel body limit',
           maxBodyBytes: target.maxBodyBytes,
         });
@@ -960,7 +1128,7 @@ async function forward(
       if (hook.bodyMaxBytes !== null && withBody && seen) {
         if (!seen.complete || seen.bytes.length > hook.bodyMaxBytes) {
           if (hook.onOversize === 'continue') continue;
-          writeJson(res, 413, {
+          writeError(res, surface, 413, {
             error: 'The request body is too large for a request hook of this plugin',
             maxBytes: hook.bodyMaxBytes,
           });
@@ -976,7 +1144,7 @@ async function forward(
       );
       if (!run.ok) {
         if (hook.onError === 'continue') continue;
-        writeJson(res, 503, {
+        writeError(res, surface, 503, {
           error: 'A request hook of this plugin failed',
           reasonId: 'hook-failed',
         });
@@ -1009,7 +1177,7 @@ async function forward(
   } catch (err: unknown) {
     // A malformed secret, or a caller the path is not for: a mistake in
     // Lamaste — nothing is sent, and the hijacked reply is still answered.
-    writeJson(res, 500, { error: 'The request could not be signed for the agent half' });
+    writeError(res, surface, 500, { error: 'The request could not be signed for the agent half' });
     return { status: 500, error: err instanceof Error ? err.message : String(err) };
   }
   if (body.kind === 'buffer') headers['content-length'] = String(body.bytes.length);
@@ -1024,7 +1192,7 @@ async function forward(
     timeouts: opts,
     clientRes: res,
   });
-  if (!upstream.ok) return answerFailure(res, upstream, fallback);
+  if (!upstream.ok) return answerFailure(res, upstream, fallback, surface);
   const upstreamRes = upstream.res;
 
   // Nothing of an answer reaches the client — not its status, not a header —
@@ -1042,6 +1210,7 @@ async function forward(
       res,
       { ok: false, status: 502, error: UNAUTHENTICATED_ANSWER, extra: { reason: 'app' } },
       fallback,
+      surface,
     );
     // The log line says which: an old or foreign answer, or a forged one.
     return {
@@ -1053,7 +1222,7 @@ async function forward(
     };
   }
 
-  if (!plan || plan.post.length === 0) return streamResponse(upstreamRes, res, opts);
+  if (!plan || plan.post.length === 0) return streamResponse(upstreamRes, res, opts, surface);
 
   // --- request:post-forward ---------------------------------------------------
   const status = upstreamRes.statusCode ?? 502;
@@ -1063,13 +1232,13 @@ async function forward(
     // treats it as too large.
     if (plan.post.some((p) => p.hook.bodyMaxBytes !== null && p.hook.onOversize !== 'pass')) {
       upstreamRes.destroy();
-      writeJson(res, 502, {
+      writeError(res, surface, 502, {
         error: "A streaming response cannot be checked by this plugin's response hook",
         reasonId: 'response-not-checkable',
       });
       return { status: 502, hook: 'blocked' };
     }
-    return streamResponse(upstreamRes, res, opts);
+    return streamResponse(upstreamRes, res, opts, surface);
   }
 
   let current: { bytes: Buffer; complete: boolean; overflow: Buffer } = {
@@ -1082,7 +1251,10 @@ async function forward(
       current = await readUpTo(upstreamRes, wantedResponse, bodyIdleTimeoutMs);
     } catch (err: unknown) {
       upstreamRes.destroy();
-      writeJson(res, 502, { error: "The hosting agent's response ended early", reason: 'app' });
+      writeError(res, surface, 502, {
+        error: "The hosting agent's response ended early",
+        reason: 'app',
+      });
       return { status: 502, error: err instanceof Error ? err.message : String(err) };
     }
   }
@@ -1093,7 +1265,7 @@ async function forward(
       if (!current.complete || current.bytes.length > hook.bodyMaxBytes) {
         if (hook.onOversize === 'pass') continue;
         upstreamRes.destroy();
-        writeJson(res, 502, {
+        writeError(res, surface, 502, {
           error: 'The response is too large for a response hook of this plugin',
           reasonId: 'response-too-large',
         });
@@ -1115,7 +1287,7 @@ async function forward(
     if (!run.ok) {
       if (hook.onError === 'pass') continue;
       upstreamRes.destroy();
-      writeJson(res, 502, {
+      writeError(res, surface, 502, {
         error: 'A response hook of this plugin failed',
         reasonId: 'hook-failed',
       });
@@ -1125,7 +1297,7 @@ async function forward(
     if (decision.action === 'block') {
       upstreamRes.destroy();
       const blockedStatus = decision.status ?? 502;
-      writeJson(res, blockedStatus, {
+      writeError(res, surface, blockedStatus, {
         error: 'Blocked by a response hook of this plugin',
         reasonId: decision.reasonId,
       });
@@ -1149,7 +1321,7 @@ async function forward(
     responseHeaders['content-length'] = String(current.bytes.length);
     delete responseHeaders['transfer-encoding'];
     if (!res.headersSent) {
-      res.writeHead(status, responseHeaders);
+      res.writeHead(status, clientResponseHeaders(responseHeaders, surface));
       res.end(current.bytes);
     }
     return { status, ...(replaced ? { hook: 'replaced' } : {}) };
@@ -1159,16 +1331,22 @@ async function forward(
     upstreamRes,
     res,
     opts,
+    surface,
     Buffer.concat([current.bytes, current.overflow]),
   );
   upstreamRes.resume();
   return outcome;
 }
 
-function answer(reply: FastifyReply, status: number, body: string): ForwardOutcome {
+/** Answer with the relay's own error before anything was forwarded (see {@link writeError}). */
+function answer(
+  reply: FastifyReply,
+  surface: ForwardSurface,
+  status: number,
+  body: Readonly<Record<string, unknown>>,
+): ForwardOutcome {
   reply.hijack();
-  reply.raw.writeHead(status, { 'content-type': 'application/json' });
-  reply.raw.end(body);
+  writeError(reply.raw, surface, status, body);
   return { status };
 }
 
@@ -1248,13 +1426,15 @@ export async function agentForwarderPlugin(
           hint: `POST /api/plugins/${route}/hosting with the agent that runs it`,
         });
       }
-      return reply.callNotFound();
+      if (resolved.kind !== 'down') return reply.callNotFound();
     }
     const guarded = opts.guard?.(request) ?? null;
     if (guarded) {
       return reply.code(guarded.status).send(guarded.body);
     }
-    const caller = await opts.authorize(request, resolved.plugin);
+    // A plugin with an agent half is named by its route.
+    const plugin = 'kind' in resolved ? route : resolved.plugin;
+    const caller = await opts.authorize(request, plugin);
     // Only an admin or an agent reaches the admin surface; the panel's
     // authorizer names nothing else, and anything else is refused.
     if (!caller || (caller.type !== 'admin' && caller.type !== 'agent')) {
@@ -1269,6 +1449,29 @@ export async function agentForwarderPlugin(
     }
     if (isAgentHalfReservedPath(targetPath)) {
       return reply.callNotFound();
+    }
+
+    if ('kind' in resolved) {
+      // The hosting is down: answered as a request into a dead tunnel is —
+      // the plugin's `tunnel:down` fallback, or 502 with the reason — and
+      // nothing is sent to whatever holds the port.
+      const startedAt = Date.now();
+      reply.hijack();
+      const outcome = answerFailure(
+        reply.raw,
+        downFailure(resolved.reason),
+        opts.hooks?.fallbackFor(plugin) ?? null,
+        'admin',
+      );
+      logForwarded(
+        logger,
+        { plugin, caller, method: request.method, targetPath, startedAt, plan: null, outcome },
+        {
+          done: 'Plugin request answered while its hosting is down',
+          failed: 'Plugin request not forwarded: its hosting is down',
+        },
+      );
+      return;
     }
 
     let plan: RequestHookPlan | null = null;
@@ -1286,7 +1489,16 @@ export async function agentForwarderPlugin(
     }
 
     const startedAt = Date.now();
-    const outcome = await forward(request, reply, resolved, caller, targetPath, opts, plan);
+    const outcome = await forward(
+      request,
+      reply,
+      resolved,
+      caller,
+      targetPath,
+      opts,
+      plan,
+      'admin',
+    );
     logForwarded(
       logger,
       {
@@ -1365,6 +1577,31 @@ export type UserCallerResolution =
 
 type MaybePromise<T> = T | Promise<T>;
 
+/**
+ * A user-surface response the panel is sending — from the moment its
+ * request is forwarded until the answer has been sent or the request ended.
+ * The panel keeps the open ones to re-check their user while they last.
+ */
+export interface OpenUserSurfaceResponse {
+  readonly route: string;
+  readonly plugin: string;
+  /** The user caller the request was forwarded with. */
+  readonly caller: UserCallerIdentity;
+  /** When the request was forwarded (milliseconds since the epoch). */
+  readonly startedAt: number;
+  /**
+   * End it now — the browser's connection and the request to the agent
+   * half — and say why in the request's log line. Idempotent.
+   */
+  end(reason: string): void;
+}
+
+/**
+ * The longest a user-surface response lives, in milliseconds
+ * ({@link USER_SURFACE_MAX_RESPONSE_SECONDS}).
+ */
+export const USER_SURFACE_MAX_RESPONSE_MS = USER_SURFACE_MAX_RESPONSE_SECONDS * 1000;
+
 export interface UserSurfaceOptions extends AgentForwardTimeouts {
   /**
    * Check the request's relay assertion (`RELAY_PANEL_AUDIENCE`, bound to
@@ -1373,10 +1610,11 @@ export interface UserSurfaceOptions extends AgentForwardTimeouts {
    */
   verifyRelay(request: FastifyRequest): MaybePromise<UserSurfaceRelayVerification>;
   /**
-   * The forward target of a route with a user surface — bound to a host, its
-   * plugin hosted — or why not: null or `not_found` (404: no user surface on
-   * the route), `disabled` or `not_hosted` (503: the plugin is not available
-   * right now). Called on every request.
+   * The forward target of a route with a user surface — bound to a host its
+   * hosting agent carries, its plugin hosted — or why not: null or
+   * `not_found` (404: no user surface on the route), `disabled`,
+   * `not_hosted` or `down` (503: the plugin is not available right now;
+   * nothing is forwarded). Called on every request.
    */
   resolveTarget(route: string): MaybePromise<AgentForwardResolution | null>;
   /** The directory's user behind `username` for this plugin: id, username and roles. */
@@ -1388,42 +1626,76 @@ export interface UserSurfaceOptions extends AgentForwardTimeouts {
    * that `Origin`.
    */
   originFor(route: string): MaybePromise<string | null>;
+  /**
+   * Called when a request is forwarded, with what the panel needs to end
+   * its response early; returns the function called once it is over. The
+   * panel re-checks every open response's user while it lasts — a
+   * response must not outlive its user's access.
+   */
+  trackResponse?: ((response: OpenUserSurfaceResponse) => () => void) | undefined;
+  /**
+   * The longest a response lives before the panel ends it (default
+   * {@link USER_SURFACE_MAX_RESPONSE_MS}).
+   */
+  readonly maxResponseMs?: number | undefined;
   /** The plugins' request hooks; without it every request streams through untouched. */
   readonly hooks?: RequestHookRuntime | undefined;
   readonly logger?: AgentForwarderLogger | undefined;
   /**
    * Fastify route config of the two routes (`config`) — the panel gives
-   * them a rate limit of their own there.
+   * them a rate limit of their own there, and turns its CORS off for them.
    */
   readonly routeConfig?: Readonly<Record<string, unknown>> | undefined;
+}
+
+/**
+ * Whether a request's `Sec-Fetch-Site` lets it on a user surface: absent (a
+ * client that does not send it — no browser of this decade), `same-origin`
+ * (the bound host's own pages) or `none` (the user typed it, a bookmark).
+ * A request another site started — `cross-site`, and `same-site`: another
+ * host under the relay's domain, which every tunnel is — is refused, whatever
+ * its method: the session cookie travels with it. Pure; exported for tests.
+ */
+export function isSameOriginFetch(headers: IncomingHttpHeaders): boolean {
+  const site = headers['sec-fetch-site'];
+  return site === undefined || site === 'same-origin' || site === 'none';
 }
 
 /**
  * Fastify plugin serving plugins' user surfaces: `/:route/app` and
  * `/:route/app/*`, registered under the prefix `/api` (anything else
  * throws — the relay assertion binds the path `/api/<route>/app…`), in a
- * context of its own that answers only what Gatekeeper vouched for. Per
- * request, in order:
+ * context of its own that answers only what Gatekeeper vouched for. Every
+ * answer carries {@link USER_SURFACE_RESPONSE_HEADERS} and no
+ * `Access-Control-*`. Per request, in order:
  *
- * 1. the relay assertion must verify and be bound to the URL's route —
+ * 1. a request another site started (`Sec-Fetch-Site` present and neither
+ *    `same-origin` nor `none`) — 403 `{ error: 'cross-site request
+ *    refused' }`, whatever its method;
+ * 2. the relay assertion must verify and be bound to the URL's route —
  *    else 401 `{ error: 'unauthenticated' }`, JSON (no redirect for an
  *    XHR), before anything is looked up;
- * 2. the route must have a user surface (`resolveTarget`) — else 404 — and
- *    its plugin be available (enabled, hosted) — else 503;
- * 3. a request that may change something must carry `Origin` equal to the
+ * 3. the route must have a user surface (`resolveTarget`) — else 404 — and
+ *    its plugin be available (enabled, hosted, its hosting not down) —
+ *    else 503;
+ * 4. a request that may change something must carry `Origin` equal to the
  *    bound host's origin — else 403 `{ error: 'cross-origin request
  *    refused' }` (CSRF: the session cookie travels with any cross-site
  *    request);
- * 4. the directory must know the user for this plugin
+ * 5. the directory must know the user for this plugin
  *    (`resolveUserCaller`) — else its 403, 404 or 503;
- * 5. the request is forwarded to `/app/<rest>` with the `user` caller,
+ * 6. the request is forwarded to `/app/<rest>` with the `user` caller,
  *    through the plugin's request hooks — the admin forwarder's pipeline:
- *    credentials and Lamaste's headers stripped (the relay assertion and
- *    the session cookie among them), the body limit, the signed assertion,
- *    the responder check, streaming, and no `Set-Cookie` back.
+ *    credentials, Lamaste's headers and method/URL overrides stripped (the
+ *    relay assertion and the session cookie among them), the body limit,
+ *    the signed assertion, the responder check, streaming, and no
+ *    `Set-Cookie` or `X-Accel-*` back. While it is sent the response is
+ *    tracked (`trackResponse`) and ended after `maxResponseMs`.
  *
- * Logs one metadata line per forwarded request, the user as
- * `user:<userId>`; never a body, a query string or a username.
+ * Every error the relay answers itself is a fixed text per status, never an
+ * internal message (`userSurfaceErrorText`). Logs one metadata line per
+ * forwarded request, the user as `user:<userId>`; never a body, a query
+ * string or a username.
  */
 export async function userSurfacePlugin(
   fastify: FastifyInstance,
@@ -1436,14 +1708,31 @@ export async function userSurfacePlugin(
   }
   const logger = opts.logger ?? fastify.log;
   const reserved = new Set<string>(RESERVED_API_PREFIXES);
+  const maxResponseMs = opts.maxResponseMs ?? USER_SURFACE_MAX_RESPONSE_MS;
 
   passBodiesThrough(fastify);
+
+  // Every answer of these routes — the relay's refusals included — carries
+  // the user surface's response headers, and no CORS header: no other
+  // origin reads a user's answers.
+  fastify.addHook('onRequest', async (_request, reply) => {
+    applyUserSurfaceResponseHeaders(reply.raw);
+  });
+  fastify.addHook('onSend', async (_request, reply, payload) => {
+    for (const name of Object.keys(reply.getHeaders())) {
+      if (name.toLowerCase().startsWith('access-control-')) reply.removeHeader(name);
+    }
+    return payload;
+  });
 
   const handler = async (
     request: FastifyRequest<{ Params: { route: string } }>,
     reply: FastifyReply,
   ): Promise<void> => {
     const { route } = request.params;
+    if (!isSameOriginFetch(request.headers)) {
+      return reply.code(403).send({ error: 'cross-site request refused' });
+    }
     const relay = await opts.verifyRelay(request);
     if (!relay.ok || relay.route !== route) {
       return reply.code(401).send({ error: 'unauthenticated' });
@@ -1479,25 +1768,48 @@ export async function userSurfacePlugin(
         { plugin: target.plugin, route },
         'The user surface resolved a caller that is not the attested user',
       );
-      return reply.code(500).send({ error: 'The user could not be resolved' });
+      return reply.code(500).send({ error: userSurfaceErrorText(500) });
     }
 
     const targetPath = userSurfaceHalfPath(request.raw.url ?? '', route);
     if (targetPath === null) {
-      return reply.code(400).send({ error: 'Invalid plugin path' });
+      return reply.code(400).send({ error: userSurfaceErrorText(400) });
     }
 
     let plan: RequestHookPlan | null = null;
     if (opts.hooks) {
       const built = await buildRequestHookPlan(opts.hooks, target.plugin, method, targetPath);
       if ('refuse' in built) {
-        return reply.code(503).send({ error: built.refuse, code: 'hooks_not_approved' });
+        return reply
+          .code(503)
+          .send({ error: userSurfaceErrorText(503), code: 'hooks_not_approved' });
       }
       plan = built;
     }
 
+    // While the response is sent it can be ended: when its user loses
+    // access (the panel's sweep), and once it has lived maxResponseMs.
     const startedAt = Date.now();
-    const outcome = await forward(request, reply, target, caller, targetPath, opts, plan);
+    const ended: { reason: string | null } = { reason: null };
+    const end = (reason: string): void => {
+      if (ended.reason !== null || reply.raw.writableFinished) return;
+      ended.reason = reason;
+      reply.raw.destroy();
+    };
+    const lifetime = setTimeout(() => end('lifetime'), maxResponseMs);
+    lifetime.unref();
+    const untrack =
+      opts.trackResponse?.({ route, plugin: target.plugin, caller, startedAt, end }) ?? null;
+    let outcome: ForwardOutcome;
+    try {
+      outcome = await forward(request, reply, target, caller, targetPath, opts, plan, 'user');
+    } finally {
+      clearTimeout(lifetime);
+      untrack?.();
+    }
+    if (ended.reason !== null) {
+      outcome = { ...outcome, error: `ended by the relay: ${ended.reason}` };
+    }
     logForwarded(
       logger,
       {

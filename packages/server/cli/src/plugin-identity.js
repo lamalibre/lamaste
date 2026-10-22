@@ -273,6 +273,8 @@ export function userSurfaceStatusText(status) {
       return 'not served yet — its installed version declares no identity (requests go down the tunnel)';
     case 'not_approved':
       return 'not served yet — its installed version waits for approval (requests go down the tunnel)';
+    case 'not_hosting_agent':
+      return 'not served — the agent carrying this tunnel does not host the plugin (moved, revoked, or hosted elsewhere); requests go down the tunnel';
     default:
       return `not served (${terminalText(status.reason)})`;
   }

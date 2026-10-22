@@ -273,6 +273,14 @@ export async function hookStatus(plugin) {
   const agent = agentHookSetOf({ hooks: plugin.hooks });
   const state = await readHookState(plugin.name);
   const approved = isApproved(approval, state);
+  let pendingUpdate = null;
+  if (state?.pendingUpdate) {
+    const { withIdentityGrantImpact } = await import('./entitlements.js');
+    pendingUpdate = await withIdentityGrantImpact(
+      pendingUpdateView(state.pendingUpdate),
+      plugin.route,
+    );
+  }
   return {
     relay: relay ? relayHookSetPreview(relay.set, relay.entrySha256) : null,
     agent,
@@ -297,7 +305,7 @@ export async function hookStatus(plugin) {
       installedDigest: state?.installedDigest ?? null,
       current: relay !== null && approved && state?.installedDigest === relay.digest,
     },
-    pendingUpdate: state?.pendingUpdate ? pendingUpdateView(state.pendingUpdate) : null,
+    pendingUpdate,
   };
 }
 

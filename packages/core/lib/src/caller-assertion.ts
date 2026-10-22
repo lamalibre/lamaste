@@ -43,6 +43,12 @@
  * one kind can never act on the other's routes. A verifier built before
  * the `user` caller existed refuses it as `malformed`.
  *
+ * Every path, whoever the caller, is in origin form ({@link isOriginFormPath}):
+ * exactly one leading `/`, never `//` or `/\`, so no scheme and no
+ * authority — a path a router could read as another host's, or as a
+ * protocol-relative URL, is never signed and never verified
+ * (`wrong_request`).
+ *
  * Shared between the server subpath (signing, responder checks) and the
  * agent subpath (verifying, responder signing); the two never import each
  * other.
@@ -52,6 +58,8 @@ import crypto from 'node:crypto';
 
 import { isLamasteUsername } from './constants.js';
 import { isIdentityRoleList, isIdentityUuid } from './identity.js';
+import { openIdentityChanges } from './identity-seal.js';
+import type { IdentityChangesEnvelope, SealedIdentityChanges } from './identity-seal.js';
 import { decryptSettingsSecret } from './settings-secrets.js';
 import type { EncryptedSettingsSecret } from './settings-secrets.js';
 import { isAgentHalfAppPath, isUnderAgentHalfApp } from './user-surface.js';
@@ -199,11 +207,29 @@ export function parseCallerIdentity(raw: unknown): CallerIdentity | null {
 }
 
 /**
+ * Whether `path` is a request target in origin form — what the forwarder
+ * and Lamaste's own calls send: it starts with exactly one `/` (not `//`,
+ * not `/\`, which routers and URL parsers read as an authority), so it
+ * names no scheme and no host. Pure; exported for tests.
+ */
+export function isOriginFormPath(path: unknown): path is string {
+  return (
+    typeof path === 'string' &&
+    path.startsWith('/') &&
+    !path.startsWith('//') &&
+    !path.startsWith('/\\')
+  );
+}
+
+/**
  * Whether `caller` may be named for a request to `path` on the agent half:
- * a `user` only under `/app` (read literally), every other caller never
- * where a router could take the path for `/app` (`user-surface.ts`).
+ * the path must be in origin form ({@link isOriginFormPath}), whoever the
+ * caller; then a `user` only under `/app` (read literally), every other
+ * caller never where a router could take the path for `/app`
+ * (`user-surface.ts`).
  */
 function callerMayReach(caller: CallerIdentity, path: string): boolean {
+  if (!isOriginFormPath(path)) return false;
   return caller.type === 'user' ? isAgentHalfAppPath(path) : !isUnderAgentHalfApp(path);
 }
 
@@ -224,6 +250,9 @@ export function signCallerAssertion(input: CallerAssertionInput, secret: string)
   }
   const parsedCaller = parseCallerIdentity(input.caller);
   if (!parsedCaller) throw new Error('Invalid caller in caller assertion');
+  if (!isOriginFormPath(input.path)) {
+    throw new Error('A caller assertion path must be in origin form (one leading "/", no host)');
+  }
   if (!callerMayReach(parsedCaller, input.path)) {
     throw new Error(
       parsedCaller.type === 'user'
@@ -348,6 +377,13 @@ export interface VerifiedCallerAssertion {
    * not open.
    */
   decryptSettingsSecret(key: string, baseRevision: number, sealed: EncryptedSettingsSecret): string;
+  /**
+   * Open the identity changes sealed for this request
+   * (`POST /admin/identity/changes`, `identity-seal.ts`): bound to this
+   * plugin, this request's nonce and the batch `envelope`. Returns the
+   * parsed JSON; throws, without the changes, when they do not open.
+   */
+  openIdentityChanges(sealed: SealedIdentityChanges, envelope: IdentityChangesEnvelope): unknown;
 }
 
 export type VerifyCallerAssertionResult =
@@ -462,8 +498,9 @@ function bodyMatches(payload: CallerAssertionPayload, opts: VerifyCallerAssertio
  * Verify the `X-Lamalibre-Caller` header of a request the agent half
  * received. Checks, in order: shape, signature against each accepted secret
  * (constant time), plugin, method and path, whether the caller may be named
- * for that path (a `user` only under `/app`, every other caller never
- * there — `wrong_request`), body (constant time), age, and replay. The
+ * for that path (an origin-form path, then a `user` only under `/app`,
+ * every other caller never there — `wrong_request`), body (constant time),
+ * age, and replay. The
  * nonce is recorded only when everything else passed, so a forged
  * assertion — or a true one with another body — cannot poison the store.
  */
@@ -517,6 +554,14 @@ export function verifyCallerAssertion(
         nonce: payload.nonce,
         key,
         baseRevision,
+        sealed,
+      }),
+    openIdentityChanges: (sealed, envelope) =>
+      openIdentityChanges({
+        secret,
+        plugin: payload.plugin,
+        nonce: payload.nonce,
+        envelope,
         sealed,
       }),
   };

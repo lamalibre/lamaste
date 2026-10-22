@@ -4,7 +4,10 @@
  * Lamaste, only with the body its assertion signs, every answer to a
  * verified call authenticated over its exact bytes. End to end: the relay's
  * `callAgentHalf` against the handlers over HTTP, the projection in
- * `node:sqlite`. Nothing about a member reaches a log line or an error.
+ * `node:sqlite`. A batch's changes travel sealed to the request — bound to
+ * its nonce and envelope, under a key derived from the installation secret —
+ * so the wire carries no member in clear. Nothing about a member reaches a
+ * log line or an error.
  */
 
 import { test, before, after } from 'node:test';
@@ -24,11 +27,13 @@ import {
   RESPONDER_HEADER,
   bodySha256Hex,
   callAgentHalf,
+  encryptSettingsSecret,
   generateCallerAssertionNonce,
   generateHostingSecret,
   parseIdentityChangesAnswer,
   parseIdentityCursorConflict,
   parseIdentityNotifyAnswer,
+  sealIdentityChanges,
   signCallerAssertion,
   signResponder,
 } from '@lamalibre/lamaste';
@@ -138,10 +143,27 @@ function changesBody(fields = {}) {
   };
 }
 
-/** A request as the relay signs it, with any caller; `nonce` returned to check the answer. */
+/**
+ * A batch as the relay sends it: the envelope in clear, `changes` sealed for
+ * the request with `nonce` (`sealFor` another plugin, `with` another secret).
+ */
+function seal(batch, nonce, { sealFor = PLUGIN, with: key = secret } = {}) {
+  const { protocol, changes, ...envelope } = batch;
+  return {
+    protocol,
+    ...envelope,
+    changes: sealIdentityChanges({ secret: key, plugin: sealFor, nonce, envelope, changes }),
+  };
+}
+
+/**
+ * A request as the relay signs it, with any caller; `nonce` returned to check
+ * the answer. A `body` function is called with the nonce (to seal to it).
+ */
 function signed(method, url, body, { caller = { type: 'lamaste' }, bindBody = true } = {}) {
-  const bytes = body === undefined ? undefined : Buffer.from(JSON.stringify(body), 'utf-8');
   const nonce = generateCallerAssertionNonce();
+  const value = typeof body === 'function' ? body(nonce) : body;
+  const bytes = value === undefined ? undefined : Buffer.from(JSON.stringify(value), 'utf-8');
   const header = signCallerAssertion(
     {
       plugin: PLUGIN,
@@ -184,7 +206,9 @@ test('end to end: the panel notifies, pushes a batch, and learns the cursor from
       cursor: 0,
     });
 
-    const applied = await call(AGENT_HALF_IDENTITY_CHANGES_PATH, changesBody());
+    const applied = await call(AGENT_HALF_IDENTITY_CHANGES_PATH, (nonce) =>
+      seal(changesBody(), nonce),
+    );
     assert.equal(applied.status, 200, JSON.stringify(applied));
     assert.deepEqual(parseIdentityChangesAnswer(applied.body), {
       protocol: 1,
@@ -198,9 +222,8 @@ test('end to end: the panel notifies, pushes a batch, and learns the cursor from
     assert.deepEqual(second.body, { protocol: 1, directoryId: DIRECTORY, cursor: 5 });
 
     // The same batch again: the cursor is past it — 409 with what the half holds.
-    const conflict = await call(
-      AGENT_HALF_IDENTITY_CHANGES_PATH,
-      changesBody({ reset: false, final: false }),
+    const conflict = await call(AGENT_HALF_IDENTITY_CHANGES_PATH, (nonce) =>
+      seal(changesBody({ reset: false, final: false }), nonce),
     );
     assert.equal(conflict.status, 409);
     assert.deepEqual(parseIdentityCursorConflict(conflict.body), {
@@ -223,7 +246,8 @@ test('end to end: the panel notifies, pushes a batch, and learns the cursor from
 test('only Lamaste, only with the body it signed; answers to a verified call are authenticated', async () => {
   const { handlers, projection } = setup();
   const url = AGENT_HALF_IDENTITY_CHANGES_PATH;
-  const body = changesBody();
+  const plain = changesBody();
+  const body = (nonce) => seal(plain, nonce);
 
   // An admin through some other path: verified, refused, and the refusal signed over its body.
   const admin = signed('POST', url, body, { caller: { type: 'admin' } });
@@ -246,7 +270,7 @@ test('only Lamaste, only with the body it signed; answers to a verified call are
   const swapped = signed('POST', url, body);
   const swappedAnswer = await handlers.handle({
     ...swapped.request,
-    body: Buffer.from(JSON.stringify(changesBody({ to: 9 }))),
+    body: Buffer.from(JSON.stringify(seal(changesBody({ to: 9 }), swapped.nonce))),
   });
   assert.equal(swappedAnswer.status, 401);
 
@@ -255,7 +279,10 @@ test('only Lamaste, only with the body it signed; answers to a verified call are
     (await handlers.handle({ method: 'POST', url, headers: {}, body: '{}' })).status,
     401,
   );
-  assert.equal((await handlers.handle({ ...signed('POST', url, body).request, body })).status, 400);
+  assert.equal(
+    (await handlers.handle({ ...signed('POST', url, body).request, body: plain })).status,
+    400,
+  );
   assert.equal(
     (await handlers.handle(signed('POST', '/admin/identity/other', body).request)).status,
     404,
@@ -270,7 +297,7 @@ test('only Lamaste, only with the body it signed; answers to a verified call are
   assert.equal(huge.status, 413);
 
   // Verified, but not the contract: signed 400s.
-  const otherProtocol = signed('POST', url, { ...body, protocol: 2 });
+  const otherProtocol = signed('POST', url, (nonce) => ({ ...body(nonce), protocol: 2 }));
   const protocolAnswer = await handlers.handle(otherProtocol.request);
   assert.equal(protocolAnswer.status, 400);
   assert.deepEqual(protocolAnswer.body, { error: 'Unsupported identity protocol', protocol: 1 });
@@ -283,7 +310,14 @@ test('only Lamaste, only with the body it signed; answers to a verified call are
       body: protocolAnswer.bodyText,
     }),
   );
-  const malformed = signed('POST', url, { ...body, changes: [{ seq: 1, kind: 'upsert' }] });
+  // Changes in clear are not the contract; sealed changes that are not a batch either.
+  const unsealed = signed('POST', url, plain);
+  const unsealedAnswer = await handlers.handle(unsealed.request);
+  assert.equal(unsealedAnswer.status, 400);
+  assert.deepEqual(unsealedAnswer.body, { error: 'Malformed identity batch' });
+  const malformed = signed('POST', url, (nonce) =>
+    seal({ ...plain, changes: [{ seq: 1, kind: 'upsert' }] }, nonce),
+  );
   const malformedAnswer = await handlers.handle(malformed.request);
   assert.equal(malformedAnswer.status, 400);
   assert.deepEqual(malformedAnswer.body, { error: 'Malformed identity batch' });
@@ -321,7 +355,9 @@ test('a projection failure is a signed 500 that names nothing, and the batch is 
       throw new Error(`cannot store ${user.displayName}`);
     },
   });
-  const request = signed('POST', AGENT_HALF_IDENTITY_CHANGES_PATH, changesBody());
+  const request = signed('POST', AGENT_HALF_IDENTITY_CHANGES_PATH, (nonce) =>
+    seal(changesBody(), nonce),
+  );
   const answer = await handlers.handle(request.request);
   assert.equal(answer.status, 500);
   assert.deepEqual(answer.body, { error: 'The identity projection failed' });
@@ -334,4 +370,56 @@ test('a projection failure is a signed 500 that names nothing, and the batch is 
   const logged = logger.lines.join('\n');
   assert.match(logged, /Applying an identity batch failed/);
   assert.ok(!logged.includes(NAME));
+});
+
+test('the changes travel sealed: nothing of a member in clear, and they open only for their request', async () => {
+  const { handlers, projection, logger } = setup();
+  const url = AGENT_HALF_IDENTITY_CHANGES_PATH;
+  const plain = changesBody();
+
+  const sent = signed('POST', url, (nonce) => seal(plain, nonce));
+  const wire = sent.request.body.toString('utf-8');
+  for (const personal of ['ayse', NAME, EMAIL, U1]) {
+    assert.ok(!wire.includes(personal), `${personal} is not on the wire in clear`);
+  }
+  assert.deepEqual(Object.keys(JSON.parse(wire).changes).sort(), ['ct', 'iv', 'v']);
+
+  const refusedAs = async (request) => {
+    const answer = await handlers.handle(request);
+    assert.equal(answer.status, 400);
+    assert.deepEqual(answer.body, { error: 'The identity changes could not be opened' });
+    assert.ok(answer.headers[RESPONDER_HEADER], 'a verified call gets a signed refusal');
+  };
+  // Sealed to another request's nonce (replayed under a fresh assertion).
+  const otherNonce = generateCallerAssertionNonce();
+  await refusedAs(signed('POST', url, seal(plain, otherNonce)).request);
+  // Moved under another envelope — re-signed, so only the seal can tell.
+  await refusedAs(
+    signed('POST', url, (nonce) => ({ ...seal(plain, nonce), to: 9, final: false })).request,
+  );
+  // Sealed for another plugin, or with another secret.
+  await refusedAs(signed('POST', url, (nonce) => seal(plain, nonce, { sealFor: 'gx' })).request);
+  await refusedAs(
+    signed('POST', url, (nonce) => seal(plain, nonce, { with: generateHostingSecret() })).request,
+  );
+  // A settings secret sealed for the same request is not identity changes.
+  await refusedAs(
+    signed('POST', url, (nonce) => ({
+      ...seal(plain, nonce),
+      changes: encryptSettingsSecret({
+        secret,
+        plugin: PLUGIN,
+        nonce,
+        key: 'changes',
+        baseRevision: 0,
+        value: JSON.stringify(plain.changes),
+      }),
+    })).request,
+  );
+  assert.deepEqual(projection.state(), { directoryId: null, cursor: 0 });
+
+  assert.equal((await handlers.handle(sent.request)).status, 200);
+  assert.equal(projection.getUser(U1).displayName, NAME);
+  const logged = logger.lines.join('\n');
+  for (const personal of ['ayse', NAME, EMAIL]) assert.ok(!logged.includes(personal), personal);
 });

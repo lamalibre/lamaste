@@ -10,8 +10,10 @@
  * relay assertion for the panel naming the username alone, bound to the
  * method and that target. 401 without a session (nginx then serves the
  * JSON of `/authz/user-surface-unauthenticated`), 403 for the rest, 503
- * without the relay key. Also: how Gatekeeper reads the bindings from
- * tunnels.json. Runs against the build (`npm run build`).
+ * without the relay key. A bound route is served only while the agent
+ * carrying the tunnel hosts the plugin — carries its internal tunnel — and
+ * refused otherwise (`not_hosting_agent`). Also: how Gatekeeper reads the
+ * bindings from tunnels.json. Runs against the build (`npm run build`).
  */
 
 import { test, before, after, beforeEach } from 'node:test';
@@ -40,6 +42,22 @@ let tunnelInfoFromState;
 const sessions = new Map();
 /** The X-Original-URL of every Authelia verification Gatekeeper made. */
 const askedAuthelia = [];
+
+/** The internal tunnel of a plugin hosted on `agentLabel` (what hosting it creates). */
+function internal(route, agentLabel, port) {
+  return {
+    id: `internal-${route}`,
+    subdomain: null,
+    fqdn: null,
+    port,
+    type: 'plugin',
+    exposure: 'internal',
+    enabled: true,
+    pluginName: `@lamalibre/${route}`,
+    pluginRoute: route,
+    ...(agentLabel ? { agentLabel } : {}),
+  };
+}
 
 /** tunnels.json as the panel writes it; Gatekeeper reads it with `tunnelInfoFromState`. */
 const STATE = [
@@ -98,6 +116,38 @@ const STATE = [
     agentLabel: 'vm1',
     userSurface: { routes: ['opened'] },
   },
+  // Bound to plugins another agent hosts, or none: kept, never served.
+  {
+    id: 'moved-id',
+    subdomain: 'moved',
+    fqdn: 'moved.example.com',
+    port: 20015,
+    type: 'app',
+    accessMode: 'authenticated',
+    enabled: true,
+    agentLabel: 'vm2',
+    userSurface: { routes: ['fx', 'elsewhere', 'unhosted', 'revoked', 'twice'] },
+  },
+  {
+    id: 'orphan-id',
+    subdomain: 'orphan',
+    fqdn: 'orphan.example.com',
+    port: 20016,
+    type: 'app',
+    accessMode: 'authenticated',
+    enabled: true,
+    userSurface: { routes: ['orphaned'] },
+  },
+  internal('market-indicators', 'vm1', 21000),
+  internal('fx', 'vm1', 21001),
+  internal('camwatch', 'vm1', 21002),
+  internal('offline', 'vm1', 21003),
+  internal('opened', 'vm1', 21004),
+  internal('elsewhere', 'vm3', 21005),
+  internal('revoked', null, 21006),
+  internal('orphaned', 'vm1', 21007),
+  internal('twice', 'vm2', 21008),
+  { ...internal('twice', 'vm2', 21009), id: 'internal-twice-again' },
 ];
 
 before(async () => {
@@ -302,6 +352,24 @@ test('only an enabled tunnel, bound to the route, serves its user surface', asyn
   assert.deepEqual(askedAuthelia, []);
 });
 
+test('a bound route is served only while the tunnel’s agent hosts its plugin', async () => {
+  for (const [label, target, fqdn] of [
+    ['the tunnel moved to another agent', '/api/fx/app/me', 'moved.example.com'],
+    ['the plugin hosted on a third agent', '/api/elsewhere/app/me', 'moved.example.com'],
+    ['the plugin not hosted at all', '/api/unhosted/app/me', 'moved.example.com'],
+    ['the hosting agent revoked', '/api/revoked/app/me', 'moved.example.com'],
+    ['two internal tunnels for one route', '/api/twice/app/me', 'moved.example.com'],
+    ['the tunnel carried by no agent', '/api/orphaned/app/me', 'orphan.example.com'],
+  ]) {
+    const res = await check(target, { fqdn });
+    assert.equal(res.statusCode, 403, label);
+    assert.equal(res.headers['x-lamalibre-relay-assertion'], undefined, label);
+  }
+  assert.deepEqual(askedAuthelia, [], 'refused before the session is looked at');
+  // The same route on the host its hosting agent carries is served.
+  assert.equal((await check('/api/fx/app/me')).statusCode, 200);
+});
+
 test('a target off the user surface, or that a server could read otherwise, is refused — not redirected', async () => {
   for (const target of [
     '/',
@@ -321,6 +389,10 @@ test('a target off the user surface, or that a server could read otherwise, is r
     '/api/fx/app/a\\b',
     '/api/fx/app/%E0%A4%A',
     '?/api/fx/app',
+    // An encoded `%`: a router decoding twice would read `..` or `/`.
+    '/api/fx/app/%252e%252e/admin/x',
+    '/api/fx/app/a%252Fb',
+    '/api/fx/app/%25',
   ]) {
     const res = await check(target);
     assert.equal(res.statusCode, 403, target);
@@ -409,15 +481,25 @@ test('tunnels.json: bindings are read from app tunnels only, valid routes only',
     'not a tunnel',
   ]);
   const byId = new Map(tunnels.map((t) => [t.id, t]));
-  assert.deepEqual(byId.get('piyasa-id').userSurface, { routes: ['market-indicators', 'fx'] });
+  assert.deepEqual(byId.get('piyasa-id').userSurface, {
+    routes: ['market-indicators', 'fx'],
+    served: ['market-indicators', 'fx'],
+  });
   assert.equal(byId.get('plain-id').userSurface, undefined);
-  assert.deepEqual(byId.get('mixed-id').userSurface, { routes: ['ok'] });
-  assert.deepEqual(byId.get('legacy-id').userSurface, { routes: ['legacy'] });
+  // Bound, but no agent carries the tunnel: nothing served.
+  assert.deepEqual(byId.get('mixed-id').userSurface, { routes: ['ok'], served: [] });
+  assert.deepEqual(byId.get('legacy-id').userSurface, { routes: ['legacy'], served: [] });
+  assert.deepEqual(byId.get('moved-id').userSurface, {
+    routes: ['fx', 'elsewhere', 'unhosted', 'revoked', 'twice'],
+    served: [],
+  });
   assert.equal(byId.get('plugin-id').userSurface, undefined);
   assert.deepEqual(byId.get('plugin-id').plugin, { agentLabel: 'vm1', port: 9393, route: 'herd' });
   assert.equal(byId.has('internal-id'), false);
+  assert.equal(byId.has('internal-fx'), false, 'internal tunnels have no host to authorize');
   assert.equal(byId.get('weird-id').accessMode, 'restricted');
   assert.equal(byId.get('junk-id').userSurface, undefined);
-  assert.equal(tunnels.length, STATE.length + 5);
+  const hosts = STATE.filter((t) => t.exposure !== 'internal');
+  assert.equal(tunnels.length, hosts.length + 5);
   assert.deepEqual(tunnelInfoFromState({ not: 'a list' }), []);
 });

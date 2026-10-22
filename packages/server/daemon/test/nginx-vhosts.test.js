@@ -322,6 +322,8 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
       'proxy_pass http://127.0.0.1:9294/authz/user-surface-unauthenticated;',
     ),
   );
+  // Gatekeeper's rate limit keys on the address nginx saw, never one a client sent.
+  assert.ok(unauthenticated.includes('proxy_set_header X-Forwarded-For $remote_addr;'));
 
   for (const [route, limit] of [
     ['market-indicators', 10],
@@ -353,8 +355,9 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
         'proxy_pass http://127.0.0.1:3100;',
         'proxy_http_version 1.1;',
         `client_max_body_size ${limit}m;`,
-        'proxy_read_timeout 86400s;',
-        'proxy_send_timeout 86400s;',
+        // No user-surface response lives longer than the panel lets it
+        'proxy_read_timeout 3600s;',
+        'proxy_send_timeout 3600s;',
         'error_page 401 = /internal/lamaste/user-surface-401;',
       ]) {
         assert.ok(body.includes(line), `${matcher}: ${line}`);
@@ -440,6 +443,44 @@ test('every location that proxies a browser to the panel clears a client’s rel
   }
   // panel (7) + auth (2) + agent-panel authz (1) + user surfaces (2 × 3)
   assert.equal(checked, 16);
+});
+
+test('no location proxying to a tunnel or agent backend passes Authelia’s session cookie on', async () => {
+  // Every location whose proxy_pass is not a Lamaste service on the relay
+  // (panel 3100, chisel 9090, Authelia 9091, Gatekeeper 9294) reaches a
+  // backend: an app on an agent, an agent's lamaste-agentd, or whatever
+  // holds the tunnel port. Each sets Cookie from the map that strips
+  // authelia_session — the browser's other cookies still reach the app.
+  const RELAY_SERVICES = new Set(['3100', '9090', '9091', '9294']);
+  const backends = [];
+  for (const name of await readdir(captured)) {
+    const text = await readFile(path.join(captured, name), 'utf8');
+    for (const { matcher, body } of locations(text)) {
+      const pass = /proxy_pass http:\/\/127\.0\.0\.1:(\d+)/.exec(body);
+      if (!pass || RELAY_SERVICES.has(pass[1])) continue;
+      backends.push(`${name} ${matcher}`);
+      assert.ok(
+        body.includes('proxy_set_header Cookie $lamaste_backend_cookie;'),
+        `${name} ${matcher}: Cookie from $lamaste_backend_cookie`,
+      );
+      assert.equal(
+        (body.match(/proxy_set_header Cookie /g) ?? []).length,
+        1,
+        `${name} ${matcher}: one Cookie header`,
+      );
+    }
+  }
+  // app1–app4, piyasa and kamera (location /), and the agent panel
+  assert.equal(backends.length, 7, backends.join('\n'));
+  // Gatekeeper alone is handed the browser's session, to check it.
+  for (const name of await readdir(captured)) {
+    const text = await readFile(path.join(captured, name), 'utf8');
+    for (const { matcher, body } of locations(text)) {
+      if (body.includes('proxy_set_header Cookie $http_cookie;')) {
+        assert.match(body, /proxy_pass http:\/\/127\.0\.0\.1:9294\/authz\//, `${name} ${matcher}`);
+      }
+    }
+  }
 });
 
 test('the panel vhost renders on the certificate it names, as the reconcile rewrites it', () => {

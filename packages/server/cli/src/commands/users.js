@@ -303,10 +303,14 @@ export function removedUserText(user, now) {
   let pending = null;
   if (erased) {
     const plugins = Array.isArray(user.pendingErasures) ? user.pendingErasures : [];
+    const inactive = Array.isArray(user.pendingErasuresInactive)
+      ? user.pendingErasuresInactive
+      : [];
+    const named = plugins.map((name) =>
+      inactive.includes(name) ? `${name} (not taking the feed; an agent keeps its data)` : name,
+    );
     pending =
-      plugins.length > 0
-        ? `erasure not yet acknowledged by ${terminalText(plugins.join(', '))}`
-        : null;
+      named.length > 0 ? `erasure not yet acknowledged by ${terminalText(named.join(', '))}` : null;
   } else if (user.principalClearedAt === null) {
     pending = 'Gatekeeper cleanup of the username pending (retried every minute)';
   }

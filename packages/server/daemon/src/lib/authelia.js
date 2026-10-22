@@ -31,6 +31,8 @@ import {
   base32Decode,
   generateTotpSecret,
   writeTotpToDatabase as writeTotpToDatabaseCore,
+  purgeAutheliaSecondFactors,
+  autheliaHoldsOpaqueIdentifier,
 } from '@lamalibre/lamaste/server';
 
 // bcryptjs hasher — signature matches the core lib's BcryptHashFn.
@@ -40,23 +42,52 @@ const restartRealAuthelia = () => reloadAutheliaCore(execa);
 const writeRealTotp = (username, base32Secret) =>
   writeTotpToDatabaseCore(username, base32Secret, execa);
 
+/** Authelia's per-user storage through the root helper — replaced in tests. */
+const realUserStorage = Object.freeze({
+  purgeSecondFactors: (username) => purgeAutheliaSecondFactors(username, execa),
+  holdsOidcIdentifier: (username) => autheliaHoldsOpaqueIdentifier(username, execa),
+});
+
 /** Authelia's users file — another one in tests. */
 let usersFile = AUTHELIA_USERS;
 /** Restart Authelia (it reads users.yml when it starts) — replaced in tests. */
 let restartAuthelia = restartRealAuthelia;
 /** Store a TOTP secret in Authelia's database — replaced in tests. */
 let totpWriter = writeRealTotp;
+/** Authelia's per-user storage — replaced in tests. */
+let userStorage = realUserStorage;
 
 /**
- * Point the users file, the Authelia restart and the TOTP writer elsewhere
- * (tests); `null` restores Authelia's.
+ * Point the users file, the Authelia restart, the TOTP writer and the
+ * per-user storage elsewhere (tests); `null` restores Authelia's.
  *
- * @param {{ usersFile?: string, restart?: () => Promise<unknown>, writeTotp?: (username: string, secret: string) => Promise<void> } | null} overrides
+ * @param {{ usersFile?: string, restart?: () => Promise<unknown>, writeTotp?: (username: string, secret: string) => Promise<void>, userStorage?: { purgeSecondFactors: (username: string) => Promise<void>, holdsOidcIdentifier: (username: string) => Promise<boolean> } } | null} overrides
  */
 export function setAutheliaForTests(overrides) {
   usersFile = overrides?.usersFile ?? AUTHELIA_USERS;
   restartAuthelia = overrides?.restart ?? restartRealAuthelia;
   totpWriter = overrides?.writeTotp ?? writeRealTotp;
+  userStorage = overrides?.userStorage ?? realUserStorage;
+}
+
+/**
+ * Delete `username`'s TOTP configuration and WebAuthn credentials from
+ * Authelia's storage (idempotent; throws when the helper fails).
+ *
+ * @param {string} username
+ */
+export function purgeAutheliaUserSecondFactors(username) {
+  return userStorage.purgeSecondFactors(username);
+}
+
+/**
+ * Whether Authelia's storage holds an OpenID Connect opaque identifier for
+ * `username` (throws when it cannot be told).
+ *
+ * @param {string} username
+ */
+export function autheliaHoldsOidcIdentity(username) {
+  return userStorage.holdsOidcIdentifier(username);
 }
 
 /** True once create-lamaste has installed Authelia. */

@@ -202,6 +202,33 @@ test('an identity diff: what waits for approval, what only changes the digest', 
     declaredAfter: true,
   });
 
+  // A removed role stays removed: how many grants approving it changes.
+  const removing = {
+    before,
+    after,
+    rolesAdded: [],
+    rolesRemoved: ['editor'],
+    attributesAdded: [],
+    attributesRemoved: [],
+    labelsChanged: [],
+  };
+  assert.deepEqual(
+    identityDiffRows({ ...removing, grantsAffected: { rewritten: 1, revoked: 4 } }).rows.at(-1),
+    {
+      label: 'role grants affected',
+      entries: ['4 revoked', '1 narrowed to the roles that stay'],
+      approval: true,
+    },
+  );
+  assert.deepEqual(identityDiffRows({ ...removing, grantsAffected: null }).rows.at(-1).entries, [
+    'not known — Gatekeeper could not be read',
+  ]);
+  assert.equal(
+    identityDiffRows(removing).rows.some((row) => row.label === 'role grants affected'),
+    false,
+    'nothing said when the view does not carry it',
+  );
+
   // Unchanged: nothing to show.
   const same = {
     before,

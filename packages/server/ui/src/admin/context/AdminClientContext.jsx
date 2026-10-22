@@ -32,7 +32,7 @@ const AdminClientContext = createContext(null);
  * @property {(username: string) => Promise<{ok, totpUri}>} resetTotp
  *
  * User directory:
- * @property {() => Promise<{directoryId, users: Array<{userId, username, displayName, email, status, removedReason, removedAt, erasedAt, principalClearedAt, version, createdAt, updatedAt, erasure, pendingErasures}>}>} getUserDirectory — removed and erased users too; `pendingErasures`: the plugins whose agent half has not acknowledged the erasure
+ * @property {() => Promise<{directoryId, users: Array<{userId, username, displayName, email, status, removedReason, removedAt, erasedAt, principalClearedAt, version, createdAt, updatedAt, erasure, pendingErasures, pendingErasuresInactive}>}>} getUserDirectory — removed and erased users too; `pendingErasures`: the plugins that have not acknowledged the erasure (their hosting's agent half, or an agent that retains their data); `pendingErasuresInactive`: those among them the feed does not reach now (uninstalled, or no longer declaring identity)
  * @property {(userId: string) => Promise<{ok, userId, erasedAt, invitationsPurged, accessLogPurged}>} eraseDirectoryUser — a removed user; refused with `code` user_not_removed, already_erased, gatekeeper_unavailable or user_not_found
  *
  * Invitations:
@@ -161,7 +161,7 @@ const AdminClientContext = createContext(null);
  * @property {(grantId: string) => Promise<{ok}>} revokeUserAccessGrant
  *
  * Tunnels:
- * @property {() => Promise<{tunnels: Array}>} getTunnels — a tunnel bound as a user surface carries `userSurface: {routes}` and `userSurfaceStatus: [{route, served, reason}]` (reason not_installed | no_identity | not_approved, null when served)
+ * @property {() => Promise<{tunnels: Array}>} getTunnels — a tunnel bound as a user surface carries `userSurface: {routes}` and `userSurfaceStatus: [{route, served, reason}]` (reason not_installed | no_identity | not_approved | not_hosting_agent, null when served)
  * @property {(data: {subdomain, port, description?, type?, pluginName?, agentLabel?, accessMode?, maxBodySizeMb?}) => Promise<{ok, tunnel}>} createTunnel
  * @property {(id: string, data: {enabled?, agentLabel?, accessMode?, maxBodySizeMb?}) => Promise<{ok, tunnel}>} updateTunnel
  * @property {(id: string) => Promise<{ok}>} deleteTunnel

@@ -311,6 +311,9 @@ All three also declare the same request headers inside their `location /` (`TUNN
         proxy_set_header X-SSL-Client-DN "";
         proxy_set_header X-SSL-Client-Serial "";
 
+        # Never Authelia's session cookie: the browser's other cookies only
+        proxy_set_header Cookie $lamaste_backend_cookie;
+
         # WebSocket support
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -318,6 +321,7 @@ All three also declare the same request headers inside their `location /` (`TUNN
 
 - **Per location, not per server.** nginx inherits `proxy_set_header` from the enclosing level only when a level declares none of its own. Every tunnel location declares some (`Upgrade`, `Remote-*`), so headers placed at server level never reached the app — it saw `Host: 127.0.0.1:<port>` and no client address. Declared in the location, `Host`, `X-Real-IP`, `X-Forwarded-For` and `X-Forwarded-Proto` now reach the app.
 - **Client-certificate headers are always cleared.** The panel treats `X-SSL-Client-*` from nginx as proof of an mTLS client certificate. A tunnel vhost never passes client-supplied values through, whatever listens on its port.
+- **Authelia's session cookie never reaches the backend.** `Cookie` is set from `$lamaste_backend_cookie`: the browser's cookies with every `authelia_session` pair removed — or no `Cookie` header at all when nothing else is left, or when the map could not strip it ([The backend cookie map](#the-backend-cookie-map)). The cookie is scoped to the base domain, so the browser sends it to every tunnel host; an application that received it could replay the visitor's session on every authenticated host and every plugin's user surface. The agent-panel vhost's `location /` sets it the same way.
 - **Identity headers.** Public vhosts also clear `Remote-User`, `Remote-Groups`, `Remote-Name` and `Remote-Email` — a public tunnel has no authenticated user, and an app might trust those headers from an authenticated vhost. Authenticated and restricted vhosts set them from the Gatekeeper's answer, which replaces anything the client sent.
 - **Relay assertions on plugin tunnels.** A plugin tunnel (a vhost with a `pathPrefix`) ends at the agent's lamaste-agentd, which takes the user only from a relay assertion — its port can be reached without nginx, so a `Remote-User` header proves nothing to it. Authenticated and restricted plugin vhosts forward the one Gatekeeper signs for the request (`auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;` and `proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;`); public plugin vhosts clear the header. App tunnel vhosts clear it too: Gatekeeper signs one only for a plugin tunnel or the panel, never one a client sent. An app tunnel's backend gets the user only as the unsigned `Remote-*` headers — trustworthy as far as nginx goes, but anything that reaches its loopback port can send them as well. An app tunnel bound as a plugin's user surface also carries the [user-surface locations](#user-surface-locations). See [Security Model](../01-concepts/security-model.md#5c-the-agent-daemon-lamaste-agentd-and-relay-assertions).
 
@@ -348,6 +352,8 @@ location / {
     proxy_pass http://127.0.0.1:<port>;
     proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;
     # X-SSL-Client-* are still sent for agents older than 4.3; lamaste-agentd 4.3 removes them unread
+    # Never Authelia's session cookie
+    proxy_set_header Cookie $lamaste_backend_cookie;
     # ...
 }
 ```
@@ -428,7 +434,8 @@ server {
         proxy_set_header Remote-Email "";
 
         # ... the tunnel proxy headers (section 5): Host, X-Real-IP,
-        #     X-Forwarded-For/Proto, X-SSL-Client-* cleared, WebSocket
+        #     X-Forwarded-For/Proto, X-SSL-Client-* cleared,
+        #     Cookie $lamaste_backend_cookie, WebSocket
 
         proxy_pass http://127.0.0.1:<port>;
         proxy_http_version 1.1;
@@ -492,7 +499,8 @@ server {
         proxy_set_header Remote-Email $email;
 
         # ... the tunnel proxy headers (section 5): Host, X-Real-IP,
-        #     X-Forwarded-For/Proto, X-SSL-Client-* cleared, WebSocket
+        #     X-Forwarded-For/Proto, X-SSL-Client-* cleared,
+        #     Cookie $lamaste_backend_cookie, WebSocket
 
         proxy_pass http://127.0.0.1:<port>;
         proxy_http_version 1.1;
@@ -509,7 +517,8 @@ Key characteristics:
 
 - `auth_request` targets the Gatekeeper at `127.0.0.1:9294/authz/tunnel/<fqdn>` instead of Authelia directly
 - The subrequest names the tunnel by the vhost's own hostname, written into the configuration — in its path, `X-Original-URL` and `Host` — never by the client's `Host` header (see [below](#authorization-subrequests-name-their-own-hostname))
-- The Gatekeeper validates the Authelia session cookie and returns 200 (authenticated) or 401 (unauthenticated)
+- The Gatekeeper validates the Authelia session cookie and returns 200 (authenticated) or 401 (unauthenticated) — the subrequest is the one place the browser's `Cookie` goes as it is (`$http_cookie`), and Gatekeeper sends Authelia the `authelia_session` pair alone; a request with two is a 401
+- The backend gets the browser's other cookies (`$lamaste_backend_cookie`), never the session
 - The upstream receives `Remote-*` headers only as set from the Gatekeeper's response; client-supplied values under those names are replaced
 - 401 redirects to the Authelia login portal
 
@@ -567,7 +576,8 @@ server {
         proxy_set_header Remote-Email $email;
 
         # ... the tunnel proxy headers (section 5): Host, X-Real-IP,
-        #     X-Forwarded-For/Proto, X-SSL-Client-* cleared, WebSocket
+        #     X-Forwarded-For/Proto, X-SSL-Client-* cleared,
+        #     Cookie $lamaste_backend_cookie, WebSocket
 
         proxy_pass http://127.0.0.1:<port>;
         proxy_http_version 1.1;
@@ -591,7 +601,7 @@ Key differences from the authenticated vhost:
 
 ### User-surface locations
 
-An `authenticated` or `restricted` app tunnel bound as the user surface of agent-hosted plugins ([Tunnels API](../04-api-reference/tunnels.md#user-surface-binding)) carries, for each plugin whose installed, approved version declares `identity`, two more locations — `= /api/<route>/app` and `/api/<route>/app/` — and two internal ones they share (`renderTunnelVhost` with `userSurface`, `userSurfaceLocations` in `nginx.js`). A bound route whose plugin does not declare identity yet has no locations: its requests take `location /` down the tunnel. A public vhost never carries them (the generator refuses).
+An `authenticated` or `restricted` app tunnel bound as the user surface of agent-hosted plugins ([Tunnels API](../04-api-reference/tunnels.md#user-surface-binding)) carries, for each plugin whose installed, approved version declares `identity` **and whose hosting agent is the agent carrying the tunnel**, two more locations — `= /api/<route>/app` and `/api/<route>/app/` — and two internal ones they share (`renderTunnelVhost` with `userSurface`, `userSurfaceLocations` in `nginx.js`). A bound route whose plugin does not declare identity yet, or is not hosted by the tunnel's agent (the tunnel moved or its agent revoked, the plugin hosted elsewhere or not at all), has no locations: its requests take `location /` down the tunnel. Moving the tunnel, revoking its agent and hosting or unhosting the plugin re-render the vhost. A public vhost never carries them (the generator refuses).
 
 ```nginx
     # The user surface of agent-hosted plugins on this host: Gatekeeper
@@ -623,6 +633,8 @@ An `authenticated` or `restricted` app tunnel bound as the user surface of agent
         proxy_set_header Content-Length "";
         proxy_set_header Cookie "";
         proxy_set_header Authorization "";
+        # Gatekeeper's rate limit counts the client nginx saw, never one a client named
+        proxy_set_header X-Forwarded-For $remote_addr;
 
         proxy_http_version 1.1;
     }
@@ -660,8 +672,9 @@ An `authenticated` or `restricted` app tunnel bound as the user surface of agent
         proxy_http_version 1.1;
 
         client_max_body_size 10m;      # the plugin's internal tunnel's maxBodySizeMb
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
+        # No response lives longer (the panel ends one then)
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
 
         # No session: a JSON 401, never a redirect
         error_page 401 = /internal/lamaste/user-surface-401;
@@ -670,7 +683,8 @@ An `authenticated` or `restricted` app tunnel bound as the user surface of agent
 
 - **Gatekeeper attests, the panel identifies.** The subrequest names the tunnel as the tunnel's own does; Gatekeeper answers with a single-use relay assertion for the panel (never cached) and no `Remote-*` headers. The location passes that assertion to the panel and **nothing else of the browser's credentials**: the panel serves other contexts on the same listener, so everything any of them trusts — the client-certificate headers, `Remote-*`, a desktop session's `Authorization`, an administrator's 2FA `Cookie`, `X-Forwarded-Host` — is cleared. `X-Forwarded-For` is the client's address alone: the panel trusts one loopback hop, and the user surface's rate limit keys on it.
 - **`proxy_pass` names no URI**, so the panel receives `$request_uri` unchanged — the raw target the assertion is bound to and the panel compares byte for byte. A normalized path would differ from what Gatekeeper signed.
-- **The body limit is the plugin's** (its internal tunnel's `maxBodySizeMb`), not the tunnel's; long timeouts carry server-sent events, which the panel streams unbuffered.
+- **The body limit is the plugin's** (its internal tunnel's `maxBodySizeMb`), not the tunnel's. The timeouts are one hour (`USER_SURFACE_MAX_RESPONSE_SECONDS`), the longest a user-surface response lives: long enough for server-sent events, which the panel streams unbuffered, and no longer than the panel lets any response stay open — it ends one after an hour, and at once when its user loses access.
+- **The panel's answer steers nothing.** It never carries `X-Accel-*` from an agent half (nginx obeys `X-Accel-Redirect` from 3100); the panel sets `X-Accel-Buffering: no` itself on an event stream. Every answer carries `Cross-Origin-Resource-Policy: same-origin`, `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`, and no `Access-Control-*`.
 - **`= /api/<route>/app`** and **`/api/<route>/app/`** are both needed: a prefix location `/api/<route>/app` would also match `/api/<route>/apps`, which belongs to the tunnel.
 
 **A client's relay assertion is cleared wherever a browser reaches the panel.** The panel accepts `X-Lamalibre-Relay-Assertion` only on the user surface, and only from Gatekeeper; every location of the domain panel vhost, the auth vhost's panel locations, the agent-panel vhost's subrequest to the panel and the IP panel vhost set it to `""`, and so does every tunnel vhost that does not set Gatekeeper's (app tunnels, public vhosts). The panel's startup reconcile rewrites the domain panel and auth vhosts and every tunnel vhost; the IP panel vhost, which the installer writes and the panel cannot, is refreshed by `create-lamaste`'s redeploy (`Refreshing the IP panel vhost`).
@@ -684,6 +698,37 @@ nginx selects the vhost from the request line when a request is in absolute form
 Gatekeeper authorizes the tunnel named in the path, and refuses a check whose `X-Original-URL` or `Host` names another hostname, or has no `Host` (401). It refuses `/authz/check` — what vhosts written before 4.3 call, with the client's `Host` in both headers — outright (403, logged as `vhost_predates_host_binding`): a tunnel vhost the panel has not rewritten is closed, not open to the users of other tunnels. The panel rewrites them at startup (see [Rewritten at Startup](#rewritten-at-startup)).
 
 Authelia evaluates the raw `$request_uri`, while nginx serves the normalized `$uri` (`/a/../b` is `/b`, `%2e` is `.`). Lamaste writes no path (`resources`) rules into Authelia's `access_control`, only hostname rules; a path rule added by hand would see a different path than nginx serves.
+
+## The backend cookie map
+
+Authelia's session cookie (`authelia_session`, the name core configures in `server/authelia.ts` and exports as `AUTHELIA_SESSION_COOKIE`) is scoped to the base domain, so a browser sends it to every host under it. No tunnel or agent backend may receive it: every location that proxies to one sends
+
+```nginx
+        proxy_set_header Cookie $lamaste_backend_cookie;
+```
+
+and the variable comes from an http-level map that create-lamaste installs as `/etc/nginx/conf.d/lamalibre-lamaste-backend-cookie.conf` (root-owned, 0644; nginx's own `nginx.conf` includes `conf.d/*.conf` in `http {}`). Its text is core's `renderBackendCookieMap()`:
+
+```nginx
+map $http_cookie $lamaste_cookie_strip_1 {
+    default $http_cookie;
+    "~^[ \t]*authelia_session[ \t]*=[^;]*(?:;[ \t]*)?(.*)$" $1;      # the first pair
+    "~^(.*?)[ \t]*;[ \t]*authelia_session[ \t]*=[^;]*(.*)$" $1$2;    # a later pair
+}
+# ... $lamaste_cookie_strip_2 to _4 from the one before, alike
+
+map $lamaste_cookie_strip_4 $lamaste_backend_cookie {
+    default $lamaste_cookie_strip_4;
+    "~(?:^|;)[ \t]*authelia_session[ \t]*=" "";                       # one left: fail closed
+}
+```
+
+- **One pair per round, four rounds.** A pair is the session cookie when its name — spaces and tabs around it trimmed — is exactly `authelia_session` (case-sensitive, as cookie names are and as Authelia reads them); `authelia_session_x`, `xauthelia_session` and a value containing `authelia_session=` are other cookies and stay. A browser holds one cookie per name, domain and path, so more than four is a request no browser of Authelia's makes — and a fifth pair empties the variable: the backend gets **no `Cookie` header at all**, never the session. nginx sends no header whose value is empty.
+- **The rest of the cookies stay**, in order — an application keeps its own session and preferences.
+- **Several `Cookie` lines** (HTTP/1.1, or HTTP/2's split cookies) are one `$http_cookie` to nginx, joined with `; `, and `proxy_set_header Cookie` replaces all of them.
+- **Gatekeeper reads the same grammar** (core `autheliaSessionCookies`): it is the only party handed the browser's `Cookie` as it is (`proxy_set_header Cookie $http_cookie;` in the authorization subrequests), sends Authelia the one pair alone, and refuses a request with more than one.
+- **Order of installation.** A vhost that names the variable fails `nginx -t` without the map and is rolled back, so the map is installed before the panel writes its first tunnel vhost — on a fresh install with nginx's own configuration, on a redeploy as its first step, before the running panel is stopped (a relay whose nginx refuses the map keeps the version it runs). The panel's startup reconcile then rewrites every tunnel and agent-panel vhost to use it.
+- **Tested** by evaluating the rendered map's expressions as PCRE does (they use only constructs PCRE and JavaScript read alike) against cookie strings with the session first, in the middle, last, repeated, beside similar names and with any spacing, and — where an nginx binary is installed — by running nginx with the map and a backend that reports the `Cookie` it received (`packages/provisioners/server/test/backend-cookie.test.js`).
 
 ## nginx Cache Zone (`lamaste_authz`)
 
@@ -875,6 +920,8 @@ The 24-hour timeout (`proxy_read_timeout 86400s`) is set on tunnel and app vhost
 ```
 /etc/nginx/
 ├── nginx.conf                          ← Default nginx config (not modified by Lamaste)
+├── conf.d/
+│   └── lamalibre-lamaste-backend-cookie.conf  ← http-level map: $lamaste_backend_cookie (installer, redeploy)
 ├── sites-available/
 │   ├── lamalibre-lamaste-http-redirect         ← :80 catch-all → HTTPS (created by installer)
 │   ├── lamalibre-lamaste-panel-ip              ← IP:9292 panel access (created by installer)
@@ -906,6 +953,8 @@ All Lamaste-managed files are prefixed with `lamalibre-lamaste-` to distinguish 
 | --------------------------------- | ---------------------- | ----------------------- |
 | `lamalibre-lamaste-panel-ip`      | Installation           | Never (fallback access) |
 | `lamalibre-lamaste-http-redirect` | Installation, redeploy | Uninstall               |
+
+Beside them the installer writes the http-level map `conf.d/lamalibre-lamaste-backend-cookie.conf` — on a fresh install with nginx's configuration, on every redeploy as the first step ([The backend cookie map](#the-backend-cookie-map)); `lamaste-server uninstall` removes it after the sites that use it.
 
 `lamalibre-lamaste-http-redirect` is the port-80 catch-all:
 
@@ -950,16 +999,19 @@ A tunnel vhost left as it was fails closed: Gatekeeper refuses its `/authz/check
 
 ## Key Files
 
-| File                                                     | Role                                                                                              |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `packages/provisioners/server/src/tasks/nginx.js`        | Installer: self-signed cert, mTLS snippet, IP vhost, port-80 redirect                             |
-| `packages/provisioners/server/src/lib/http-redirect.js`  | Installs/refreshes the port-80 redirect site (installer and redeploy)                             |
-| `packages/server/daemon/src/lib/nginx.js`                | Runtime: vhost generation, write-with-rollback, enable/disable/reload                             |
-| `packages/provisioners/server/scripts/lamaste-priv`      | Root helper (`/usr/local/sbin/lamaste-priv`): site names, vhost allow-list, install/enable/remove |
-| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`        | Shared mTLS snippet                                                                               |
-| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition                                                            |
-| `/etc/nginx/sites-available/lamalibre-lamaste-*`         | Vhost configuration files                                                                         |
-| `/etc/nginx/sites-enabled/lamalibre-lamaste-*`           | Symlinks to enabled vhosts                                                                        |
+| File                                                      | Role                                                                                              |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `packages/provisioners/server/src/tasks/nginx.js`         | Installer: self-signed cert, mTLS snippet, IP vhost, port-80 redirect                             |
+| `packages/provisioners/server/src/lib/http-redirect.js`   | Installs/refreshes the port-80 redirect site (installer and redeploy)                             |
+| `packages/provisioners/server/src/lib/backend-cookie.js`  | Installs/refreshes the backend cookie map (installer and redeploy), `nginx -t` with rollback      |
+| `packages/core/lib/src/authelia-session.ts`               | The session cookie's name, the map's text (`renderBackendCookieMap`), Gatekeeper's reader         |
+| `/etc/nginx/conf.d/lamalibre-lamaste-backend-cookie.conf` | Defines `$lamaste_backend_cookie`: the browser's cookies without `authelia_session`               |
+| `packages/server/daemon/src/lib/nginx.js`                 | Runtime: vhost generation, write-with-rollback, enable/disable/reload                             |
+| `packages/provisioners/server/scripts/lamaste-priv`       | Root helper (`/usr/local/sbin/lamaste-priv`): site names, vhost allow-list, install/enable/remove |
+| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`         | Shared mTLS snippet                                                                               |
+| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf`  | Gatekeeper proxy_cache zone definition                                                            |
+| `/etc/nginx/sites-available/lamalibre-lamaste-*`          | Vhost configuration files                                                                         |
+| `/etc/nginx/sites-enabled/lamalibre-lamaste-*`            | Symlinks to enabled vhosts                                                                        |
 
 ## Design Decisions
 
@@ -982,6 +1034,8 @@ nginx emits error 495 when no client certificate is provided and 496 when the ce
 ### Why 24-hour WebSocket timeouts?
 
 Chisel tunnel connections and some app WebSocket connections are long-lived. nginx's default `proxy_read_timeout` of 60 seconds would close these connections, causing tunnel drops. The 24-hour timeout is effectively "never timeout" for practical purposes, while still allowing nginx to reclaim resources from genuinely dead connections.
+
+A plugin's user-surface locations are the exception: one hour, the longest the panel lets a user-surface response live. A response that outlived its user's access — an event stream left open after the user was disabled — is what the bound is there to stop; the panel also ends such a response within seconds of the change.
 
 ### Why a root helper for nginx operations?
 

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { generateServiceUnit, generateSudoersContent } from '../lib/service-config.js';
 import { lookupId } from '../lib/accounts.js';
+import { ensureBackendCookieMap } from '../lib/backend-cookie.js';
 import { ensureHttpRedirect } from '../lib/http-redirect.js';
 import { refreshIpPanelVhost } from '../lib/ip-panel-vhost.js';
 import { generateCertHelpPage } from '../lib/cert-help-page.js';
@@ -71,7 +72,10 @@ async function getLatestNpmVersion() {
  * changed. Does not touch OS hardening or mTLS certs. Of the panel's
  * vhosts it refreshes only the IP-based one, which it installed and the
  * panel cannot write (its text; the panel's 2FA owns its link) — the panel
- * reconciles the others itself when it starts.
+ * reconciles the others itself when it starts. Before anything else
+ * changes, it installs the nginx map those vhosts take the backends'
+ * `Cookie` from (Authelia's session cookie stripped): a relay whose nginx
+ * refuses it stops here, with the running panel untouched.
  *
  * Runs as root and may be started by a compromised panel, so it never
  * writes through a path the lamaste user controls (see lib/ownership.js).
@@ -97,6 +101,21 @@ export function redeployTasks(ctx, task) {
         ctx.installedVersion = installed;
         ctx.latestVersion = latest;
         subtask.output = `Installed: ${installed || 'unknown'} → Latest: ${latest || 'unknown'}`;
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: "Keeping Authelia's session cookie from tunnel backends",
+      task: async (_ctx, subtask) => {
+        // First, while the running panel is untouched: the panel this
+        // redeploy starts renders every tunnel and agent-panel vhost with
+        // `proxy_set_header Cookie $lamaste_backend_cookie;`, which nginx
+        // refuses without the map. Fatal — a relay whose nginx rejects it
+        // keeps the version it runs.
+        const { changed } = await ensureBackendCookieMap();
+        subtask.output = changed
+          ? 'nginx map installed: backends never receive the authelia_session cookie'
+          : 'nginx map already in place';
       },
       rendererOptions: { persistentOutput: true },
     },

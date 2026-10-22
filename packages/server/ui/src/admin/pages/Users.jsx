@@ -831,7 +831,15 @@ function DeletedUsersSection() {
                             <span className="mt-0.5 flex items-start gap-1 text-amber-400">
                               <Eraser size={11} className="mt-0.5 shrink-0" />
                               <span>
-                                waiting for {u.pendingErasures.join(', ')} to acknowledge it
+                                waiting for{' '}
+                                {u.pendingErasures
+                                  .map((name) =>
+                                    (u.pendingErasuresInactive ?? []).includes(name)
+                                      ? `${name} (not taking the feed — an agent keeps its data)`
+                                      : name,
+                                  )
+                                  .join(', ')}{' '}
+                                to acknowledge it
                               </span>
                             </span>
                           ) : (
