@@ -118,7 +118,7 @@ log_pass "Fixtures built: ${SERVER_PACKAGE}, ${DEPS_SERVER_PACKAGE} and a tamper
 ship_agent_facts_probe
 start_stand_in_feria fixtures/main/server fixtures/main/agent fixtures/deps/server fixtures/deps/agent
 ensure_app_host_helper
-open_push_install "${POLICY_ID}" "[\"${AGENT_PACKAGE}\",\"${DEPS_AGENT_PACKAGE}\"]" '["install","uninstall"]' > /dev/null
+open_push_install "${POLICY_ID}" "[\"${AGENT_PACKAGE}\",\"${DEPS_AGENT_PACKAGE}\"]" '["install","uninstall"]'
 
 INSTALL=$(install_approved "${PLUGIN}" "${SERVER_PACKAGE}@1.0.0")
 assert_json_field "$INSTALL" '.plugin.version' '1.0.0' "Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half" || true

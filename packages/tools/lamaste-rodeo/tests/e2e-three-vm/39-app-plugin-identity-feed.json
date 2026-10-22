@@ -1,0 +1,2475 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 39,
+    "name": "App plugin identity feed",
+    "suite": "e2e-three-vm",
+    "description": "39 — App plugin identity feed (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {
+    "TEST_USER": {
+      "description": "TEST_USER"
+    }
+  },
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-idfeed"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-idfeed-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-idfeed-agent"
+    },
+    "SERVICE_USER": {
+      "value": "lamaste-app-e2e-idfeed"
+    },
+    "UNIT": {
+      "value": "lamalibre-app-e2e-idfeed.service"
+    },
+    "SOCKET": {
+      "value": "lamalibre-app-e2e-idfeed.socket"
+    },
+    "PLAIN": {
+      "value": "e2e-idplain"
+    },
+    "PLAIN_SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-idplain-server"
+    },
+    "PLAIN_AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-idplain-agent"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-39"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-39-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN} ${PLAIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN} ${PLAIN}",
+      "expression": true
+    },
+    "TEST_USER": {
+      "value": "${TEST_USER:-testuser}",
+      "expression": true
+    },
+    "SECOND_USER": {
+      "value": "e2e39-bob"
+    },
+    "SECOND_NAME": {
+      "value": "E2E Bob"
+    },
+    "SECOND_EMAIL": {
+      "value": "e2e39-bob@example.test"
+    },
+    "GROUP": {
+      "value": "e2e39-editors"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE gatekeeper/groups/${GROUP}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "gatekeeper/groups/${GROUP}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE users/${SECOND_USER}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${SECOND_USER}?erase=true"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "POST identity/directory/${SECOND_ID}/erase",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "identity/directory/${SECOND_ID}/erase",
+        "body": {}
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Set TEST_USER_RECORD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "listed_user \"${TEST_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "TEST_USER_RECORD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "Set TEST_USER_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$TEST_USER_RECORD\" '.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TEST_USER_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "Set TEST_USER_NAME",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$TEST_USER_RECORD\" '.displayname // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TEST_USER_NAME",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Set TEST_USER_EMAIL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$TEST_USER_RECORD\" '.email // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TEST_USER_EMAIL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "${TEST_USER} has a directory id (${TEST_USER_ID})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${TEST_USER_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "${TEST_USER} has a directory id (${TEST_USER_ID})"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "GET /api/identity/directory",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/directory"
+          },
+          "capture": [
+            {
+              "variable": "DIRECTORY_ID",
+              "from": {
+                "kind": "jq",
+                "expression": ".directoryId // empty"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "The panel's directory has an id (${DIRECTORY_ID})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${DIRECTORY_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The panel's directory has an id (${DIRECTORY_ID})"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "DELETE /api/gatekeeper/groups/${GROUP}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "gatekeeper/groups/${GROUP}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-14",
+          "label": "DELETE /api/users/${SECOND_USER}?erase=true",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "users/${SECOND_USER}?erase=true"
+          },
+          "continueOnError": true
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nlog_info \"Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}\"\nif agent_has_node_sqlite; then\n  log_pass \"The agent VM's Node.js has node:sqlite, which the agent half's projection needs\"\nelse\n  log_fail \"The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run\"\n  end_test\n  exit $?\nfi\nTEST_USER_RECORD=$(listed_user \"${TEST_USER}\")\nTEST_USER_ID=$(json_get \"$TEST_USER_RECORD\" '.userId // empty')\nTEST_USER_NAME=$(json_get \"$TEST_USER_RECORD\" '.displayname // empty')\nTEST_USER_EMAIL=$(json_get \"$TEST_USER_RECORD\" '.email // empty')\nassert_eq \"$(is_uuid \"${TEST_USER_ID}\")\" \"true\" \"${TEST_USER} has a directory id (${TEST_USER_ID})\" || true\nDIRECTORY_ID=$(host_api_get \"identity/directory\" | jq -r '.directoryId // empty' 2>/dev/null || echo \"\")\nassert_eq \"$(is_uuid \"${DIRECTORY_ID}\")\" \"true\" \"The panel's directory has an id (${DIRECTORY_ID})\" || true\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\ndrop_plugin_grants \"${PLUGIN}\"\ndrop_plugin_grants \"${PLAIN}\"\nhost_api_delete \"gatekeeper/groups/${GROUP}\" > /dev/null 2>&1 || true\nhost_api_delete \"users/${SECOND_USER}?erase=true\" > /dev/null 2>&1 || true\n\n# ===========================================================================\n# 1. Fixtures; install and host both plugins\n# ==========================================================================="
+    },
+    {
+      "id": "fixtures-the-stand-in-feria-both-plugins-installed-and-hosted",
+      "label": "Fixtures, the stand-in Feria; both plugins installed and hosted",
+      "steps": [
+        {
+          "id": "step-15",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-39-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "FIXTURES",
+            "value": "built"
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Fixtures built: ${SERVER_PACKAGE} (identity: viewer, editor; displayName, email) and ${PLAIN_SERVER_PACKAGE} (no identity)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixtures built: ${SERVER_PACKAGE} (identity: viewer, editor; displayName, email) and ${PLAIN_SERVER_PACKAGE} (no identity)"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Set INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Installed ${SERVER_PACKAGE}@1.0.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed ${SERVER_PACKAGE}@1.0.0"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "…its identity block: roles editor and viewer, attributes displayName and email",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": "\"\\(.hooks.identity.declared) \\(.hooks.identity.block.roles | map(.id) | join(\",\")) \\(.hooks.identity.block.attributes | join(\",\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true editor,viewer displayName,email"
+              },
+              "message": "…its identity block: roles editor and viewer, attributes displayName and email"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "…approved with its agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_get \"plugins/${PLUGIN}/hooks\")"
+              },
+              "path": "\"\\(.hooks.approval.state) \\(.hooks.identity.approved)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "approved true"
+              },
+              "message": "…approved with its agent half"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "install_approved \"${PLAIN}\" \"${PLAIN_SERVER_PACKAGE}@1.0.0\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Installed ${PLAIN_SERVER_PACKAGE}@1.0.0, no identity",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": "\"\\(.plugin.version) \\(.hooks.identity.declared)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0 false"
+              },
+              "message": "Installed ${PLAIN_SERVER_PACKAGE}@1.0.0, no identity"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Set OP_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "start_hosting \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "OP_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Set PLAIN_OP_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "start_hosting \"${PLAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "PLAIN_OP_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "${PLUGIN} hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "${PLUGIN} hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PLAIN_OP_ID"
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "${PLAIN} hosted on ${HOST_AGENT_LABEL} ($(json_get \"$PLAIN_OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PLAIN_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "${PLAIN} hosted on ${HOST_AGENT_LABEL} ($(json_get \"$PLAIN_OP\" '.error // \"\"'))"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PLAIN_OP_ID"
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "The relay's health of ${p} is up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The relay's health of ${p} is up"
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Health of ${p}: $(hosting_field \"$p\" '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health of ${p}: $(hosting_field \"$p\" '.hosting.health')"
+          }
+        }
+      ],
+      "bash": "log_section \"Fixtures, the stand-in Feria; both plugins installed and hosted\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-39-app-plugin-XXXXXXXX)\nBUILD=\"r$(date +%s)-$$\"\nFIXTURES=\"built\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/feed\" \"${PLUGIN}\" 1.0.0 main \"${BUILD}\" '[]' none wide || FIXTURES=\"failed\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/plain\" \"${PLAIN}\" 1.0.0 main \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nif [ \"$FIXTURES\" != \"built\" ]; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixtures built: ${SERVER_PACKAGE} (identity: viewer, editor; displayName, email) and ${PLAIN_SERVER_PACKAGE} (no identity)\"\nship_agent_facts_probe\nship_identity_tamper\nstart_stand_in_feria fixtures/feed/server fixtures/feed/agent fixtures/plain/server fixtures/plain/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\",\\\"${PLAIN_AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\n\nINSTALL=$(install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0\" || true\nassert_json_field \"$INSTALL\" '\"\\(.hooks.identity.declared) \\(.hooks.identity.block.roles | map(.id) | join(\",\")) \\(.hooks.identity.block.attributes | join(\",\"))\"' 'true editor,viewer displayName,email' \"…its identity block: roles editor and viewer, attributes displayName and email\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}/hooks\")\" '\"\\(.hooks.approval.state) \\(.hooks.identity.approved)\"' 'approved true' \"…approved with its agent half\" || true\nINSTALL=$(install_approved \"${PLAIN}\" \"${PLAIN_SERVER_PACKAGE}@1.0.0\")\nassert_json_field \"$INSTALL\" '\"\\(.plugin.version) \\(.hooks.identity.declared)\"' '1.0.0 false' \"Installed ${PLAIN_SERVER_PACKAGE}@1.0.0, no identity\" || true\n\n# Both hostings at once: the agent's sync runs their jobs one after the other.\nOP_ID=$(start_hosting \"${PLUGIN}\")\nPLAIN_OP_ID=$(start_hosting \"${PLAIN}\")\nOP='{}'\nPLAIN_OP='{}'\nif [ -n \"$OP_ID\" ]; then OP=$(wait_operation \"${PLUGIN}\" \"${OP_ID}\" 360 nudge); fi\nif [ -n \"$PLAIN_OP_ID\" ]; then PLAIN_OP=$(wait_operation \"${PLAIN}\" \"${PLAIN_OP_ID}\" 240 nudge); fi\nassert_json_field \"$OP\" '.status' 'succeeded' \"${PLUGIN} hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_json_field \"$PLAIN_OP\" '.status' 'succeeded' \"${PLAIN} hosted on ${HOST_AGENT_LABEL} ($(json_get \"$PLAIN_OP\" '.error // \"\"'))\" || true\nfor p in \"${PLUGIN}\" \"${PLAIN}\"; do\n  if wait_for 60 health_up \"$p\"; then\n    log_pass \"The relay's health of ${p} is up\"\n  else\n    log_fail \"Health of ${p}: $(hosting_field \"$p\" '.hosting.health')\"\n  fi\ndone\n\n# ===========================================================================\n# 2. Ready: protocol 1, the directory followed\n# ==========================================================================="
+    },
+    {
+      "id": "ready-its-agent-half-answered-protocol-1-and-follows-the-directory",
+      "label": "Ready: its agent half answered protocol 1 and follows the directory",
+      "steps": [
+        {
+          "id": "step-43",
+          "label": "${PLUGIN} is ready for its users",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${PLUGIN} is ready for its users"
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Not ready: $(identity_view \"${PLUGIN}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not ready: $(identity_view \"${PLUGIN}\")"
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Set VIEW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "identity_view \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "VIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "1.0.0 answered protocol 1; its agent half follows directory ${DIRECTORY_ID}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": "\"\\(.readiness.readyVersion) \\(.sync.halfDirectoryId)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "1.0.0 ${DIRECTORY_ID}"
+              },
+              "message": "1.0.0 answered protocol 1; its agent half follows directory ${DIRECTORY_ID}"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "The panel synced it at $(json_get \"$VIEW\" '.sync.lastSyncAt')",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": ".sync.lastSyncAt",
+              "message": "The panel synced it at $(json_get \"$VIEW\" '.sync.lastSyncAt')"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Set PROJ",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "projection \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "PROJ",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "GET /api/${PLUGIN}/e2e/projection: the agent half's projection follows the same directory",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROJ"
+              },
+              "path": ".state.directoryId",
+              "expected": {
+                "kind": "var",
+                "name": "DIRECTORY_ID"
+              },
+              "message": "GET /api/${PLUGIN}/e2e/projection: the agent half's projection follows the same directory"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "…and holds no member: no one is entitled yet",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROJ"
+              },
+              "path": "[.users[] | select(.status != \"removed\")] | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…and holds no member: no one is entitled yet"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Ready: its agent half answered protocol 1 and follows the directory\"\n\nif wait_for 120 identity_ready \"${PLUGIN}\"; then\n  log_pass \"${PLUGIN} is ready for its users\"\nelse\n  log_fail \"Not ready: $(identity_view \"${PLUGIN}\")\"\nfi\nVIEW=$(identity_view \"${PLUGIN}\")\nassert_json_field \"$VIEW\" '\"\\(.readiness.readyVersion) \\(.sync.halfDirectoryId)\"' \"1.0.0 ${DIRECTORY_ID}\" \"1.0.0 answered protocol 1; its agent half follows directory ${DIRECTORY_ID}\" || true\nassert_json_field_not_empty \"$VIEW\" '.sync.lastSyncAt' \"The panel synced it at $(json_get \"$VIEW\" '.sync.lastSyncAt')\" || true\nPROJ=$(projection \"${PLUGIN}\")\nassert_json_field \"$PROJ\" '.state.directoryId' \"${DIRECTORY_ID}\" \"GET /api/${PLUGIN}/e2e/projection: the agent half's projection follows the same directory\" || true\nassert_json_field \"$PROJ\" '[.users[] | select(.status != \"removed\")] | length' '0' \"…and holds no member: no one is entitled yet\" || true\n\n# ===========================================================================\n# 3. Entitled: a user and a group's member\n# ==========================================================================="
+    },
+    {
+      "id": "entitled-test-user-as-viewer-a-group-s-member-as-editor",
+      "label": "Entitled: ${TEST_USER} as viewer, a group's member as editor",
+      "steps": [
+        {
+          "id": "step-51",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${SECOND_USER}\\\",\\\"displayname\\\":\\\"${SECOND_NAME}\\\",\\\"email\\\":\\\"${SECOND_EMAIL}\\\",\\\"password\\\":\\\"E2e-$(openssl rand -hex 12)\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "User ${SECOND_USER} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${SECOND_USER} created"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Set SECOND_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "SECOND_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "…with a directory id (${SECOND_ID})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${SECOND_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…with a directory id (${SECOND_ID})"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Group ${GROUP} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_post \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${GROUP}\\\",\\\"description\\\":\\\"E2E 39 editors\\\"}\")"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Group ${GROUP} created"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "…with ${SECOND_USER} in it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_post \"gatekeeper/groups/${GROUP}/members\" \"{\\\"usernames\\\":[\\\"${SECOND_USER}\\\"]}\")"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…with ${SECOND_USER} in it"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${TEST_USER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "${TEST_USER} entitled as viewer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${TEST_USER} entitled as viewer"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "…named by the directory's id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".entitlement.userId",
+              "expected": {
+                "kind": "var",
+                "name": "TEST_USER_ID"
+              },
+              "message": "…named by the directory's id"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${GROUP}\\\",\\\"roles\\\":[\\\"editor\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "${GROUP} entitled as editor",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${GROUP} entitled as editor"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "The agent half's projection holds both, pushed through the tunnel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half's projection holds both, pushed through the tunnel"
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "The projection: $(projection \"${PLUGIN}\" | jq -c '.users' 2>/dev/null)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The projection: $(projection \"${PLUGIN}\" | jq -c '.users' 2>/dev/null)"
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "${TEST_USER}: viewer, active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.username) \\(.roles | join(\",\")) \\(.status)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${TEST_USER} viewer active"
+              },
+              "message": "${TEST_USER}: viewer, active"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "…with the directory's display name and address — both declared",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.displayName)|\\(.email)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${TEST_USER_NAME}|${TEST_USER_EMAIL}"
+              },
+              "message": "…with the directory's display name and address — both declared"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "projected_user \"${PLUGIN}\" \"${SECOND_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "${SECOND_USER}: editor through the group, active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.username) \\(.roles | join(\",\")) \\(.status)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${SECOND_USER} editor active"
+              },
+              "message": "${SECOND_USER}: editor through the group, active"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "…${SECOND_NAME}, ${SECOND_EMAIL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.displayName)|\\(.email)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${SECOND_NAME}|${SECOND_EMAIL}"
+              },
+              "message": "…${SECOND_NAME}, ${SECOND_EMAIL}"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "The panel sees its agent half at the head of the audience",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The panel sees its agent half at the head of the audience"
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "Behind: $(identity_view \"${PLUGIN}\" | jq -c '.sync')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Behind: $(identity_view \"${PLUGIN}\" | jq -c '.sync')"
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "The audience: two active members",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(identity_view \"${PLUGIN}\")"
+              },
+              "path": "\"\\(.audience.active) \\(.audience.disabled) \\(.audience.removed) \\(.audience.erased)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "2 0 0 0"
+              },
+              "message": "The audience: two active members"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Entitled: ${TEST_USER} as viewer, a group's member as editor\"\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${SECOND_USER}\\\",\\\"displayname\\\":\\\"${SECOND_NAME}\\\",\\\"email\\\":\\\"${SECOND_EMAIL}\\\",\\\"password\\\":\\\"E2e-$(openssl rand -hex 12)\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${SECOND_USER} created\" || true\nSECOND_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nassert_eq \"$(is_uuid \"${SECOND_ID}\")\" \"true\" \"…with a directory id (${SECOND_ID})\" || true\nassert_json_field \"$(host_api_post \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${GROUP}\\\",\\\"description\\\":\\\"E2E 39 editors\\\"}\")\" '.ok' 'true' \"Group ${GROUP} created\" || true\nassert_json_field \"$(host_api_post \"gatekeeper/groups/${GROUP}/members\" \"{\\\"usernames\\\":[\\\"${SECOND_USER}\\\"]}\")\" '.ok' 'true' \"…with ${SECOND_USER} in it\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${TEST_USER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${TEST_USER} entitled as viewer\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.entitlement.userId' \"${TEST_USER_ID}\" \"…named by the directory's id\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${GROUP}\\\",\\\"roles\\\":[\\\"editor\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${GROUP} entitled as editor\" || true\n\nif wait_for 60 projection_has \"${PLUGIN}\" \"([.users[] | select(.userId == \\\"${TEST_USER_ID}\\\" and .status == \\\"active\\\")] | length == 1) and ([.users[] | select(.userId == \\\"${SECOND_ID}\\\" and .status == \\\"active\\\")] | length == 1)\"; then\n  log_pass \"The agent half's projection holds both, pushed through the tunnel\"\nelse\n  log_fail \"The projection: $(projection \"${PLUGIN}\" | jq -c '.users' 2>/dev/null)\"\nfi\nROW=$(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.roles | join(\",\")) \\(.status)\"' \"${TEST_USER} viewer active\" \"${TEST_USER}: viewer, active\" || true\nassert_json_field \"$ROW\" '\"\\(.displayName)|\\(.email)\"' \"${TEST_USER_NAME}|${TEST_USER_EMAIL}\" \"…with the directory's display name and address — both declared\" || true\nROW=$(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.roles | join(\",\")) \\(.status)\"' \"${SECOND_USER} editor active\" \"${SECOND_USER}: editor through the group, active\" || true\nassert_json_field \"$ROW\" '\"\\(.displayName)|\\(.email)\"' \"${SECOND_NAME}|${SECOND_EMAIL}\" \"…${SECOND_NAME}, ${SECOND_EMAIL}\" || true\nif wait_for 30 identity_caught_up \"${PLUGIN}\"; then\n  log_pass \"The panel sees its agent half at the head of the audience\"\nelse\n  log_fail \"Behind: $(identity_view \"${PLUGIN}\" | jq -c '.sync')\"\nfi\nassert_json_field \"$(identity_view \"${PLUGIN}\")\" '\"\\(.audience.active) \\(.audience.disabled) \\(.audience.removed) \\(.audience.erased)\"' '2 0 0 0' \"The audience: two active members\" || true\n\n# ===========================================================================\n# 4. Revoked\n# ==========================================================================="
+    },
+    {
+      "id": "revoked-removed-unentitled-the-last-attributes-kept",
+      "label": "Revoked: removed, unentitled, the last attributes kept",
+      "steps": [
+        {
+          "id": "step-73",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"plugins/${PLUGIN}/entitlements?principalType=user&principalId=${TEST_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "${TEST_USER}'s role revoked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.ok) \\(.revoked)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true 1"
+              },
+              "message": "${TEST_USER}'s role revoked"
+            }
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "The agent half: ${TEST_USER} removed, unentitled",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half: ${TEST_USER} removed, unentitled"
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "The projection: $(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The projection: $(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")"
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-78",
+          "label": "…no roles, the last attributes it received kept",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.roles | length) \\(.username) \\(.displayName)|\\(.email)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "0 ${TEST_USER} ${TEST_USER_NAME}|${TEST_USER_EMAIL}"
+              },
+              "message": "…no roles, the last attributes it received kept"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "…removed at $(json_get \"$ROW\" '.removedAt')",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": ".removedAt",
+              "message": "…removed at $(json_get \"$ROW\" '.removedAt')"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "The panel's audience: remove/unentitled with the last attributes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(audience_row \"${PLUGIN}\" \"${TEST_USER_ID}\")"
+              },
+              "path": "\"\\(.change.kind) \\(.change.reason) \\(.change.last.username)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "remove unentitled ${TEST_USER}"
+              },
+              "message": "The panel's audience: remove/unentitled with the last attributes"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Revoked: removed, unentitled, the last attributes kept\"\n\nRESP=$(host_api_call DELETE \"plugins/${PLUGIN}/entitlements?principalType=user&principalId=${TEST_USER}\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.ok) \\(.revoked)\"' 'true 1' \"${TEST_USER}'s role revoked\" || true\nif wait_for 60 projection_has \"${PLUGIN}\" \"[.users[] | select(.userId == \\\"${TEST_USER_ID}\\\" and .status == \\\"removed\\\" and .removedReason == \\\"unentitled\\\")] | length == 1\"; then\n  log_pass \"The agent half: ${TEST_USER} removed, unentitled\"\nelse\n  log_fail \"The projection: $(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")\"\nfi\nROW=$(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")\nassert_json_field \"$ROW\" '\"\\(.roles | length) \\(.username) \\(.displayName)|\\(.email)\"' \"0 ${TEST_USER} ${TEST_USER_NAME}|${TEST_USER_EMAIL}\" \"…no roles, the last attributes it received kept\" || true\nassert_json_field_not_empty \"$ROW\" '.removedAt' \"…removed at $(json_get \"$ROW\" '.removedAt')\" || true\nassert_json_field \"$(audience_row \"${PLUGIN}\" \"${TEST_USER_ID}\")\" '\"\\(.change.kind) \\(.change.reason) \\(.change.last.username)\"' \"remove unentitled ${TEST_USER}\" \"The panel's audience: remove/unentitled with the last attributes\" || true\n\n# ===========================================================================\n# 5. Disabled\n# ==========================================================================="
+    },
+    {
+      "id": "disabled-still-a-member-status-disabled",
+      "label": "Disabled: still a member, status disabled",
+      "steps": [
+        {
+          "id": "step-81",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call PUT \"users/${SECOND_USER}\" '{\"disabled\":true}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-82",
+          "label": "${SECOND_USER} disabled, the same id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.user.status) \\(.user.userId)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "disabled ${SECOND_ID}"
+              },
+              "message": "${SECOND_USER} disabled, the same id"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "The agent half: ${SECOND_USER} disabled, still an editor",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half: ${SECOND_USER} disabled, still an editor"
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "The projection: $(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The projection: $(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")"
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "The audience: one disabled member, none active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(identity_view \"${PLUGIN}\")"
+              },
+              "path": "\"\\(.audience.active) \\(.audience.disabled)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "0 1"
+              },
+              "message": "The audience: one disabled member, none active"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Disabled: still a member, status disabled\"\n\nRESP=$(users_call PUT \"users/${SECOND_USER}\" '{\"disabled\":true}')\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.user.status) \\(.user.userId)\"' \"disabled ${SECOND_ID}\" \"${SECOND_USER} disabled, the same id\" || true\nif wait_for 60 projection_has \"${PLUGIN}\" \"[.users[] | select(.userId == \\\"${SECOND_ID}\\\" and .status == \\\"disabled\\\" and .roles == [\\\"editor\\\"])] | length == 1\"; then\n  log_pass \"The agent half: ${SECOND_USER} disabled, still an editor\"\nelse\n  log_fail \"The projection: $(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")\"\nfi\nassert_json_field \"$(identity_view \"${PLUGIN}\")\" '\"\\(.audience.active) \\(.audience.disabled)\"' '0 1' \"The audience: one disabled member, none active\" || true\n\n# ===========================================================================\n# 6. Deleted\n# ==========================================================================="
+    },
+    {
+      "id": "deleted-removed-deleted-the-last-display-name-kept",
+      "label": "Deleted: removed, deleted, the last display name kept",
+      "steps": [
+        {
+          "id": "step-86",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call DELETE \"users/${SECOND_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-87",
+          "label": "${SECOND_USER} deleted; Gatekeeper dropped their grants and memberships",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.ok) \\(.userId) \\(.principalCleared)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "true ${SECOND_ID} true"
+              },
+              "message": "${SECOND_USER} deleted; Gatekeeper dropped their grants and memberships"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "The agent half: ${SECOND_USER} removed, deleted",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half: ${SECOND_USER} removed, deleted"
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "The projection: $(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The projection: $(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")"
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "projected_user \"${PLUGIN}\" \"${SECOND_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-91",
+          "label": "…no roles, the last display name kept",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.roles | length) \\(.username) \\(.displayName)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "0 ${SECOND_USER} ${SECOND_NAME}"
+              },
+              "message": "…no roles, the last display name kept"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "The directory keeps their tombstone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(directory_user \"${SECOND_ID}\")"
+              },
+              "path": "\"\\(.status) \\(.removedReason) \\(.username)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "removed deleted ${SECOND_USER}"
+              },
+              "message": "The directory keeps their tombstone"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Deleted: removed, deleted, the last display name kept\"\n\nRESP=$(users_call DELETE \"users/${SECOND_USER}\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.ok) \\(.userId) \\(.principalCleared)\"' \"true ${SECOND_ID} true\" \"${SECOND_USER} deleted; Gatekeeper dropped their grants and memberships\" || true\nif wait_for 60 projection_has \"${PLUGIN}\" \"[.users[] | select(.userId == \\\"${SECOND_ID}\\\" and .status == \\\"removed\\\" and .removedReason == \\\"deleted\\\")] | length == 1\"; then\n  log_pass \"The agent half: ${SECOND_USER} removed, deleted\"\nelse\n  log_fail \"The projection: $(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")\"\nfi\nROW=$(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")\nassert_json_field \"$ROW\" '\"\\(.roles | length) \\(.username) \\(.displayName)\"' \"0 ${SECOND_USER} ${SECOND_NAME}\" \"…no roles, the last display name kept\" || true\nassert_json_field \"$(host_api_get \"gatekeeper/groups/${GROUP}\")\" \".group.members | index(\\\"${SECOND_USER}\\\")\" 'null' \"${GROUP} no longer has them\" || true\nassert_json_field \"$(directory_user \"${SECOND_ID}\")\" '\"\\(.status) \\(.removedReason) \\(.username)\"' \"removed deleted ${SECOND_USER}\" \"The directory keeps their tombstone\" || true\n\n# ===========================================================================\n# 7. Erased while the agent half is stopped\n# ==========================================================================="
+    },
+    {
+      "id": "erased-while-the-agent-half-is-stopped-queued-then-caught-up",
+      "label": "Erased while the agent half is stopped: queued, then caught up",
+      "steps": [
+        {
+          "id": "step-96",
+          "label": "The agent half is stopped: its socket and its service (nothing holds its port)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(agent_exec \"systemctl is-active ${SOCKET} ${UNIT} 2>/dev/null | sort -u | tr '\\n' ' '; true\" 2>/dev/null | tr -d ' ')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "inactive"
+              },
+              "message": "The agent half is stopped: its socket and its service (nothing holds its port)"
+            }
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"identity/directory/${SECOND_ID}/erase\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-98",
+          "label": "${SECOND_USER} erased by their id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${SECOND_USER} erased by their id"
+            }
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "directory_user \"${SECOND_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-100",
+          "label": "The directory scrubbed the tombstone to the bare id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.username) \\(.displayName) \\(.email)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null null"
+              },
+              "message": "The directory scrubbed the tombstone to the bare id"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "Set VIEW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "identity_view \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "VIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-104",
+          "label": "…its agent half is behind ($(json_get \"$VIEW\" '.sync.behind') change)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": ".sync.behind >= 1",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…its agent half is behind ($(json_get \"$VIEW\" '.sync.behind') change)"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "The audience: remove/erased, nothing but the id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(audience_row \"${PLUGIN}\" \"${SECOND_ID}\")"
+              },
+              "path": "\"\\(.change.kind) \\(.change.reason) \\(.change | has(\"last\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "remove erased false"
+              },
+              "message": "The audience: remove/erased, nothing but the id"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "The panel tried and could not deliver it: $(json_get \"$(identity_view \"${PLUGIN}\")\" '.sync.lastError')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The panel tried and could not deliver it: $(json_get \"$(identity_view \"${PLUGIN}\")\" '.sync.lastError')"
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "No failed delivery recorded: $(identity_view \"${PLUGIN}\" | jq -c '.sync')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "No failed delivery recorded: $(identity_view \"${PLUGIN}\" | jq -c '.sync')"
+          }
+        },
+        {
+          "id": "step-111",
+          "label": "The agent half's socket started again; nothing asks the panel to sync",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "The agent half's socket started again; nothing asks the panel to sync"
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "The agent half caught up on its own (health back up, or the minute's retry)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half caught up on its own (health back up, or the minute's retry)"
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "Still behind: $(identity_view \"${PLUGIN}\" | jq -c '.sync')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Still behind: $(identity_view \"${PLUGIN}\" | jq -c '.sync')"
+          }
+        },
+        {
+          "id": "step-114",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "projected_user \"${PLUGIN}\" \"${SECOND_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-115",
+          "label": "The agent half scrubbed the row to the bare id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.username) \\(.displayName) \\(.email) \\(.removedReason)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null null erased"
+              },
+              "message": "The agent half scrubbed the row to the bare id"
+            }
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "…erased at $(json_get \"$ROW\" '.erasedAt')",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": ".erasedAt",
+              "message": "…erased at $(json_get \"$ROW\" '.erasedAt')"
+            }
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "No erasure pending for ${PLUGIN}: its cursor passed it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(identity_view \"${PLUGIN}\")"
+              },
+              "path": ".pendingErasures | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "No erasure pending for ${PLUGIN}: its cursor passed it"
+            }
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "GET /api/identity/directory: none pending for the user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(directory_user \"${SECOND_ID}\")"
+              },
+              "path": ".pendingErasures | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "GET /api/identity/directory: none pending for the user"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Erased while the agent half is stopped: queued, then caught up\"\n\nHALF_STOPPED=1\nagent_exec \"systemctl stop ${SOCKET} ${UNIT}\" > /dev/null 2>&1 || true\nassert_eq \"$(agent_exec \"systemctl is-active ${SOCKET} ${UNIT} 2>/dev/null | sort -u | tr '\\n' ' '; true\" 2>/dev/null | tr -d ' ')\" \"inactive\" \"The agent half is stopped: its socket and its service (nothing holds its port)\" || true\n\nRESP=$(host_api_call POST \"identity/directory/${SECOND_ID}/erase\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${SECOND_USER} erased by their id\" || true\nROW=$(directory_user \"${SECOND_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.displayName) \\(.email)\"' 'null null null' \"The directory scrubbed the tombstone to the bare id\" || true\nassert_json_field \"$ROW\" \".pendingErasures | index(\\\"${PLUGIN}\\\") != null\" 'true' \"…and the erasure is pending for ${PLUGIN}\" || true\nVIEW=$(identity_view \"${PLUGIN}\")\nassert_json_field \"$VIEW\" \".pendingErasures | index(\\\"${SECOND_ID}\\\") != null\" 'true' \"GET /api/plugins/${PLUGIN}/identity: pending erasure ${SECOND_ID}\" || true\nassert_json_field \"$VIEW\" '.sync.behind >= 1' 'true' \"…its agent half is behind ($(json_get \"$VIEW\" '.sync.behind') change)\" || true\nassert_json_field \"$(audience_row \"${PLUGIN}\" \"${SECOND_ID}\")\" '\"\\(.change.kind) \\(.change.reason) \\(.change | has(\"last\"))\"' 'remove erased false' \"The audience: remove/erased, nothing but the id\" || true\nsync_failed() { [ -n \"$(json_get \"$(identity_view \"${PLUGIN}\")\" '.sync.lastError // empty')\" ]; }\nif wait_for 45 sync_failed; then\n  log_pass \"The panel tried and could not deliver it: $(json_get \"$(identity_view \"${PLUGIN}\")\" '.sync.lastError')\"\nelse\n  log_fail \"No failed delivery recorded: $(identity_view \"${PLUGIN}\" | jq -c '.sync')\"\nfi\n\nagent_exec \"systemctl start ${SOCKET}\" > /dev/null 2>&1 || true\nHALF_STOPPED=\"\"\nlog_info \"The agent half's socket started again; nothing asks the panel to sync\"\nif wait_for 180 identity_caught_up \"${PLUGIN}\"; then\n  log_pass \"The agent half caught up on its own (health back up, or the minute's retry)\"\nelse\n  log_fail \"Still behind: $(identity_view \"${PLUGIN}\" | jq -c '.sync')\"\nfi\nROW=$(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.displayName) \\(.email) \\(.removedReason)\"' 'null null null erased' \"The agent half scrubbed the row to the bare id\" || true\nassert_json_field_not_empty \"$ROW\" '.erasedAt' \"…erased at $(json_get \"$ROW\" '.erasedAt')\" || true\nassert_json_field \"$(projection \"${PLUGIN}\")\" \".erased | index(\\\"${SECOND_ID}\\\") != null\" 'true' \"…and ran the plugin's anonymiser (onErase)\" || true\nassert_json_field \"$(identity_view \"${PLUGIN}\")\" '.pendingErasures | length' '0' \"No erasure pending for ${PLUGIN}: its cursor passed it\" || true\nassert_json_field \"$(directory_user \"${SECOND_ID}\")\" '.pendingErasures | length' '0' \"GET /api/identity/directory: none pending for the user\" || true\n\n# ===========================================================================\n# 8. Reconcile\n# ==========================================================================="
+    },
+    {
+      "id": "reconcile-nothing-to-find-then-a-tampered-projection",
+      "label": "Reconcile: nothing to find; then a tampered projection",
+      "steps": [
+        {
+          "id": "step-120",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${TEST_USER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-121",
+          "label": "${TEST_USER} entitled as viewer again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${TEST_USER} entitled as viewer again"
+            }
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "The agent half: ${TEST_USER} a member again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half: ${TEST_USER} a member again"
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "The projection: $(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The projection: $(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")"
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "POST /api/plugins/${PLUGIN}/identity/sync",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/identity/sync",
+            "body": {
+              "reconcile": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "SYNC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-125",
+          "label": "POST /api/plugins/${PLUGIN}/identity/sync {reconcile}: a replay that finds no mismatch",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SYNC"
+              },
+              "path": "\"\\(.ok) \\(.result.status) \\(.result.replay) \\(.result.mismatches)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true synced true 0"
+              },
+              "message": "POST /api/plugins/${PLUGIN}/identity/sync {reconcile}: a replay that finds no mismatch"
+            }
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "…recorded: lastMismatches 0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SYNC"
+              },
+              "path": ".sync.lastMismatches",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…recorded: lastMismatches 0"
+            }
+          }
+        },
+        {
+          "id": "step-127",
+          "label": "Set MISMATCH_AUDITS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "audit_count \"${PLUGIN}\" identity.reconcile.mismatches"
+          },
+          "capture": [
+            {
+              "variable": "MISMATCH_AUDITS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-128",
+          "label": "Set TAMPER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "tamper_projection \"${PLUGIN}\" \"${SERVICE_USER}\" \"${TEST_USER_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "TAMPER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-129",
+          "label": "Tampered with as ${SERVICE_USER}: ${TEST_USER} given the editor role, a member slipped in",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TAMPER"
+              },
+              "path": "\"\\(.changed) \\(.inserted)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "1 1"
+              },
+              "message": "Tampered with as ${SERVICE_USER}: ${TEST_USER} given the editor role, a member slipped in"
+            }
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "…the agent half now believes ${TEST_USER} is an editor",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")"
+              },
+              "path": ".roles | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "editor"
+              },
+              "message": "…the agent half now believes ${TEST_USER} is an editor"
+            }
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "…and holds a member the directory never named",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(projection \"${PLUGIN}\")"
+              },
+              "path": "[.users[] | select(.username == \"e2e-phantom\" and .status == \"active\")] | length",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…and holds a member the directory never named"
+            }
+          }
+        },
+        {
+          "id": "step-132",
+          "label": "POST /api/plugins/${PLUGIN}/identity/sync",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/identity/sync",
+            "body": {
+              "reconcile": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "SYNC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-133",
+          "label": "Set MISMATCHES",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$SYNC\" '.result.mismatches // 0'"
+          },
+          "capture": [
+            {
+              "variable": "MISMATCHES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-134",
+          "label": "The next reconcile reports ${MISMATCHES} mismatches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SYNC"
+              },
+              "path": "\"\\(.result.status) \\(.result.mismatches > 0)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "synced true"
+              },
+              "message": "The next reconcile reports ${MISMATCHES} mismatches"
+            }
+          }
+        },
+        {
+          "id": "step-135",
+          "label": "…recorded on the feed's state",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SYNC"
+              },
+              "path": ".sync.lastMismatches",
+              "expected": {
+                "kind": "var",
+                "name": "MISMATCHES"
+              },
+              "message": "…recorded on the feed's state"
+            }
+          }
+        },
+        {
+          "id": "step-136",
+          "label": "…and audited (identity.reconcile.mismatches)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" identity.reconcile.mismatches '.mismatches > 0')"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$((MISMATCH_AUDITS + 1))"
+              },
+              "message": "…and audited (identity.reconcile.mismatches)"
+            }
+          }
+        },
+        {
+          "id": "step-137",
+          "label": "The replay put ${TEST_USER} back: viewer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")"
+              },
+              "path": "\"\\(.roles | join(\",\")) \\(.status)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "viewer active"
+              },
+              "message": "The replay put ${TEST_USER} back: viewer"
+            }
+          }
+        },
+        {
+          "id": "step-138",
+          "label": "…and removed the member the directory never named",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(projection \"${PLUGIN}\")"
+              },
+              "path": "[.users[] | select(.username == \"e2e-phantom\") | \"\\(.status) \\(.removedReason)\"] | first",
+              "expected": {
+                "kind": "literal",
+                "value": "removed deleted"
+              },
+              "message": "…and removed the member the directory never named"
+            }
+          }
+        },
+        {
+          "id": "step-139",
+          "label": "POST /api/plugins/${PLUGIN}/identity/sync",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/identity/sync",
+            "body": {
+              "reconcile": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "SYNC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-140",
+          "label": "The reconcile after that finds nothing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SYNC"
+              },
+              "path": "\"\\(.result.status) \\(.result.mismatches)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "synced 0"
+              },
+              "message": "The reconcile after that finds nothing"
+            }
+          }
+        },
+        {
+          "id": "step-141",
+          "label": "…and audits nothing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" identity.reconcile.mismatches)"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$((MISMATCH_AUDITS + 1))"
+              },
+              "message": "…and audits nothing"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Reconcile: nothing to find; then a tampered projection\"\n\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${TEST_USER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${TEST_USER} entitled as viewer again\" || true\nif wait_for 60 projection_has \"${PLUGIN}\" \"[.users[] | select(.userId == \\\"${TEST_USER_ID}\\\" and .status == \\\"active\\\" and .roles == [\\\"viewer\\\"])] | length == 1\"; then\n  log_pass \"The agent half: ${TEST_USER} a member again\"\nelse\n  log_fail \"The projection: $(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")\"\nfi\n\nSYNC=$(host_api_post \"plugins/${PLUGIN}/identity/sync\" '{\"reconcile\":true}')\nassert_json_field \"$SYNC\" '\"\\(.ok) \\(.result.status) \\(.result.replay) \\(.result.mismatches)\"' 'true synced true 0' \"POST /api/plugins/${PLUGIN}/identity/sync {reconcile}: a replay that finds no mismatch\" || true\nassert_json_field \"$SYNC\" '.sync.lastMismatches' '0' \"…recorded: lastMismatches 0\" || true\nMISMATCH_AUDITS=$(audit_count \"${PLUGIN}\" identity.reconcile.mismatches)\n\nTAMPER=$(tamper_projection \"${PLUGIN}\" \"${SERVICE_USER}\" \"${TEST_USER_ID}\")\nassert_json_field \"$TAMPER\" '\"\\(.changed) \\(.inserted)\"' '1 1' \"Tampered with as ${SERVICE_USER}: ${TEST_USER} given the editor role, a member slipped in\" || true\nassert_json_field \"$(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")\" '.roles | join(\",\")' 'editor' \"…the agent half now believes ${TEST_USER} is an editor\" || true\nassert_json_field \"$(projection \"${PLUGIN}\")\" '[.users[] | select(.username == \"e2e-phantom\" and .status == \"active\")] | length' '1' \"…and holds a member the directory never named\" || true\n\nSYNC=$(host_api_post \"plugins/${PLUGIN}/identity/sync\" '{\"reconcile\":true}')\nMISMATCHES=$(json_get \"$SYNC\" '.result.mismatches // 0')\nassert_json_field \"$SYNC\" '\"\\(.result.status) \\(.result.mismatches > 0)\"' 'synced true' \"The next reconcile reports ${MISMATCHES} mismatches\" || true\nassert_json_field \"$SYNC\" '.sync.lastMismatches' \"${MISMATCHES}\" \"…recorded on the feed's state\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" identity.reconcile.mismatches '.mismatches > 0')\" \"$((MISMATCH_AUDITS + 1))\" \"…and audited (identity.reconcile.mismatches)\" || true\nassert_json_field \"$(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")\" '\"\\(.roles | join(\",\")) \\(.status)\"' 'viewer active' \"The replay put ${TEST_USER} back: viewer\" || true\nassert_json_field \"$(projection \"${PLUGIN}\")\" '[.users[] | select(.username == \"e2e-phantom\") | \"\\(.status) \\(.removedReason)\"] | first' 'removed deleted' \"…and removed the member the directory never named\" || true\nSYNC=$(host_api_post \"plugins/${PLUGIN}/identity/sync\" '{\"reconcile\":true}')\nassert_json_field \"$SYNC\" '\"\\(.result.status) \\(.result.mismatches)\"' 'synced 0' \"The reconcile after that finds nothing\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" identity.reconcile.mismatches)\" \"$((MISMATCH_AUDITS + 1))\" \"…and audits nothing\" || true\n\n# ===========================================================================\n# 9. A plugin without identity\n# ==========================================================================="
+    },
+    {
+      "id": "a-plugin-without-identity-is-never-sent-any",
+      "label": "A plugin without identity is never sent any",
+      "steps": [
+        {
+          "id": "step-143",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call GET \"plugins/${PLAIN}/${path}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-144",
+          "label": "GET /api/plugins/${PLAIN}/${path}: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "GET /api/plugins/${PLAIN}/${path}: 400"
+            }
+          }
+        },
+        {
+          "id": "step-145",
+          "label": "…no_identity",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "no_identity"
+              },
+              "message": "…no_identity"
+            }
+          }
+        },
+        {
+          "id": "step-147",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PLAIN}/identity/sync\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-148",
+          "label": "POST /api/plugins/${PLAIN}/identity/sync: 400 (no_identity)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "POST /api/plugins/${PLAIN}/identity/sync: 400 (no_identity)"
+            }
+          }
+        },
+        {
+          "id": "step-149",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLAIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${TEST_USER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-150",
+          "label": "PUT /api/plugins/${PLAIN}/entitlements: 400 — no roles to give",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "PUT /api/plugins/${PLAIN}/entitlements: 400 — no roles to give"
+            }
+          }
+        },
+        {
+          "id": "step-151",
+          "label": "GET /api/plugins/${PLAIN}/identity: nothing declared, no feed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(identity_view \"${PLAIN}\")"
+              },
+              "path": "\"\\(.declared) \\(.readiness.reason) \\(.sync)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null no_identity null"
+              },
+              "message": "GET /api/plugins/${PLAIN}/identity: nothing declared, no feed"
+            }
+          }
+        },
+        {
+          "id": "step-152",
+          "label": "Its agent half's request log: not one /admin/identity request",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(half_requests \"${PLAIN}\" ' /admin/identity')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Its agent half's request log: not one /admin/identity request"
+            }
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "Set PLAIN_HEALTH",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_requests \"${PLAIN}\" ' GET /admin/health$'"
+          },
+          "capture": [
+            {
+              "variable": "PLAIN_HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-155",
+          "label": "Set FED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_requests \"${PLUGIN}\" ' POST /admin/identity/(notify|changes)$'"
+          },
+          "capture": [
+            {
+              "variable": "FED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"A plugin without identity is never sent any\"\n\nfor path in audience entitlements; do\n  RESP=$(host_api_call GET \"plugins/${PLAIN}/${path}\")\n  assert_eq \"$(status_of \"$RESP\")\" \"400\" \"GET /api/plugins/${PLAIN}/${path}: 400\" || true\n  assert_json_field \"$(body_of \"$RESP\")\" '.code' 'no_identity' \"…no_identity\" || true\ndone\nRESP=$(host_api_call POST \"plugins/${PLAIN}/identity/sync\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"POST /api/plugins/${PLAIN}/identity/sync: 400 (no_identity)\" || true\nRESP=$(host_api_call PUT \"plugins/${PLAIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${TEST_USER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"PUT /api/plugins/${PLAIN}/entitlements: 400 — no roles to give\" || true\nassert_json_field \"$(identity_view \"${PLAIN}\")\" '\"\\(.declared) \\(.readiness.reason) \\(.sync)\"' 'null no_identity null' \"GET /api/plugins/${PLAIN}/identity: nothing declared, no feed\" || true\nassert_eq \"$(half_requests \"${PLAIN}\" ' /admin/identity')\" \"0\" \"Its agent half's request log: not one /admin/identity request\" || true\nPLAIN_HEALTH=$(half_requests \"${PLAIN}\" ' GET /admin/health$')\nassert_json_field \"{\\\"n\\\":${PLAIN_HEALTH:-0}}\" '.n > 0' 'true' \"…though it answered the relay's health probes all along (${PLAIN_HEALTH} logged)\" || true\nFED=$(half_requests \"${PLUGIN}\" ' POST /admin/identity/(notify|changes)$')\nassert_json_field \"{\\\"n\\\":${FED:-0}}\" '.n > 0' 'true' \"…while ${PLUGIN}'s agent half was sent ${FED} identity calls\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 39 — App plugin identity feed (Three-VM)\n# ============================================================================\n# Slice 6's feed, end to end: the panel pushes a plugin's audience to its\n# agent half through the internal tunnel. Two app plugins are hosted on the\n# agent VM from the panel as in spec 34 (helpers.sh,\n# write_app_install_fixture): @lamalibre/e2e-idfeed-server, whose manifest\n# declares identity (roles viewer and editor, attributes displayName and\n# email) and whose agent half keeps a projection of its users\n# (createIdentityProjection over node:sqlite, createIdentityHandlers), and\n# @lamalibre/e2e-idplain-server, the same without identity. Then:\n#\n# 1. Approved and hosted, the identity plugin's agent half answers protocol\n#    1 and follows the panel's directory; nothing is entitled yet.\n# 2. testuser entitled as viewer and a Lamaste group as editor, with a\n#    second user in it: the agent half's projection holds both — the\n#    directory's ids, their roles, the declared attributes from the\n#    directory.\n# 3. testuser's role revoked: removed, unentitled, the last attributes kept.\n# 4. The second user disabled: still a member, status disabled.\n# 5. Deleted: removed, deleted, the last display name kept; the group no\n#    longer has them.\n# 6. The agent half stopped (its socket and service): the user erased —\n#    the directory scrubs the tombstone, the erasure is pending for the\n#    plugin, the feed falls behind. Started again, it catches up without\n#    being asked: the row scrubbed to the bare id, the plugin's anonymiser\n#    run, the erasure no longer pending.\n# 7. testuser entitled again; a reconcile (POST …/identity/sync\n#    {reconcile:true}) finds nothing. The projection tampered with from the\n#    agent half's own account (a role given, a member slipped in): the next\n#    reconcile reports mismatches and audits them, and puts the projection\n#    right — the one after finds nothing.\n# 8. The plugin without identity has no audience, entitlements or sync\n#    (400 no_identity), and its agent half's request log shows it never\n#    received an /admin/identity request — though it answered the relay all\n#    along, and the identity plugin was fed throughout.\n#\n# The user surface (a visitor's session reaching /app) is spec 40; the\n# directory itself — ids, disable, delete, erase, the approval gate — is\n# single-VM spec 32.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-idfeed\"\nSERVER_PACKAGE=\"@lamalibre/e2e-idfeed-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-idfeed-agent\"\nSERVICE_USER=\"lamaste-app-e2e-idfeed\"\nUNIT=\"lamalibre-app-e2e-idfeed.service\"\nSOCKET=\"lamalibre-app-e2e-idfeed.socket\"\nPLAIN=\"e2e-idplain\"\nPLAIN_SERVER_PACKAGE=\"@lamalibre/e2e-idplain-server\"\nPLAIN_AGENT_PACKAGE=\"@lamalibre/e2e-idplain-agent\"\nPOLICY_ID=\"e2e-apphost-39\"\nREMOTE_DIR=\"/var/tmp/e2e-39-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN} ${PLAIN}\"\nCLEAN_ROUTES=\"${PLUGIN} ${PLAIN}\"\nPURGE_PACKAGES=\"\"\nTEST_USER=\"${TEST_USER:-testuser}\"\nSECOND_USER=\"e2e39-bob\"\nSECOND_NAME=\"E2E Bob\"\nSECOND_EMAIL=\"e2e39-bob@example.test\"\nGROUP=\"e2e39-editors\"\nSECOND_ID=\"\"\n# Set while the agent half is stopped: the cleanup starts it again\nHALF_STOPPED=\"\"\n\nhealth_up() { [ \"$(hosting_field \"$1\" '.hosting.health.state')\" = \"up\" ]; }\n\n# start_hosting <plugin> — POST its hosting on the agent VM's agent; prints\n# the operation id (\"\" when refused — the refusal is logged)\nstart_hosting() {\n  local response id\n  response=$(host_api_post \"plugins/$1/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\n  id=$(json_get \"$response\" '.operation.id // empty')\n  if [ -z \"$id\" ]; then log_info \"Hosting $1 was refused: ${response}\" >&2; fi\n  echo \"$id\"\n}\n\nbegin_test \"39 — App plugin identity feed (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  if [ -n \"${HALF_STOPPED}\" ]; then\n    agent_exec \"systemctl start ${SOCKET} > /dev/null 2>&1; true\" > /dev/null 2>&1 || true\n  fi\n  # Gatekeeper's grants and group outlive the plugin.\n  drop_plugin_grants \"${PLUGIN}\"\n  drop_plugin_grants \"${PLAIN}\"\n  host_api_delete \"gatekeeper/groups/${GROUP}\" > /dev/null 2>&1 || true\n  # The second user, whatever state the spec left them in: deleted and erased.\n  host_api_delete \"users/${SECOND_USER}?erase=true\" > /dev/null 2>&1 || true\n  if [ -n \"${SECOND_ID}\" ]; then\n    host_api_post \"identity/directory/${SECOND_ID}/erase\" '{}' > /dev/null 2>&1 || true\n  fi\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

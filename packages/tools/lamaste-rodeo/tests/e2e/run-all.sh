@@ -77,6 +77,7 @@ TEST_SCRIPTS=(
   "24-agent-user-plugin-access.sh"
   "25-gatekeeper.sh"
   "31-plugin-settings.sh"
+  "32-identity-directory.sh"
 )
 
 PASSED=0

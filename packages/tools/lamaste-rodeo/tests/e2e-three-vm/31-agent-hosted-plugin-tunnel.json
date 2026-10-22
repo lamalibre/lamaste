@@ -1014,7 +1014,7 @@
         },
         {
           "id": "step-79",
-          "label": "The user surface is out of the forwarder's reach",
+          "label": "The user surface is out of the forwarder's reach: 401 without a relay assertion",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1027,9 +1027,9 @@
               },
               "expected": {
                 "kind": "literal",
-                "value": "404"
+                "value": "401"
               },
-              "message": "The user surface is out of the forwarder's reach"
+              "message": "The user surface is out of the forwarder's reach: 401 without a relay assertion"
             }
           }
         },
@@ -1054,7 +1054,7 @@
           }
         }
       ],
-      "bash": "log_section \"Forwarding through the internal tunnel\"\n\nagent_exec \"nohup node ${REMOTE_DIR}/app-plugin-half.mjs --config ${PLUGIN_CONFIG_FILE} --plugin ${PLUGIN_NAME} --lamaste ${AGENT_LIB_DIR} --log ${HALF_LOG} &> ${REMOTE_DIR}/half.out & exit\"\nhalf_up() { [ \"$(agent_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; }\nif wait_for 30 half_up; then\n  log_pass \"Agent half listens on the agent VM's 127.0.0.1:${PORT}\"\nelse\n  log_fail \"Agent half did not start: $(agent_exec \"cat ${REMOTE_DIR}/half.out\" 2>/dev/null)\"\nfi\n\n# The chisel client picks the new grant up on its next sync.\ntunnel_up() { [ \"$(host_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; }\nif wait_for 90 tunnel_up; then\n  log_pass \"The host's loopback port ${PORT} reaches the agent half through chisel\"\nelse\n  log_fail \"The internal tunnel did not come up within 90 seconds\"\nfi\n\nHOST_OP=$(wait_operation \"${HOST_OP_ID}\" 180)\nassert_json_field \"$HOST_OP\" '.status' 'succeeded' \"The hosting operation succeeded once the agent half answered through the tunnel\" || true\nassert_eq \"$(hosting_field '.hosting.phase')\" \"active\" \"The hosting is active\" || true\n\nPING=$(host_api_get \"${PLUGIN_NAME}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN_NAME}/ping reaches the agent half across VMs\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"The caller assertion names the admin\" || true\nassert_json_field \"$PING\" '.cookie' 'null' \"No cookie crosses the tunnel\" || true\nBUNDLE=$(host_api_get \"${PLUGIN_NAME}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin bundle comes from the agent half\" || true\nassert_eq \"$(host_api_get_status \"${PLUGIN_NAME}/app/secret\")\" \"404\" \"The user surface is out of the forwarder's reach\" || true\n\nif wait_health up 60; then\n  log_pass \"Health is up\"\nelse\n  log_fail \"Health did not reach up: $(hosting_field '.hosting.health')\"\nfi\n\n# ===========================================================================\n# 4. Rotation, picked up by the sync timer\n# ==========================================================================="
+      "bash": "log_section \"Forwarding through the internal tunnel\"\n\nagent_exec \"nohup node ${REMOTE_DIR}/app-plugin-half.mjs --config ${PLUGIN_CONFIG_FILE} --plugin ${PLUGIN_NAME} --lamaste ${AGENT_LIB_DIR} --log ${HALF_LOG} &> ${REMOTE_DIR}/half.out & exit\"\nhalf_up() { [ \"$(agent_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; }\nif wait_for 30 half_up; then\n  log_pass \"Agent half listens on the agent VM's 127.0.0.1:${PORT}\"\nelse\n  log_fail \"Agent half did not start: $(agent_exec \"cat ${REMOTE_DIR}/half.out\" 2>/dev/null)\"\nfi\n\n# The chisel client picks the new grant up on its next sync.\ntunnel_up() { [ \"$(host_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; }\nif wait_for 90 tunnel_up; then\n  log_pass \"The host's loopback port ${PORT} reaches the agent half through chisel\"\nelse\n  log_fail \"The internal tunnel did not come up within 90 seconds\"\nfi\n\nHOST_OP=$(wait_operation \"${HOST_OP_ID}\" 180)\nassert_json_field \"$HOST_OP\" '.status' 'succeeded' \"The hosting operation succeeded once the agent half answered through the tunnel\" || true\nassert_eq \"$(hosting_field '.hosting.phase')\" \"active\" \"The hosting is active\" || true\n\nPING=$(host_api_get \"${PLUGIN_NAME}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN_NAME}/ping reaches the agent half across VMs\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"The caller assertion names the admin\" || true\nassert_json_field \"$PING\" '.cookie' 'null' \"No cookie crosses the tunnel\" || true\nBUNDLE=$(host_api_get \"${PLUGIN_NAME}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin bundle comes from the agent half\" || true\n# /api/<route>/app is the user surface's (slice 6): a relay assertion from\n# Gatekeeper or nothing — the admin forwarder never reaches /admin/app*.\nassert_eq \"$(host_api_get_status \"${PLUGIN_NAME}/app/secret\")\" \"401\" \"The user surface is out of the forwarder's reach: 401 without a relay assertion\" || true\n\nif wait_health up 60; then\n  log_pass \"Health is up\"\nelse\n  log_fail \"Health did not reach up: $(hosting_field '.hosting.health')\"\nfi\n\n# ===========================================================================\n# 4. Rotation, picked up by the sync timer\n# ==========================================================================="
     },
     {
       "id": "secret-rotation-across-the-tunnel",

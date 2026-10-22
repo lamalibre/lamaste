@@ -253,8 +253,8 @@ REFUSED=$(host_api_call POST "plugins/${PLUGIN}/hosting" "{\"agentLabel\":\"${HO
 assert_eq "$(status_of "$REFUSED")" "403" "Push-install on, the agent's window closed: hosting is refused" || true
 assert_json_field "$(body_of "$REFUSED")" '.code' 'push_install_refused' "…push_install_refused ($(json_get "$(body_of "$REFUSED")" '.error'))" || true
 
-WINDOW=$(open_push_install "${POLICY_ID}" "[\"${AGENT_PACKAGE}\"]" '["install","uninstall"]')
-assert_json_field "$WINDOW" '.pushInstallPolicy' "${POLICY_ID}" "The agent's window is open, under a policy naming only ${AGENT_PACKAGE}" || true
+open_push_install "${POLICY_ID}" "[\"${AGENT_PACKAGE}\"]" '["install","uninstall"]'
+assert_json_field "${PUSH_WINDOW_RESPONSE}" '.pushInstallPolicy' "${POLICY_ID}" "The agent's window is open, under a policy naming only ${AGENT_PACKAGE}" || true
 
 # ===========================================================================
 # 6. Hosting from the panel; the agent's sync timer does the rest

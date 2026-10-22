@@ -15,7 +15,10 @@
 # - the operator's one-time `lamaste-agent apphost enable --user root` (the
 #   rodeo agent runs as root: the helper needs no sudoers rule), which also
 #   pins the relay's signing key — the helper runs only app jobs it signed;
-# - open_push_install: the push-install gates an agent-half push passes;
+# - open_push_install: the push-install gates an agent-half push passes —
+#   called in the spec's own shell (never in a command substitution: the
+#   cleanup reads what it records), its window's answer left in
+#   PUSH_WINDOW_RESPONSE;
 # - agent_facts / relay_leftovers: the agent VM's and the relay's state of an
 #   agent half — its units, the socket systemd holds its port with and who
 #   listens on that port among it — each read in one call and never
@@ -29,6 +32,11 @@
 #   host VM, the settings API called through a script there that never
 #   prints a response holding one, and scans of the relay and the agent VM
 #   that report counts, never a secret;
+# - identity (slice 6, specs 39 and 40): the panel's view of a plugin's
+#   identity feed, what the agent half's projection holds (its
+#   /admin/e2e/projection, through the forwarder as the admin), its request
+#   log, the users API waiting out its rate limit, and a way to tamper with
+#   the projection as the agent half's own account could;
 # - app_plugin_cleanup: what the specs' cleanup traps run.
 #
 # Runs on the machine driving the VMs, under bash 3.2 (macOS): no arrays.
@@ -72,6 +80,8 @@ APPHOST_ENABLED_HERE=""
 PUSH_GLOBAL_BEFORE=""
 PUSH_POLICY=""
 PUSH_WINDOW=""
+# The panel's answer to the last open_push_install's window
+PUSH_WINDOW_RESPONSE=""
 CREDENTIAL_SET=""
 STUB_STARTED=""
 # The host VM's private directory for test secrets (settings helpers; the
@@ -399,7 +409,12 @@ remember_push_install() {
 
 # open_push_install <policy id> <packages json> <actions json> — push-install
 # on, a policy allowing exactly <actions> on exactly the agent <packages>, and
-# the agent's window (60 minutes) under that policy. Prints the window.
+# the agent's window (60 minutes) under that policy; the panel's answer to
+# opening the window is left in PUSH_WINDOW_RESPONSE. Call it in the spec's
+# own shell, never in a command substitution: what it records for the
+# cleanup to undo (PUSH_GLOBAL_BEFORE, PUSH_POLICY, PUSH_WINDOW) would be
+# lost with the subshell, and the policy and the window would outlive the
+# spec.
 open_push_install() {
   remember_push_install
   host_api_patch "plugins/push-install/config" '{"enabled":true}' > /dev/null
@@ -407,7 +422,8 @@ open_push_install() {
   PUSH_POLICY="$1"
   host_api_post "plugins/push-install/policies" "{\"name\":\"$1\",\"id\":\"$1\",\"description\":\"e2e: agent-half pushes\",\"allowedPlugins\":$2,\"allowedActions\":$3}" > /dev/null
   PUSH_WINDOW=1
-  host_api_post "plugins/push-install/enable/${HOST_AGENT_LABEL}" "{\"durationMinutes\":60,\"policyId\":\"$1\"}"
+  # shellcheck disable=SC2034 # read by the specs that source this file
+  PUSH_WINDOW_RESPONSE=$(host_api_post "plugins/push-install/enable/${HOST_AGENT_LABEL}" "{\"durationMinutes\":60,\"policyId\":\"$1\"}") || PUSH_WINDOW_RESPONSE='{}'
 }
 
 # ---------------------------------------------------------------------------
@@ -1232,6 +1248,155 @@ settings_facts() {
 # iso_epoch <ISO 8601 timestamp> — its Unix time, "" when it is not one
 iso_epoch() {
   jq -rn --arg t "$1" '$t | sub("\\.[0-9]+"; "") | fromdateiso8601' 2>/dev/null || echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Identity (slice 6) — specs 39 and 40
+# ---------------------------------------------------------------------------
+#
+# The fixtures are write_app_install_fixture … <identity> (helpers.sh): an
+# agent half keeping a projection of its plugin's users, answering a user
+# caller on /app/echo and /app/me, showing an administrator its projection on
+# /admin/e2e/projection, and logging every request that reaches it in
+# requests.log in its data directory.
+
+# A directory id, a user id: a UUID v4, lower case
+UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+
+# is_uuid <value> — "true" when it is a UUID v4
+is_uuid() { jq -rn --arg v "$1" --arg re "${UUID_RE}" '$v | test($re)' 2>/dev/null || echo "false"; }
+
+# identity_view <plugin> — GET /api/plugins/<plugin>/identity's `identity`
+# ('{}' when there is none): declared block, readiness, the feed's state
+# (cursor, head, behind, readyVersion, lastSyncAt, lastMismatches,
+# lastError), audience counts, pending erasures
+identity_view() {
+  host_api_get "plugins/$1/identity" 2>/dev/null | jq -c '.identity // {}' 2>/dev/null || echo '{}'
+}
+
+# identity_ready <plugin> — users may reach it: its installed version
+# declares identity and is approved, its hosting is active, and its agent
+# half answered protocol 1 since that version was installed
+identity_ready() { [ "$(json_get "$(identity_view "$1")" '.readiness.ready')" = "true" ]; }
+
+# identity_caught_up <plugin> — its agent half follows this directory and
+# holds every change of its audience (cursor at the head, none behind)
+identity_caught_up() {
+  [ "$(json_get "$(identity_view "$1")" '(.sync.behind == 0) and (.sync.cursor == .sync.head) and (.sync.halfDirectoryId == .sync.directoryId) and (.sync.directoryId != null)')" = "true" ]
+}
+
+# audience_row <plugin> <userId> — the plugin's audience row of that user
+# ('null' when the audience never held them)
+audience_row() {
+  host_api_get "plugins/$1/audience" 2>/dev/null | jq -c --arg id "$2" '[.audience[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo "null"
+}
+
+# directory_user <userId> — the directory's record of that user ('null' when none)
+directory_user() {
+  host_api_get "identity/directory" 2>/dev/null | jq -c --arg id "$1" '[.users[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo "null"
+}
+
+# listed_user <username> — the user as GET /api/users lists them ('null' when absent)
+listed_user() {
+  host_api_get "users" 2>/dev/null | jq -c --arg u "$1" '[.users[]? | select(.username == $u)] | first // null' 2>/dev/null || echo "null"
+}
+
+# projection <plugin> — what the agent half's projection holds: its state,
+# every row (removed and erased ones too) and the users its onErase ran for
+projection() { host_api_get "$1/e2e/projection" 2>/dev/null || echo '{}'; }
+
+# projection_has <plugin> <jq filter> — the agent half's projection satisfies it
+projection_has() { projection "$1" | jq -e "$2" > /dev/null 2>&1; }
+
+# projected_user <plugin> <userId> — the projection's row of that user ('null' when none)
+projected_user() {
+  projection "$1" | jq -c --arg id "$2" '[.users[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo "null"
+}
+
+# drop_plugin_grants <route> — remove every Gatekeeper grant on the plugin
+# (its entitlements, grants without roles): they outlive an uninstall, and
+# an interrupted run's would make someone a member of the next run's audience
+drop_plugin_grants() {
+  local id
+  for id in $(host_api_get "gatekeeper/grants?resourceType=plugin&resourceId=$1" 2>/dev/null | jq -r '.grants[]?.grantId // empty' 2>/dev/null || true); do
+    host_api_delete "gatekeeper/grants/${id}" > /dev/null 2>&1 || true
+  done
+}
+
+# users_call <method> <path> [json] — host_api_call for the users API,
+# waiting out its rate limit (5 creations or updates a minute): retried on
+# 429 for up to 75 seconds
+users_call() {
+  local out deadline=$((SECONDS + 75))
+  while :; do
+    out=$(host_api_call "$@")
+    if [ "$(status_of "$out")" != "429" ] || [ "$SECONDS" -ge "$deadline" ]; then
+      echo "$out"
+      return 0
+    fi
+    sleep 15
+  done
+}
+
+# half_requests <route> <extended regex> — how many lines of the agent half's
+# request log (requests.log in its data directory: `<time> <method> <path>`)
+# match; -1 when the log cannot be read — never a count a spec could take
+# for "nothing arrived"
+half_requests() {
+  local n
+  n=$(agent_exec "f=/var/lib/lamalibre/apps/$1/requests.log; if [ -f \$f ]; then grep -cE $(printf %q "$2") \$f || true; else echo -1; fi" 2>/dev/null | tail -n 1) || n=""
+  echo "${n:--1}"
+}
+
+# write_identity_tamper <file> — identity-tamper.mjs: what an intruder in an
+# agent half's own account could do to its projection, as one SQLite
+# transaction from outside the running half — the given user gets the
+# editor role, and a member the directory never named (e2e-phantom, active,
+# viewer) is slipped in. Prints {"changed": n, "inserted": n}.
+#
+#   node identity-tamper.mjs <identity.db> <userId>
+write_identity_tamper() {
+  cat > "$1" <<'TAMPER_EOF'
+import crypto from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+
+const [file, userId] = process.argv.slice(2);
+const db = new DatabaseSync(file);
+db.exec('PRAGMA busy_timeout = 10000');
+db.exec('BEGIN IMMEDIATE');
+const changed = db.prepare('UPDATE lamaste_users SET roles = ? WHERE user_id = ?').run('["editor"]', userId).changes;
+const inserted = db
+  .prepare(
+    `INSERT INTO lamaste_users (user_id, username, display_name, email, roles, status, removed_reason,
+       removed_at, erased_at, version, seen_pass, updated_at)
+     VALUES (?, 'e2e-phantom', 'E2E Phantom', NULL, '["viewer"]', 'active', NULL, NULL, NULL, 1, NULL, ?)`,
+  )
+  .run(crypto.randomUUID(), new Date().toISOString()).changes;
+db.exec('COMMIT');
+db.close();
+process.stdout.write(`${JSON.stringify({ changed: Number(changed), inserted: Number(inserted) })}\n`);
+TAMPER_EOF
+}
+
+# ship_identity_tamper — write identity-tamper.mjs and put it in the agent
+# VM's REMOTE_DIR, after ship_agent_facts_probe (which makes it)
+ship_identity_tamper() {
+  write_identity_tamper "${LOCAL_TMP}/identity-tamper.mjs"
+  multipass transfer "${LOCAL_TMP}/identity-tamper.mjs" "${AGENT_VM}:${REMOTE_DIR}/identity-tamper.mjs"
+  agent_exec "chmod 0644 ${REMOTE_DIR}/identity-tamper.mjs" > /dev/null 2>&1 || true
+}
+
+# tamper_projection <route> <service user> <userId> — run it on the agent
+# half's database as the agent half's own account (its files stay its own);
+# prints its answer ('{}' when it failed)
+tamper_projection() {
+  agent_exec "runuser -u $2 -- node ${REMOTE_DIR}/identity-tamper.mjs /var/lib/lamalibre/apps/$1/identity.db $3 2>/dev/null" 2>/dev/null | grep -E '^\{' | tail -n 1 || echo '{}'
+}
+
+# agent_has_node_sqlite — the agent VM's Node.js has node:sqlite unflagged
+# (22.13 and later), which the identity fixture's agent half needs
+agent_has_node_sqlite() {
+  [ "$(agent_exec "node -e \"require('node:sqlite'); console.log('yes')\" 2>/dev/null" 2>/dev/null | tail -n 1)" = "yes" ]
 }
 
 # ---------------------------------------------------------------------------

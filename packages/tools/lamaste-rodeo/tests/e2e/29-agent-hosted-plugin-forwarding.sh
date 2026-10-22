@@ -345,8 +345,11 @@ COOKIE_PING=$(_curl_mtls -H 'Cookie: lamaste_2fa_session=secret' -H 'Authorizati
 assert_json_field "$COOKIE_PING" '.cookie' 'null' "The panel's cookie never reaches the agent half" || true
 assert_json_field "$COOKIE_PING" '.authorization' 'null' "An Authorization header never reaches the agent half" || true
 
+# /api/<route>/app is the user surface's (slice 6): a relay assertion from
+# Gatekeeper or nothing — the admin forwarder never reaches /admin/app*.
 USER_SURFACE_STATUS=$(api_get_status "${PLUGIN_NAME}/app/secret")
-assert_eq "$USER_SURFACE_STATUS" "404" "The agent half's /app is out of the forwarder's reach" || true
+assert_eq "$USER_SURFACE_STATUS" "401" "The agent half's /app is out of the forwarder's reach: the user surface answers, 401 without a relay assertion" || true
+assert_eq "$(grep -c '/app/secret' "${HALF_LOG}" 2>/dev/null || true)" "0" "…the agent half never saw it" || true
 DIRECT_APP=$(curl -s --max-time 5 "http://127.0.0.1:${PORT}/app/secret" 2>/dev/null || echo "")
 assert_contains "$DIRECT_APP" "USER SURFACE" "(the agent half does serve /app directly)" || true
 

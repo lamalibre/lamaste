@@ -314,7 +314,9 @@ assert_json_field "$PING" '.caller.type' 'admin' "The caller assertion names the
 assert_json_field "$PING" '.cookie' 'null' "No cookie crosses the tunnel" || true
 BUNDLE=$(host_api_get "${PLUGIN_NAME}/panel.js")
 assert_contains "$BUNDLE" "__lamalibrePlugins" "The admin bundle comes from the agent half" || true
-assert_eq "$(host_api_get_status "${PLUGIN_NAME}/app/secret")" "404" "The user surface is out of the forwarder's reach" || true
+# /api/<route>/app is the user surface's (slice 6): a relay assertion from
+# Gatekeeper or nothing — the admin forwarder never reaches /admin/app*.
+assert_eq "$(host_api_get_status "${PLUGIN_NAME}/app/secret")" "401" "The user surface is out of the forwarder's reach: 401 without a relay assertion" || true
 
 if wait_health up 60; then
   log_pass "Health is up"

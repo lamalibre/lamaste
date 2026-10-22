@@ -135,7 +135,7 @@ DIGEST_A=$(secret_digest a)
 DIGEST_B=$(secret_digest b)
 assert_not_eq "${DIGEST_A}" "${DIGEST_B}" "Their digests are known; the secrets never leave the host VM" || true
 ensure_app_host_helper
-open_push_install "${POLICY_ID}" "[\"${AGENT_PACKAGE}\"]" '["install","update","uninstall"]' > /dev/null
+open_push_install "${POLICY_ID}" "[\"${AGENT_PACKAGE}\"]" '["install","update","uninstall"]'
 
 # ===========================================================================
 # 2. Install and host 1.0.0

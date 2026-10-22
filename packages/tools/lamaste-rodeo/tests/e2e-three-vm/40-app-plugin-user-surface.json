@@ -1,0 +1,3144 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 40,
+    "name": "App plugin user surface",
+    "suite": "e2e-three-vm",
+    "description": "40 — App plugin user surface (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    }
+  },
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-idsurf"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-idsurf-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-idsurf-agent"
+    },
+    "APP": {
+      "value": "/api/${PLUGIN}/app",
+      "expression": true
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-40"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-40-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "VISITOR_VM": {
+      "value": "lamaste-visitor"
+    },
+    "VIEWER": {
+      "value": "e2e40-viewer"
+    },
+    "NOROLE": {
+      "value": "e2e40-norole"
+    },
+    "JAR_VIEWER": {
+      "value": "/tmp/e2e-40-viewer.cookies"
+    },
+    "JAR_NOROLE": {
+      "value": "/tmp/e2e-40-norole.cookies"
+    },
+    "SUB_A": {
+      "value": "e2e40us"
+    },
+    "SUB_P": {
+      "value": "e2e40pub"
+    },
+    "SUB_S": {
+      "value": "e2e40two"
+    },
+    "PORT_A": {
+      "value": "18440"
+    },
+    "PORT_P": {
+      "value": "18441"
+    },
+    "PORT_S": {
+      "value": "18442"
+    },
+    "BACKEND_UNIT": {
+      "value": "e2e-40-backend"
+    },
+    "BACKEND_DIR": {
+      "value": "/var/tmp/e2e-40-backend"
+    },
+    "MARKER": {
+      "value": "E2E_40_TUNNEL_BACKEND_$timestamp()",
+      "expression": true
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE tunnels/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${id}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE users/${id}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${id}?erase=true"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "POST identity/directory/${id}/erase",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "identity/directory/${id}/erase",
+        "body": {}
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-3",
+          "label": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}, bound host ${FQDN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}, bound host ${FQDN}"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs"
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "The visitor VM has oathtool (Authelia's second factor)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The visitor VM has oathtool (Authelia's second factor)"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "The visitor VM has no oathtool: no one can sign in to reach the user surface",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The visitor VM has no oathtool: no one can sign in to reach the user surface"
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "DELETE /api/users/${user}?erase=true",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "users/${user}?erase=true"
+          },
+          "continueOnError": true
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nFQDN=\"${SUB_A}.${DOMAIN}\"\nORIGIN=\"https://${FQDN}\"\nlog_info \"Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}, bound host ${FQDN}\"\nif agent_has_node_sqlite; then\n  log_pass \"The agent VM's Node.js has node:sqlite, which the agent half's projection needs\"\nelse\n  log_fail \"The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run\"\n  end_test\n  exit $?\nfi\nif [ \"$(visitor_exec \"command -v oathtool > /dev/null && echo yes || echo no\" 2>/dev/null | tail -n 1)\" = \"yes\" ]; then\n  log_pass \"The visitor VM has oathtool (Authelia's second factor)\"\nelse\n  log_fail \"The visitor VM has no oathtool: no one can sign in to reach the user surface\"\n  end_test\n  exit $?\nfi\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\ndrop_plugin_grants \"${PLUGIN}\"\nfor user in \"${VIEWER}\" \"${NOROLE}\"; do\n  host_api_delete \"users/${user}?erase=true\" > /dev/null 2>&1 || true\ndone\n\n# ===========================================================================\n# 1. Fixtures, users, the plugin installed\n# ==========================================================================="
+    },
+    {
+      "id": "fixtures-the-stand-in-feria-the-users-the-plugin-installed-not-approved",
+      "label": "Fixtures, the stand-in Feria, the users; the plugin installed, not approved",
+      "steps": [
+        {
+          "id": "step-12",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-40-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Fixture built: ${SERVER_PACKAGE} (identity: viewer, editor; displayName, email) and its agent package",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixture built: ${SERVER_PACKAGE} (identity: viewer, editor; displayName, email) and its agent package"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${VIEWER}\\\",\\\"displayname\\\":\\\"E2E Viewer\\\",\\\"email\\\":\\\"${VIEWER}@example.test\\\",\\\"password\\\":\\\"${VIEWER_PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "User ${VIEWER} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${VIEWER} created"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Set VIEWER_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "VIEWER_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${NOROLE}\\\",\\\"displayname\\\":\\\"E2E No Role\\\",\\\"email\\\":\\\"${NOROLE}@example.test\\\",\\\"password\\\":\\\"${NOROLE_PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "User ${NOROLE} created — to hold no role in the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${NOROLE} created — to hold no role in the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Set NOROLE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "NOROLE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Both have a directory id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${VIEWER_ID}\") $(is_uuid \"${NOROLE_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true true"
+              },
+              "message": "Both have a directory id"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Installed ${SERVER_PACKAGE}@1.0.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed ${SERVER_PACKAGE}@1.0.0"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "…its identity block waits for approval",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": "\"\\(.hooks.identity.declared) \\(.hooks.identity.approved) \\(.hooks.approval.state)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true false pending"
+              },
+              "message": "…its identity block waits for approval"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Set DIGEST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$INSTALL\" '.hooks.approval.digest // empty'"
+          },
+          "capture": [
+            {
+              "variable": "DIGEST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-31",
+          "label": "Hosting it is refused until it is approved (409)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Hosting it is refused until it is approved (409)"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "…hooks_not_approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "hooks_not_approved"
+              },
+              "message": "…hooks_not_approved"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Fixtures, the stand-in Feria, the users; the plugin installed, not approved\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-40-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/surf\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none wide; then\n  log_fail \"The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE} (identity: viewer, editor; displayName, email) and its agent package\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/surf/server fixtures/surf/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\n\n# Every users.yml write of the spec, before anyone signs in.\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${VIEWER}\\\",\\\"displayname\\\":\\\"E2E Viewer\\\",\\\"email\\\":\\\"${VIEWER}@example.test\\\",\\\"password\\\":\\\"${VIEWER_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${VIEWER} created\" || true\nVIEWER_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${NOROLE}\\\",\\\"displayname\\\":\\\"E2E No Role\\\",\\\"email\\\":\\\"${NOROLE}@example.test\\\",\\\"password\\\":\\\"${NOROLE_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${NOROLE} created — to hold no role in the plugin\" || true\nNOROLE_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nassert_eq \"$(is_uuid \"${VIEWER_ID}\") $(is_uuid \"${NOROLE_ID}\")\" \"true true\" \"Both have a directory id\" || true\n\nINSTALL=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${SERVER_PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0\" || true\nassert_json_field \"$INSTALL\" '\"\\(.hooks.identity.declared) \\(.hooks.identity.approved) \\(.hooks.approval.state)\"' 'true false pending' \"…its identity block waits for approval\" || true\nDIGEST=$(json_get \"$INSTALL\" '.hooks.approval.digest // empty')\nRESP=$(host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Hosting it is refused until it is approved (409)\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'hooks_not_approved' \"…hooks_not_approved\" || true\n\n# ===========================================================================\n# 2. The tunnels; the bound one's own backend\n# ==========================================================================="
+    },
+    {
+      "id": "an-authenticated-app-tunnel-with-its-own-backend-and-two-others",
+      "label": "An authenticated app tunnel with its own backend, and two others",
+      "steps": [
+        {
+          "id": "step-33",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Set TUNNEL_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.tunnel.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Tunnel ${FQDN}: authenticated, carried by ${HOST_AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": "\"\\(.tunnel.fqdn) \\(.tunnel.accessMode) \\(.tunnel.agentLabel)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${FQDN} authenticated ${HOST_AGENT_LABEL}"
+              },
+              "message": "Tunnel ${FQDN}: authenticated, carried by ${HOST_AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Set TUNNEL_P",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.tunnel.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_P",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "Tunnel ${SUB_P}: public",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".tunnel.accessMode",
+              "expected": {
+                "kind": "literal",
+                "value": "public"
+              },
+              "message": "Tunnel ${SUB_P}: public"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Set TUNNEL_S",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.tunnel.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_S",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Tunnel ${SUB_S}: authenticated",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".tunnel.accessMode",
+              "expected": {
+                "kind": "literal",
+                "value": "authenticated"
+              },
+              "message": "Tunnel ${SUB_S}: authenticated"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "The tunnel's own backend answers through chisel (${APP}/echo is a file of it)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The tunnel's own backend answers through chisel (${APP}/echo is a file of it)"
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "The tunnel's backend is not reachable through chisel on the host VM's port ${PORT_A}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The tunnel's backend is not reachable through chisel on the host VM's port ${PORT_A}"
+          }
+        }
+      ],
+      "bash": "log_section \"An authenticated app tunnel with its own backend, and two others\"\n\nRESP=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_A}\\\",\\\"port\\\":${PORT_A},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nTUNNEL_A=$(json_get \"$RESP\" '.tunnel.id // empty')\nassert_json_field \"$RESP\" '\"\\(.tunnel.fqdn) \\(.tunnel.accessMode) \\(.tunnel.agentLabel)\"' \"${FQDN} authenticated ${HOST_AGENT_LABEL}\" \"Tunnel ${FQDN}: authenticated, carried by ${HOST_AGENT_LABEL}\" || true\nRESP=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_P}\\\",\\\"port\\\":${PORT_P},\\\"accessMode\\\":\\\"public\\\",\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nTUNNEL_P=$(json_get \"$RESP\" '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.accessMode' 'public' \"Tunnel ${SUB_P}: public\" || true\nRESP=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_S}\\\",\\\"port\\\":${PORT_S},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nTUNNEL_S=$(json_get \"$RESP\" '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.accessMode' 'authenticated' \"Tunnel ${SUB_S}: authenticated\" || true\n\nagent_exec \"grep -q 'tunnel.${DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${DOMAIN}' >> /etc/hosts\" > /dev/null 2>&1 || true\nvisitor_exec \"grep -q '${FQDN}' /etc/hosts || echo '${HOST_IP} ${FQDN}' >> /etc/hosts\" > /dev/null 2>&1 || true\nagent_exec \"systemctl stop ${BACKEND_UNIT} > /dev/null 2>&1; rm -rf ${BACKEND_DIR} && mkdir -p ${BACKEND_DIR}${APP} && printf '%s\\n' ${MARKER} > ${BACKEND_DIR}${APP}/echo && chmod -R a+rX ${BACKEND_DIR}\" > /dev/null 2>&1 || true\nagent_exec \"systemd-run --quiet --collect --unit ${BACKEND_UNIT} --uid=nobody --gid=nogroup python3 -m http.server ${PORT_A} --bind 127.0.0.1 --directory ${BACKEND_DIR}\" > /dev/null 2>&1 || true\nnudge_sync\nif wait_for 120 backend_reachable; then\n  log_pass \"The tunnel's own backend answers through chisel (${APP}/echo is a file of it)\"\nelse\n  log_fail \"The tunnel's backend is not reachable through chisel on the host VM's port ${PORT_A}\"\nfi\n\n# ===========================================================================\n# 3. Binding, and what is refused\n# ==========================================================================="
+    },
+    {
+      "id": "bound-as-the-plugin-s-user-surface-the-refusals",
+      "label": "Bound as the plugin's user surface; the refusals",
+      "steps": [
+        {
+          "id": "step-49",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" '{\"route\":\"e2e-no-such-plugin\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "A route no installed plugin holds cannot be bound (400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A route no installed plugin holds cannot be bound (400)"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Set BOUND",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "body_of \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "BOUND",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "…bound",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BOUND"
+              },
+              "path": "\"\\(.changed) \\(.tunnel.userSurface.routes | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "true ${PLUGIN}"
+              },
+              "message": "…bound"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "…not served yet: its identity is not approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BOUND"
+              },
+              "path": ".tunnel.userSurfaceStatus[0] | \"\\(.route) \\(.served) \\(.reason)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${PLUGIN} false not_approved"
+              },
+              "message": "…not served yet: its identity is not approved"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Binding it again changes nothing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\")"
+              },
+              "path": ".changed",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Binding it again changes nothing"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"tunnels/${TUNNEL_P}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "A public tunnel cannot be bound (400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A public tunnel cannot be bound (400)"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "…$(json_get \"$(body_of \"$RESP\")\" '.error')",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(body_of \"$RESP\")\" '.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "public"
+              },
+              "message": "…$(json_get \"$(body_of \"$RESP\")\" '.error')"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"tunnels/${TUNNEL_S}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "A second tunnel for the same route is refused (409)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "A second tunnel for the same route is refused (409)"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "…user_surface_conflict",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "user_surface_conflict"
+              },
+              "message": "…user_surface_conflict"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"public\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-64",
+          "label": "The bound tunnel cannot be made public (409)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "The bound tunnel cannot be made public (409)"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "…it stays authenticated",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(tunnel_entry \"${TUNNEL_A}\")"
+              },
+              "path": ".accessMode",
+              "expected": {
+                "kind": "literal",
+                "value": "authenticated"
+              },
+              "message": "…it stays authenticated"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Bound as the plugin's user surface; the refusals\"\n\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" '{\"route\":\"e2e-no-such-plugin\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A route no installed plugin holds cannot be bound (400)\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}\" || true\nBOUND=$(body_of \"$RESP\")\nassert_json_field \"$BOUND\" '\"\\(.changed) \\(.tunnel.userSurface.routes | join(\",\"))\"' \"true ${PLUGIN}\" \"…bound\" || true\nassert_json_field \"$BOUND\" '.tunnel.userSurfaceStatus[0] | \"\\(.route) \\(.served) \\(.reason)\"' \"${PLUGIN} false not_approved\" \"…not served yet: its identity is not approved\" || true\nassert_json_field \"$(body_of \"$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\")\" '.changed' 'false' \"Binding it again changes nothing\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_P}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A public tunnel cannot be bound (400)\" || true\nassert_contains \"$(json_get \"$(body_of \"$RESP\")\" '.error')\" \"public\" \"…$(json_get \"$(body_of \"$RESP\")\" '.error')\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_S}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"A second tunnel for the same route is refused (409)\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'user_surface_conflict' \"…user_surface_conflict\" || true\nRESP=$(host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"public\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"The bound tunnel cannot be made public (409)\" || true\nassert_json_field \"$(tunnel_entry \"${TUNNEL_A}\")\" '.accessMode' 'authenticated' \"…it stays authenticated\" || true\n\n# ===========================================================================\n# 4. Before approval: the tunnel's own backend\n# ==========================================================================="
+    },
+    {
+      "id": "bound-not-approved-requests-go-down-the-tunnel-as-before",
+      "label": "Bound, not approved: requests go down the tunnel as before",
+      "steps": [
+        {
+          "id": "step-66",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-67",
+          "label": "Without a session: Authelia's redirect, as for any page of the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "302"
+              },
+              "message": "Without a session: Authelia's redirect, as for any page of the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "…to the sign-in portal",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_headers \"$RESP\")"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "auth.${DOMAIN}"
+              },
+              "message": "…to the sign-in portal"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-71",
+          "label": "Signed in: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Signed in: 200"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "…from the tunnel's own backend: no user-surface location yet",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "…from the tunnel's own backend: no user-surface location yet"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Bound, not approved: requests go down the tunnel as before\"\n\nRESP=$(visit - \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"302\" \"Without a session: Authelia's redirect, as for any page of the tunnel\" || true\nassert_contains \"$(visit_headers \"$RESP\")\" \"auth.${DOMAIN}\" \"…to the sign-in portal\" || true\n\nsign_in_both\nRESP=$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"Signed in: 200\" || true\nassert_contains \"$(visit_body \"$RESP\")\" \"${MARKER}\" \"…from the tunnel's own backend: no user-surface location yet\" || true\n\n# ===========================================================================\n# 5. Approved, hosted, ready\n# ==========================================================================="
+    },
+    {
+      "id": "approved-the-location-is-there-hosted-its-users-are-let-through",
+      "label": "Approved: the location is there; hosted, its users are let through",
+      "steps": [
+        {
+          "id": "step-73",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "Approved: its agent half and identity block",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPROVED"
+              },
+              "path": "\"\\(.hooks.approval.state) \\(.hooks.identity.approved)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "approved true"
+              },
+              "message": "Approved: its agent half and identity block"
+            }
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "POST /api/plugins/${PLUGIN}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/enable",
+            "body": {}
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "The bound host serves ${APP} now",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(tunnel_entry \"${TUNNEL_A}\")"
+              },
+              "path": ".userSurfaceStatus[0] | \"\\(.served) \\(.reason)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true null"
+              },
+              "message": "The bound host serves ${APP} now"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Without a session: 401",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Without a session: 401"
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Without a session: $(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Without a session: $(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")"
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "…JSON (unauthenticated) for the application to act on",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "unauthenticated"
+              },
+              "message": "…JSON (unauthenticated) for the application to act on"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "…never a redirect",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location:"
+              },
+              "message": "…never a redirect"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "Signed in, the plugin not hosted yet: 503",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "503"
+              },
+              "message": "Signed in, the plugin not hosted yet: 503"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "…the tunnel's backend is no longer asked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "…the tunnel's backend is no longer asked"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 300 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-86",
+          "label": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "The relay's health of the hosting is up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The relay's health of the hosting is up"
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "Ready: its agent half answered protocol 1",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Ready: its agent half answered protocol 1"
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')"
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "The sessions ended while the plugin was hosted — signing in again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "The sessions ended while the plugin was hosted — signing in again"
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-94",
+          "label": "${VIEWER}, before any entitlement: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${VIEWER}, before any entitlement: 403"
+            }
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "…not entitled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "This user may not use this plugin"
+              },
+              "message": "…not entitled"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${VIEWER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-97",
+          "label": "${VIEWER} entitled as viewer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${VIEWER} entitled as viewer"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "…an active member of the audience",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…an active member of the audience"
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "The audience: $(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The audience: $(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\")"
+          }
+        }
+      ],
+      "bash": "log_section \"Approved: the location is there; hosted, its users are let through\"\n\nAPPROVED=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"${DIGEST}\\\"}\")\nassert_json_field \"$APPROVED\" '\"\\(.hooks.approval.state) \\(.hooks.identity.approved)\"' 'approved true' \"Approved: its agent half and identity block\" || true\nhost_api_post \"plugins/${PLUGIN}/enable\" '{}' > /dev/null\nassert_json_field \"$(tunnel_entry \"${TUNNEL_A}\")\" '.userSurfaceStatus[0] | \"\\(.served) \\(.reason)\"' 'true null' \"The bound host serves ${APP} now\" || true\nif wait_for 30 anonymous_gets 401; then\n  log_pass \"Without a session: 401\"\nelse\n  log_fail \"Without a session: $(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")\"\nfi\nRESP=$(visit - \"https://${FQDN}${APP}/echo\")\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'unauthenticated' \"…JSON (unauthenticated) for the application to act on\" || true\nassert_not_contains \"$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\" \"location:\" \"…never a redirect\" || true\nRESP=$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"503\" \"Signed in, the plugin not hosted yet: 503\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"${MARKER}\" \"…the tunnel's backend is no longer asked\" || true\n\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nif wait_for 60 health_up; then\n  log_pass \"The relay's health of the hosting is up\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\nif wait_for 120 identity_ready \"${PLUGIN}\"; then\n  log_pass \"Ready: its agent half answered protocol 1\"\nelse\n  log_fail \"Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')\"\nfi\nif [ \"$(viewer_echo_status)\" = \"401\" ]; then\n  # Something restarted Authelia since (a users.yml write would): sign in again.\n  log_info \"The sessions ended while the plugin was hosted — signing in again\"\n  sign_in_both\nfi\nRESP=$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${VIEWER}, before any entitlement: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'This user may not use this plugin' \"…not entitled\" || true\n\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${VIEWER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${VIEWER} entitled as viewer\" || true\nif wait_for 30 viewer_in_audience; then\n  log_pass \"…an active member of the audience\"\nelse\n  log_fail \"The audience: $(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\")\"\nfi\n\n# ===========================================================================\n# 6. The user surface\n# ==========================================================================="
+    },
+    {
+      "id": "signed-in-with-a-role-the-agent-half-sees-the-directory-s-user",
+      "label": "Signed in with a role: the agent half sees the directory's user",
+      "steps": [
+        {
+          "id": "step-100",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-101",
+          "label": "GET ${APP}/echo as ${VIEWER}: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "GET ${APP}/echo as ${VIEWER}: 200"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "Set ECHO",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "ECHO",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-103",
+          "label": "The caller the panel signed: user, the directory's id, the username, the roles",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ECHO"
+              },
+              "path": "\"\\(.caller.type) \\(.caller.userId) \\(.caller.username) \\(.caller.roles | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "user ${VIEWER_ID} ${VIEWER} viewer"
+              },
+              "message": "The caller the panel signed: user, the directory's id, the username, the roles"
+            }
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "…for the agent half's /app/echo",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ECHO"
+              },
+              "path": "\"\\(.path) \\(.method)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "/app/echo GET"
+              },
+              "message": "…for the agent half's /app/echo"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "Set HEADERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]'"
+          },
+          "capture": [
+            {
+              "variable": "HEADERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "The application's Set-Cookie never reaches the browser",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "HEADERS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "app-session"
+              },
+              "message": "The application's Set-Cookie never reaches the browser"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "…nor any X-Lamalibre-* header (the responder signature is the relay's)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "HEADERS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "x-lamalibre-"
+              },
+              "message": "…nor any X-Lamalibre-* header (the responder signature is the relay's)"
+            }
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "The agent half's projection holds ${VIEWER} (the feed delivered the entitlement)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half's projection holds ${VIEWER} (the feed delivered the entitlement)"
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "The projection: $(projected_user \"${PLUGIN}\" \"${VIEWER_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The projection: $(projected_user \"${PLUGIN}\" \"${VIEWER_ID}\")"
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "Set ME",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/me\")\""
+          },
+          "capture": [
+            {
+              "variable": "ME",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-111",
+          "label": "GET ${APP}/me: what the agent half's projection holds of them",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ME"
+              },
+              "path": "\"\\(.member.userId) \\(.member.displayName) \\(.member.email) \\(.member.roles | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${VIEWER_ID} E2E Viewer ${VIEWER}@example.test viewer"
+              },
+              "message": "GET ${APP}/me: what the agent half's projection holds of them"
+            }
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "POST ${APP}/me: the agent half's own 405, signed, passes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit \"${JAR_VIEWER}\" -X POST -H \"Origin: ${ORIGIN}\" \"https://${FQDN}${APP}/me\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "405"
+              },
+              "message": "POST ${APP}/me: the agent half's own 405, signed, passes"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "${APP}/nothing: the agent half's own 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/nothing\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "${APP}/nothing: the agent half's own 404"
+            }
+          }
+        },
+        {
+          "id": "step-114",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_NOROLE}\" \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-115",
+          "label": "${NOROLE}, signed in without a role in the plugin: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${NOROLE}, signed in without a role in the plugin: 403"
+            }
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "…not entitled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "This user may not use this plugin"
+              },
+              "message": "…not entitled"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Signed in with a role: the agent half sees the directory's user\"\n\nRESP=$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"GET ${APP}/echo as ${VIEWER}: 200\" || true\nECHO=$(visit_body \"$RESP\")\nassert_json_field \"$ECHO\" '\"\\(.caller.type) \\(.caller.userId) \\(.caller.username) \\(.caller.roles | join(\",\"))\"' \"user ${VIEWER_ID} ${VIEWER} viewer\" \"The caller the panel signed: user, the directory's id, the username, the roles\" || true\nassert_json_field \"$ECHO\" '\"\\(.path) \\(.method)\"' '/app/echo GET' \"…for the agent half's /app/echo\" || true\nHEADERS=$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\nassert_not_contains \"$HEADERS\" \"app-session\" \"The application's Set-Cookie never reaches the browser\" || true\nassert_not_contains \"$HEADERS\" \"x-lamalibre-\" \"…nor any X-Lamalibre-* header (the responder signature is the relay's)\" || true\nif wait_for 60 projection_has \"${PLUGIN}\" \"[.users[] | select(.userId == \\\"${VIEWER_ID}\\\" and .status == \\\"active\\\")] | length == 1\"; then\n  log_pass \"The agent half's projection holds ${VIEWER} (the feed delivered the entitlement)\"\nelse\n  log_fail \"The projection: $(projected_user \"${PLUGIN}\" \"${VIEWER_ID}\")\"\nfi\nME=$(visit_body \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/me\")\")\nassert_json_field \"$ME\" '\"\\(.member.userId) \\(.member.displayName) \\(.member.email) \\(.member.roles | join(\",\"))\"' \"${VIEWER_ID} E2E Viewer ${VIEWER}@example.test viewer\" \"GET ${APP}/me: what the agent half's projection holds of them\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_VIEWER}\" -X POST -H \"Origin: ${ORIGIN}\" \"https://${FQDN}${APP}/me\")\")\" \"405\" \"POST ${APP}/me: the agent half's own 405, signed, passes\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/nothing\")\")\" \"404\" \"${APP}/nothing: the agent half's own 404\" || true\n\nRESP=$(visit \"${JAR_NOROLE}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${NOROLE}, signed in without a role in the plugin: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'This user may not use this plugin' \"…not entitled\" || true"
+    },
+    {
+      "id": "what-a-browser-cannot-do",
+      "label": "What a browser cannot do",
+      "steps": [
+        {
+          "id": "step-118",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_VIEWER}\" -X POST -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-119",
+          "label": "POST without an Origin: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "POST without an Origin: 403"
+            }
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "…cross-origin request refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "cross-origin request refused"
+              },
+              "message": "…cross-origin request refused"
+            }
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "POST from a foreign Origin: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit \"${JAR_VIEWER}\" -X POST -H 'Origin: https://evil.example.test' -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "POST from a foreign Origin: 403"
+            }
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_VIEWER}\" -X POST -H \"Origin: ${ORIGIN}\" -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-123",
+          "label": "POST from the bound host's Origin: forwarded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "POST from the bound host's Origin: forwarded"
+            }
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "…the agent half got the POST, its Origin and all ${#BODY} bytes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "\"\\(.method) \\(.origin) \\(.bytes)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "POST ${ORIGIN} ${#BODY}"
+              },
+              "message": "…the agent half got the POST, its Origin and all ${#BODY} bytes"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_VIEWER}\" -H 'X-Lamalibre-Relay-Assertion: e2e.forged' -H 'Remote-User: admin' -H 'X-Lamalibre-Caller: e2e.forged' -H 'X-E2E-Marker: e2e-40-marker' \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-126",
+          "label": "Sent with its own X-Lamalibre-Relay-Assertion, Remote-User and X-Lamalibre-Caller: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Sent with its own X-Lamalibre-Relay-Assertion, Remote-User and X-Lamalibre-Caller: 200"
+            }
+          }
+        },
+        {
+          "id": "step-127",
+          "label": "Set ECHO",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "ECHO",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-128",
+          "label": "…the caller is still the one Gatekeeper vouched for",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ECHO"
+              },
+              "path": "\"\\(.caller.username) \\(.caller.userId)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${VIEWER} ${VIEWER_ID}"
+              },
+              "message": "…the caller is still the one Gatekeeper vouched for"
+            }
+          }
+        },
+        {
+          "id": "step-129",
+          "label": "…no Remote-User or relay assertion reached the agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ECHO"
+              },
+              "path": "\"\\(.headers.remoteUser) \\(.headers.relayAssertion)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null"
+              },
+              "message": "…no Remote-User or relay assertion reached the agent half"
+            }
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "…while an ordinary header did",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ECHO"
+              },
+              "path": ".headers.marker",
+              "expected": {
+                "kind": "literal",
+                "value": "e2e-40-marker"
+              },
+              "message": "…while an ordinary header did"
+            }
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "Set COOKIE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "session_cookie \"${JAR_VIEWER}\""
+          },
+          "capture": [
+            {
+              "variable": "COOKIE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-132",
+          "label": "The viewer's session cookie, read from the visitor's jar",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "COOKIE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "The viewer's session cookie, read from the visitor's jar"
+            }
+          }
+        },
+        {
+          "id": "step-133",
+          "label": "Set ASSERTION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "gatekeeper_assertion GET \"${APP}/echo\" \"${COOKIE}\""
+          },
+          "capture": [
+            {
+              "variable": "ASSERTION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-134",
+          "label": "On the host VM, Gatekeeper vouches for that session (/authz/user-surface/${FQDN})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"${ASSERTION}\" | grep -cE '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "On the host VM, Gatekeeper vouches for that session (/authz/user-surface/${FQDN})"
+            }
+          }
+        },
+        {
+          "id": "step-135",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "panel_direct GET \"${APP}/echo\" \"${ASSERTION}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-136",
+          "label": "Its assertion, sent to the panel's listener: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Its assertion, sent to the panel's listener: 200"
+            }
+          }
+        },
+        {
+          "id": "step-137",
+          "label": "…as ${VIEWER}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".caller.userId",
+              "expected": {
+                "kind": "var",
+                "name": "VIEWER_ID"
+              },
+              "message": "…as ${VIEWER}"
+            }
+          }
+        },
+        {
+          "id": "step-138",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "panel_direct GET \"${APP}/echo\" \"${ASSERTION}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-139",
+          "label": "The same assertion again: 401 — replay refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "The same assertion again: 401 — replay refused"
+            }
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "…unauthenticated",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "unauthenticated"
+              },
+              "message": "…unauthenticated"
+            }
+          }
+        },
+        {
+          "id": "step-141",
+          "label": "An assertion for GET does not carry a POST (401)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(panel_direct POST \"${APP}/echo\" \"$(gatekeeper_assertion GET \"${APP}/echo\" \"${COOKIE}\")\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "An assertion for GET does not carry a POST (401)"
+            }
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "Set PATHS_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_requests \"${PLUGIN}\" '(%2[fFeE]|%5[cC]|/\\.\\.?(/|$))'"
+          },
+          "capture": [
+            {
+              "variable": "PATHS_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-144",
+          "label": "Set STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_status \"$(visit \"${JAR_VIEWER}\" --path-as-is \"https://${FQDN}${path}\")\""
+          },
+          "capture": [
+            {
+              "variable": "STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-145",
+          "label": "${path}: refused (${STATUS})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${path}: refused (${STATUS})"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "STATUS",
+                "value": "403"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "STATUS",
+                "value": "400"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-146",
+          "label": "${path}: expected 403 or 400, got ${STATUS}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${path}: expected 403 or 400, got ${STATUS}"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "STATUS",
+                "value": "403"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "STATUS",
+                "value": "400"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-148",
+          "label": "The agent half saw none of them (its request log)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(half_requests \"${PLUGIN}\" '(%2[fFeE]|%5[cC]|/\\.\\.?(/|$))')"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PATHS_BEFORE"
+              },
+              "message": "The agent half saw none of them (its request log)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"What a browser cannot do\"\n\nBODY='{\"note\":\"e2e 40\"}'\nRESP=$(visit \"${JAR_VIEWER}\" -X POST -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"POST without an Origin: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'cross-origin request refused' \"…cross-origin request refused\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_VIEWER}\" -X POST -H 'Origin: https://evil.example.test' -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\")\")\" \"403\" \"POST from a foreign Origin: 403\" || true\nRESP=$(visit \"${JAR_VIEWER}\" -X POST -H \"Origin: ${ORIGIN}\" -H 'Content-Type: application/json' -d \"$BODY\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"POST from the bound host's Origin: forwarded\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.method) \\(.origin) \\(.bytes)\"' \"POST ${ORIGIN} ${#BODY}\" \"…the agent half got the POST, its Origin and all ${#BODY} bytes\" || true\n\nRESP=$(visit \"${JAR_VIEWER}\" -H 'X-Lamalibre-Relay-Assertion: e2e.forged' -H 'Remote-User: admin' -H 'X-Lamalibre-Caller: e2e.forged' -H 'X-E2E-Marker: e2e-40-marker' \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"Sent with its own X-Lamalibre-Relay-Assertion, Remote-User and X-Lamalibre-Caller: 200\" || true\nECHO=$(visit_body \"$RESP\")\nassert_json_field \"$ECHO\" '\"\\(.caller.username) \\(.caller.userId)\"' \"${VIEWER} ${VIEWER_ID}\" \"…the caller is still the one Gatekeeper vouched for\" || true\nassert_json_field \"$ECHO\" '\"\\(.headers.remoteUser) \\(.headers.relayAssertion)\"' 'null null' \"…no Remote-User or relay assertion reached the agent half\" || true\nassert_json_field \"$ECHO\" '.headers.marker' 'e2e-40-marker' \"…while an ordinary header did\" || true\n\nCOOKIE=$(session_cookie \"${JAR_VIEWER}\")\nassert_not_eq \"${COOKIE}\" \"\" \"The viewer's session cookie, read from the visitor's jar\" || true\nASSERTION=$(gatekeeper_assertion GET \"${APP}/echo\" \"${COOKIE}\")\nassert_eq \"$(echo \"${ASSERTION}\" | grep -cE '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$' || true)\" \"1\" \"On the host VM, Gatekeeper vouches for that session (/authz/user-surface/${FQDN})\" || true\nRESP=$(panel_direct GET \"${APP}/echo\" \"${ASSERTION}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Its assertion, sent to the panel's listener: 200\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.caller.userId' \"${VIEWER_ID}\" \"…as ${VIEWER}\" || true\nRESP=$(panel_direct GET \"${APP}/echo\" \"${ASSERTION}\")\nassert_eq \"$(status_of \"$RESP\")\" \"401\" \"The same assertion again: 401 — replay refused\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.error' 'unauthenticated' \"…unauthenticated\" || true\nassert_eq \"$(status_of \"$(panel_direct POST \"${APP}/echo\" \"$(gatekeeper_assertion GET \"${APP}/echo\" \"${COOKIE}\")\")\")\" \"401\" \"An assertion for GET does not carry a POST (401)\" || true\n\n# Each resolves (by nginx's reading) under the user surface; Gatekeeper\n# checks the raw target, which may not hold a dot segment or an encoded\n# separator.\nPATHS_BEFORE=$(half_requests \"${PLUGIN}\" '(%2[fFeE]|%5[cC]|/\\.\\.?(/|$))')\nfor path in \"${APP}/../app/echo\" \"${APP}/./echo\" \"${APP}/%2e/echo\" \"${APP}/a%2fb\" \"${APP}/a%5cb\"; do\n  STATUS=$(visit_status \"$(visit \"${JAR_VIEWER}\" --path-as-is \"https://${FQDN}${path}\")\")\n  if [ \"$STATUS\" = \"403\" ] || [ \"$STATUS\" = \"400\" ]; then\n    log_pass \"${path}: refused (${STATUS})\"\n  else\n    log_fail \"${path}: expected 403 or 400, got ${STATUS}\"\n  fi\ndone\nassert_eq \"$(half_requests \"${PLUGIN}\" '(%2[fFeE]|%5[cC]|/\\.\\.?(/|$))')\" \"${PATHS_BEFORE}\" \"The agent half saw none of them (its request log)\" || true\n\n# ===========================================================================\n# 7. A restricted tunnel\n# ==========================================================================="
+    },
+    {
+      "id": "restricted-a-grant-for-the-tunnel-is-needed-too",
+      "label": "Restricted: a grant for the tunnel is needed too",
+      "steps": [
+        {
+          "id": "step-149",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"restricted\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-150",
+          "label": "The bound tunnel made restricted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The bound tunnel made restricted"
+            }
+          }
+        },
+        {
+          "id": "step-151",
+          "label": "${VIEWER}, entitled to the plugin but without a grant for the tunnel: 403",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${VIEWER}, entitled to the plugin but without a grant for the tunnel: 403"
+          }
+        },
+        {
+          "id": "step-152",
+          "label": "${VIEWER} on the restricted tunnel: $(viewer_echo_status)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${VIEWER} on the restricted tunnel: $(viewer_echo_status)"
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "POST /api/gatekeeper/grants",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/grants",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-154",
+          "label": "Set TUNNEL_GRANT_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.grant.grantId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_GRANT_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-155",
+          "label": "${VIEWER} granted the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".grant.grantId",
+              "message": "${VIEWER} granted the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-156",
+          "label": "POST /api/gatekeeper/cache/bust",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/cache/bust",
+            "body": {}
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-157",
+          "label": "…200 with the grant",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…200 with the grant"
+          }
+        },
+        {
+          "id": "step-158",
+          "label": "${VIEWER} with the grant: $(viewer_echo_status)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${VIEWER} with the grant: $(viewer_echo_status)"
+          }
+        },
+        {
+          "id": "step-159",
+          "label": "DELETE /api/gatekeeper/grants/${TUNNEL_GRANT_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "gatekeeper/grants/${TUNNEL_GRANT_ID}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-161",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"authenticated\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-162",
+          "label": "The grant revoked, the tunnel authenticated again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The grant revoked, the tunnel authenticated again"
+            }
+          }
+        },
+        {
+          "id": "step-163",
+          "label": "${VIEWER}: 200 again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${VIEWER}: 200 again"
+          }
+        },
+        {
+          "id": "step-164",
+          "label": "${VIEWER}: $(viewer_echo_status)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${VIEWER}: $(viewer_echo_status)"
+          }
+        }
+      ],
+      "bash": "log_section \"Restricted: a grant for the tunnel is needed too\"\n\nRESP=$(host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"restricted\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The bound tunnel made restricted\" || true\nif wait_for 30 viewer_gets 403; then\n  log_pass \"${VIEWER}, entitled to the plugin but without a grant for the tunnel: 403\"\nelse\n  log_fail \"${VIEWER} on the restricted tunnel: $(viewer_echo_status)\"\nfi\nRESP=$(host_api_post \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${VIEWER}\\\",\\\"resourceType\\\":\\\"tunnel\\\",\\\"resourceId\\\":\\\"${TUNNEL_A}\\\"}\")\nTUNNEL_GRANT_ID=$(json_get \"$RESP\" '.grant.grantId // empty')\nassert_json_field_not_empty \"$RESP\" '.grant.grantId' \"${VIEWER} granted the tunnel\" || true\nhost_api_post \"gatekeeper/cache/bust\" '{}' > /dev/null 2>&1 || true\nif wait_for 30 viewer_gets 200; then\n  log_pass \"…200 with the grant\"\nelse\n  log_fail \"${VIEWER} with the grant: $(viewer_echo_status)\"\nfi\nhost_api_delete \"gatekeeper/grants/${TUNNEL_GRANT_ID}\" > /dev/null 2>&1 || true\nTUNNEL_GRANT_ID=\"\"\nRESP=$(host_api_call PATCH \"tunnels/${TUNNEL_A}\" '{\"accessMode\":\"authenticated\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The grant revoked, the tunnel authenticated again\" || true\nif wait_for 30 viewer_gets 200; then\n  log_pass \"${VIEWER}: 200 again\"\nelse\n  log_fail \"${VIEWER}: $(viewer_echo_status)\"\nfi\n\n# ===========================================================================\n# 8. Unbound, bound again\n# ==========================================================================="
+    },
+    {
+      "id": "unbound-the-location-is-gone-bound-again-served",
+      "label": "Unbound: the location is gone; bound again: served",
+      "steps": [
+        {
+          "id": "step-165",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"tunnels/${TUNNEL_A}/user-surface/${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-166",
+          "label": "DELETE /api/tunnels/${TUNNEL_A}/user-surface/${PLUGIN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "DELETE /api/tunnels/${TUNNEL_A}/user-surface/${PLUGIN}"
+            }
+          }
+        },
+        {
+          "id": "step-167",
+          "label": "…the tunnel carries no binding",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(tunnel_entry \"${TUNNEL_A}\")"
+              },
+              "path": ".userSurface // \"none\"",
+              "expected": {
+                "kind": "literal",
+                "value": "none"
+              },
+              "message": "…the tunnel carries no binding"
+            }
+          }
+        },
+        {
+          "id": "step-169",
+          "label": "Signed in, ${APP}/echo reaches the tunnel's own backend again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Signed in, ${APP}/echo reaches the tunnel's own backend again"
+          }
+        },
+        {
+          "id": "step-170",
+          "label": "${APP}/echo after unbinding: $(viewer_echo_status)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${APP}/echo after unbinding: $(viewer_echo_status)"
+          }
+        },
+        {
+          "id": "step-171",
+          "label": "…and without a session Authelia redirects, as for any page of it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "302"
+              },
+              "message": "…and without a session Authelia redirects, as for any page of it"
+            }
+          }
+        },
+        {
+          "id": "step-172",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-173",
+          "label": "Bound again: served at once (approved, hosted)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.tunnel.userSurfaceStatus[0].served)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true true"
+              },
+              "message": "Bound again: served at once (approved, hosted)"
+            }
+          }
+        },
+        {
+          "id": "step-174",
+          "label": "${VIEWER}: the agent half answers again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${VIEWER}: the agent half answers again"
+          }
+        },
+        {
+          "id": "step-175",
+          "label": "${VIEWER} after binding again: $(viewer_echo_status)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${VIEWER} after binding again: $(viewer_echo_status)"
+          }
+        }
+      ],
+      "bash": "log_section \"Unbound: the location is gone; bound again: served\"\n\nRESP=$(host_api_call DELETE \"tunnels/${TUNNEL_A}/user-surface/${PLUGIN}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"DELETE /api/tunnels/${TUNNEL_A}/user-surface/${PLUGIN}\" || true\nassert_json_field \"$(tunnel_entry \"${TUNNEL_A}\")\" '.userSurface // \"none\"' 'none' \"…the tunnel carries no binding\" || true\nbackend_answers() { [[ \"$(visit_body \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\")\" == *\"${MARKER}\"* ]]; }\nif wait_for 30 backend_answers; then\n  log_pass \"Signed in, ${APP}/echo reaches the tunnel's own backend again\"\nelse\n  log_fail \"${APP}/echo after unbinding: $(viewer_echo_status)\"\nfi\nassert_eq \"$(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")\" \"302\" \"…and without a session Authelia redirects, as for any page of it\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.tunnel.userSurfaceStatus[0].served)\"' 'true true' \"Bound again: served at once (approved, hosted)\" || true\nif wait_for 30 viewer_gets 200; then\n  log_pass \"${VIEWER}: the agent half answers again\"\nelse\n  log_fail \"${VIEWER} after binding again: $(viewer_echo_status)\"\nfi\n\n# ===========================================================================\n# 9. Disabled\n# ==========================================================================="
+    },
+    {
+      "id": "disabled-refused-at-once",
+      "label": "Disabled: refused at once",
+      "steps": [
+        {
+          "id": "step-176",
+          "label": "Set COOKIE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "session_cookie \"${JAR_VIEWER}\""
+          },
+          "capture": [
+            {
+              "variable": "COOKIE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-177",
+          "label": "Set ASSERTION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "gatekeeper_assertion GET \"${APP}/echo\" \"${COOKIE}\""
+          },
+          "capture": [
+            {
+              "variable": "ASSERTION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-178",
+          "label": "Gatekeeper vouches for ${VIEWER}'s session once more",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"${ASSERTION}\" | grep -cE '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Gatekeeper vouches for ${VIEWER}'s session once more"
+            }
+          }
+        },
+        {
+          "id": "step-179",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call PUT \"users/${VIEWER}\" '{\"disabled\":true}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-180",
+          "label": "${VIEWER} disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".user.status",
+              "expected": {
+                "kind": "literal",
+                "value": "disabled"
+              },
+              "message": "${VIEWER} disabled"
+            }
+          }
+        },
+        {
+          "id": "step-181",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "panel_direct GET \"${APP}/echo\" \"${ASSERTION}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-182",
+          "label": "That assertion, still valid, sent to the panel: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "That assertion, still valid, sent to the panel: 403"
+            }
+          }
+        },
+        {
+          "id": "step-183",
+          "label": "…This user is disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "This user is disabled"
+              },
+              "message": "…This user is disabled"
+            }
+          }
+        },
+        {
+          "id": "step-184",
+          "label": "Set STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "viewer_echo_status"
+          },
+          "capture": [
+            {
+              "variable": "STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-185",
+          "label": "From the visitor VM: ${STATUS} — the session ended with Authelia's restart, or the panel refuses it",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "From the visitor VM: ${STATUS} — the session ended with Authelia's restart, or the panel refuses it"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "STATUS",
+                "value": "401"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "STATUS",
+                "value": "403"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-186",
+          "label": "From the visitor VM, disabled: ${STATUS}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "From the visitor VM, disabled: ${STATUS}"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "STATUS",
+                "value": "401"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "STATUS",
+                "value": "403"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "log_section \"Disabled: refused at once\"\n\nCOOKIE=$(session_cookie \"${JAR_VIEWER}\")\nASSERTION=$(gatekeeper_assertion GET \"${APP}/echo\" \"${COOKIE}\")\nassert_eq \"$(echo \"${ASSERTION}\" | grep -cE '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$' || true)\" \"1\" \"Gatekeeper vouches for ${VIEWER}'s session once more\" || true\nRESP=$(users_call PUT \"users/${VIEWER}\" '{\"disabled\":true}')\nassert_json_field \"$(body_of \"$RESP\")\" '.user.status' 'disabled' \"${VIEWER} disabled\" || true\nRESP=$(panel_direct GET \"${APP}/echo\" \"${ASSERTION}\")\nassert_eq \"$(status_of \"$RESP\")\" \"403\" \"That assertion, still valid, sent to the panel: 403\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.error' 'This user is disabled' \"…This user is disabled\" || true\nSTATUS=$(viewer_echo_status)\nif [ \"$STATUS\" = \"401\" ] || [ \"$STATUS\" = \"403\" ]; then\n  log_pass \"From the visitor VM: ${STATUS} — the session ended with Authelia's restart, or the panel refuses it\"\nelse\n  log_fail \"From the visitor VM, disabled: ${STATUS}\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 40 — App plugin user surface (Three-VM)\n# ============================================================================\n# Slice 6's user path: a person signed in to Authelia reaches an\n# agent-hosted plugin's /app through the relay. An app plugin whose manifest\n# declares identity (fixture @lamalibre/e2e-idsurf-server, helpers.sh:\n# write_app_install_fixture … wide — its agent half answers a user caller\n# on /app/echo and /app/me) is installed from the panel, and an\n# authenticated app tunnel the agent VM carries — its own backend a static\n# server there — is bound as the plugin's user surface. From the visitor VM:\n#\n# 1. Binding refusals: a route no plugin holds, a public tunnel, a second\n#    tunnel for the same route (409); a bound tunnel cannot be made public.\n# 2. Bound but not approved, the host serves no user-surface location:\n#    /api/<route>/app/echo goes down the tunnel to its own backend, and\n#    without a session Authelia's redirect answers, as for any page of it.\n# 3. Approved: the location is there — without a session a JSON 401, never\n#    a redirect; not hosted yet, a 503. Hosted, once its agent half answered\n#    protocol 1: a signed-in user without a role in the plugin gets 403;\n#    with the viewer role, /app/echo answers with the caller the panel\n#    signed — the directory's userId, the username, the roles — and\n#    /app/me with what the agent half's projection holds of them.\n# 4. What a browser cannot do: change something without the bound host's\n#    Origin (no Origin, a foreign one: 403; the bound one: forwarded); get\n#    the application's Set-Cookie; pass its own X-Lamalibre-Relay-Assertion,\n#    Remote-User or X-Lamalibre-Caller for the relay's; replay what\n#    Gatekeeper vouched (an assertion taken from Gatekeeper on the host VM\n#    with the visitor's cookie, sent twice to the panel's loopback\n#    listener: the second is 401); reach a path with dot segments or\n#    encoded separators (403/400 — the agent half never sees one).\n# 5. A restricted tunnel lets through only a user with a grant for it.\n# 6. Unbound, the location is gone: the request reaches the tunnel's own\n#    backend again; bound again, it is served again.\n# 7. A user disabled while an assertion Gatekeeper gave for them is still\n#    valid: the panel refuses it at once (403, disabled).\n#\n# Every write of users.yml restarts Authelia and ends every session: both\n# users are created before anyone signs in, and disabling one is the last\n# step. The identity feed itself is spec 39.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-idsurf\"\nSERVER_PACKAGE=\"@lamalibre/e2e-idsurf-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-idsurf-agent\"\nAPP=\"/api/${PLUGIN}/app\"\nPOLICY_ID=\"e2e-apphost-40\"\nREMOTE_DIR=\"/var/tmp/e2e-40-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nVISITOR_VM=\"lamaste-visitor\"\nVIEWER=\"e2e40-viewer\"\nNOROLE=\"e2e40-norole\"\n# Test credentials for this run only, never printed\nVIEWER_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nNOROLE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR_VIEWER=\"/tmp/e2e-40-viewer.cookies\"\nJAR_NOROLE=\"/tmp/e2e-40-norole.cookies\"\n# The bound tunnel (A), a public one (P) and a second authenticated one (S)\nSUB_A=\"e2e40us\"\nSUB_P=\"e2e40pub\"\nSUB_S=\"e2e40two\"\nPORT_A=18440\nPORT_P=18441\nPORT_S=18442\nTUNNEL_A=\"\"\nTUNNEL_P=\"\"\nTUNNEL_S=\"\"\nFQDN=\"\"\nORIGIN=\"\"\nBACKEND_UNIT=\"e2e-40-backend\"\nBACKEND_DIR=\"/var/tmp/e2e-40-backend\"\nMARKER=\"E2E_40_TUNNEL_BACKEND_$(date +%s)\"\nVIEWER_ID=\"\"\nNOROLE_ID=\"\"\nTUNNEL_GRANT_ID=\"\"\n\n# ---------------------------------------------------------------------------\n# The visitor VM\n# ---------------------------------------------------------------------------\n\nvisitor_exec() { multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"$1\"; }\n\n# q <arguments...> — each quoted for the remote shell (printf %q), joined by spaces\nq() {\n  local out=\"\" a\n  for a in \"$@\"; do out=\"${out} $(printf %q \"$a\")\"; done\n  printf '%s' \"${out# }\"\n}\n\n# visit <cookie jar | -> <curl arguments...> — one request from the visitor\n# VM: the response headers, a blank line, the body, then the HTTP status on\n# a line of its own (visit_status, visit_headers, visit_body split them)\nvisit() {\n  local jar=\"$1\" cookies=\"\"\n  shift\n  if [ \"$jar\" != \"-\" ]; then cookies=\"-b $(printf %q \"$jar\")\"; fi\n  visitor_exec \"curl -sk --max-time 20 -D - -w '\\n%{http_code}' ${cookies} $(q \"$@\") || true\" 2>/dev/null || echo \"000\"\n}\nvisit_status() { printf '%s\\n' \"$1\" | tail -n 1; }\n# Read to the end (no early exit): under pipefail the writer must not die of SIGPIPE.\nvisit_headers() { printf '%s\\n' \"$1\" | sed '$d' | tr -d '\\r' | awk 'f == 0 && /^$/ {f = 1} f == 0 {print}'; }\nvisit_body() { printf '%s\\n' \"$1\" | sed '$d' | tr -d '\\r' | awk 'f == 1 {print} f == 0 && /^$/ {f = 1}'; }\n\n# viewer_echo_status — the HTTP status of the viewer's GET /api/<route>/app/echo\nviewer_echo_status() { visit_status \"$(visit \"${JAR_VIEWER}\" \"https://${FQDN}${APP}/echo\")\"; }\nviewer_gets() { [ \"$(viewer_echo_status)\" = \"$1\" ]; }\n# anonymous_gets <status> — the same without a session\nanonymous_gets() { [ \"$(visit_status \"$(visit - \"https://${FQDN}${APP}/echo\")\")\" = \"$1\" ]; }\n\n# reset_totp <username> — a fresh TOTP secret for the user (the panel's\n# reset, as the admin); prints the base32 secret\nreset_totp() {\n  host_api_post \"users/$1/reset-totp\" '{}' 2>/dev/null | jq -r '.totpUri // empty' 2>/dev/null | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p' || true\n}\n\n# sign_in <username> <password> <totp secret> <cookie jar> — Authelia's two\n# factors from the visitor VM into <jar>; prints \"<first> <second>\" (OK OK)\nsign_in() {\n  local body first code second\n  visitor_exec \"rm -f $(printf %q \"$4\")\" > /dev/null 2>&1 || true\n  body=$(jq -c -n --arg u \"$1\" --arg p \"$2\" --arg t \"https://${FQDN}/\" '{username: $u, password: $p, keepMeLoggedIn: false, targetURL: $t}')\n  first=$(visitor_exec \"curl -sk --max-time 15 -c $(q \"$4\" -X POST -H 'Content-Type: application/json' -d \"$body\" \"https://auth.${DOMAIN}/api/firstfactor\") || true\" 2>/dev/null | jq -r '.status // \"none\"' 2>/dev/null || true)\n  code=$(visitor_exec \"oathtool --totp --base32 $(printf %q \"$3\")\" 2>/dev/null | tail -n 1 || true)\n  body=$(jq -c -n --arg c \"$code\" --arg t \"https://${FQDN}/\" '{token: $c, targetURL: $t}')\n  second=$(visitor_exec \"curl -sk --max-time 15 -b $(q \"$4\") -c $(q \"$4\" -X POST -H 'Content-Type: application/json' -d \"$body\" \"https://auth.${DOMAIN}/api/secondfactor/totp\") || true\" 2>/dev/null | jq -r '.status // \"none\"' 2>/dev/null || true)\n  echo \"${first:-none} ${second:-none}\"\n}\n\n# sign_in_both — both users, after one wait into a fresh TOTP window (a code\n# already used in the current one is refused); logs the outcome\nsign_in_both() {\n  local secret_v secret_n\n  secret_v=$(reset_totp \"${VIEWER}\")\n  secret_n=$(reset_totp \"${NOROLE}\")\n  if [ -z \"$secret_v\" ] || [ -z \"$secret_n\" ]; then\n    log_fail \"The TOTP secrets could not be reset\"\n    return 0\n  fi\n  wait_for_next_totp_window\n  assert_eq \"$(sign_in \"${VIEWER}\" \"${VIEWER_PASSWORD}\" \"${secret_v}\" \"${JAR_VIEWER}\")\" \"OK OK\" \"${VIEWER} signed in from the visitor VM (password, TOTP)\" || true\n  assert_eq \"$(sign_in \"${NOROLE}\" \"${NOROLE_PASSWORD}\" \"${secret_n}\" \"${JAR_NOROLE}\")\" \"OK OK\" \"${NOROLE} signed in from the visitor VM\" || true\n}\n\n# session_cookie <jar> — the authelia_session cookie in a visitor's jar\nsession_cookie() {\n  # shellcheck disable=SC2016 # an awk program, for the remote shell to pass on as it is\n  visitor_exec \"awk $(printf %q '$6 == \"authelia_session\" {print $7}') $(printf %q \"$1\") || true\" 2>/dev/null | tail -n 1 || true\n}\n\n# gatekeeper_assertion <method> <path> <cookie> — on the host VM, what\n# Gatekeeper answers nginx's user-surface subrequest for this request with\n# the session's cookie: its X-Lamalibre-Relay-Assertion (\"\" when none)\ngatekeeper_assertion() {\n  host_exec \"curl -s --max-time 10 -o /dev/null -D - $(q -H \"Host: ${FQDN}\" -H \"X-Original-URL: https://${FQDN}$2\" -H \"X-Original-Method: $1\" -H \"Cookie: authelia_session=$3\" \"http://127.0.0.1:9294/authz/user-surface/${FQDN}\") || true\" 2>/dev/null |\n    tr -d '\\r' | awk -F': ' 'tolower($1) == \"x-lamalibre-relay-assertion\" {v = $2} END {print v}' || true\n}\n\n# panel_direct <method> <path> <assertion> — the request as nginx passes it,\n# sent to the panel's loopback listener on the host VM: the body, then the status\npanel_direct() {\n  host_exec \"curl -s --max-time 15 -X $1 -w '\\n%{http_code}' $(q -H \"X-Lamalibre-Relay-Assertion: $3\" \"http://127.0.0.1:3100$2\") || true\" 2>/dev/null || echo \"000\"\n}\n\n# tunnel_entry <id> — the tunnel as GET /api/tunnels lists it ('null' when gone)\ntunnel_entry() {\n  host_api_get \"tunnels?limit=500\" 2>/dev/null | jq -c --arg id \"$1\" '[.tunnels[]? | select(.id == $id)] | first // null' 2>/dev/null || echo \"null\"\n}\n\n# backend_reachable — the bound tunnel's own backend answers through chisel\nbackend_reachable() {\n  [ \"$(host_exec \"curl -s --max-time 3 http://127.0.0.1:${PORT_A}${APP}/echo || true\" 2>/dev/null | tr -d '\\r\\n')\" = \"${MARKER}\" ]\n}\n\nhealth_up() { [ \"$(hosting_field \"${PLUGIN}\" '.hosting.health.state')\" = \"up\" ]; }\n\n# viewer_in_audience — the audience holds the viewer as an active member\nviewer_in_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\nbegin_test \"40 — App plugin user surface (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  if [ -n \"${TUNNEL_GRANT_ID}\" ]; then host_api_delete \"gatekeeper/grants/${TUNNEL_GRANT_ID}\" > /dev/null 2>&1 || true; fi\n  # Gatekeeper's grants outlive the plugin.\n  drop_plugin_grants \"${PLUGIN}\"\n  for id in ${TUNNEL_A} ${TUNNEL_P} ${TUNNEL_S}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  timed_exec 60 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"systemctl stop ${BACKEND_UNIT} > /dev/null 2>&1; rm -rf ${BACKEND_DIR}; sed -i '/${SUB_A}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR_VIEWER} ${JAR_NOROLE}; sed -i '/${SUB_A}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  for id in \"${VIEWER}\" \"${NOROLE}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  for id in ${VIEWER_ID} ${NOROLE_ID}; do\n    host_api_post \"identity/directory/${id}/erase\" '{}' > /dev/null 2>&1 || true\n  done\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

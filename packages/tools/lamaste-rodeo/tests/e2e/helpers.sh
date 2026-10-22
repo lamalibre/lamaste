@@ -138,13 +138,15 @@ assert_not_eq() {
 }
 
 # assert_contains output substring message
-# Check that output contains substring.
+# Check that output contains substring. Matched in the shell, never through
+# a pipe into `grep -q`: under pipefail, grep leaving at its first match
+# makes the writer of a large output die of SIGPIPE, and a match fail.
 assert_contains() {
   local output="$1"
   local substring="$2"
   local message="$3"
 
-  if printf '%s\n' "$output" | grep -qF -e "$substring"; then
+  if [[ "$output" == *"$substring"* ]]; then
     log_pass "$message"
     return 0
   else
@@ -159,7 +161,7 @@ assert_not_contains() {
   local substring="$2"
   local message="$3"
 
-  if ! printf '%s\n' "$output" | grep -qF -e "$substring"; then
+  if [[ "$output" != *"$substring"* ]]; then
     log_pass "$message"
     return 0
   else
@@ -589,7 +591,11 @@ write_stub_registry() {
 // republished version at once.
 //
 // Admin-only e2e endpoints: GET /-/e2e/requests (what was recorded),
-// POST /-/e2e/config {"agentTokenTtlSeconds": n} (lifetime of brokered tokens),
+// POST /-/e2e/config {"agentTokenTtlSeconds": n, "workloadScopes": [...]}
+// (the lifetime of brokered tokens; the scopes — of read, publish and admin —
+// the workload rule grants the panel's own client at login, read and admin by
+// default as a real Feria's auth.json carries them, narrowed by a spec to
+// prove the panel refuses the result; answers both as they now are),
 // PUT /-/e2e/packages with a package .tgz as the body (publish that version, or
 // replace its tarball: the packument then advertises the new integrity, as a
 // registry that serves other bytes under a published version would).
@@ -1093,7 +1099,8 @@ FIXTURE_EOF
 #
 #   node app-plugin-half.mjs --config <plugin config json> --plugin <route> \
 #     --lamaste <dir of the @lamalibre/lamaste package> [--log <file>] \
-#     [--flags <dir>] [--wait-config] [--manifest <file> --data <dir>]
+#     [--flags <dir>] [--wait-config] [--manifest <file> --data <dir>] \
+#     [--identity-db <file>]
 #
 # Every answer to a verified request authenticates itself with
 # X-Lamalibre-Responder, as the relay requires of an agent half: core's
@@ -1126,6 +1133,22 @@ FIXTURE_EOF
 # anything else under /admin is 404. /app/* is the user surface and answers
 # without an assertion — the forwarder must never reach it. One log line per
 # request.
+#
+# Identity (slice 6), with --identity-db: the plugin's users as Lamaste's
+# feed delivers them, in a projection (createIdentityProjection over
+# node:sqlite, in that file; its onErase marks the user in a table of its
+# own, e2e_erased, as a plugin anonymises its data) fed through
+# /admin/identity/* (createIdentityHandlers: Lamaste's calls only, the body
+# hash required; a line `<method> <url> <status> identity-call` each). The
+# user surface is then the plugin's own: /app/echo (any method — the
+# caller, the path, the method, the Origin and a few headers it was sent,
+# how many body bytes; it sets a cookie the relay must never pass on) and
+# /app/me (GET — the caller and the projection's row of them) answer only a
+# user caller (core's verifier refuses any other under /app), every answer
+# to a verified request signed (404 and 405 too; a line `<method> <url>
+# <status> app caller=user:<userId>` each); and GET /admin/e2e/projection
+# shows an admin caller what the projection holds — its state, every row
+# (removed and erased ones too) and the users onErase was called for.
 write_app_plugin_half() {
   local dest="$1"
   cat > "$dest" <<'HALF_EOF'
@@ -1147,8 +1170,9 @@ const logFile = opt('--log');
 const flagsDir = opt('--flags');
 const manifestPath = opt('--manifest');
 const dataDir = opt('--data');
+const identityDbPath = opt('--identity-db');
 if (!configPath || !plugin || !lamasteDir || (manifestPath && !dataDir)) {
-  console.error('usage: app-plugin-half.mjs --config <file> --plugin <route> --lamaste <dir> [--log <file>] [--flags <dir>] [--wait-config] [--manifest <file> --data <dir>]');
+  console.error('usage: app-plugin-half.mjs --config <file> --plugin <route> --lamaste <dir> [--log <file>] [--flags <dir>] [--wait-config] [--manifest <file> --data <dir>] [--identity-db <file>]');
   process.exit(2);
 }
 // --wait-config: the agent's sync delivers the config after the half starts.
@@ -1166,7 +1190,8 @@ if (missing.length > 0) {
 }
 const verifier = agentLib.createCallerAssertionVerifier({ configPath, plugin, reloadIntervalMs: 500 });
 const port = await verifier.port();
-const callerName = (c) => (c.type === 'agent' ? `agent:${c.label}` : c.type);
+// A user by the directory's id, as Lamaste's logs name one — never by name.
+const callerName = (c) => (c.type === 'agent' ? `agent:${c.label}` : c.type === 'user' ? `user:${c.userId}` : c.type);
 const healthHandler = agentLib.createHealthHandler({ verifier });
 
 // Lifecycle hooks (4.3): each stage logs what it was called with; a file
@@ -1224,6 +1249,53 @@ function log(line) {
   if (logFile) appendFileSync(logFile, text);
 }
 
+// Identity (slice 6): the projection of the plugin's audience, fed by
+// Lamaste through /admin/identity/*. onErase runs inside the batch's
+// transaction, as a plugin's anonymiser does: it records the user in
+// e2e_erased (idempotent — replays repeat it).
+let identity = null;
+if (identityDbPath) {
+  const wanted = ['createIdentityProjection', 'createIdentityHandlers'];
+  const lacking = wanted.filter((name) => typeof agentLib[name] !== 'function');
+  if (lacking.length > 0) {
+    console.error(`--identity-db: this @lamalibre/lamaste has no ${lacking.join(', ')} — it predates slice 6`);
+    process.exit(2);
+  }
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(identityDbPath);
+  db.exec('CREATE TABLE IF NOT EXISTS e2e_erased (user_id TEXT PRIMARY KEY, at TEXT NOT NULL)');
+  const markErased = db.prepare('INSERT OR IGNORE INTO e2e_erased (user_id, at) VALUES (?, ?)');
+  const projection = agentLib.createIdentityProjection({
+    db,
+    onErase: (userId) => {
+      markErased.run(userId, new Date().toISOString());
+    },
+  });
+  identity = {
+    projection,
+    erased: db.prepare('SELECT user_id FROM e2e_erased ORDER BY user_id'),
+    // Metadata only: core's handlers never hand a member's attributes to the logger.
+    handler: agentLib.createIdentityHandlers({
+      verifier,
+      projection,
+      logger: {
+        info: (obj, msg) => log(`identity ${msg ?? ''} ${JSON.stringify(obj)}`),
+        warn: (obj, msg) => log(`identity warning ${msg ?? ''} ${JSON.stringify(obj)}`),
+      },
+    }),
+  };
+}
+
+// What the projection holds, for the specs: its state, every row (removed
+// and erased ones too) and the users the plugin's onErase ran for.
+function projectionProbe() {
+  return {
+    state: identity.projection.state(),
+    users: identity.projection.listUsers({ includeRemoved: true }),
+    erased: identity.erased.all().map((row) => row.user_id),
+  };
+}
+
 // The responder header core's handlers set (RESPONDER_HEADER of
 // @lamalibre/lamaste), for the answers this half gives Lamaste's own calls.
 const RESPONDER_HEADER = 'x-lamalibre-responder';
@@ -1261,9 +1333,77 @@ async function bodyOf(req) {
   return Buffer.concat(chunks);
 }
 
+// The user surface (with --identity-db): a user caller only — core's
+// verifier refuses any other under /app — and every answer to a verified
+// request signed, 404 and 405 included.
+async function userSurface(req, res, p) {
+  const result = await verifier.verify(req.headers, req.method, req.url);
+  if (!result.ok) {
+    log(`${req.method} ${req.url} 401 app refused=${result.reason}`);
+    json(res, 401, { error: 'caller assertion refused', reason: result.reason });
+    return;
+  }
+  const caller = result.payload.caller;
+  const reply = (status, body, headers = {}) => {
+    log(`${req.method} ${req.url} ${status} app caller=${callerName(caller)}`);
+    json(res, status, body, headers, result);
+  };
+  if (caller.type !== 'user') {
+    reply(403, { error: 'the user surface answers users only' });
+    return;
+  }
+  if (p === '/app/echo') {
+    const body = await bodyOf(req);
+    // A cookie of the application's own: the relay never passes it on.
+    reply(
+      200,
+      {
+        caller,
+        path: req.url,
+        method: req.method,
+        origin: req.headers.origin ?? null,
+        headers: {
+          cookie: req.headers.cookie ?? null,
+          authorization: req.headers.authorization ?? null,
+          remoteUser: req.headers['remote-user'] ?? null,
+          relayAssertion: req.headers['x-lamalibre-relay-assertion'] ?? null,
+          marker: req.headers['x-e2e-marker'] ?? null,
+        },
+        bytes: body.length,
+      },
+      { 'set-cookie': 'app-session=should-not-pass; Path=/; HttpOnly' },
+    );
+    return;
+  }
+  if (p === '/app/me') {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      reply(405, { error: 'GET only' }, { allow: 'GET' });
+      return;
+    }
+    reply(200, {
+      userId: caller.userId,
+      username: caller.username,
+      roles: caller.roles,
+      member: identity.projection.getUser(caller.userId),
+    });
+    return;
+  }
+  reply(404, { error: 'no such app route' });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   const p = url.pathname;
+  if (identity && (p === '/app' || p.startsWith('/app/'))) {
+    await userSurface(req, res, p);
+    return;
+  }
+  if (identity && (p === '/admin/identity' || p.startsWith('/admin/identity/'))) {
+    const out = await identity.handler.handle({ method: req.method, url: req.url, headers: req.headers, body: await bodyOf(req) });
+    log(`${req.method} ${req.url} ${out.status} identity-call`);
+    answer(res, out);
+    return;
+  }
   if (p.startsWith('/app/')) {
     log(`${req.method} ${req.url} 200 user-surface`);
     res.writeHead(200, { 'content-type': 'text/plain' });
@@ -1327,6 +1467,15 @@ const server = http.createServer(async (req, res) => {
   if (p === '/admin/probe/settings' && settings) {
     log(`${req.method} ${req.url} 200 caller=${caller}`);
     json(res, 200, settingsProbe(), {}, result);
+    return;
+  }
+  // What the identity projection holds: an administrator's read alone.
+  if (p === '/admin/e2e/projection' && identity) {
+    const status = result.payload.caller.type !== 'admin' ? 403 : req.method !== 'GET' ? 405 : 200;
+    log(`${req.method} ${req.url} ${status} caller=${caller}`);
+    if (status === 403) json(res, 403, { error: 'administrators only' }, {}, result);
+    else if (status === 405) json(res, 405, { error: 'GET only' }, { allow: 'GET' }, result);
+    else json(res, 200, projectionProbe(), {}, result);
     return;
   }
   if (p === '/admin/echo' && req.method === 'POST') {
@@ -1736,7 +1885,130 @@ FIXTURE_EOF
   done
 }
 
-# write_app_install_fixture dir name version mode build-id [system-packages-json] [settings]
+# identity_block_json <variant>
+# The identity block of the identity fixtures (slice 6), as it sits in a
+# manifest:
+#   viewer   one role, viewer; the default attributes (displayName)
+#   roles2   viewer and editor; the default attributes
+#   wide     viewer and editor; attributes displayName and email
+#   narrow   viewer (relabelled Reader) and editor; attributes displayName
+#            alone — narrowed from wide, which only changes the digest
+#   badrole  a role id that is not one (upper case, punctuation)
+#   badattr  an attribute no plugin may receive (phone)
+identity_block_json() {
+  case "$1" in
+    viewer)
+      echo '{ "roles": [{ "id": "viewer", "label": "Viewer", "description": "Reads the dashboards" }] }'
+      ;;
+    roles2)
+      echo '{ "roles": [{ "id": "viewer", "label": "Viewer", "description": "Reads the dashboards" }, { "id": "editor", "label": "Editor" }] }'
+      ;;
+    wide)
+      echo '{ "roles": [{ "id": "viewer", "label": "Viewer", "description": "Reads the dashboards" }, { "id": "editor", "label": "Editor" }], "attributes": ["displayName", "email"] }'
+      ;;
+    narrow)
+      echo '{ "roles": [{ "id": "viewer", "label": "Reader", "description": "Reads the dashboards" }, { "id": "editor", "label": "Editor" }], "attributes": ["displayName"] }'
+      ;;
+    badrole)
+      echo '{ "roles": [{ "id": "Viewer!", "label": "Viewer" }] }'
+      ;;
+    badattr)
+      echo '{ "roles": [{ "id": "viewer", "label": "Viewer" }], "attributes": ["displayName", "phone"] }'
+      ;;
+    *)
+      echo "identity_block_json: unknown variant $1" >&2
+      return 2
+      ;;
+  esac
+}
+
+# write_identity_fixture_plugins dir
+# Plugins declaring identity (slice 6), for single-VM spec 32; each in
+# <dir>/<variant>, its main module throwing if the panel ever imports it:
+#   v1 … v5        @lamalibre/e2e-ident-server 1.0.0 … 5.0.0 (e2e-ident):
+#                  agent-hosted with an agent block, its identity block
+#                  1.0.0 none, 2.0.0 viewer, 3.0.0 roles2, 4.0.0 wide,
+#                  5.0.0 narrow (identity_block_json) — added, a role
+#                  added, attributes widened, then narrowed with a label
+#                  edit; its agent half is
+#                  write_app_plugin_half --identity-db <file>
+#   serverhosted   e2e-ident-serverhosted — identity on a server plugin
+#   noagent        e2e-ident-noagent — agent-hosted without an agent block
+#   badrole        e2e-ident-badrole — a role id that is not one
+#   badattr        e2e-ident-badattr — an attribute outside displayName/email
+# Every variant but v1 … v5 is refused at install.
+write_identity_fixture_plugins() {
+  local dir="$1"
+  local variant name pkg version hosting agent identity n
+  for variant in v1 v2 v3 v4 v5 serverhosted noagent badrole badattr; do
+    name="e2e-ident-${variant}"
+    version="1.0.0"
+    hosting='
+  "hosting": "agent",'
+    agent='
+  "agent": { "requires": { "node": ">=22", "os": ["linux"] } },'
+    identity=""
+    case "$variant" in
+      v1 | v2 | v3 | v4 | v5)
+        name="e2e-ident"
+        n="${variant#v}"
+        version="${n}.0.0"
+        case "$n" in
+          2) identity="$(identity_block_json viewer)" ;;
+          3) identity="$(identity_block_json roles2)" ;;
+          4) identity="$(identity_block_json wide)" ;;
+          5) identity="$(identity_block_json narrow)" ;;
+        esac
+        ;;
+      serverhosted)
+        hosting=''
+        agent=''
+        identity="$(identity_block_json viewer)"
+        ;;
+      noagent)
+        agent=''
+        identity="$(identity_block_json viewer)"
+        ;;
+      badrole | badattr)
+        identity="$(identity_block_json "$variant")"
+        ;;
+    esac
+    if [ -n "$identity" ]; then
+      identity=",
+  \"identity\": ${identity}"
+    fi
+    pkg="@lamalibre/${name}-server"
+    mkdir -p "${dir}/${variant}"
+    cat > "${dir}/${variant}/package.json" <<FIXTURE_EOF
+{
+  "name": "${pkg}",
+  "version": "${version}",
+  "description": "Lamaste e2e fixture: a plugin declaring identity (${variant})",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "lamaste-plugin.json"],
+  "license": "PolyForm-Noncommercial-1.0.0"
+}
+FIXTURE_EOF
+    cat > "${dir}/${variant}/index.js" <<FIXTURE_EOF
+// The application runs on its hosting agent; the panel never loads this module.
+throw new Error('${name}: plugin code was imported by the panel');
+FIXTURE_EOF
+    cat > "${dir}/${variant}/lamaste-plugin.json" <<FIXTURE_EOF
+{
+  "name": "${name}",
+  "displayName": "E2E Identity (${variant})",
+  "version": "${version}",
+  "description": "Its users and their roles, as Lamaste's directory tells its agent half",${hosting}${agent}
+  "modes": ["server"],
+  "packages": { "server": "${pkg}" },
+  "capabilities": ["plugin:${name}:use"]${identity}
+}
+FIXTURE_EOF
+  done
+}
+
+# write_app_install_fixture dir name version mode build-id [system-packages-json] [settings] [identity]
 # An agent-hosted plugin whose agent half Lamaste installs onto the hosting
 # agent itself (slice 3) — two packages at <version>:
 #   <dir>/server  @lamalibre/<name>-server: the manifest — hosting "agent";
@@ -1781,6 +2053,28 @@ FIXTURE_EOF
 # its schema version, revision, configured, missing, effective values,
 # stored values and the SHA-256 of each secret that is set, never a value.
 # Without a settings block none of this exists.
+# <identity> (slice 6; default none): a variant of identity_block_json
+# (wide: roles viewer and editor, attributes displayName and email) puts
+# that identity block in the manifest, and the agent half keeps its users:
+# a projection (createIdentityProjection over node:sqlite, in
+# LAMASTE_APP_DATA_DIR/identity.db; its onErase marks the user in
+# e2e_erased, as a plugin anonymises its data) fed through
+# /admin/identity/* (createIdentityHandlers: Lamaste's calls only, the body
+# hash required; each logs `identity <method> <path> <status>`), the user
+# surface /app/echo (any method — the caller, the path, the method, the
+# Origin and a few headers it was sent, how many body bytes; it sets a
+# cookie the relay must never pass on) and /app/me (GET — the caller and
+# the projection's row of them), a user caller only, every answer to a
+# verified request signed (404 and 405 too; each logs
+# `app <method> <path> <status> user:<userId>`), and GET
+# /admin/e2e/projection, an administrator's read of what the projection
+# holds: its state, every row (removed and erased ones too) and the users
+# onErase ran for. Without an identity block none of this exists (/app is
+# a 404, as before).
+# Every variant keeps a request log, LAMASTE_APP_DATA_DIR/requests.log: one
+# line `<ISO time> <method> <path>` (the raw path, never the query) for every
+# request that reaches it, before anything else looks at the request — what
+# proves that something never reached it.
 # <build-id> goes into the agent package, so each run's tarballs — and their
 # integrity — are new: an agent's npm cache never answers for the registry.
 # Needs node, this workspace's node_modules (esbuild) and its core library
@@ -1789,9 +2083,10 @@ write_app_install_fixture() {
   local dir="$1" name="$2" version="$3" mode="$4" build_id="$5"
   local system_packages="${6:-[\"sqlite3\"]}"
   local settings_schema="${7:-none}"
+  local identity_variant="${8:-none}"
   local server_pkg="@lamalibre/${name}-server"
   local agent_pkg="@lamalibre/${name}-agent"
-  local here deps='' settings_entry=''
+  local here deps='' settings_entry='' identity_entry=''
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   case "$mode" in
     main | failpost | deps | tampered) ;;
@@ -1815,6 +2110,11 @@ write_app_install_fixture() {
       return 2
       ;;
   esac
+  if [ "$identity_variant" != "none" ]; then
+    identity_entry="$(identity_block_json "$identity_variant")" || return 2
+    identity_entry=",
+  \"identity\": ${identity_entry}"
+  fi
   if [ "$mode" = "deps" ]; then
     deps=',
   "dependencies": { "left-pad": "1.3.0" }'
@@ -1861,7 +2161,7 @@ FIXTURE_EOF
       "install": { "pre-tunnel": {}, "post-tunnel": {} },
       "uninstall": { "pre-teardown": {}, "post-teardown": {} }
     }
-  }${settings_entry}
+  }${settings_entry}${identity_entry}
 }
 FIXTURE_EOF
   # The agent half's own copy of the manifest: its settings block is the
@@ -1888,6 +2188,7 @@ FIXTURE_EOF
 import crypto from 'node:crypto';
 import dgram from 'node:dgram';
 import {
+  appendFileSync,
   closeSync,
   fsyncSync,
   openSync,
@@ -1907,6 +2208,8 @@ import {
   createAgentHookHandler,
   createCallerAssertionVerifier,
   createHealthHandler,
+  createIdentityHandlers,
+  createIdentityProjection,
   createSettingsHandler,
   createSettingsStore,
   responderHeaderFor,
@@ -2014,6 +2317,61 @@ function settingsProbe() {
   };
 }
 
+// Identity, when the manifest declares it: the plugin's users as Lamaste's
+// feed delivers them, in a projection over node:sqlite in the data
+// directory (it outlives versions, as the plugin's data does). onErase runs
+// inside the batch's transaction, as a plugin's anonymiser does: it records
+// the user in e2e_erased (idempotent — replays repeat it). node:sqlite is
+// loaded only then: a plugin without identity runs on any Node.js 22.
+let identity = null;
+if (MANIFEST.identity !== undefined) {
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(path.join(dataDir, 'identity.db'));
+  db.exec('CREATE TABLE IF NOT EXISTS e2e_erased (user_id TEXT PRIMARY KEY, at TEXT NOT NULL)');
+  const markErased = db.prepare('INSERT OR IGNORE INTO e2e_erased (user_id, at) VALUES (?, ?)');
+  const projection = createIdentityProjection({
+    db,
+    onErase: (userId) => {
+      markErased.run(userId, new Date().toISOString());
+    },
+  });
+  identity = {
+    projection,
+    erased: db.prepare('SELECT user_id FROM e2e_erased ORDER BY user_id'),
+    // Metadata only: core's handlers never hand a member's attributes to the logger.
+    handler: createIdentityHandlers({
+      verifier,
+      projection,
+      logger: {
+        info: (obj, msg) => log(`identity ${msg ?? ''} ${JSON.stringify(obj)}`),
+        warn: (obj, msg) => log(`identity warning ${msg ?? ''} ${JSON.stringify(obj)}`),
+      },
+    }),
+  };
+}
+// What the projection holds, for the specs: its state, every row (removed
+// and erased ones too) and the users the plugin's onErase ran for.
+function projectionProbe() {
+  return {
+    state: identity.projection.state(),
+    users: identity.projection.listUsers({ includeRemoved: true }),
+    erased: identity.erased.all().map((row) => row.user_id),
+  };
+}
+
+// The request log: every request that reaches this process, before anything
+// looks at it — the raw path, never the query. What proves that a request
+// never reached it. Best effort: a full disk does not stop the service.
+const REQUEST_LOG = path.join(dataDir, 'requests.log');
+function logRequest(method, target) {
+  const query = target.indexOf('?');
+  try {
+    appendFileSync(REQUEST_LOG, `${new Date().toISOString()} ${method} ${query === -1 ? target : target.slice(0, query)}\n`, { mode: 0o600 });
+  } catch {
+    // the log is evidence for the specs, never a reason to fail a request
+  }
+}
+
 // What the unit's sandbox lets this process do. Each write is attempted and
 // undone when it succeeds; all but the data directory and the private /tmp
 // must fail.
@@ -2113,14 +2471,19 @@ function responderOf(verified, status, text) {
     ? { 'x-lamalibre-responder': verified.responder(status, text) }
     : responderHeaderFor(verified, status);
 }
-// send(res, status, contentType, text, verified) — authenticated when it
-// answers a verified request; an answer before verification carries nothing
-function send(res, status, contentType, text, verified = null) {
-  res.writeHead(status, { 'content-type': contentType, ...(verified ? responderOf(verified, status, text) : {}) });
+// send(res, status, contentType, text, verified, extra) — authenticated when
+// it answers a verified request; an answer before verification carries
+// nothing. `extra`: more response headers.
+function send(res, status, contentType, text, verified = null, extra = {}) {
+  res.writeHead(status, {
+    'content-type': contentType,
+    ...extra,
+    ...(verified ? responderOf(verified, status, text) : {}),
+  });
   res.end(text);
 }
-function json(res, status, body, verified = null) {
-  send(res, status, 'application/json', JSON.stringify(body), verified);
+function json(res, status, body, verified = null, extra = {}) {
+  send(res, status, 'application/json', JSON.stringify(body), verified, extra);
 }
 // What core's handlers answer: exactly their bytes, with their headers.
 function answer(res, out) {
@@ -2136,11 +2499,68 @@ const PANEL_JS =
   'window.__lamalibrePlugins = window.__lamalibrePlugins || {};\n' +
   `window.__lamalibrePlugins[${JSON.stringify(ROUTE)}] = { mount(ctx) { ctx.mountPoint.textContent = ${JSON.stringify(`E2E app plugin ${VERSION}, installed by Lamaste on its agent`)}; return () => {}; } };\n`;
 
+// The user surface (with identity): a user caller only — core's verifier
+// refuses any other under /app — and every answer to a verified request
+// signed, 404 and 405 included.
+async function userSurface(req, res, method, target, p) {
+  const verified = await verifier.verify(req.headers, method, target);
+  if (!verified.ok) {
+    log(`app ${method} ${p} 401 refused=${verified.reason}`);
+    return json(res, 401, { error: 'caller assertion refused', reason: verified.reason });
+  }
+  const caller = verified.payload.caller;
+  const reply = (status, body, extra = {}) => {
+    log(`app ${method} ${p} ${status} ${caller.type === 'user' ? `user:${caller.userId}` : caller.type}`);
+    return json(res, status, body, verified, extra);
+  };
+  if (caller.type !== 'user') return reply(403, { error: 'the user surface answers users only' });
+  if (p === '/app/echo') {
+    const body = await bodyOf(req);
+    // A cookie of the application's own: the relay never passes it on.
+    return reply(
+      200,
+      {
+        caller,
+        path: target,
+        method,
+        origin: req.headers.origin ?? null,
+        headers: {
+          cookie: req.headers.cookie ?? null,
+          authorization: req.headers.authorization ?? null,
+          remoteUser: req.headers['remote-user'] ?? null,
+          relayAssertion: req.headers['x-lamalibre-relay-assertion'] ?? null,
+          marker: req.headers['x-e2e-marker'] ?? null,
+        },
+        bytes: body.length,
+        version: VERSION,
+      },
+      { 'set-cookie': 'app-session=should-not-pass; Path=/; HttpOnly' },
+    );
+  }
+  if (p === '/app/me') {
+    if (method !== 'GET' && method !== 'HEAD') return reply(405, { error: 'GET only' }, { allow: 'GET' });
+    return reply(200, {
+      userId: caller.userId,
+      username: caller.username,
+      roles: caller.roles,
+      member: identity.projection.getUser(caller.userId),
+    });
+  }
+  return reply(404, { error: 'no such app route' });
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const target = req.url ?? '/';
     const method = req.method ?? 'GET';
+    logRequest(method, target);
     const p = new URL(target, 'http://127.0.0.1').pathname;
+    if (identity && (p === '/app' || p.startsWith('/app/'))) return await userSurface(req, res, method, target, p);
+    if (identity && (p === '/admin/identity' || p.startsWith('/admin/identity/'))) {
+      const out = await identity.handler.handle({ method, url: target, headers: req.headers, body: await bodyOf(req) });
+      log(`identity ${method} ${p} ${out.status}`);
+      return answer(res, out);
+    }
     if (p.startsWith('/admin/hooks/')) {
       return answer(res, await hooks.handle({ method, url: target, headers: req.headers, body: await bodyOf(req) }));
     }
@@ -2181,6 +2601,12 @@ const server = http.createServer(async (req, res) => {
     if (p === '/admin/panel.js') return send(res, 200, 'application/javascript', PANEL_JS, verified);
     if (p === '/admin/sandbox') return json(res, 200, await sandboxProbe(), verified);
     if (p === '/admin/probe/settings' && settings) return json(res, 200, settingsProbe(), verified);
+    // What the identity projection holds: an administrator's read alone.
+    if (p === '/admin/e2e/projection' && identity) {
+      if (caller.type !== 'admin') return json(res, 403, { error: 'administrators only' }, verified);
+      if (method !== 'GET') return json(res, 405, { error: 'GET only' }, verified, { allow: 'GET' });
+      return json(res, 200, projectionProbe(), verified);
+    }
     return json(res, 404, { error: 'no such admin route' }, verified);
   } catch (err) {
     log(`error: ${err?.message ?? err}`);

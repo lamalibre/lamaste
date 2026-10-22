@@ -129,7 +129,7 @@ assert_eq "$(make_test_secret a)" "48" "Test secret A, made on the host VM in a 
 assert_eq "$(make_test_secret c)" "48" "Test secret C, for a change while the agent is offline" || true
 DIGEST_A=$(secret_digest a)
 ensure_app_host_helper
-open_push_install "${POLICY_ID}" "[\"${AGENT_PACKAGE}\"]" '["install","uninstall"]' > /dev/null
+open_push_install "${POLICY_ID}" "[\"${AGENT_PACKAGE}\"]" '["install","uninstall"]'
 
 INSTALL=$(install_approved "${PLUGIN}" "${SERVER_PACKAGE}@1.0.0")
 assert_json_field "$INSTALL" '.plugin.version' '1.0.0' "Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half" || true

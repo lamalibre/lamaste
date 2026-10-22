@@ -1,0 +1,4175 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 32,
+    "name": "Identity: the user directory, entitlements and the approval gate",
+    "suite": "e2e",
+    "description": "32 — Identity: the user directory, entitlements and the approval gate",
+    "deps": [],
+    "requires": ["curl", "jq", "node", "npm", "openssl", "sqlite3", "runuser", "systemd-run"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE gatekeeper/grants/${gid}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "gatekeeper/grants/${gid}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE gatekeeper/groups/${GROUP}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "gatekeeper/groups/${GROUP}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE users/${USER_A}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${USER_A}?erase=true"
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "POST identity/directory/${id}/erase",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "identity/directory/${id}/erase"
+      }
+    },
+    {
+      "id": "cleanup-4",
+      "label": "POST plugins/${PLUGIN}/disable",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "plugins/${PLUGIN}/disable"
+      }
+    },
+    {
+      "id": "cleanup-5",
+      "label": "DELETE plugins/${PLUGIN}?force=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN}?force=true"
+      }
+    },
+    {
+      "id": "cleanup-6",
+      "label": "DELETE plugins/${name}?force=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${name}?force=true"
+      }
+    },
+    {
+      "id": "cleanup-7",
+      "label": "DELETE certs/agent/${AGENT_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Domain: ${DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Domain: ${DOMAIN}"
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Sleep 15s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 15
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "GET /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/hosting"
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "GET /api/plugins/${PLUGIN}/audience",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/audience"
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "GET /api/identity/directory",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/directory"
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "GET /api/gatekeeper/access-log?limit=1000",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "gatekeeper/access-log?limit=1000"
+          }
+        }
+      ],
+      "when": {
+        "kind": "and",
+        "conditions": [
+          {
+            "kind": "var_not_empty",
+            "variable": "DOMAIN"
+          },
+          {
+            "kind": "var_not_eq",
+            "variable": "DOMAIN",
+            "value": "null"
+          }
+        ]
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping identity tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Domain: ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-identity\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_identity_00000000000000\"\n# Transient units (systemd-run) for what runs in the background\nSTUB_UNIT=\"lamalibre-lamaste-e2e-32-stub\"\nHALF_UNIT=\"lamalibre-lamaste-e2e-32-half\"\nPLUGIN=\"e2e-ident\"\nPACKAGE=\"@lamalibre/e2e-ident-server\"\nAGENT_LABEL=\"e2e-idhost-$(date +%s)\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nHALF_CONFIG=\"${WORK_DIR}/plugin-config.json\"\nHALF_LOG=\"${WORK_DIR}/half.log\"\nHALF_DB=\"${WORK_DIR}/half-data/identity.db\"\nLAMASTE_LIB=\"/opt/lamalibre/lamaste/serverd/node_modules/@lamalibre/lamaste\"\nGATEKEEPER_DB=\"${STATE_DIR}/gatekeeper.db\"\nUSER_A=\"e2e32-alice\"\n# A test credential for this run only: alice signs in once, at the first factor\nUSER_A_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nGROUP=\"e2e32-team\"\nTUNNEL_RESOURCE=\"e2e32-tunnel-0001\"\nAUTH_RESOLVE=\"--resolve auth.${DOMAIN}:443:127.0.0.1\"\n# Marks the requests the forwarder must never pass on (their query)\nMARK=\"e2e32mark$(date +%s)\"\nUUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'\nPORT=\"\"\nALICE_ID=\"\"\nNEW_ALICE_ID=\"\"\nROLELESS_GRANT_ID=\"\"\nTUNNEL_GRANT_ID=\"\"\n\ncleanup() {\n  systemctl stop \"${HALF_UNIT}\" \"${STUB_UNIT}\" > /dev/null 2>&1 || true\n  # Gatekeeper's grants and group outlive the plugin: every grant on it (an\n  # interrupted run's would make someone a member of the next run's audience)\n  local gid\n  for gid in $(api_get \"gatekeeper/grants?resourceType=plugin&resourceId=${PLUGIN}\" | jq -r '.grants[]?.grantId // empty' 2>/dev/null || true); do\n    api_delete \"gatekeeper/grants/${gid}\" > /dev/null 2>&1 || true\n  done\n  if [ -n \"${TUNNEL_GRANT_ID}\" ]; then api_delete \"gatekeeper/grants/${TUNNEL_GRANT_ID}\" > /dev/null 2>&1 || true; fi\n  api_delete \"gatekeeper/groups/${GROUP}\" > /dev/null 2>&1 || true\n  # Alice, whatever state the spec left her in: deleted and erased.\n  api_delete \"users/${USER_A}?erase=true\" > /dev/null 2>&1 || true\n  local id\n  for id in ${ALICE_ID} ${NEW_ALICE_ID}; do\n    api_post \"identity/directory/${id}/erase\" > /dev/null 2>&1 || true\n  done\n  # Uninstalling tears a hosting down first (an operation); one still\n  # running refuses it until it ends.\n  api_post \"plugins/${PLUGIN}/disable\" > /dev/null 2>&1 || true\n  local deadline=$((SECONDS + 180)) name\n  while [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(api_get_status \"plugins/${PLUGIN}\")\" != \"404\" ]; do\n    api_delete \"plugins/${PLUGIN}?force=true\" > /dev/null 2>&1 || true\n    sleep 3\n  done\n  # Refused at install, so never there — unless a refusal regressed.\n  for name in e2e-ident-serverhosted e2e-ident-noagent e2e-ident-badrole e2e-ident-badattr; do\n    api_delete \"plugins/${name}?force=true\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\n# call <method> <api path> [<json>] — one panel API call as the admin: the\n# body, then the HTTP status on a line of its own\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\n# users_call <method> <api path> [<json>] — call, waiting out the users\n# API's rate limit (5 creations or updates a minute): retried on 429\nusers_call() {\n  local out deadline=$((SECONDS + 75))\n  while :; do\n    out=$(call \"$@\")\n    if [ \"$(status_of \"$out\")\" != \"429\" ] || [ \"$SECONDS\" -ge \"$deadline\" ]; then\n      echo \"$out\"\n      return 0\n    fi\n    sleep 15\n  done\n}\n\n# agent_api_get path / agent_api_post path json — as the test agent (its certificate)\nagent_api_get() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -H 'Accept: application/json' \"${BASE_URL}/api/$1\"\n}\nagent_api_post() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \"$2\" \"${BASE_URL}/api/$1\"\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 2 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\n# wait_operation <operation id> <seconds> — prints the operation once it ended\n# (still running after <seconds>: printed as is; the caller asserts its status)\nwait_operation() {\n  local id=\"$1\" deadline=$((SECONDS + $2)) op='{}'\n  if [ -z \"$id\" ]; then\n    echo '{}'\n    return 0\n  fi\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    op=$(api_get \"plugins/${PLUGIN}/operations/${id}\" | jq -c '.operation // {}' 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$op\" | jq -r '.status // \"running\"' 2>/dev/null)\" != \"running\" ]; then\n      echo \"$op\"\n      return 0\n    fi\n    sleep 2\n  done\n  echo \"$op\"\n  return 0\n}\n\n# hosting_field jq-expr — a field of GET /api/plugins/<plugin>/hosting\nhosting_field() {\n  api_get \"plugins/${PLUGIN}/hosting\" | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\nhealth_up() { [ \"$(hosting_field '.hosting.health.state')\" = \"up\" ]; }\n\n# identity_view — GET /api/plugins/<plugin>/identity's `identity`\nidentity_view() { api_get \"plugins/${PLUGIN}/identity\" | jq -c '.identity // {}' 2>/dev/null || echo '{}'; }\nidentity_ready() { [ \"$(json_get \"$(identity_view)\" '.readiness.ready')\" = \"true\" ]; }\n\n# audience_row <userId> — the plugin's audience row of that user ('null' when none)\naudience_row() {\n  api_get \"plugins/${PLUGIN}/audience\" | jq -c --arg id \"$1\" '[.audience[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo \"null\"\n}\n\n# directory_row <userId> — the directory's record of that user ('null' when none)\ndirectory_row() {\n  api_get \"identity/directory\" | jq -c --arg id \"$1\" '[.users[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo \"null\"\n}\n\n# projection — what the agent half's projection holds (GET\n# /admin/e2e/projection through the forwarder, as the admin)\nprojection() { api_get \"${PLUGIN}/e2e/projection\" 2>/dev/null || echo '{}'; }\n\n# projection_has <jq filter> — the agent half's projection satisfies it\nprojection_has() { projection | jq -e \"$1\" > /dev/null 2>&1; }\n\n# projected_user <userId> — the projection's row of that user ('null' when none)\nprojected_user() { projection | jq -c --arg id \"$1\" '[.users[]? | select(.userId == $id)] | first // null' 2>/dev/null || echo \"null\"; }\n\n# first_factor <username> <password> — Authelia's first factor for the user:\n# its answer's status (OK, KO), \"none\" when Authelia does not answer\nfirst_factor() {\n  local body\n  body=$(jq -c -n --arg u \"$1\" --arg p \"$2\" --arg t \"https://${DOMAIN}/\" '{username: $u, password: $p, keepMeLoggedIn: false, targetURL: $t}')\n  # shellcheck disable=SC2086 # AUTH_RESOLVE is two words on purpose\n  curl -sk --max-time 15 ${AUTH_RESOLVE} -X POST -H 'Content-Type: application/json' -d \"$body\" \\\n    \"https://auth.${DOMAIN}/api/firstfactor\" 2>/dev/null | jq -r '.status // \"none\"' 2>/dev/null || echo \"none\"\n}\nfirst_factor_ok() { [ \"$(first_factor \"${USER_A}\" \"${USER_A_PASSWORD}\")\" = \"OK\" ]; }\n# first_factor_answered — Authelia answers again (after a restart): OK or KO\nfirst_factor_answered() {\n  local s\n  s=$(first_factor \"${USER_A}\" \"${USER_A_PASSWORD}\")\n  [ \"$s\" = \"OK\" ] || [ \"$s\" = \"KO\" ]\n}\n\n# gatekeeper_log_rows <username> — Gatekeeper's access-request log rows of the username\ngatekeeper_log_rows() {\n  api_get \"gatekeeper/access-log?limit=1000\" | jq --arg u \"$1\" '[.entries[]? | select(.username == $u)] | length' 2>/dev/null || echo \"-1\"\n}\n\n# seed_access_log <username> — a row in Gatekeeper's access-request log for\n# the username, now, as Gatekeeper writes one for a denied request (written\n# as the database's owner, so its WAL files stay Gatekeeper's)\nseed_access_log() {\n  local owner now\n  owner=$(stat -c %U \"${GATEKEEPER_DB}\")\n  now=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)\n  runuser -u \"${owner}\" -- sqlite3 \"${GATEKEEPER_DB}\" \\\n    \"PRAGMA busy_timeout = 5000; INSERT INTO access_request_log (timestamp, username, resource_type, resource_id, resource_fqdn) VALUES ('${now}', '$1', 'tunnel', '${TUNNEL_RESOURCE}', 'e2e32.${DOMAIN}');\" > /dev/null\n}\n\n# relay_assertion <method> <path> <username> — a relay assertion for the\n# panel, signed with the relay's own key (what Gatekeeper sends nginx for a\n# user-surface request): valid once, for 60 seconds\nrelay_assertion() {\n  node \"${WORK_DIR}/sign-relay.mjs\" \"${LAMASTE_LIB}\" \"${STATE_DIR}/relay-signing-key.json\" \"$1\" \"$2\" \"$3\" 2>/dev/null || true\n}\n\n# panel_direct <path> <assertion> — the request nginx would pass the panel's\n# loopback listener: the body, then the status\npanel_direct() {\n  curl -s --max-time 15 -H \"X-Lamalibre-Relay-Assertion: $2\" -w '\\n%{http_code}' \"${PANEL_DIRECT_URL}$1\" 2>/dev/null || true\n}\n\n# ===========================================================================\n# 1. Stand-in registry with the fixtures\n# ==========================================================================="
+    },
+    {
+      "id": "stand-in-registry-with-the-identity-fixtures",
+      "label": "Stand-in registry with the identity fixtures",
+      "steps": [
+        {
+          "id": "step-141",
+          "label": "Stand-in registry is up on ${STUB_URL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Stand-in registry is up on ${STUB_URL}"
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)"
+          }
+        },
+        {
+          "id": "step-145",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"Stand-in registry with the identity fixtures\"\n\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\ncleanup\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\" \"${AGENT_CERT_DIR}\" \"$(dirname \"${HALF_DB}\")\"\nchmod 700 \"${AGENT_CERT_DIR}\" \"$(dirname \"${HALF_DB}\")\"\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_identity_fixture_plugins \"${WORK_DIR}/fixtures\"\nwrite_app_plugin_half \"${WORK_DIR}/app-plugin-half.mjs\"\ncat > \"${WORK_DIR}/sign-relay.mjs\" <<'SIGN_EOF'\n// sign-relay.mjs <@lamalibre/lamaste dir> <relay key file> <method> <path> <username>\n// A relay assertion for the panel's user surface, as Gatekeeper signs one.\nimport path from 'node:path';\nimport { pathToFileURL } from 'node:url';\nconst [lib, keyFile, method, target, username] = process.argv.slice(2);\nconst core = await import(pathToFileURL(path.join(lib, 'dist', 'index.js')).href);\nconst key = await core.createRelaySigner(keyFile, { create: false }).current();\nif (!key) throw new Error('no relay signing key');\nconst route = target.split('/')[2];\nprocess.stdout.write(\n  core.signRelayAssertion(\n    { aud: core.RELAY_PANEL_AUDIENCE, port: core.RELAY_PANEL_PORT, caller: { type: 'user', username }, method, target: { route, path: target } },\n    key,\n  ),\n);\nSIGN_EOF\nsystemctl stop \"${STUB_UNIT}\" > /dev/null 2>&1 || true\nsystemd-run --quiet --collect --unit \"${STUB_UNIT}\" --setenv=PATH=\"${PATH}\" --setenv=HOME=/root \\\n  \"$(command -v node)\" \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" \\\n  --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json \\\n  --package \"${WORK_DIR}/fixtures/v1\" --package \"${WORK_DIR}/fixtures/v2\" --package \"${WORK_DIR}/fixtures/v3\" \\\n  --package \"${WORK_DIR}/fixtures/v4\" --package \"${WORK_DIR}/fixtures/v5\" --package \"${WORK_DIR}/fixtures/serverhosted\" \\\n  --package \"${WORK_DIR}/fixtures/noagent\" --package \"${WORK_DIR}/fixtures/badrole\" --package \"${WORK_DIR}/fixtures/badattr\"\nif wait_for_http \"${STUB_URL}/-/ping\" 60; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)\"\n  end_test\n  exit $?\nfi\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nAUDIT_BASE=$(api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 2. Every user has a directory id\n# ==========================================================================="
+    },
+    {
+      "id": "every-user-has-a-directory-id-and-a-status-the-same-after-a-panel-restart",
+      "label": "Every user has a directory id and a status, the same after a panel restart",
+      "steps": [
+        {
+          "id": "step-146",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "USERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-147",
+          "label": "Set USER_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$USERS\" '.users | length'"
+          },
+          "capture": [
+            {
+              "variable": "USER_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-148",
+          "label": "GET /api/users lists ${USER_COUNT} users",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "USERS"
+              },
+              "path": ".users | length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "GET /api/users lists ${USER_COUNT} users"
+            }
+          }
+        },
+        {
+          "id": "step-150",
+          "label": "…and a status, active or disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "USERS"
+              },
+              "path": "[.users[] | select(.status != \"active\" and .status != \"disabled\")] | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…and a status, active or disabled"
+            }
+          }
+        },
+        {
+          "id": "step-151",
+          "label": "…no two users share an id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "USERS"
+              },
+              "path": "[.users[].userId] | unique | length == length",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…no two users share an id"
+            }
+          }
+        },
+        {
+          "id": "step-152",
+          "label": "GET /api/identity/directory",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/directory"
+          },
+          "capture": [
+            {
+              "variable": "DIRECTORY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-153",
+          "label": "Set DIRECTORY_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$DIRECTORY\" '.directoryId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "DIRECTORY_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-154",
+          "label": "GET /api/identity/directory: the directory's own id is a UUID v4",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$DIRECTORY_ID\" | grep -cE \"${UUID_RE}\" || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "GET /api/identity/directory: the directory's own id is a UUID v4"
+            }
+          }
+        },
+        {
+          "id": "step-155",
+          "label": "Set IDS_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$USERS\" | jq -c '[.users[] | {username, userId}] | sort_by(.username)' 2>/dev/null || echo \"[]\""
+          },
+          "capture": [
+            {
+              "variable": "IDS_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-162",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-164",
+          "label": "The panel is back after a restart",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PANEL_BACK"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "The panel is back after a restart"
+            }
+          }
+        },
+        {
+          "id": "step-166",
+          "label": "…and the directory its id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"identity/directory\")"
+              },
+              "path": ".directoryId",
+              "expected": {
+                "kind": "var",
+                "name": "DIRECTORY_ID"
+              },
+              "message": "…and the directory its id"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Every user has a directory id and a status, the same after a panel restart\"\n\nUSERS=$(api_get \"users\")\nUSER_COUNT=$(json_get \"$USERS\" '.users | length')\nassert_json_field \"$USERS\" '.users | length > 0' 'true' \"GET /api/users lists ${USER_COUNT} users\" || true\nassert_json_field \"$USERS\" \"[.users[] | select((.userId // \\\"\\\") | test(\\\"${UUID_RE}\\\") | not)] | length\" '0' \"…each with a userId that is a UUID v4\" || true\nassert_json_field \"$USERS\" '[.users[] | select(.status != \"active\" and .status != \"disabled\")] | length' '0' \"…and a status, active or disabled\" || true\nassert_json_field \"$USERS\" '[.users[].userId] | unique | length == length' 'true' \"…no two users share an id\" || true\nDIRECTORY=$(api_get \"identity/directory\")\nDIRECTORY_ID=$(json_get \"$DIRECTORY\" '.directoryId // empty')\nassert_eq \"$(echo \"$DIRECTORY_ID\" | grep -cE \"${UUID_RE}\" || true)\" \"1\" \"GET /api/identity/directory: the directory's own id is a UUID v4\" || true\nIDS_BEFORE=$(echo \"$USERS\" | jq -c '[.users[] | {username, userId}] | sort_by(.username)' 2>/dev/null || echo \"[]\")\nassert_eq \"$(echo \"$DIRECTORY\" | jq -c '[.users[] | select(.status != \"removed\") | {username, userId}] | sort_by(.username)' 2>/dev/null || echo \"-\")\" \"${IDS_BEFORE}\" \"The directory holds those users under those ids\" || true\n\nsystemctl restart lamalibre-lamaste-serverd\nPANEL_BACK=\"no\"\nfor _ in $(seq 1 60); do\n  if [ \"$(api_get \"health\" 2>/dev/null | jq -r '.status' 2>/dev/null || echo \"\")\" = \"ok\" ]; then\n    PANEL_BACK=\"yes\"\n    break\n  fi\n  sleep 1\ndone\nassert_eq \"$PANEL_BACK\" \"yes\" \"The panel is back after a restart\" || true\nassert_eq \"$(api_get \"users\" | jq -c '[.users[] | {username, userId}] | sort_by(.username)' 2>/dev/null || echo \"-\")\" \"${IDS_BEFORE}\" \"Every user keeps their id across the restart\" || true\nassert_json_field \"$(api_get \"identity/directory\")\" '.directoryId' \"${DIRECTORY_ID}\" \"…and the directory its id\" || true\n\n# ===========================================================================\n# 3. Manifest refusals\n# ==========================================================================="
+    },
+    {
+      "id": "a-manifest-s-identity-block-is-checked-at-install",
+      "label": "A manifest's identity block is checked at install",
+      "steps": [
+        {
+          "id": "step-173",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"plugins/install\" \"{\\\"packageName\\\":\\\"@lamalibre/${name}-server\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-174",
+          "label": "Installing ${name} (${what}) is refused: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Installing ${name} (${what}) is refused: 400"
+            }
+          }
+        },
+        {
+          "id": "step-175",
+          "label": "…${issue}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(body_of \"$RESP\")\" '.error')"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "$issue"
+              },
+              "message": "…${issue}"
+            }
+          }
+        },
+        {
+          "id": "step-177",
+          "label": "…and its package was removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(test -e \"${STATE_DIR}/node_modules/@lamalibre/${name}-server\" && echo \"yes\" || echo \"no\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "no"
+              },
+              "message": "…and its package was removed"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A manifest's identity block is checked at install\"\n\nfor refusal in \\\n  \"serverhosted|identity needs an agent-hosted plugin with an agent half|identity on a server-hosted plugin\" \\\n  \"noagent|identity needs an agent-hosted plugin with an agent half|identity on an agent-hosted plugin without an agent block\" \\\n  \"badrole|A role id starts with a lower-case letter|a role id that is not one\" \\\n  \"badattr|displayName|an attribute outside displayName and email\"; do\n  variant=\"${refusal%%|*}\"\n  rest=\"${refusal#*|}\"\n  issue=\"${rest%%|*}\"\n  what=\"${rest#*|}\"\n  name=\"e2e-ident-${variant}\"\n  RESP=$(call POST \"plugins/install\" \"{\\\"packageName\\\":\\\"@lamalibre/${name}-server\\\"}\")\n  assert_eq \"$(status_of \"$RESP\")\" \"400\" \"Installing ${name} (${what}) is refused: 400\" || true\n  assert_contains \"$(json_get \"$(body_of \"$RESP\")\" '.error')\" \"$issue\" \"…${issue}\" || true\n  assert_eq \"$(api_get \"plugins\" | jq \"[.plugins[] | select(.name == \\\"${name}\\\")] | length\" 2>/dev/null || echo \"-1\")\" \"0\" \"…it is not in the registry\" || true\n  assert_eq \"$(test -e \"${STATE_DIR}/node_modules/@lamalibre/${name}-server\" && echo \"yes\" || echo \"no\")\" \"no\" \"…and its package was removed\" || true\ndone\n\n# ===========================================================================\n# 4. The approval gate\n# ==========================================================================="
+    },
+    {
+      "id": "the-approval-gate-identity-added-a-role-added-attributes-widened-and-narrowed",
+      "label": "The approval gate: identity added, a role added, attributes widened and narrowed",
+      "steps": [
+        {
+          "id": "step-179",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-180",
+          "label": "${PACKAGE}@1.0.0 installed: agent-hosted, no identity block",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "${PACKAGE}@1.0.0 installed: agent-hosted, no identity block"
+            }
+          }
+        },
+        {
+          "id": "step-181",
+          "label": "…nothing to approve: no digest",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": "\"\\(.hooks.identity.declared) \\(.hooks.approval.state) \\(.hooks.approval.digest)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "false not-required null"
+              },
+              "message": "…nothing to approve: no digest"
+            }
+          }
+        },
+        {
+          "id": "step-182",
+          "label": "GET /api/plugins/${PLUGIN}/identity: no identity declared",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(identity_view)"
+              },
+              "path": "\"\\(.declared) \\(.readiness.reason)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null no_identity"
+              },
+              "message": "GET /api/plugins/${PLUGIN}/identity: no identity declared"
+            }
+          }
+        },
+        {
+          "id": "step-183",
+          "label": "…and no audience (400 no_identity)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(call GET \"plugins/${PLUGIN}/audience\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "…and no audience (400 no_identity)"
+            }
+          }
+        },
+        {
+          "id": "step-184",
+          "label": "POST /api/plugins/${PLUGIN}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/enable"
+          }
+        },
+        {
+          "id": "step-185",
+          "label": "POST /api/plugins/${PLUGIN}/update",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/update",
+            "body": {
+              "version": "2.0.0"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPDATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-186",
+          "label": "2.0.0, which adds identity, waits for approval",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": ".pendingUpdate.version",
+              "expected": {
+                "kind": "literal",
+                "value": "2.0.0"
+              },
+              "message": "2.0.0, which adds identity, waits for approval"
+            }
+          }
+        },
+        {
+          "id": "step-187",
+          "label": "Set CODES",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | sort | join(\",\")'"
+          },
+          "capture": [
+            {
+              "variable": "CODES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-188",
+          "label": "…as digest.unapproved and identity.changed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CODES"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "digest.unapproved,identity.changed"
+              },
+              "message": "…as digest.unapproved and identity.changed"
+            }
+          }
+        },
+        {
+          "id": "step-189",
+          "label": "The preview: no identity before, role viewer added",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "\"\\(.pendingUpdate.identity.before) \\(.pendingUpdate.identity.rolesAdded | join(\",\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null viewer"
+              },
+              "message": "The preview: no identity before, role viewer added"
+            }
+          }
+        },
+        {
+          "id": "step-190",
+          "label": "…receiving displayName, the default",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": ".pendingUpdate.identity.after.attributes | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "displayName"
+              },
+              "message": "…receiving displayName, the default"
+            }
+          }
+        },
+        {
+          "id": "step-191",
+          "label": "…with a digest to approve",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": ".pendingUpdate.digest",
+              "message": "…with a digest to approve"
+            }
+          }
+        },
+        {
+          "id": "step-192",
+          "label": "1.0.0 stays until it is approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}\")"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "1.0.0 stays until it is approved"
+            }
+          }
+        },
+        {
+          "id": "step-193",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-194",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-195",
+          "label": "Approved, the update to 2.0.0 succeeded ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Approved, the update to 2.0.0 succeeded ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-196",
+          "label": "GET /api/plugins/${PLUGIN}/hooks",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/hooks"
+          },
+          "capture": [
+            {
+              "variable": "HOOKS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-197",
+          "label": "2.0.0 declares identity, approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOOKS"
+              },
+              "path": "\"\\(.hooks.identity.declared) \\(.hooks.identity.approved) \\(.hooks.approval.state)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true true approved"
+              },
+              "message": "2.0.0 declares identity, approved"
+            }
+          }
+        },
+        {
+          "id": "step-198",
+          "label": "Set AUTO",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"plugins/${PLUGIN}/hooks/auto-approve\" '{\"enabled\":true}'"
+          },
+          "capture": [
+            {
+              "variable": "AUTO",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-199",
+          "label": "Auto-approve is on for ${PLUGIN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$AUTO\")"
+              },
+              "path": ".autoApprove",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Auto-approve is on for ${PLUGIN}"
+            }
+          }
+        },
+        {
+          "id": "step-200",
+          "label": "POST /api/plugins/${PLUGIN}/update",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/update",
+            "body": {
+              "version": "3.0.0"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPDATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-201",
+          "label": "3.0.0 adds a role: it waits, auto-approve on",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": ".pendingUpdate.version",
+              "expected": {
+                "kind": "literal",
+                "value": "3.0.0"
+              },
+              "message": "3.0.0 adds a role: it waits, auto-approve on"
+            }
+          }
+        },
+        {
+          "id": "step-202",
+          "label": "…identity.changed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…identity.changed"
+            }
+          }
+        },
+        {
+          "id": "step-203",
+          "label": "The preview: role editor added, no attribute",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "\"\\(.pendingUpdate.identity.rolesAdded | join(\",\")) \\(.pendingUpdate.identity.attributesAdded | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "editor 0"
+              },
+              "message": "The preview: role editor added, no attribute"
+            }
+          }
+        },
+        {
+          "id": "step-204",
+          "label": "Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join(",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "(.pendingUpdate.autoApproveWithheld // []) | length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join("
+            }
+          }
+        },
+        {
+          "id": "step-206",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-207",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-208",
+          "label": "Approved by the admin, 3.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Approved by the admin, 3.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-209",
+          "label": "POST /api/plugins/${PLUGIN}/update",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/update",
+            "body": {
+              "version": "4.0.0"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPDATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-210",
+          "label": "4.0.0 widens the attributes: it waits, auto-approve on",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": ".pendingUpdate.version",
+              "expected": {
+                "kind": "literal",
+                "value": "4.0.0"
+              },
+              "message": "4.0.0 widens the attributes: it waits, auto-approve on"
+            }
+          }
+        },
+        {
+          "id": "step-211",
+          "label": "…identity.changed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…identity.changed"
+            }
+          }
+        },
+        {
+          "id": "step-212",
+          "label": "The preview: email added, no role",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "\"\\(.pendingUpdate.identity.attributesAdded | join(\",\")) \\(.pendingUpdate.identity.rolesAdded | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "email 0"
+              },
+              "message": "The preview: email added, no role"
+            }
+          }
+        },
+        {
+          "id": "step-214",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-215",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-216",
+          "label": "Approved, 4.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Approved, 4.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-217",
+          "label": "POST /api/plugins/${PLUGIN}/update",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/update",
+            "body": {
+              "version": "5.0.0"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPDATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-218",
+          "label": "5.0.0 narrows the attributes and edits a label: no pending update…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": ".pendingUpdate // \"none\"",
+              "expected": {
+                "kind": "literal",
+                "value": "none"
+              },
+              "message": "5.0.0 narrows the attributes and edits a label: no pending update…"
+            }
+          }
+        },
+        {
+          "id": "step-219",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(json_get \"$UPDATE\" '.operation.id // empty')\" 120"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-220",
+          "label": "…auto-approved, the update ran at once ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "…auto-approved, the update ran at once ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-221",
+          "label": "GET /api/audit?plugin=${PLUGIN}&action=hooks.approved&limit=50",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?plugin=${PLUGIN}&action=hooks.approved&limit=50"
+          },
+          "capture": [
+            {
+              "variable": "APPROVAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-222",
+          "label": "Audit: hooks.approved by auto-approve, for the digest alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPROVAL"
+              },
+              "path": "\"\\(.actor) \\(.details.codes | join(\",\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "auto-approve digest.unapproved"
+              },
+              "message": "Audit: hooks.approved by auto-approve, for the digest alone"
+            }
+          }
+        },
+        {
+          "id": "step-223",
+          "label": "GET /api/plugins/${PLUGIN}/hooks",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/hooks"
+          },
+          "capture": [
+            {
+              "variable": "HOOKS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-224",
+          "label": "5.0.0: roles editor and viewer (relabelled Reader), displayName alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOOKS"
+              },
+              "path": "\"\\(.hooks.identity.block.roles | map(\"\\(.id)=\\(.label)\") | join(\",\")) \\(.hooks.identity.block.attributes | join(\",\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "editor=Editor,viewer=Reader displayName"
+              },
+              "message": "5.0.0: roles editor and viewer (relabelled Reader), displayName alone"
+            }
+          }
+        },
+        {
+          "id": "step-225",
+          "label": "${PLUGIN} is at 5.0.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}\")"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "5.0.0"
+              },
+              "message": "${PLUGIN} is at 5.0.0"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The approval gate: identity added, a role added, attributes widened and narrowed\"\n\nINSTALL=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"${PACKAGE}@1.0.0 installed: agent-hosted, no identity block\" || true\nassert_json_field \"$INSTALL\" '\"\\(.hooks.identity.declared) \\(.hooks.approval.state) \\(.hooks.approval.digest)\"' 'false not-required null' \"…nothing to approve: no digest\" || true\nassert_json_field \"$(identity_view)\" '\"\\(.declared) \\(.readiness.reason)\"' 'null no_identity' \"GET /api/plugins/${PLUGIN}/identity: no identity declared\" || true\nassert_eq \"$(status_of \"$(call GET \"plugins/${PLUGIN}/audience\")\")\" \"400\" \"…and no audience (400 no_identity)\" || true\napi_post \"plugins/${PLUGIN}/enable\" > /dev/null\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"2.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '2.0.0' \"2.0.0, which adds identity, waits for approval\" || true\nCODES=$(json_get \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | sort | join(\",\")')\nassert_eq \"$CODES\" \"digest.unapproved,identity.changed\" \"…as digest.unapproved and identity.changed\" || true\nassert_json_field \"$UPDATE\" '\"\\(.pendingUpdate.identity.before) \\(.pendingUpdate.identity.rolesAdded | join(\",\"))\"' 'null viewer' \"The preview: no identity before, role viewer added\" || true\nassert_json_field \"$UPDATE\" '.pendingUpdate.identity.after.attributes | join(\",\")' 'displayName' \"…receiving displayName, the default\" || true\nassert_json_field_not_empty \"$UPDATE\" '.pendingUpdate.digest' \"…with a digest to approve\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '1.0.0' \"1.0.0 stays until it is approved\" || true\nAPPROVED=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved, the update to 2.0.0 succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nHOOKS=$(api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '\"\\(.hooks.identity.declared) \\(.hooks.identity.approved) \\(.hooks.approval.state)\"' 'true true approved' \"2.0.0 declares identity, approved\" || true\n\nAUTO=$(call PUT \"plugins/${PLUGIN}/hooks/auto-approve\" '{\"enabled\":true}')\nassert_json_field \"$(body_of \"$AUTO\")\" '.autoApprove' 'true' \"Auto-approve is on for ${PLUGIN}\" || true\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"3.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '3.0.0' \"3.0.0 adds a role: it waits, auto-approve on\" || true\nassert_json_field \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null' 'true' \"…identity.changed\" || true\nassert_json_field \"$UPDATE\" '\"\\(.pendingUpdate.identity.rolesAdded | join(\",\")) \\(.pendingUpdate.identity.attributesAdded | length)\"' 'editor 0' \"The preview: role editor added, no attribute\" || true\nassert_json_field \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | length > 0' 'true' \"Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join(\"; \")')\" || true\nassert_eq \"$(api_get \"audit?plugin=${PLUGIN}&action=hooks.auto-approve.withheld&limit=50\" | jq \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.version == \\\"3.0.0\\\" and ((.details.codes // []) | index(\\\"identity.changed\\\")) != null)] | length\" 2>/dev/null || echo \"-1\")\" \"1\" \"Audit: hooks.auto-approve.withheld, identity.changed\" || true\nAPPROVED=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved by the admin, 3.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))\" || true\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"4.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '4.0.0' \"4.0.0 widens the attributes: it waits, auto-approve on\" || true\nassert_json_field \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null' 'true' \"…identity.changed\" || true\nassert_json_field \"$UPDATE\" '\"\\(.pendingUpdate.identity.attributesAdded | join(\",\")) \\(.pendingUpdate.identity.rolesAdded | length)\"' 'email 0' \"The preview: email added, no role\" || true\nassert_eq \"$(api_get \"audit?plugin=${PLUGIN}&action=hooks.auto-approve.withheld&limit=50\" | jq \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.version == \\\"4.0.0\\\" and ((.details.codes // []) | index(\\\"identity.changed\\\")) != null)] | length\" 2>/dev/null || echo \"-1\")\" \"1\" \"Audit: hooks.auto-approve.withheld for 4.0.0\" || true\nAPPROVED=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved, 4.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))\" || true\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"5.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate // \"none\"' 'none' \"5.0.0 narrows the attributes and edits a label: no pending update…\" || true\nOP=$(wait_operation \"$(json_get \"$UPDATE\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"…auto-approved, the update ran at once ($(json_get \"$OP\" '.error // \"\"'))\" || true\nAPPROVAL=$(api_get \"audit?plugin=${PLUGIN}&action=hooks.approved&limit=50\" | jq -c \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.version == \\\"5.0.0\\\")] | first // {}\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$APPROVAL\" '\"\\(.actor) \\(.details.codes | join(\",\"))\"' 'auto-approve digest.unapproved' \"Audit: hooks.approved by auto-approve, for the digest alone\" || true\nHOOKS=$(api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '\"\\(.hooks.identity.block.roles | map(\"\\(.id)=\\(.label)\") | join(\",\")) \\(.hooks.identity.block.attributes | join(\",\"))\"' 'editor=Editor,viewer=Reader displayName' \"5.0.0: roles editor and viewer (relabelled Reader), displayName alone\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '5.0.0' \"${PLUGIN} is at 5.0.0\" || true\n\n# ===========================================================================\n# 5. Hosted: the agent half answers protocol 1\n# ==========================================================================="
+    },
+    {
+      "id": "hosted-the-agent-half-on-the-relay-loopback-answers-protocol-1",
+      "label": "Hosted, the agent half on the relay loopback answers protocol 1",
+      "steps": [
+        {
+          "id": "step-226",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-227",
+          "label": "Agent certificate issued for ${AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent certificate issued for ${AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-228",
+          "label": "Extract P12_PASS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-233",
+          "label": "POST /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hosting",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "HOST_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-234",
+          "label": "Hosting on ${AGENT_LABEL} started",
+          "target": "local",
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_RESPONSE"
+              },
+              "path": ".operation.kind",
+              "expected": {
+                "kind": "literal",
+                "value": "host"
+              },
+              "message": "Hosting on ${AGENT_LABEL} started"
+            }
+          }
+        },
+        {
+          "id": "step-235",
+          "label": "Set HOST_OP_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$HOST_RESPONSE\" '.operation.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "HOST_OP_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-238",
+          "label": "GET /api/agents/me/plugin-config/${PLUGIN}",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "agents/me/plugin-config/${PLUGIN}"
+          },
+          "capture": [
+            {
+              "variable": "PLUGIN_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-239",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-241",
+          "label": "Set PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$PLUGIN_CONFIG\" '.port // empty'"
+          },
+          "capture": [
+            {
+              "variable": "PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-245",
+          "label": "POST /api/agents/me/plugin-config/${PLUGIN}/ack",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/me/plugin-config/${PLUGIN}/ack",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "ACK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-246",
+          "label": "The agent fetched and acknowledged the plugin config (port ${PORT})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ACK"
+              },
+              "path": ".acknowledged",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The agent fetched and acknowledged the plugin config (port ${PORT})"
+            }
+          }
+        },
+        {
+          "id": "step-250",
+          "label": "The agent half listens on 127.0.0.1:${PORT}, with its identity projection",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half listens on 127.0.0.1:${PORT}, with its identity projection"
+          }
+        },
+        {
+          "id": "step-251",
+          "label": "The agent half did not start: $(journalctl -u \"${HALF_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent half did not start: $(journalctl -u \"${HALF_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)"
+          }
+        },
+        {
+          "id": "step-252",
+          "label": "Set HOST_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${HOST_OP_ID}\" 180"
+          },
+          "capture": [
+            {
+              "variable": "HOST_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-253",
+          "label": "The hosting operation succeeded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "The hosting operation succeeded"
+            }
+          }
+        },
+        {
+          "id": "step-254",
+          "label": "Health is up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health is up"
+          }
+        },
+        {
+          "id": "step-255",
+          "label": "Health did not reach up: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health did not reach up: $(hosting_field '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-256",
+          "label": "The plugin is ready for its users: its agent half answered protocol 1",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The plugin is ready for its users: its agent half answered protocol 1"
+          }
+        },
+        {
+          "id": "step-257",
+          "label": "Not ready: $(identity_view)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not ready: $(identity_view)"
+          }
+        },
+        {
+          "id": "step-258",
+          "label": "Set VIEW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "identity_view"
+          },
+          "capture": [
+            {
+              "variable": "VIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-259",
+          "label": "5.0.0 answered, and follows this directory",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": "\"\\(.readiness.readyVersion) \\(.sync.halfDirectoryId)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "5.0.0 ${DIRECTORY_ID}"
+              },
+              "message": "5.0.0 answered, and follows this directory"
+            }
+          }
+        },
+        {
+          "id": "step-260",
+          "label": "The agent half was notified with Lamaste's own caller assertion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cat \"${HALF_LOG}\" 2>/dev/null)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "POST /admin/identity/notify 200 identity-call"
+              },
+              "message": "The agent half was notified with Lamaste's own caller assertion"
+            }
+          }
+        },
+        {
+          "id": "step-261",
+          "label": "Its projection follows the panel's directory",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(projection)"
+              },
+              "path": ".state.directoryId",
+              "expected": {
+                "kind": "var",
+                "name": "DIRECTORY_ID"
+              },
+              "message": "Its projection follows the panel's directory"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Hosted, the agent half on the relay loopback answers protocol 1\"\n\nCERT_RESPONSE=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"Agent certificate issued for ${AGENT_LABEL}\" || true\nP12_PASS=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.crt\" -clcerts -nokeys -passin pass:\"${P12_PASS}\" 2>/dev/null\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.key\" -nocerts -nodes -passin pass:\"${P12_PASS}\" 2>/dev/null\nchmod 600 \"${AGENT_CERT_DIR}/client.key\"\nunset P12_PASS\n\nHOST_RESPONSE=$(api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$HOST_RESPONSE\" '.operation.kind' 'host' \"Hosting on ${AGENT_LABEL} started\" || log_info \"The panel answered: ${HOST_RESPONSE}\"\nHOST_OP_ID=$(json_get \"$HOST_RESPONSE\" '.operation.id // empty')\n# What the agent's sync does: fetch the plugin config, acknowledge it, start\n# the agent half — here on the relay loopback, as in spec 31.\nPLUGIN_CONFIG=\"{}\"\nfor _ in $(seq 1 60); do\n  PLUGIN_CONFIG=$(agent_api_get \"agents/me/plugin-config/${PLUGIN}\" 2>/dev/null || echo '{}')\n  if [ -n \"$(json_get \"$PLUGIN_CONFIG\" '.port // empty')\" ]; then break; fi\n  sleep 1\ndone\nPORT=$(json_get \"$PLUGIN_CONFIG\" '.port // empty')\necho \"$PLUGIN_CONFIG\" | jq '. + {fetchedAt: (now | todate), acknowledged: false}' > \"${HALF_CONFIG}.tmp\"\nchmod 600 \"${HALF_CONFIG}.tmp\"\nmv \"${HALF_CONFIG}.tmp\" \"${HALF_CONFIG}\"\nACK=$(agent_api_post \"agents/me/plugin-config/${PLUGIN}/ack\" \"{\\\"issuedAt\\\":\\\"$(json_get \"$PLUGIN_CONFIG\" '.issuedAt')\\\"}\")\nassert_json_field \"$ACK\" '.acknowledged' 'true' \"The agent fetched and acknowledged the plugin config (port ${PORT})\" || true\nsystemctl stop \"${HALF_UNIT}\" > /dev/null 2>&1 || true\nsystemd-run --quiet --collect --unit \"${HALF_UNIT}\" \"$(command -v node)\" \"${WORK_DIR}/app-plugin-half.mjs\" \\\n  --config \"${HALF_CONFIG}\" --plugin \"${PLUGIN}\" --lamaste \"${LAMASTE_LIB}\" --log \"${HALF_LOG}\" --identity-db \"${HALF_DB}\"\nhalf_listens() { [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \"http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null || true)\" = \"401\" ]; }\nif wait_for 30 half_listens; then\n  log_pass \"The agent half listens on 127.0.0.1:${PORT}, with its identity projection\"\nelse\n  log_fail \"The agent half did not start: $(journalctl -u \"${HALF_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)\"\nfi\nHOST_OP=$(wait_operation \"${HOST_OP_ID}\" 180)\nassert_json_field \"$HOST_OP\" '.status' 'succeeded' \"The hosting operation succeeded\" || true\nif wait_for 60 health_up; then\n  log_pass \"Health is up\"\nelse\n  log_fail \"Health did not reach up: $(hosting_field '.hosting.health')\"\nfi\nif wait_for 90 identity_ready; then\n  log_pass \"The plugin is ready for its users: its agent half answered protocol 1\"\nelse\n  log_fail \"Not ready: $(identity_view)\"\nfi\nVIEW=$(identity_view)\nassert_json_field \"$VIEW\" '\"\\(.readiness.readyVersion) \\(.sync.halfDirectoryId)\"' \"5.0.0 ${DIRECTORY_ID}\" \"5.0.0 answered, and follows this directory\" || true\nassert_contains \"$(cat \"${HALF_LOG}\" 2>/dev/null)\" \"POST /admin/identity/notify 200 identity-call\" \"The agent half was notified with Lamaste's own caller assertion\" || true\nassert_json_field \"$(projection)\" '.state.directoryId' \"${DIRECTORY_ID}\" \"Its projection follows the panel's directory\" || true\n\n# ===========================================================================\n# 6. Entitlements\n# ==========================================================================="
+    },
+    {
+      "id": "entitlements-declared-roles-only-a-grant-without-roles-makes-no-member",
+      "label": "Entitlements: declared roles only; a grant without roles makes no member",
+      "steps": [
+        {
+          "id": "step-262",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${USER_A}\\\",\\\"displayname\\\":\\\"E2E Alice\\\",\\\"email\\\":\\\"${USER_A}@example.test\\\",\\\"password\\\":\\\"${USER_A_PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-263",
+          "label": "User ${USER_A} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${USER_A} created"
+            }
+          }
+        },
+        {
+          "id": "step-264",
+          "label": "Set ALICE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "ALICE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-265",
+          "label": "…with a directory id (${ALICE_ID})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$ALICE_ID\" | grep -cE \"${UUID_RE}\" || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…with a directory id (${ALICE_ID})"
+            }
+          }
+        },
+        {
+          "id": "step-266",
+          "label": "…active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".user.status",
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "…active"
+            }
+          }
+        },
+        {
+          "id": "step-267",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[\\\"owner\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-268",
+          "label": "A role the plugin does not declare is refused: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A role the plugin does not declare is refused: 400"
+            }
+          }
+        },
+        {
+          "id": "step-269",
+          "label": "…unknown_roles: owner",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.code) \\(.unknown | join(\",\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "unknown_roles owner"
+              },
+              "message": "…unknown_roles: owner"
+            }
+          }
+        },
+        {
+          "id": "step-270",
+          "label": "No roles at all: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[]}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "No roles at all: 400"
+            }
+          }
+        },
+        {
+          "id": "step-271",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"plugin\\\",\\\"resourceId\\\":\\\"${PLUGIN}\\\",\\\"context\\\":{\\\"roles\\\":[\\\"owner\\\"]}}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-272",
+          "label": "The same through the Gatekeeper proxy: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "The same through the Gatekeeper proxy: 400"
+            }
+          }
+        },
+        {
+          "id": "step-273",
+          "label": "…unknown_roles",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "unknown_roles"
+              },
+              "message": "…unknown_roles"
+            }
+          }
+        },
+        {
+          "id": "step-274",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"plugin\\\",\\\"resourceId\\\":\\\"${PLUGIN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-275",
+          "label": "Set ROLELESS_GRANT_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.grant.grantId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "ROLELESS_GRANT_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-276",
+          "label": "A plugin grant without roles is taken by Gatekeeper",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".grant.grantId",
+              "message": "A plugin grant without roles is taken by Gatekeeper"
+            }
+          }
+        },
+        {
+          "id": "step-277",
+          "label": "GET /api/plugins/${PLUGIN}/entitlements",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/entitlements"
+          },
+          "capture": [
+            {
+              "variable": "ENTITLEMENTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-278",
+          "label": "…counted as roleless ($(json_get \"$ENTITLEMENTS\" '.roleless'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENTITLEMENTS"
+              },
+              "path": ".roleless >= 1",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…counted as roleless ($(json_get \"$ENTITLEMENTS\" '.roleless'))"
+            }
+          }
+        },
+        {
+          "id": "step-280",
+          "label": "It makes ${USER_A} no member of the audience",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audience_row \"${ALICE_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "It makes ${USER_A} no member of the audience"
+            }
+          }
+        },
+        {
+          "id": "step-281",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[\\\"viewer\\\",\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-282",
+          "label": "${USER_A} entitled as viewer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${USER_A} entitled as viewer"
+            }
+          }
+        },
+        {
+          "id": "step-283",
+          "label": "…named by her directory id, the role once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.entitlement.userId) \\(.entitlement.roles | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${ALICE_ID} viewer"
+              },
+              "message": "…named by her directory id, the role once"
+            }
+          }
+        },
+        {
+          "id": "step-284",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${GROUP}\\\",\\\"description\\\":\\\"E2E 32 team\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-285",
+          "label": "Group ${GROUP} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Group ${GROUP} created"
+            }
+          }
+        },
+        {
+          "id": "step-286",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"gatekeeper/groups/${GROUP}/members\" \"{\\\"usernames\\\":[\\\"${USER_A}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-287",
+          "label": "…with ${USER_A} in it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…with ${USER_A} in it"
+            }
+          }
+        },
+        {
+          "id": "step-288",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${GROUP}\\\",\\\"roles\\\":[\\\"editor\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-289",
+          "label": "The group entitled as editor",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The group entitled as editor"
+            }
+          }
+        },
+        {
+          "id": "step-290",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "audience_row \"${ALICE_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-291",
+          "label": "The audience: ${USER_A} active, her roles and her group's (editor, viewer)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.change.kind) \\(.change.member.status) \\(.change.member.roles | join(\",\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "upsert active editor,viewer"
+              },
+              "message": "The audience: ${USER_A} active, her roles and her group's (editor, viewer)"
+            }
+          }
+        },
+        {
+          "id": "step-292",
+          "label": "…her display name, never the address 5.0.0 does not declare",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.change.member.displayName) \\(.change.member | has(\"email\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "E2E Alice false"
+              },
+              "message": "…her display name, never the address 5.0.0 does not declare"
+            }
+          }
+        },
+        {
+          "id": "step-293",
+          "label": "The agent half's projection holds her, with both roles",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half's projection holds her, with both roles"
+          }
+        },
+        {
+          "id": "step-294",
+          "label": "The projection does not hold her: $(projected_user \"${ALICE_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The projection does not hold her: $(projected_user \"${ALICE_ID}\")"
+          }
+        }
+      ],
+      "bash": "log_section \"Entitlements: declared roles only; a grant without roles makes no member\"\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${USER_A}\\\",\\\"displayname\\\":\\\"E2E Alice\\\",\\\"email\\\":\\\"${USER_A}@example.test\\\",\\\"password\\\":\\\"${USER_A_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${USER_A} created\" || true\nALICE_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nassert_eq \"$(echo \"$ALICE_ID\" | grep -cE \"${UUID_RE}\" || true)\" \"1\" \"…with a directory id (${ALICE_ID})\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.user.status' 'active' \"…active\" || true\n\nRESP=$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[\\\"owner\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A role the plugin does not declare is refused: 400\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.code) \\(.unknown | join(\",\"))\"' 'unknown_roles owner' \"…unknown_roles: owner\" || true\nassert_eq \"$(status_of \"$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[]}\")\")\" \"400\" \"No roles at all: 400\" || true\nRESP=$(call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"plugin\\\",\\\"resourceId\\\":\\\"${PLUGIN}\\\",\\\"context\\\":{\\\"roles\\\":[\\\"owner\\\"]}}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"The same through the Gatekeeper proxy: 400\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'unknown_roles' \"…unknown_roles\" || true\nRESP=$(call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"plugin\\\",\\\"resourceId\\\":\\\"${PLUGIN}\\\"}\")\nROLELESS_GRANT_ID=$(json_get \"$(body_of \"$RESP\")\" '.grant.grantId // empty')\nassert_json_field_not_empty \"$(body_of \"$RESP\")\" '.grant.grantId' \"A plugin grant without roles is taken by Gatekeeper\" || true\nENTITLEMENTS=$(api_get \"plugins/${PLUGIN}/entitlements\")\nassert_json_field \"$ENTITLEMENTS\" '.roleless >= 1' 'true' \"…counted as roleless ($(json_get \"$ENTITLEMENTS\" '.roleless'))\" || true\nassert_json_field \"$ENTITLEMENTS\" \"[.entitlements[] | select(.principalId == \\\"${USER_A}\\\")] | length\" '0' \"…and no entitlement\" || true\nassert_eq \"$(audience_row \"${ALICE_ID}\")\" \"null\" \"It makes ${USER_A} no member of the audience\" || true\n\nRESP=$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[\\\"viewer\\\",\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${USER_A} entitled as viewer\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.entitlement.userId) \\(.entitlement.roles | join(\",\"))\"' \"${ALICE_ID} viewer\" \"…named by her directory id, the role once\" || true\nRESP=$(call POST \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${GROUP}\\\",\\\"description\\\":\\\"E2E 32 team\\\"}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.ok' 'true' \"Group ${GROUP} created\" || true\nRESP=$(call POST \"gatekeeper/groups/${GROUP}/members\" \"{\\\"usernames\\\":[\\\"${USER_A}\\\"]}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.ok' 'true' \"…with ${USER_A} in it\" || true\nRESP=$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${GROUP}\\\",\\\"roles\\\":[\\\"editor\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The group entitled as editor\" || true\nROW=$(audience_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.change.kind) \\(.change.member.status) \\(.change.member.roles | join(\",\"))\"' 'upsert active editor,viewer' \"The audience: ${USER_A} active, her roles and her group's (editor, viewer)\" || true\nassert_json_field \"$ROW\" '\"\\(.change.member.displayName) \\(.change.member | has(\"email\"))\"' 'E2E Alice false' \"…her display name, never the address 5.0.0 does not declare\" || true\nif wait_for 30 projection_has \"[.users[] | select(.userId == \\\"${ALICE_ID}\\\" and .status == \\\"active\\\" and .roles == [\\\"editor\\\",\\\"viewer\\\"])] | length == 1\"; then\n  log_pass \"The agent half's projection holds her, with both roles\"\nelse\n  log_fail \"The projection does not hold her: $(projected_user \"${ALICE_ID}\")\"\nfi\n\n# ===========================================================================\n# 7. Disable and enable\n# ==========================================================================="
+    },
+    {
+      "id": "disabled-authelia-refuses-her-first-factor-enabled-takes-it-again",
+      "label": "Disabled: Authelia refuses her first factor; enabled: takes it again",
+      "steps": [
+        {
+          "id": "step-295",
+          "label": "Authelia's first factor takes ${USER_A}'s password",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia's first factor takes ${USER_A}'s password"
+          }
+        },
+        {
+          "id": "step-296",
+          "label": "Authelia's first factor refused ${USER_A} before she was disabled",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia's first factor refused ${USER_A} before she was disabled"
+          }
+        },
+        {
+          "id": "step-297",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call PUT \"users/${USER_A}\" '{\"disabled\":true}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-298",
+          "label": "${USER_A} disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${USER_A} disabled"
+            }
+          }
+        },
+        {
+          "id": "step-299",
+          "label": "…status disabled, her id unchanged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.user.status) \\(.user.disabled) \\(.user.userId)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "disabled true ${ALICE_ID}"
+              },
+              "message": "…status disabled, her id unchanged"
+            }
+          }
+        },
+        {
+          "id": "step-301",
+          "label": "The directory: disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(directory_row \"${ALICE_ID}\")"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "disabled"
+              },
+              "message": "The directory: disabled"
+            }
+          }
+        },
+        {
+          "id": "step-303",
+          "label": "Authelia's first factor refuses her",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(first_factor \"${USER_A}\" \"${USER_A_PASSWORD}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK"
+              },
+              "message": "Authelia's first factor refuses her"
+            }
+          }
+        },
+        {
+          "id": "step-304",
+          "label": "The audience keeps her as a member, disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(audience_row \"${ALICE_ID}\")"
+              },
+              "path": "\"\\(.change.kind) \\(.change.member.status)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "upsert disabled"
+              },
+              "message": "The audience keeps her as a member, disabled"
+            }
+          }
+        },
+        {
+          "id": "step-305",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call PUT \"users/${USER_A}\" '{\"disabled\":false}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-306",
+          "label": "${USER_A} enabled again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".user.status",
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "${USER_A} enabled again"
+            }
+          }
+        },
+        {
+          "id": "step-307",
+          "label": "Authelia's first factor takes her password again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia's first factor takes her password again"
+          }
+        },
+        {
+          "id": "step-308",
+          "label": "Authelia's first factor still refuses ${USER_A} once enabled",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia's first factor still refuses ${USER_A} once enabled"
+          }
+        },
+        {
+          "id": "step-309",
+          "label": "The audience: active again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(audience_row \"${ALICE_ID}\")"
+              },
+              "path": ".change.member.status",
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "The audience: active again"
+            }
+          }
+        },
+        {
+          "id": "step-310",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "ADMINS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-311",
+          "label": "Set LAST_ADMIN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$ADMINS\" '.[0]'"
+          },
+          "capture": [
+            {
+              "variable": "LAST_ADMIN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-312",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call PUT \"users/${LAST_ADMIN}\" '{\"disabled\":true}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-313",
+          "label": "The last enabled administrator (${LAST_ADMIN}) cannot be disabled: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "The last enabled administrator (${LAST_ADMIN}) cannot be disabled: 400"
+            }
+          }
+        },
+        {
+          "id": "step-314",
+          "label": "…last_admin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "last_admin"
+              },
+              "message": "…last_admin"
+            }
+          }
+        },
+        {
+          "id": "step-316",
+          "label": "Last enabled administrator: ${ADMINS} — not exactly one enabled administrator on this VM",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Last enabled administrator: ${ADMINS} — not exactly one enabled administrator on this VM"
+          }
+        }
+      ],
+      "bash": "log_section \"Disabled: Authelia refuses her first factor; enabled: takes it again\"\n\nif wait_for 30 first_factor_ok; then\n  log_pass \"Authelia's first factor takes ${USER_A}'s password\"\nelse\n  log_fail \"Authelia's first factor refused ${USER_A} before she was disabled\"\nfi\nRESP=$(users_call PUT \"users/${USER_A}\" '{\"disabled\":true}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${USER_A} disabled\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.user.status) \\(.user.disabled) \\(.user.userId)\"' \"disabled true ${ALICE_ID}\" \"…status disabled, her id unchanged\" || true\nassert_json_field \"$(api_get \"users\")\" \"[.users[] | select(.username == \\\"${USER_A}\\\") | .status] | first\" 'disabled' \"GET /api/users: disabled\" || true\nassert_json_field \"$(directory_row \"${ALICE_ID}\")\" '.status' 'disabled' \"The directory: disabled\" || true\nwait_for 30 first_factor_answered || true\nassert_not_eq \"$(first_factor \"${USER_A}\" \"${USER_A_PASSWORD}\")\" \"OK\" \"Authelia's first factor refuses her\" || true\nassert_json_field \"$(audience_row \"${ALICE_ID}\")\" '\"\\(.change.kind) \\(.change.member.status)\"' 'upsert disabled' \"The audience keeps her as a member, disabled\" || true\nRESP=$(users_call PUT \"users/${USER_A}\" '{\"disabled\":false}')\nassert_json_field \"$(body_of \"$RESP\")\" '.user.status' 'active' \"${USER_A} enabled again\" || true\nif wait_for 30 first_factor_ok; then\n  log_pass \"Authelia's first factor takes her password again\"\nelse\n  log_fail \"Authelia's first factor still refuses ${USER_A} once enabled\"\nfi\nassert_json_field \"$(audience_row \"${ALICE_ID}\")\" '.change.member.status' 'active' \"The audience: active again\" || true\n\nADMINS=$(api_get \"users\" | jq -c '[.users[] | select(((.groups // []) | index(\"admins\")) != null and .disabled != true) | .username]' 2>/dev/null || echo \"[]\")\nif [ \"$(json_get \"$ADMINS\" 'length')\" = \"1\" ]; then\n  LAST_ADMIN=$(json_get \"$ADMINS\" '.[0]')\n  RESP=$(users_call PUT \"users/${LAST_ADMIN}\" '{\"disabled\":true}')\n  assert_eq \"$(status_of \"$RESP\")\" \"400\" \"The last enabled administrator (${LAST_ADMIN}) cannot be disabled: 400\" || true\n  assert_json_field \"$(body_of \"$RESP\")\" '.code' 'last_admin' \"…last_admin\" || true\n  assert_json_field \"$(api_get \"users\")\" \"[.users[] | select(.username == \\\"${LAST_ADMIN}\\\") | .status] | first\" 'active' \"…still active\" || true\nelse\n  log_skip \"Last enabled administrator: ${ADMINS} — not exactly one enabled administrator on this VM\"\nfi\n\n# ===========================================================================\n# 8. Delete: a tombstone, Gatekeeper cleared\n# ==========================================================================="
+    },
+    {
+      "id": "deleted-a-tombstone-her-grants-and-memberships-gone",
+      "label": "Deleted: a tombstone, her grants and memberships gone",
+      "steps": [
+        {
+          "id": "step-317",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"tunnel\\\",\\\"resourceId\\\":\\\"${TUNNEL_RESOURCE}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-318",
+          "label": "Set TUNNEL_GRANT_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.grant.grantId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_GRANT_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-319",
+          "label": "${USER_A} holds a tunnel grant too",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".grant.grantId",
+              "message": "${USER_A} holds a tunnel grant too"
+            }
+          }
+        },
+        {
+          "id": "step-321",
+          "label": "…and a row in Gatekeeper's access-request log",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(gatekeeper_log_rows \"${USER_A}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…and a row in Gatekeeper's access-request log"
+            }
+          }
+        },
+        {
+          "id": "step-322",
+          "label": "Gatekeeper holds three grants of hers: the tunnel, the roleless plugin grant, her role",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")"
+              },
+              "path": ".grants | length",
+              "expected": {
+                "kind": "literal",
+                "value": "3"
+              },
+              "message": "Gatekeeper holds three grants of hers: the tunnel, the roleless plugin grant, her role"
+            }
+          }
+        },
+        {
+          "id": "step-323",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call DELETE \"users/${USER_A}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-324",
+          "label": "${USER_A} deleted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${USER_A} deleted"
+            }
+          }
+        },
+        {
+          "id": "step-325",
+          "label": "…her id named, Gatekeeper's principal cleared",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.userId) \\(.principalCleared)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${ALICE_ID} true"
+              },
+              "message": "…her id named, Gatekeeper's principal cleared"
+            }
+          }
+        },
+        {
+          "id": "step-326",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "directory_row \"${ALICE_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-327",
+          "label": "The directory keeps a tombstone: removed, deleted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.status) \\(.removedReason) \\(.erasedAt)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "removed deleted null"
+              },
+              "message": "The directory keeps a tombstone: removed, deleted"
+            }
+          }
+        },
+        {
+          "id": "step-328",
+          "label": "…with her username, name and address",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.username) \\(.displayName) \\(.email)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${USER_A} E2E Alice ${USER_A}@example.test"
+              },
+              "message": "…with her username, name and address"
+            }
+          }
+        },
+        {
+          "id": "step-329",
+          "label": "…and when Gatekeeper dropped what it held of her",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": ".principalClearedAt",
+              "message": "…and when Gatekeeper dropped what it held of her"
+            }
+          }
+        },
+        {
+          "id": "step-331",
+          "label": "No Gatekeeper grant names her username",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")"
+              },
+              "path": ".grants | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "No Gatekeeper grant names her username"
+            }
+          }
+        },
+        {
+          "id": "step-332",
+          "label": "…the roleless plugin grant gone with the others",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get_status \"gatekeeper/grants/${ROLELESS_GRANT_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "…the roleless plugin grant gone with the others"
+            }
+          }
+        },
+        {
+          "id": "step-334",
+          "label": "GET /api/plugins/${PLUGIN}/entitlements",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/entitlements"
+          },
+          "capture": [
+            {
+              "variable": "ENTITLEMENTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-335",
+          "label": "The plugin's entitlements: the group's alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENTITLEMENTS"
+              },
+              "path": "[.entitlements[] | \"\\(.principalType):\\(.principalId)\"] | join(\",\")",
+              "expected": {
+                "kind": "expr",
+                "template": "group:${GROUP}"
+              },
+              "message": "The plugin's entitlements: the group's alone"
+            }
+          }
+        },
+        {
+          "id": "step-336",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "audience_row \"${ALICE_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-337",
+          "label": "The audience: remove/deleted, with the last display name",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.change.kind) \\(.change.reason) \\(.change.last.displayName) \\(.change.last.username)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "remove deleted E2E Alice ${USER_A}"
+              },
+              "message": "The audience: remove/deleted, with the last display name"
+            }
+          }
+        },
+        {
+          "id": "step-338",
+          "label": "The agent half's projection: removed, deleted, her name kept, no roles",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half's projection: removed, deleted, her name kept, no roles"
+          }
+        },
+        {
+          "id": "step-339",
+          "label": "The projection: $(projected_user \"${ALICE_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The projection: $(projected_user \"${ALICE_ID}\")"
+          }
+        }
+      ],
+      "bash": "log_section \"Deleted: a tombstone, her grants and memberships gone\"\n\nRESP=$(call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"tunnel\\\",\\\"resourceId\\\":\\\"${TUNNEL_RESOURCE}\\\"}\")\nTUNNEL_GRANT_ID=$(json_get \"$(body_of \"$RESP\")\" '.grant.grantId // empty')\nassert_json_field_not_empty \"$(body_of \"$RESP\")\" '.grant.grantId' \"${USER_A} holds a tunnel grant too\" || true\nseed_access_log \"${USER_A}\"\nassert_eq \"$(gatekeeper_log_rows \"${USER_A}\")\" \"1\" \"…and a row in Gatekeeper's access-request log\" || true\nassert_json_field \"$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")\" '.grants | length' '3' \"Gatekeeper holds three grants of hers: the tunnel, the roleless plugin grant, her role\" || true\n\nRESP=$(call DELETE \"users/${USER_A}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${USER_A} deleted\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.userId) \\(.principalCleared)\"' \"${ALICE_ID} true\" \"…her id named, Gatekeeper's principal cleared\" || true\nROW=$(directory_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.status) \\(.removedReason) \\(.erasedAt)\"' 'removed deleted null' \"The directory keeps a tombstone: removed, deleted\" || true\nassert_json_field \"$ROW\" '\"\\(.username) \\(.displayName) \\(.email)\"' \"${USER_A} E2E Alice ${USER_A}@example.test\" \"…with her username, name and address\" || true\nassert_json_field_not_empty \"$ROW\" '.principalClearedAt' \"…and when Gatekeeper dropped what it held of her\" || true\nassert_json_field \"$(api_get \"users\")\" \"[.users[] | select(.username == \\\"${USER_A}\\\")] | length\" '0' \"GET /api/users no longer lists her\" || true\nassert_json_field \"$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")\" '.grants | length' '0' \"No Gatekeeper grant names her username\" || true\nassert_eq \"$(api_get_status \"gatekeeper/grants/${ROLELESS_GRANT_ID}\")\" \"404\" \"…the roleless plugin grant gone with the others\" || true\nassert_json_field \"$(api_get \"gatekeeper/groups/${GROUP}\")\" \".group.members | index(\\\"${USER_A}\\\")\" 'null' \"${GROUP} no longer has her\" || true\nENTITLEMENTS=$(api_get \"plugins/${PLUGIN}/entitlements\")\nassert_json_field \"$ENTITLEMENTS\" '[.entitlements[] | \"\\(.principalType):\\(.principalId)\"] | join(\",\")' \"group:${GROUP}\" \"The plugin's entitlements: the group's alone\" || true\nROW=$(audience_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.change.kind) \\(.change.reason) \\(.change.last.displayName) \\(.change.last.username)\"' \"remove deleted E2E Alice ${USER_A}\" \"The audience: remove/deleted, with the last display name\" || true\nif wait_for 30 projection_has \"[.users[] | select(.userId == \\\"${ALICE_ID}\\\" and .status == \\\"removed\\\" and .removedReason == \\\"deleted\\\" and .displayName == \\\"E2E Alice\\\" and .roles == [])] | length == 1\"; then\n  log_pass \"The agent half's projection: removed, deleted, her name kept, no roles\"\nelse\n  log_fail \"The projection: $(projected_user \"${ALICE_ID}\")\"\nfi\n\n# ===========================================================================\n# 9. The same username again: a new user\n# ==========================================================================="
+    },
+    {
+      "id": "the-same-username-created-again-is-a-new-user-with-no-roles",
+      "label": "The same username created again is a new user, with no roles",
+      "steps": [
+        {
+          "id": "step-340",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${USER_A}\\\",\\\"displayname\\\":\\\"E2E Alice Two\\\",\\\"email\\\":\\\"${USER_A}-two@example.test\\\",\\\"password\\\":\\\"${USER_A_PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-341",
+          "label": "${USER_A} created again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "${USER_A} created again"
+            }
+          }
+        },
+        {
+          "id": "step-342",
+          "label": "Set NEW_ALICE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "NEW_ALICE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-343",
+          "label": "…with a directory id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$NEW_ALICE_ID\" | grep -cE \"${UUID_RE}\" || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…with a directory id"
+            }
+          }
+        },
+        {
+          "id": "step-344",
+          "label": "…a new one: not the deleted user's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_ALICE_ID"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "ALICE_ID"
+              },
+              "message": "…a new one: not the deleted user's"
+            }
+          }
+        },
+        {
+          "id": "step-345",
+          "label": "The earlier user stays a tombstone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(directory_row \"${ALICE_ID}\")"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "removed"
+              },
+              "message": "The earlier user stays a tombstone"
+            }
+          }
+        },
+        {
+          "id": "step-346",
+          "label": "She inherits no grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")"
+              },
+              "path": ".grants | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "She inherits no grant"
+            }
+          }
+        },
+        {
+          "id": "step-348",
+          "label": "…so no role in ${PLUGIN}: not in its audience",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audience_row \"${NEW_ALICE_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "…so no role in ${PLUGIN}: not in its audience"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The same username created again is a new user, with no roles\"\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${USER_A}\\\",\\\"displayname\\\":\\\"E2E Alice Two\\\",\\\"email\\\":\\\"${USER_A}-two@example.test\\\",\\\"password\\\":\\\"${USER_A_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"${USER_A} created again\" || true\nNEW_ALICE_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nassert_eq \"$(echo \"$NEW_ALICE_ID\" | grep -cE \"${UUID_RE}\" || true)\" \"1\" \"…with a directory id\" || true\nassert_not_eq \"${NEW_ALICE_ID}\" \"${ALICE_ID}\" \"…a new one: not the deleted user's\" || true\nassert_json_field \"$(directory_row \"${ALICE_ID}\")\" '.status' 'removed' \"The earlier user stays a tombstone\" || true\nassert_json_field \"$(api_get \"gatekeeper/grants?principalType=user&principalId=${USER_A}\")\" '.grants | length' '0' \"She inherits no grant\" || true\nassert_json_field \"$(api_get \"gatekeeper/groups/${GROUP}\")\" \".group.members | index(\\\"${USER_A}\\\")\" 'null' \"…and no group\" || true\nassert_eq \"$(audience_row \"${NEW_ALICE_ID}\")\" \"null\" \"…so no role in ${PLUGIN}: not in its audience\" || true\nseed_access_log \"${USER_A}\"\n\n# ===========================================================================\n# 10. Erase\n# ==========================================================================="
+    },
+    {
+      "id": "erased-the-tombstone-scrubbed-the-access-request-log-purged-the-plugin-told",
+      "label": "Erased: the tombstone scrubbed, the access-request log purged, the plugin told",
+      "steps": [
+        {
+          "id": "step-350",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"identity/directory/${NEW_ALICE_ID}/erase\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-351",
+          "label": "An active user is not erased: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "An active user is not erased: 409"
+            }
+          }
+        },
+        {
+          "id": "step-352",
+          "label": "…user_not_removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "user_not_removed"
+              },
+              "message": "…user_not_removed"
+            }
+          }
+        },
+        {
+          "id": "step-353",
+          "label": "Gatekeeper's access-request log holds two rows of ${USER_A}: the deleted user's and the new one's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(gatekeeper_log_rows \"${USER_A}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "Gatekeeper's access-request log holds two rows of ${USER_A}: the deleted user's and the new one's"
+            }
+          }
+        },
+        {
+          "id": "step-354",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"identity/directory/${ALICE_ID}/erase\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-355",
+          "label": "The deleted user erased by her id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The deleted user erased by her id"
+            }
+          }
+        },
+        {
+          "id": "step-356",
+          "label": "…her access-request log row purged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.userId) \\(.accessLogPurged)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${ALICE_ID} 1"
+              },
+              "message": "…her access-request log row purged"
+            }
+          }
+        },
+        {
+          "id": "step-357",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "directory_row \"${ALICE_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-358",
+          "label": "The tombstone is scrubbed to the bare id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.username) \\(.displayName) \\(.email)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null null"
+              },
+              "message": "The tombstone is scrubbed to the bare id"
+            }
+          }
+        },
+        {
+          "id": "step-359",
+          "label": "…erased at $(json_get \"$ROW\" '.erasedAt')",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": ".erasedAt",
+              "message": "…erased at $(json_get \"$ROW\" '.erasedAt')"
+            }
+          }
+        },
+        {
+          "id": "step-360",
+          "label": "The new ${USER_A}'s row stays: the erasure is the deleted user's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(gatekeeper_log_rows \"${USER_A}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The new ${USER_A}'s row stays: the erasure is the deleted user's"
+            }
+          }
+        },
+        {
+          "id": "step-361",
+          "label": "Set ROW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "audience_row \"${ALICE_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-362",
+          "label": "The audience: remove/erased, nothing but the id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.change.kind) \\(.change.reason) \\(.change | has(\"last\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "remove erased false"
+              },
+              "message": "The audience: remove/erased, nothing but the id"
+            }
+          }
+        },
+        {
+          "id": "step-363",
+          "label": "The agent half's projection scrubbed her row to the bare id",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half's projection scrubbed her row to the bare id"
+          }
+        },
+        {
+          "id": "step-364",
+          "label": "The projection: $(projected_user \"${ALICE_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The projection: $(projected_user \"${ALICE_ID}\")"
+          }
+        },
+        {
+          "id": "step-367",
+          "label": "Its cursor passed the erasure: no plugin has it pending",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Its cursor passed the erasure: no plugin has it pending"
+          }
+        },
+        {
+          "id": "step-368",
+          "label": "Still pending: $(directory_row \"${ALICE_ID}\" | jq -c '.pendingErasures')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Still pending: $(directory_row \"${ALICE_ID}\" | jq -c '.pendingErasures')"
+          }
+        },
+        {
+          "id": "step-369",
+          "label": "GET /api/plugins/${PLUGIN}/identity: no pending erasure",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(identity_view)"
+              },
+              "path": ".pendingErasures | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "GET /api/plugins/${PLUGIN}/identity: no pending erasure"
+            }
+          }
+        },
+        {
+          "id": "step-370",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"identity/directory/${ALICE_ID}/erase\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-371",
+          "label": "A second erasure: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "A second erasure: 409"
+            }
+          }
+        },
+        {
+          "id": "step-372",
+          "label": "…already_erased",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "already_erased"
+              },
+              "message": "…already_erased"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Erased: the tombstone scrubbed, the access-request log purged, the plugin told\"\n\nRESP=$(call POST \"identity/directory/${NEW_ALICE_ID}/erase\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"An active user is not erased: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'user_not_removed' \"…user_not_removed\" || true\nassert_eq \"$(gatekeeper_log_rows \"${USER_A}\")\" \"2\" \"Gatekeeper's access-request log holds two rows of ${USER_A}: the deleted user's and the new one's\" || true\n\nRESP=$(call POST \"identity/directory/${ALICE_ID}/erase\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The deleted user erased by her id\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.userId) \\(.accessLogPurged)\"' \"${ALICE_ID} 1\" \"…her access-request log row purged\" || true\nROW=$(directory_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.displayName) \\(.email)\"' 'null null null' \"The tombstone is scrubbed to the bare id\" || true\nassert_json_field_not_empty \"$ROW\" '.erasedAt' \"…erased at $(json_get \"$ROW\" '.erasedAt')\" || true\nassert_eq \"$(gatekeeper_log_rows \"${USER_A}\")\" \"1\" \"The new ${USER_A}'s row stays: the erasure is the deleted user's\" || true\nROW=$(audience_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.change.kind) \\(.change.reason) \\(.change | has(\"last\"))\"' 'remove erased false' \"The audience: remove/erased, nothing but the id\" || true\nif wait_for 30 projection_has \"[.users[] | select(.userId == \\\"${ALICE_ID}\\\" and .username == null and .displayName == null and .email == null and .removedReason == \\\"erased\\\" and .erasedAt != null)] | length == 1\"; then\n  log_pass \"The agent half's projection scrubbed her row to the bare id\"\nelse\n  log_fail \"The projection: $(projected_user \"${ALICE_ID}\")\"\nfi\nassert_json_field \"$(projection)\" \".erased | index(\\\"${ALICE_ID}\\\") != null\" 'true' \"…and the plugin's anonymiser (onErase) ran for her\" || true\nerasure_acknowledged() { [ \"$(directory_row \"${ALICE_ID}\" | jq -r '.pendingErasures | length' 2>/dev/null)\" = \"0\" ]; }\nif wait_for 30 erasure_acknowledged; then\n  log_pass \"Its cursor passed the erasure: no plugin has it pending\"\nelse\n  log_fail \"Still pending: $(directory_row \"${ALICE_ID}\" | jq -c '.pendingErasures')\"\nfi\nassert_json_field \"$(identity_view)\" '.pendingErasures | length' '0' \"GET /api/plugins/${PLUGIN}/identity: no pending erasure\" || true\nRESP=$(call POST \"identity/directory/${ALICE_ID}/erase\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"A second erasure: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'already_erased' \"…already_erased\" || true\n\n# ===========================================================================\n# 11. The forwarder's reserved paths\n# ==========================================================================="
+    },
+    {
+      "id": "the-admin-forwarder-never-reaches-admin-identity-or-admin-app",
+      "label": "The admin forwarder never reaches /admin/identity* or /admin/app*",
+      "steps": [
+        {
+          "id": "step-373",
+          "label": "(an admin reaches the agent half's /admin through the forwarder)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/${PLUGIN}/e2e/projection\" 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "(an admin reaches the agent half's /admin through the forwarder)"
+            }
+          }
+        },
+        {
+          "id": "step-375",
+          "label": "POST /api/${PLUGIN}/${path}: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' \"${BASE_URL}/api/${PLUGIN}/${path}?e2e=${MARK}\" 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "POST /api/${PLUGIN}/${path}: 404"
+            }
+          }
+        },
+        {
+          "id": "step-376",
+          "label": "GET /api/${PLUGIN}/${path}: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/${PLUGIN}/${path}?e2e=${MARK}\" 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "GET /api/${PLUGIN}/${path}: 404"
+            }
+          }
+        },
+        {
+          "id": "step-379",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call GET \"${PLUGIN}/${path}?e2e=${MARK}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-380",
+          "label": "GET /api/${PLUGIN}/${path} with the admin certificate: 401 — the user surface's, without a relay assertion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "GET /api/${PLUGIN}/${path} with the admin certificate: 401 — the user surface's, without a relay assertion"
+            }
+          }
+        },
+        {
+          "id": "step-381",
+          "label": "…JSON, unauthenticated",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "unauthenticated"
+              },
+              "message": "…JSON, unauthenticated"
+            }
+          }
+        },
+        {
+          "id": "step-383",
+          "label": "POST /api/${PLUGIN}/app/echo: 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(call POST \"${PLUGIN}/app/echo?e2e=${MARK}\" '{}')\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "POST /api/${PLUGIN}/app/echo: 401"
+            }
+          }
+        },
+        {
+          "id": "step-384",
+          "label": "The agent half saw none of them",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(grep -c \"${MARK}\" \"${HALF_LOG}\" 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The agent half saw none of them"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The admin forwarder never reaches /admin/identity* or /admin/app*\"\n\nassert_eq \"$(_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/${PLUGIN}/e2e/projection\" 2>/dev/null || true)\" \"200\" \"(an admin reaches the agent half's /admin through the forwarder)\" || true\nfor path in identity identity/notify identity/changes IDENTITY/changes %69dentity/notify identity.json identity-v2/notify; do\n  assert_eq \"$(_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' \"${BASE_URL}/api/${PLUGIN}/${path}?e2e=${MARK}\" 2>/dev/null || true)\" \"404\" \"POST /api/${PLUGIN}/${path}: 404\" || true\n  assert_eq \"$(_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/${PLUGIN}/${path}?e2e=${MARK}\" 2>/dev/null || true)\" \"404\" \"GET /api/${PLUGIN}/${path}: 404\" || true\ndone\nfor path in app app/ app/echo app/me; do\n  RESP=$(call GET \"${PLUGIN}/${path}?e2e=${MARK}\")\n  assert_eq \"$(status_of \"$RESP\")\" \"401\" \"GET /api/${PLUGIN}/${path} with the admin certificate: 401 — the user surface's, without a relay assertion\" || true\n  assert_json_field \"$(body_of \"$RESP\")\" '.error' 'unauthenticated' \"…JSON, unauthenticated\" || true\ndone\nassert_eq \"$(status_of \"$(call POST \"${PLUGIN}/app/echo?e2e=${MARK}\" '{}')\")\" \"401\" \"POST /api/${PLUGIN}/app/echo: 401\" || true\nassert_eq \"$(grep -c \"${MARK}\" \"${HALF_LOG}\" 2>/dev/null || true)\" \"0\" \"The agent half saw none of them\" || true\n\n# ===========================================================================\n# 12. A client's relay assertion never passes the panel vhost\n# ==========================================================================="
+    },
+    {
+      "id": "the-panel-vhost-clears-a-client-sent-x-lamalibre-relay-assertion",
+      "label": "The panel vhost clears a client-sent X-Lamalibre-Relay-Assertion",
+      "steps": [
+        {
+          "id": "step-385",
+          "label": "Set ASSERTION_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "relay_assertion GET \"/api/${PLUGIN}/app/echo\" \"${USER_A}\""
+          },
+          "capture": [
+            {
+              "variable": "ASSERTION_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-386",
+          "label": "Set ASSERTION_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "relay_assertion GET \"/api/${PLUGIN}/app/echo\" \"${USER_A}\""
+          },
+          "capture": [
+            {
+              "variable": "ASSERTION_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-387",
+          "label": "Two relay assertions for the panel, signed with the relay's own key",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"${ASSERTION_A}\" | grep -cE '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Two relay assertions for the panel, signed with the relay's own key"
+            }
+          }
+        },
+        {
+          "id": "step-388",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -H \"X-Lamalibre-Relay-Assertion: ${ASSERTION_A}\" -w '\\n%{http_code}' \"${BASE_URL}/api/${PLUGIN}/app/echo\" 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-389",
+          "label": "Sent through the panel vhost with the admin certificate: 401 — nginx cleared it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Sent through the panel vhost with the admin certificate: 401 — nginx cleared it"
+            }
+          }
+        },
+        {
+          "id": "step-390",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "panel_direct \"/api/${PLUGIN}/app/echo\" \"${ASSERTION_B}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-391",
+          "label": "The other, sent to the panel's loopback listener: accepted — 404, no host serves the route",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The other, sent to the panel's loopback listener: accepted — 404, no host serves the route"
+            }
+          }
+        },
+        {
+          "id": "step-392",
+          "label": "…and refused when replayed (401)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(panel_direct \"/api/${PLUGIN}/app/echo\" \"${ASSERTION_B}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "…and refused when replayed (401)"
+            }
+          }
+        },
+        {
+          "id": "step-393",
+          "label": "The first one, sent there now, is accepted too: it never reached the panel before",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(panel_direct \"/api/${PLUGIN}/app/echo\" \"${ASSERTION_A}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The first one, sent there now, is accepted too: it never reached the panel before"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The panel vhost clears a client-sent X-Lamalibre-Relay-Assertion\"\n\nASSERTION_A=$(relay_assertion GET \"/api/${PLUGIN}/app/echo\" \"${USER_A}\")\nASSERTION_B=$(relay_assertion GET \"/api/${PLUGIN}/app/echo\" \"${USER_A}\")\nassert_eq \"$(echo \"${ASSERTION_A}\" | grep -cE '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$' || true)\" \"1\" \"Two relay assertions for the panel, signed with the relay's own key\" || true\nRESP=$(_curl_mtls -H \"X-Lamalibre-Relay-Assertion: ${ASSERTION_A}\" -w '\\n%{http_code}' \"${BASE_URL}/api/${PLUGIN}/app/echo\" 2>/dev/null || true)\nassert_eq \"$(status_of \"$RESP\")\" \"401\" \"Sent through the panel vhost with the admin certificate: 401 — nginx cleared it\" || true\nRESP=$(panel_direct \"/api/${PLUGIN}/app/echo\" \"${ASSERTION_B}\")\nassert_eq \"$(status_of \"$RESP\")\" \"404\" \"The other, sent to the panel's loopback listener: accepted — 404, no host serves the route\" || true\nassert_eq \"$(status_of \"$(panel_direct \"/api/${PLUGIN}/app/echo\" \"${ASSERTION_B}\")\")\" \"401\" \"…and refused when replayed (401)\" || true\nassert_eq \"$(status_of \"$(panel_direct \"/api/${PLUGIN}/app/echo\" \"${ASSERTION_A}\")\")\" \"404\" \"The first one, sent there now, is accepted too: it never reached the panel before\" || true"
+    }
+  ],
+  "apiHelpers": ["agent_api_get", "agent_api_post"],
+  "headerRaw": "# ============================================================================\n# 32 — Identity: the user directory, entitlements and the approval gate\n# ============================================================================\n# Slice 6 on one VM, with fixtures served by a stand-in registry on the VM\n# (helpers.sh, write_identity_fixture_plugins) and the agent half of\n# e2e-ident on the relay loopback, as spec 31 runs one\n# (write_app_plugin_half --identity-db):\n# - every user has a directory id (a UUID v4) and a status; the ids and the\n#   directory's own id are the same after the panel restarts\n# - a manifest's identity block is checked at install: on a server-hosted\n#   plugin, on an agent-hosted one without an agent block, a role id that\n#   is not one and an attribute outside displayName/email are each refused\n#   (400, naming the issue) and leave nothing\n# - the approval gate: a plugin without identity needs no approval (no\n#   digest); the update that adds identity waits for an administrator\n#   (digest.unapproved, identity.changed); with auto-approve on, a role\n#   added and an attribute widened still wait (identity.changed, the\n#   withholding audited), while narrowing the attributes with a label edit\n#   only changes the digest — auto-approved\n# - hosted and approved, the agent half answers protocol 1 and follows the\n#   panel's directory\n# - entitlements: a role the plugin does not declare is refused (400\n#   unknown_roles, through the plugin's entitlements and the Gatekeeper\n#   proxy alike); a plugin grant without roles makes no one a member; a\n#   user's roles are their own and their groups' — and the plugin receives\n#   only the attributes it declares\n# - disable and enable: Authelia's first factor refuses a disabled user and\n#   takes them back once enabled; the audience shows them disabled; the last\n#   enabled administrator cannot be disabled (400 last_admin)\n# - delete: a tombstone in the directory keeping the id, the name and the\n#   address; every Gatekeeper grant of the username and its group\n#   memberships gone; the audience and the agent half's projection say\n#   removed/deleted with the last display name\n# - the same username created again is a new user (a new id) with no roles\n# - erase: an active user is not erased (409); the tombstone is scrubbed to\n#   the bare id, Gatekeeper's access-request log loses the removed user's\n#   rows (not the later holder's), the plugin is told remove/erased, its\n#   anonymiser runs, the erasure stops pending once its cursor passed it,\n#   and a second erasure is refused\n# - the admin forwarder reserves /admin/identity* however it is spelled\n#   (404, the agent half never asked) and never reaches /admin/app*\n#   (/api/<route>/app is the user surface's: 401 without a relay assertion)\n# - a client-sent X-Lamalibre-Relay-Assertion never passes the panel vhost:\n#   a valid one sent with the admin certificate is 401, while the same\n#   assertion, sent to the panel's loopback listener directly, is accepted\n#   (404: no host serves the route) — and refused when replayed\n#\n# Users reaching an agent half through a bound host (Gatekeeper, a visitor's\n# session) and the feed through a real tunnel are three-VM specs 40 and 39.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm openssl sqlite3 runuser systemd-run\n\nbegin_test \"32 — Identity: the user directory, entitlements and the approval gate\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

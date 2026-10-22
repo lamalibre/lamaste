@@ -1978,7 +1978,7 @@
         },
         {
           "id": "step-179",
-          "label": "The agent half's /app is out of the forwarder's reach",
+          "label": "The agent half's /app is out of the forwarder's reach: the user surface answers, 401 without a relay assertion",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1991,14 +1991,35 @@
               },
               "expected": {
                 "kind": "literal",
-                "value": "404"
+                "value": "401"
               },
-              "message": "The agent half's /app is out of the forwarder's reach"
+              "message": "The agent half's /app is out of the forwarder's reach: the user surface answers, 401 without a relay assertion"
             }
           }
         },
         {
           "id": "step-180",
+          "label": "…the agent half never saw it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(grep -c '/app/secret' \"${HALF_LOG}\" 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…the agent half never saw it"
+            }
+          }
+        },
+        {
+          "id": "step-181",
           "label": "Set DIRECT_APP",
           "target": "local",
           "op": {
@@ -2015,7 +2036,7 @@
           ]
         },
         {
-          "id": "step-181",
+          "id": "step-182",
           "label": "(the agent half does serve /app directly)",
           "target": "local",
           "continueOnError": true,
@@ -2036,7 +2057,7 @@
           }
         },
         {
-          "id": "step-182",
+          "id": "step-183",
           "label": "GET /api/${PLUGIN_NAME}/panel.js",
           "target": "host",
           "op": {
@@ -2054,7 +2075,7 @@
           ]
         },
         {
-          "id": "step-183",
+          "id": "step-184",
           "label": "The admin bundle is served through the forwarder",
           "target": "local",
           "continueOnError": true,
@@ -2075,7 +2096,7 @@
           }
         },
         {
-          "id": "step-184",
+          "id": "step-185",
           "label": "Set BUNDLE_TYPE",
           "target": "local",
           "op": {
@@ -2092,7 +2113,7 @@
           ]
         },
         {
-          "id": "step-185",
+          "id": "step-186",
           "label": "The bundle keeps its content type",
           "target": "local",
           "continueOnError": true,
@@ -2113,7 +2134,7 @@
           }
         },
         {
-          "id": "step-186",
+          "id": "step-187",
           "label": "GET /api/plugins/${PLUGIN_NAME}",
           "target": "host",
           "op": {
@@ -2132,7 +2153,7 @@
           ]
         },
         {
-          "id": "step-187",
+          "id": "step-188",
           "label": "The panel lists the plugin's page",
           "target": "local",
           "continueOnError": true,
@@ -2153,7 +2174,7 @@
           }
         },
         {
-          "id": "step-189",
+          "id": "step-190",
           "label": "Set ECHO",
           "target": "local",
           "op": {
@@ -2170,7 +2191,7 @@
           ]
         },
         {
-          "id": "step-190",
+          "id": "step-191",
           "label": "A request body streams through",
           "target": "local",
           "continueOnError": true,
@@ -2192,7 +2213,7 @@
           }
         },
         {
-          "id": "step-191",
+          "id": "step-192",
           "label": "Set ECHO_HEADERS",
           "target": "local",
           "op": {
@@ -2209,7 +2230,7 @@
           ]
         },
         {
-          "id": "step-192",
+          "id": "step-193",
           "label": "Set-Cookie from the application never passes back",
           "target": "local",
           "continueOnError": true,
@@ -2230,7 +2251,7 @@
           }
         },
         {
-          "id": "step-193",
+          "id": "step-194",
           "label": "Set UNSAFE_HEADERS",
           "target": "local",
           "op": {
@@ -2247,7 +2268,7 @@
           ]
         },
         {
-          "id": "step-194",
+          "id": "step-195",
           "label": "The agent half's own response headers pass…",
           "target": "local",
           "continueOnError": true,
@@ -2268,7 +2289,7 @@
           }
         },
         {
-          "id": "step-195",
+          "id": "step-196",
           "label": "…but not Service-Worker-Allowed, which it set",
           "target": "local",
           "continueOnError": true,
@@ -2289,7 +2310,7 @@
           }
         },
         {
-          "id": "step-196",
+          "id": "step-197",
           "label": "…nor Clear-Site-Data, which it set",
           "target": "local",
           "continueOnError": true,
@@ -2310,7 +2331,7 @@
           }
         },
         {
-          "id": "step-197",
+          "id": "step-198",
           "label": "…nor its X-Lamalibre-Responder: the relay checks it, the browser never sees it",
           "target": "local",
           "continueOnError": true,
@@ -2331,7 +2352,7 @@
           }
         },
         {
-          "id": "step-198",
+          "id": "step-199",
           "label": "Set SW_STATUS",
           "target": "local",
           "op": {
@@ -2348,7 +2369,7 @@
           ]
         },
         {
-          "id": "step-199",
+          "id": "step-200",
           "label": "A service worker's script request (Service-Worker: script) is refused (403)…",
           "target": "local",
           "continueOnError": true,
@@ -2369,7 +2390,7 @@
           }
         },
         {
-          "id": "step-200",
+          "id": "step-201",
           "label": "…before it enters the tunnel: the agent half never saw it",
           "target": "local",
           "continueOnError": true,
@@ -2390,7 +2411,7 @@
           }
         },
         {
-          "id": "step-202",
+          "id": "step-203",
           "label": "Set BIG_STATUS",
           "target": "local",
           "op": {
@@ -2407,7 +2428,7 @@
           ]
         },
         {
-          "id": "step-203",
+          "id": "step-204",
           "label": "A body above the tunnel's 10 MiB limit is refused with 413",
           "target": "local",
           "continueOnError": true,
@@ -2428,7 +2449,7 @@
           }
         },
         {
-          "id": "step-204",
+          "id": "step-205",
           "label": "Set SSE",
           "target": "local",
           "op": {
@@ -2445,7 +2466,7 @@
           ]
         },
         {
-          "id": "step-205",
+          "id": "step-206",
           "label": "Server-sent events pass through nginx and the forwarder",
           "target": "local",
           "continueOnError": true,
@@ -2466,7 +2487,7 @@
           }
         },
         {
-          "id": "step-206",
+          "id": "step-207",
           "label": "Set SSE_HEADERS",
           "target": "local",
           "op": {
@@ -2483,7 +2504,7 @@
           ]
         },
         {
-          "id": "step-207",
+          "id": "step-208",
           "label": "The panel marks the event stream unbuffered for nginx",
           "target": "local",
           "continueOnError": true,
@@ -2504,7 +2525,7 @@
           }
         },
         {
-          "id": "step-208",
+          "id": "step-209",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "agent",
           "op": {
@@ -2523,7 +2544,7 @@
           ]
         },
         {
-          "id": "step-209",
+          "id": "step-210",
           "label": "The host capability alone does not admit calls to the plugin's API",
           "target": "local",
           "continueOnError": true,
@@ -2544,7 +2565,7 @@
           }
         },
         {
-          "id": "step-210",
+          "id": "step-211",
           "label": "Set HALF_LINES",
           "target": "local",
           "op": {
@@ -2561,7 +2582,7 @@
           ]
         },
         {
-          "id": "step-211",
+          "id": "step-212",
           "label": "The agent half verified every forwarded call (${HALF_LINES} admin calls logged)",
           "target": "local",
           "op": {
@@ -2571,7 +2592,7 @@
           }
         },
         {
-          "id": "step-212",
+          "id": "step-213",
           "label": "The agent half logged ${HALF_LINES} verified admin calls",
           "target": "local",
           "op": {
@@ -2581,14 +2602,14 @@
           }
         }
       ],
-      "bash": "log_section \"Forwarding through /api/${PLUGIN_NAME}/*\"\n\nBARE=$(curl -s --max-time 5 \"http://127.0.0.1:${PORT}/admin/ping\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$BARE\" '.reason' 'malformed' \"A loopback call without an assertion is refused\" || true\n\nPING=$(api_get \"${PLUGIN_NAME}/ping?x=1\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN_NAME}/ping reaches the agent half\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"The assertion names the admin caller\" || true\nassert_json_field \"$PING\" '.path' '/admin/ping?x=1' \"The path is mapped under /admin with its query\" || true\nassert_json_field \"$PING\" '.sslClientDn' 'null' \"nginx's client-certificate headers do not pass\" || true\n\nROOT=$(api_get \"${PLUGIN_NAME}\")\nassert_json_field \"$ROOT\" '.path' '/admin' \"GET /api/${PLUGIN_NAME} maps to /admin\" || true\n\nCOOKIE_PING=$(_curl_mtls -H 'Cookie: lamaste_2fa_session=secret' -H 'Authorization: Bearer leak' \"${BASE_URL}/api/${PLUGIN_NAME}/ping\")\nassert_json_field \"$COOKIE_PING\" '.cookie' 'null' \"The panel's cookie never reaches the agent half\" || true\nassert_json_field \"$COOKIE_PING\" '.authorization' 'null' \"An Authorization header never reaches the agent half\" || true\n\nUSER_SURFACE_STATUS=$(api_get_status \"${PLUGIN_NAME}/app/secret\")\nassert_eq \"$USER_SURFACE_STATUS\" \"404\" \"The agent half's /app is out of the forwarder's reach\" || true\nDIRECT_APP=$(curl -s --max-time 5 \"http://127.0.0.1:${PORT}/app/secret\" 2>/dev/null || echo \"\")\nassert_contains \"$DIRECT_APP\" \"USER SURFACE\" \"(the agent half does serve /app directly)\" || true\n\nBUNDLE=$(api_get \"${PLUGIN_NAME}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin bundle is served through the forwarder\" || true\nBUNDLE_TYPE=$(_curl_mtls -o /dev/null -w '%{content_type}' \"${BASE_URL}/api/${PLUGIN_NAME}/panel.js\" 2>/dev/null || echo \"\")\nassert_contains \"$BUNDLE_TYPE\" \"javascript\" \"The bundle keeps its content type\" || true\nPAGES=$(api_get \"plugins/${PLUGIN_NAME}\" | jq -r '.plugin.panel.pages[0].path' 2>/dev/null || echo \"\")\nassert_eq \"$PAGES\" \"/status\" \"The panel lists the plugin's page\" || true\n\nhead -c 4096 /dev/urandom > \"${WORK_DIR}/body.bin\"\nECHO=$(_curl_mtls -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\")\nassert_json_field \"$ECHO\" '.bytes' '4096' \"A request body streams through\" || true\nECHO_HEADERS=$(_curl_mtls -D - -o /dev/null -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\")\nassert_not_contains \"$ECHO_HEADERS\" \"app-session\" \"Set-Cookie from the application never passes back\" || true\n\n# A plugin's pages live in the panel's origin: nothing they serve may\n# install a service worker there or wipe the panel's storage.\nUNSAFE_HEADERS=$(_curl_mtls -D - -o /dev/null \"${BASE_URL}/api/${PLUGIN_NAME}/unsafe-headers\" 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo \"\")\nassert_contains \"$UNSAFE_HEADERS\" \"x-e2e-kept: kept\" \"The agent half's own response headers pass…\" || true\nassert_not_contains \"$UNSAFE_HEADERS\" \"service-worker-allowed\" \"…but not Service-Worker-Allowed, which it set\" || true\nassert_not_contains \"$UNSAFE_HEADERS\" \"clear-site-data\" \"…nor Clear-Site-Data, which it set\" || true\nassert_not_contains \"$UNSAFE_HEADERS\" \"x-lamalibre-\" \"…nor its X-Lamalibre-Responder: the relay checks it, the browser never sees it\" || true\nSW_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' -H 'Service-Worker: script' \"${BASE_URL}/api/${PLUGIN_NAME}/sw.js\" 2>/dev/null || echo \"000\")\nassert_eq \"$SW_STATUS\" \"403\" \"A service worker's script request (Service-Worker: script) is refused (403)…\" || true\nassert_eq \"$(grep -c '/admin/sw.js' \"${HALF_LOG}\" 2>/dev/null || true)\" \"0\" \"…before it enters the tunnel: the agent half never saw it\" || true\n\nhead -c $((11 * 1024 * 1024)) /dev/zero > \"${WORK_DIR}/big.bin\"\nBIG_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/big.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\" 2>/dev/null || echo \"000\")\nassert_eq \"$BIG_STATUS\" \"413\" \"A body above the tunnel's 10 MiB limit is refused with 413\" || true\n\nSSE=$(_curl_mtls -N --max-time 10 \"${BASE_URL}/api/${PLUGIN_NAME}/events\" 2>/dev/null || echo \"\")\nassert_contains \"$SSE\" \"data: tick 3\" \"Server-sent events pass through nginx and the forwarder\" || true\n# nginx consumes X-Accel-Buffering, so look at the panel's own answer on :3100\n# with the headers nginx would set for the admin certificate.\nSSE_HEADERS=$(curl -s --max-time 10 -D - -o /dev/null -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' \"http://127.0.0.1:3100/api/${PLUGIN_NAME}/events\" 2>/dev/null | tr 'A-Z' 'a-z' || echo \"\")\nassert_contains \"$SSE_HEADERS\" \"x-accel-buffering: no\" \"The panel marks the event stream unbuffered for nginx\" || true\n\nAGENT_FORWARD_STATUS=$(agent_api_get_status \"${PLUGIN_NAME}/ping\")\nassert_eq \"$AGENT_FORWARD_STATUS\" \"403\" \"The host capability alone does not admit calls to the plugin's API\" || true\n\nHALF_LINES=$(grep -c \"caller=admin\" \"${HALF_LOG}\" 2>/dev/null || true)\nif [ \"${HALF_LINES:-0}\" -ge 5 ] 2>/dev/null; then\n  log_pass \"The agent half verified every forwarded call (${HALF_LINES} admin calls logged)\"\nelse\n  log_fail \"The agent half logged ${HALF_LINES} verified admin calls\"\nfi\n\n# ===========================================================================\n# 6. Health\n# ==========================================================================="
+      "bash": "log_section \"Forwarding through /api/${PLUGIN_NAME}/*\"\n\nBARE=$(curl -s --max-time 5 \"http://127.0.0.1:${PORT}/admin/ping\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$BARE\" '.reason' 'malformed' \"A loopback call without an assertion is refused\" || true\n\nPING=$(api_get \"${PLUGIN_NAME}/ping?x=1\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN_NAME}/ping reaches the agent half\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"The assertion names the admin caller\" || true\nassert_json_field \"$PING\" '.path' '/admin/ping?x=1' \"The path is mapped under /admin with its query\" || true\nassert_json_field \"$PING\" '.sslClientDn' 'null' \"nginx's client-certificate headers do not pass\" || true\n\nROOT=$(api_get \"${PLUGIN_NAME}\")\nassert_json_field \"$ROOT\" '.path' '/admin' \"GET /api/${PLUGIN_NAME} maps to /admin\" || true\n\nCOOKIE_PING=$(_curl_mtls -H 'Cookie: lamaste_2fa_session=secret' -H 'Authorization: Bearer leak' \"${BASE_URL}/api/${PLUGIN_NAME}/ping\")\nassert_json_field \"$COOKIE_PING\" '.cookie' 'null' \"The panel's cookie never reaches the agent half\" || true\nassert_json_field \"$COOKIE_PING\" '.authorization' 'null' \"An Authorization header never reaches the agent half\" || true\n\n# /api/<route>/app is the user surface's (slice 6): a relay assertion from\n# Gatekeeper or nothing — the admin forwarder never reaches /admin/app*.\nUSER_SURFACE_STATUS=$(api_get_status \"${PLUGIN_NAME}/app/secret\")\nassert_eq \"$USER_SURFACE_STATUS\" \"401\" \"The agent half's /app is out of the forwarder's reach: the user surface answers, 401 without a relay assertion\" || true\nassert_eq \"$(grep -c '/app/secret' \"${HALF_LOG}\" 2>/dev/null || true)\" \"0\" \"…the agent half never saw it\" || true\nDIRECT_APP=$(curl -s --max-time 5 \"http://127.0.0.1:${PORT}/app/secret\" 2>/dev/null || echo \"\")\nassert_contains \"$DIRECT_APP\" \"USER SURFACE\" \"(the agent half does serve /app directly)\" || true\n\nBUNDLE=$(api_get \"${PLUGIN_NAME}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin bundle is served through the forwarder\" || true\nBUNDLE_TYPE=$(_curl_mtls -o /dev/null -w '%{content_type}' \"${BASE_URL}/api/${PLUGIN_NAME}/panel.js\" 2>/dev/null || echo \"\")\nassert_contains \"$BUNDLE_TYPE\" \"javascript\" \"The bundle keeps its content type\" || true\nPAGES=$(api_get \"plugins/${PLUGIN_NAME}\" | jq -r '.plugin.panel.pages[0].path' 2>/dev/null || echo \"\")\nassert_eq \"$PAGES\" \"/status\" \"The panel lists the plugin's page\" || true\n\nhead -c 4096 /dev/urandom > \"${WORK_DIR}/body.bin\"\nECHO=$(_curl_mtls -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\")\nassert_json_field \"$ECHO\" '.bytes' '4096' \"A request body streams through\" || true\nECHO_HEADERS=$(_curl_mtls -D - -o /dev/null -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\")\nassert_not_contains \"$ECHO_HEADERS\" \"app-session\" \"Set-Cookie from the application never passes back\" || true\n\n# A plugin's pages live in the panel's origin: nothing they serve may\n# install a service worker there or wipe the panel's storage.\nUNSAFE_HEADERS=$(_curl_mtls -D - -o /dev/null \"${BASE_URL}/api/${PLUGIN_NAME}/unsafe-headers\" 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo \"\")\nassert_contains \"$UNSAFE_HEADERS\" \"x-e2e-kept: kept\" \"The agent half's own response headers pass…\" || true\nassert_not_contains \"$UNSAFE_HEADERS\" \"service-worker-allowed\" \"…but not Service-Worker-Allowed, which it set\" || true\nassert_not_contains \"$UNSAFE_HEADERS\" \"clear-site-data\" \"…nor Clear-Site-Data, which it set\" || true\nassert_not_contains \"$UNSAFE_HEADERS\" \"x-lamalibre-\" \"…nor its X-Lamalibre-Responder: the relay checks it, the browser never sees it\" || true\nSW_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' -H 'Service-Worker: script' \"${BASE_URL}/api/${PLUGIN_NAME}/sw.js\" 2>/dev/null || echo \"000\")\nassert_eq \"$SW_STATUS\" \"403\" \"A service worker's script request (Service-Worker: script) is refused (403)…\" || true\nassert_eq \"$(grep -c '/admin/sw.js' \"${HALF_LOG}\" 2>/dev/null || true)\" \"0\" \"…before it enters the tunnel: the agent half never saw it\" || true\n\nhead -c $((11 * 1024 * 1024)) /dev/zero > \"${WORK_DIR}/big.bin\"\nBIG_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/big.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\" 2>/dev/null || echo \"000\")\nassert_eq \"$BIG_STATUS\" \"413\" \"A body above the tunnel's 10 MiB limit is refused with 413\" || true\n\nSSE=$(_curl_mtls -N --max-time 10 \"${BASE_URL}/api/${PLUGIN_NAME}/events\" 2>/dev/null || echo \"\")\nassert_contains \"$SSE\" \"data: tick 3\" \"Server-sent events pass through nginx and the forwarder\" || true\n# nginx consumes X-Accel-Buffering, so look at the panel's own answer on :3100\n# with the headers nginx would set for the admin certificate.\nSSE_HEADERS=$(curl -s --max-time 10 -D - -o /dev/null -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' \"http://127.0.0.1:3100/api/${PLUGIN_NAME}/events\" 2>/dev/null | tr 'A-Z' 'a-z' || echo \"\")\nassert_contains \"$SSE_HEADERS\" \"x-accel-buffering: no\" \"The panel marks the event stream unbuffered for nginx\" || true\n\nAGENT_FORWARD_STATUS=$(agent_api_get_status \"${PLUGIN_NAME}/ping\")\nassert_eq \"$AGENT_FORWARD_STATUS\" \"403\" \"The host capability alone does not admit calls to the plugin's API\" || true\n\nHALF_LINES=$(grep -c \"caller=admin\" \"${HALF_LOG}\" 2>/dev/null || true)\nif [ \"${HALF_LINES:-0}\" -ge 5 ] 2>/dev/null; then\n  log_pass \"The agent half verified every forwarded call (${HALF_LINES} admin calls logged)\"\nelse\n  log_fail \"The agent half logged ${HALF_LINES} verified admin calls\"\nfi\n\n# ===========================================================================\n# 6. Health\n# ==========================================================================="
     },
     {
       "id": "health-monitor",
       "label": "Health monitor",
       "steps": [
         {
-          "id": "step-213",
+          "id": "step-214",
           "label": "Health is up within 45 seconds",
           "target": "local",
           "op": {
@@ -2598,7 +2619,7 @@
           }
         },
         {
-          "id": "step-214",
+          "id": "step-215",
           "label": "Health did not reach up: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -2608,7 +2629,7 @@
           }
         },
         {
-          "id": "step-215",
+          "id": "step-216",
           "label": "GET /api/plugins",
           "target": "host",
           "op": {
@@ -2626,7 +2647,7 @@
           ]
         },
         {
-          "id": "step-216",
+          "id": "step-217",
           "label": "GET /api/plugins carries the hosting's health",
           "target": "local",
           "continueOnError": true,
@@ -2654,7 +2675,7 @@
       "label": "Rotate the installation secret",
       "steps": [
         {
-          "id": "step-217",
+          "id": "step-218",
           "label": "POST /api/plugins/${PLUGIN_NAME}/hosting/rotate-secret",
           "target": "host",
           "op": {
@@ -2672,7 +2693,7 @@
           ]
         },
         {
-          "id": "step-218",
+          "id": "step-219",
           "label": "Rotation pending until the agent acknowledges",
           "target": "local",
           "continueOnError": true,
@@ -2694,7 +2715,7 @@
           }
         },
         {
-          "id": "step-219",
+          "id": "step-220",
           "label": "The new secret is not acknowledged yet",
           "target": "local",
           "continueOnError": true,
@@ -2716,7 +2737,7 @@
           }
         },
         {
-          "id": "step-220",
+          "id": "step-221",
           "label": "Extract NEW_ISSUED_AT",
           "target": "local",
           "op": {
@@ -2733,7 +2754,7 @@
           }
         },
         {
-          "id": "step-221",
+          "id": "step-222",
           "label": "A new secret was issued",
           "target": "local",
           "continueOnError": true,
@@ -2754,7 +2775,7 @@
           }
         },
         {
-          "id": "step-222",
+          "id": "step-223",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -2772,7 +2793,7 @@
           ]
         },
         {
-          "id": "step-223",
+          "id": "step-224",
           "label": "Calls keep working on the previous secret before the agent fetched the new one",
           "target": "local",
           "continueOnError": true,
@@ -2794,7 +2815,7 @@
           }
         },
         {
-          "id": "step-224",
+          "id": "step-225",
           "label": "POST /api/agents/me/plugin-config/${PLUGIN_NAME}/ack",
           "target": "agent",
           "op": {
@@ -2813,7 +2834,7 @@
           ]
         },
         {
-          "id": "step-225",
+          "id": "step-226",
           "label": "Acknowledging the old secret changes nothing",
           "target": "local",
           "continueOnError": true,
@@ -2835,7 +2856,7 @@
           }
         },
         {
-          "id": "step-226",
+          "id": "step-227",
           "label": "GET /api/agents/me/plugin-config/${PLUGIN_NAME}",
           "target": "agent",
           "op": {
@@ -2853,7 +2874,7 @@
           ]
         },
         {
-          "id": "step-227",
+          "id": "step-228",
           "label": "The agent fetches the new secret",
           "target": "local",
           "continueOnError": true,
@@ -2875,7 +2896,7 @@
           }
         },
         {
-          "id": "step-228",
+          "id": "step-229",
           "label": "Extract NEW_PREVIOUS",
           "target": "local",
           "op": {
@@ -2892,7 +2913,7 @@
           }
         },
         {
-          "id": "step-229",
+          "id": "step-230",
           "label": "The config carries the previous secret for the overlap",
           "target": "local",
           "continueOnError": true,
@@ -2913,7 +2934,7 @@
           }
         },
         {
-          "id": "step-231",
+          "id": "step-232",
           "label": "POST /api/agents/me/plugin-config/${PLUGIN_NAME}/ack",
           "target": "agent",
           "op": {
@@ -2932,7 +2953,7 @@
           ]
         },
         {
-          "id": "step-232",
+          "id": "step-233",
           "label": "The agent acknowledges the new secret",
           "target": "local",
           "continueOnError": true,
@@ -2954,7 +2975,7 @@
           }
         },
         {
-          "id": "step-233",
+          "id": "step-234",
           "label": "The previous secret is dropped once acknowledged",
           "target": "local",
           "continueOnError": true,
@@ -2975,7 +2996,7 @@
           }
         },
         {
-          "id": "step-234",
+          "id": "step-235",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -2993,7 +3014,7 @@
           ]
         },
         {
-          "id": "step-235",
+          "id": "step-236",
           "label": "Calls work on the new secret without restarting the agent half",
           "target": "local",
           "continueOnError": true,
@@ -3015,7 +3036,7 @@
           }
         },
         {
-          "id": "step-236",
+          "id": "step-237",
           "label": "Health stays up across the rotation",
           "target": "local",
           "op": {
@@ -3025,7 +3046,7 @@
           }
         },
         {
-          "id": "step-237",
+          "id": "step-238",
           "label": "Health lost after the rotation: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -3042,7 +3063,7 @@
       "label": "Agent half down",
       "steps": [
         {
-          "id": "step-239",
+          "id": "step-240",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -3051,7 +3072,7 @@
           }
         },
         {
-          "id": "step-240",
+          "id": "step-241",
           "label": "Set START",
           "target": "local",
           "op": {
@@ -3068,7 +3089,7 @@
           ]
         },
         {
-          "id": "step-241",
+          "id": "step-242",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -3087,7 +3108,7 @@
           ]
         },
         {
-          "id": "step-242",
+          "id": "step-243",
           "label": "Set ELAPSED",
           "target": "local",
           "op": {
@@ -3104,7 +3125,7 @@
           ]
         },
         {
-          "id": "step-243",
+          "id": "step-244",
           "label": "A stopped agent half answers 502",
           "target": "local",
           "continueOnError": true,
@@ -3125,7 +3146,7 @@
           }
         },
         {
-          "id": "step-244",
+          "id": "step-245",
           "label": "The 502 came in ${ELAPSED}s — no hang",
           "target": "local",
           "op": {
@@ -3135,7 +3156,7 @@
           }
         },
         {
-          "id": "step-245",
+          "id": "step-246",
           "label": "The 502 took ${ELAPSED}s",
           "target": "local",
           "op": {
@@ -3145,7 +3166,7 @@
           }
         },
         {
-          "id": "step-246",
+          "id": "step-247",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -3163,7 +3184,7 @@
           ]
         },
         {
-          "id": "step-247",
+          "id": "step-248",
           "label": "Nothing on the loopback port reads as the tunnel being down",
           "target": "local",
           "continueOnError": true,
@@ -3185,7 +3206,7 @@
           }
         },
         {
-          "id": "step-250",
+          "id": "step-251",
           "label": "Sleep 0s",
           "target": "local",
           "op": {
@@ -3194,7 +3215,7 @@
           }
         },
         {
-          "id": "step-252",
+          "id": "step-253",
           "label": "Set SQUATTED",
           "target": "local",
           "op": {
@@ -3211,7 +3232,7 @@
           ]
         },
         {
-          "id": "step-253",
+          "id": "step-254",
           "label": "Whatever holds the port without the installation secret serves nothing through the panel: 502…",
           "target": "local",
           "continueOnError": true,
@@ -3232,7 +3253,7 @@
           }
         },
         {
-          "id": "step-254",
+          "id": "step-255",
           "label": "…reason app (its answer carries no responder header)",
           "target": "local",
           "continueOnError": true,
@@ -3254,7 +3275,7 @@
           }
         },
         {
-          "id": "step-255",
+          "id": "step-256",
           "label": "Health reports down within 60 seconds",
           "target": "local",
           "op": {
@@ -3264,7 +3285,7 @@
           }
         },
         {
-          "id": "step-256",
+          "id": "step-257",
           "label": "Health did not report down: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -3274,7 +3295,7 @@
           }
         },
         {
-          "id": "step-257",
+          "id": "step-258",
           "label": "An answering port with no agent half is reason app",
           "target": "local",
           "continueOnError": true,
@@ -3295,7 +3316,7 @@
           }
         },
         {
-          "id": "step-259",
+          "id": "step-260",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -3304,7 +3325,7 @@
           }
         },
         {
-          "id": "step-261",
+          "id": "step-262",
           "label": "Sleep 3s",
           "target": "local",
           "op": {
@@ -3313,7 +3334,7 @@
           }
         },
         {
-          "id": "step-263",
+          "id": "step-264",
           "label": "A refused port is reason tunnel",
           "target": "local",
           "continueOnError": true,
@@ -3334,7 +3355,7 @@
           }
         },
         {
-          "id": "step-264",
+          "id": "step-265",
           "label": "Health is up again once the agent half is back",
           "target": "local",
           "op": {
@@ -3344,7 +3365,7 @@
           }
         },
         {
-          "id": "step-265",
+          "id": "step-266",
           "label": "Health did not recover: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -3361,7 +3382,7 @@
       "label": "Clear hosting and uninstall",
       "steps": [
         {
-          "id": "step-266",
+          "id": "step-267",
           "label": "DELETE /api/plugins/${PLUGIN_NAME}/hosting",
           "target": "host",
           "op": {
@@ -3379,7 +3400,7 @@
           ]
         },
         {
-          "id": "step-267",
+          "id": "step-268",
           "label": "Removing the hosting is an operation",
           "target": "local",
           "continueOnError": true,
@@ -3401,7 +3422,7 @@
           }
         },
         {
-          "id": "step-268",
+          "id": "step-269",
           "label": "Set UNHOST_OP",
           "target": "local",
           "op": {
@@ -3418,7 +3439,7 @@
           ]
         },
         {
-          "id": "step-269",
+          "id": "step-270",
           "label": "Hosting removed",
           "target": "local",
           "continueOnError": true,
@@ -3440,7 +3461,7 @@
           }
         },
         {
-          "id": "step-270",
+          "id": "step-271",
           "label": "GET hosting answers 404 afterwards",
           "target": "local",
           "continueOnError": true,
@@ -3461,7 +3482,7 @@
           }
         },
         {
-          "id": "step-271",
+          "id": "step-272",
           "label": "GET /api/tunnels?limit=500",
           "target": "host",
           "op": {
@@ -3479,7 +3500,7 @@
           ]
         },
         {
-          "id": "step-272",
+          "id": "step-273",
           "label": "The internal tunnel is gone",
           "target": "local",
           "continueOnError": true,
@@ -3500,7 +3521,7 @@
           }
         },
         {
-          "id": "step-273",
+          "id": "step-274",
           "label": "GET /api/certs/agent",
           "target": "host",
           "op": {
@@ -3518,7 +3539,7 @@
           ]
         },
         {
-          "id": "step-274",
+          "id": "step-275",
           "label": "The host capability is revoked",
           "target": "local",
           "continueOnError": true,
@@ -3539,7 +3560,7 @@
           }
         },
         {
-          "id": "step-275",
+          "id": "step-276",
           "label": "Set GRANT_AFTER",
           "target": "local",
           "op": {
@@ -3556,7 +3577,7 @@
           ]
         },
         {
-          "id": "step-276",
+          "id": "step-277",
           "label": "The chisel grant is withdrawn",
           "target": "local",
           "continueOnError": true,
@@ -3577,7 +3598,7 @@
           }
         },
         {
-          "id": "step-277",
+          "id": "step-278",
           "label": "The route answers 503 (not hosted) again",
           "target": "local",
           "continueOnError": true,
@@ -3598,7 +3619,7 @@
           }
         },
         {
-          "id": "step-278",
+          "id": "step-279",
           "label": "The agent can no longer fetch the config",
           "target": "local",
           "continueOnError": true,
@@ -3619,7 +3640,7 @@
           }
         },
         {
-          "id": "step-283",
+          "id": "step-284",
           "label": "GET /api/agents/me/plugin-config/${PLUGIN_NAME}",
           "target": "agent",
           "op": {
@@ -3637,7 +3658,7 @@
           ]
         },
         {
-          "id": "step-284",
+          "id": "step-285",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -3646,7 +3667,7 @@
           }
         },
         {
-          "id": "step-286",
+          "id": "step-287",
           "label": "Extract PORT",
           "target": "local",
           "op": {
@@ -3663,7 +3684,7 @@
           }
         },
         {
-          "id": "step-290",
+          "id": "step-291",
           "label": "Set CLI_HOST",
           "target": "local",
           "op": {
@@ -3680,7 +3701,7 @@
           ]
         },
         {
-          "id": "step-291",
+          "id": "step-292",
           "label": "lamaste-server plugins host follows the operation to its end",
           "target": "local",
           "continueOnError": true,
@@ -3702,7 +3723,7 @@
           }
         },
         {
-          "id": "step-292",
+          "id": "step-293",
           "label": "lamaste-server plugins host hosts the plugin",
           "target": "local",
           "continueOnError": true,
@@ -3724,7 +3745,7 @@
           }
         },
         {
-          "id": "step-293",
+          "id": "step-294",
           "label": "Set CLI_STEPS",
           "target": "local",
           "op": {
@@ -3741,7 +3762,7 @@
           ]
         },
         {
-          "id": "step-294",
+          "id": "step-295",
           "label": "…reporting its steps (${CLI_STEPS})",
           "target": "local",
           "op": {
@@ -3751,7 +3772,7 @@
           }
         },
         {
-          "id": "step-295",
+          "id": "step-296",
           "label": "The CLI reported ${CLI_STEPS} steps",
           "target": "local",
           "op": {
@@ -3761,7 +3782,7 @@
           }
         },
         {
-          "id": "step-296",
+          "id": "step-297",
           "label": "Set CLI_SHOW",
           "target": "local",
           "op": {
@@ -3778,7 +3799,7 @@
           ]
         },
         {
-          "id": "step-297",
+          "id": "step-298",
           "label": "lamaste-server plugins hosting shows the agent",
           "target": "local",
           "continueOnError": true,
@@ -3799,7 +3820,7 @@
           }
         },
         {
-          "id": "step-298",
+          "id": "step-299",
           "label": "Set CLI_LIST",
           "target": "local",
           "op": {
@@ -3816,7 +3837,7 @@
           ]
         },
         {
-          "id": "step-299",
+          "id": "step-300",
           "label": "lamaste-server plugins list shows where it is hosted",
           "target": "local",
           "continueOnError": true,
@@ -3837,7 +3858,7 @@
           }
         },
         {
-          "id": "step-300",
+          "id": "step-301",
           "label": "POST /api/plugins/${PLUGIN_NAME}/disable",
           "target": "host",
           "op": {
@@ -3855,7 +3876,7 @@
           ]
         },
         {
-          "id": "step-301",
+          "id": "step-302",
           "label": "Plugin disabled",
           "target": "local",
           "continueOnError": true,
@@ -3877,7 +3898,7 @@
           }
         },
         {
-          "id": "step-302",
+          "id": "step-303",
           "label": "Disabling keeps the hosting",
           "target": "local",
           "continueOnError": true,
@@ -3898,7 +3919,7 @@
           }
         },
         {
-          "id": "step-303",
+          "id": "step-304",
           "label": "DELETE /api/plugins/${PLUGIN_NAME}",
           "target": "host",
           "op": {
@@ -3916,7 +3937,7 @@
           ]
         },
         {
-          "id": "step-304",
+          "id": "step-305",
           "label": "Uninstalling a hosted plugin is an operation",
           "target": "local",
           "continueOnError": true,
@@ -3938,7 +3959,7 @@
           }
         },
         {
-          "id": "step-305",
+          "id": "step-306",
           "label": "Set UNINSTALL_OP",
           "target": "local",
           "op": {
@@ -3955,7 +3976,7 @@
           ]
         },
         {
-          "id": "step-306",
+          "id": "step-307",
           "label": "Plugin uninstalled",
           "target": "local",
           "continueOnError": true,
@@ -3977,7 +3998,7 @@
           }
         },
         {
-          "id": "step-307",
+          "id": "step-308",
           "label": "The plugin is gone",
           "target": "local",
           "continueOnError": true,
@@ -3998,7 +4019,7 @@
           }
         },
         {
-          "id": "step-308",
+          "id": "step-309",
           "label": "GET /api/tunnels?limit=500",
           "target": "host",
           "op": {
@@ -4016,7 +4037,7 @@
           ]
         },
         {
-          "id": "step-309",
+          "id": "step-310",
           "label": "Uninstalling removed the internal tunnel",
           "target": "local",
           "continueOnError": true,
@@ -4037,7 +4058,7 @@
           }
         },
         {
-          "id": "step-310",
+          "id": "step-311",
           "label": "GET /api/certs/agent",
           "target": "host",
           "op": {
@@ -4055,7 +4076,7 @@
           ]
         },
         {
-          "id": "step-311",
+          "id": "step-312",
           "label": "Uninstalling revoked the host capability",
           "target": "local",
           "continueOnError": true,
@@ -4076,7 +4097,7 @@
           }
         },
         {
-          "id": "step-312",
+          "id": "step-313",
           "label": "Set HOSTINGS_FILE",
           "target": "local",
           "op": {
@@ -4093,7 +4114,7 @@
           ]
         },
         {
-          "id": "step-313",
+          "id": "step-314",
           "label": "The hosting record is gone",
           "target": "local",
           "continueOnError": true,

@@ -1543,23 +1543,6 @@
           }
         },
         {
-          "id": "step-94",
-          "label": "Set WINDOW",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "open_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'"
-          },
-          "capture": [
-            {
-              "variable": "WINDOW",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
           "id": "step-95",
           "label": "The agent's window is open, under a policy naming only ${AGENT_PACKAGE}",
           "target": "local",
@@ -1570,7 +1553,7 @@
               "kind": "json_field",
               "source": {
                 "kind": "var",
-                "name": "WINDOW"
+                "name": "PUSH_WINDOW_RESPONSE"
               },
               "path": ".pushInstallPolicy",
               "expected": {
@@ -1582,7 +1565,7 @@
           }
         }
       ],
-      "bash": "log_section \"Refused by the push-install gates; the window opened\"\n\nremember_push_install\nhost_api_patch \"plugins/push-install/config\" '{\"enabled\":false}' > /dev/null\nREFUSED=$(host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_eq \"$(status_of \"$REFUSED\")\" \"400\" \"Push-install off: hosting is refused\" || true\nassert_json_field \"$(body_of \"$REFUSED\")\" '.code' 'push_install_refused' \"…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))\" || true\n\nhost_api_patch \"plugins/push-install/config\" '{\"enabled\":true}' > /dev/null\nPUSH_WINDOW=1\nhost_api_delete \"plugins/push-install/enable/${HOST_AGENT_LABEL}\" > /dev/null 2>&1 || true\nREFUSED=$(host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_eq \"$(status_of \"$REFUSED\")\" \"403\" \"Push-install on, the agent's window closed: hosting is refused\" || true\nassert_json_field \"$(body_of \"$REFUSED\")\" '.code' 'push_install_refused' \"…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))\" || true\n\nWINDOW=$(open_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]')\nassert_json_field \"$WINDOW\" '.pushInstallPolicy' \"${POLICY_ID}\" \"The agent's window is open, under a policy naming only ${AGENT_PACKAGE}\" || true\n\n# ===========================================================================\n# 6. Hosting from the panel; the agent's sync timer does the rest\n# ==========================================================================="
+      "bash": "log_section \"Refused by the push-install gates; the window opened\"\n\nremember_push_install\nhost_api_patch \"plugins/push-install/config\" '{\"enabled\":false}' > /dev/null\nREFUSED=$(host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_eq \"$(status_of \"$REFUSED\")\" \"400\" \"Push-install off: hosting is refused\" || true\nassert_json_field \"$(body_of \"$REFUSED\")\" '.code' 'push_install_refused' \"…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))\" || true\n\nhost_api_patch \"plugins/push-install/config\" '{\"enabled\":true}' > /dev/null\nPUSH_WINDOW=1\nhost_api_delete \"plugins/push-install/enable/${HOST_AGENT_LABEL}\" > /dev/null 2>&1 || true\nREFUSED=$(host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_eq \"$(status_of \"$REFUSED\")\" \"403\" \"Push-install on, the agent's window closed: hosting is refused\" || true\nassert_json_field \"$(body_of \"$REFUSED\")\" '.code' 'push_install_refused' \"…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))\" || true\n\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\nassert_json_field \"${PUSH_WINDOW_RESPONSE}\" '.pushInstallPolicy' \"${POLICY_ID}\" \"The agent's window is open, under a policy naming only ${AGENT_PACKAGE}\" || true\n\n# ===========================================================================\n# 6. Hosting from the panel; the agent's sync timer does the rest\n# ==========================================================================="
     },
     {
       "id": "hosting-nothing-more-is-done-on-the-agent-vm",

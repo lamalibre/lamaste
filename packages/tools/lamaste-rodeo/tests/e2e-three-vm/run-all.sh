@@ -107,6 +107,8 @@ TEST_SCRIPTS=(
   "20-agent-user-plugin-access.sh"
   "37-app-plugin-settings.sh"
   "38-app-plugin-offline.sh"
+  "39-app-plugin-identity-feed.sh"
+  "40-app-plugin-user-surface.sh"
 )
 
 PASSED=0
