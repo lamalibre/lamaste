@@ -215,8 +215,10 @@ RESP=$(users_call POST "users" "{\"username\":\"${SECOND_USER}\",\"displayname\"
 assert_eq "$(status_of "$RESP")" "201" "User ${SECOND_USER} created" || true
 SECOND_ID=$(json_get "$(body_of "$RESP")" '.user.userId // empty')
 assert_eq "$(is_uuid "${SECOND_ID}")" "true" "…with a directory id (${SECOND_ID})" || true
-assert_json_field "$(host_api_post "gatekeeper/groups" "{\"name\":\"${GROUP}\",\"description\":\"E2E 39 editors\"}")" '.ok' 'true' "Group ${GROUP} created" || true
-assert_json_field "$(host_api_post "gatekeeper/groups/${GROUP}/members" "{\"usernames\":[\"${SECOND_USER}\"]}")" '.ok' 'true' "…with ${SECOND_USER} in it" || true
+RESP=$(host_api_post "gatekeeper/groups" "{\"name\":\"${GROUP}\",\"description\":\"E2E 39 editors\"}")
+assert_json_field "$RESP" '.ok' 'true' "Group ${GROUP} created" || true
+RESP=$(host_api_post "gatekeeper/groups/${GROUP}/members" "{\"usernames\":[\"${SECOND_USER}\"]}")
+assert_json_field "$RESP" '.ok' 'true' "…with ${SECOND_USER} in it" || true
 RESP=$(host_api_call PUT "plugins/${PLUGIN}/entitlements" "{\"principalType\":\"user\",\"principalId\":\"${TEST_USER}\",\"roles\":[\"viewer\"]}")
 assert_eq "$(status_of "$RESP")" "200" "${TEST_USER} entitled as viewer" || true
 assert_json_field "$(body_of "$RESP")" '.entitlement.userId' "${TEST_USER_ID}" "…named by the directory's id" || true

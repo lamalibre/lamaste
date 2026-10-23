@@ -558,7 +558,8 @@ assert_json_field "$(body_of "$RESP")" '.user.status' 'active' "…active" || tr
 RESP=$(call PUT "plugins/${PLUGIN}/entitlements" "{\"principalType\":\"user\",\"principalId\":\"${USER_A}\",\"roles\":[\"owner\"]}")
 assert_eq "$(status_of "$RESP")" "400" "A role the plugin does not declare is refused: 400" || true
 assert_json_field "$(body_of "$RESP")" '"\(.code) \(.unknown | join(","))"' 'unknown_roles owner' "…unknown_roles: owner" || true
-assert_eq "$(status_of "$(call PUT "plugins/${PLUGIN}/entitlements" "{\"principalType\":\"user\",\"principalId\":\"${USER_A}\",\"roles\":[]}")")" "400" "No roles at all: 400" || true
+RESP=$(call PUT "plugins/${PLUGIN}/entitlements" "{\"principalType\":\"user\",\"principalId\":\"${USER_A}\",\"roles\":[]}")
+assert_eq "$(status_of "$RESP")" "400" "No roles at all: 400" || true
 RESP=$(call POST "gatekeeper/grants" "{\"principalType\":\"user\",\"principalId\":\"${USER_A}\",\"resourceType\":\"plugin\",\"resourceId\":\"${PLUGIN}\",\"context\":{\"roles\":[\"owner\"]}}")
 assert_eq "$(status_of "$RESP")" "400" "The same through the Gatekeeper proxy: 400" || true
 assert_json_field "$(body_of "$RESP")" '.code' 'unknown_roles' "…unknown_roles" || true

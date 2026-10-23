@@ -2107,6 +2107,23 @@
         },
         {
           "id": "step-280",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-281",
           "label": "No roles at all: 400",
           "target": "local",
           "continueOnError": true,
@@ -2116,7 +2133,7 @@
               "kind": "eq",
               "actual": {
                 "kind": "expr",
-                "template": "$(status_of \"$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[]}\")\")"
+                "template": "$(status_of \"$RESP\")"
               },
               "expected": {
                 "kind": "literal",
@@ -2127,7 +2144,7 @@
           }
         },
         {
-          "id": "step-281",
+          "id": "step-282",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2144,7 +2161,7 @@
           ]
         },
         {
-          "id": "step-282",
+          "id": "step-283",
           "label": "The same through the Gatekeeper proxy: 400",
           "target": "local",
           "continueOnError": true,
@@ -2165,7 +2182,7 @@
           }
         },
         {
-          "id": "step-283",
+          "id": "step-284",
           "label": "…unknown_roles",
           "target": "local",
           "continueOnError": true,
@@ -2187,7 +2204,7 @@
           }
         },
         {
-          "id": "step-284",
+          "id": "step-285",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2204,7 +2221,7 @@
           ]
         },
         {
-          "id": "step-285",
+          "id": "step-286",
           "label": "Set ROLELESS_GRANT_ID",
           "target": "local",
           "op": {
@@ -2221,7 +2238,7 @@
           ]
         },
         {
-          "id": "step-286",
+          "id": "step-287",
           "label": "A plugin grant without roles is taken by Gatekeeper",
           "target": "local",
           "continueOnError": true,
@@ -2239,7 +2256,7 @@
           }
         },
         {
-          "id": "step-287",
+          "id": "step-288",
           "label": "GET /api/plugins/${PLUGIN}/entitlements",
           "target": "host",
           "op": {
@@ -2257,7 +2274,7 @@
           ]
         },
         {
-          "id": "step-288",
+          "id": "step-289",
           "label": "…counted as roleless ($(json_get \"$ENTITLEMENTS\" '.roleless'))",
           "target": "local",
           "continueOnError": true,
@@ -2279,7 +2296,7 @@
           }
         },
         {
-          "id": "step-290",
+          "id": "step-291",
           "label": "It makes ${USER_A} no member of the audience",
           "target": "local",
           "continueOnError": true,
@@ -2300,7 +2317,7 @@
           }
         },
         {
-          "id": "step-291",
+          "id": "step-292",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2317,7 +2334,7 @@
           ]
         },
         {
-          "id": "step-292",
+          "id": "step-293",
           "label": "${USER_A} entitled as viewer",
           "target": "local",
           "continueOnError": true,
@@ -2338,7 +2355,7 @@
           }
         },
         {
-          "id": "step-293",
+          "id": "step-294",
           "label": "…named by her directory id, the role once",
           "target": "local",
           "continueOnError": true,
@@ -2360,7 +2377,7 @@
           }
         },
         {
-          "id": "step-294",
+          "id": "step-295",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2377,7 +2394,7 @@
           ]
         },
         {
-          "id": "step-295",
+          "id": "step-296",
           "label": "Group ${GROUP} created",
           "target": "local",
           "continueOnError": true,
@@ -2399,7 +2416,7 @@
           }
         },
         {
-          "id": "step-296",
+          "id": "step-297",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2416,7 +2433,7 @@
           ]
         },
         {
-          "id": "step-297",
+          "id": "step-298",
           "label": "…with ${USER_A} in it",
           "target": "local",
           "continueOnError": true,
@@ -2438,7 +2455,7 @@
           }
         },
         {
-          "id": "step-298",
+          "id": "step-299",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2455,7 +2472,7 @@
           ]
         },
         {
-          "id": "step-299",
+          "id": "step-300",
           "label": "The group entitled as editor",
           "target": "local",
           "continueOnError": true,
@@ -2476,7 +2493,7 @@
           }
         },
         {
-          "id": "step-300",
+          "id": "step-301",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -2493,7 +2510,7 @@
           ]
         },
         {
-          "id": "step-301",
+          "id": "step-302",
           "label": "The audience: ${USER_A} active, her roles and her group's (editor, viewer)",
           "target": "local",
           "continueOnError": true,
@@ -2515,7 +2532,7 @@
           }
         },
         {
-          "id": "step-302",
+          "id": "step-303",
           "label": "…her display name, never the address 5.0.0 does not declare",
           "target": "local",
           "continueOnError": true,
@@ -2537,7 +2554,7 @@
           }
         },
         {
-          "id": "step-303",
+          "id": "step-304",
           "label": "The agent half's projection holds her, with both roles",
           "target": "local",
           "op": {
@@ -2547,7 +2564,7 @@
           }
         },
         {
-          "id": "step-304",
+          "id": "step-305",
           "label": "The projection does not hold her: $(projected_user \"${ALICE_ID}\")",
           "target": "local",
           "op": {
@@ -2557,14 +2574,14 @@
           }
         }
       ],
-      "bash": "log_section \"Entitlements: declared roles only; a grant without roles makes no member\"\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${USER_A}\\\",\\\"displayname\\\":\\\"E2E Alice\\\",\\\"email\\\":\\\"${USER_A}@example.test\\\",\\\"password\\\":\\\"${USER_A_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${USER_A} created\" || true\nALICE_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nassert_eq \"$(echo \"$ALICE_ID\" | grep -cE \"${UUID_RE}\" || true)\" \"1\" \"…with a directory id (${ALICE_ID})\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.user.status' 'active' \"…active\" || true\n\nRESP=$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[\\\"owner\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A role the plugin does not declare is refused: 400\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.code) \\(.unknown | join(\",\"))\"' 'unknown_roles owner' \"…unknown_roles: owner\" || true\nassert_eq \"$(status_of \"$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[]}\")\")\" \"400\" \"No roles at all: 400\" || true\nRESP=$(call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"plugin\\\",\\\"resourceId\\\":\\\"${PLUGIN}\\\",\\\"context\\\":{\\\"roles\\\":[\\\"owner\\\"]}}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"The same through the Gatekeeper proxy: 400\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'unknown_roles' \"…unknown_roles\" || true\nRESP=$(call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"plugin\\\",\\\"resourceId\\\":\\\"${PLUGIN}\\\"}\")\nROLELESS_GRANT_ID=$(json_get \"$(body_of \"$RESP\")\" '.grant.grantId // empty')\nassert_json_field_not_empty \"$(body_of \"$RESP\")\" '.grant.grantId' \"A plugin grant without roles is taken by Gatekeeper\" || true\nENTITLEMENTS=$(api_get \"plugins/${PLUGIN}/entitlements\")\nassert_json_field \"$ENTITLEMENTS\" '.roleless >= 1' 'true' \"…counted as roleless ($(json_get \"$ENTITLEMENTS\" '.roleless'))\" || true\nassert_json_field \"$ENTITLEMENTS\" \"[.entitlements[] | select(.principalId == \\\"${USER_A}\\\")] | length\" '0' \"…and no entitlement\" || true\nassert_eq \"$(audience_row \"${ALICE_ID}\")\" \"null\" \"It makes ${USER_A} no member of the audience\" || true\n\nRESP=$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[\\\"viewer\\\",\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${USER_A} entitled as viewer\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.entitlement.userId) \\(.entitlement.roles | join(\",\"))\"' \"${ALICE_ID} viewer\" \"…named by her directory id, the role once\" || true\nRESP=$(call POST \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${GROUP}\\\",\\\"description\\\":\\\"E2E 32 team\\\"}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.ok' 'true' \"Group ${GROUP} created\" || true\nRESP=$(call POST \"gatekeeper/groups/${GROUP}/members\" \"{\\\"usernames\\\":[\\\"${USER_A}\\\"]}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.ok' 'true' \"…with ${USER_A} in it\" || true\nRESP=$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${GROUP}\\\",\\\"roles\\\":[\\\"editor\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The group entitled as editor\" || true\nROW=$(audience_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.change.kind) \\(.change.member.status) \\(.change.member.roles | join(\",\"))\"' 'upsert active editor,viewer' \"The audience: ${USER_A} active, her roles and her group's (editor, viewer)\" || true\nassert_json_field \"$ROW\" '\"\\(.change.member.displayName) \\(.change.member | has(\"email\"))\"' 'E2E Alice false' \"…her display name, never the address 5.0.0 does not declare\" || true\nif wait_for 30 projection_has \"[.users[] | select(.userId == \\\"${ALICE_ID}\\\" and .status == \\\"active\\\" and .roles == [\\\"editor\\\",\\\"viewer\\\"])] | length == 1\"; then\n  log_pass \"The agent half's projection holds her, with both roles\"\nelse\n  log_fail \"The projection does not hold her: $(projected_user \"${ALICE_ID}\")\"\nfi\n\n# ===========================================================================\n# 7. Disable and enable\n# ==========================================================================="
+      "bash": "log_section \"Entitlements: declared roles only; a grant without roles makes no member\"\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${USER_A}\\\",\\\"displayname\\\":\\\"E2E Alice\\\",\\\"email\\\":\\\"${USER_A}@example.test\\\",\\\"password\\\":\\\"${USER_A_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${USER_A} created\" || true\nALICE_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nassert_eq \"$(echo \"$ALICE_ID\" | grep -cE \"${UUID_RE}\" || true)\" \"1\" \"…with a directory id (${ALICE_ID})\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.user.status' 'active' \"…active\" || true\n\nRESP=$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[\\\"owner\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A role the plugin does not declare is refused: 400\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.code) \\(.unknown | join(\",\"))\"' 'unknown_roles owner' \"…unknown_roles: owner\" || true\nRESP=$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"No roles at all: 400\" || true\nRESP=$(call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"plugin\\\",\\\"resourceId\\\":\\\"${PLUGIN}\\\",\\\"context\\\":{\\\"roles\\\":[\\\"owner\\\"]}}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"The same through the Gatekeeper proxy: 400\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'unknown_roles' \"…unknown_roles\" || true\nRESP=$(call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"resourceType\\\":\\\"plugin\\\",\\\"resourceId\\\":\\\"${PLUGIN}\\\"}\")\nROLELESS_GRANT_ID=$(json_get \"$(body_of \"$RESP\")\" '.grant.grantId // empty')\nassert_json_field_not_empty \"$(body_of \"$RESP\")\" '.grant.grantId' \"A plugin grant without roles is taken by Gatekeeper\" || true\nENTITLEMENTS=$(api_get \"plugins/${PLUGIN}/entitlements\")\nassert_json_field \"$ENTITLEMENTS\" '.roleless >= 1' 'true' \"…counted as roleless ($(json_get \"$ENTITLEMENTS\" '.roleless'))\" || true\nassert_json_field \"$ENTITLEMENTS\" \"[.entitlements[] | select(.principalId == \\\"${USER_A}\\\")] | length\" '0' \"…and no entitlement\" || true\nassert_eq \"$(audience_row \"${ALICE_ID}\")\" \"null\" \"It makes ${USER_A} no member of the audience\" || true\n\nRESP=$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${USER_A}\\\",\\\"roles\\\":[\\\"viewer\\\",\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${USER_A} entitled as viewer\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.entitlement.userId) \\(.entitlement.roles | join(\",\"))\"' \"${ALICE_ID} viewer\" \"…named by her directory id, the role once\" || true\nRESP=$(call POST \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${GROUP}\\\",\\\"description\\\":\\\"E2E 32 team\\\"}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.ok' 'true' \"Group ${GROUP} created\" || true\nRESP=$(call POST \"gatekeeper/groups/${GROUP}/members\" \"{\\\"usernames\\\":[\\\"${USER_A}\\\"]}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.ok' 'true' \"…with ${USER_A} in it\" || true\nRESP=$(call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${GROUP}\\\",\\\"roles\\\":[\\\"editor\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The group entitled as editor\" || true\nROW=$(audience_row \"${ALICE_ID}\")\nassert_json_field \"$ROW\" '\"\\(.change.kind) \\(.change.member.status) \\(.change.member.roles | join(\",\"))\"' 'upsert active editor,viewer' \"The audience: ${USER_A} active, her roles and her group's (editor, viewer)\" || true\nassert_json_field \"$ROW\" '\"\\(.change.member.displayName) \\(.change.member | has(\"email\"))\"' 'E2E Alice false' \"…her display name, never the address 5.0.0 does not declare\" || true\nif wait_for 30 projection_has \"[.users[] | select(.userId == \\\"${ALICE_ID}\\\" and .status == \\\"active\\\" and .roles == [\\\"editor\\\",\\\"viewer\\\"])] | length == 1\"; then\n  log_pass \"The agent half's projection holds her, with both roles\"\nelse\n  log_fail \"The projection does not hold her: $(projected_user \"${ALICE_ID}\")\"\nfi\n\n# ===========================================================================\n# 7. Disable and enable\n# ==========================================================================="
     },
     {
       "id": "disabled-authelia-refuses-her-first-factor-enabled-takes-it-again",
       "label": "Disabled: Authelia refuses her first factor; enabled: takes it again",
       "steps": [
         {
-          "id": "step-305",
+          "id": "step-306",
           "label": "Authelia's first factor takes ${USER_A}'s password",
           "target": "local",
           "op": {
@@ -2574,7 +2591,7 @@
           }
         },
         {
-          "id": "step-306",
+          "id": "step-307",
           "label": "Authelia's first factor refused ${USER_A} before she was disabled",
           "target": "local",
           "op": {
@@ -2584,7 +2601,7 @@
           }
         },
         {
-          "id": "step-307",
+          "id": "step-308",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2601,7 +2618,7 @@
           ]
         },
         {
-          "id": "step-308",
+          "id": "step-309",
           "label": "${USER_A} disabled",
           "target": "local",
           "continueOnError": true,
@@ -2622,7 +2639,7 @@
           }
         },
         {
-          "id": "step-309",
+          "id": "step-310",
           "label": "…status disabled, her id unchanged",
           "target": "local",
           "continueOnError": true,
@@ -2644,7 +2661,7 @@
           }
         },
         {
-          "id": "step-311",
+          "id": "step-312",
           "label": "The directory: disabled",
           "target": "local",
           "continueOnError": true,
@@ -2666,7 +2683,7 @@
           }
         },
         {
-          "id": "step-313",
+          "id": "step-314",
           "label": "Authelia's first factor refuses her",
           "target": "local",
           "continueOnError": true,
@@ -2687,7 +2704,7 @@
           }
         },
         {
-          "id": "step-314",
+          "id": "step-315",
           "label": "The audience keeps her as a member, disabled",
           "target": "local",
           "continueOnError": true,
@@ -2709,7 +2726,7 @@
           }
         },
         {
-          "id": "step-315",
+          "id": "step-316",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2726,7 +2743,7 @@
           ]
         },
         {
-          "id": "step-316",
+          "id": "step-317",
           "label": "${USER_A} enabled again",
           "target": "local",
           "continueOnError": true,
@@ -2748,7 +2765,7 @@
           }
         },
         {
-          "id": "step-317",
+          "id": "step-318",
           "label": "Authelia's first factor takes her password again",
           "target": "local",
           "op": {
@@ -2758,7 +2775,7 @@
           }
         },
         {
-          "id": "step-318",
+          "id": "step-319",
           "label": "Authelia's first factor still refuses ${USER_A} once enabled",
           "target": "local",
           "op": {
@@ -2768,7 +2785,7 @@
           }
         },
         {
-          "id": "step-319",
+          "id": "step-320",
           "label": "The audience: active again",
           "target": "local",
           "continueOnError": true,
@@ -2790,7 +2807,7 @@
           }
         },
         {
-          "id": "step-320",
+          "id": "step-321",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -2808,7 +2825,7 @@
           ]
         },
         {
-          "id": "step-321",
+          "id": "step-322",
           "label": "Set LAST_ADMIN",
           "target": "local",
           "op": {
@@ -2825,7 +2842,7 @@
           ]
         },
         {
-          "id": "step-322",
+          "id": "step-323",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2842,7 +2859,7 @@
           ]
         },
         {
-          "id": "step-323",
+          "id": "step-324",
           "label": "The last enabled administrator (${LAST_ADMIN}) cannot be disabled: 400",
           "target": "local",
           "continueOnError": true,
@@ -2863,7 +2880,7 @@
           }
         },
         {
-          "id": "step-324",
+          "id": "step-325",
           "label": "…last_admin",
           "target": "local",
           "continueOnError": true,
@@ -2885,7 +2902,7 @@
           }
         },
         {
-          "id": "step-326",
+          "id": "step-327",
           "label": "Last enabled administrator: ${ADMINS} — not exactly one enabled administrator on this VM",
           "target": "local",
           "op": {
@@ -2902,7 +2919,7 @@
       "label": "Deleted: a tombstone, her grants and memberships gone",
       "steps": [
         {
-          "id": "step-327",
+          "id": "step-328",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2919,7 +2936,7 @@
           ]
         },
         {
-          "id": "step-328",
+          "id": "step-329",
           "label": "Set TUNNEL_GRANT_ID",
           "target": "local",
           "op": {
@@ -2936,7 +2953,7 @@
           ]
         },
         {
-          "id": "step-329",
+          "id": "step-330",
           "label": "${USER_A} holds a tunnel grant too",
           "target": "local",
           "continueOnError": true,
@@ -2954,7 +2971,7 @@
           }
         },
         {
-          "id": "step-331",
+          "id": "step-332",
           "label": "…and a row in Gatekeeper's access-request log",
           "target": "local",
           "continueOnError": true,
@@ -2975,7 +2992,7 @@
           }
         },
         {
-          "id": "step-332",
+          "id": "step-333",
           "label": "Gatekeeper holds three grants of hers: the tunnel, the roleless plugin grant, her role",
           "target": "local",
           "continueOnError": true,
@@ -2997,7 +3014,7 @@
           }
         },
         {
-          "id": "step-333",
+          "id": "step-334",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3014,7 +3031,7 @@
           ]
         },
         {
-          "id": "step-334",
+          "id": "step-335",
           "label": "${USER_A} deleted",
           "target": "local",
           "continueOnError": true,
@@ -3035,7 +3052,7 @@
           }
         },
         {
-          "id": "step-335",
+          "id": "step-336",
           "label": "…her id named, Gatekeeper's principal cleared",
           "target": "local",
           "continueOnError": true,
@@ -3057,7 +3074,7 @@
           }
         },
         {
-          "id": "step-336",
+          "id": "step-337",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -3074,7 +3091,7 @@
           ]
         },
         {
-          "id": "step-337",
+          "id": "step-338",
           "label": "The directory keeps a tombstone: removed, deleted",
           "target": "local",
           "continueOnError": true,
@@ -3096,7 +3113,7 @@
           }
         },
         {
-          "id": "step-338",
+          "id": "step-339",
           "label": "…with her username, name and address",
           "target": "local",
           "continueOnError": true,
@@ -3118,7 +3135,7 @@
           }
         },
         {
-          "id": "step-339",
+          "id": "step-340",
           "label": "…and when Gatekeeper dropped what it held of her",
           "target": "local",
           "continueOnError": true,
@@ -3136,7 +3153,7 @@
           }
         },
         {
-          "id": "step-341",
+          "id": "step-342",
           "label": "No Gatekeeper grant names her username",
           "target": "local",
           "continueOnError": true,
@@ -3158,7 +3175,7 @@
           }
         },
         {
-          "id": "step-342",
+          "id": "step-343",
           "label": "…the roleless plugin grant gone with the others",
           "target": "local",
           "continueOnError": true,
@@ -3179,7 +3196,7 @@
           }
         },
         {
-          "id": "step-344",
+          "id": "step-345",
           "label": "GET /api/plugins/${PLUGIN}/entitlements",
           "target": "host",
           "op": {
@@ -3197,7 +3214,7 @@
           ]
         },
         {
-          "id": "step-345",
+          "id": "step-346",
           "label": "The plugin's entitlements: the group's alone",
           "target": "local",
           "continueOnError": true,
@@ -3219,7 +3236,7 @@
           }
         },
         {
-          "id": "step-346",
+          "id": "step-347",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -3236,7 +3253,7 @@
           ]
         },
         {
-          "id": "step-347",
+          "id": "step-348",
           "label": "The audience: remove/deleted, with the last display name",
           "target": "local",
           "continueOnError": true,
@@ -3258,7 +3275,7 @@
           }
         },
         {
-          "id": "step-348",
+          "id": "step-349",
           "label": "The agent half's projection: removed, deleted, her name kept, no roles",
           "target": "local",
           "op": {
@@ -3268,7 +3285,7 @@
           }
         },
         {
-          "id": "step-349",
+          "id": "step-350",
           "label": "The projection: $(projected_user \"${ALICE_ID}\")",
           "target": "local",
           "op": {
@@ -3278,7 +3295,7 @@
           }
         },
         {
-          "id": "step-350",
+          "id": "step-351",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3295,7 +3312,7 @@
           ]
         },
         {
-          "id": "step-351",
+          "id": "step-352",
           "label": "A grant to ${USER_A}, which nobody holds since her deletion: 409",
           "target": "local",
           "continueOnError": true,
@@ -3316,7 +3333,7 @@
           }
         },
         {
-          "id": "step-352",
+          "id": "step-353",
           "label": "…username_deleted",
           "target": "local",
           "continueOnError": true,
@@ -3338,7 +3355,7 @@
           }
         },
         {
-          "id": "step-353",
+          "id": "step-354",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3355,7 +3372,7 @@
           ]
         },
         {
-          "id": "step-354",
+          "id": "step-355",
           "label": "Adding ${USER_A} to ${GROUP}: 409",
           "target": "local",
           "continueOnError": true,
@@ -3376,7 +3393,7 @@
           }
         },
         {
-          "id": "step-355",
+          "id": "step-356",
           "label": "…username_deleted",
           "target": "local",
           "continueOnError": true,
@@ -3398,7 +3415,7 @@
           }
         },
         {
-          "id": "step-356",
+          "id": "step-357",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3415,7 +3432,7 @@
           ]
         },
         {
-          "id": "step-357",
+          "id": "step-358",
           "label": "Entitling ${USER_A} in ${PLUGIN}: 409",
           "target": "local",
           "continueOnError": true,
@@ -3436,7 +3453,7 @@
           }
         },
         {
-          "id": "step-358",
+          "id": "step-359",
           "label": "…username_deleted",
           "target": "local",
           "continueOnError": true,
@@ -3458,7 +3475,7 @@
           }
         },
         {
-          "id": "step-359",
+          "id": "step-360",
           "label": "Nothing was given: no grant names ${USER_A}",
           "target": "local",
           "continueOnError": true,
@@ -3487,7 +3504,7 @@
       "label": "The same username created again is a new user, with no roles",
       "steps": [
         {
-          "id": "step-361",
+          "id": "step-362",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3504,7 +3521,7 @@
           ]
         },
         {
-          "id": "step-362",
+          "id": "step-363",
           "label": "${USER_A} created again",
           "target": "local",
           "continueOnError": true,
@@ -3525,7 +3542,7 @@
           }
         },
         {
-          "id": "step-363",
+          "id": "step-364",
           "label": "Set NEW_ALICE_ID",
           "target": "local",
           "op": {
@@ -3542,7 +3559,7 @@
           ]
         },
         {
-          "id": "step-364",
+          "id": "step-365",
           "label": "…with a directory id",
           "target": "local",
           "continueOnError": true,
@@ -3563,7 +3580,7 @@
           }
         },
         {
-          "id": "step-365",
+          "id": "step-366",
           "label": "…a new one: not the deleted user's",
           "target": "local",
           "continueOnError": true,
@@ -3584,7 +3601,7 @@
           }
         },
         {
-          "id": "step-366",
+          "id": "step-367",
           "label": "The earlier user stays a tombstone",
           "target": "local",
           "continueOnError": true,
@@ -3606,7 +3623,7 @@
           }
         },
         {
-          "id": "step-367",
+          "id": "step-368",
           "label": "She inherits no grant",
           "target": "local",
           "continueOnError": true,
@@ -3628,7 +3645,7 @@
           }
         },
         {
-          "id": "step-369",
+          "id": "step-370",
           "label": "…so no role in ${PLUGIN}: not in its audience",
           "target": "local",
           "continueOnError": true,
@@ -3656,7 +3673,7 @@
       "label": "A username Authelia holds an OpenID Connect identity for is never given to a new user",
       "steps": [
         {
-          "id": "step-371",
+          "id": "step-372",
           "label": "lamaste-priv: Authelia holds no OpenID Connect identity for ${USER_O}",
           "target": "local",
           "continueOnError": true,
@@ -3677,7 +3694,7 @@
           }
         },
         {
-          "id": "step-372",
+          "id": "step-373",
           "label": "Authelia's CLI stored an opaque identifier for ${USER_O}, as a first sign-in to a relying party would",
           "target": "local",
           "op": {
@@ -3687,7 +3704,7 @@
           }
         },
         {
-          "id": "step-373",
+          "id": "step-374",
           "label": "authelia storage user identifiers add failed: $(echo \"$OUT\" | tail -n 3)",
           "target": "local",
           "op": {
@@ -3697,7 +3714,7 @@
           }
         },
         {
-          "id": "step-374",
+          "id": "step-375",
           "label": "lamaste-priv: now it holds one",
           "target": "local",
           "continueOnError": true,
@@ -3718,7 +3735,7 @@
           }
         },
         {
-          "id": "step-375",
+          "id": "step-376",
           "label": "…and none for ${USER_A}, who never signed in to a relying party",
           "target": "local",
           "continueOnError": true,
@@ -3739,7 +3756,7 @@
           }
         },
         {
-          "id": "step-376",
+          "id": "step-377",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3756,7 +3773,7 @@
           ]
         },
         {
-          "id": "step-377",
+          "id": "step-378",
           "label": "Creating a user named ${USER_O}: 409 — every relying party would take them for the earlier holder",
           "target": "local",
           "continueOnError": true,
@@ -3777,7 +3794,7 @@
           }
         },
         {
-          "id": "step-378",
+          "id": "step-379",
           "label": "…username_has_oidc_identity",
           "target": "local",
           "continueOnError": true,
@@ -3806,7 +3823,7 @@
       "label": "Erased: the tombstone scrubbed, the access-request log purged, the plugin told",
       "steps": [
         {
-          "id": "step-381",
+          "id": "step-382",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3823,7 +3840,7 @@
           ]
         },
         {
-          "id": "step-382",
+          "id": "step-383",
           "label": "An active user is not erased: 409",
           "target": "local",
           "continueOnError": true,
@@ -3844,7 +3861,7 @@
           }
         },
         {
-          "id": "step-383",
+          "id": "step-384",
           "label": "…user_not_removed",
           "target": "local",
           "continueOnError": true,
@@ -3866,7 +3883,7 @@
           }
         },
         {
-          "id": "step-384",
+          "id": "step-385",
           "label": "Gatekeeper's access-request log holds two rows of ${USER_A}: the deleted user's and the new one's",
           "target": "local",
           "continueOnError": true,
@@ -3887,7 +3904,7 @@
           }
         },
         {
-          "id": "step-385",
+          "id": "step-386",
           "label": "GET /api/gatekeeper/access-log?limit=1000",
           "target": "host",
           "op": {
@@ -3905,7 +3922,7 @@
           ]
         },
         {
-          "id": "step-386",
+          "id": "step-387",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3922,7 +3939,7 @@
           ]
         },
         {
-          "id": "step-387",
+          "id": "step-388",
           "label": "Gatekeeper: DELETE /api/access-log narrowed by a query, as an older caller would purge one user: 400",
           "target": "local",
           "continueOnError": true,
@@ -3943,7 +3960,7 @@
           }
         },
         {
-          "id": "step-388",
+          "id": "step-389",
           "label": "…naming POST /api/access-log/purge, the username in the body",
           "target": "local",
           "continueOnError": true,
@@ -3964,7 +3981,7 @@
           }
         },
         {
-          "id": "step-389",
+          "id": "step-390",
           "label": "…and the log is as it was: nothing cleared, ${USER_A}'s rows or anyone's",
           "target": "local",
           "continueOnError": true,
@@ -3985,7 +4002,7 @@
           }
         },
         {
-          "id": "step-390",
+          "id": "step-391",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -4002,7 +4019,7 @@
           ]
         },
         {
-          "id": "step-391",
+          "id": "step-392",
           "label": "The deleted user erased by her id",
           "target": "local",
           "continueOnError": true,
@@ -4023,7 +4040,7 @@
           }
         },
         {
-          "id": "step-392",
+          "id": "step-393",
           "label": "…her access-request log row purged",
           "target": "local",
           "continueOnError": true,
@@ -4045,7 +4062,7 @@
           }
         },
         {
-          "id": "step-393",
+          "id": "step-394",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -4062,7 +4079,7 @@
           ]
         },
         {
-          "id": "step-394",
+          "id": "step-395",
           "label": "The tombstone is scrubbed to the bare id",
           "target": "local",
           "continueOnError": true,
@@ -4084,7 +4101,7 @@
           }
         },
         {
-          "id": "step-395",
+          "id": "step-396",
           "label": "…erased at $(json_get \"$ROW\" '.erasedAt')",
           "target": "local",
           "continueOnError": true,
@@ -4102,7 +4119,7 @@
           }
         },
         {
-          "id": "step-396",
+          "id": "step-397",
           "label": "The new ${USER_A}'s row stays: the erasure is the deleted user's",
           "target": "local",
           "continueOnError": true,
@@ -4123,7 +4140,7 @@
           }
         },
         {
-          "id": "step-397",
+          "id": "step-398",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -4140,7 +4157,7 @@
           ]
         },
         {
-          "id": "step-398",
+          "id": "step-399",
           "label": "The audience: remove/erased, nothing but the id",
           "target": "local",
           "continueOnError": true,
@@ -4162,7 +4179,7 @@
           }
         },
         {
-          "id": "step-399",
+          "id": "step-400",
           "label": "The agent half's projection scrubbed her row to the bare id",
           "target": "local",
           "op": {
@@ -4172,7 +4189,7 @@
           }
         },
         {
-          "id": "step-400",
+          "id": "step-401",
           "label": "The projection: $(projected_user \"${ALICE_ID}\")",
           "target": "local",
           "op": {
@@ -4182,7 +4199,7 @@
           }
         },
         {
-          "id": "step-403",
+          "id": "step-404",
           "label": "Its cursor passed the erasure: no plugin has it pending",
           "target": "local",
           "op": {
@@ -4192,7 +4209,7 @@
           }
         },
         {
-          "id": "step-404",
+          "id": "step-405",
           "label": "Still pending: $(directory_row \"${ALICE_ID}\" | jq -c '.pendingErasures')",
           "target": "local",
           "op": {
@@ -4202,7 +4219,7 @@
           }
         },
         {
-          "id": "step-405",
+          "id": "step-406",
           "label": "GET /api/plugins/${PLUGIN}/identity: no pending erasure",
           "target": "local",
           "continueOnError": true,
@@ -4224,7 +4241,7 @@
           }
         },
         {
-          "id": "step-406",
+          "id": "step-407",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -4241,7 +4258,7 @@
           ]
         },
         {
-          "id": "step-407",
+          "id": "step-408",
           "label": "A second erasure: 409",
           "target": "local",
           "continueOnError": true,
@@ -4262,7 +4279,7 @@
           }
         },
         {
-          "id": "step-408",
+          "id": "step-409",
           "label": "…already_erased",
           "target": "local",
           "continueOnError": true,
@@ -4291,7 +4308,7 @@
       "label": "The admin forwarder never reaches /admin/identity* or /admin/app*",
       "steps": [
         {
-          "id": "step-409",
+          "id": "step-410",
           "label": "(an admin reaches the agent half's /admin through the forwarder)",
           "target": "local",
           "continueOnError": true,
@@ -4312,7 +4329,7 @@
           }
         },
         {
-          "id": "step-411",
+          "id": "step-412",
           "label": "POST /api/${PLUGIN}/${path}: 404",
           "target": "local",
           "continueOnError": true,
@@ -4333,7 +4350,7 @@
           }
         },
         {
-          "id": "step-412",
+          "id": "step-413",
           "label": "GET /api/${PLUGIN}/${path}: 404",
           "target": "local",
           "continueOnError": true,
@@ -4354,7 +4371,7 @@
           }
         },
         {
-          "id": "step-415",
+          "id": "step-416",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -4371,7 +4388,7 @@
           ]
         },
         {
-          "id": "step-416",
+          "id": "step-417",
           "label": "GET /api/${PLUGIN}/${path} with the admin certificate: 401 — the user surface's, without a relay assertion",
           "target": "local",
           "continueOnError": true,
@@ -4392,7 +4409,7 @@
           }
         },
         {
-          "id": "step-417",
+          "id": "step-418",
           "label": "…JSON, unauthenticated",
           "target": "local",
           "continueOnError": true,
@@ -4414,7 +4431,7 @@
           }
         },
         {
-          "id": "step-419",
+          "id": "step-420",
           "label": "POST /api/${PLUGIN}/app/echo: 401",
           "target": "local",
           "continueOnError": true,
@@ -4435,7 +4452,7 @@
           }
         },
         {
-          "id": "step-420",
+          "id": "step-421",
           "label": "The agent half saw none of them",
           "target": "local",
           "continueOnError": true,
@@ -4463,7 +4480,7 @@
       "label": "The panel vhost clears a client-sent X-Lamalibre-Relay-Assertion",
       "steps": [
         {
-          "id": "step-421",
+          "id": "step-422",
           "label": "Set ASSERTION_A",
           "target": "local",
           "op": {
@@ -4480,7 +4497,7 @@
           ]
         },
         {
-          "id": "step-422",
+          "id": "step-423",
           "label": "Set ASSERTION_B",
           "target": "local",
           "op": {
@@ -4497,7 +4514,7 @@
           ]
         },
         {
-          "id": "step-423",
+          "id": "step-424",
           "label": "Two relay assertions for the panel, signed with the relay's own key",
           "target": "local",
           "continueOnError": true,
@@ -4518,7 +4535,7 @@
           }
         },
         {
-          "id": "step-424",
+          "id": "step-425",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -4535,7 +4552,7 @@
           ]
         },
         {
-          "id": "step-425",
+          "id": "step-426",
           "label": "Sent through the panel vhost with the admin certificate: 401 — nginx cleared it",
           "target": "local",
           "continueOnError": true,
@@ -4556,7 +4573,7 @@
           }
         },
         {
-          "id": "step-426",
+          "id": "step-427",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -4573,7 +4590,7 @@
           ]
         },
         {
-          "id": "step-427",
+          "id": "step-428",
           "label": "The other, sent to the panel's loopback listener: accepted — 404, no host serves the route",
           "target": "local",
           "continueOnError": true,
@@ -4594,7 +4611,7 @@
           }
         },
         {
-          "id": "step-428",
+          "id": "step-429",
           "label": "…and refused when replayed (401)",
           "target": "local",
           "continueOnError": true,
@@ -4615,7 +4632,7 @@
           }
         },
         {
-          "id": "step-429",
+          "id": "step-430",
           "label": "The first one, sent there now, is accepted too: it never reached the panel before",
           "target": "local",
           "continueOnError": true,

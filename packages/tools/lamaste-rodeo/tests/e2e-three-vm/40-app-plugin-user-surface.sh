@@ -421,7 +421,8 @@ assert_eq "$(status_of "$RESP")" "200" "PUT /api/tunnels/${TUNNEL_A}/user-surfac
 BOUND=$(body_of "$RESP")
 assert_json_field "$BOUND" '"\(.changed) \(.tunnel.userSurface.routes | join(","))"' "true ${PLUGIN}" "…bound" || true
 assert_json_field "$BOUND" '.tunnel.userSurfaceStatus[0] | "\(.route) \(.served) \(.reason)"' "${PLUGIN} true null" "…served at once: approved, declares identity, hosted by the tunnel's agent" || true
-assert_json_field "$(body_of "$(host_api_call PUT "tunnels/${TUNNEL_A}/user-surface" "{\"route\":\"${PLUGIN}\"}")")" '.changed' 'false' "Binding it again changes nothing" || true
+RESP=$(host_api_call PUT "tunnels/${TUNNEL_A}/user-surface" "{\"route\":\"${PLUGIN}\"}")
+assert_json_field "$(body_of "$RESP")" '.changed' 'false' "Binding it again changes nothing" || true
 RESP=$(host_api_call PUT "tunnels/${TUNNEL_P}/user-surface" "{\"route\":\"${PLUGIN}\"}")
 assert_eq "$(status_of "$RESP")" "400" "A public tunnel cannot be bound (400)" || true
 assert_contains "$(json_get "$(body_of "$RESP")" '.error')" "public" "…$(json_get "$(body_of "$RESP")" '.error')" || true

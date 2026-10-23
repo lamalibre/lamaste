@@ -823,6 +823,25 @@
         },
         {
           "id": "step-56",
+          "label": "POST /api/gatekeeper/groups",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/groups",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
           "label": "Group ${GROUP} created",
           "target": "local",
           "continueOnError": true,
@@ -831,8 +850,8 @@
             "check": {
               "kind": "json_field",
               "source": {
-                "kind": "expr",
-                "template": "$(host_api_post \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${GROUP}\\\",\\\"description\\\":\\\"E2E 39 editors\\\"}\")"
+                "kind": "var",
+                "name": "RESP"
               },
               "path": ".ok",
               "expected": {
@@ -844,7 +863,26 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-58",
+          "label": "POST /api/gatekeeper/groups/${GROUP}/members",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/groups/${GROUP}/members",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
           "label": "…with ${SECOND_USER} in it",
           "target": "local",
           "continueOnError": true,
@@ -853,8 +891,8 @@
             "check": {
               "kind": "json_field",
               "source": {
-                "kind": "expr",
-                "template": "$(host_api_post \"gatekeeper/groups/${GROUP}/members\" \"{\\\"usernames\\\":[\\\"${SECOND_USER}\\\"]}\")"
+                "kind": "var",
+                "name": "RESP"
               },
               "path": ".ok",
               "expected": {
@@ -866,7 +904,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-60",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -883,7 +921,7 @@
           ]
         },
         {
-          "id": "step-59",
+          "id": "step-61",
           "label": "${TEST_USER} entitled as viewer",
           "target": "local",
           "continueOnError": true,
@@ -904,7 +942,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-62",
           "label": "…named by the directory's id",
           "target": "local",
           "continueOnError": true,
@@ -926,7 +964,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-63",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -943,7 +981,7 @@
           ]
         },
         {
-          "id": "step-62",
+          "id": "step-64",
           "label": "${GROUP} entitled as editor",
           "target": "local",
           "continueOnError": true,
@@ -964,7 +1002,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-65",
           "label": "The agent half's projection holds both, pushed through the tunnel",
           "target": "local",
           "op": {
@@ -974,7 +1012,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-66",
           "label": "The projection: $(projection \"${PLUGIN}\" | jq -c '.users' 2>/dev/null)",
           "target": "local",
           "op": {
@@ -984,7 +1022,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-67",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -1001,7 +1039,7 @@
           ]
         },
         {
-          "id": "step-66",
+          "id": "step-68",
           "label": "${TEST_USER}: viewer, active",
           "target": "local",
           "continueOnError": true,
@@ -1023,7 +1061,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-69",
           "label": "…with the directory's display name and address — both declared",
           "target": "local",
           "continueOnError": true,
@@ -1045,7 +1083,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-70",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -1062,7 +1100,7 @@
           ]
         },
         {
-          "id": "step-69",
+          "id": "step-71",
           "label": "${SECOND_USER}: editor through the group, active",
           "target": "local",
           "continueOnError": true,
@@ -1084,7 +1122,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-72",
           "label": "…${SECOND_NAME}, ${SECOND_EMAIL}",
           "target": "local",
           "continueOnError": true,
@@ -1106,7 +1144,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-73",
           "label": "The panel sees its agent half at the head of the audience",
           "target": "local",
           "op": {
@@ -1116,7 +1154,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-74",
           "label": "Behind: $(identity_view \"${PLUGIN}\" | jq -c '.sync')",
           "target": "local",
           "op": {
@@ -1126,7 +1164,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-75",
           "label": "The audience: two active members",
           "target": "local",
           "continueOnError": true,
@@ -1148,14 +1186,14 @@
           }
         }
       ],
-      "bash": "log_section \"Entitled: ${TEST_USER} as viewer, a group's member as editor\"\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${SECOND_USER}\\\",\\\"displayname\\\":\\\"${SECOND_NAME}\\\",\\\"email\\\":\\\"${SECOND_EMAIL}\\\",\\\"password\\\":\\\"E2e-$(openssl rand -hex 12)\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${SECOND_USER} created\" || true\nSECOND_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nassert_eq \"$(is_uuid \"${SECOND_ID}\")\" \"true\" \"…with a directory id (${SECOND_ID})\" || true\nassert_json_field \"$(host_api_post \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${GROUP}\\\",\\\"description\\\":\\\"E2E 39 editors\\\"}\")\" '.ok' 'true' \"Group ${GROUP} created\" || true\nassert_json_field \"$(host_api_post \"gatekeeper/groups/${GROUP}/members\" \"{\\\"usernames\\\":[\\\"${SECOND_USER}\\\"]}\")\" '.ok' 'true' \"…with ${SECOND_USER} in it\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${TEST_USER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${TEST_USER} entitled as viewer\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.entitlement.userId' \"${TEST_USER_ID}\" \"…named by the directory's id\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${GROUP}\\\",\\\"roles\\\":[\\\"editor\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${GROUP} entitled as editor\" || true\n\nif wait_for 60 projection_has \"${PLUGIN}\" \"([.users[] | select(.userId == \\\"${TEST_USER_ID}\\\" and .status == \\\"active\\\")] | length == 1) and ([.users[] | select(.userId == \\\"${SECOND_ID}\\\" and .status == \\\"active\\\")] | length == 1)\"; then\n  log_pass \"The agent half's projection holds both, pushed through the tunnel\"\nelse\n  log_fail \"The projection: $(projection \"${PLUGIN}\" | jq -c '.users' 2>/dev/null)\"\nfi\nROW=$(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.roles | join(\",\")) \\(.status)\"' \"${TEST_USER} viewer active\" \"${TEST_USER}: viewer, active\" || true\nassert_json_field \"$ROW\" '\"\\(.displayName)|\\(.email)\"' \"${TEST_USER_NAME}|${TEST_USER_EMAIL}\" \"…with the directory's display name and address — both declared\" || true\nROW=$(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.roles | join(\",\")) \\(.status)\"' \"${SECOND_USER} editor active\" \"${SECOND_USER}: editor through the group, active\" || true\nassert_json_field \"$ROW\" '\"\\(.displayName)|\\(.email)\"' \"${SECOND_NAME}|${SECOND_EMAIL}\" \"…${SECOND_NAME}, ${SECOND_EMAIL}\" || true\nif wait_for 30 identity_caught_up \"${PLUGIN}\"; then\n  log_pass \"The panel sees its agent half at the head of the audience\"\nelse\n  log_fail \"Behind: $(identity_view \"${PLUGIN}\" | jq -c '.sync')\"\nfi\nassert_json_field \"$(identity_view \"${PLUGIN}\")\" '\"\\(.audience.active) \\(.audience.disabled) \\(.audience.removed) \\(.audience.erased)\"' '2 0 0 0' \"The audience: two active members\" || true\n\n# ===========================================================================\n# 4. Revoked\n# ==========================================================================="
+      "bash": "log_section \"Entitled: ${TEST_USER} as viewer, a group's member as editor\"\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${SECOND_USER}\\\",\\\"displayname\\\":\\\"${SECOND_NAME}\\\",\\\"email\\\":\\\"${SECOND_EMAIL}\\\",\\\"password\\\":\\\"E2e-$(openssl rand -hex 12)\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${SECOND_USER} created\" || true\nSECOND_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nassert_eq \"$(is_uuid \"${SECOND_ID}\")\" \"true\" \"…with a directory id (${SECOND_ID})\" || true\nRESP=$(host_api_post \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${GROUP}\\\",\\\"description\\\":\\\"E2E 39 editors\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"Group ${GROUP} created\" || true\nRESP=$(host_api_post \"gatekeeper/groups/${GROUP}/members\" \"{\\\"usernames\\\":[\\\"${SECOND_USER}\\\"]}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"…with ${SECOND_USER} in it\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${TEST_USER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${TEST_USER} entitled as viewer\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.entitlement.userId' \"${TEST_USER_ID}\" \"…named by the directory's id\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${GROUP}\\\",\\\"roles\\\":[\\\"editor\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${GROUP} entitled as editor\" || true\n\nif wait_for 60 projection_has \"${PLUGIN}\" \"([.users[] | select(.userId == \\\"${TEST_USER_ID}\\\" and .status == \\\"active\\\")] | length == 1) and ([.users[] | select(.userId == \\\"${SECOND_ID}\\\" and .status == \\\"active\\\")] | length == 1)\"; then\n  log_pass \"The agent half's projection holds both, pushed through the tunnel\"\nelse\n  log_fail \"The projection: $(projection \"${PLUGIN}\" | jq -c '.users' 2>/dev/null)\"\nfi\nROW=$(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.roles | join(\",\")) \\(.status)\"' \"${TEST_USER} viewer active\" \"${TEST_USER}: viewer, active\" || true\nassert_json_field \"$ROW\" '\"\\(.displayName)|\\(.email)\"' \"${TEST_USER_NAME}|${TEST_USER_EMAIL}\" \"…with the directory's display name and address — both declared\" || true\nROW=$(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")\nassert_json_field \"$ROW\" '\"\\(.username) \\(.roles | join(\",\")) \\(.status)\"' \"${SECOND_USER} editor active\" \"${SECOND_USER}: editor through the group, active\" || true\nassert_json_field \"$ROW\" '\"\\(.displayName)|\\(.email)\"' \"${SECOND_NAME}|${SECOND_EMAIL}\" \"…${SECOND_NAME}, ${SECOND_EMAIL}\" || true\nif wait_for 30 identity_caught_up \"${PLUGIN}\"; then\n  log_pass \"The panel sees its agent half at the head of the audience\"\nelse\n  log_fail \"Behind: $(identity_view \"${PLUGIN}\" | jq -c '.sync')\"\nfi\nassert_json_field \"$(identity_view \"${PLUGIN}\")\" '\"\\(.audience.active) \\(.audience.disabled) \\(.audience.removed) \\(.audience.erased)\"' '2 0 0 0' \"The audience: two active members\" || true\n\n# ===========================================================================\n# 4. Revoked\n# ==========================================================================="
     },
     {
       "id": "revoked-removed-unentitled-the-last-attributes-kept",
       "label": "Revoked: removed, unentitled, the last attributes kept",
       "steps": [
         {
-          "id": "step-74",
+          "id": "step-76",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1172,7 +1210,7 @@
           ]
         },
         {
-          "id": "step-75",
+          "id": "step-77",
           "label": "${TEST_USER}'s role revoked",
           "target": "local",
           "continueOnError": true,
@@ -1194,7 +1232,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-78",
           "label": "The agent half: ${TEST_USER} removed, unentitled",
           "target": "local",
           "op": {
@@ -1204,7 +1242,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-79",
           "label": "The projection: $(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")",
           "target": "local",
           "op": {
@@ -1214,7 +1252,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-80",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -1231,7 +1269,7 @@
           ]
         },
         {
-          "id": "step-79",
+          "id": "step-81",
           "label": "…no roles, the last attributes it received kept",
           "target": "local",
           "continueOnError": true,
@@ -1253,7 +1291,7 @@
           }
         },
         {
-          "id": "step-80",
+          "id": "step-82",
           "label": "…removed at $(json_get \"$ROW\" '.removedAt')",
           "target": "local",
           "continueOnError": true,
@@ -1271,7 +1309,7 @@
           }
         },
         {
-          "id": "step-81",
+          "id": "step-83",
           "label": "The panel's audience: remove/unentitled with the last attributes",
           "target": "local",
           "continueOnError": true,
@@ -1300,7 +1338,7 @@
       "label": "Disabled: still a member, status disabled",
       "steps": [
         {
-          "id": "step-82",
+          "id": "step-84",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1317,7 +1355,7 @@
           ]
         },
         {
-          "id": "step-83",
+          "id": "step-85",
           "label": "${SECOND_USER} disabled, the same id",
           "target": "local",
           "continueOnError": true,
@@ -1339,7 +1377,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-86",
           "label": "The agent half: ${SECOND_USER} disabled, still an editor",
           "target": "local",
           "op": {
@@ -1349,7 +1387,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-87",
           "label": "The projection: $(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")",
           "target": "local",
           "op": {
@@ -1359,7 +1397,7 @@
           }
         },
         {
-          "id": "step-86",
+          "id": "step-88",
           "label": "The audience: one disabled member, none active",
           "target": "local",
           "continueOnError": true,
@@ -1388,7 +1426,7 @@
       "label": "Deleted: removed, deleted, the last display name kept",
       "steps": [
         {
-          "id": "step-87",
+          "id": "step-89",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1405,7 +1443,7 @@
           ]
         },
         {
-          "id": "step-88",
+          "id": "step-90",
           "label": "${SECOND_USER} deleted; Gatekeeper dropped their grants and memberships",
           "target": "local",
           "continueOnError": true,
@@ -1427,7 +1465,7 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-91",
           "label": "The agent half: ${SECOND_USER} removed, deleted",
           "target": "local",
           "op": {
@@ -1437,7 +1475,7 @@
           }
         },
         {
-          "id": "step-90",
+          "id": "step-92",
           "label": "The projection: $(projected_user \"${PLUGIN}\" \"${SECOND_ID}\")",
           "target": "local",
           "op": {
@@ -1447,7 +1485,7 @@
           }
         },
         {
-          "id": "step-91",
+          "id": "step-93",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -1464,7 +1502,7 @@
           ]
         },
         {
-          "id": "step-92",
+          "id": "step-94",
           "label": "…no roles, the last display name kept",
           "target": "local",
           "continueOnError": true,
@@ -1486,7 +1524,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-96",
           "label": "The directory keeps their tombstone",
           "target": "local",
           "continueOnError": true,
@@ -1515,7 +1553,7 @@
       "label": "Erased while the agent half is stopped: queued, then caught up",
       "steps": [
         {
-          "id": "step-97",
+          "id": "step-99",
           "label": "The agent half is stopped: its socket and its service (nothing holds its port)",
           "target": "local",
           "continueOnError": true,
@@ -1536,7 +1574,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-100",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1553,7 +1591,7 @@
           ]
         },
         {
-          "id": "step-99",
+          "id": "step-101",
           "label": "${SECOND_USER} erased by their id",
           "target": "local",
           "continueOnError": true,
@@ -1574,7 +1612,7 @@
           }
         },
         {
-          "id": "step-100",
+          "id": "step-102",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -1591,7 +1629,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-103",
           "label": "The directory scrubbed the tombstone to the bare id",
           "target": "local",
           "continueOnError": true,
@@ -1613,7 +1651,7 @@
           }
         },
         {
-          "id": "step-103",
+          "id": "step-105",
           "label": "Set VIEW",
           "target": "local",
           "op": {
@@ -1630,7 +1668,7 @@
           ]
         },
         {
-          "id": "step-105",
+          "id": "step-107",
           "label": "…its agent half is behind ($(json_get \"$VIEW\" '.sync.behind') change)",
           "target": "local",
           "continueOnError": true,
@@ -1652,7 +1690,7 @@
           }
         },
         {
-          "id": "step-106",
+          "id": "step-108",
           "label": "The audience: remove/erased, nothing but the id",
           "target": "local",
           "continueOnError": true,
@@ -1674,7 +1712,7 @@
           }
         },
         {
-          "id": "step-108",
+          "id": "step-110",
           "label": "The panel tried and could not deliver it: $(json_get \"$(identity_view \"${PLUGIN}\")\" '.sync.lastError')",
           "target": "local",
           "op": {
@@ -1684,7 +1722,7 @@
           }
         },
         {
-          "id": "step-109",
+          "id": "step-111",
           "label": "No failed delivery recorded: $(identity_view \"${PLUGIN}\" | jq -c '.sync')",
           "target": "local",
           "op": {
@@ -1694,7 +1732,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-114",
           "label": "The agent half's socket started again; nothing asks the panel to sync",
           "target": "local",
           "op": {
@@ -1704,7 +1742,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-115",
           "label": "The agent half caught up on its own (health back up, or the minute's retry)",
           "target": "local",
           "op": {
@@ -1714,7 +1752,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-116",
           "label": "Still behind: $(identity_view \"${PLUGIN}\" | jq -c '.sync')",
           "target": "local",
           "op": {
@@ -1724,7 +1762,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-117",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -1741,7 +1779,7 @@
           ]
         },
         {
-          "id": "step-116",
+          "id": "step-118",
           "label": "The agent half scrubbed the row to the bare id",
           "target": "local",
           "continueOnError": true,
@@ -1763,7 +1801,7 @@
           }
         },
         {
-          "id": "step-117",
+          "id": "step-119",
           "label": "…erased at $(json_get \"$ROW\" '.erasedAt')",
           "target": "local",
           "continueOnError": true,
@@ -1781,7 +1819,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-121",
           "label": "No erasure pending for ${PLUGIN}: its cursor passed it",
           "target": "local",
           "continueOnError": true,
@@ -1803,7 +1841,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-122",
           "label": "GET /api/identity/directory: none pending for the user",
           "target": "local",
           "continueOnError": true,
@@ -1832,7 +1870,7 @@
       "label": "Reconcile: nothing to find; then a tampered projection",
       "steps": [
         {
-          "id": "step-121",
+          "id": "step-123",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1849,7 +1887,7 @@
           ]
         },
         {
-          "id": "step-122",
+          "id": "step-124",
           "label": "${TEST_USER} entitled as viewer again",
           "target": "local",
           "continueOnError": true,
@@ -1870,7 +1908,7 @@
           }
         },
         {
-          "id": "step-123",
+          "id": "step-125",
           "label": "The agent half: ${TEST_USER} a member again",
           "target": "local",
           "op": {
@@ -1880,7 +1918,7 @@
           }
         },
         {
-          "id": "step-124",
+          "id": "step-126",
           "label": "The projection: $(projected_user \"${PLUGIN}\" \"${TEST_USER_ID}\")",
           "target": "local",
           "op": {
@@ -1890,7 +1928,7 @@
           }
         },
         {
-          "id": "step-125",
+          "id": "step-127",
           "label": "POST /api/plugins/${PLUGIN}/identity/sync",
           "target": "host",
           "op": {
@@ -1911,7 +1949,7 @@
           ]
         },
         {
-          "id": "step-126",
+          "id": "step-128",
           "label": "POST /api/plugins/${PLUGIN}/identity/sync {reconcile}: a replay that finds no mismatch",
           "target": "local",
           "continueOnError": true,
@@ -1933,7 +1971,7 @@
           }
         },
         {
-          "id": "step-127",
+          "id": "step-129",
           "label": "…recorded: lastMismatches 0",
           "target": "local",
           "continueOnError": true,
@@ -1955,7 +1993,7 @@
           }
         },
         {
-          "id": "step-128",
+          "id": "step-130",
           "label": "Set MISMATCH_AUDITS",
           "target": "local",
           "op": {
@@ -1972,7 +2010,7 @@
           ]
         },
         {
-          "id": "step-129",
+          "id": "step-131",
           "label": "Set TAMPER",
           "target": "local",
           "op": {
@@ -1989,7 +2027,7 @@
           ]
         },
         {
-          "id": "step-130",
+          "id": "step-132",
           "label": "Tampered with as ${SERVICE_USER}: ${TEST_USER} given the editor role, a member slipped in",
           "target": "local",
           "continueOnError": true,
@@ -2011,7 +2049,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-133",
           "label": "…the agent half now believes ${TEST_USER} is an editor",
           "target": "local",
           "continueOnError": true,
@@ -2033,7 +2071,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-134",
           "label": "…and holds a member the directory never named",
           "target": "local",
           "continueOnError": true,
@@ -2055,7 +2093,7 @@
           }
         },
         {
-          "id": "step-133",
+          "id": "step-135",
           "label": "POST /api/plugins/${PLUGIN}/identity/sync",
           "target": "host",
           "op": {
@@ -2076,7 +2114,7 @@
           ]
         },
         {
-          "id": "step-134",
+          "id": "step-136",
           "label": "Set MISMATCHES",
           "target": "local",
           "op": {
@@ -2093,7 +2131,7 @@
           ]
         },
         {
-          "id": "step-135",
+          "id": "step-137",
           "label": "The next reconcile reports ${MISMATCHES} mismatches",
           "target": "local",
           "continueOnError": true,
@@ -2115,7 +2153,7 @@
           }
         },
         {
-          "id": "step-136",
+          "id": "step-138",
           "label": "…recorded on the feed's state",
           "target": "local",
           "continueOnError": true,
@@ -2137,7 +2175,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-139",
           "label": "…and audited (identity.reconcile.mismatches)",
           "target": "local",
           "continueOnError": true,
@@ -2158,7 +2196,7 @@
           }
         },
         {
-          "id": "step-138",
+          "id": "step-140",
           "label": "The replay put ${TEST_USER} back: viewer",
           "target": "local",
           "continueOnError": true,
@@ -2180,7 +2218,7 @@
           }
         },
         {
-          "id": "step-139",
+          "id": "step-141",
           "label": "…and removed the member the directory never named",
           "target": "local",
           "continueOnError": true,
@@ -2202,7 +2240,7 @@
           }
         },
         {
-          "id": "step-140",
+          "id": "step-142",
           "label": "POST /api/plugins/${PLUGIN}/identity/sync",
           "target": "host",
           "op": {
@@ -2223,7 +2261,7 @@
           ]
         },
         {
-          "id": "step-141",
+          "id": "step-143",
           "label": "The reconcile after that finds nothing",
           "target": "local",
           "continueOnError": true,
@@ -2245,7 +2283,7 @@
           }
         },
         {
-          "id": "step-142",
+          "id": "step-144",
           "label": "…and audits nothing",
           "target": "local",
           "continueOnError": true,
@@ -2273,7 +2311,7 @@
       "label": "A plugin without identity is never sent any",
       "steps": [
         {
-          "id": "step-144",
+          "id": "step-146",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2290,7 +2328,7 @@
           ]
         },
         {
-          "id": "step-145",
+          "id": "step-147",
           "label": "GET /api/plugins/${PLAIN}/${path}: 400",
           "target": "local",
           "continueOnError": true,
@@ -2311,7 +2349,7 @@
           }
         },
         {
-          "id": "step-146",
+          "id": "step-148",
           "label": "…no_identity",
           "target": "local",
           "continueOnError": true,
@@ -2333,7 +2371,7 @@
           }
         },
         {
-          "id": "step-148",
+          "id": "step-150",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2350,7 +2388,7 @@
           ]
         },
         {
-          "id": "step-149",
+          "id": "step-151",
           "label": "POST /api/plugins/${PLAIN}/identity/sync: 400 (no_identity)",
           "target": "local",
           "continueOnError": true,
@@ -2371,7 +2409,7 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-152",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2388,7 +2426,7 @@
           ]
         },
         {
-          "id": "step-151",
+          "id": "step-153",
           "label": "PUT /api/plugins/${PLAIN}/entitlements: 400 — no roles to give",
           "target": "local",
           "continueOnError": true,
@@ -2409,7 +2447,7 @@
           }
         },
         {
-          "id": "step-152",
+          "id": "step-154",
           "label": "GET /api/plugins/${PLAIN}/identity: nothing declared, no feed",
           "target": "local",
           "continueOnError": true,
@@ -2431,7 +2469,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-155",
           "label": "Its agent half's request log: not one /admin/identity request",
           "target": "local",
           "continueOnError": true,
@@ -2452,7 +2490,7 @@
           }
         },
         {
-          "id": "step-154",
+          "id": "step-156",
           "label": "Set PLAIN_HEALTH",
           "target": "local",
           "op": {
@@ -2469,7 +2507,7 @@
           ]
         },
         {
-          "id": "step-156",
+          "id": "step-158",
           "label": "Set FED",
           "target": "local",
           "op": {
