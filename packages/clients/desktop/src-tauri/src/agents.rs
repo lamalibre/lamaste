@@ -325,7 +325,7 @@ fn read_tail(path: &std::path::Path, lines: usize) -> String {
         return String::new();
     }
     Command::new("tail")
-        .args(["-n", &lines.to_string(), &path.to_string_lossy().to_string()])
+        .args(["-n", &lines.to_string(), path.to_string_lossy().as_ref()])
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
@@ -713,7 +713,7 @@ pub async fn uninstall_agent(label: String) -> Result<serde_json::Value, String>
         // 5. Remove agent credentials from OS keychain
         match crate::credentials::delete_agent_credential(&label) {
             Ok(()) => add("Remove credentials", "complete", "Removed from keychain"),
-            Err(e) => add("Remove credentials", "warning", &format!("{}", e)),
+            Err(e) => add("Remove credentials", "warning", &e.to_string()),
         }
 
         Ok(serde_json::json!({ "label": label, "steps": steps }))
@@ -1115,10 +1115,10 @@ pub async fn install_agent(
         })();
 
         // Ensure child process is cleaned up regardless of read outcome
-        if read_result.is_err() {
+        if let Err(err) = read_result {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(read_result.unwrap_err());
+            return Err(err);
         }
 
         let exit_status = child

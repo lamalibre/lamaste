@@ -1,9 +1,9 @@
-/// OS credential storage for cloud provider API tokens and server P12 passwords.
-///
-/// macOS: uses `security-framework` crate (direct Keychain API — no CLI, no process listing exposure)
-/// Linux: uses `secret-tool` CLI (libsecret / GNOME Keyring) with stdin for secrets
-///
-/// Tokens and passwords are never stored in plaintext files or passed as CLI arguments.
+//! OS credential storage for cloud provider API tokens and server P12 passwords.
+//!
+//! macOS: uses `security-framework` crate (direct Keychain API — no CLI, no process listing exposure)
+//! Linux: uses `secret-tool` CLI (libsecret / GNOME Keyring) with stdin for secrets
+//!
+//! Tokens and passwords are never stored in plaintext files or passed as CLI arguments.
 
 // Keychain / libsecret service names follow the brand-split rule: ecosystem-level
 // surfaces (cloud, storage) live under `com.lamalibre.*`; product-level surfaces

@@ -292,7 +292,7 @@ fn validate_spaces_region(region: &str) -> Result<(), String> {
 /// must start and end with alphanumeric.
 fn validate_bucket_name(bucket: &str) -> Result<(), String> {
     let len = bucket.len();
-    if len < 3 || len > 63 {
+    if !(3..=63).contains(&len) {
         return Err("Bucket name must be 3-63 characters".to_string());
     }
     let bytes = bucket.as_bytes();
@@ -318,8 +318,7 @@ fn validate_provider(provider: &str) -> Result<(), String> {
 fn validate_domain(domain: &str) -> Result<(), String> {
     fn is_valid_label(label: &str) -> bool {
         let len = label.len();
-        len >= 1
-            && len <= 63
+        (1..=63).contains(&len)
             && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
             && label.as_bytes()[0].is_ascii_alphanumeric()
             && label.as_bytes()[len - 1].is_ascii_alphanumeric()
@@ -398,7 +397,7 @@ pub fn save_servers_registry(
 /// the credential store (keyed by server ID) and clear the field.
 /// Rewrites `servers.json` only if changes were made.
 fn migrate_p12_passwords(
-    servers: &mut Vec<ServerEntry>,
+    servers: &mut [ServerEntry],
     registry_path: &std::path::Path,
 ) -> Result<(), String> {
     let mut changed = false;
@@ -884,6 +883,9 @@ pub async fn get_cloud_domain_records(
 // Provisioning
 // ---------------------------------------------------------------------------
 
+// A Tauri command's parameters are the fields of the frontend's `invoke`
+// payload, named one by one; grouping them would change that contract.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn provision_server(
     app_handle: tauri::AppHandle,

@@ -62,7 +62,7 @@ pub async fn create_tunnel(
         {
             return Err("subdomain must be lowercase alphanumeric with hyphens".to_string());
         }
-        if port < 1 || port > 65_535 {
+        if !(1..=65_535).contains(&port) {
             return Err("port must be between 1 and 65535".to_string());
         }
 

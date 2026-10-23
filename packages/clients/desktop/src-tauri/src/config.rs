@@ -1,4 +1,4 @@
-use crate::branding::{user_ecosystem_root, user_product_root, ORG, PROJECT};
+use crate::branding::{user_ecosystem_root, user_product_root, PROJECT};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -9,11 +9,6 @@ use std::path::PathBuf;
 // Defaults are (~/.lamalibre/lamaste/, com.lamalibre.lamaste.*,
 // lamalibre-lamaste-*). The v3 rebrand from "lamaste" to "lamaste" is
 // therefore a single-line default change in `branding.rs`.
-
-/// Organization identifier — the company. Will not change.
-pub fn org() -> String {
-    ORG.to_string()
-}
 
 /// Project identifier — becomes "lamaste" at v3.
 pub fn project() -> String {
