@@ -616,7 +616,7 @@ test('the sites API manages no plugin-owned site; no tunnel takes its route or i
     accessMode: 'authenticated',
   });
   assert.equal(create.statusCode, 400, create.body);
-  assert.match(create.json().details, /already served: by the static site 'wf'/);
+  assert.match(create.json().details, /already served by a static site \('wf'\)/);
 });
 
 test('delete: the vhost, the entry, the trees and the site’s grants go', async () => {

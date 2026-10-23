@@ -1478,6 +1478,111 @@ agent_has_node_sqlite() {
 }
 
 # ---------------------------------------------------------------------------
+# The visitor VM (slices 6 and 7) — specs 40, 42 and 43
+# ---------------------------------------------------------------------------
+#
+# A person's browser: requests from the visitor VM, which reaches the relay's
+# hosts through /etc/hosts entries the specs write, and signs in to Authelia
+# with a password and a TOTP code (oathtool).
+
+VISITOR_VM="lamaste-visitor"
+
+visitor_exec() { multipass exec "${VISITOR_VM}" -- sudo bash -c "$1"; }
+
+# q <arguments...> — each quoted for the remote shell (printf %q), joined by spaces
+q() {
+  local out="" a
+  for a in "$@"; do out="${out} $(printf %q "$a")"; done
+  printf '%s' "${out# }"
+}
+
+# visit <cookie jar | -> <curl arguments...> — one request from the visitor
+# VM: the response headers, a blank line, the body, then the HTTP status on
+# a line of its own (visit_status, visit_headers, visit_body split them)
+visit() {
+  local jar="$1" cookies=""
+  shift
+  if [ "$jar" != "-" ]; then cookies="-b $(printf %q "$jar")"; fi
+  visitor_exec "curl -sk --max-time 20 -D - -w '\n%{http_code}' ${cookies} $(q "$@") || true" 2>/dev/null || echo "000"
+}
+visit_status() { printf '%s\n' "$1" | tail -n 1; }
+# Read to the end (no early exit): under pipefail the writer must not die of SIGPIPE.
+visit_headers() { printf '%s\n' "$1" | sed '$d' | tr -d '\r' | awk 'f == 0 && /^$/ {f = 1} f == 0 {print}'; }
+visit_body() { printf '%s\n' "$1" | sed '$d' | tr -d '\r' | awk 'f == 1 {print} f == 0 && /^$/ {f = 1}'; }
+
+# reset_totp <username> — a fresh TOTP secret for the user (the panel's
+# reset, as the admin); prints the base32 secret
+reset_totp() {
+  host_api_post "users/$1/reset-totp" '{}' 2>/dev/null | jq -r '.totpUri // empty' 2>/dev/null | sed -n 's/.*secret=\([A-Z2-7]*\).*/\1/p' || true
+}
+
+# sign_in <username> <password> <totp secret> <cookie jar> <host> — Authelia's
+# two factors from the visitor VM into <jar>, for a page of <host>; prints
+# "<first> <second>" (OK OK)
+sign_in() {
+  local body first code second
+  visitor_exec "rm -f $(printf %q "$4")" > /dev/null 2>&1 || true
+  body=$(jq -c -n --arg u "$1" --arg p "$2" --arg t "https://$5/" '{username: $u, password: $p, keepMeLoggedIn: false, targetURL: $t}')
+  first=$(visitor_exec "curl -sk --max-time 15 -c $(q "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://auth.${DOMAIN}/api/firstfactor") || true" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || true)
+  code=$(visitor_exec "oathtool --totp --base32 $(printf %q "$3")" 2>/dev/null | tail -n 1 || true)
+  body=$(jq -c -n --arg c "$code" --arg t "https://$5/" '{token: $c, targetURL: $t}')
+  second=$(visitor_exec "curl -sk --max-time 15 -b $(q "$4") -c $(q "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://auth.${DOMAIN}/api/secondfactor/totp") || true" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || true)
+  echo "${first:-none} ${second:-none}"
+}
+
+# session_cookie <jar> — the authelia_session cookie in a visitor's jar
+session_cookie() {
+  # shellcheck disable=SC2016 # an awk program, for the remote shell to pass on as it is
+  visitor_exec "awk $(printf %q '$6 == "authelia_session" {print $7}') $(printf %q "$1") || true" 2>/dev/null | tail -n 1 || true
+}
+
+# visitor_has_oathtool — the visitor VM can make Authelia's second factor
+visitor_has_oathtool() {
+  [ "$(visitor_exec "command -v oathtool > /dev/null && echo yes || echo no" 2>/dev/null | tail -n 1)" = "yes" ]
+}
+
+# tunnel_entry <id> — the tunnel as GET /api/tunnels lists it ('null' when gone)
+tunnel_entry() {
+  host_api_get "tunnels?limit=500" 2>/dev/null | jq -c --arg id "$1" '[.tunnels[]? | select(.id == $id)] | first // null' 2>/dev/null || echo "null"
+}
+
+# ---------------------------------------------------------------------------
+# Web surfaces (slice 7) — specs 42 and 43
+# ---------------------------------------------------------------------------
+#
+# The fixtures are write_app_install_fixture … <identity> <web tag>
+# (helpers.sh): a web tree under web/ in the server package, whose
+# index.html carries E2E_WEB_<tag>.
+
+# page <jar | -> <path> [curl arguments...] — a request for <path> on the
+# spec's host (FQDN) from the visitor VM, as visit prints it
+page() {
+  local jar="$1" path="$2"
+  shift 2
+  visit "$jar" "$@" "https://${FQDN}${path}"
+}
+page_status() { visit_status "$(page "$@")"; }
+
+# web_surface <plugin> — GET /api/plugins/<plugin>/web-surface's `webSurface` ('{}' when none)
+web_surface() {
+  host_api_get "plugins/$1/web-surface" 2>/dev/null | jq -c '.webSurface // {}' 2>/dev/null || echo '{}'
+}
+
+# web_served <plugin> — the plugin's web surface is served
+web_served() { [ "$(json_get "$(web_surface "$1")" '.served')" = "true" ]; }
+
+# tree_link <route> <current|previous> — the digest the relay's tree store
+# link names on the host VM ("" when there is none)
+tree_link() {
+  host_exec "readlink /var/www/lamaste/apps/$1/$2 2>/dev/null || true" 2>/dev/null | tr -d '\r\n' || true
+}
+
+# tree_dirs <route> — the trees the store holds, sorted, comma-separated
+tree_dirs() {
+  host_exec "ls /var/www/lamaste/apps/$1 2>/dev/null | grep -E '^[a-f0-9]{64}$' | sort | paste -sd, - || true" 2>/dev/null | tr -d '\r\n' || true
+}
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 
@@ -1498,6 +1603,9 @@ app_plugin_cleanup() {
     host_api_post "plugins/push-install/enable/${HOST_AGENT_LABEL}" "{\"durationMinutes\":15,\"policyId\":\"${PUSH_POLICY}\"}" > /dev/null 2>&1 || true
   fi
   for plugin in ${CLEAN_PLUGINS:-}; do
+    # A web surface outlives its plugin's uninstall: deleted first (its
+    # site, vhost, trees and grants).
+    host_api_delete "plugins/${plugin}/web-surface" > /dev/null 2>&1 || true
     deadline=$((SECONDS + 180))
     while [ "$SECONDS" -lt "$deadline" ]; do
       code=$(host_api_get_status "plugins/${plugin}")

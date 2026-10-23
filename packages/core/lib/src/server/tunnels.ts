@@ -553,7 +553,8 @@ export interface CreateTunnelOptions {
   agents: TunnelAgentDeps;
   /**
    * What else answers on the tunnel's hostname — a static site, one of its
-   * aliases — as a sentence, or null when nothing does. Asked under the
+   * aliases — as the end of a sentence ("by a static site ('blog')"), or
+   * null when nothing does. Asked under the
    * tunnel lock, which every workflow that gives a site a hostname takes
    * too, so a site and a tunnel never take one name at once.
    */
@@ -770,7 +771,7 @@ async function createTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntr
   const fqdn = `${subdomain}.${domain}`;
   const taken = opts.hostTaken ? await opts.hostTaken(fqdn) : null;
   if (taken !== null) {
-    throw new TunnelError(`Domain '${fqdn}' is already served: ${taken}`, 'SUBDOMAIN_IN_USE');
+    throw new TunnelError(`Domain '${fqdn}' is already served ${taken}`, 'SUBDOMAIN_IN_USE');
   }
   let certResult: CertResult;
 
@@ -1049,7 +1050,7 @@ async function toggleTunnelLocked(
     const taken = await opts.hostTaken(tunnel.fqdn);
     if (taken !== null) {
       throw new TunnelError(
-        `Domain '${tunnel.fqdn}' is already served: ${taken}`,
+        `Domain '${tunnel.fqdn}' is already served ${taken}`,
         'SUBDOMAIN_IN_USE',
       );
     }

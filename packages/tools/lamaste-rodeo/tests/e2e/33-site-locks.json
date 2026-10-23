@@ -1,0 +1,616 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 33,
+    "name": "Site locks",
+    "suite": "e2e",
+    "description": "33 — Site locks (Single-VM)",
+    "deps": [],
+    "requires": ["curl", "jq"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE sites/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "sites/${id}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE tunnels/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${id}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE certs/agent/${AGENT_LABEL_33}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL_33}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Set RACE_DIR",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-33-XXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "RACE_DIR",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "Set BIG_SIZE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stat -c %s \"${BIG_FILE}\""
+          },
+          "capture": [
+            {
+              "variable": "BIG_SIZE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "A ${BIG_SIZE}-byte file to upload",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "A ${BIG_SIZE}-byte file to upload"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\ncleanup\nRACE_DIR=$(mktemp -d /tmp/e2e-33-XXXXXX)\nBIG_FILE=\"${RACE_DIR}/big.bin\"\nhead -c $((24 * 1024 * 1024)) /dev/urandom > \"${BIG_FILE}\"\nBIG_SIZE=$(stat -c %s \"${BIG_FILE}\")\nlog_info \"A ${BIG_SIZE}-byte file to upload\""
+    },
+    {
+      "id": "an-upload-no-longer-undoes-a-change-made-while-it-ran",
+      "label": "An upload no longer undoes a change made while it ran",
+      "steps": [
+        {
+          "id": "step-8",
+          "label": "POST /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "sites",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CREATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Extract SITE_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SITE_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE"
+              },
+              "expression": ".site.id // empty"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Site ${SITE_NAME} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Site ${SITE_NAME} created"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Set STATUSES",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "upload_while_patching \"${WANT}\""
+          },
+          "capture": [
+            {
+              "variable": "STATUSES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "Round ${round}: the upload and the PATCH (spaMode ${WANT}) both answered 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STATUSES"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200 200"
+              },
+              "message": "Round ${round}: the upload and the PATCH (spaMode ${WANT}) both answered 200"
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Round ${round}: spaMode is ${WANT} — the upload did not write back the copy it read before",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(site_field '.spaMode')"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "WANT"
+              },
+              "message": "Round ${round}: spaMode is ${WANT} — the upload did not write back the copy it read before"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Set SIZE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "site_field '.totalSize'"
+          },
+          "capture": [
+            {
+              "variable": "SIZE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "The recorded size counts the upload (${SIZE} bytes)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The recorded size counts the upload (${SIZE} bytes)"
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "The recorded size is ${SIZE}, below the ${BIG_SIZE} bytes uploaded",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The recorded size is ${SIZE}, below the ${BIG_SIZE} bytes uploaded"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"An upload no longer undoes a change made while it ran\"\n# ---------------------------------------------------------------------------\n\nCREATE=$(api_post \"sites\" \"{\\\"name\\\":\\\"${SITE_NAME}\\\",\\\"type\\\":\\\"managed\\\",\\\"spaMode\\\":false}\")\nSITE_ID=$(echo \"$CREATE\" | jq -r '.site.id // empty' 2>/dev/null || echo \"\")\nassert_json_field \"$CREATE\" '.ok' 'true' \"Site ${SITE_NAME} created\" || true\n\nfor round in 1 2 3; do\n  if [ $((round % 2)) -eq 1 ]; then WANT=true; else WANT=false; fi\n  STATUSES=$(upload_while_patching \"${WANT}\")\n  assert_eq \"${STATUSES}\" \"200 200\" \"Round ${round}: the upload and the PATCH (spaMode ${WANT}) both answered 200\" || true\n  assert_eq \"$(site_field '.spaMode')\" \"${WANT}\" \"Round ${round}: spaMode is ${WANT} — the upload did not write back the copy it read before\" || true\ndone\nSIZE=$(site_field '.totalSize')\nif [ \"${SIZE:-0}\" -ge \"${BIG_SIZE}\" ]; then\n  log_pass \"The recorded size counts the upload (${SIZE} bytes)\"\nelse\n  log_fail \"The recorded size is ${SIZE}, below the ${BIG_SIZE} bytes uploaded\"\nfi"
+    },
+    {
+      "id": "two-sites-under-one-name-at-once-one-is-created",
+      "label": "Two sites under one name at once: one is created",
+      "steps": [
+        {
+          "id": "step-20",
+          "label": "Set RESULT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "race first sites \"$BODY\" second sites \"$BODY\""
+          },
+          "capture": [
+            {
+              "variable": "RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "Statuses: ${RESULT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Statuses: ${RESULT}"
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Set CREATED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$RESULT\" | grep -o ':201' | wc -l | tr -d ' '"
+          },
+          "capture": [
+            {
+              "variable": "CREATED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Set REFUSED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$RESULT\" | grep -o ':400' | wc -l | tr -d ' '"
+          },
+          "capture": [
+            {
+              "variable": "REFUSED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Exactly one created (201), the other refused (400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${CREATED} ${REFUSED}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1 1"
+              },
+              "message": "Exactly one created (201), the other refused (400)"
+            }
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "GET /api/sites?limit=500",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites?limit=500"
+          },
+          "capture": [
+            {
+              "variable": "TWINS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "sites.json holds one site of that name",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TWINS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "sites.json holds one site of that name"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Two sites under one name at once: one is created\"\n# ---------------------------------------------------------------------------\n\nBODY=\"{\\\"name\\\":\\\"${TWIN_NAME}\\\",\\\"type\\\":\\\"managed\\\"}\"\nRESULT=$(race first sites \"$BODY\" second sites \"$BODY\")\nlog_info \"Statuses: ${RESULT}\"\nCREATED=$(echo \"$RESULT\" | grep -o ':201' | wc -l | tr -d ' ')\nREFUSED=$(echo \"$RESULT\" | grep -o ':400' | wc -l | tr -d ' ')\nassert_eq \"${CREATED} ${REFUSED}\" \"1 1\" \"Exactly one created (201), the other refused (400)\" || true\nTWINS=$(api_get \"sites?limit=500\" | jq --arg n \"${TWIN_NAME}\" '[.sites[] | select(.name == $n)] | length' 2>/dev/null || echo \"?\")\nassert_eq \"${TWINS}\" \"1\" \"sites.json holds one site of that name\" || true"
+    },
+    {
+      "id": "a-tunnel-and-a-site-on-one-hostname-at-once-one-gets-it",
+      "label": "A tunnel and a site on one hostname at once: one gets it",
+      "steps": [
+        {
+          "id": "step-27",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "AGENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Agent enrolled to own the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AGENT"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent enrolled to own the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set RESULT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "race tunnel tunnels \"$TUNNEL_BODY\" site sites \"$SITE_BODY\""
+          },
+          "capture": [
+            {
+              "variable": "RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Statuses: ${RESULT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Statuses: ${RESULT}"
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Set WON",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$RESULT\" | grep -oE ':20[01]' | wc -l | tr -d ' '"
+          },
+          "capture": [
+            {
+              "variable": "WON",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Set LOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$RESULT\" | grep -o ':400' | wc -l | tr -d ' '"
+          },
+          "capture": [
+            {
+              "variable": "LOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Exactly one of them got ${RACE_NAME}, the other was refused (400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${WON} ${LOST}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1 1"
+              },
+              "message": "Exactly one of them got ${RACE_NAME}, the other was refused (400)"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "GET /api/tunnels?limit=500",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels?limit=500"
+          },
+          "capture": [
+            {
+              "variable": "TUNNELS_ON",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "GET /api/sites?limit=500",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites?limit=500"
+          },
+          "capture": [
+            {
+              "variable": "SITES_ON",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "One vhost answers on ${RACE_NAME} — a tunnel (${TUNNELS_ON}) or a site (${SITES_ON}), never both",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$((TUNNELS_ON + SITES_ON))"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "One vhost answers on ${RACE_NAME} — a tunnel (${TUNNELS_ON}) or a site (${SITES_ON}), never both"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"A tunnel and a site on one hostname at once: one gets it\"\n# ---------------------------------------------------------------------------\n\nAGENT=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL_33}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$AGENT\" '.ok' 'true' \"Agent enrolled to own the tunnel\" || true\nTUNNEL_BODY=\"{\\\"subdomain\\\":\\\"${RACE_NAME}\\\",\\\"port\\\":19933,\\\"description\\\":\\\"site lock race\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL_33}\\\"}\"\nSITE_BODY=\"{\\\"name\\\":\\\"${RACE_NAME}\\\",\\\"type\\\":\\\"managed\\\"}\"\nRESULT=$(race tunnel tunnels \"$TUNNEL_BODY\" site sites \"$SITE_BODY\")\nlog_info \"Statuses: ${RESULT}\"\nWON=$(echo \"$RESULT\" | grep -oE ':20[01]' | wc -l | tr -d ' ')\nLOST=$(echo \"$RESULT\" | grep -o ':400' | wc -l | tr -d ' ')\nassert_eq \"${WON} ${LOST}\" \"1 1\" \"Exactly one of them got ${RACE_NAME}, the other was refused (400)\" || true\nTUNNELS_ON=$(api_get \"tunnels?limit=500\" | jq --arg n \"${RACE_NAME}\" '[.tunnels[] | select(.subdomain == $n)] | length' 2>/dev/null || echo \"?\")\nSITES_ON=$(api_get \"sites?limit=500\" | jq --arg n \"${RACE_NAME}\" '[.sites[] | select(.name == $n)] | length' 2>/dev/null || echo \"?\")\nassert_eq \"$((TUNNELS_ON + SITES_ON))\" \"1\" \"One vhost answers on ${RACE_NAME} — a tunnel (${TUNNELS_ON}) or a site (${SITES_ON}), never both\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 33 — Site locks (Single-VM)\n# ============================================================================\n# 4.6 serializes every change of sites.json, and gives a site or a tunnel a\n# hostname under the tunnel lock (slice 7, wave 2). Before, each handler read\n# sites.json, decided, and wrote it back on its own:\n#\n# 1. An upload recorded the site's size into a copy of sites.json read\n#    before the upload — overwriting a settings change made meanwhile. Here\n#    a PATCH lands while a large upload is in flight, three times: the\n#    setting each PATCH made stays, and the size counts the upload.\n# 2. Two sites created under one name at the same moment: exactly one is\n#    created, the other refused.\n# 3. A tunnel and a site created on one hostname at the same moment — the\n#    tunnel's check of the sites ran before its lock: exactly one of them\n#    gets it.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nbegin_test \"33 — Site locks\"\n\nRUN_ID=\"$(date +%s)\"\nSITE_NAME=\"e2e33lock\"\nSITE_ID=\"\"\nTWIN_NAME=\"e2e33twin\"\nRACE_NAME=\"e2e33race\"\nAGENT_LABEL_33=\"site-lock-e2e-${RUN_ID}\"\nBIG_FILE=\"\"\nRACE_DIR=\"\"\n\ncleanup() {\n  local id\n  for id in $(api_get \"sites?limit=500\" 2>/dev/null | jq -r --arg a \"${SITE_NAME}\" --arg b \"${TWIN_NAME}\" --arg c \"${RACE_NAME}\" '.sites[]? | select(.name == $a or .name == $b or .name == $c) | .id' 2>/dev/null || true); do\n    api_delete \"sites/${id}\" > /dev/null 2>&1 || true\n  done\n  for id in $(api_get \"tunnels?limit=500\" 2>/dev/null | jq -r --arg c \"${RACE_NAME}\" '.tunnels[]? | select(.subdomain == $c) | .id' 2>/dev/null || true); do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${AGENT_LABEL_33}\" > /dev/null 2>&1 || true\n  if [ -n \"${BIG_FILE}\" ]; then rm -f \"${BIG_FILE}\"; fi\n  if [ -n \"${RACE_DIR}\" ]; then rm -rf \"${RACE_DIR}\"; fi\n}\ntrap cleanup EXIT\n\n# site_field <jq> — of the lock site as GET /api/sites lists it\nsite_field() {\n  api_get \"sites?limit=500\" | jq -r --arg id \"${SITE_ID}\" \".sites[] | select(.id == \\$id) | $1\" 2>/dev/null || echo \"\"\n}\n\n# upload_while_patching <spaMode> — a large upload, and a PATCH of spaMode\n# while it is in flight; prints \"<upload status> <patch status>\"\nupload_while_patching() {\n  local out=\"${RACE_DIR}/upload.status\" patch\n  _curl_mtls -o /dev/null -w '%{http_code}' -X POST -F \"file=@${BIG_FILE}\" \\\n    \"${BASE_URL}/api/sites/${SITE_ID}/files\" > \"$out\" 2> /dev/null &\n  local pid=$!\n  sleep 0.1\n  patch=$(api_patch_status \"sites/${SITE_ID}\" \"{\\\"spaMode\\\":$1}\")\n  wait \"$pid\" || true\n  echo \"$(cat \"$out\" 2> /dev/null || echo 000) ${patch}\"\n}\n\n# race <label> <api path> <json> <label> <api path> <json> — two POSTs at\n# the same moment; prints \"<label>:<status> <label>:<status>\"\nrace() {\n  _curl_mtls -o /dev/null -w '%{http_code}' -X POST -H \"Content-Type: application/json\" -d \"$3\" \\\n    \"${BASE_URL}/api/$2\" > \"${RACE_DIR}/$1\" 2> /dev/null &\n  local a=$!\n  _curl_mtls -o /dev/null -w '%{http_code}' -X POST -H \"Content-Type: application/json\" -d \"$6\" \\\n    \"${BASE_URL}/api/$5\" > \"${RACE_DIR}/$4\" 2> /dev/null &\n  local b=$!\n  wait \"$a\" || true\n  wait \"$b\" || true\n  echo \"$1:$(cat \"${RACE_DIR}/$1\" 2> /dev/null || echo 000) $4:$(cat \"${RACE_DIR}/$4\" 2> /dev/null || echo 000)\"\n}\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

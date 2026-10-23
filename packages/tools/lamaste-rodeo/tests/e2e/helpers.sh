@@ -2075,6 +2075,13 @@ FIXTURE_EOF
 # line `<ISO time> <method> <path>` (the raw path, never the query) for every
 # request that reaches it, before anything else looks at the request — what
 # proves that something never reached it.
+# <web> (slice 7; default none): a tag (letters, digits) puts a web surface
+# in the manifest — `userSurface.web` on subdomain <web-subdomain> (default
+# <name> without hyphens) — and a web tree in the server package under
+# `web/`: index.html carrying the marker E2E_WEB_<tag> (and loading
+# app-<tag>.js), app-<tag>.js, style.css and only-<tag>.js, a file no other
+# tag's tree has (what the previous tree serves after an update). Needs an
+# identity variant.
 # <build-id> goes into the agent package, so each run's tarballs — and their
 # integrity — are new: an agent's npm cache never answers for the registry.
 # Needs node, this workspace's node_modules (esbuild) and its core library
@@ -2084,9 +2091,11 @@ write_app_install_fixture() {
   local system_packages="${6:-[\"sqlite3\"]}"
   local settings_schema="${7:-none}"
   local identity_variant="${8:-none}"
+  local web_tag="${9:-none}"
+  local web_subdomain="${10:-${name//-/}}"
   local server_pkg="@lamalibre/${name}-server"
   local agent_pkg="@lamalibre/${name}-agent"
-  local here deps='' settings_entry='' identity_entry=''
+  local here deps='' settings_entry='' identity_entry='' web_entry='' server_files='"index.js", "lamaste-plugin.json"'
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   case "$mode" in
     main | failpost | deps | tampered) ;;
@@ -2115,11 +2124,40 @@ write_app_install_fixture() {
     identity_entry=",
   \"identity\": ${identity_entry}"
   fi
+  if [ "$web_tag" != "none" ]; then
+    if [ "$identity_variant" = "none" ] || ! [[ "$web_tag" =~ ^[a-z0-9]+$ ]] || ! [[ "$web_subdomain" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+      echo "write_app_install_fixture: a web surface needs an identity variant, a tag of letters and digits and a DNS label" >&2
+      return 2
+    fi
+    web_entry=",
+  \"userSurface\": { \"web\": { \"defaultSubdomain\": \"${web_subdomain}\", \"root\": \"web\" } }"
+    server_files="${server_files}, \"web\""
+  fi
   if [ "$mode" = "deps" ]; then
     deps=',
   "dependencies": { "left-pad": "1.3.0" }'
   fi
   mkdir -p "${dir}/server" "${dir}/agent/dist" "${dir}/agent-src"
+  if [ "$web_tag" != "none" ]; then
+    mkdir -p "${dir}/server/web"
+    cat > "${dir}/server/web/index.html" <<FIXTURE_EOF
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>E2E web surface ${web_tag}</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app-${web_tag}.js"></script>
+  </head>
+  <body>
+    <main id="app">E2E_WEB_${web_tag}</main>
+  </body>
+</html>
+FIXTURE_EOF
+    printf "document.getElementById('app').dataset.tag = '%s';\n" "${web_tag}" > "${dir}/server/web/app-${web_tag}.js"
+    printf 'main { font-family: sans-serif; } /* %s */\n' "${web_tag}" > "${dir}/server/web/style.css"
+    printf "export const only = '%s';\n" "${web_tag}" > "${dir}/server/web/only-${web_tag}.js"
+  fi
 
   cat > "${dir}/server/package.json" <<FIXTURE_EOF
 {
@@ -2128,7 +2166,7 @@ write_app_install_fixture() {
   "description": "Lamaste e2e fixture: an app plugin whose agent half Lamaste installs (${mode})",
   "type": "module",
   "main": "index.js",
-  "files": ["index.js", "lamaste-plugin.json"],
+  "files": [${server_files}],
   "license": "PolyForm-Noncommercial-1.0.0"
 }
 FIXTURE_EOF
@@ -2161,7 +2199,7 @@ FIXTURE_EOF
       "install": { "pre-tunnel": {}, "post-tunnel": {} },
       "uninstall": { "pre-teardown": {}, "post-teardown": {} }
     }
-  }${settings_entry}${identity_entry}
+  }${settings_entry}${identity_entry}${web_entry}
 }
 FIXTURE_EOF
   # The agent half's own copy of the manifest: its settings block is the

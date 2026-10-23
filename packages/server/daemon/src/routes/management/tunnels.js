@@ -229,7 +229,7 @@ function maxBodyCeiling(request) {
 async function siteServing(fqdn) {
   const sites = await readSites();
   const site = sites.find((s) => s.fqdn === fqdn || (s.aliases ?? []).includes(fqdn));
-  return site ? `by the static site '${site.name}'` : null;
+  return site ? `by a static site ('${site.name}')` : null;
 }
 
 /**

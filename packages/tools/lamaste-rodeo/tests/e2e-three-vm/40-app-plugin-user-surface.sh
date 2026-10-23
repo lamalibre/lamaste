@@ -76,7 +76,6 @@ LOCAL_TMP=""
 CLEAN_PLUGINS="${PLUGIN}"
 CLEAN_ROUTES="${PLUGIN}"
 PURGE_PACKAGES=""
-VISITOR_VM="lamaste-visitor"
 VIEWER="e2e40-viewer"
 NOROLE="e2e40-norole"
 # Test credentials for this run only, never printed
@@ -103,57 +102,11 @@ VIEWER_ID=""
 NOROLE_ID=""
 TUNNEL_GRANT_ID=""
 
-# ---------------------------------------------------------------------------
-# The visitor VM
-# ---------------------------------------------------------------------------
-
-visitor_exec() { multipass exec "${VISITOR_VM}" -- sudo bash -c "$1"; }
-
-# q <arguments...> — each quoted for the remote shell (printf %q), joined by spaces
-q() {
-  local out="" a
-  for a in "$@"; do out="${out} $(printf %q "$a")"; done
-  printf '%s' "${out# }"
-}
-
-# visit <cookie jar | -> <curl arguments...> — one request from the visitor
-# VM: the response headers, a blank line, the body, then the HTTP status on
-# a line of its own (visit_status, visit_headers, visit_body split them)
-visit() {
-  local jar="$1" cookies=""
-  shift
-  if [ "$jar" != "-" ]; then cookies="-b $(printf %q "$jar")"; fi
-  visitor_exec "curl -sk --max-time 20 -D - -w '\n%{http_code}' ${cookies} $(q "$@") || true" 2>/dev/null || echo "000"
-}
-visit_status() { printf '%s\n' "$1" | tail -n 1; }
-# Read to the end (no early exit): under pipefail the writer must not die of SIGPIPE.
-visit_headers() { printf '%s\n' "$1" | sed '$d' | tr -d '\r' | awk 'f == 0 && /^$/ {f = 1} f == 0 {print}'; }
-visit_body() { printf '%s\n' "$1" | sed '$d' | tr -d '\r' | awk 'f == 1 {print} f == 0 && /^$/ {f = 1}'; }
-
 # viewer_echo_status — the HTTP status of the viewer's GET /api/<route>/app/echo
 viewer_echo_status() { visit_status "$(visit "${JAR_VIEWER}" "https://${FQDN}${APP}/echo")"; }
 viewer_gets() { [ "$(viewer_echo_status)" = "$1" ]; }
 # anonymous_gets <status> — the same without a session
 anonymous_gets() { [ "$(visit_status "$(visit - "https://${FQDN}${APP}/echo")")" = "$1" ]; }
-
-# reset_totp <username> — a fresh TOTP secret for the user (the panel's
-# reset, as the admin); prints the base32 secret
-reset_totp() {
-  host_api_post "users/$1/reset-totp" '{}' 2>/dev/null | jq -r '.totpUri // empty' 2>/dev/null | sed -n 's/.*secret=\([A-Z2-7]*\).*/\1/p' || true
-}
-
-# sign_in <username> <password> <totp secret> <cookie jar> — Authelia's two
-# factors from the visitor VM into <jar>; prints "<first> <second>" (OK OK)
-sign_in() {
-  local body first code second
-  visitor_exec "rm -f $(printf %q "$4")" > /dev/null 2>&1 || true
-  body=$(jq -c -n --arg u "$1" --arg p "$2" --arg t "https://${FQDN}/" '{username: $u, password: $p, keepMeLoggedIn: false, targetURL: $t}')
-  first=$(visitor_exec "curl -sk --max-time 15 -c $(q "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://auth.${DOMAIN}/api/firstfactor") || true" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || true)
-  code=$(visitor_exec "oathtool --totp --base32 $(printf %q "$3")" 2>/dev/null | tail -n 1 || true)
-  body=$(jq -c -n --arg c "$code" --arg t "https://${FQDN}/" '{token: $c, targetURL: $t}')
-  second=$(visitor_exec "curl -sk --max-time 15 -b $(q "$4") -c $(q "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://auth.${DOMAIN}/api/secondfactor/totp") || true" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || true)
-  echo "${first:-none} ${second:-none}"
-}
 
 # sign_in_both — both users, after one wait into a fresh TOTP window (a code
 # already used in the current one is refused); logs the outcome
@@ -166,14 +119,8 @@ sign_in_both() {
     return 0
   fi
   wait_for_next_totp_window
-  assert_eq "$(sign_in "${VIEWER}" "${VIEWER_PASSWORD}" "${secret_v}" "${JAR_VIEWER}")" "OK OK" "${VIEWER} signed in from the visitor VM (password, TOTP)" || true
-  assert_eq "$(sign_in "${NOROLE}" "${NOROLE_PASSWORD}" "${secret_n}" "${JAR_NOROLE}")" "OK OK" "${NOROLE} signed in from the visitor VM" || true
-}
-
-# session_cookie <jar> — the authelia_session cookie in a visitor's jar
-session_cookie() {
-  # shellcheck disable=SC2016 # an awk program, for the remote shell to pass on as it is
-  visitor_exec "awk $(printf %q '$6 == "authelia_session" {print $7}') $(printf %q "$1") || true" 2>/dev/null | tail -n 1 || true
+  assert_eq "$(sign_in "${VIEWER}" "${VIEWER_PASSWORD}" "${secret_v}" "${JAR_VIEWER}" "${FQDN}")" "OK OK" "${VIEWER} signed in from the visitor VM (password, TOTP)" || true
+  assert_eq "$(sign_in "${NOROLE}" "${NOROLE_PASSWORD}" "${secret_n}" "${JAR_NOROLE}" "${FQDN}")" "OK OK" "${NOROLE} signed in from the visitor VM" || true
 }
 
 # gatekeeper_assertion <method> <path> <cookie> — on the host VM, what
@@ -188,11 +135,6 @@ gatekeeper_assertion() {
 # sent to the panel's loopback listener on the host VM: the body, then the status
 panel_direct() {
   host_exec "curl -s --max-time 15 -X $1 -w '\n%{http_code}' $(q -H "X-Lamalibre-Relay-Assertion: $3" "http://127.0.0.1:3100$2") || true" 2>/dev/null || echo "000"
-}
-
-# tunnel_entry <id> — the tunnel as GET /api/tunnels lists it ('null' when gone)
-tunnel_entry() {
-  host_api_get "tunnels?limit=500" 2>/dev/null | jq -c --arg id "$1" '[.tunnels[]? | select(.id == $id)] | first // null' 2>/dev/null || echo "null"
 }
 
 # write_cookie_backend <file> — cookie-backend.py, the bound tunnel's own
@@ -289,7 +231,7 @@ else
   end_test
   exit $?
 fi
-if [ "$(visitor_exec "command -v oathtool > /dev/null && echo yes || echo no" 2>/dev/null | tail -n 1)" = "yes" ]; then
+if visitor_has_oathtool; then
   log_pass "The visitor VM has oathtool (Authelia's second factor)"
 else
   log_fail "The visitor VM has no oathtool: no one can sign in to reach the user surface"
