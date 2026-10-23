@@ -32,6 +32,7 @@ import {
 } from './chisel-service.js';
 import { ensureAgentChiselBinary } from './chisel-binary.js';
 import { isAgentEnabled, isAgentLoaded, loadAgent, unloadAgent } from './service.js';
+import { HOSTNAME_REGEX } from '../constants.js';
 import { withAgentLock } from './agent-lock.js';
 import { parseAppPluginAssignments, syncAppPluginConfigs } from './app-plugins.js';
 import type { AppPluginPanelCalls, AppPluginSyncResult } from './app-plugins.js';
@@ -99,9 +100,6 @@ export interface ConvergeResult {
   readonly warnings: readonly string[];
 }
 
-const HOSTNAME_RE =
-  /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
-
 /**
  * The domain this agent enrolled with. Agents set up before the domain was
  * recorded adopt the one their (pinned) panel reports, once.
@@ -121,7 +119,7 @@ async function enrolledDomain(
     }
     return config.domain;
   }
-  if (reported === null || !HOSTNAME_RE.test(reported)) {
+  if (reported === null || !HOSTNAME_REGEX.test(reported)) {
     throw new Error('The panel did not report a valid domain');
   }
   const fresh = await requireAgentConfig(label);

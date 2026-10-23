@@ -35,11 +35,21 @@
  * nothing of it, so no agent but the hosting one can answer on the host
  * whose sessions reach the plugin's users.
  *
+ * A plugin that declares a web surface (`userSurface.web`) gets a host of
+ * its own: a site it owns (`SiteEntry.owner` in `sites.json`), whose route
+ * is its owner's and which serves the plugin's shell beside the API. Such a
+ * site's route is served while the plugin is hosted at all. Everything that
+ * resolves a host — the panel, Gatekeeper, the vhost renderer — reads both
+ * kinds through {@link userSurfaceHosts}, which also keeps a route that two
+ * hosts claim from being served on either.
+ *
  * Pure; shared by the root (caller and relay assertions) and the server
  * subpath (the forwarder, the tunnel workflows).
  */
 
-import { AGENT_LABEL_REGEX, RESERVED_API_PREFIXES } from './constants.js';
+import { AGENT_LABEL_REGEX, HOSTNAME_REGEX, RESERVED_API_PREFIXES } from './constants.js';
+import { WEB_SURFACE_ACCESS_MODES } from './web-surface.js';
+import type { WebSurfaceAccessMode } from './web-surface.js';
 
 /** The agent half's user surface, the only prefix a `user` caller reaches. */
 export const AGENT_HALF_APP_PREFIX = '/app';
@@ -267,4 +277,128 @@ export function tunnelServedUserSurfaceRoutes(tunnels: unknown, tunnel: unknown)
   const agent = (tunnel as { agentLabel?: unknown }).agentLabel;
   if (typeof agent !== 'string' || !AGENT_LABEL_REGEX.test(agent)) return [];
   return routes.filter((route) => userSurfaceHostingAgent(tunnels, route) === agent);
+}
+
+/**
+ * The plugin route a site entry as `sites.json` stores it owns
+ * (`owner: { plugin }`), read defensively: a valid route
+ * ({@link isUserSurfaceRoute}), or null — a site no plugin owns, or one
+ * whose owner is malformed, serves no user surface.
+ */
+export function siteUserSurfaceRoute(site: unknown): string | null {
+  if (!site || typeof site !== 'object') return null;
+  const owner = (site as { owner?: unknown }).owner;
+  if (!owner || typeof owner !== 'object' || Array.isArray(owner)) return null;
+  const plugin = (owner as { plugin?: unknown }).plugin;
+  return isUserSurfaceRoute(plugin) ? plugin : null;
+}
+
+/** A host that serves user surfaces: a bound tunnel, or a plugin-owned site. */
+export interface UserSurfaceHost {
+  readonly kind: 'tunnel' | 'site';
+  /** The tunnel's or the site's id. */
+  readonly id: string;
+  /** Lower case. */
+  readonly fqdn: string;
+  /** A site is always enabled; a tunnel unless `enabled: false`. */
+  readonly enabled: boolean;
+  readonly accessMode: WebSurfaceAccessMode;
+  /** The routes bound to the host (a site: its owner's). */
+  readonly routes: readonly string[];
+  /**
+   * Of `routes`, those the host serves as far as the state files tell: a
+   * tunnel's whose plugin its agent hosts, a site's whose plugin is
+   * hosted — and in both cases bound to no other host. Whether the
+   * plugin's installed version is approved and declares identity is the
+   * panel's to decide.
+   */
+  readonly served: readonly string[];
+}
+
+function hostBase(
+  entry: unknown,
+): { id: string; fqdn: string; accessMode: WebSurfaceAccessMode } | null {
+  const e = entry as { id?: unknown; fqdn?: unknown; accessMode?: unknown };
+  if (typeof e.id !== 'string' || e.id.length === 0 || typeof e.fqdn !== 'string') return null;
+  const fqdn = e.fqdn.toLowerCase();
+  if (!HOSTNAME_REGEX.test(fqdn)) return null;
+  // A public host serves no user surface. A missing or unknown mode reads
+  // as the stricter one, as Gatekeeper reads it.
+  if (e.accessMode === 'public') return null;
+  const accessMode = (WEB_SURFACE_ACCESS_MODES as readonly unknown[]).includes(e.accessMode)
+    ? (e.accessMode as WebSurfaceAccessMode)
+    : 'restricted';
+  return { id: e.id, fqdn, accessMode };
+}
+
+/**
+ * Every host that serves user surfaces, from the state files as they are
+ * stored (read defensively, as {@link tunnelUserSurfaceRoutes} reads a
+ * binding; a missing or unknown access mode reads as `restricted`, and a
+ * public host serves none): the bound tunnels and the plugin-owned sites
+ * ({@link siteUserSurfaceRoute}). A route bound to more than one host is
+ * served on none, and a host whose fqdn another host shares is left out
+ * altogether: two answers to "who serves this" mean no one does.
+ *
+ * @param tunnels - every entry of `tunnels.json` (the internal tunnels among them)
+ * @param sites - every entry of `sites.json`
+ */
+export function userSurfaceHosts(tunnels: unknown, sites: unknown): UserSurfaceHost[] {
+  const candidates: Array<Omit<UserSurfaceHost, 'served'> & { hosted: readonly string[] }> = [];
+  for (const tunnel of Array.isArray(tunnels) ? (tunnels as unknown[]) : []) {
+    const routes = tunnelUserSurfaceRoutes(tunnel);
+    if (routes.length === 0) continue;
+    const base = hostBase(tunnel);
+    if (!base) continue;
+    candidates.push({
+      kind: 'tunnel',
+      ...base,
+      enabled: (tunnel as { enabled?: unknown }).enabled !== false,
+      routes,
+      hosted: tunnelServedUserSurfaceRoutes(tunnels, tunnel),
+    });
+  }
+  for (const site of Array.isArray(sites) ? (sites as unknown[]) : []) {
+    const route = siteUserSurfaceRoute(site);
+    if (route === null) continue;
+    const base = hostBase(site);
+    if (!base) continue;
+    candidates.push({
+      kind: 'site',
+      ...base,
+      enabled: true,
+      routes: [route],
+      hosted: userSurfaceHostingAgent(tunnels, route) === null ? [] : [route],
+    });
+  }
+
+  const claims = new Map<string, number>();
+  const fqdns = new Map<string, number>();
+  for (const host of candidates) {
+    for (const route of host.routes) claims.set(route, (claims.get(route) ?? 0) + 1);
+    fqdns.set(host.fqdn, (fqdns.get(host.fqdn) ?? 0) + 1);
+  }
+  return candidates
+    .filter((host) => fqdns.get(host.fqdn) === 1)
+    .map(({ hosted, ...host }) => ({
+      ...host,
+      served: hosted.filter((route) => claims.get(route) === 1),
+    }));
+}
+
+/** The host named `fqdn` (any case) among `hosts`, or null. */
+export function userSurfaceHostByFqdn(
+  hosts: readonly UserSurfaceHost[],
+  fqdn: string,
+): UserSurfaceHost | null {
+  const name = fqdn.toLowerCase();
+  return hosts.find((host) => host.fqdn === name) ?? null;
+}
+
+/** The enabled host that serves `route`, or null. */
+export function userSurfaceHostServing(
+  hosts: readonly UserSurfaceHost[],
+  route: string,
+): UserSurfaceHost | null {
+  return hosts.find((host) => host.enabled && host.served.includes(route)) ?? null;
 }

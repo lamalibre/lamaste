@@ -55,19 +55,50 @@ function parsePax(data: Buffer): Record<string, string> {
   return out;
 }
 
+const TARBALL_ENTRY_PROBLEMS = {
+  NOT_REGULAR_FILE: 'is not a regular file',
+  TOO_LARGE: 'is too large',
+  DUPLICATE: 'is in the archive twice',
+} as const;
+
 /**
- * Return the files of `wanted` (archive paths such as
- * `package/lamaste-plugin.json`) found in the gzip tarball `tgz`. Paths not
- * present are simply absent from the result. Throws on a corrupt archive or
- * a limit.
+ * An entry of a tarball that a tree read refuses (see
+ * {@link readTarballTree}): `NOT_REGULAR_FILE`, `TOO_LARGE` or `DUPLICATE`.
+ * `entry` is its archive path.
  */
-export function readTarballFiles(
+export class TarballEntryError extends Error {
+  constructor(
+    readonly entry: string,
+    readonly reason: keyof typeof TARBALL_ENTRY_PROBLEMS,
+  ) {
+    super(`${entry} ${TARBALL_ENTRY_PROBLEMS[reason]}`);
+    this.name = 'TarballEntryError';
+  }
+}
+
+/** One entry of a tarball, as {@link walkTarball} hands it out. */
+interface TarballEntry {
+  /** The archive path (`package/…`). */
+  readonly name: string;
+  /** A regular file (`0`, NUL or `7`). */
+  readonly isFile: boolean;
+  /** A directory (`5`). */
+  readonly isDirectory: boolean;
+  readonly size: number;
+  /** The content (a copy); only meaningful for a regular file. */
+  data(): Buffer;
+}
+
+/**
+ * Visit every entry of the gzip tarball `tgz` but PAX headers, in archive
+ * order. Throws on a corrupt archive or an archive over the limit.
+ */
+function walkTarball(
   tgz: Buffer,
-  wanted: ReadonlySet<string>,
-  limits: TarballLimits = DEFAULT_TARBALL_LIMITS,
-): Map<string, Buffer> {
+  limits: TarballLimits,
+  visit: (entry: TarballEntry) => void,
+): void {
   const tar = gunzipSync(tgz, { maxOutputLength: limits.maxArchiveBytes });
-  const found = new Map<string, Buffer>();
   let at = 0;
   let paxPath: string | null = null;
   while (at + BLOCK <= tar.length) {
@@ -88,13 +119,60 @@ export function readTarballFiles(
       const prefix = cString(header, 345, 155);
       const fullName = paxPath ?? (prefix ? `${prefix}/${name}` : name);
       paxPath = null;
-      const isFile = type === '0' || type === '\0' || type === '7';
-      if (isFile && wanted.has(fullName)) {
-        if (size > limits.maxFileBytes) throw new Error(`${fullName} is too large`);
-        found.set(fullName, Buffer.from(tar.subarray(dataStart, dataEnd)));
-      }
+      visit({
+        name: fullName,
+        isFile: type === '0' || type === '\0' || type === '7',
+        isDirectory: type === '5',
+        size,
+        data: () => Buffer.from(tar.subarray(dataStart, dataEnd)),
+      });
     }
     at = dataStart + Math.ceil(size / BLOCK) * BLOCK;
   }
+}
+
+/**
+ * Return the files of `wanted` (archive paths such as
+ * `package/lamaste-plugin.json`) found in the gzip tarball `tgz`. Paths not
+ * present are simply absent from the result. Throws on a corrupt archive or
+ * a limit.
+ */
+export function readTarballFiles(
+  tgz: Buffer,
+  wanted: ReadonlySet<string>,
+  limits: TarballLimits = DEFAULT_TARBALL_LIMITS,
+): Map<string, Buffer> {
+  const found = new Map<string, Buffer>();
+  walkTarball(tgz, limits, (entry) => {
+    if (!entry.isFile || !wanted.has(entry.name)) return;
+    if (entry.size > limits.maxFileBytes) throw new Error(`${entry.name} is too large`);
+    found.set(entry.name, entry.data());
+  });
+  return found;
+}
+
+/**
+ * Return every regular file under the archive directory `dir` (such as
+ * `package/web`) of the gzip tarball `tgz`, keyed by its path relative to
+ * `dir`. Directories are skipped; any other entry under `dir` — a link, a
+ * device — throws {@link TarballEntryError}, as does a file over the limit
+ * or one the archive holds twice: a tree read this way is all regular
+ * files, or not read at all.
+ */
+export function readTarballTree(
+  tgz: Buffer,
+  dir: string,
+  limits: TarballLimits = DEFAULT_TARBALL_LIMITS,
+): Map<string, Buffer> {
+  const prefix = `${dir.replace(/\/+$/, '')}/`;
+  const found = new Map<string, Buffer>();
+  walkTarball(tgz, limits, (entry) => {
+    if (!entry.name.startsWith(prefix) || entry.isDirectory) return;
+    const relative = entry.name.slice(prefix.length);
+    if (!entry.isFile) throw new TarballEntryError(entry.name, 'NOT_REGULAR_FILE');
+    if (entry.size > limits.maxFileBytes) throw new TarballEntryError(entry.name, 'TOO_LARGE');
+    if (found.has(relative)) throw new TarballEntryError(entry.name, 'DUPLICATE');
+    found.set(relative, entry.data());
+  });
   return found;
 }

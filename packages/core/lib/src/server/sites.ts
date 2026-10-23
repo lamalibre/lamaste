@@ -8,7 +8,8 @@
 
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
-import { CORE_SUBDOMAINS } from '../constants.js';
+import { CORE_SUBDOMAINS, HOSTNAME_REGEX, RESERVED_SUBDOMAINS } from '../constants.js';
+import type { WebSurfaceAccessMode } from '../web-surface.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,6 +36,21 @@ export interface SiteEntry {
    * after `fqdn`, covers the primary name and every alias.
    */
   aliases?: string[] | undefined;
+  /**
+   * The plugin whose web surface this site is (`userSurface.web`): the
+   * panel alone manages its files (the approved web tree of the installed
+   * version), it is authenticated through Gatekeeper, not Authelia's
+   * `access_control`, and its host also serves the plugin's
+   * `/api/<route>/app/*`. Absent on every other site.
+   */
+  owner?: SiteOwner | undefined;
+  /** A plugin-owned site's access mode; absent on every other site. */
+  accessMode?: WebSurfaceAccessMode | undefined;
+}
+
+/** Who owns a plugin-owned site: the plugin, by route. */
+export interface SiteOwner {
+  readonly plugin: string;
 }
 
 export interface SiteLogger {
@@ -93,13 +109,8 @@ export interface AutheliaDeps {
 // Constants
 // ---------------------------------------------------------------------------
 
-const RESERVED_SUBDOMAINS = ['panel', 'auth', 'tunnel', 'www', 'mail', 'ftp', 'api'] as const;
-
 /** Upper bound on aliases per site — a redirect list, not a domain farm. */
 export const MAX_SITE_ALIASES = 10;
-
-const HOSTNAME_RE =
-  /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -205,7 +216,7 @@ function validateAliases(
     tunnels.filter((t) => t.subdomain !== null).map((t) => `${t.subdomain}.${domain}`),
   );
   for (const alias of normalised) {
-    if (!HOSTNAME_RE.test(alias)) {
+    if (!HOSTNAME_REGEX.test(alias)) {
       throw new SiteError(`Invalid alias hostname '${alias}'`, 'INVALID_ALIAS');
     }
     if (alias === fqdn) {

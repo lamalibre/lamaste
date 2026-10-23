@@ -13,7 +13,7 @@
  * hooks, `--nginx-ctl`, openssl `-engine`) into running code as root.
  */
 
-import { CORE_SUBDOMAINS } from '../constants.js';
+import { CORE_SUBDOMAINS, HOSTNAME_REGEX } from '../constants.js';
 
 /** `lamaste-certbot issue|renew|renew-all|list` — see the provisioner's scripts/. */
 export const CERTBOT_WRAPPER = '/usr/local/sbin/lamaste-certbot';
@@ -402,11 +402,8 @@ export async function issueTunnelCert(
 // Site certificates (a primary name plus aliases, one lineage)
 // ---------------------------------------------------------------------------
 
-const HOSTNAME_RE =
-  /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
-
 function assertHostname(name: string): void {
-  if (typeof name !== 'string' || !HOSTNAME_RE.test(name)) {
+  if (typeof name !== 'string' || !HOSTNAME_REGEX.test(name)) {
     throw new Error(`Invalid hostname: ${String(name)}`);
   }
 }
@@ -503,7 +500,7 @@ export async function getCertPath(fqdn: string, domain: string, exec: ExecFn): P
  */
 export async function isCertValid(fqdn: string, exec: ExecFn): Promise<CertValidity> {
   const certPath = `/etc/letsencrypt/live/${fqdn}/fullchain.pem`;
-  if (!HOSTNAME_RE.test(fqdn)) {
+  if (!HOSTNAME_REGEX.test(fqdn)) {
     return { valid: false, certPath: null, expiryDate: null };
   }
 
@@ -530,7 +527,7 @@ export async function readLetsEncryptExpiry(
   lineage: string,
   exec: ExecFn,
 ): Promise<{ expiresAt: string; daysUntilExpiry: number } | null> {
-  if (!HOSTNAME_RE.test(lineage)) return null;
+  if (!HOSTNAME_REGEX.test(lineage)) return null;
   try {
     const { stdout } = await exec('sudo', [CERT_INFO_WRAPPER, lineage, 'enddate']);
     const match = stdout.match(/notAfter=(.+)/);

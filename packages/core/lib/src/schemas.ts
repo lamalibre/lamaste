@@ -43,6 +43,7 @@ import {
 } from './hooks/index.js';
 import { IdentityBlockSchema } from './identity.js';
 import { SettingsBlockSchema } from './plugin-settings.js';
+import { UserSurfaceBlockSchema } from './web-surface.js';
 
 // ---------------------------------------------------------------------------
 // Capability string
@@ -736,6 +737,13 @@ export const ManifestSchema = z
      * agent half's `/app/*`, and the agent half keeps their projection.
      */
     identity: IdentityBlockSchema.optional(),
+    /**
+     * How the plugin's end users reach it (see `UserSurfaceBlockSchema`):
+     * its web surface, a static shell the relay serves on the plugin's own
+     * site. Only with an agent half and `identity` — the shell is the front
+     * of the agent half's `/app/*`.
+     */
+    userSurface: UserSurfaceBlockSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
     if (manifest.agent !== undefined && manifest.hosting !== 'agent') {
@@ -769,6 +777,15 @@ export const ManifestSchema = z
         path: ['identity'],
         message:
           'identity needs an agent-hosted plugin with an agent half ("hosting": "agent" and an "agent" block) — its users reach the agent half',
+      });
+    }
+
+    if (manifest.userSurface !== undefined && manifest.identity === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['userSurface'],
+        message:
+          "userSurface needs identity (and so an agent-hosted plugin with an agent half) — its shell calls the agent half's /app/*, which knows its users only through identity",
       });
     }
 

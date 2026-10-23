@@ -25,7 +25,9 @@
 import crypto from 'node:crypto';
 import {
   AGENT_LABEL_REGEX,
+  AGENT_PANEL_SUBDOMAIN_PREFIX,
   INTERNAL_PLUGIN_PORT_RANGE,
+  RESERVED_SUBDOMAINS,
   RESERVED_TUNNEL_PORTS,
   derivePluginRoute as coreDerivePluginRoute,
   isInternalPluginPort,
@@ -242,17 +244,6 @@ export interface TunnelStateDeps {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/** Subdomains reserved for core infrastructure. */
-export const RESERVED_SUBDOMAINS = [
-  'panel',
-  'auth',
-  'tunnel',
-  'www',
-  'mail',
-  'ftp',
-  'api',
-] as const;
 
 /**
  * Request body limit bounds for tunnels, in MiB. The default suits ordinary
@@ -741,7 +732,7 @@ async function createTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntr
     throw new TunnelError(`Subdomain '${subdomain}' is reserved`, 'RESERVED_SUBDOMAIN');
   }
 
-  if (subdomain.startsWith('agent-') && type !== 'panel') {
+  if (subdomain.startsWith(AGENT_PANEL_SUBDOMAIN_PREFIX) && type !== 'panel') {
     throw new TunnelError(
       "Subdomain prefix 'agent-' is reserved for agent panel tunnels",
       'RESERVED_AGENT_PREFIX',

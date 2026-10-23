@@ -31,6 +31,8 @@ export {
   pluginHostCapability,
   hasAgentHalf,
   CORE_SUBDOMAINS,
+  RESERVED_SUBDOMAINS,
+  AGENT_PANEL_SUBDOMAIN_PREFIX,
   LETSENCRYPT_EMAIL_REGEX,
   CHISEL_RELEASE,
   chiselAssetUrl,
@@ -266,11 +268,46 @@ export {
   isUnderAgentHalfApp,
   isUserSurfaceRoute,
   isUserSurfaceUrl,
+  siteUserSurfaceRoute,
   tunnelUserSurfaceRoutes,
   tunnelServedUserSurfaceRoutes,
   userSurfaceApiPath,
+  userSurfaceHostByFqdn,
+  userSurfaceHostServing,
   userSurfaceHostingAgent,
+  userSurfaceHosts,
 } from './user-surface.js';
+export type { UserSurfaceHost } from './user-surface.js';
+
+// The web surface of an agent-hosted plugin (`userSurface.web`): the
+// manifest block, and the rules and digest of the web tree its server
+// package ships
+export {
+  DEFAULT_WEB_SURFACE_ROOT,
+  UserSurfaceBlockSchema,
+  WEB_SURFACE_ACCESS_MODES,
+  WEB_TREE_DIGEST_VERSION,
+  WEB_TREE_EXTENSIONS,
+  WEB_TREE_INDEX,
+  WEB_TREE_LIMITS,
+  WebSurfaceBlockSchema,
+  WebTreeError,
+  isWebSurfaceSubdomain,
+  isWebTreeSegment,
+  webTreeDigest,
+  webTreeFileSha256,
+  webTreeLimitError,
+  webTreeManifest,
+  webTreePathProblem,
+} from './web-surface.js';
+export type {
+  UserSurfaceBlock,
+  WebSurfaceAccessMode,
+  WebSurfaceBlock,
+  WebTreeErrorCode,
+  WebTreeFile,
+  WebTreeManifest,
+} from './web-surface.js';
 
 // Authelia's session cookie: its name, how Gatekeeper reads it, and the
 // nginx map that keeps it from every tunnel and agent backend

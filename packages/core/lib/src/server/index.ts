@@ -70,8 +70,8 @@ export type {
 } from './mtls.js';
 
 // --- Tunnels ---
+export { RESERVED_SUBDOMAINS } from '../constants.js';
 export {
-  RESERVED_SUBDOMAINS,
   TunnelError,
   derivePluginRoute,
   createTunnel,
@@ -129,6 +129,7 @@ export { SiteError, createSite, deleteSite, updateSite, verifyDns } from './site
 export type {
   SiteType,
   SiteEntry,
+  SiteOwner,
   SiteLogger,
   CertResult as SiteCertResult,
   SiteNginxDeps,
@@ -581,7 +582,14 @@ export {
   decisionEffects,
 } from './hook-decisions.js';
 export type { ValidatedDecision } from './hook-decisions.js';
-export { DEFAULT_TARBALL_LIMITS, readTarballFiles } from './tarball.js';
+export {
+  DEFAULT_TARBALL_LIMITS,
+  TarballEntryError,
+  readTarballFiles,
+  readTarballTree,
+} from './tarball.js';
+// --- Web trees (a plugin's web surface: from a staged tarball, from disk) ---
+export { webTreeManifestOfDirectory, webTreeManifestOfTarball } from './web-tree.js';
 export type { TarballLimits } from './tarball.js';
 export { callAgentHalfHook } from '../agent-hook-call.js';
 export type {

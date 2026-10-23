@@ -205,19 +205,25 @@ export interface ApprovalSubject {
   readonly agentHalf: AgentHalfSpec | null;
   /** The plugin's identity block; null or omitted when it declares none. */
   readonly identity?: IdentityBlockInput | null | undefined;
+  /**
+   * The web tree of the plugin's web surface (`webTreeManifest`'s
+   * `sha256`); null or omitted when it declares none.
+   */
+  readonly web?: { readonly treeSha256: string } | null | undefined;
 }
 
 /**
  * The digest an approval names: SHA-256 (hex) of the canonical JSON (keys
  * sorted at every level) of
- * `{ v: 2, relay: { set, entrySha256 } | null, agentHalf: { package, version, integrity, service: { entry, memoryMax }, systemPackages } | null, identity?: { roles, attributes } }`,
- * with the agent half's system packages sorted and without repeats, and
+ * `{ v: 2, relay: { set, entrySha256 } | null, agentHalf: { package, version, integrity, service: { entry, memoryMax }, systemPackages } | null, identity?: { roles, attributes }, web?: { treeSha256 } }`,
+ * with the agent half's system packages sorted and without repeats,
  * `identity` — the block as {@link normalizeIdentityBlock} returns it —
- * only when the plugin declares one: a digest without it is the digest of
- * the same subject before identity existed, byte for byte. Throws on an
- * entry digest that is not SHA-256 hex, an agent half that is not a valid
- * {@link AgentHalfSpec} (`AgentHalfSpecSchema`, which refuses unknown keys)
- * or an identity block that is not valid — none can be approved.
+ * only when the plugin declares one, and `web` only when it declares a web
+ * surface: a digest without them is the digest of the same subject before
+ * they existed, byte for byte. Throws on an entry or tree digest that is
+ * not SHA-256 hex, an agent half that is not a valid {@link AgentHalfSpec}
+ * (`AgentHalfSpecSchema`, which refuses unknown keys) or an identity block
+ * that is not valid — none can be approved.
  */
 export function approvalDigest(subject: ApprovalSubject): string {
   const { relay } = subject;
@@ -247,11 +253,16 @@ export function approvalDigest(subject: ApprovalSubject): string {
     subject.identity === null || subject.identity === undefined
       ? null
       : normalizeIdentityBlock(subject.identity);
+  const web = subject.web ?? null;
+  if (web && !/^[a-f0-9]{64}$/.test(web.treeSha256)) {
+    throw new Error('web.treeSha256 must be a SHA-256 hex digest');
+  }
   const doc = canonical({
     v: HOOK_SET_DIGEST_VERSION,
     relay: relay ? { set: relay.set, entrySha256: relay.entrySha256 } : null,
     agentHalf,
     ...(identity ? { identity } : {}),
+    ...(web ? { web: { treeSha256: web.treeSha256 } } : {}),
   });
   return crypto.createHash('sha256').update(JSON.stringify(doc)).digest('hex');
 }

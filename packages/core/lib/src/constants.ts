@@ -171,6 +171,14 @@ export function derivePluginRoute(pluginNameOrPackage: string): string {
 export const AGENT_LABEL_REGEX = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
+ * A fully qualified host name as the relay stores and checks one: lower-case
+ * DNS labels (each {@link AGENT_LABEL_REGEX}'s shape), at least two, at most
+ * 253 characters in all.
+ */
+export const HOSTNAME_REGEX =
+  /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/**
  * Lamaste username format — the rule of the users and invitations APIs: a
  * lowercase letter or digit, then lowercase letters, digits, `_` and `-`,
  * {@link USERNAME_MIN_LENGTH}–{@link USERNAME_MAX_LENGTH} characters in
@@ -268,6 +276,19 @@ export function pluginHostCapability(route: string): string {
  * another host until a site is put on it.
  */
 export const CORE_SUBDOMAINS = ['panel', 'auth', 'tunnel'] as const;
+
+/**
+ * Subdomains no tunnel or site may take: the relay's own
+ * ({@link CORE_SUBDOMAINS}) and the names a domain conventionally keeps for
+ * other services.
+ */
+export const RESERVED_SUBDOMAINS = [...CORE_SUBDOMAINS, 'www', 'mail', 'ftp', 'api'] as const;
+
+/**
+ * The subdomain prefix kept for agent panel tunnels (`agent-<label>`): no
+ * other tunnel and no site starts with it.
+ */
+export const AGENT_PANEL_SUBDOMAIN_PREFIX = 'agent-';
 
 /**
  * The Let's Encrypt registration email the relay accepts — the exact rule the
