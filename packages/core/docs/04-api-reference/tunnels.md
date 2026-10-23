@@ -153,24 +153,24 @@ curl -s --cert client.p12:password \
 
 **Errors:**
 
-| Status | Body                                                                                                          | When                                                         |
-| ------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`                                                    | Invalid subdomain format, port out of range or reserved      |
-| 400    | `{"error":"agentLabel is required: name the agent that will carry the tunnel"}`                               | Admin certificate did not name the carrying agent            |
-| 400    | `{"error":"Failed to create tunnel","details":"Agent 'x' is not enrolled or has been revoked"}`               | `agentLabel` does not name an active agent                   |
-| 400    | `{"error":"Failed to create tunnel","details":"Subdomain 'panel' is reserved"}`                               | Subdomain is in the reserved list                            |
-| 400    | `{"error":"Failed to create tunnel","details":"Subdomain 'app' is already in use"}`                           | Another tunnel uses this subdomain                           |
-| 400    | `{"error":"Failed to create tunnel","details":"Port 3000 is already in use by another tunnel"}`               | Another tunnel uses this port                                |
-| 400    | `{"error":"Failed to create tunnel","details":"Domain 'app.example.com' is already served by a static site"}` | A static site or site alias already answers on this hostname |
-| 400    | `{"error":"Domain and email must be configured before creating tunnels"}`                                     | Domain not set in config                                     |
-| 403    | `{"error":"Agents can only create tunnels they carry themselves"}`                                            | Agent certificate named another agent                        |
-| 403    | `{"error":"Plugin-agent certificates cannot create tunnels — use the agent certificate of ..."}`              | Plugin-agent certificate                                     |
-| 403    | `{"error":"Only administrators can set a body limit above 100 MiB"}`                                          | Agent certificate asked for `maxBodySizeMb` over 100         |
-| 403    | `{"error":"Only administrators can set tunnel access mode to public or authenticated"}`                       | Agent certificate asked for a non-restricted mode            |
-| 500    | `{"error":"Failed to create tunnel","details":"Certificate issuance failed: ..."}`                            | certbot failed                                               |
-| 500    | `{"error":"Failed to create tunnel","details":"Nginx configuration failed: ..."}`                             | nginx vhost write or test failed                             |
-| 500    | `{"error":"Failed to create tunnel","details":"State persistence failed: ..."}`                               | Failed to write tunnels.json                                 |
-| 500    | `{"error":"Failed to create tunnel","details":"Chisel reconfiguration failed: ..."}`                          | Chisel authfile sync failed                                  |
+| Status | Body                                                                                                                   | When                                                                                                                                    |
+| ------ | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`                                                             | Invalid subdomain format, port out of range or reserved                                                                                 |
+| 400    | `{"error":"agentLabel is required: name the agent that will carry the tunnel"}`                                        | Admin certificate did not name the carrying agent                                                                                       |
+| 400    | `{"error":"Failed to create tunnel","details":"Agent 'x' is not enrolled or has been revoked"}`                        | `agentLabel` does not name an active agent                                                                                              |
+| 400    | `{"error":"Failed to create tunnel","details":"Subdomain 'panel' is reserved"}`                                        | Subdomain is in the reserved list                                                                                                       |
+| 400    | `{"error":"Failed to create tunnel","details":"Subdomain 'app' is already in use"}`                                    | Another tunnel uses this subdomain                                                                                                      |
+| 400    | `{"error":"Failed to create tunnel","details":"Port 3000 is already in use by another tunnel"}`                        | Another tunnel uses this port                                                                                                           |
+| 400    | `{"error":"Failed to create tunnel","details":"Domain 'app.example.com' is already served: by the static site 'app'"}` | A static site or site alias already answers on this hostname (checked under the tunnel lock; enabling a tunnel is refused the same way) |
+| 400    | `{"error":"Domain and email must be configured before creating tunnels"}`                                              | Domain not set in config                                                                                                                |
+| 403    | `{"error":"Agents can only create tunnels they carry themselves"}`                                                     | Agent certificate named another agent                                                                                                   |
+| 403    | `{"error":"Plugin-agent certificates cannot create tunnels — use the agent certificate of ..."}`                       | Plugin-agent certificate                                                                                                                |
+| 403    | `{"error":"Only administrators can set a body limit above 100 MiB"}`                                                   | Agent certificate asked for `maxBodySizeMb` over 100                                                                                    |
+| 403    | `{"error":"Only administrators can set tunnel access mode to public or authenticated"}`                                | Agent certificate asked for a non-restricted mode                                                                                       |
+| 500    | `{"error":"Failed to create tunnel","details":"Certificate issuance failed: ..."}`                                     | certbot failed                                                                                                                          |
+| 500    | `{"error":"Failed to create tunnel","details":"Nginx configuration failed: ..."}`                                      | nginx vhost write or test failed                                                                                                        |
+| 500    | `{"error":"Failed to create tunnel","details":"State persistence failed: ..."}`                                        | Failed to write tunnels.json                                                                                                            |
+| 500    | `{"error":"Failed to create tunnel","details":"Chisel reconfiguration failed: ..."}`                                   | Chisel authfile sync failed                                                                                                             |
 
 ### Creation Flow
 
@@ -328,6 +328,8 @@ curl -s --cert client.p12:password \
 | 500    | `{"error":"Failed to generate agent config"}` | Config generation failed |
 
 ## User Surface Binding
+
+A plugin that owns a site for its [web surface](agent-hosted-plugins.md#web-surface) serves its user surface there; binding it to a tunnel is refused (`400`). A tunnel bound to one plugin alone can hand its host over to that plugin's web surface in one reload ([Moving from a bound tunnel](agent-hosted-plugins.md#moving-from-a-bound-tunnel)); it stays in the state, disabled and unbound, and cannot be enabled again while the site holds its hostname.
 
 An app tunnel can be **bound** as the user surface of an agent-hosted plugin: its host then serves the plugin's users at `/api/<route>/app` and everything under it — Gatekeeper authenticates the Authelia session and vouches for the user to the panel, and the panel forwards the request to the plugin's agent half with the directory's `userId`, username and the user's roles ([Agent-Hosted Plugins](agent-hosted-plugins.md#the-user-surface)). Every other path of the host goes down the tunnel as before. Admin only, 30 a minute.
 

@@ -7,6 +7,10 @@
  *   delete <id>                     Delete a site by ID
  *   aliases <id> --set <a,b|"">     Replace a custom site's redirect aliases
  *
+ * A site a plugin owns (its web surface) is marked in the list and managed
+ * through `lamaste-server plugins web-surface <plugin>`; the panel refuses
+ * to change or delete it here.
+ *
  * List reads directly from the state file.
  * Create/delete use the panel REST API (which has the full
  * nginx/certbot/directory dependency stack).
@@ -16,6 +20,7 @@ import chalk from 'chalk';
 import { readSites } from '../state.js';
 import { panelRequest } from '../panel-api.js';
 import { emit, emitError, emitComplete } from '../ndjson.js';
+import { siteOwnerTag } from '../plugin-web-surface.js';
 
 /**
  * @param {string[]} args
@@ -92,11 +97,20 @@ async function listSites({ json }) {
     const certStatus = s.certIssued ? g('cert issued') : y('no cert');
     const spaTag = s.spaMode ? d('[SPA]') : '';
     const authTag = s.autheliaProtected ? d('[protected]') : '';
+    const owner = siteOwnerTag(s);
+    const ownerTag = owner ? c(owner) : '';
 
     console.log(
-      `  ${c(s.name)}  ${d(s.fqdn)}  ${s.type}  ${dnsStatus}  ${certStatus} ${spaTag} ${authTag}`.trimEnd(),
+      `  ${c(s.name)}  ${d(s.fqdn)}  ${s.type}  ${dnsStatus}  ${certStatus} ${spaTag} ${authTag} ${ownerTag}`.trimEnd(),
     );
     console.log(`    ${d(`id: ${s.id}`)}`);
+  }
+  if (sites.some((s) => siteOwnerTag(s) !== null)) {
+    console.log(
+      d(
+        '\n  A [plugin …] site is the web surface of that plugin: manage it with lamaste-server plugins web-surface <plugin>',
+      ),
+    );
   }
   console.log('');
 }

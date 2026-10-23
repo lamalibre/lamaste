@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Package,
@@ -23,6 +23,7 @@ import { PluginHooks, PluginOperation, PluginUpdate } from '../components/Plugin
 import PluginHostDialog from '../components/PluginHostDialog.jsx';
 import PluginIdentity from '../components/PluginIdentity.jsx';
 import PluginSettings, { NeedsConfigurationBadge } from '../components/PluginSettings.jsx';
+import PluginWebSurface from '../components/PluginWebSurface.jsx';
 import PushInstallSection from '../components/PushInstallSection.jsx';
 import { PluginRetainedData, UninstalledRetainedData } from '../components/RetainedData.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
@@ -30,6 +31,7 @@ import { errorMessage } from '../lib/errorMessage.js';
 import { hostingOutage, outageMessage } from '../lib/hostingState.js';
 import { refusalText } from '../lib/pluginRefusal.js';
 import { withoutSecrets } from '../lib/oidcSecrets.js';
+import { ownedSiteRoutes, pluginAnchorId, showsWebSurface } from '../lib/web-surface.js';
 
 function StatusBadge({ status }) {
   const styles =
@@ -269,6 +271,7 @@ function HostingSection({ plugin, dataDir, now, onHost, onUnhost, onRotate, isAc
 function PluginCard({
   plugin,
   now,
+  ownedRoutes,
   onEnable,
   onDisable,
   onUninstall,
@@ -304,7 +307,10 @@ function PluginCard({
   };
 
   return (
-    <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-5">
+    <div
+      id={pluginAnchorId(plugin.name)}
+      className="rounded-lg bg-zinc-900 border border-zinc-800 p-5 scroll-mt-4"
+    >
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
           <Package size={16} className="text-cyan-400" />
@@ -364,6 +370,7 @@ function PluginCard({
         plugin.hooks?.agent ||
         plugin.hooks?.agentHalf ||
         plugin.identity ||
+        plugin.userSurface?.web ||
         plugin.hooks?.pendingUpdate) && <PluginHooks plugin={plugin} isActing={isActing} />}
 
       {hasAgentHalf && (
@@ -381,6 +388,8 @@ function PluginCard({
       {plugin.settings && <PluginSettings plugin={plugin} />}
 
       {plugin.identity && <PluginIdentity plugin={plugin} />}
+
+      {showsWebSurface(plugin, ownedRoutes) && <PluginWebSurface plugin={plugin} />}
 
       {agentHosted && <PluginRetainedData plugin={plugin} isActing={isActing} />}
 
@@ -774,6 +783,24 @@ export default function Plugins() {
     queryFn: () => client.getPlugins(),
     refetchInterval: 10000,
   });
+  // The sites plugins own: a plugin that owns one shows its Web surface
+  // even when its installed version no longer declares it.
+  const sitesQuery = useQuery({
+    queryKey: ['sites'],
+    queryFn: () => client.getSites(),
+    refetchInterval: 30000,
+  });
+  const ownedRoutes = ownedSiteRoutes(sitesQuery.data?.sites);
+
+  // Opened from another page at a plugin (`#plugin-<name>`): bring its card
+  // into view once the list is there.
+  const loaded = pluginsQuery.isSuccess;
+  useEffect(() => {
+    if (!loaded || typeof window === 'undefined') return;
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    if (!id) return;
+    document.getElementById(id)?.scrollIntoView({ block: 'start' });
+  }, [loaded]);
 
   // Installing and enabling answer with the secrets of the confidential OIDC
   // clients they created, once: they go straight to the dialog that shows
@@ -963,6 +990,7 @@ export default function Plugins() {
               key={plugin.name}
               plugin={plugin}
               now={pluginsQuery.dataUpdatedAt}
+              ownedRoutes={ownedRoutes}
               onEnable={handleEnable}
               onDisable={handleDisable}
               onUninstall={handleUninstall}

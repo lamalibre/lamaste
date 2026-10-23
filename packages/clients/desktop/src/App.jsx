@@ -65,6 +65,7 @@ import {
   AgentLogsPage,
   AgentSettingsPage,
 } from '@lamalibre/lamaste-agent-ui';
+import { pluginAnchorId } from '@lamalibre/lamaste-server-ui/lib/web-surface.js';
 import { desktopAdminClient } from './lib/desktop-admin-client.js';
 import { createDesktopAgentClient } from './lib/desktop-agent-client.js';
 import { desktopUserAccessClient } from './lib/desktop-user-access-client.js';
@@ -343,7 +344,16 @@ export default function App() {
       case 'server-services':
         return <ServicesPage />;
       case 'server-sites':
-        return <SitesPage domain={managingDomain} />;
+        return (
+          <SitesPage
+            domain={managingDomain}
+            onOpenPlugin={(name) => {
+              // The Plugins page scrolls to the card the hash names once it has loaded.
+              window.location.hash = encodeURIComponent(pluginAnchorId(name));
+              setActiveTab('server-plugins');
+            }}
+          />
+        );
       case 'server-users':
         return <UsersPage />;
       case 'server-certificates':

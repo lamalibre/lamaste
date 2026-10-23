@@ -253,6 +253,15 @@ export const webAdminClient = {
     jsonDelete(`${pluginPath(name, 'entitlements')}${toQuery({ principalType, principalId })}`),
   syncPluginIdentity: (name, { reconcile = false } = {}) =>
     jsonPost(pluginPath(name, 'identity/sync'), { reconcile }),
+  getPluginWebSurface: (name) => apiFetch(pluginPath(name, 'web-surface')),
+  createPluginWebSurface: (name, { subdomain, accessMode } = {}) =>
+    jsonPost(pluginPath(name, 'web-surface'), {
+      ...(subdomain ? { subdomain } : {}),
+      ...(accessMode ? { accessMode } : {}),
+    }),
+  movePluginWebSurface: (name, tunnelId) =>
+    jsonPost(pluginPath(name, 'web-surface/move'), { tunnelId }),
+  deletePluginWebSurface: (name) => jsonDelete(pluginPath(name, 'web-surface')),
   fetchPluginBundle: async (name) => {
     const res = await fetch(`/api/${encodeURIComponent(name)}/panel.js`);
     if (!res.ok) throw new Error(`Failed to load plugin bundle for "${name}"`);

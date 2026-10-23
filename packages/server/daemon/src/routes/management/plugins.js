@@ -301,6 +301,8 @@ async function withHooks(plugin) {
       agent: status.agent !== null,
       // Lamaste installs the agent half (agent.package); false: none, or installed by hand.
       agentHalf: status.agentHalf !== null,
+      // The installed version declares a web surface (its tree is in the approval).
+      web: status.web.declared,
       approval: status.approval.state,
       autoApprove: status.autoApprove,
       failOpenCount: status.relay?.failOpenCount ?? 0,

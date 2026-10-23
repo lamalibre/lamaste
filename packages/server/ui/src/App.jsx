@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useOnboardingStatus } from './hooks/useOnboardingStatus.js';
 import {
@@ -19,6 +19,7 @@ import {
   AuditPage,
 } from './admin/index.js';
 import { webAdminClient } from './lib/web-admin-client.js';
+import { pluginAnchorId } from './admin/lib/web-surface.js';
 import Layout from './components/layout/Layout.jsx';
 import LoadingScreen from './components/LoadingScreen.jsx';
 import ErrorScreen from './components/ErrorScreen.jsx';
@@ -37,6 +38,9 @@ const queryClient = new QueryClient({
 
 function AppRoutes() {
   const { status, domain, isLoading, isError, refetch } = useOnboardingStatus();
+  const navigate = useNavigate();
+  // A plugin's card on the Plugins page (a plugin-owned site is managed there).
+  const openPlugin = (name) => navigate(`/plugins#${encodeURIComponent(pluginAnchorId(name))}`);
 
   if (isLoading) {
     return <LoadingScreen />;
@@ -55,7 +59,7 @@ function AppRoutes() {
       <Route element={<Layout />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/tunnels" element={<TunnelsPage />} />
-        <Route path="/sites" element={<SitesPage domain={domain} />} />
+        <Route path="/sites" element={<SitesPage domain={domain} onOpenPlugin={openPlugin} />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/certificates" element={<CertificatesPage />} />
         <Route path="/services" element={<ServicesPage />} />

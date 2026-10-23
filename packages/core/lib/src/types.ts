@@ -217,6 +217,54 @@ export interface PluginSettingsView {
   } | null;
 }
 
+/** Why a plugin's web surface is not served (its site answers 503). */
+export type WebSurfaceNotServedReason =
+  | 'not_installed'
+  | 'no_identity'
+  | 'no_web_surface'
+  | 'not_approved'
+  | 'not_hosted'
+  | 'tree_not_current';
+
+/**
+ * A plugin's web surface (4.6): what its installed version declares
+ * (`userSurface.web`), the site it owns, whether that site serves the shell
+ * and the API (and why not), the trees the relay holds — the approved one,
+ * the one it serves and the one before — the tunnel still bound as its
+ * user surface (which it can be moved from), and, while it owns no site,
+ * the subdomain Lamaste offers.
+ */
+export interface PluginWebSurfaceView {
+  readonly declared: {
+    readonly defaultSubdomain: string;
+    readonly accessMode: 'authenticated' | 'restricted';
+    readonly root: string;
+  } | null;
+  readonly site: {
+    readonly id: string;
+    readonly name: string;
+    readonly fqdn: string;
+    readonly accessMode: 'authenticated' | 'restricted' | null;
+  } | null;
+  readonly served: boolean;
+  readonly reason: WebSurfaceNotServedReason | null;
+  readonly tree: {
+    readonly approved: string | null;
+    readonly current: string | null;
+    readonly previous: string | null;
+  };
+  readonly boundTunnel: {
+    readonly id: string;
+    readonly fqdn: string | null;
+    readonly routes: readonly string[];
+  } | null;
+  readonly offer: {
+    readonly subdomain: string;
+    readonly accessMode: 'authenticated' | 'restricted';
+    readonly available: boolean;
+  } | null;
+}
+
 /**
  * What the panel knows about an agent-hosted plugin's users: the identity
  * block its installed version declares, whether users can reach it, the
@@ -652,6 +700,29 @@ export interface AdminClient {
     name: string,
     options?: { reconcile?: boolean },
   ): Promise<{ ok: boolean; result: IdentitySyncResult; sync: PluginIdentityView['sync'] }>;
+  // Web surface of an agent-hosted plugin (4.6): the site it owns, serving
+  // the shell its server package ships beside its user surface's API.
+  // Refusals carry a `code`: `no_web_surface`, `no_identity`, `exists`,
+  // `bound_to_tunnel`, `hostname_taken`, `not_bound`, `shared_tunnel`,
+  // `tunnel_disabled`, `not_hosted`, `not_approved`, `web_tree`,
+  // `gatekeeper`, `domain_not_configured`, `not_found`.
+  getPluginWebSurface(name: string): Promise<{ webSurface: PluginWebSurfaceView }>;
+  /** Create the site on `subdomain` (default: the declared one) with `accessMode` (default: the declared one). */
+  createPluginWebSurface(
+    name: string,
+    options?: { subdomain?: string; accessMode?: 'authenticated' | 'restricted' },
+  ): Promise<{ webSurface: PluginWebSurfaceView }>;
+  /**
+   * Hand the host of tunnel `tunnelId` — bound as the plugin's user
+   * surface, and to nothing else — to its web surface in one reload; the
+   * tunnel stays, disabled and unbound.
+   */
+  movePluginWebSurface(
+    name: string,
+    tunnelId: string,
+  ): Promise<{ webSurface: PluginWebSurfaceView }>;
+  /** Delete the site, its trees and the grants on it. */
+  deletePluginWebSurface(name: string): Promise<{ ok: boolean }>;
   // Push install: what lets the panel install, update and remove what
   // Lamaste installs on an agent while that agent's window is open.
   getPushInstallConfig(): Promise<{

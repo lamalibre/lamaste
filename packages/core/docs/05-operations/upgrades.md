@@ -35,6 +35,15 @@ lamaste-agent update
 
 A machine that hosts app plugins' agent halves needs the root-owned install shown above and its app host helper enabled once with `sudo lamaste-agent apphost enable` (see [App host](../04-api-reference/app-host.md)); after replacing the server's relay signing key, run `sudo lamaste-agent apphost pin` there. An upgrade of `lamaste-agent` does not replace that helper: when a release raises the app host protocol (4.4 speaks 2), run `sudo lamaste-agent apphost enable` again there — until then the agent refuses to install agent halves and the server does not offer it for hosting (`lamaste-agent apphost status` shows the helper as out of date).
 
+### Upgrading to 4.6
+
+4.6 adds plugins' web surfaces ([Web surface](../04-api-reference/agent-hosted-plugins.md#web-surface)). **Only the relay is upgraded**: the panel's **Update** action, or a `create-lamaste@4.6.0 --yes` redeploy.
+
+- **`state.db` migration `0015`** adds `plugins.user_surface` and `plugins.web_tree_sha256`. Existing plugins declare no web surface: their approval digests are unchanged.
+- **`lamaste-priv` must be the 4.6 one** before the panel writes a web surface's vhost: it now accepts a server-level `auth_request`, named locations and a named location as `try_files`' last argument. The Update action and the redeploy install it; a relay whose `lamaste-priv` is older refuses the vhost (`nginx site write failed … directive "auth_request" is not allowed in server`) and keeps the vhost it had.
+- **Web trees live under `/var/www/lamaste/apps/`.** They are copies of approved package contents, made again at the panel's start when missing: nothing there needs a backup.
+- **What changes for existing setups.** Gatekeeper reads `sites.json` as well as `tunnels.json`. The check that a tunnel and a site never share a hostname now runs under the tunnel lock, for enabling a tunnel too. The sites API serves `sites.json` under a lock, and an upload's size is recorded from the file as it is then.
+
 ### Upgrading to 4.5
 
 4.5 adds the user directory and users of agent-hosted plugins ([Users and identity](../04-api-reference/agent-hosted-plugins.md#users-and-identity)). **Only the relay is upgraded**: the panel's **Update** action, or a `create-lamaste@4.5.0 --yes` redeploy.

@@ -14,6 +14,7 @@ import {
   withTunnelLock,
 } from '@lamalibre/lamaste/server';
 import { AppError } from '../../lib/app-error.js';
+import { webSurfaceServing } from '../../lib/web-surface.js';
 import { getConfig } from '../../lib/config.js';
 import { readSites, writeSites, readTunnels, withSitesLock } from '../../lib/state.js';
 import { writeStaticSiteVhost, removeStaticSiteVhost } from '../../lib/nginx.js';
@@ -190,6 +191,25 @@ async function recordSiteSize(id) {
   return totalSize;
 }
 
+/**
+ * Sites as listed: a plugin-owned one with `webSurface: { served, reason }`
+ * — whether it serves its plugin's shell and API now, or answers 503 and why.
+ */
+async function withWebSurfaceState(sites) {
+  if (!sites.some((site) => site.owner)) return sites;
+  const tunnels = await readTunnels();
+  return Promise.all(
+    sites.map(async (site) => {
+      if (!site.owner) return site;
+      const serving = await webSurfaceServing(site.owner.plugin, tunnels);
+      return {
+        ...site,
+        webSurface: { served: serving.served, reason: serving.served ? null : serving.reason },
+      };
+    }),
+  );
+}
+
 function assertAgentSiteAccess(request, site) {
   if (request.certRole === 'agent') {
     const allowed = request.certAllowedSites || [];
@@ -247,7 +267,7 @@ export default async function sitesRoutes(fastify, _opts) {
       }
 
       const total = sites.length;
-      const windowed = sites.slice(offset, offset + limit);
+      const windowed = await withWebSurfaceState(sites.slice(offset, offset + limit));
 
       return { sites: windowed, total, limit, offset };
     },

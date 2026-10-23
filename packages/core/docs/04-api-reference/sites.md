@@ -652,6 +652,10 @@ curl -s --cert client.p12:password \
 }
 ```
 
+A site a plugin owns for its [web surface](agent-hosted-plugins.md#web-surface) is listed with two more fields — `"owner": { "plugin": "<route>" }` and `"accessMode": "authenticated" | "restricted"` — and its `rootPath` is the plugin's `current` tree under `/var/www/lamaste/apps/<route>/`; `GET /api/sites` adds `webSurface: { served, reason }` — whether it serves its plugin now, or answers `503` and why (the reasons of [`GET /api/plugins/:name/web-surface`](agent-hosted-plugins.md#get-apipluginsnameweb-surface)). The routes below do not manage it: `PATCH`, `DELETE`, `verify-dns` and the file routes answer `409` with `details.code: "plugin_owned_site"` (and so `lamaste-agent deploy` is refused); it is created, moved to and deleted through `/api/plugins/:name/web-surface`.
+
+**Locks.** Every change of `sites.json` runs under one lock; one that gives a site a hostname (creating a site, changing its aliases, verifying its DNS) takes the tunnel lock first, as creating or enabling a tunnel does — a site and a tunnel never take one name at once. The size recorded after an upload or a deletion is written from `sites.json` as it is then, never from a copy read before.
+
 ### Managed vs Custom Site Flow
 
 ```

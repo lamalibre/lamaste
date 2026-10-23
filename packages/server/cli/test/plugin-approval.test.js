@@ -3,8 +3,9 @@
  * waits (its `approvalRequired`, a secret turned plain as a warning, an
  * identity change with its note), what auto-approve could not cover beyond
  * that, what an identity block lets a plugin learn and how an update
- * changes it, the command that approves it — by digest, by version, or
- * both — and the arguments `approve-hooks` takes.
+ * changes it, the web tree a version brings and how an update changes it,
+ * the command that approves it — by digest, by version, or both — and the
+ * arguments `approve-hooks` takes.
  */
 
 import { test } from 'node:test';
@@ -17,6 +18,8 @@ import {
   identityDiffLines,
   parseApproveArgs,
   pendingUpdateReasons,
+  webSurfaceBlockLines,
+  webTreeDiffLines,
 } from '../src/plugin-approval.js';
 
 const DIGEST = 'a'.repeat(64);
@@ -228,4 +231,76 @@ test('an identity diff: what waits for approval, what only changes the digest', 
     identityDiffLines({ ...removing, grantsAffected: null }).lines.at(-1).text,
     /not known/,
   );
+});
+
+const TREE_A = 'a'.repeat(64);
+const TREE_B = 'b'.repeat(64);
+
+test('why an update waits: a web surface not approved is said as the panel says it', () => {
+  const reason = 'its agent half, identity and web surface are not what was approved';
+  assert.deepEqual(
+    pendingUpdateReasons({ approvalRequired: [{ code: 'digest.unapproved', reason }] }).required,
+    [{ text: reason, warning: false, note: null }],
+  );
+});
+
+test("the installed version's web surface: the tree an approval covers, the site offered", () => {
+  assert.deepEqual(
+    webSurfaceBlockLines({
+      declared: true,
+      approved: false,
+      treeSha256: TREE_A,
+      surface: { defaultSubdomain: 'piyasa', accessMode: 'authenticated', root: 'web' },
+    }),
+    [
+      `tree:     ${TREE_A}`,
+      'site:     offered on piyasa (authenticated), the shell from web/ of its server package',
+    ],
+  );
+  assert.deepEqual(
+    webSurfaceBlockLines({ declared: true, approved: true, treeSha256: TREE_A, surface: null }),
+    [`tree:     ${TREE_A}`],
+  );
+  assert.deepEqual(
+    webSurfaceBlockLines({ declared: false, approved: false, treeSha256: null, surface: null }),
+    [],
+  );
+  assert.deepEqual(webSurfaceBlockLines(null), []);
+  assert.deepEqual(
+    webSurfaceBlockLines({
+      declared: true,
+      treeSha256: TREE_A,
+      surface: { defaultSubdomain: 'p\u001b[2J', accessMode: 'restricted', root: 'dist' },
+    })[1],
+    'site:     offered on p[2J (restricted), the shell from dist/ of its server package',
+  );
+});
+
+test("an update's web tree: first declared, changed, kept, dropped", () => {
+  const after = { sha256: TREE_B, files: 12, totalBytes: 1536 };
+  assert.equal(webTreeDiffLines(null), null);
+  assert.equal(webTreeDiffLines({ before: null, after: null }), null);
+  assert.deepEqual(webTreeDiffLines({ before: null, after }), {
+    headline: 'declares a web surface for the first time',
+    lines: [`tree:     ${TREE_B}`, 'contents: 12 file(s), 1.5 KiB'],
+    changed: true,
+  });
+  assert.deepEqual(webTreeDiffLines({ before: TREE_A, after }), {
+    headline: 'changes its web tree — its site serves the new shell once approved',
+    lines: [
+      'tree:     aaaaaaaaaaaa → bbbbbbbbbbbb',
+      `new tree: ${TREE_B}`,
+      'contents: 12 file(s), 1.5 KiB',
+    ],
+    changed: true,
+  });
+  assert.deepEqual(webTreeDiffLines({ before: TREE_B, after }), {
+    headline: 'keeps its web tree',
+    lines: [`tree:     ${TREE_B} (12 file(s), 1.5 KiB)`],
+    changed: false,
+  });
+  const dropped = webTreeDiffLines({ before: TREE_A, after: null });
+  assert.match(dropped.headline, /^no longer declares a web surface — its site answers 503/);
+  assert.deepEqual(dropped.lines, ['tree:     aaaaaaaaaaaa → none']);
+  assert.equal(dropped.changed, true);
 });

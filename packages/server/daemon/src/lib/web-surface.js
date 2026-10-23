@@ -286,8 +286,10 @@ export async function webSurfaceStatus(route) {
   const declared = plugin.userSurface?.web ?? null;
   const boundTunnel =
     tunnels.find((t) => tunnelUserSurfaceRoutes(t).includes(route) && t.enabled !== false) ?? null;
+  // While a tunnel is bound as its user surface, the way to a site is a
+  // move (creating one is refused): nothing is offered.
   let offer = null;
-  if (!site && declared) {
+  if (!site && declared && !boundTunnel) {
     const subdomain = declared.defaultSubdomain;
     offer = {
       subdomain,

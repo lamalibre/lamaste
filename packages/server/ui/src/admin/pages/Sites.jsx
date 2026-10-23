@@ -14,11 +14,13 @@ import {
   AlertTriangle,
   Settings,
   Shield,
+  Package,
   X,
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import FileBrowser from '../components/FileBrowser.jsx';
+import { notServedReasonText, siteOwner } from '../lib/web-surface.js';
 
 // --- Helpers ---
 
@@ -46,6 +48,18 @@ function formatBytes(bytes) {
 }
 
 function StatusBadge({ site }) {
+  // A plugin's web surface: live only while it serves its plugin (503 otherwise).
+  if (site.webSurface && !site.webSurface.served) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border text-yellow-400 bg-yellow-500/10 border-yellow-500/20"
+        title={`Answers 503: ${notServedReasonText(site.webSurface.reason)}`}
+      >
+        <Clock size={10} />
+        Not served
+      </span>
+    );
+  }
   if (site.certIssued && site.dnsVerified) {
     return (
       <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border text-green-400 bg-green-500/10 border-green-500/20">
@@ -81,6 +95,59 @@ function TypeBadge({ type }) {
     >
       {type}
     </span>
+  );
+}
+
+/**
+ * A site a plugin owns — its web surface: its files are the plugin's
+ * approved web tree and its settings follow the plugin, so the panel
+ * refuses to manage it here.
+ */
+function OwnerBadge({ owner }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border text-amber-400 bg-amber-500/10 border-amber-500/20"
+      title="The web surface of an agent-hosted plugin — managed through the plugin"
+    >
+      <Package size={10} />
+      owned by plugin <span className="font-mono">{owner.route}</span>
+    </span>
+  );
+}
+
+/**
+ * Where a plugin-owned site is managed: the plugin's page when the host can
+ * open it, otherwise in words.
+ */
+function OwnerAction({ owner, onOpenPlugin, compact = false }) {
+  if (!owner.name) {
+    return (
+      <span className="text-xs text-zinc-500" title="No installed plugin holds this route">
+        plugin not installed
+      </span>
+    );
+  }
+  if (!onOpenPlugin) {
+    return (
+      <span className="text-xs text-zinc-500">
+        manage under Plugins → {owner.label} → Web surface
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenPlugin(owner.name)}
+      title={`Manage it on the page of plugin ${owner.label} (Web surface)`}
+      className={
+        compact
+          ? 'inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300'
+          : 'inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-cyan-400 hover:bg-cyan-600/20 hover:text-cyan-300'
+      }
+    >
+      <Package size={12} />
+      Open plugin {owner.label}
+    </button>
   );
 }
 
@@ -680,7 +747,7 @@ function SiteSettingsModal({ site, onClose }) {
 
 // --- Site Table (desktop) ---
 
-function SiteTable({ sites, onDelete, onFiles, onVerifyDns, onSettings }) {
+function SiteTable({ sites, ownerOf, onOpenPlugin, onDelete, onFiles, onVerifyDns, onSettings }) {
   return (
     <div className="hidden md:block overflow-x-auto">
       <table className="w-full">
@@ -710,79 +777,97 @@ function SiteTable({ sites, onDelete, onFiles, onVerifyDns, onSettings }) {
           </tr>
         </thead>
         <tbody>
-          {sites.map((site) => (
-            <tr key={site.id} className="border-b border-zinc-700 bg-zinc-800/50">
-              <td className="py-3 px-4 text-sm text-zinc-200 font-mono">{site.name}</td>
-              <td className="py-3 px-4 text-sm">
-                {site.certIssued ? (
-                  <a
-                    href={`https://${site.fqdn}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1"
-                  >
-                    {site.fqdn}
-                    <ExternalLink size={12} />
-                  </a>
-                ) : (
-                  <span className="text-zinc-400 font-mono">{site.fqdn}</span>
-                )}
-                {(site.aliases || []).length > 0 && (
-                  <p className="text-xs text-zinc-500 font-mono mt-0.5">
-                    also {site.aliases.join(', ')}
-                  </p>
-                )}
-              </td>
-              <td className="py-3 px-4">
-                <TypeBadge type={site.type} />
-              </td>
-              <td className="py-3 px-4">
-                <StatusBadge site={site} />
-              </td>
-              <td className="py-3 px-4 text-sm text-zinc-400 font-mono">
-                {formatBytes(site.totalSize || 0)}
-              </td>
-              <td className="py-3 px-4 text-sm text-zinc-500">{relativeTime(site.createdAt)}</td>
-              <td className="py-3 px-4 text-right">
-                <div className="flex items-center justify-end gap-2">
-                  {site.type === 'custom' && !site.dnsVerified && (
-                    <button
-                      type="button"
-                      onClick={() => onVerifyDns(site)}
-                      className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-yellow-400 hover:bg-yellow-600/20 hover:text-yellow-300"
+          {sites.map((site) => {
+            const owner = ownerOf(site);
+            return (
+              <tr key={site.id} className="border-b border-zinc-700 bg-zinc-800/50">
+                <td className="py-3 px-4 text-sm text-zinc-200 font-mono">{site.name}</td>
+                <td className="py-3 px-4 text-sm">
+                  {site.certIssued ? (
+                    <a
+                      href={`https://${site.fqdn}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1"
                     >
-                      <Globe size={12} />
-                      Verify DNS
-                    </button>
+                      {site.fqdn}
+                      <ExternalLink size={12} />
+                    </a>
+                  ) : (
+                    <span className="text-zinc-400 font-mono">{site.fqdn}</span>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => onSettings(site)}
-                    className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-400 hover:bg-zinc-600 hover:text-zinc-300"
-                  >
-                    <Settings size={12} />
-                    Settings
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onFiles(site)}
-                    className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-cyan-400 hover:bg-cyan-600/20 hover:text-cyan-300"
-                  >
-                    <FolderOpen size={12} />
-                    Files
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDelete(site)}
-                    className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-600/20 hover:text-red-300"
-                  >
-                    <Trash2 size={12} />
-                    Delete
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
+                  {(site.aliases || []).length > 0 && (
+                    <p className="text-xs text-zinc-500 font-mono mt-0.5">
+                      also {site.aliases.join(', ')}
+                    </p>
+                  )}
+                </td>
+                <td className="py-3 px-4">
+                  <div className="flex flex-wrap items-center gap-1">
+                    <TypeBadge type={site.type} />
+                    {owner && <OwnerBadge owner={owner} />}
+                  </div>
+                </td>
+                <td className="py-3 px-4">
+                  <StatusBadge site={site} />
+                </td>
+                <td className="py-3 px-4 text-sm text-zinc-400 font-mono">
+                  {owner ? (
+                    <span className="text-zinc-600" title="Its web tree — see the plugin">
+                      —
+                    </span>
+                  ) : (
+                    formatBytes(site.totalSize || 0)
+                  )}
+                </td>
+                <td className="py-3 px-4 text-sm text-zinc-500">{relativeTime(site.createdAt)}</td>
+                <td className="py-3 px-4 text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    {owner ? (
+                      <OwnerAction owner={owner} onOpenPlugin={onOpenPlugin} />
+                    ) : (
+                      <>
+                        {site.type === 'custom' && !site.dnsVerified && (
+                          <button
+                            type="button"
+                            onClick={() => onVerifyDns(site)}
+                            className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-yellow-400 hover:bg-yellow-600/20 hover:text-yellow-300"
+                          >
+                            <Globe size={12} />
+                            Verify DNS
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => onSettings(site)}
+                          className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-400 hover:bg-zinc-600 hover:text-zinc-300"
+                        >
+                          <Settings size={12} />
+                          Settings
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onFiles(site)}
+                          className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-cyan-400 hover:bg-cyan-600/20 hover:text-cyan-300"
+                        >
+                          <FolderOpen size={12} />
+                          Files
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDelete(site)}
+                          className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-600/20 hover:text-red-300"
+                        >
+                          <Trash2 size={12} />
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -791,83 +876,102 @@ function SiteTable({ sites, onDelete, onFiles, onVerifyDns, onSettings }) {
 
 // --- Site Cards (mobile) ---
 
-function SiteCards({ sites, onDelete, onFiles, onVerifyDns, onSettings }) {
+function SiteCards({ sites, ownerOf, onOpenPlugin, onDelete, onFiles, onVerifyDns, onSettings }) {
   return (
     <div className="md:hidden space-y-3">
-      {sites.map((site) => (
-        <div key={site.id} className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-semibold text-zinc-200 font-mono">{site.name}</span>
-            <div className="flex items-center gap-2">
-              <TypeBadge type={site.type} />
-              <StatusBadge site={site} />
+      {sites.map((site) => {
+        const owner = ownerOf(site);
+        return (
+          <div key={site.id} className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-semibold text-zinc-200 font-mono">{site.name}</span>
+              <div className="flex items-center gap-2">
+                <TypeBadge type={site.type} />
+                <StatusBadge site={site} />
+              </div>
+            </div>
+            {site.certIssued ? (
+              <a
+                href={`https://${site.fqdn}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-cyan-400 hover:text-cyan-300 text-sm inline-flex items-center gap-1 mb-1"
+              >
+                {site.fqdn}
+                <ExternalLink size={12} />
+              </a>
+            ) : (
+              <span className="text-zinc-400 text-sm font-mono">{site.fqdn}</span>
+            )}
+            {(site.aliases || []).length > 0 && (
+              <p className="text-xs text-zinc-500 font-mono mb-1">also {site.aliases.join(', ')}</p>
+            )}
+            {owner && (
+              <div className="mt-1">
+                <OwnerBadge owner={owner} />
+              </div>
+            )}
+            <div className="flex items-center gap-4 text-xs text-zinc-500 mt-2">
+              {!owner && <span>{formatBytes(site.totalSize || 0)}</span>}
+              <span>{relativeTime(site.createdAt)}</span>
+            </div>
+            <div className="flex items-center gap-2 mt-3">
+              {owner ? (
+                <OwnerAction owner={owner} onOpenPlugin={onOpenPlugin} compact />
+              ) : (
+                <>
+                  {site.type === 'custom' && !site.dnsVerified && (
+                    <button
+                      type="button"
+                      onClick={() => onVerifyDns(site)}
+                      className="inline-flex items-center gap-1 text-xs text-yellow-400 hover:text-yellow-300"
+                    >
+                      <Globe size={12} />
+                      Verify DNS
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onSettings(site)}
+                    className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-300"
+                  >
+                    <Settings size={12} />
+                    Settings
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onFiles(site)}
+                    className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300"
+                  >
+                    <FolderOpen size={12} />
+                    Files
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(site)}
+                    className="inline-flex items-center gap-1 text-xs text-red-400 hover:text-red-300"
+                  >
+                    <Trash2 size={12} />
+                    Delete
+                  </button>
+                </>
+              )}
             </div>
           </div>
-          {site.certIssued ? (
-            <a
-              href={`https://${site.fqdn}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-cyan-400 hover:text-cyan-300 text-sm inline-flex items-center gap-1 mb-1"
-            >
-              {site.fqdn}
-              <ExternalLink size={12} />
-            </a>
-          ) : (
-            <span className="text-zinc-400 text-sm font-mono">{site.fqdn}</span>
-          )}
-          {(site.aliases || []).length > 0 && (
-            <p className="text-xs text-zinc-500 font-mono mb-1">also {site.aliases.join(', ')}</p>
-          )}
-          <div className="flex items-center gap-4 text-xs text-zinc-500 mt-2">
-            <span>{formatBytes(site.totalSize || 0)}</span>
-            <span>{relativeTime(site.createdAt)}</span>
-          </div>
-          <div className="flex items-center gap-2 mt-3">
-            {site.type === 'custom' && !site.dnsVerified && (
-              <button
-                type="button"
-                onClick={() => onVerifyDns(site)}
-                className="inline-flex items-center gap-1 text-xs text-yellow-400 hover:text-yellow-300"
-              >
-                <Globe size={12} />
-                Verify DNS
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => onSettings(site)}
-              className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-300"
-            >
-              <Settings size={12} />
-              Settings
-            </button>
-            <button
-              type="button"
-              onClick={() => onFiles(site)}
-              className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300"
-            >
-              <FolderOpen size={12} />
-              Files
-            </button>
-            <button
-              type="button"
-              onClick={() => onDelete(site)}
-              className="inline-flex items-center gap-1 text-xs text-red-400 hover:text-red-300"
-            >
-              <Trash2 size={12} />
-              Delete
-            </button>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
 // --- Main Page ---
 
-export default function Sites({ domain }) {
+/**
+ * Static sites. Sites a plugin owns (its web surface) are listed read-only
+ * — `onOpenPlugin(name)`, when the host passes it, opens that plugin's
+ * page, where its web surface is managed.
+ */
+export default function Sites({ domain, onOpenPlugin }) {
   const queryClient = useQueryClient();
   const addToast = useToast();
   const client = useAdminClient();
@@ -883,6 +987,11 @@ export default function Sites({ domain }) {
     queryFn: () => client.getSites(),
     refetchInterval: 10_000,
   });
+
+  // Who owns the plugin-owned sites: their route, named after the plugin.
+  const pluginsQuery = useQuery({ queryKey: ['plugins'], queryFn: () => client.getPlugins() });
+  const plugins = pluginsQuery.data?.plugins;
+  const ownerOf = useCallback((site) => siteOwner(site, plugins), [plugins]);
 
   const deleteMutation = useMutation({
     mutationFn: (id) => client.deleteSite(id),
@@ -964,6 +1073,8 @@ export default function Sites({ domain }) {
         <>
           <SiteTable
             sites={sites}
+            ownerOf={ownerOf}
+            onOpenPlugin={onOpenPlugin}
             onDelete={handleDelete}
             onFiles={handleFiles}
             onVerifyDns={handleVerifyDns}
@@ -971,6 +1082,8 @@ export default function Sites({ domain }) {
           />
           <SiteCards
             sites={sites}
+            ownerOf={ownerOf}
+            onOpenPlugin={onOpenPlugin}
             onDelete={handleDelete}
             onFiles={handleFiles}
             onVerifyDns={handleVerifyDns}

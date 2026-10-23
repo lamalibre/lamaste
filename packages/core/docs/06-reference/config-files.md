@@ -245,20 +245,24 @@ Stores the array of static sites hosted through Lamaste.
 
 **Schema:** Array of site objects.
 
-| Field               | Type                  | Description                                                                                                                 |
-| ------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `id`                | string                | UUID                                                                                                                        |
-| `name`              | string                | Site name (the subdomain for managed sites)                                                                                 |
-| `fqdn`              | string                | Full domain (e.g., `blog.example.com`)                                                                                      |
-| `type`              | string                | `"managed"` (subdomain of the Lamaste domain) or `"custom"` (your own domain)                                               |
-| `spaMode`           | boolean               | If true, `try_files` falls back to `/index.html`                                                                            |
-| `autheliaProtected` | boolean               | If true, requires Authelia authentication                                                                                   |
-| `allowedUsers`      | string[]              | Authelia users allowed when protected (empty: all authenticated users)                                                      |
-| `dnsVerified`       | boolean               | DNS verified (always `true` for managed sites)                                                                              |
-| `certIssued`        | boolean               | TLS certificate issued and vhost live                                                                                       |
-| `aliases`           | string[] \| undefined | Custom sites only: hostnames answered with a 301 to `https://<fqdn>`. One certificate lineage named after `fqdn` covers all |
-| `rootPath`          | string                | Document root (e.g., `/var/www/lamaste/<id>/`)                                                                              |
-| `createdAt`         | string                | ISO 8601 timestamp                                                                                                          |
+| Field               | Type                  | Description                                                                                                                                                                                                    |
+| ------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                | string                | UUID                                                                                                                                                                                                           |
+| `name`              | string                | Site name (the subdomain for managed sites)                                                                                                                                                                    |
+| `fqdn`              | string                | Full domain (e.g., `blog.example.com`)                                                                                                                                                                         |
+| `type`              | string                | `"managed"` (subdomain of the Lamaste domain) or `"custom"` (your own domain)                                                                                                                                  |
+| `spaMode`           | boolean               | If true, `try_files` falls back to `/index.html`                                                                                                                                                               |
+| `autheliaProtected` | boolean               | If true, requires Authelia authentication                                                                                                                                                                      |
+| `allowedUsers`      | string[]              | Authelia users allowed when protected (empty: all authenticated users)                                                                                                                                         |
+| `dnsVerified`       | boolean               | DNS verified (always `true` for managed sites)                                                                                                                                                                 |
+| `certIssued`        | boolean               | TLS certificate issued and vhost live                                                                                                                                                                          |
+| `aliases`           | string[] \| undefined | Custom sites only: hostnames answered with a 301 to `https://<fqdn>`. One certificate lineage named after `fqdn` covers all                                                                                    |
+| `rootPath`          | string                | Document root (e.g., `/var/www/lamaste/<id>/`)                                                                                                                                                                 |
+| `createdAt`         | string                | ISO 8601 timestamp                                                                                                                                                                                             |
+| `owner`             | object \| undefined   | `{ plugin: <route> }` — a plugin's [web surface](../04-api-reference/agent-hosted-plugins.md#web-surface); its `rootPath` is `/var/www/lamaste/apps/<route>/current` and only the plugin's workflows change it |
+| `accessMode`        | string \| undefined   | A plugin-owned site's: `"authenticated"` or `"restricted"` (a `site` grant in Gatekeeper)                                                                                                                      |
+
+Gatekeeper reads this file too (the hosts of plugins' user surfaces). Every change runs under the panel's sites lock.
 
 **Example:**
 

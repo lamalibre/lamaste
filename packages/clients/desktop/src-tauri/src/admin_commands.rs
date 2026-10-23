@@ -1129,6 +1129,122 @@ pub async fn admin_sync_plugin_identity(
     admin_refusable_task("POST", path, Some(body)).await
 }
 
+// --- Web surface of an agent-hosted plugin ---
+//
+// Refusals carry the panel's `code`: `no_web_surface`, `no_identity`,
+// `exists`, `bound_to_tunnel`, `hostname_taken`, `not_bound`,
+// `shared_tunnel`, `tunnel_disabled`, `not_hosted`, `not_approved`,
+// `web_tree`, `gatekeeper`, `not_found`.
+
+/// The longest plugin name the panel accepts in a path.
+const PLUGIN_NAME_MAX: usize = 100;
+
+/// `/api/plugins/<name>/<rest>` for the web-surface routes, whose plugin
+/// name the panel caps at `PLUGIN_NAME_MAX` characters.
+fn web_surface_path(name: &str, rest: &str) -> Result<String, serde_json::Value> {
+    if name.len() > PLUGIN_NAME_MAX {
+        return Err(refusal(format!(
+            "A plugin name is at most {} characters",
+            PLUGIN_NAME_MAX
+        )));
+    }
+    plugin_api_path(name, rest)
+}
+
+/// `subdomain`, when it is a DNS label: 1–63 lowercase letters, digits and
+/// inner hyphens.
+fn dns_label(subdomain: &str) -> Result<&str, serde_json::Value> {
+    let bytes = subdomain.as_bytes();
+    let valid = (1..=63).contains(&bytes.len())
+        && bytes.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+        && bytes.first() != Some(&b'-')
+        && bytes.last() != Some(&b'-');
+    if !valid {
+        return Err(refusal(format!("\"{}\" is not a DNS label", subdomain)));
+    }
+    Ok(subdomain)
+}
+
+/// `access_mode`, when it is one a web surface's site can have.
+fn web_surface_access_mode(access_mode: &str) -> Result<&str, serde_json::Value> {
+    match access_mode {
+        "authenticated" | "restricted" => Ok(access_mode),
+        _ => Err(refusal(format!(
+            "\"{}\" is not an access mode (authenticated or restricted)",
+            access_mode
+        ))),
+    }
+}
+
+/// `id`, when it has the shape of a tunnel id the panel accepts in a move:
+/// 1–64 ASCII letters, digits and hyphens.
+fn move_tunnel_id(id: &str) -> Result<&str, serde_json::Value> {
+    let valid = (1..=64).contains(&id.len())
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    if !valid {
+        return Err(refusal(format!("\"{}\" is not a tunnel id", id)));
+    }
+    Ok(id)
+}
+
+/// The body of a create: `{ subdomain?, accessMode? }`, each left out when
+/// not given so the panel falls back to what the plugin declares.
+fn create_web_surface_body(
+    subdomain: Option<&str>,
+    access_mode: Option<&str>,
+) -> Result<String, serde_json::Value> {
+    let mut body = serde_json::Map::new();
+    if let Some(subdomain) = subdomain {
+        body.insert("subdomain".to_string(), dns_label(subdomain)?.into());
+    }
+    if let Some(access_mode) = access_mode {
+        body.insert("accessMode".to_string(), web_surface_access_mode(access_mode)?.into());
+    }
+    Ok(serde_json::Value::Object(body).to_string())
+}
+
+/// What the plugin's installed version declares as its web surface, the
+/// site it owns, whether that site is served (and why not), its trees, the
+/// tunnel still bound as its user surface, and the subdomain on offer.
+/// Answered with `{ webSurface }`.
+#[tauri::command]
+pub async fn admin_get_plugin_web_surface(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("GET", web_surface_path(&name, "web-surface")?, None).await
+}
+
+/// Create the plugin's site on `subdomain` (default: the declared one) with
+/// `access_mode` (default: the declared one). Answered with `{ webSurface }`.
+#[tauri::command]
+pub async fn admin_create_plugin_web_surface(
+    name: String,
+    subdomain: Option<String>,
+    access_mode: Option<String>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = web_surface_path(&name, "web-surface")?;
+    let body = create_web_surface_body(subdomain.as_deref(), access_mode.as_deref())?;
+    admin_refusable_task("POST", path, Some(body)).await
+}
+
+/// Hand the host of tunnel `tunnel_id` — bound as the plugin's user surface
+/// and to nothing else — to its web surface; the tunnel stays, disabled and
+/// unbound. Answered with `{ webSurface }`.
+#[tauri::command]
+pub async fn admin_move_plugin_web_surface(
+    name: String,
+    tunnel_id: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = web_surface_path(&name, "web-surface/move")?;
+    let body = serde_json::json!({ "tunnelId": move_tunnel_id(&tunnel_id)? }).to_string();
+    admin_refusable_task("POST", path, Some(body)).await
+}
+
+/// Delete the plugin's site, its trees and the grants on it. Answered with
+/// `{ ok: true }`.
+#[tauri::command]
+pub async fn admin_delete_plugin_web_surface(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("DELETE", web_surface_path(&name, "web-surface")?, None).await
+}
+
 // --- Audit log and panel notifications ---
 
 /// `?key=value&…` from a JSON object of query values (strings, numbers, booleans).
@@ -1534,13 +1650,10 @@ pub async fn admin_start_log_stream(
         }
 
         // Clean up entry from state when task exits
-        drop({
-            let state = app_handle.state::<LogStreamState>();
-            let _ = state.0.lock().map(|mut streams| {
-                streams.remove(&cancel_key_for_cleanup);
-            });
-            state
-        });
+        let state = app_handle.state::<LogStreamState>();
+        if let Ok(mut streams) = state.0.lock() {
+            streams.remove(&cancel_key_for_cleanup);
+        };
     });
 
     Ok(())
@@ -1890,5 +2003,51 @@ mod tests {
         }
         assert!(user_surface_path("not-a-uuid", None).is_err());
         assert!(user_surface_path("../tunnels", Some("fx")).is_err());
+    }
+
+    #[test]
+    fn a_web_surface_path_takes_a_plugin_name_of_at_most_100_characters() {
+        assert_eq!(
+            web_surface_path("market-indicators", "web-surface").unwrap(),
+            "/api/plugins/market-indicators/web-surface"
+        );
+        assert_eq!(
+            web_surface_path("fx", "web-surface/move").unwrap(),
+            "/api/plugins/fx/web-surface/move"
+        );
+        assert!(web_surface_path(&"a".repeat(100), "web-surface").is_ok());
+        for bad in [String::new(), "Fx".into(), "../fx".into(), "fx/x".into(), "a".repeat(101)] {
+            assert!(web_surface_path(&bad, "web-surface").unwrap_err()["error"].is_string(), "{}", bad);
+        }
+    }
+
+    #[test]
+    fn a_web_surface_create_body_carries_only_what_is_given() {
+        assert_eq!(create_web_surface_body(None, None).unwrap(), "{}");
+        let body: serde_json::Value = serde_json::from_str(
+            &create_web_surface_body(Some("piyasa"), Some("restricted")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body, serde_json::json!({ "subdomain": "piyasa", "accessMode": "restricted" }));
+        assert!(create_web_surface_body(None, Some("authenticated")).is_ok());
+        assert!(create_web_surface_body(Some(&"a".repeat(63)), None).is_ok());
+        for bad in ["", "-fx", "fx-", "Fx", "f.x", "fx/x", "f_x", &"a".repeat(64)] {
+            assert!(create_web_surface_body(Some(bad), None).is_err(), "{}", bad);
+        }
+        for bad in ["", "public", "Authenticated", "restricted "] {
+            assert!(create_web_surface_body(None, Some(bad)).is_err(), "{}", bad);
+        }
+    }
+
+    #[test]
+    fn a_web_surface_move_names_a_tunnel_id() {
+        assert_eq!(
+            move_tunnel_id("8d3f1c2b-1a2b-4c3d-8e4f-5a6b7c8d9e0f").unwrap(),
+            "8d3f1c2b-1a2b-4c3d-8e4f-5a6b7c8d9e0f"
+        );
+        assert!(move_tunnel_id(&"A".repeat(64)).is_ok());
+        for bad in ["", "..", "a/b", "a b", "a_b", "a\"b", &"a".repeat(65)] {
+            assert!(move_tunnel_id(bad).unwrap_err()["error"].is_string(), "{}", bad);
+        }
     }
 }

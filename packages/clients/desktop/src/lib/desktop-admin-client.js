@@ -13,12 +13,13 @@ import { settingsErrorsOf } from '@lamalibre/lamaste-server-ui/lib/pluginSetting
  * approving an update, purging retained data), settles one's leftovers
  * (forgetting retained data), reads or changes a plugin's settings or its
  * people (identity, audience, entitlements, sync), disables, enables,
- * deletes or erases a user, or binds a tunnel as a user surface. It
- * rejects with the panel's refusal — `{ error, status?, code?, reasons?,
- * operationId?, errors? }` — which is rethrown as the Error the web client
- * throws for it, so the panel UI can explain it (an ineligible agent's
- * reasons, closed push install, a stale settings revision, a message per
- * setting, the last enabled administrator, a route served elsewhere). The
+ * deletes or erases a user, binds a tunnel as a user surface, or reads,
+ * creates, moves or deletes a plugin's web surface. It rejects with the
+ * panel's refusal — `{ error, status?, code?, reasons?, operationId?,
+ * errors? }` — which is rethrown as the Error the web client throws for it,
+ * so the panel UI can explain it (an ineligible agent's reasons, closed push
+ * install, a stale settings revision, a message per setting, the last
+ * enabled administrator, a route served elsewhere, a hostname taken). The
  * panel's messages never contain a setting's value.
  */
 async function invokeRefusable(command, args) {
@@ -196,6 +197,16 @@ export const desktopAdminClient = {
     invokeRefusable('admin_remove_plugin_entitlement', { name, principalType, principalId }),
   syncPluginIdentity: (name, { reconcile = false } = {}) =>
     invokeRefusable('admin_sync_plugin_identity', { name, reconcile: reconcile === true }),
+  getPluginWebSurface: (name) => invokeRefusable('admin_get_plugin_web_surface', { name }),
+  createPluginWebSurface: (name, { subdomain, accessMode } = {}) =>
+    invokeRefusable('admin_create_plugin_web_surface', {
+      name,
+      subdomain: subdomain || null,
+      accessMode: accessMode || null,
+    }),
+  movePluginWebSurface: (name, tunnelId) =>
+    invokeRefusable('admin_move_plugin_web_surface', { name, tunnelId }),
+  deletePluginWebSurface: (name) => invokeRefusable('admin_delete_plugin_web_surface', { name }),
   getPluginSettings: (name) => invokeRefusable('admin_get_plugin_settings', { name }),
   // The body carries secrets: it goes to the Rust command and on to curl's
   // stdin as the request body, and nowhere else.

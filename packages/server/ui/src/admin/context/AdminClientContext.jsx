@@ -41,7 +41,7 @@ const AdminClientContext = createContext(null);
  * @property {(id: string) => Promise<{ok}>} revokeInvitation
  *
  * Sites:
- * @property {() => Promise<{sites: Array}>} getSites
+ * @property {() => Promise<{sites: Array}>} getSites — sites a plugin owns (its web surface) carry `owner: {plugin: <route>}` and `accessMode`; the sites API refuses to manage them (409, `code` plugin_owned_site)
  * @property {(data: {name, type, customDomain?, spaMode?, autheliaProtected?}) => Promise<{ok, site}>} createSite
  * @property {(id: string) => Promise<{ok}>} deleteSite
  * @property {(id: string, data: {spaMode?, autheliaProtected?, allowedUsers?}) => Promise<{ok, site}>} updateSite
@@ -119,6 +119,10 @@ const AdminClientContext = createContext(null);
  * @property {(name: string, entitlement: {principalType, principalId, roles}) => Promise<{ok, entitlement, changed, warnings?}>} setPluginEntitlement — exactly these roles for a user or a Lamaste group; refused with `code` unknown_roles, user_not_found, group_not_found or gatekeeper_unavailable
  * @property {(name: string, principal: {principalType, principalId}) => Promise<{ok, revoked, warnings?}>} removePluginEntitlement — refused with `code` entitlement_not_found
  * @property {(name: string, options?: {reconcile?: boolean}) => Promise<{ok, result: {status, reason?, error?, cursor?, replay?, mismatches?}, sync}>} syncPluginIdentity — sync the audience to the agent half now; `reconcile` replays everything and counts what was out of step
+ * @property {(name: string) => Promise<{webSurface: {declared, site, served, reason, tree, boundTunnel, offer}}>} getPluginWebSurface — what the installed version declares (`userSurface.web`, null: none), the site it owns (null: none), whether that site serves the shell and API (`reason` not_installed | no_identity | no_web_surface | not_approved | not_hosted | tree_not_current), the trees (`approved`, `current`, `previous` digests), the tunnel bound as its user surface, and — while it owns no site — the offered subdomain and whether it is free
+ * @property {(name: string, options?: {subdomain?: string, accessMode?: 'authenticated'|'restricted'}) => Promise<{webSurface}>} createPluginWebSurface — the site on `subdomain` (default: the declared one); refused with `code` no_web_surface, no_identity, exists, bound_to_tunnel, hostname_taken, web_tree or domain_not_configured
+ * @property {(name: string, tunnelId: string) => Promise<{webSurface}>} movePluginWebSurface — hand the hostname of the tunnel bound as its user surface to its web surface in one reload (the tunnel stays, disabled and unbound; a restricted tunnel's grants are copied); refused with `code` exists, not_found, not_bound, shared_tunnel, tunnel_disabled, not_hosted, not_approved, hostname_taken, web_tree or gatekeeper
+ * @property {(name: string) => Promise<{ok}>} deletePluginWebSurface — the site, its trees and the grants on it; the plugin stays
  * @property {() => Promise<{enabled, defaultPolicy, policies, windowMinutes: {min, max}}>} getPushInstallConfig
  * @property {(data: {enabled?, defaultPolicy?}) => Promise<any>} updatePushInstallConfig
  * @property {() => Promise<{policies: Array}>} getPushInstallPolicies

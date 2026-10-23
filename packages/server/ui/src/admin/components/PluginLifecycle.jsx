@@ -25,11 +25,12 @@ import { refusalText } from '../lib/pluginRefusal.js';
 import { markSecretsRead, operationSecretsAction, withoutSecrets } from '../lib/oidcSecrets.js';
 import { settingsDiffRows } from '../lib/pluginSettings.js';
 import { IDENTITY_CHANGED, attributeLabel, identityDiffRows } from '../lib/identity.js';
-
-/** `0123…cdef` — enough of a digest to compare by eye. */
-function short(digest) {
-  return digest ? `${digest.slice(0, 8)}…${digest.slice(-6)}` : '';
-}
+import {
+  accessModeText,
+  shortDigest as short,
+  treeSummary,
+  webTreeChange,
+} from '../lib/web-surface.js';
 
 /** `sha512-AbCdEfGhIj…uvwxyz==` — enough of a tarball integrity to compare by eye. */
 function shortIntegrity(integrity) {
@@ -385,6 +386,8 @@ function invalidatePluginLifecycle(queryClient, name) {
   queryClient.invalidateQueries({ queryKey: ['plugin-hooks', name] });
   queryClient.invalidateQueries({ queryKey: ['plugins'] });
   queryClient.invalidateQueries({ queryKey: ['plugin-operations', name] });
+  // Whether its web surface is served follows the approval and the version.
+  queryClient.invalidateQueries({ queryKey: ['plugin-web-surface', name] });
 }
 
 /** A refused update, for a toast: its agent half is a push to the hosting agent. */
@@ -394,23 +397,31 @@ function updateRefusalText(err, plugin) {
 
 /**
  * What the installed version brings that an approval covers — its relay
- * hook set, the agent half Lamaste installs, its identity block (each null
- * when it brings none) — from the hook status.
+ * hook set, the agent half Lamaste installs, its identity block, its web
+ * tree (`{ treeSha256, surface }`; each null when it brings none) — from
+ * the hook status.
  */
 function installedBrings(hooks) {
   return {
     relay: hooks.relay ?? null,
     agentHalf: hooks.agentHalf ?? null,
     identity: hooks.identity?.declared ? hooks.identity.block : null,
+    web: hooks.web?.declared
+      ? { treeSha256: hooks.web.treeSha256, surface: hooks.web.surface ?? null }
+      : null,
   };
 }
 
-/** The same for a pending update (its identity diff names the block it brings, `after`). */
+/**
+ * The same for a pending update (its identity diff names the block it
+ * brings, `after`; its web diff the tree, `after`).
+ */
 function updateBrings(update) {
   return {
     relay: update.relay ?? null,
     agentHalf: update.agentHalf ?? null,
     identity: update.identity?.after ?? null,
+    web: update.web?.after ?? null,
   };
 }
 
@@ -422,23 +433,27 @@ function listed(parts) {
 }
 
 /** What an approval covers, in words, and the verb that goes with it. */
-function approvalSubject({ relay, agentHalf, identity }) {
-  const parts = [relay && 'relay hooks', agentHalf && 'agent half', identity && 'identity'].filter(
-    Boolean,
-  );
+function approvalSubject({ relay, agentHalf, identity, web }) {
+  const parts = [
+    relay && 'relay hooks',
+    agentHalf && 'agent half',
+    identity && 'identity',
+    web && 'web surface',
+  ].filter(Boolean);
   if (parts.length === 0) return { subject: 'relay hooks', plural: true };
   return { subject: listed(parts), plural: parts.length > 1 || parts[0] === 'relay hooks' };
 }
 
 /** The question before approving: what approving lets Lamaste do. */
-function approvalQuestion({ relay, agentHalf, identity }) {
+function approvalQuestion({ relay, agentHalf, identity, web }) {
   const parts = [
     relay && 'run this code on the relay',
     agentHalf &&
-      (relay || identity
+      (relay || identity || web
         ? 'install this agent half'
         : 'install this agent half on the hosting agent'),
     identity && 'send it its users with these roles and attributes',
+    web && 'serve this web tree to its users',
   ].filter(Boolean);
   const question = listed(parts.length > 0 ? parts : ['run this code on the relay']);
   return `${question.charAt(0).toUpperCase()}${question.slice(1)}?`;
@@ -446,16 +461,18 @@ function approvalQuestion({ relay, agentHalf, identity }) {
 
 /**
  * What waits for an approval to happen: the relay hooks run, the agent
- * half is installed, its users are sent to it and reach it.
+ * half is installed, its users are sent to it and reach it, its web tree
+ * is served.
  */
-function approvalGate({ relay, agentHalf, identity }) {
+function approvalGate({ relay, agentHalf, identity, web }) {
   const parts = [
     relay && 'runs its relay hooks',
     agentHalf && 'installs its agent half',
     identity && 'sends it its users (and lets them reach it)',
+    web && 'serves its web tree',
     'hosts the plugin',
   ].filter(Boolean);
-  const what = relay && !agentHalf && !identity ? 'they are' : 'this is';
+  const what = relay && !agentHalf && !identity && !web ? 'they are' : 'this is';
   return `Lamaste ${listed(parts)} only once ${what} approved.`;
 }
 
@@ -559,12 +576,38 @@ function IdentityBlockView({ block }) {
 }
 
 /**
+ * The web tree an approval covers: its digest — the relay serves only a
+ * copy that matches it — and, for the installed version, the web surface it
+ * declares.
+ */
+function WebTreeView({ web }) {
+  return (
+    <div className="space-y-0.5 text-zinc-400">
+      <div>
+        <span className="text-zinc-500">tree </span>
+        <span className="font-mono text-zinc-300" title={web.treeSha256}>
+          {short(web.treeSha256)}
+        </span>
+      </div>
+      {web.surface && (
+        <div>
+          <span className="text-zinc-500">offers </span>
+          <span className="font-mono text-zinc-300">{web.surface.defaultSubdomain}</span>
+          <span className="text-zinc-500"> · {accessModeText(web.surface.accessMode)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * What a version brings that needs approval — its relay hook set (code
  * Lamaste runs on the relay, in a sandbox), the agent half Lamaste
- * installs on the hosting agent, and its identity block (who its users are
- * and what it learns about them).
+ * installs on the hosting agent, its identity block (who its users are
+ * and what it learns about them) and its web tree (the shell the relay
+ * serves to them).
  */
-function ApprovalContents({ relay, agentHalf, identity }) {
+function ApprovalContents({ relay, agentHalf, identity, web }) {
   return (
     <>
       {relay && (
@@ -592,7 +635,54 @@ function ApprovalContents({ relay, agentHalf, identity }) {
           <IdentityBlockView block={identity} />
         </div>
       )}
+      {web && (
+        <div>
+          <p className="mb-1 text-zinc-500">
+            Web surface — the relay serves this tree, from its server package, to its users on the
+            site it owns:
+          </p>
+          <WebTreeView web={web} />
+        </div>
+      )}
     </>
+  );
+}
+
+/**
+ * What an update changes in the plugin's web tree (`pendingUpdate.web`,
+ * part of the digest): the installed tree's digest, the staged one's with
+ * its file count and size.
+ */
+function WebTreeChanges({ web }) {
+  const change = webTreeChange(web);
+  if (!change) return null;
+  const headline = {
+    added: 'Web surface — this version declares one for the first time:',
+    removed:
+      'Web surface — this version no longer declares one: its site answers 503 until a version that does is approved:',
+    changed: 'Web surface — this version ships another web tree:',
+    unchanged: 'Web surface — the web tree is unchanged:',
+  }[change.kind];
+  return (
+    <div>
+      <p className="mb-1 text-zinc-500">{headline}</p>
+      <div className="flex flex-wrap items-center gap-x-1.5 text-zinc-400">
+        <span className="text-zinc-500">tree </span>
+        {change.before && (
+          <span className="font-mono text-zinc-300" title={change.before}>
+            {short(change.before)}
+          </span>
+        )}
+        {change.kind === 'changed' && <span className="text-zinc-500">→</span>}
+        {(change.kind === 'added' || change.kind === 'changed') && (
+          <span className="font-mono text-zinc-300" title={change.after.sha256}>
+            {short(change.after.sha256)}
+          </span>
+        )}
+        {change.after && <span className="text-zinc-500">({treeSummary(change.after)})</span>}
+        {change.kind === 'removed' && <span className="text-zinc-500">→ none</span>}
+      </div>
+    </div>
   );
 }
 
@@ -759,6 +849,7 @@ export function PluginHooks({ plugin, isActing }) {
       !hooks.agent &&
       !hooks.agentHalf &&
       !hooks.identity?.declared &&
+      !hooks.web?.declared &&
       !hooks.pendingUpdate)
   ) {
     return null;
@@ -897,6 +988,7 @@ export function PluginHooks({ plugin, isActing }) {
               )}
               <ApprovalContents relay={pendingUpdate.relay} agentHalf={pendingUpdate.agentHalf} />
               <IdentityChanges diff={pendingUpdate.identity} />
+              <WebTreeChanges web={pendingUpdate.web} />
               <SettingsSchemaChanges diff={pendingUpdate.settings} />
               <AutoApproveWithheld reasons={notCovered} />
               <div className="flex items-center gap-2">
@@ -961,7 +1053,7 @@ export function PluginUpdate({ plugin, isActing }) {
         disabled={isActing || update.isPending}
         onClick={() => update.mutate()}
         className="flex items-center gap-1.5 rounded bg-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
-        title="Fetch the version and read it before installing it; relay hooks that changed, a new agent half, secret settings turned plain and roles added or removed or attributes widened wait for approval"
+        title="Fetch the version and read it before installing it; relay hooks that changed, a new agent half, a changed web tree, secret settings turned plain and roles added or removed or attributes widened wait for approval"
       >
         {update.isPending ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
         Update

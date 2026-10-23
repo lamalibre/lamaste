@@ -1,11 +1,13 @@
 /**
  * `lamaste-server plugins hooks|update|approve-hooks`: why an update waits
  * for approval, what an identity block lets a plugin learn and how an
- * update changes it, the command that approves it, and the arguments that
+ * update changes it, the web tree a version brings and how an update
+ * changes it, the command that approves it, and the arguments that
  * command takes. Pure — no output — so they are tested as they are.
  */
 
 import { terminalText } from './plugin-settings.js';
+import { bytesText, shortDigest } from './plugin-web-surface.js';
 
 const DIGEST_RE = /^[a-f0-9]{64}$/;
 const VERSION_RE = /^[0-9A-Za-z.+-]{1,64}$/;
@@ -139,6 +141,83 @@ export function identityDiffLines(diff) {
       ? 'no longer declares identity — it is sent no users, its role grants are revoked and its user surface is no longer served'
       : 'changes its identity';
   return { headline, lines };
+}
+
+/**
+ * What the installed version's web surface brings (the hook status's
+ * `web`: `{ declared, approved, treeSha256, surface }`) as lines — the tree
+ * the approval covers, and the site Lamaste offers for it. Empty when it
+ * declares none.
+ *
+ * @param {unknown} web
+ * @returns {string[]}
+ */
+export function webSurfaceBlockLines(web) {
+  if (web === null || typeof web !== 'object' || !web.declared) return [];
+  const surface = web.surface !== null && typeof web.surface === 'object' ? web.surface : null;
+  const lines = [terminalText(`tree:     ${web.treeSha256 ?? 'unknown'}`)];
+  if (surface) {
+    lines.push(
+      terminalText(
+        `site:     offered on ${surface.defaultSubdomain} (${surface.accessMode}), the shell from ${surface.root}/ of its server package`,
+      ),
+    );
+  }
+  return lines;
+}
+
+/**
+ * How an update changes the plugin's web tree (`pendingUpdate.web`:
+ * `{ before: sha256 | null, after: { sha256, files, totalBytes } | null }`
+ * — part of the digest): a headline and its lines. Null when neither
+ * version declares a web surface.
+ *
+ * @param {unknown} web
+ * @returns {{ headline: string, lines: string[], changed: boolean } | null}
+ */
+export function webTreeDiffLines(web) {
+  if (web === null || typeof web !== 'object') return null;
+  const before = typeof web.before === 'string' ? web.before : null;
+  const after =
+    web.after !== null && typeof web.after === 'object' && typeof web.after.sha256 === 'string'
+      ? web.after
+      : null;
+  if (before === null && after === null) return null;
+  const contents = (tree) => `${tree.files} file(s), ${bytesText(tree.totalBytes)}`;
+  if (after === null) {
+    return {
+      headline:
+        'no longer declares a web surface — its site answers 503 until a version that does is approved',
+      lines: [terminalText(`tree:     ${shortDigest(before)} → none`)],
+      changed: true,
+    };
+  }
+  if (before === null) {
+    return {
+      headline: 'declares a web surface for the first time',
+      lines: [
+        terminalText(`tree:     ${after.sha256}`),
+        terminalText(`contents: ${contents(after)}`),
+      ],
+      changed: true,
+    };
+  }
+  if (before === after.sha256) {
+    return {
+      headline: 'keeps its web tree',
+      lines: [terminalText(`tree:     ${after.sha256} (${contents(after)})`)],
+      changed: false,
+    };
+  }
+  return {
+    headline: 'changes its web tree — its site serves the new shell once approved',
+    lines: [
+      terminalText(`tree:     ${shortDigest(before)} → ${shortDigest(after.sha256)}`),
+      terminalText(`new tree: ${after.sha256}`),
+      terminalText(`contents: ${contents(after)}`),
+    ],
+    changed: true,
+  };
 }
 
 /**

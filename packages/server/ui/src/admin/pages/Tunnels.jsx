@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
+import { siteOwnerRoute } from '../lib/web-surface.js';
 import {
   boundRoutes,
   userSurfaceCandidateBlock,
@@ -567,6 +568,8 @@ function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
   const [route, setRoute] = useState('');
   const tunnel = tunnels.find((t) => t.id === tunnelId);
   const pluginsQuery = useQuery({ queryKey: ['plugins'], queryFn: () => client.getPlugins() });
+  // A plugin's own site (its web surface) serves its route too.
+  const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: () => client.getSites() });
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['tunnels'] });
@@ -604,6 +607,10 @@ function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
   for (const t of tunnels) {
     if (t.id === tunnel.id) continue;
     for (const r of boundRoutes(t)) servedOn.set(r, t.fqdn ?? t.subdomain);
+  }
+  for (const site of sitesQuery.data?.sites ?? []) {
+    const r = siteOwnerRoute(site);
+    if (r) servedOn.set(r, `its own site ${site.fqdn}`);
   }
   const candidates = (pluginsQuery.data?.plugins ?? [])
     .filter((p) => p.hosting === 'agent' && p.route && !routes.includes(p.route))

@@ -59,6 +59,10 @@
  *                        Who holds which of its roles; give or take them away
  *   identity-sync <name> [--reconcile]
  *                        Sync its audience to its agent half now
+ *   web-surface <name> [create [--subdomain <s>] [--access-mode <m>] | move --tunnel <t> | delete [--yes]]
+ *                        The site an agent-hosted plugin owns for its web surface: what it
+ *                        declares, whether it is served, its trees; create, move a bound
+ *                        tunnel's host to it, delete it
  *
  * Every subcommand goes through the running panel (`/api/plugins/*`, admin
  * certificate): the panel owns the plugin registry (SQLite `state.db`), runs
@@ -77,6 +81,7 @@ import { panelRequest } from '../panel-api.js';
 import { emit, emitStep, emitError, emitComplete, emitLog } from '../ndjson.js';
 import { configureCmd, settingsCmd } from './plugin-settings.js';
 import { audienceCmd, entitlementsCmd, identityCmd, identitySyncCmd } from './plugin-identity.js';
+import { webSurfaceCmd } from './plugin-web-surface.js';
 import { settingsDiffLines, terminalText } from '../plugin-settings.js';
 import {
   APPROVE_HOOKS_USAGE,
@@ -85,6 +90,8 @@ import {
   identityDiffLines,
   parseApproveArgs,
   pendingUpdateReasons,
+  webSurfaceBlockLines,
+  webTreeDiffLines,
 } from '../plugin-approval.js';
 
 /** npm runs inside the panel for install and uninstall (its own limit is 120 s). */
@@ -152,6 +159,8 @@ export async function runPlugins(args, { json }) {
       return entitlementsCmd(args.slice(1), { json });
     case 'identity-sync':
       return identitySyncCmd(args.slice(1), { json });
+    case 'web-surface':
+      return webSurfaceCmd(args.slice(1), { json });
     default:
       printPluginUsage();
       process.exit(sub ? 1 : 0);
@@ -219,6 +228,14 @@ ${b('Subcommands:')}
                        Take every role away
   ${c('identity-sync <name> [--reconcile]')}
                        Sync its audience to its agent half now; --reconcile replays all of it
+  ${c('web-surface <name>')}   The site a plugin owns for its web surface: what it declares, its site,
+                       whether it is served (and why not), its trees, the bound tunnel, the offer
+  ${c('web-surface <name> create [--subdomain <label>] [--access-mode authenticated|restricted]')}
+                       Give it its site (default: the subdomain and access mode it declares)
+  ${c('web-surface <name> move --tunnel <id | subdomain | fqdn>')}
+                       Hand the host of the tunnel bound as its user surface to its site
+  ${c('web-surface <name> delete [--yes]')}
+                       Delete its site, its trees and the grants on it (typed confirmation)
 `);
 }
 
@@ -797,15 +814,24 @@ function printIdentityBlock(block, title) {
 }
 
 /**
+ * Print a web surface — the web tree an approval covers and the site
+ * Lamaste offers for it (the hook status's `web`).
+ */
+function printWebSurfaceBlock(web, title) {
+  console.log(chalk.bold(`  ${title}`));
+  for (const line of webSurfaceBlockLines(web)) console.log(`    ${line}`);
+}
+
+/**
  * Print what a version brings that needs approval — the approval digest
  * (what `approve-hooks` takes; none for an update that brings neither
- * relay hooks, nor an agent half Lamaste installs, nor an identity block),
- * its relay hook set, the agent half Lamaste installs and its identity
- * block.
+ * relay hooks, nor an agent half Lamaste installs, nor an identity block,
+ * nor a web surface), its relay hook set, the agent half Lamaste installs,
+ * its identity block and its web tree.
  */
-function printApprovalContents({ digest, relay, agentHalf, identity = null }) {
+function printApprovalContents({ digest, relay, agentHalf, identity = null, web = null }) {
   console.log(
-    `    approval digest: ${digest ? chalk.cyan(digest) : chalk.dim('none — no relay hooks, no agent half Lamaste installs, no identity block')}`,
+    `    approval digest: ${digest ? chalk.cyan(digest) : chalk.dim('none — no relay hooks, no agent half Lamaste installs, no identity block, no web surface')}`,
   );
   if (relay) {
     console.log('');
@@ -821,6 +847,27 @@ function printApprovalContents({ digest, relay, agentHalf, identity = null }) {
       identity,
       'Identity — Lamaste sends its agent half the users entitled to these roles',
     );
+  }
+  if (web?.declared) {
+    console.log('');
+    printWebSurfaceBlock(
+      web,
+      'Web surface — the relay serves this tree on the site the plugin owns',
+    );
+  }
+}
+
+/**
+ * Print how an update changes the plugin's web tree (part of the digest):
+ * the tree before and after, its file count and size.
+ */
+function printWebTreeChanges(web) {
+  const shown = webTreeDiffLines(web);
+  if (!shown) return;
+  console.log('');
+  console.log(chalk.bold(`  Web surface — this version ${shown.headline}`));
+  for (const line of shown.lines) {
+    console.log(`    ${shown.changed ? line : chalk.dim(line)}`);
   }
 }
 
@@ -874,6 +921,7 @@ function printPendingUpdate(name, update, title) {
     agentHalf: update.agentHalf,
   });
   printIdentityChanges(update.identity);
+  printWebTreeChanges(update.web);
   const lines = settingsDiffLines(update.settings);
   if (lines.length > 0) {
     console.log('');
@@ -916,7 +964,7 @@ async function hooksCmd(name, { json }) {
   console.log('');
   if (!approval.required && !hooks.agent && !hooks.pendingUpdate) {
     console.log(
-      `  Plugin ${chalk.cyan(name)} declares no lifecycle hooks, no agent half for Lamaste to install and no identity.\n`,
+      `  Plugin ${chalk.cyan(name)} declares no lifecycle hooks, no agent half for Lamaste to install, no identity and no web surface.\n`,
     );
     return;
   }
@@ -933,6 +981,7 @@ async function hooksCmd(name, { json }) {
       relay: hooks.relay,
       agentHalf: hooks.agentHalf,
       identity: hooks.identity?.declared ? hooks.identity.block : null,
+      web: hooks.web ?? null,
     });
     console.log(
       `\n    auto-approve for later versions: ${hooks.autoApprove ? chalk.yellow('on') : 'off'}`,
@@ -944,6 +993,13 @@ async function hooksCmd(name, { json }) {
       console.log(
         chalk.dim(
           `    Its people (entitlements, audience, feed): lamaste-server plugins identity ${terminalText(name)}`,
+        ),
+      );
+    }
+    if (hooks.web?.declared) {
+      console.log(
+        chalk.dim(
+          `    Its site (served, trees, offer): lamaste-server plugins web-surface ${terminalText(name)}`,
         ),
       );
     }
@@ -1262,6 +1318,7 @@ async function installPluginCmd(packageName, { json }) {
       relay: result.hooks.relay,
       agentHalf: result.hooks.agentHalf,
       identity: result.hooks.identity?.declared ? result.hooks.identity.block : null,
+      web: result.hooks.web ?? null,
     });
     if (approval.state === 'pending') {
       console.log(

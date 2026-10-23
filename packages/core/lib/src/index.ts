@@ -91,6 +91,8 @@ export type {
   DirectoryUserView,
   IdentityReadinessReason,
   PluginIdentityView,
+  PluginWebSurfaceView,
+  WebSurfaceNotServedReason,
   PluginSettingsView,
   StoredAudienceChange,
   PluginAudienceRow,

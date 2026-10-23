@@ -410,6 +410,55 @@ Optional Authelia protection is controlled by the `autheliaProtected` flag on th
 
 A custom-domain site may list `aliases` (e.g. `www.myblog.net`). They are served by a second server block that answers with a 301 to the primary host. One certificate lineage, named after the site's domain (`certbot certonly --nginx --cert-name <fqdn> -d <fqdn> -d <alias> ...`), covers the primary name and every alias, so both blocks point at the same `live/<fqdn>/` directory.
 
+### Web-surface vhosts
+
+A site a plugin owns for its [web surface](../04-api-reference/agent-hosted-plugins.md#web-surface) has a vhost of its own kind under the site name (`lamalibre-lamaste-site-<id>`), rendered by the panel from the plugin's state (`renderWebSurfaceVhost`) — never by the static-site generator. While the surface is served:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name piyasa.example.com;
+    ssl_certificate /etc/letsencrypt/live/piyasa.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/piyasa.example.com/privkey.pem;
+
+    root /var/www/lamaste/apps/market-indicators/current;
+    index index.html;
+
+    # Every path of the shell: Gatekeeper first (the API's locations ask on their own)
+    auth_request /internal/lamaste/shell-authz;
+    error_page 401 =302 https://auth.example.com/?rd=https://piyasa.example.com$request_uri;
+    error_page 403 = /internal/lamaste/shell-authz;
+
+    location = /internal/lamaste/shell-authz {
+        internal;
+        auth_request off;
+        proxy_pass http://127.0.0.1:9294/authz/user-surface-shell/piyasa.example.com;
+        # ... as every Gatekeeper subrequest
+    }
+
+    # /internal/lamaste/user-surface-authz, -401 and the /api/market-indicators/app
+    # locations — exactly the user-surface locations of a bound tunnel
+
+    location / {
+        if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; ..." always;
+        # X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, COOP, Cache-Control no-cache
+        try_files $uri @previous;
+    }
+
+    # A file the current tree lacks: the previous tree's, else the shell
+    location @previous {
+        # the same headers
+        root /var/www/lamaste/apps/market-indicators/previous;
+        try_files $uri /index.html;
+    }
+}
+```
+
+`auth_request` sits at server level so every location of the shell asks Gatekeeper — the API's locations name their own subrequest, and the internal ones turn it `off`. The shell's headers are set in its two locations only: the API's answers are the panel's to head. `current` and `previous` are links the panel switches with a rename (see [Serving the tree](../04-api-reference/agent-hosted-plugins.md#serving-the-tree)); nginx follows them per request. While the surface is not served, the vhost answers everything with `503` (`Cache-Control: no-store`).
+
+Moving a bound tunnel's host to a web surface hands the hostname over in **one reload**: the tunnel's vhost is unlinked, the site's written and linked, `nginx -t` run, nginx reloaded once, and only then the tunnel's file removed; on a failed test both are put back.
+
 ### 7. Public Tunnel Vhost (`lamalibre-lamaste-app-<name>`, access mode: public)
 
 Created when a tunnel is configured with public access. Direct proxy with no authentication.
@@ -852,12 +901,12 @@ nginx's master process runs as root and opens the files a configuration names �
 - its **name** is one the panel manages: `lamalibre-lamaste-panel-domain`, `-auth`, `-tunnel`, `-app-<subdomain>`, `-agent-panel-<label>` or `-site-<uuid>`. `lamalibre-lamaste-panel-ip` (written by the installer) may only be enabled or disabled — which is how panel 2FA turns the IP vhost off;
 - every **directive** is on the allow-list for its context, with arguments that cannot name a file outside what Lamaste serves:
 
-| Context    | Allowed                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| top level  | `server`, `map` (plain `key value;` entries, no `include`), `limit_req_zone`                                                                                                                                                                                                                                                                                                                                                                                 |
-| `server`   | `listen 443` / `[::]:443` with optional `ssl` / `http2`; `server_name` (hostnames); `ssl_certificate(_key)` only `/etc/letsencrypt/live/<name>/{fullchain,privkey}.pem`; `include` only `/etc/nginx/snippets/lamalibre-lamaste-*.conf`; `root` only under `/var/www/lamaste/`; `ssl_protocols`, `ssl_ciphers`, `ssl_prefer_server_ciphers`, `client_max_body_size`, `index`, `add_header`, `proxy_set_header`, `error_page`, `return`, `rewrite`, `location` |
-| `location` | `proxy_pass` only `http://127.0.0.1:<port>[/path]`; `root` / `alias` only under `/var/www/lamaste/`; `proxy_set_header`, `proxy_http_version`, `proxy_read_timeout`, `proxy_send_timeout`, `proxy_buffers`, `proxy_next_upstream`, `proxy_pass_request_body`, `auth_request`, `auth_request_set`, `limit_req`, `try_files`, `index`, `add_header`, `error_page`, `client_max_body_size`, `internal`, `return`, `rewrite`, `if`, nested `location`            |
-| `if`       | `return`, `rewrite`                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Context    | Allowed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| top level  | `server`, `map` (plain `key value;` entries, no `include`), `limit_req_zone`                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `server`   | `listen 443` / `[::]:443` with optional `ssl` / `http2`; `server_name` (hostnames); `ssl_certificate(_key)` only `/etc/letsencrypt/live/<name>/{fullchain,privkey}.pem`; `include` only `/etc/nginx/snippets/lamalibre-lamaste-*.conf`; `root` only under `/var/www/lamaste/`; `auth_request` only a URI of the server or `off`; `ssl_protocols`, `ssl_ciphers`, `ssl_prefer_server_ciphers`, `client_max_body_size`, `index`, `add_header`, `proxy_set_header`, `error_page`, `return`, `rewrite`, `location` (a path, or a named location `@name`) |
+| `location` | `proxy_pass` only `http://127.0.0.1:<port>[/path]`; `root` / `alias` only under `/var/www/lamaste/`; `proxy_set_header`, `proxy_http_version`, `proxy_read_timeout`, `proxy_send_timeout`, `proxy_buffers`, `proxy_next_upstream`, `proxy_pass_request_body`, `auth_request`, `auth_request_set`, `limit_req`, `try_files` (the last argument may name a location, `@name`), `index`, `add_header`, `error_page`, `client_max_body_size`, `internal`, `return`, `rewrite`, `if`, nested `location`                                                   |
+| `if`       | `return`, `rewrite`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 Port 80 is not allowed: it belongs to the installer's HTTPS redirect and to certbot's HTTP-01 challenges. Backslashes, `${`, control characters and non-ASCII text outside comments are refused rather than interpreted, as is any directive not listed — including ones nginx would accept (`access_log`, `log_format`, `ssl_*` files elsewhere, `proxy_pass` to another host, ...). A refused `write` fails with `nginx site write failed for <name>: lamaste-priv: vhost line <n>: ...` and leaves the previous vhost in place.
 

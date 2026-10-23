@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Plugins' web surfaces (slice 7): an agent-hosted plugin's users open the application its server package ships, served by the relay on a site the plugin owns, beside its user surface's API — one host, one Authelia session, no tunnel or web server of the plugin's own.
+
+### Upgrade notes
+
+**Only the relay is upgraded**: the panel's Update action or a `create-lamaste --yes` redeploy.
+
+1. `state.db` migration `0015` adds `plugins.user_surface` and `plugins.web_tree_sha256`. No plugin installed today declares a web surface, so every approval digest stays as it is.
+2. **`lamaste-priv` must be this release's** before a web surface's vhost can be written: it now accepts a server-level `auth_request`, named locations (`location @name`) and a named location as `try_files`' last argument. The Update action and the redeploy install it.
+3. Web trees live under `/var/www/lamaste/apps/<route>/`; they are copies of approved package contents and are made again at start when missing — nothing to back up.
+
+### Added
+
+- **Manifest `userSurface.web`** (agent-hosted plugins that declare `identity`): `{ defaultSubdomain, accessMode?: "authenticated" | "restricted", root?: "web" }` — `userSurface` is validated now instead of being stripped. The files under `root` in the server package are the plugin's **web tree**: regular files only, safe path segments, an extension allowlist, at most 2,000 files, 8 MB a file and 32 MB in all, `index.html` at the top. Its digest (core `webTreeManifest`, `webTreeDigest`) enters the approval digest as `web: { treeSha256 }` only when declared — every existing digest is unchanged. It is read at install (`400 invalid_web_tree` for a tree that breaks a rule) and from the registry tarball when an update is staged; `pendingUpdate.web` shows `{ before, after: { sha256, files, totalBytes } }`, `GET /api/plugins/:name/hooks` the installed tree as `web: { declared, approved, treeSha256, surface }`, and `digest.unapproved` names the web surface.
+- **The relay serves only the approved tree.** Once the installed version is approved (an approval, an update or its revert, a hosting, the panel's start) its tree is copied out of the package into `/var/www/lamaste/apps/<route>/<sha256>/`, the copy checked against the approved digest, and `current` switched to it by a rename; `previous` keeps the tree before, so a page still running the old shell loads its lazy files and a revert switches back. Audit `plugin.web-tree.switched`. Core `@lamalibre/lamaste/server`: `stageWebTree`, `switchWebTree`, `readWebTreeStore`, `removeWebTreeStore`, `webTreeStoreDir`, `webTreeManifestOfTarball`, `webTreeManifestOfDirectory`, `readTarballTree`.
+- **Plugin-owned sites.** `GET /api/plugins/:name/web-surface` (what is declared, the site, served and why not — `not_installed`, `no_identity`, `no_web_surface`, `not_approved`, `not_hosted`, `tree_not_current` — the trees, the tunnel bound as its user surface, and the subdomain offered), `POST /api/plugins/:name/web-surface { subdomain?, accessMode? }` (certificate, site, vhost; audit `plugin.web-surface.created`), `DELETE /api/plugins/:name/web-surface` (vhost, site, trees and the site's grants; `.deleted`). The site's vhost serves the shell — `GET`/`HEAD` from `current`, falling back to `previous`, then `index.html`, with a strict `Content-Security-Policy` (no inline scripts, nothing from another origin), `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, `Cross-Origin-Opener-Policy: same-origin` and `Cache-Control: no-cache` — and the user surface's `/api/<route>/app*` as a bound tunnel does, and answers `503` while the surface is not served. Every shell request asks Gatekeeper.
+- **Moving from a bound tunnel in one reload.** `POST /api/plugins/:name/web-surface/move { tunnelId }` creates the site on the tunnel's hostname (its certificate kept), disables and unbinds the tunnel in the same state change, hands the hostname from the tunnel's vhost to the site's in one nginx reload, and only then withdraws the tunnel's port grant; a restricted tunnel's grants are copied to the site; when nginx refuses, everything is put back. The tunnel stays, disabled, for a rollback by hand. Audit `plugin.web-surface.moved`.
+- **Gatekeeper** reads `sites.json` beside `tunnels.json`. `GET /authz/user-surface/:fqdn` serves a plugin-owned site's API as a bound tunnel's (a restricted site needs a `site` grant), and the new `GET /authz/user-surface-shell/:fqdn` authorizes the shell: a session, membership of the plugin's audience (an entitlement with roles, directly or through a group) and, on a restricted site, the site's grant — the access-request page otherwise. Grants gain the `site` resource type. Core `userSurfaceHosts`, `userSurfaceHostByFqdn`, `userSurfaceHostServing`, `siteUserSurfaceRoute`: the panel and Gatekeeper read both host kinds alike, and a route two hosts would serve is served by neither.
+
+### Changed
+
+- **Site and tunnel names are checked under the tunnel lock.** A tunnel is refused — at creation and now also when it is enabled — while a static site answers on its hostname, checked inside the tunnel lock instead of before it; every change of `sites.json` runs under a sites lock, taken after the tunnel lock when it gives a site a hostname.
+- The sites API refuses to manage a plugin-owned site (`409`, `details.code: "plugin_owned_site"`) — and so does `lamaste-agent deploy`; binding a tunnel as the user surface of a plugin that owns a site is refused.
+- Uninstalling a plugin keeps the site it owns, answering `503`, until it is deleted.
+
+### Fixed
+
+- **An upload no longer undoes other site changes.** The size recorded after an upload or a file deletion was written into a copy of `sites.json` read before the upload, overwriting whatever changed meanwhile; it is now written from the file as it is then, under the sites lock.
+
 ## [4.5.0] - 2026-10-22
 
 All lockstep packages, the desktop crate and its Tauri config move to 4.5.0; internal `@lamalibre/*` ranges become `^4.5.0`. Users of agent-hosted plugins (slice 6) — a user directory with stable user ids, plugin roles and audiences, the identity feed into agent halves, and the user surface through which users reach an agent half with a signed identity.

@@ -181,6 +181,10 @@ The file browser lets you:
 
 The Let's Encrypt certificate is left in place (certbot manages its lifecycle).
 
+### Sites that belong to a plugin
+
+An agent-hosted plugin can own a site: its **web surface**, where the relay serves the application its users open, from the files its approved version ships ([Web surface](../04-api-reference/agent-hosted-plugins.md#web-surface)). Such a site is listed on the Sites page with the plugin it belongs to, but it is managed on the plugin's card — no uploads, no settings, no deletion here, and `lamaste-agent deploy` refuses it: its files change only with an approved version of the plugin.
+
 ## For Developers
 
 ### Site Data Model

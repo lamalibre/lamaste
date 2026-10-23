@@ -592,6 +592,10 @@ test('create: the site on the declared subdomain, 503 until served, then the she
 
 test('the sites API manages no plugin-owned site; no tunnel takes its route or its name', async () => {
   const site = (await lib.readSites()).find((s) => s.owner?.plugin === 'wf');
+  // Listed with whether it serves its plugin now.
+  const listed = (await call('GET', '/api/sites')).json().sites.find((s) => s.id === site.id);
+  assert.deepEqual(listed.webSurface, { served: true, reason: null });
+  assert.deepEqual(listed.owner, { plugin: 'wf' });
   for (const [method, url, body] of [
     ['GET', `/api/sites/${site.id}/files`],
     ['DELETE', `/api/sites/${site.id}/files`, { path: 'index.html' }],
@@ -664,11 +668,15 @@ async function bound(name, t) {
 
 test('move: refused while nginx refuses — everything as it was', async () => {
   await bound('mi', T.piyasa);
-  // A bound tunnel: creating a second host is refused.
+  // A bound tunnel: creating a second host is refused, and nothing is
+  // offered — moving is the way.
   assert.equal(
     (await call('POST', '/api/plugins/mi/web-surface', {})).json().code,
     'bound_to_tunnel',
   );
+  const boundView = (await status('mi')).webSurface;
+  assert.equal(boundView.offer, null);
+  assert.equal(boundView.boundTunnel.id, T.piyasa.id);
   const before = { tunnels: await lib.readTunnels(), sites: await lib.readSites() };
   lib.setWebSurfaceDepsForTests({
     readInstalledVhost: sudo.read,
