@@ -220,10 +220,16 @@ function maxBodyCeiling(request) {
   return request.certRole === 'admin' ? TUNNEL_MAX_BODY_MB.max : TUNNEL_MAX_BODY_MB.agentMax;
 }
 
-/** A static site (or one of its aliases) that already answers on `fqdn`. */
+/**
+ * Core `createTunnel`'s `hostTaken`: the static site (or one of its
+ * aliases) that already answers on `fqdn` — two vhosts with one
+ * server_name make nginx pick silently. Asked under the tunnel lock, which
+ * every workflow giving a site a hostname holds too.
+ */
 async function siteServing(fqdn) {
   const sites = await readSites();
-  return sites.find((s) => s.fqdn === fqdn || (s.aliases ?? []).includes(fqdn)) ?? null;
+  const site = sites.find((s) => s.fqdn === fqdn || (s.aliases ?? []).includes(fqdn));
+  return site ? `by the static site '${site.name}'` : null;
 }
 
 /**
@@ -496,16 +502,6 @@ export default async function tunnelRoutes(fastify, _opts) {
         });
       }
 
-      // A static site (or one of its aliases) may already answer on this
-      // hostname; two vhosts with one server_name make nginx pick silently.
-      const fqdn = `${subdomain}.${config.domain}`;
-      if (await siteServing(fqdn)) {
-        return reply.code(400).send({
-          error: 'Failed to create tunnel',
-          details: `Domain '${fqdn}' is already served by a static site`,
-        });
-      }
-
       try {
         const tunnel = await createTunnel({
           subdomain,
@@ -523,6 +519,7 @@ export default async function tunnelRoutes(fastify, _opts) {
           chisel: chiselDeps,
           state: stateDeps,
           agents: agentDeps,
+          hostTaken: siteServing,
           logger: request.log,
         });
         return reply.code(201).send({ ok: true, tunnel });
@@ -600,6 +597,7 @@ export default async function tunnelRoutes(fastify, _opts) {
           state: stateDeps,
           agents: agentDeps,
           userSurface: userSurfaceDeps,
+          hostTaken: siteServing,
           logger: request.log,
           authorize: authorizeFor(request, 'change'),
         });
@@ -748,14 +746,6 @@ export default async function tunnelRoutes(fastify, _opts) {
         });
       }
 
-      const fqdn = `${subdomain}.${config.domain}`;
-      if (await siteServing(fqdn)) {
-        return reply.code(400).send({
-          error: 'Failed to expose agent panel',
-          details: `Domain '${fqdn}' is already served by a static site`,
-        });
-      }
-
       // Check if a panel tunnel already exists for this agent
       const existing = await readTunnels();
       const existingPanel = existing.find((t) => t.type === 'panel' && t.subdomain === subdomain);
@@ -780,6 +770,7 @@ export default async function tunnelRoutes(fastify, _opts) {
           chisel: chiselDeps,
           state: stateDeps,
           agents: agentDeps,
+          hostTaken: siteServing,
           logger: request.log,
         });
         return reply.code(201).send({ ok: true, tunnel });

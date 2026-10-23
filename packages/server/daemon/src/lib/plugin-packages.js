@@ -8,6 +8,12 @@
  * manifest, so it must stay inside the package, be a regular file (not a
  * link) and be no larger than {@link HOOK_MODULE_MAX_BYTES}.
  *
+ * A web surface's tree (`userSurface.web.root`) is read the same two ways:
+ * from the staged tarball, so its digest can be approved, and from the
+ * installed package, which must hold the very same tree — every file a
+ * regular one, no link on the way (core `webTreeManifestOfTarball`,
+ * `webTreeManifestOfDirectory`).
+ *
  * An agent half Lamaste installs onto an agent is never fetched here: its
  * tarball's integrity is read from the registry ({@link pinAgentHalf}) and
  * pinned with the version, and the agent fetches the tarball itself and
@@ -26,8 +32,13 @@ import {
   hookEntrySha256,
   relayHookSetNeedsEntry,
   relayHookSetOf,
+  WebTreeError,
 } from '@lamalibre/lamaste';
-import { readTarballFiles } from '@lamalibre/lamaste/server';
+import {
+  readTarballFiles,
+  webTreeManifestOfDirectory,
+  webTreeManifestOfTarball,
+} from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { withRegistryUserconfig } from './registry-credential.js';
 
@@ -89,6 +100,62 @@ export async function installedHookEntrySha256(packageName, manifest) {
 }
 
 /**
+ * Run a web tree read, turning a broken rule into a 400 that names the
+ * version's tree.
+ *
+ * @template T
+ * @param {string} what — the package (and version) whose tree it is
+ * @param {() => T | Promise<T>} read
+ * @returns {Promise<T>}
+ */
+async function webTreeOrRefusal(what, read) {
+  try {
+    return await read();
+  } catch (err) {
+    if (err instanceof WebTreeError) {
+      throw httpError(`The web surface of ${what} cannot be served: ${err.message}`, 400, {
+        code: 'invalid_web_tree',
+      });
+    }
+    throw err;
+  }
+}
+
+/**
+ * The directory of an installed package's web tree (`userSurface.web.root`,
+ * already a relative path of safe segments — core `WebSurfaceBlockSchema`),
+ * refused when it leaves the package or reaches it through a link.
+ */
+export async function installedWebTreeDir(packageName, manifest) {
+  const root = manifest.userSurface?.web?.root;
+  if (!root) return null;
+  const packageDir = await installedPackageDir(packageName);
+  const resolved = path.resolve(packageDir, root);
+  if (!resolved.startsWith(`${packageDir}${path.sep}`)) {
+    throw httpError('The web surface lies outside its package', 400, { code: 'invalid_web_tree' });
+  }
+  const real = await realpath(resolved).catch(() => null);
+  if (real !== null && real !== resolved) {
+    throw httpError('The web surface path goes through a link', 400, { code: 'invalid_web_tree' });
+  }
+  return resolved;
+}
+
+/**
+ * For a validated manifest of an installed package: its web tree's digest
+ * (core `webTreeManifest`'s `sha256`), or null when it declares no web
+ * surface. Throws 400 when the tree breaks a rule.
+ */
+export async function installedWebTreeSha256(packageName, manifest) {
+  const dir = await installedWebTreeDir(packageName, manifest);
+  if (dir === null) return null;
+  const tree = await webTreeOrRefusal(`${packageName}@${manifest.version}`, () =>
+    webTreeManifestOfDirectory(dir),
+  );
+  return tree.sha256;
+}
+
+/**
  * Fetch `<package>@<version>` from the registry the panel installs from
  * (`npm pack` through {@link withRegistryUserconfig}: the configured
  * registry credential, else the machine's npm configuration) and read its
@@ -97,7 +164,7 @@ export async function installedHookEntrySha256(packageName, manifest) {
  *
  * @param {string} packageName bare `@lamalibre/<name>`
  * @param {string} version an exact version or a dist-tag (`latest`)
- * @returns {Promise<{ version: string, manifestRaw: unknown, readHookModule: (entry: string) => Buffer | null }>}
+ * @returns {Promise<{ version: string, manifestRaw: unknown, readHookModule: (entry: string) => Buffer | null, readWebTree: (root: string) => Promise<import('@lamalibre/lamaste').WebTreeManifest> }>}
  */
 export async function readRegistryPackage(packageName, version) {
   if (!PACKAGE_RE.test(packageName)) throw httpError('Invalid package name', 400);
@@ -155,6 +222,11 @@ export async function readRegistryPackage(packageName, version) {
             maxArchiveBytes: 64 * 1024 * 1024,
             maxFileBytes: HOOK_MODULE_MAX_BYTES,
           }).get(name) ?? null
+        );
+      },
+      readWebTree(root) {
+        return webTreeOrRefusal(`${packageName}@${info.version}`, () =>
+          webTreeManifestOfTarball(tgz, root),
         );
       },
     };

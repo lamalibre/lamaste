@@ -29,7 +29,7 @@ import { Writable } from 'node:stream';
 import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import { MockAgent, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
-import { createRelaySigner } from '@lamalibre/lamaste';
+import { createRelaySigner, userSurfaceHosts } from '@lamalibre/lamaste';
 
 let dir;
 let app;
@@ -143,7 +143,9 @@ async function gatekeeperApp({ logger = false, rateLimitPerClient } = {}) {
     timeWindow: '1 minute',
     keyGenerator: () => 'gatekeeper-internal',
   });
+  const hosts = userSurfaceHosts(STATE, []);
   instance.decorate('getTunnels', () => tunnels);
+  instance.decorate('getUserSurfaceHosts', () => hosts);
   instance.decorate('getSessionCache', () => sessions);
   instance.decorate('getCacheVersion', () => 1);
   instance.decorate('getSettings', () => ({}));

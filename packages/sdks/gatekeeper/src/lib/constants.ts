@@ -6,9 +6,10 @@ export type PrincipalType = (typeof PRINCIPAL_TYPES)[number];
 
 /**
  * Built-in resource types. The grant system is extensible — new resource types
- * can be added without schema changes.
+ * can be added without schema changes. A `site` grant opens a restricted
+ * plugin-owned site (a plugin's web surface) to its holder.
  */
-export const RESOURCE_TYPES = ['tunnel', 'plugin'] as const;
+export const RESOURCE_TYPES = ['tunnel', 'plugin', 'site'] as const;
 export type ResourceType = (typeof RESOURCE_TYPES)[number];
 
 /**
@@ -76,6 +77,8 @@ export const DEFAULT_DATA_DIR = '/etc/lamalibre/lamaste';
 export const GROUPS_FILE = 'groups.json';
 export const GRANTS_FILE = 'access-grants.json';
 export const SETTINGS_FILE = 'gatekeeper.json';
+export const TUNNELS_FILE = 'tunnels.json';
+export const SITES_FILE = 'sites.json';
 export const ACCESS_LOG_FILE = 'access-request-log.json';
 
 /**

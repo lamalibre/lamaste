@@ -300,9 +300,8 @@ const defaultSiteDeps = { readSites, readInstalledVhost, installVhost, isSiteEna
 /**
  * Reconcile the vhosts that proxy a browser to the panel or ask Authelia
  * directly: the panel's own (`panel.<domain>`), the auth portal
- * (`auth.<domain>`) and every static site. Site changes take no lock, so
- * call it before the panel listens — then nothing can change a site
- * meanwhile.
+ * (`auth.<domain>`) and every static site but a plugin's web surface. Call
+ * it before the panel listens — then nothing can change a site meanwhile.
  *
  * @param {Parameters<typeof logResult>[0]} log
  * @param {string} domain
@@ -342,6 +341,9 @@ export async function reconcileSiteVhosts(log, domain, deps = defaultSiteDeps) {
   }
   for (const site of sites) {
     if (typeof site.id !== 'string' || !SITE_NAME_PART_RE.test(site.id)) continue;
+    // A plugin's web surface is its plugin's to render (lib/web-surface.js
+    // `reconcileWebSurfaces`, once plugins and hostings can be read).
+    if (site.owner) continue;
     const name = `lamalibre-lamaste-site-${site.id}`;
     await reconcileOne(
       {

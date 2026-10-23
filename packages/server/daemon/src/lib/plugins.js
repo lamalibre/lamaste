@@ -31,6 +31,7 @@ import { RegistryCredentialError } from '@lamalibre/lamaste/server';
 import {
   bareLamalibrePackageName,
   installedHookEntrySha256,
+  installedWebTreeSha256,
   pinAgentHalf,
 } from './plugin-packages.js';
 
@@ -72,8 +73,9 @@ async function getStmts() {
       INSERT INTO plugins
         (name, route, display_name, package_name, version, description, capabilities,
          packages, panel, config, modes, hosting, agent, hooks, hooks_entry_sha256,
-         agent_half_pin, settings, identity, status, installed_at, enabled_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         agent_half_pin, settings, identity, user_surface, web_tree_sha256, status,
+         installed_at, enabled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     deleteByName: db.prepare('DELETE FROM plugins WHERE name = ?'),
     // The plugin's audience and the state of its identity feed
@@ -141,6 +143,8 @@ function rowToPlugin(row) {
   if (row.agent_half_pin != null) entry.agentHalfPin = JSON.parse(row.agent_half_pin);
   if (row.settings != null) entry.settings = JSON.parse(row.settings);
   if (row.identity != null) entry.identity = JSON.parse(row.identity);
+  if (row.user_surface != null) entry.userSurface = JSON.parse(row.user_surface);
+  if (row.web_tree_sha256 != null) entry.webTreeSha256 = row.web_tree_sha256;
   if (row.enabled_at != null) entry.enabledAt = row.enabled_at;
   return entry;
 }
@@ -224,6 +228,8 @@ export async function writePlugins(data) {
         nullableJson(p.agentHalfPin),
         nullableJson(p.settings),
         nullableJson(p.identity),
+        nullableJson(p.userSurface),
+        nullableString(p.webTreeSha256),
         p.status,
         p.installedAt,
         nullableString(p.enabledAt),
@@ -457,6 +463,17 @@ export function installPlugin(packageName, logger) {
       throw Object.assign(new Error(err.message), { statusCode: err.statusCode || 400 });
     }
 
+    // A web surface: its tree must be in the package and keep every rule of
+    // a web tree; its digest goes into the approval digest, and the relay
+    // serves only a copy that matches it.
+    let webTreeSha256 = null;
+    try {
+      webTreeSha256 = await installedWebTreeSha256(packageName, manifest);
+    } catch (err) {
+      await discardPackage();
+      throw Object.assign(new Error(err.message), { statusCode: err.statusCode || 400 });
+    }
+
     // An agent half Lamaste installs: its tarball's integrity is pinned now,
     // from the registry this install used — the approval covers it and the
     // agent installs only a tarball that matches it.
@@ -508,6 +525,8 @@ export function installPlugin(packageName, logger) {
       agentHalfPin,
       settings: manifest.settings,
       identity: identityOf(manifest),
+      userSurface: manifest.userSurface,
+      webTreeSha256,
       status: 'disabled',
       installedAt: new Date().toISOString(),
     };
@@ -536,6 +555,8 @@ export function installPlugin(packageName, logger) {
         nullableJson(entry.agentHalfPin),
         nullableJson(entry.settings),
         nullableJson(entry.identity),
+        nullableJson(entry.userSurface),
+        nullableString(entry.webTreeSha256),
         entry.status,
         entry.installedAt,
         null,
@@ -684,7 +705,7 @@ const updateRowSql = `
   UPDATE plugins SET
     display_name = ?, version = ?, description = ?, capabilities = ?, packages = ?, panel = ?,
     config = ?, modes = ?, hosting = ?, agent = ?, hooks = ?, hooks_entry_sha256 = ?,
-    agent_half_pin = ?, settings = ?, identity = ?
+    agent_half_pin = ?, settings = ?, identity = ?, user_surface = ?, web_tree_sha256 = ?
   WHERE name = ?`;
 
 /**
@@ -698,8 +719,16 @@ const updateRowSql = `
  * beside it, and a secret whose field became a plain value is no longer
  * reported set. The identity block is stored normalized; the update's
  * caller recomputes the audiences once the version is in place.
+ * `webTreeSha256` is the digest of the version's web tree, read from the
+ * installed package (null when it declares no web surface).
  */
-export async function writePluginRow(name, manifest, hooksEntrySha256, agentHalfPin) {
+export async function writePluginRow(
+  name,
+  manifest,
+  hooksEntrySha256,
+  agentHalfPin,
+  webTreeSha256 = null,
+) {
   const s = await getStmts();
   const { prunedSettingsCache } = await import('./plugin-settings.js');
   s.begin.run();
@@ -723,6 +752,8 @@ export async function writePluginRow(name, manifest, hooksEntrySha256, agentHalf
         nullableJson(agentHalfPin),
         nullableJson(manifest.settings),
         nullableJson(identityOf(manifest)),
+        nullableJson(manifest.userSurface),
+        nullableString(webTreeSha256),
         name,
       );
     const pruned = prunedSettingsCache(
@@ -750,7 +781,8 @@ export async function writePluginRow(name, manifest, hooksEntrySha256, agentHalf
 
 /**
  * Install `<packageName>@<version>` over the installed copy and read it
- * back: the validated manifest and its relay entry module's SHA-256. The
+ * back: the validated manifest, its relay entry module's SHA-256 and its
+ * web tree's digest. The
  * row is not touched — the caller compares the result with what was
  * reviewed and then writes it. Refuses a package whose manifest names
  * another plugin.
@@ -790,7 +822,8 @@ export function replacePluginPackage(name, packageName, version, logger) {
       );
     }
     const hooksEntrySha256 = await installedHookEntrySha256(packageName, manifest);
-    return { manifest, hooksEntrySha256 };
+    const webTreeSha256 = await installedWebTreeSha256(packageName, manifest);
+    return { manifest, hooksEntrySha256, webTreeSha256 };
   });
 }
 

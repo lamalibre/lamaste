@@ -17,7 +17,6 @@ export type {
   GatekeeperSettings,
   AccessRequestEntry,
   TunnelInfo,
-  TunnelUserSurfaceInfo,
   PluginTunnelTarget,
   AutheliaSession,
   GatekeeperLogger,
@@ -40,6 +39,8 @@ export {
   GROUPS_FILE,
   GRANTS_FILE,
   SETTINGS_FILE,
+  TUNNELS_FILE,
+  SITES_FILE,
   ACCESS_LOG_FILE,
   AUTHELIA_VERIFY_URL,
   GATEKEEPER_PORT,
@@ -71,7 +72,7 @@ export {
 } from './lib/grants.js';
 
 // Authorization
-export { checkAccess } from './lib/authz.js';
+export { checkAccess, isPluginAudienceMember } from './lib/authz.js';
 
 // The tunnels Gatekeeper authorizes, as it reads them from tunnels.json
 export { tunnelInfoFromState } from './lib/tunnels.js';

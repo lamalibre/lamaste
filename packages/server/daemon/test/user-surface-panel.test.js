@@ -477,17 +477,26 @@ before(async () => {
   }
   authelia.intercept({ path: '/api/authz/auth-request', method: 'GET' }).reply(401, '').persist();
 
-  // Gatekeeper's authorization routes, reading tunnels.json as it does.
+  // Gatekeeper's authorization routes, reading tunnels.json and sites.json as it does.
   const { default: Fastify } = await import('fastify');
   const { authzRoutes } = await import(new URL('server/routes/authz.js', GATEKEEPER_DIST).href);
   const { tunnelInfoFromState } = await import(new URL('lib/tunnels.js', GATEKEEPER_DIST).href);
+  const { userSurfaceHosts } = await import('@lamalibre/lamaste');
+  const readState = (file) => {
+    try {
+      return JSON.parse(readFileSync(path.join(stateDir, file), 'utf-8'));
+    } catch {
+      return [];
+    }
+  };
   gk = Fastify({ logger: false });
   const sessions = new Map();
   const gkSigner = createRelaySigner(path.join(stateDir, 'relay-signing-key.json'), {
     create: false,
   });
-  gk.decorate('getTunnels', () =>
-    tunnelInfoFromState(JSON.parse(readFileSync(path.join(stateDir, 'tunnels.json'), 'utf-8'))),
+  gk.decorate('getTunnels', () => tunnelInfoFromState(readState('tunnels.json')));
+  gk.decorate('getUserSurfaceHosts', () =>
+    userSurfaceHosts(readState('tunnels.json'), readState('sites.json')),
   );
   gk.decorate('getSessionCache', () => sessions);
   gk.decorate('getCacheVersion', () => 1);

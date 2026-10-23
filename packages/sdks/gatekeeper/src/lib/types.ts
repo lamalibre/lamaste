@@ -173,26 +173,6 @@ export interface TunnelInfo {
    * with a relay assertion Gatekeeper signs (see authz.ts).
    */
   readonly plugin?: PluginTunnelTarget | undefined;
-  /**
-   * Set on an app tunnel bound as the user surface of agent-hosted plugins:
-   * its host serves `/api/<route>/app/*` for the `served` routes, and
-   * Gatekeeper vouches for the session's user to the panel on them
-   * (`/authz/user-surface/<fqdn>`).
-   */
-  readonly userSurface?: TunnelUserSurfaceInfo | undefined;
-}
-
-/** The plugin routes bound to a tunnel's host as a user surface, and those it serves. */
-export interface TunnelUserSurfaceInfo {
-  /** Every route bound to the tunnel (core `tunnelUserSurfaceRoutes`). */
-  readonly routes: readonly string[];
-  /**
-   * Those the tunnel's agent hosts — it carries the route's internal plugin
-   * tunnel (core `tunnelServedUserSurfaceRoutes`). A bound route the tunnel
-   * does not serve — moved to another agent, its agent revoked, the plugin
-   * hosted elsewhere — is refused (`not_hosting_agent`).
-   */
-  readonly served: readonly string[];
 }
 
 /** Where a plugin tunnel's requests go: the agent, its daemon's port, the plugin route. */

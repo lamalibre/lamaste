@@ -508,13 +508,24 @@ test('userSurfaceHosts: tunnels and sites, served when hosted, never twice', () 
     'fx',
   ]);
 
-  // A route two hosts claim is served on neither.
+  // A route two hosts would serve is served on neither.
   const both = userSurfaceHosts([internal('fx'), boundTunnel(['fx'])], [ownedSite('fx')]);
   assert.deepEqual(
     both.map((h) => [h.kind, h.served]),
     [
       ['tunnel', []],
       ['site', []],
+    ],
+  );
+  // A binding left on a tunnel whose agent does not host the plugin claims nothing.
+  assert.deepEqual(
+    userSurfaceHosts(
+      [internal('fx'), boundTunnel(['fx'], { agentLabel: 'vm9' })],
+      [ownedSite('fx')],
+    ).map((h) => [h.kind, h.served]),
+    [
+      ['tunnel', []],
+      ['site', ['fx']],
     ],
   );
   // Two hosts under one name: neither is a host.

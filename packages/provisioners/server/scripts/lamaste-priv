@@ -251,6 +251,9 @@ const WEBROOT_RE = /^\/var\/www\/lamaste\/[A-Za-z0-9._/-]*$/;
 const HEADER_NAME_RE = /^[A-Za-z0-9-]{1,64}$/;
 const VARIABLE_RE = /^\$[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const URI_PATH_RE = /^\/[A-Za-z0-9._~/-]*$/;
+/** A named location (`location @previous`), the target of a try_files fallback. */
+const NAMED_LOCATION_RE = /^@[a-z][a-z0-9_]{0,31}$/;
+const TRY_FILES_ARG_RE = /^[A-Za-z0-9._/$=-]{1,256}$/;
 
 function hasDotDotSegment(p) {
   return p.split('/').some((seg) => seg === '..' || seg === '.');
@@ -317,6 +320,9 @@ const RULES = {
     error_page: { args: errorPageArgs },
     return: { args: argc(1, 2) },
     rewrite: { args: rewriteArgs },
+    // A host whose every location asks the same authorization (a plugin's
+    // web surface): a URI of this server, never a file.
+    auth_request: { args: (a) => a.length === 1 && (a[0] === 'off' || URI_PATH_RE.test(a[0])) },
     location: { block: 'location', args: locationArgs },
   },
   location: {
@@ -328,7 +334,7 @@ const RULES = {
     root: { args: (a) => a.length === 1 && webrootPath(a[0]) },
     alias: { args: (a) => a.length === 1 && webrootPath(a[0]) },
     index: { args: each(/^[A-Za-z0-9._-]{1,64}$/) },
-    try_files: { args: each(/^[A-Za-z0-9._/$=-]{1,256}$/) },
+    try_files: { args: tryFilesArgs },
     add_header: {
       args: (a) =>
         (a.length === 2 || (a.length === 3 && a[2] === 'always')) && HEADER_NAME_RE.test(a[0]),
@@ -386,8 +392,20 @@ function rewriteArgs(a) {
   );
 }
 
+/** Files to try under the location's root; the last may instead name a location. */
+function tryFilesArgs(a) {
+  if (a.length === 0) return false;
+  const last = a[a.length - 1];
+  return (
+    a.slice(0, -1).every((v) => TRY_FILES_ARG_RE.test(v)) &&
+    (TRY_FILES_ARG_RE.test(last) || NAMED_LOCATION_RE.test(last))
+  );
+}
+
 function locationArgs(a) {
-  if (a.length === 1) return a[0].length <= 512 && a[0].startsWith('/');
+  if (a.length === 1) {
+    return (a[0].length <= 512 && a[0].startsWith('/')) || NAMED_LOCATION_RE.test(a[0]);
+  }
   return a.length === 2 && ['=', '~', '~*', '^~'].includes(a[0]) && a[1].length <= 512;
 }
 

@@ -308,7 +308,7 @@ export interface UserSurfaceHost {
   /**
    * Of `routes`, those the host serves as far as the state files tell: a
    * tunnel's whose plugin its agent hosts, a site's whose plugin is
-   * hosted — and in both cases bound to no other host. Whether the
+   * hosted — and in both cases served by no other host. Whether the
    * plugin's installed version is approved and declares identity is the
    * panel's to decide.
    */
@@ -336,9 +336,10 @@ function hostBase(
  * stored (read defensively, as {@link tunnelUserSurfaceRoutes} reads a
  * binding; a missing or unknown access mode reads as `restricted`, and a
  * public host serves none): the bound tunnels and the plugin-owned sites
- * ({@link siteUserSurfaceRoute}). A route bound to more than one host is
- * served on none, and a host whose fqdn another host shares is left out
- * altogether: two answers to "who serves this" mean no one does.
+ * ({@link siteUserSurfaceRoute}). A route more than one host would serve
+ * is served on none — a binding left on a tunnel whose agent does not host
+ * the plugin claims nothing — and a host whose fqdn another host shares is
+ * left out altogether: two answers to "who serves this" mean no one does.
  *
  * @param tunnels - every entry of `tunnels.json` (the internal tunnels among them)
  * @param sites - every entry of `sites.json`
@@ -375,7 +376,7 @@ export function userSurfaceHosts(tunnels: unknown, sites: unknown): UserSurfaceH
   const claims = new Map<string, number>();
   const fqdns = new Map<string, number>();
   for (const host of candidates) {
-    for (const route of host.routes) claims.set(route, (claims.get(route) ?? 0) + 1);
+    for (const route of host.hosted) claims.set(route, (claims.get(route) ?? 0) + 1);
     fqdns.set(host.fqdn, (fqdns.get(host.fqdn) ?? 0) + 1);
   }
   return candidates

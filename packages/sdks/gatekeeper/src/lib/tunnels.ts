@@ -1,8 +1,4 @@
-import {
-  AGENT_LABEL_REGEX,
-  tunnelServedUserSurfaceRoutes,
-  tunnelUserSurfaceRoutes,
-} from '@lamalibre/lamaste';
+import { AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
 import type { AccessMode } from './constants.js';
 import { ACCESS_MODES } from './constants.js';
 import type { PluginTunnelTarget, TunnelInfo } from './types.js';
@@ -39,12 +35,9 @@ function accessModeOf(value: unknown): AccessMode {
 /**
  * What Gatekeeper authorizes, read from the panel's `tunnels.json` (parsed):
  * every tunnel with a hostname — an internal plugin tunnel has none — with
- * its access mode, its plugin target (a plugin tunnel) and the plugin routes
- * bound to its host as a user surface (core `tunnelUserSurfaceRoutes`: app
- * tunnels only, valid routes only) — of which its host serves only those
- * whose plugin the tunnel's own agent hosts, as the internal plugin
- * tunnels in the same file tell (core `tunnelServedUserSurfaceRoutes`).
- * Pure; anything that is not a list is no tunnel at all.
+ * its access mode and its plugin target (a plugin tunnel). Pure; anything
+ * that is not a list is no tunnel at all. The user surfaces some of these
+ * hosts serve are read with core `userSurfaceHosts` (server/index.ts).
  */
 export function tunnelInfoFromState(parsed: unknown): TunnelInfo[] {
   if (!Array.isArray(parsed)) return [];
@@ -54,21 +47,12 @@ export function tunnelInfoFromState(parsed: unknown): TunnelInfo[] {
     const t = entry as Record<string, unknown>;
     if (t['exposure'] === 'internal' || !t['fqdn']) continue;
     const plugin = pluginTunnelTarget(t);
-    const userSurfaceRoutes = tunnelUserSurfaceRoutes(t);
     out.push({
       id: String(t['id'] ?? ''),
       fqdn: String(t['fqdn']),
       accessMode: accessModeOf(t['accessMode']),
       enabled: t['enabled'] !== false,
       ...(plugin ? { plugin } : {}),
-      ...(userSurfaceRoutes.length > 0
-        ? {
-            userSurface: {
-              routes: userSurfaceRoutes,
-              served: tunnelServedUserSurfaceRoutes(parsed, t),
-            },
-          }
-        : {}),
     });
   }
   return out;

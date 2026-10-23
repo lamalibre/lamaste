@@ -9,10 +9,11 @@ import {
   autheliaSessionCookies,
   isUserSurfaceUrl,
   signRelayAssertion,
+  userSurfaceHostByFqdn,
 } from '@lamalibre/lamaste';
-import type { RelaySigningKey } from '@lamalibre/lamaste';
+import type { RelaySigningKey, UserSurfaceHost } from '@lamalibre/lamaste';
 import { AUTHELIA_VERIFY_URL, SESSION_CACHE_TTL_MS } from '../../lib/constants.js';
-import { checkAccess } from '../../lib/authz.js';
+import { checkAccess, isPluginAudienceMember } from '../../lib/authz.js';
 import { buildAccessRequestPage } from '../../lib/templates.js';
 import { logAccessRequest } from '../routes/diagnostic.js';
 import type { AutheliaSession, TunnelInfo } from '../../lib/types.js';
@@ -251,14 +252,16 @@ export async function authzRoutes(
   /**
    * GET /authz/user-surface/:fqdn — the nginx auth_request target of a
    * plugin's user surface: `/api/<route>/app` and everything under it, on
-   * the host of a tunnel bound to the plugin (`userSurface` in
-   * tunnels.json). The vhost names the tunnel as for `/authz/tunnel/:fqdn`.
+   * a host serving it — a tunnel bound to the plugin (`userSurface` in
+   * tunnels.json) or the site the plugin owns (`owner` in sites.json; core
+   * `userSurfaceHosts` reads both). The vhost names the host as for
+   * `/authz/tunnel/:fqdn`.
    *
-   * Gatekeeper authenticates the session — on a restricted tunnel it checks
-   * the user's grant too — and vouches for its user to the panel: a relay
+   * Gatekeeper authenticates the session — on a restricted host it checks
+   * the user's grant for the tunnel or the site too — and vouches for its user to the panel: a relay
    * assertion for the panel's audience and port, naming the username alone
    * and bound to the method and the raw request target, which must lie on
-   * the user surface of a route bound to this tunnel. The panel takes
+   * the user surface of a route this host serves. The panel takes
    * everything else about the user from its own directory.
    *
    * 200 with the assertion (never cacheable, no `Remote-*`), 401 without a
@@ -272,6 +275,29 @@ export async function authzRoutes(
     { config: authzRateLimit },
     async (request, reply) =>
       authorizeUserSurfaceRequest(fastify, request, reply, request.params.fqdn),
+  );
+
+  /**
+   * GET /authz/user-surface-shell/:fqdn — the nginx auth_request target of
+   * every path of a plugin-owned site but its user surface's API: the shell
+   * of the plugin's web surface (`userSurface.web`). The vhost names the
+   * site in the path, as a tunnel vhost names its tunnel.
+   *
+   * The shell is the front of an API that knows its users, so it is gated
+   * as that API is: the site's route must be served (its plugin hosted, no
+   * other host serving it), the session valid, the user in the plugin's
+   * audience (an entitlement with roles, to the user or a group of theirs)
+   * and, on a restricted site, holding the site's grant. 200 (nothing else:
+   * nginx serves the shell from disk), 401 without a session
+   * (nginx redirects a page to the login), 403 otherwise — with the
+   * access-request page when the user lacks an entitlement or a grant
+   * (nginx serves it inline, as for a restricted tunnel).
+   */
+  fastify.get<{ Params: { fqdn: string } }>(
+    '/authz/user-surface-shell/:fqdn',
+    { config: authzRateLimit },
+    async (request, reply) =>
+      authorizeUserSurfaceShellRequest(fastify, request, reply, request.params.fqdn),
   );
 
   /**
@@ -504,10 +530,9 @@ async function authorizeUserSurfaceRequest(
     return refuse(reason, detail);
   }
 
-  const tunnel = findTunnelByFqdn(fastify.getTunnels(), fqdn);
-  if (!tunnel) return refuse('unknown_tunnel_fqdn');
-  if (!tunnel.enabled) return refuse('tunnel_disabled');
-  if (tunnel.accessMode === 'public' || !tunnel.userSurface) return refuse('no_user_surface');
+  const host = userSurfaceHostByFqdn(fastify.getUserSurfaceHosts(), fqdn);
+  if (!host) return refuse('no_user_surface');
+  if (!host.enabled) return refuse('tunnel_disabled');
 
   // The request target exactly as the browser sent it — what follows the
   // hostname the vhost wrote — never re-encoded by a URL parser: the panel
@@ -517,11 +542,12 @@ async function authorizeUserSurfaceRequest(
     return refuse('invalid_original_url');
   }
   const target = originalUrl.slice(prefix.length);
-  const route = tunnel.userSurface.routes.find((r) => isUserSurfaceUrl(target, r));
+  const route = host.routes.find((r) => isUserSurfaceUrl(target, r));
   if (!route) return refuse('not_on_user_surface');
-  // Bound, but its plugin is not hosted by the agent carrying this tunnel
-  // (moved, revoked, hosted elsewhere): nothing of it is served here.
-  if (!tunnel.userSurface.served.includes(route)) return refuse('not_hosting_agent', { route });
+  // Bound, but not served here: a tunnel's plugin hosted by another agent
+  // than the one carrying it (moved, revoked, hosted elsewhere), a site's
+  // plugin not hosted at all, or a route another host would serve too.
+  if (!host.served.includes(route)) return refuse('not_hosting_agent', { route });
 
   const session = await authenticatedSession(
     fastify,
@@ -532,15 +558,16 @@ async function authorizeUserSurfaceRequest(
   );
   if (!session) return reply.code(401).send();
 
-  if (tunnel.accessMode !== 'authenticated') {
-    // restricted — the user's grant for the tunnel, as on its other paths
-    const result = await checkAccess(session.username, 'tunnel', tunnel.id, {
+  if (host.accessMode !== 'authenticated') {
+    // restricted — the user's grant for the host (the tunnel, or the site),
+    // as on its other paths
+    const result = await checkAccess(session.username, host.kind, host.id, {
       adminContact: fastify.getSettings().adminEmail,
       adminName: fastify.getSettings().adminName,
     });
     if (!result.allowed) {
-      // The tunnel and the reason only — never who was refused.
-      return refuse('no_matching_grant', { resourceType: 'tunnel', resourceId: tunnel.id });
+      // The host and the reason only — never who was refused.
+      return refuse('no_matching_grant', { resourceType: host.kind, resourceId: host.id });
     }
   }
 
@@ -570,6 +597,81 @@ async function authorizeUserSurfaceRequest(
     return refuse('not_assertable', { detail: err instanceof Error ? err.message : String(err) });
   }
   reply.header(RELAY_ASSERTION_HEADER, assertion);
+  return reply.code(200).send();
+}
+
+/**
+ * Authorize one request for the shell of the plugin-owned site named
+ * `fqdn` (see the `/authz/user-surface-shell/:fqdn` route).
+ */
+async function authorizeUserSurfaceShellRequest(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  fqdn: string,
+): Promise<FastifyReply> {
+  const requestId = request.id;
+  reply.header('Cache-Control', 'no-store');
+  const refuse = (reason: string, extra: Record<string, unknown> = {}): FastifyReply => {
+    request.log.info({ requestId, reason, site: fqdn, ...extra }, 'shell authz denied');
+    return reply.code(403).send();
+  };
+
+  if (!TUNNEL_FQDN_RE.test(fqdn)) return refuse('invalid_site_name');
+  const originalUrl = request.headers['x-original-url'];
+  if (typeof originalUrl !== 'string') return refuse('missing_original_request');
+  const parsed = parseOriginalUrl(originalUrl);
+  if (!parsed) return refuse('invalid_original_url');
+  const mismatch = hostnameMismatch(request, fqdn, parsed.hostname);
+  if (mismatch) {
+    const { reason, ...detail } = mismatch;
+    return refuse(reason, detail);
+  }
+
+  const host: UserSurfaceHost | null = userSurfaceHostByFqdn(fastify.getUserSurfaceHosts(), fqdn);
+  if (!host || host.kind !== 'site') return refuse('not_a_web_surface');
+  const [route] = host.routes;
+  if (route === undefined || !host.served.includes(route)) return refuse('not_served', { route });
+
+  const session = await authenticatedSession(
+    fastify,
+    request,
+    request.headers['cookie'],
+    originalUrl,
+    parsed.hostname,
+  );
+  if (!session) return reply.code(401).send();
+
+  const settings = fastify.getSettings();
+  const templateOptions = { adminContact: settings.adminEmail, adminName: settings.adminName };
+  const deny = (resourceType: 'plugin' | 'site', resourceId: string): FastifyReply => {
+    // The host and the reason only — never who was refused.
+    request.log.info(
+      { requestId, reason: 'no_matching_grant', site: fqdn, resourceType, resourceId },
+      'shell authz denied',
+    );
+    if (settings.accessLoggingEnabled) {
+      logAccessRequest({
+        timestamp: new Date().toISOString(),
+        username: session.username,
+        resourceType,
+        resourceId,
+        resourceFqdn: parsed.hostname,
+      });
+    }
+    return reply
+      .code(403)
+      .type('text/html; charset=utf-8')
+      .send(buildAccessRequestPage(session.username, parsed.hostname, templateOptions));
+  };
+
+  if (!(await isPluginAudienceMember(session.username, route))) return deny('plugin', route);
+  if (host.accessMode !== 'authenticated') {
+    const result = await checkAccess(session.username, 'site', host.id, templateOptions);
+    if (!result.allowed) return deny('site', host.id);
+  }
+
+  // Nothing to pass on: nginx serves the shell from disk, no backend gets a user.
   return reply.code(200).send();
 }
 

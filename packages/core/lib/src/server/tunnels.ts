@@ -551,6 +551,13 @@ export interface CreateTunnelOptions {
   chisel: ChiselDeps;
   state: TunnelStateDeps;
   agents: TunnelAgentDeps;
+  /**
+   * What else answers on the tunnel's hostname — a static site, one of its
+   * aliases — as a sentence, or null when nothing does. Asked under the
+   * tunnel lock, which every workflow that gives a site a hostname takes
+   * too, so a site and a tunnel never take one name at once.
+   */
+  hostTaken?: ((fqdn: string) => Promise<string | null>) | undefined;
   logger: TunnelLogger;
 }
 
@@ -761,6 +768,10 @@ async function createTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntr
   }
 
   const fqdn = `${subdomain}.${domain}`;
+  const taken = opts.hostTaken ? await opts.hostTaken(fqdn) : null;
+  if (taken !== null) {
+    throw new TunnelError(`Domain '${fqdn}' is already served: ${taken}`, 'SUBDOMAIN_IN_USE');
+  }
   let certResult: CertResult;
 
   // --- Step 1: Issue TLS certificate ---
@@ -951,6 +962,8 @@ export interface UpdateTunnelOptions {
   agents: TunnelAgentDeps;
   /** Which bound user surfaces a re-rendered vhost serves. */
   userSurface: UserSurfaceDeps;
+  /** See `ToggleTunnelOptions.hostTaken`: asked before the tunnel is enabled. */
+  hostTaken?: ((fqdn: string) => Promise<string | null>) | undefined;
   logger: TunnelLogger;
   authorize?: AuthorizeTunnel | undefined;
 }
@@ -998,6 +1011,12 @@ export interface ToggleTunnelOptions {
   nginx: NginxDeps;
   chisel: ChiselDeps;
   state: TunnelStateDeps;
+  /**
+   * What else answers on the tunnel's hostname now (see
+   * `CreateTunnelOptions.hostTaken`) — asked before a tunnel is enabled: a
+   * tunnel whose hostname a plugin's web surface took over stays off.
+   */
+  hostTaken?: ((fqdn: string) => Promise<string | null>) | undefined;
   logger: TunnelLogger;
 }
 
@@ -1025,6 +1044,15 @@ async function toggleTunnelLocked(
   const wasEnabled = tunnel.enabled !== false;
   if (wasEnabled === enabled) {
     return { ok: true as const, tunnel };
+  }
+  if (enabled && typeof tunnel.fqdn === 'string' && opts.hostTaken) {
+    const taken = await opts.hostTaken(tunnel.fqdn);
+    if (taken !== null) {
+      throw new TunnelError(
+        `Domain '${tunnel.fqdn}' is already served: ${taken}`,
+        'SUBDOMAIN_IN_USE',
+      );
+    }
   }
   tunnel.enabled = enabled;
 

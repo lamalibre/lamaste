@@ -58,6 +58,11 @@ const refused = {
   'quote inside a word': server(' add_header X a"b;'),
   ssl_stapling_file: server(' ssl_stapling_file /etc/shadow;'),
   'no directives': '# only a comment\n',
+  'server-level auth_request naming a file': server(' auth_request /etc/shadow x;'),
+  'server-level auth_request to a URL': server(' auth_request http://10.0.0.1/;'),
+  'named location with odd characters': server(' location @a.b { return 404; }'),
+  'named location as a non-final try_files argument': location('  try_files @x $uri;'),
+  'try_files to a named location with a path': location('  try_files $uri @x/../y;'),
 };
 
 for (const [name, text] of Object.entries(refused)) {

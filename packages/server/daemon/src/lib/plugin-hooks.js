@@ -219,27 +219,44 @@ export function installedAgentHalf(plugin) {
 }
 
 /**
+ * The web tree a plugin version's approval covers: `{ treeSha256 }` when it
+ * declares a web surface (`userSurface.web`), null otherwise. A declared
+ * surface without the tree's digest cannot be approved.
+ */
+function installedWebTree(plugin) {
+  if (!plugin.userSurface?.web) return null;
+  if (typeof plugin.webTreeSha256 !== 'string') {
+    throw new Error(`Plugin "${plugin.name}" declares a web surface but its web tree is unknown`);
+  }
+  return { treeSha256: plugin.webTreeSha256 };
+}
+
+/**
  * What approving a plugin version covers — its relay hook set, the agent
- * half Lamaste installs and its identity block (normalized, as the registry
- * stores it) — and the digest the approval names. `digest` is null when
- * there is nothing to approve. A plugin without an identity block has the
- * digest it had before identity existed.
+ * half Lamaste installs, its identity block (normalized, as the registry
+ * stores it) and its web tree — and the digest the approval names.
+ * `digest` is null when there is nothing to approve. A plugin without an
+ * identity block or a web surface has the digest it had before they
+ * existed.
  */
 export function installedApproval(plugin) {
   const relay = installedRelayHooks(plugin);
   const agentHalf = installedAgentHalf(plugin);
   const identity = plugin.identity ?? null;
-  const required = relay !== null || agentHalf !== null || identity !== null;
+  const web = installedWebTree(plugin);
+  const required = relay !== null || agentHalf !== null || identity !== null || web !== null;
   return {
     relay,
     agentHalf,
     identity,
+    web,
     required,
     digest: required
       ? approvalDigest({
           relay: relay ? { set: relay.set, entrySha256: relay.entrySha256 } : null,
           agentHalf,
           identity,
+          web,
         })
       : null,
   };
@@ -269,7 +286,7 @@ export async function installedVersionApproved(plugin) {
  */
 export async function hookStatus(plugin) {
   const approval = installedApproval(plugin);
-  const { relay, agentHalf, identity } = approval;
+  const { relay, agentHalf, identity, web } = approval;
   const agent = agentHookSetOf({ hooks: plugin.hooks });
   const state = await readHookState(plugin.name);
   const approved = isApproved(approval, state);
@@ -289,6 +306,12 @@ export async function hookStatus(plugin) {
       declared: identity !== null,
       approved: identity !== null && approved,
       block: identity,
+    },
+    web: {
+      declared: web !== null,
+      approved: web !== null && approved,
+      treeSha256: web?.treeSha256 ?? null,
+      surface: plugin.userSurface?.web ?? null,
     },
     approval: {
       required: approval.required,
@@ -319,16 +342,17 @@ export const IDENTITY_CHANGED = 'identity.changed';
 /**
  * The reason a staged version waits because what it brings — its relay
  * hooks (`relay`), the agent half Lamaste installs (`agentHalf`), its
- * identity block (`identity`); each truthy when it brings one — is not what
- * was approved.
+ * identity block (`identity`), its web tree (`web`); each truthy when it
+ * brings one — is not what was approved.
  *
  * @returns {{ code: string, reason: string }}
  */
-export function digestUnapprovedReason({ relay, agentHalf, identity = null }) {
+export function digestUnapprovedReason({ relay, agentHalf, identity = null, web = null }) {
   const parts = [
-    ...(relay || (!agentHalf && !identity) ? ['relay hooks'] : []),
+    ...(relay || (!agentHalf && !identity && !web) ? ['relay hooks'] : []),
     ...(agentHalf ? ['agent half'] : []),
     ...(identity ? ['identity'] : []),
+    ...(web ? ['web surface'] : []),
   ];
   const named =
     parts.length === 1
@@ -351,6 +375,7 @@ function pendingApprovalRequired(pending) {
         relay: pending.preview,
         agentHalf: pending.agentHalf,
         identity: pending.identity?.after ?? null,
+        web: pending.web?.after ?? null,
       }),
     ]
   );
@@ -369,7 +394,10 @@ function pendingApprovalRequired(pending) {
  * how it changes the identity block (`identity`: `{ before, after,
  * rolesAdded, rolesRemoved, attributesAdded, attributesRemoved,
  * labelsChanged }` with the normalized blocks, null when neither version
- * declares one — part of the digest), why it waits for an administrator
+ * declares one — part of the digest), its web tree (`web`: `{ before,
+ * after }`, the installed version's tree digest and the staged one's
+ * `{ sha256, files, totalBytes }`, null when neither declares a web
+ * surface — part of the digest), why it waits for an administrator
  * (`approvalRequired`: `[{ code, reason }]`, `digest.unapproved`,
  * `settings.secret-to-plain` and `identity.changed`; never empty), and —
  * when the plugin has auto-approve on — why auto-approve did not cover it
@@ -385,6 +413,7 @@ export function pendingUpdateView(pending) {
     agentHalf: pending.agentHalf ?? null,
     settings: pending.settings ?? null,
     identity: pending.identity ?? null,
+    web: pending.web ?? null,
     approvalRequired: pendingApprovalRequired(pending),
     autoApproveWithheld: pending.autoApproveWithheld ?? null,
   };

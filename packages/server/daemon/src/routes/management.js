@@ -13,6 +13,7 @@ import ticketRoutes from './management/tickets.js';
 import identityRoutes from './management/identity.js';
 import identityDirectoryRoutes from './management/identity-directory.js';
 import pluginIdentityRoutes from './management/plugin-identity.js';
+import pluginWebSurfaceRoutes from './management/plugin-web-surface.js';
 import storageRoutes from './management/storage.js';
 import gatekeeperProxyRoutes from './management/gatekeeper-proxy.js';
 import agentsRoutes from './management/agents.js';
@@ -37,6 +38,7 @@ export default async function managementRoutes(fastify, _opts) {
   await fastify.register(identityRoutes);
   await fastify.register(identityDirectoryRoutes);
   await fastify.register(pluginIdentityRoutes);
+  await fastify.register(pluginWebSurfaceRoutes);
   await fastify.register(storageRoutes);
   await fastify.register(gatekeeperProxyRoutes);
   await fastify.register(agentsRoutes);

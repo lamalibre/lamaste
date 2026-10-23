@@ -225,24 +225,35 @@ function groupOf(raw) {
 }
 
 /**
+ * Every grant on one resource (`resourceType`, `resourceId`).
+ *
+ * @param {string} resourceType
+ * @param {string} resourceId
+ * @returns {Promise<{ ok: true, grants: GatekeeperGrant[] } | Extract<GatekeeperResult, { ok: false }>>}
+ */
+export async function listResourceGrants(resourceType, resourceId) {
+  const qs = new URLSearchParams({ resourceType, resourceId }).toString();
+  const result = await gatekeeperRequest('GET', `/api/grants?${qs}`);
+  if (!result.ok) return result;
+  if (!isRecord(result.data) || !Array.isArray(result.data.grants)) return malformed('its grants');
+  const grants = result.data.grants.map(grantOf);
+  if (grants.some((g) => g === null)) return malformed('its grants');
+  // Gatekeeper filters by the query; a grant on anything else is not this resource's.
+  return {
+    ok: true,
+    grants: grants.filter((g) => g.resourceType === resourceType && g.resourceId === resourceId),
+  };
+}
+
+/**
  * Every grant on plugin `route` (`resourceType: 'plugin'`, `resourceId:
  * <route>`) — with roles or without.
  *
  * @param {string} route
  * @returns {Promise<{ ok: true, grants: GatekeeperGrant[] } | Extract<GatekeeperResult, { ok: false }>>}
  */
-export async function listPluginGrants(route) {
-  const qs = new URLSearchParams({ resourceType: 'plugin', resourceId: route }).toString();
-  const result = await gatekeeperRequest('GET', `/api/grants?${qs}`);
-  if (!result.ok) return result;
-  if (!isRecord(result.data) || !Array.isArray(result.data.grants)) return malformed('its grants');
-  const grants = result.data.grants.map(grantOf);
-  if (grants.some((g) => g === null)) return malformed('its grants');
-  // Gatekeeper filters by the query; a grant on anything else is not this plugin's.
-  return {
-    ok: true,
-    grants: grants.filter((g) => g.resourceType === 'plugin' && g.resourceId === route),
-  };
+export function listPluginGrants(route) {
+  return listResourceGrants('plugin', route);
 }
 
 /**

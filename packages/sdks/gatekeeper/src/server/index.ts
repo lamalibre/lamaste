@@ -10,13 +10,16 @@ import {
   createRelaySigner,
   logRequestMetadata,
   RELAY_SIGNING_KEY_FILE,
+  userSurfaceHosts,
 } from '@lamalibre/lamaste';
-import type { RelaySigner } from '@lamalibre/lamaste';
+import type { RelaySigner, UserSurfaceHost } from '@lamalibre/lamaste';
 import {
   DEFAULT_DATA_DIR,
   GROUPS_FILE,
   GRANTS_FILE,
   SETTINGS_FILE,
+  SITES_FILE,
+  TUNNELS_FILE,
   GATEKEEPER_PORT,
   SESSION_CACHE_TTL_MS,
 } from '../lib/constants.js';
@@ -31,7 +34,8 @@ import { accessRequestRoutes } from './routes/access-request.js';
 import { principalRoutes } from './routes/principals.js';
 
 const dataDir = process.env.LAMALIBRE_LAMASTE_DATA_DIR ?? DEFAULT_DATA_DIR;
-const tunnelsPath = path.join(dataDir, 'tunnels.json');
+const tunnelsPath = path.join(dataDir, TUNNELS_FILE);
+const sitesPath = path.join(dataDir, SITES_FILE);
 const settingsPath = path.join(dataDir, SETTINGS_FILE);
 
 /**
@@ -50,6 +54,9 @@ const relaySigner = createRelaySigner(path.join(dataDir, RELAY_SIGNING_KEY_FILE)
 /** Tunnel info cache (refreshed on file change) */
 let tunnelsCache: TunnelInfo[] = [];
 
+/** The hosts serving plugins' user surfaces, from tunnels.json and sites.json (refreshed on either's change) */
+let userSurfaceHostsCache: UserSurfaceHost[] = [];
+
 /** Gatekeeper settings cache */
 let settingsCache: GatekeeperSettings = {};
 
@@ -63,12 +70,29 @@ let cacheVersion = 0;
 // File loaders
 // ---------------------------------------------------------------------------
 
-async function loadTunnels(): Promise<TunnelInfo[]> {
+/** A state file of the panel's, parsed; null when it is missing or unreadable (no entries). */
+async function readStateFile(file: string): Promise<unknown> {
   try {
-    return tunnelInfoFromState(JSON.parse(await readFile(tunnelsPath, 'utf-8')));
+    return JSON.parse(await readFile(file, 'utf-8')) as unknown;
   } catch {
-    return [];
+    return null;
   }
+}
+
+/**
+ * Re-read tunnels.json and sites.json and rebuild what Gatekeeper derives
+ * from them: the tunnels, and the hosts serving user surfaces — which
+ * depend on both files (a site's route is served while the tunnels say its
+ * plugin is hosted).
+ */
+async function loadHostState(): Promise<void> {
+  const [tunnels, sites] = await Promise.all([
+    readStateFile(tunnelsPath),
+    readStateFile(sitesPath),
+  ]);
+  tunnelsCache = tunnelInfoFromState(tunnels);
+  // The panel's own reading of both files (core), so both decide alike.
+  userSurfaceHostsCache = userSurfaceHosts(tunnels, sites);
 }
 
 async function loadSettings(): Promise<GatekeeperSettings> {
@@ -171,11 +195,12 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   });
 
   // Load initial state
-  tunnelsCache = await loadTunnels();
+  await loadHostState();
   settingsCache = await loadSettings();
 
   // Decorate server with shared state accessors
   server.decorate('getTunnels', () => tunnelsCache);
+  server.decorate('getUserSurfaceHosts', () => userSurfaceHostsCache);
   server.decorate('getSettings', () => settingsCache);
   server.decorate('getSessionCache', () => sessionCache);
   server.decorate('getCacheVersion', () => cacheVersion);
@@ -191,13 +216,8 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   });
 
   // Watch state files for changes
-  watchFile(
-    tunnelsPath,
-    async () => {
-      tunnelsCache = await loadTunnels();
-    },
-    server.log,
-  );
+  watchFile(tunnelsPath, loadHostState, server.log);
+  watchFile(sitesPath, loadHostState, server.log);
 
   // TODO(sqlite-step-4): groups.json and access-grants.json are now
   // .migrated stubs after first SQLite open. These watch registrations stay
@@ -330,6 +350,7 @@ start().catch((err) => {
 declare module 'fastify' {
   interface FastifyInstance {
     getTunnels(): TunnelInfo[];
+    getUserSurfaceHosts(): UserSurfaceHost[];
     getSettings(): GatekeeperSettings;
     getSessionCache(): Map<string, AutheliaSession>;
     getCacheVersion(): number;

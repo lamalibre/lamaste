@@ -45,6 +45,7 @@ import { startIdentityServices, stopIdentityServices } from './lib/identity-sync
 import { syncOidcClients } from './lib/plugin-oidc.js';
 import { ensureRelaySigningKey } from './lib/relay-signing.js';
 import { reconcileSiteVhosts, reconcileTunnelVhosts } from './lib/vhost-reconcile.js';
+import { reconcileWebSurfaces } from './lib/web-surface.js';
 import {
   loadTicketScopeCapabilities,
   checkInstanceLiveness,
@@ -217,7 +218,7 @@ async function start() {
 
   // The auth portal and static site vhosts an older version wrote name the
   // client's Host header, not their own hostname, to Authelia. Before listen:
-  // site changes take no lock, and none can arrive until the panel listens.
+  // no site change can arrive until the panel listens.
   if (config.onboarding.status === 'COMPLETED' && config.domain) {
     await reconcileSiteVhosts(server.log, config.domain).catch((err) => {
       server.log.error({ err: err.message }, 'Startup site vhost reconcile failed');
@@ -239,9 +240,13 @@ async function start() {
   // relay, and Gatekeeper vhosts name the client's Host header to Gatekeeper.
   // After listen: a rewritten agent-panel vhost asks this server at once.
   if (config.onboarding.status === 'COMPLETED') {
-    reconcileTunnelVhosts(server.log).catch((err) => {
-      server.log.error({ err: err.message }, 'Startup tunnel vhost reconcile failed');
-    });
+    reconcileTunnelVhosts(server.log)
+      .catch((err) => {
+        server.log.error({ err: err.message }, 'Startup tunnel vhost reconcile failed');
+      })
+      // Plugins' web surfaces: each approved tree served (a redeploy may
+      // have reset the web root), each site's vhost in line.
+      .then(() => reconcileWebSurfaces(server.log));
   }
 
   // --- Health of hosted agent-hosted plugins (every 10s; idle without hostings) ---

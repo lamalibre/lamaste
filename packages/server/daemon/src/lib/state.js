@@ -95,6 +95,24 @@ export async function writeSites(sites) {
   await rename(tmpPath, filePath);
 }
 
+/** Serializes every read-modify-write of sites.json in this process. */
+const sitesMutex = new PromiseChainMutex();
+
+/**
+ * Run `fn` holding the sites lock: a read of sites.json, the decisions made
+ * on it and the write that follows must not interleave with another. A
+ * workflow that gives a site a hostname (creating it, adding an alias,
+ * taking a tunnel's host) takes core's tunnel lock first, then this one —
+ * always in that order — so a site and a tunnel never take one name at once.
+ *
+ * @template T
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export function withSitesLock(fn) {
+  return sitesMutex.run(fn);
+}
+
 function invitationsPath() {
   return path.join(STATE_DIR, 'invitations.json');
 }

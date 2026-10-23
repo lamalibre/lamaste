@@ -222,7 +222,8 @@ export type WebTreeErrorCode =
   | 'FILE_TOO_LARGE'
   | 'TREE_TOO_LARGE'
   | 'NO_INDEX'
-  | 'NOT_FOUND';
+  | 'NOT_FOUND'
+  | 'DIGEST_MISMATCH';
 
 /** A web tree that breaks a rule; `path` names the file when one is at fault. */
 export class WebTreeError extends Error {

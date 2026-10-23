@@ -11,9 +11,11 @@ import {
   updateSite,
   verifyDns,
   SiteError,
+  withTunnelLock,
 } from '@lamalibre/lamaste/server';
+import { AppError } from '../../lib/app-error.js';
 import { getConfig } from '../../lib/config.js';
-import { readSites, writeSites, readTunnels } from '../../lib/state.js';
+import { readSites, writeSites, readTunnels, withSitesLock } from '../../lib/state.js';
 import { writeStaticSiteVhost, removeStaticSiteVhost } from '../../lib/nginx.js';
 import { updateAccessControl } from '../../lib/authelia.js';
 import { issueTunnelCert, getCertPath, issueSiteCert } from '../../lib/certbot.js';
@@ -134,6 +136,60 @@ function siteErrorStatus(code) {
   }
 }
 
+/**
+ * Run a site workflow that may give a site a hostname: under core's tunnel
+ * lock, then the sites lock — the order every such workflow takes them in
+ * (`withSitesLock`) — so no tunnel takes the name meanwhile.
+ *
+ * @template T
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+function withHostnameLocks(fn) {
+  return withTunnelLock(() => withSitesLock(fn));
+}
+
+/**
+ * Refuse (409) a site a plugin owns: its files are the plugin's approved
+ * web tree and its settings follow the plugin — it is managed through the
+ * plugin's web surface, never here (and never by `lamaste-agent deploy`).
+ */
+function assertNotPluginOwned(site) {
+  if (site?.owner) {
+    throw new AppError(
+      `Site '${site.name}' is the web surface of plugin '${site.owner.plugin}' — manage it through the plugin`,
+      409,
+      { code: 'plugin_owned_site' },
+    );
+  }
+}
+
+/** The site `id`, refused when a plugin owns it; null when there is none. */
+async function siteForManagement(id) {
+  const site = (await readSites()).find((s) => s.id === id) ?? null;
+  assertNotPluginOwned(site);
+  return site;
+}
+
+/**
+ * Record the size of site `id` on disk in sites.json, re-reading the file
+ * under the sites lock — never a copy read before an upload, which would
+ * undo every change made meanwhile.
+ *
+ * @returns {Promise<number>} the size
+ */
+async function recordSiteSize(id) {
+  const totalSize = await getSiteSize(id);
+  await withSitesLock(async () => {
+    const sites = await readSites();
+    const site = sites.find((s) => s.id === id);
+    if (!site) return;
+    site.totalSize = totalSize;
+    await writeSites(sites);
+  });
+  return totalSize;
+}
+
 function assertAgentSiteAccess(request, site) {
   if (request.certRole === 'agent') {
     const allowed = request.certAllowedSites || [];
@@ -214,22 +270,24 @@ export default async function sitesRoutes(fastify, _opts) {
       }
 
       try {
-        const result = await createSite({
-          name: body.name,
-          type: body.type,
-          customDomain: body.customDomain,
-          aliases: body.aliases,
-          spaMode: body.spaMode,
-          autheliaProtected: body.autheliaProtected,
-          domain: config.domain,
-          email: config.email,
-          nginx: nginxDeps,
-          certbot: certbotDeps,
-          files: filesDeps,
-          siteState: siteStateDeps,
-          tunnelState: tunnelReadDeps,
-          logger: request.log,
-        });
+        const result = await withHostnameLocks(() =>
+          createSite({
+            name: body.name,
+            type: body.type,
+            customDomain: body.customDomain,
+            aliases: body.aliases,
+            spaMode: body.spaMode,
+            autheliaProtected: body.autheliaProtected,
+            domain: config.domain,
+            email: config.email,
+            nginx: nginxDeps,
+            certbot: certbotDeps,
+            files: filesDeps,
+            siteState: siteStateDeps,
+            tunnelState: tunnelReadDeps,
+            logger: request.log,
+          }),
+        );
 
         const response = { ok: true, site: result.site };
         if (result.message) response.message = result.message;
@@ -261,12 +319,15 @@ export default async function sitesRoutes(fastify, _opts) {
       const { id } = IdParamSchema.parse(request.params);
 
       try {
-        await deleteSite({
-          id,
-          nginx: nginxDeps,
-          files: filesDeps,
-          siteState: siteStateDeps,
-          logger: request.log,
+        await withSitesLock(async () => {
+          await siteForManagement(id);
+          await deleteSite({
+            id,
+            nginx: nginxDeps,
+            files: filesDeps,
+            siteState: siteStateDeps,
+            logger: request.log,
+          });
         });
         return { ok: true };
       } catch (err) {
@@ -277,6 +338,7 @@ export default async function sitesRoutes(fastify, _opts) {
             details: err.message,
           });
         }
+        if (err instanceof AppError) throw err;
         request.log.error(err, 'Failed to delete site');
         return reply.code(500).send({
           error: 'Failed to delete site',
@@ -298,21 +360,24 @@ export default async function sitesRoutes(fastify, _opts) {
       const config = getConfig();
 
       try {
-        const result = await updateSite({
-          id,
-          spaMode: body.spaMode,
-          autheliaProtected: body.autheliaProtected,
-          allowedUsers: body.allowedUsers,
-          aliases: body.aliases,
-          domain: config.domain,
-          email: config.email,
-          serverIp: config.ip,
-          nginx: nginxDeps,
-          certbot: certbotDeps,
-          siteState: siteStateDeps,
-          tunnelState: tunnelReadDeps,
-          authelia: autheliaDeps,
-          logger: request.log,
+        const result = await withHostnameLocks(async () => {
+          await siteForManagement(id);
+          return updateSite({
+            id,
+            spaMode: body.spaMode,
+            autheliaProtected: body.autheliaProtected,
+            allowedUsers: body.allowedUsers,
+            aliases: body.aliases,
+            domain: config.domain,
+            email: config.email,
+            serverIp: config.ip,
+            nginx: nginxDeps,
+            certbot: certbotDeps,
+            siteState: siteStateDeps,
+            tunnelState: tunnelReadDeps,
+            authelia: autheliaDeps,
+            logger: request.log,
+          });
         });
         return result;
       } catch (err) {
@@ -330,6 +395,7 @@ export default async function sitesRoutes(fastify, _opts) {
             details: err.message,
           });
         }
+        if (err instanceof AppError) throw err;
         request.log.error(err, 'Failed to update site');
         return reply.code(500).send({
           error: 'Failed to update site configuration',
@@ -353,15 +419,18 @@ export default async function sitesRoutes(fastify, _opts) {
       const config = getConfig();
 
       try {
-        const result = await verifyDns({
-          id,
-          serverIp: config.ip,
-          domain: config.domain,
-          email: config.email,
-          nginx: nginxDeps,
-          certbot: certbotDeps,
-          siteState: siteStateDeps,
-          logger: request.log,
+        const result = await withHostnameLocks(async () => {
+          await siteForManagement(id);
+          return verifyDns({
+            id,
+            serverIp: config.ip,
+            domain: config.domain,
+            email: config.email,
+            nginx: nginxDeps,
+            certbot: certbotDeps,
+            siteState: siteStateDeps,
+            logger: request.log,
+          });
         });
         return result;
       } catch (err) {
@@ -371,6 +440,7 @@ export default async function sitesRoutes(fastify, _opts) {
             error: err.message,
           });
         }
+        if (err instanceof AppError) throw err;
         request.log.error(err, 'Failed to verify DNS');
         return reply.code(500).send({
           error: 'DNS verification failed',
@@ -390,8 +460,7 @@ export default async function sitesRoutes(fastify, _opts) {
       const { id } = IdParamSchema.parse(request.params);
       const { path: relativePath } = PathQuerySchema.parse(request.query);
 
-      const sites = await readSites();
-      const site = sites.find((s) => s.id === id);
+      const site = await siteForManagement(id);
       if (!site) {
         return reply.code(404).send({ error: 'Site not found' });
       }
@@ -417,8 +486,7 @@ export default async function sitesRoutes(fastify, _opts) {
       const { id } = IdParamSchema.parse(request.params);
       const config = getConfig();
 
-      const sites = await readSites();
-      const site = sites.find((s) => s.id === id);
+      const site = await siteForManagement(id);
       if (!site) {
         return reply.code(404).send({ error: 'Site not found' });
       }
@@ -450,13 +518,9 @@ export default async function sitesRoutes(fastify, _opts) {
 
       // Update site size
       try {
-        const totalSize = await getSiteSize(id);
-        const siteIndex = sites.findIndex((s) => s.id === id);
-        sites[siteIndex].totalSize = totalSize;
-
+        const totalSize = await recordSiteSize(id);
         if (totalSize > config.maxSiteSize) {
           // Don't block but warn
-          await writeSites(sites);
           return reply.code(200).send({
             ok: true,
             files: uploadedFiles,
@@ -464,8 +528,6 @@ export default async function sitesRoutes(fastify, _opts) {
             totalSize,
           });
         }
-
-        await writeSites(sites);
       } catch {
         // Non-critical — don't fail the upload
       }
@@ -483,8 +545,7 @@ export default async function sitesRoutes(fastify, _opts) {
     async (request, reply) => {
       const { id } = IdParamSchema.parse(request.params);
 
-      const sites = await readSites();
-      const site = sites.find((s) => s.id === id);
+      const site = await siteForManagement(id);
       if (!site) {
         return reply.code(404).send({ error: 'Site not found' });
       }
@@ -501,10 +562,7 @@ export default async function sitesRoutes(fastify, _opts) {
 
       // Update site size
       try {
-        const totalSize = await getSiteSize(id);
-        const siteIndex = sites.findIndex((s) => s.id === id);
-        sites[siteIndex].totalSize = totalSize;
-        await writeSites(sites);
+        await recordSiteSize(id);
       } catch {
         // Non-critical
       }

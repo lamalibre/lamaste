@@ -590,12 +590,14 @@ const USER_SURFACE_PROXY_HEADERS = `
  * `X-Original-URL` and in `Host` — never by the client's `Host` header (see
  * {@link originalUrl}) — and the session cookie is passed on.
  *
- * @param {'tunnel'|'user-surface'} check
+ * @param {'tunnel'|'user-surface'|'user-surface-shell'} check
  * @param {string} fqdn
  * @returns {string}
  */
 function gatekeeperSubrequest(check, fqdn) {
   return `internal;
+        # A subrequest is never authorized itself (a host may authorize at server level)
+        auth_request off;
 
         proxy_pass http://127.0.0.1:9294/authz/${check}/${fqdn};
         proxy_pass_request_body off;
@@ -685,6 +687,7 @@ ${USER_SURFACE_PROXY_HEADERS}
 
     location = /internal/lamaste/user-surface-401 {
         internal;
+        auth_request off;
 
         proxy_pass http://127.0.0.1:9294/authz/user-surface-unauthenticated;
         proxy_pass_request_body off;
@@ -1161,6 +1164,194 @@ ${
 ${aliasBlock}`;
 
   return { name: `lamalibre-lamaste-site-${site.id}`, fqdn: site.fqdn, config };
+}
+
+/**
+ * The Content-Security-Policy of a plugin's web surface: its shell loads
+ * scripts, styles, fonts and images from its own host only and talks to its
+ * own host only (its user surface's API is there). Inline styles are
+ * allowed — frameworks set `style` attributes and insert component styles
+ * at run time — inline scripts never; no framing, no plugins, no foreign
+ * form targets.
+ */
+const WEB_SURFACE_CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'";
+
+/**
+ * Response headers of the shell of a plugin's web surface, set in its
+ * locations — not at server level, where the API's answers (headed by the
+ * panel) would get a second copy. `no-cache`: a browser revalidates each file —
+ * a 304 while the tree is the same, the new file once an update switched
+ * it — so no page mixes two versions of the shell from its cache.
+ */
+const WEB_SURFACE_HEADERS = `
+        add_header Content-Security-Policy "${WEB_SURFACE_CSP}" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options DENY always;
+        add_header Referrer-Policy same-origin always;
+        add_header Cross-Origin-Opener-Policy same-origin always;
+        add_header Cache-Control no-cache always;`;
+
+/**
+ * Render the vhost of a plugin's web surface — a site the plugin owns
+ * (`site.owner`). Pure; the startup reconcile renders it again to compare.
+ *
+ * While the plugin's surface is served (`opts.served`: its installed
+ * version approved, declaring identity and a web surface, hosted), the
+ * host serves two things under one Authelia session:
+ *
+ * - **the shell**: every path but the API, from the plugin's current tree
+ *   (`<treesDir>/current`), GET and HEAD only. Every request asks
+ *   Gatekeeper first (`/authz/user-surface-shell/<fqdn>`: a session in the
+ *   plugin's audience, and the site's grant when it is restricted) — a page
+ *   without a session goes to the login, a user without access gets the
+ *   access-request page. A file the current tree lacks is looked for in the
+ *   previous tree (a page still running the old shell loads its lazy files
+ *   after an update), and an unknown path gets the shell's `index.html`.
+ * - **the API**: `/api/<route>/app/*`, exactly as on a bound tunnel
+ *   ({@link userSurfaceLocations}).
+ *
+ * While it is not served the host answers every request with 503.
+ *
+ * @param {{ id: string, fqdn: string }} site
+ * @param {string} certDir
+ * @param {string} domain
+ * @param {{ route: string, served: boolean, maxBodySizeMb: number, treesDir: string }} opts
+ * @returns {{ name: string, fqdn: string, config: string }}
+ */
+export function renderWebSurfaceVhost(site, certDir, domain, opts) {
+  const { route, served, maxBodySizeMb, treesDir } = opts;
+  assertLiteralHostname(site.fqdn);
+  if (!isUserSurfaceRoute(route)) throw new Error(`Invalid web surface route: ${route}`);
+  if (!path.isAbsolute(treesDir) || !/^[A-Za-z0-9/._-]+$/.test(treesDir)) {
+    throw new Error(`Invalid web tree directory for nginx vhost: ${treesDir}`);
+  }
+  let certDirClean = certDir;
+  while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
+
+  const head = `server {
+    listen 443 ssl;
+    server_name ${site.fqdn};
+
+    ssl_certificate ${certDirClean}/fullchain.pem;
+    ssl_certificate_key ${certDirClean}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+`;
+
+  if (!served) {
+    return {
+      name: `lamalibre-lamaste-site-${site.id}`,
+      fqdn: site.fqdn,
+      config: `${head}
+    # The web surface of plugin "${route}" is not served now (not approved,
+    # not hosted, or its version declares no web surface)
+    location / {
+        add_header Cache-Control no-store always;
+        return 503;
+    }
+}
+`,
+    };
+  }
+
+  const url = originalUrl(site.fqdn);
+  const config = `${head}
+    root ${treesDir}/current;
+    index index.html;
+
+    # Every path of the shell: Gatekeeper first (the API's locations ask on their own)
+    auth_request /internal/lamaste/shell-authz;
+    error_page 401 =302 https://auth.${domain}/?rd=${url};
+    error_page 403 = /internal/lamaste/shell-authz;
+
+    location = /internal/lamaste/shell-authz {
+        ${gatekeeperSubrequest('user-surface-shell', site.fqdn)}
+    }
+${userSurfaceLocations(site.fqdn, [{ route, maxBodySizeMb }])}
+    location / {
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405;
+        }
+${WEB_SURFACE_HEADERS}
+        try_files $uri @previous;
+    }
+
+    # A file the current tree lacks: the previous tree's, else the shell
+    location @previous {
+${WEB_SURFACE_HEADERS}
+        root ${treesDir}/previous;
+        try_files $uri /index.html;
+    }
+}
+`;
+  return { name: `lamalibre-lamaste-site-${site.id}`, fqdn: site.fqdn, config };
+}
+
+/**
+ * Write the vhost of a plugin's web surface (see {@link renderWebSurfaceVhost}).
+ *
+ * @param {{ id: string, fqdn: string }} site
+ * @param {string} certDir
+ * @param {string} domain
+ * @param {{ route: string, served: boolean, maxBodySizeMb: number, treesDir: string }} opts
+ */
+export async function writeWebSurfaceVhost(site, certDir, domain, opts) {
+  const { name, fqdn, config } = renderWebSurfaceVhost(site, certDir, domain, opts);
+  return safeWriteVhost(name, config, fqdn, { enabled: true });
+}
+
+/**
+ * Hand a hostname from one vhost to another in one nginx reload: vhost
+ * `fromName` is unlinked, `name` written with `config` and linked, the
+ * configuration tested and nginx reloaded once — then `fromName` is
+ * deleted. Until the reload nginx serves the old vhost, after it the new
+ * one; there is no moment in between. On any failure before the reload
+ * both are put back as they were.
+ *
+ * @param {string} fromName the vhost giving the hostname up (linked)
+ * @param {string} name a vhost that does not exist yet
+ * @param {string} config
+ * @param {string} fqdn
+ */
+async function handOverVhost(fromName, name, config, fqdn) {
+  if (await siteExists(name)) throw new Error(`Vhost ${name} exists already`);
+  const fromEnabled = await isSiteEnabled(fromName);
+  const restore = async () => {
+    await siteAction('remove', name).catch(() => {});
+    if (fromEnabled) await enableSite(fromName).catch(() => {});
+  };
+  try {
+    await disableSite(fromName);
+    await writeVhostFile(name, config);
+    await enableSite(name);
+    const result = await testConfig();
+    if (!result.valid) {
+      throw new Error(`Nginx config test failed handing ${fqdn} to ${name}: ${result.error}`);
+    }
+    await reload();
+  } catch (err) {
+    await restore();
+    throw err;
+  }
+  await siteAction('remove', fromName).catch(() => {});
+}
+
+/**
+ * Serve a plugin's web surface on the hostname of tunnel vhost `subdomain`
+ * in one reload (see {@link handOverVhost}).
+ *
+ * @param {string} subdomain the tunnel's
+ * @param {{ id: string, fqdn: string }} site
+ * @param {string} certDir
+ * @param {string} domain
+ * @param {{ route: string, served: boolean, maxBodySizeMb: number, treesDir: string }} opts
+ */
+export async function moveAppVhostToWebSurface(subdomain, site, certDir, domain, opts) {
+  const { name, fqdn, config } = renderWebSurfaceVhost(site, certDir, domain, opts);
+  await handOverVhost(`lamalibre-lamaste-app-${subdomain}`, name, config, fqdn);
 }
 
 /**

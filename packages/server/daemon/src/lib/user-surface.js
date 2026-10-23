@@ -45,8 +45,11 @@ import {
   RELAY_PANEL_AUDIENCE,
   RELAY_PANEL_PORT,
   isAgentHostedPlugin,
+  siteUserSurfaceRoute,
   tunnelUserSurfaceRoutes,
+  userSurfaceHostServing,
   userSurfaceHostingAgent,
+  userSurfaceHosts,
   verifyRelayAssertion,
 } from '@lamalibre/lamaste';
 import {
@@ -62,7 +65,7 @@ import { getConfig } from './config.js';
 import { installedVersionApproved } from './plugin-hooks.js';
 import { findPluginByRoute } from './plugins.js';
 import { relaySigner } from './relay-signing.js';
-import { readTunnels } from './state.js';
+import { readSites, readTunnels } from './state.js';
 import { tunnelCertbotDeps, tunnelNginxDeps, tunnelStateDeps } from './tunnel-deps.js';
 
 /**
@@ -102,7 +105,7 @@ export const USER_SURFACE_ROUTE_CONFIG = Object.freeze({
  * @param {readonly object[]} tunnels
  * @returns {Promise<string | null>}
  */
-async function hostingAgentOf(plugin, tunnels) {
+export async function hostingAgentOf(plugin, tunnels) {
   if (!plugin.route) return null;
   const { ownHosting } = await import('./plugin-hosting.js');
   const record = await ownHosting(plugin);
@@ -160,7 +163,7 @@ async function routeServing(route, agentLabel, tunnels) {
  * @param {object} plugin
  * @param {readonly object[]} tunnels the tunnel state
  */
-async function internalTunnelBodyLimit(plugin, tunnels) {
+export async function internalTunnelBodyLimit(plugin, tunnels) {
   const { ownHosting } = await import('./plugin-hosting.js');
   const record = await ownHosting(plugin);
   if (!record) return TUNNEL_MAX_BODY_MB.default;
@@ -284,6 +287,14 @@ async function assertBindableRoute(route) {
   if (!isAgentHostedPlugin(plugin)) {
     throw new TunnelError(
       `Plugin "${plugin.name}" is not agent-hosted — only an agent-hosted plugin has a user surface`,
+      'INVALID_SETTING',
+    );
+  }
+  // A route is served on one host at most: the plugin's own site, when it
+  // has one, is that host.
+  if ((await readSites()).some((site) => siteUserSurfaceRoute(site) === route)) {
+    throw new TunnelError(
+      `Plugin "${plugin.name}" has a web surface — its user surface is served there`,
       'INVALID_SETTING',
     );
   }
@@ -413,7 +424,8 @@ export async function refreshTunnelUserSurfaceVhosts(ids, logger) {
  * Whether plugin `route`'s user surface is served may have changed — its
  * version was approved, updated or reverted, it was hosted or unhosted (the
  * body limit is its internal tunnel's): bring the vhosts of the tunnels it
- * is bound to in line. Best effort — logged, never thrown; the panel's
+ * is bound to in line, and its web surface — the approved tree served, the
+ * vhost of the site it owns (`lib/web-surface.js`). Best effort — logged, never thrown; the panel's
  * start reconciles every vhost again.
  *
  * @param {string | null | undefined} route
@@ -429,6 +441,9 @@ export async function refreshUserSurfaceVhosts(route, logger) {
       'Could not bring the user-surface vhosts of a plugin in line',
     );
   }
+  // Its web surface too: the approved tree served, the site's vhost in line.
+  const { refreshWebSurface } = await import('./web-surface.js');
+  await refreshWebSurface(route, logger);
 }
 
 /**
@@ -491,6 +506,10 @@ export async function releasePluginUserSurface(route, { plugin, logger }) {
       'Could not release the user surface of an uninstalled plugin',
     );
   }
+  // The site it owns stays, answering 503 until the plugin is back (or an
+  // administrator deletes it): its vhost goes in line.
+  const { refreshWebSurface } = await import('./web-surface.js');
+  await refreshWebSurface(route, logger);
 }
 
 // ---------------------------------------------------------------------------
@@ -560,33 +579,35 @@ export async function verifyUserSurfaceRelay(request) {
 }
 
 /**
- * The enabled tunnel whose host serves `route`'s user surface, or null:
- * bound to the route, and carried by the agent hosting its plugin — the
- * check of every request, whatever a vhost not yet re-rendered still
- * routes here.
+ * The enabled host that serves `route`'s user surface, or null — the check
+ * of every request, whatever a vhost not yet re-rendered still routes here:
+ * a tunnel bound to the route and carried by the agent hosting its plugin,
+ * or the site the plugin owns while its web surface is served
+ * (`lib/web-surface.js`). Read with core `userSurfaceHosts`, as Gatekeeper
+ * reads it, so a route two hosts would serve is served by neither.
  *
  * @param {string} route
+ * @returns {Promise<import('@lamalibre/lamaste').UserSurfaceHost | null>}
  */
-async function servedUserSurfaceTunnel(route) {
-  const tunnels = await readTunnels();
-  const tunnel =
-    tunnels.find(
-      (t) =>
-        t.enabled !== false &&
-        typeof t.fqdn === 'string' &&
-        tunnelUserSurfaceRoutes(t).includes(route),
-    ) ?? null;
-  if (!tunnel) return null;
+async function servedUserSurfaceHost(route) {
+  const [tunnels, sites] = await Promise.all([readTunnels(), readSites()]);
+  const host = userSurfaceHostServing(userSurfaceHosts(tunnels, sites), route);
+  if (!host) return null;
+  if (host.kind === 'site') {
+    const { webSurfaceServing } = await import('./web-surface.js');
+    return (await webSurfaceServing(route, tunnels)).served ? host : null;
+  }
   const plugin = await findPluginByRoute(route);
   if (!plugin) return null;
+  const tunnel = tunnels.find((t) => t.id === host.id);
   const hosting = await hostingAgentOf(plugin, tunnels);
-  return hosting !== null && tunnel.agentLabel === hosting ? tunnel : null;
+  return hosting !== null && tunnel?.agentLabel === hosting ? host : null;
 }
 
 /**
  * The forward target of `route`'s user surface (core `userSurfacePlugin`'s
- * `resolveTarget`): null when no enabled tunnel its hosting agent carries
- * is bound to it, else what the admin forwarder resolves — the hosting's
+ * `resolveTarget`): null when no host serves it (see
+ * {@link servedUserSurfaceHost}), else what the admin forwarder resolves — the hosting's
  * internal tunnel, or why not (not found, disabled, not hosted) — and
  * `down` while the hosting's health is down: nothing of a user's request
  * reaches the relay-loopback port then (503).
@@ -594,7 +615,7 @@ async function servedUserSurfaceTunnel(route) {
  * @param {string} route
  */
 export async function resolveUserSurfaceTarget(route) {
-  if (!(await servedUserSurfaceTunnel(route))) return null;
+  if (!(await servedUserSurfaceHost(route))) return null;
   const { resolveForwardTarget } = await import('./plugin-hosting.js');
   return resolveForwardTarget(route);
 }
@@ -602,15 +623,15 @@ export async function resolveUserSurfaceTarget(route) {
 /**
  * The origin a request that may change something on `route`'s user surface
  * must come from (core `userSurfacePlugin`'s `originFor`): the bound host,
- * as the tunnel state names it — never the request's `Host`. Null when no
- * enabled tunnel its hosting agent carries is bound to the route.
+ * as the state names it — never the request's `Host`. Null when no host
+ * serves the route.
  *
  * @param {string} route
  * @returns {Promise<string | null>}
  */
 export async function userSurfaceOrigin(route) {
-  const tunnel = await servedUserSurfaceTunnel(route);
-  return tunnel ? `https://${tunnel.fqdn.toLowerCase()}` : null;
+  const host = await servedUserSurfaceHost(route);
+  return host ? `https://${host.fqdn}` : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -702,7 +723,7 @@ export async function sweepOpenUserSurfaceResponses(logger) {
       const { route, caller } = response;
       let verdict;
       try {
-        if (!served.has(route)) served.set(route, (await servedUserSurfaceTunnel(route)) !== null);
+        if (!served.has(route)) served.set(route, (await servedUserSurfaceHost(route)) !== null);
         const key = `${route}\n${caller.username}`;
         if (!callers.has(key)) callers.set(key, await resolveUserCaller(route, caller.username));
         const resolution = callers.get(key);

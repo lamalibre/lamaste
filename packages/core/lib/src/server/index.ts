@@ -590,6 +590,15 @@ export {
 } from './tarball.js';
 // --- Web trees (a plugin's web surface: from a staged tarball, from disk) ---
 export { webTreeManifestOfDirectory, webTreeManifestOfTarball } from './web-tree.js';
+export {
+  WEB_TREES_ROOT,
+  readWebTreeStore,
+  removeWebTreeStore,
+  stageWebTree,
+  switchWebTree,
+  webTreeStoreDir,
+} from './web-tree-store.js';
+export type { WebTreeStoreState } from './web-tree-store.js';
 export type { TarballLimits } from './tarball.js';
 export { callAgentHalfHook } from '../agent-hook-call.js';
 export type {

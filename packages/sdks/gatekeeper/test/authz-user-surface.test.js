@@ -12,8 +12,15 @@
  * JSON of `/authz/user-surface-unauthenticated`), 403 for the rest, 503
  * without the relay key. A bound route is served only while the agent
  * carrying the tunnel hosts the plugin — carries its internal tunnel — and
- * refused otherwise (`not_hosting_agent`). Also: how Gatekeeper reads the
- * bindings from tunnels.json. Runs against the build (`npm run build`).
+ * refused otherwise (`not_hosting_agent`). A site a plugin owns (its web
+ * surface, `owner` in sites.json) serves the plugin's user surface the same
+ * way, its route served while the plugin is hosted at all; its grant on a
+ * restricted site is a `site` grant. The shell of such a site —
+ * `/authz/user-surface-shell/<fqdn>`, every other path of the site — needs
+ * the session, membership of the plugin's audience (an entitlement with
+ * roles, to the user or a group of theirs) and, on a restricted site, the
+ * site's grant. Also: how Gatekeeper reads the hosts from tunnels.json and
+ * sites.json. Runs against the build (`npm run build`).
  */
 
 import { test, before, after, beforeEach } from 'node:test';
@@ -31,6 +38,7 @@ import {
   parseRelayVerifyKey,
   relayVerifyKeyOf,
   verifyRelayAssertion,
+  userSurfaceHosts,
 } from '@lamalibre/lamaste';
 
 let dir;
@@ -148,6 +156,58 @@ const STATE = [
   internal('orphaned', 'vm1', 21007),
   internal('twice', 'vm2', 21008),
   { ...internal('twice', 'vm2', 21009), id: 'internal-twice-again' },
+  internal('web-fx', 'vm1', 21010),
+  internal('web-locked', 'vm3', 21011),
+  internal('web-both', 'vm1', 21012),
+  {
+    id: 'both-id',
+    subdomain: 'both',
+    fqdn: 'both.example.com',
+    port: 20017,
+    type: 'app',
+    accessMode: 'authenticated',
+    enabled: true,
+    agentLabel: 'vm1',
+    userSurface: { routes: ['web-both'] },
+  },
+];
+
+/** sites.json as the panel writes it: plugin-owned sites (web surfaces) beside a plain one. */
+const SITES = [
+  {
+    id: 'site-fx',
+    name: 'webfx',
+    fqdn: 'webfx.example.com',
+    type: 'managed',
+    owner: { plugin: 'web-fx' },
+    accessMode: 'authenticated',
+  },
+  {
+    id: 'site-locked',
+    name: 'locked',
+    fqdn: 'locked.example.com',
+    type: 'managed',
+    owner: { plugin: 'web-locked' },
+    accessMode: 'restricted',
+  },
+  {
+    id: 'site-unhosted',
+    name: 'unhosted',
+    fqdn: 'unhosted.example.com',
+    type: 'managed',
+    owner: { plugin: 'web-nowhere' },
+    accessMode: 'authenticated',
+  },
+  // Served by a bound tunnel too (state the panel never writes): neither serves it.
+  {
+    id: 'site-both',
+    name: 'webboth',
+    fqdn: 'webboth.example.com',
+    type: 'managed',
+    owner: { plugin: 'web-both' },
+    accessMode: 'authenticated',
+  },
+  { id: 'site-blog', name: 'blog', fqdn: 'blog.example.com', type: 'managed' },
 ];
 
 before(async () => {
@@ -167,6 +227,7 @@ before(async () => {
     ['authelia_session=alice', 'alice'],
     ['authelia_session=bob', 'bob'],
     ['authelia_session=odd', 'not a username'],
+    ['authelia_session=carol', 'carol'],
   ]) {
     authelia
       .intercept({ path: '/api/authz/auth-request', method: 'GET', headers: { cookie } })
@@ -190,20 +251,31 @@ before(async () => {
     })
     .persist();
 
-  // alice holds the grant of the restricted tunnel; bob does not.
+  // alice holds the grant of the restricted tunnel and of the restricted
+  // site; bob does not.
   const { createGrant } = await import('../dist/lib/grants.js');
-  await createGrant({
-    principalType: 'user',
-    principalId: 'alice',
-    resourceType: 'tunnel',
-    resourceId: 'kamera-id',
-  });
+  const grant = (principalType, principalId, resourceType, resourceId, context) =>
+    createGrant({ principalType, principalId, resourceType, resourceId, context });
+  await grant('user', 'alice', 'tunnel', 'kamera-id');
+  await grant('user', 'alice', 'site', 'site-locked');
+  // The web surfaces' audiences: alice by name, bob through a group; carol
+  // holds a grant without roles, which is no entitlement.
+  const { createGroup, addMembers } = await import('../dist/lib/groups.js');
+  await createGroup('analysts');
+  await addMembers('analysts', ['bob']);
+  await grant('user', 'alice', 'plugin', 'web-fx', { roles: ['viewer'] });
+  await grant('group', 'analysts', 'plugin', 'web-fx', { roles: ['viewer'] });
+  await grant('user', 'carol', 'plugin', 'web-fx', { target: 'local' });
+  await grant('user', 'alice', 'plugin', 'web-locked', { roles: ['viewer'] });
+  await grant('user', 'bob', 'plugin', 'web-locked', { roles: ['viewer'] });
 
   ({ tunnelInfoFromState } = await import('../dist/lib/tunnels.js'));
   const tunnels = tunnelInfoFromState(STATE);
+  const hosts = userSurfaceHosts(STATE, SITES);
   const { authzRoutes } = await import('../dist/server/routes/authz.js');
   app = Fastify({ logger: false });
   app.decorate('getTunnels', () => tunnels);
+  app.decorate('getUserSurfaceHosts', () => hosts);
   app.decorate('getSessionCache', () => sessions);
   app.decorate('getCacheVersion', () => 1);
   app.decorate('getSettings', () => ({}));
@@ -454,52 +526,168 @@ test('a user an assertion cannot carry is refused; without the relay key, 503', 
   }
 });
 
-test('tunnels.json: bindings are read from app tunnels only, valid routes only', () => {
-  const tunnels = tunnelInfoFromState([
-    ...STATE,
-    {
-      id: 'mixed-id',
-      fqdn: 'mixed.example.com',
-      type: 'app',
-      enabled: true,
-      userSurface: { routes: ['ok', 'Bad', 'tunnels', '../x', 7, 'ok', 'a'.repeat(65)] },
-    },
-    // Tunnels persisted before `type` existed are app tunnels.
-    { id: 'legacy-id', fqdn: 'legacy.example.com', userSurface: { routes: ['legacy'] } },
-    {
-      id: 'plugin-id',
-      fqdn: 'herd.example.com',
-      type: 'plugin',
-      agentLabel: 'vm1',
-      port: 9393,
-      pluginRoute: 'herd',
-      userSurface: { routes: ['herd'] },
-    },
-    { id: 'internal-id', fqdn: null, exposure: 'internal', userSurface: { routes: ['fx'] } },
-    { id: 'weird-id', fqdn: 'weird.example.com', accessMode: 'everyone' },
-    { id: 'junk-id', fqdn: 'junk.example.com', userSurface: { routes: 'fx' } },
-    'not a tunnel',
-  ]);
+test('a site a plugin owns serves its user surface; a restricted one needs the site grant', async () => {
+  const target = '/api/web-fx/app/me';
+  const res = await check(target, { fqdn: 'webfx.example.com' });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(
+    verifyAsPanel(res.headers['x-lamalibre-relay-assertion'], { method: 'GET', url: target })
+      .payload.target,
+    { route: 'web-fx', path: target },
+  );
+  // The panel decides membership on the API: Gatekeeper only vouches for the session.
+  assert.equal(
+    (await check(target, { fqdn: 'webfx.example.com', cookie: 'authelia_session=carol' }))
+      .statusCode,
+    200,
+  );
+
+  const locked = '/api/web-locked/app/me';
+  assert.equal((await check(locked, { fqdn: 'locked.example.com' })).statusCode, 200);
+  assert.equal(
+    (await check(locked, { fqdn: 'locked.example.com', cookie: 'authelia_session=bob' }))
+      .statusCode,
+    403,
+  );
+
+  for (const [label, t, fqdn] of [
+    ['another plugin on the site', '/api/fx/app/me', 'webfx.example.com'],
+    ['the site’s plugin not hosted', '/api/web-nowhere/app/me', 'unhosted.example.com'],
+    ['a route a tunnel serves too', '/api/web-both/app/me', 'webboth.example.com'],
+    ['… on the tunnel as well', '/api/web-both/app/me', 'both.example.com'],
+    ['a plain site', '/api/web-fx/app/me', 'blog.example.com'],
+  ]) {
+    const refused = await check(t, { fqdn });
+    assert.equal(refused.statusCode, 403, label);
+    assert.equal(refused.headers['x-lamalibre-relay-assertion'], undefined, label);
+  }
+});
+
+/** The subrequest a plugin-owned site's shell locations send, for `target` on `fqdn`. */
+function shell(
+  target,
+  { fqdn = 'webfx.example.com', host = fqdn, cookie = 'authelia_session=alice' } = {},
+) {
+  const headers = {
+    host,
+    'x-original-url': `https://${fqdn}${target}`,
+    'x-original-method': 'GET',
+  };
+  if (cookie !== null) headers.cookie = cookie;
+  return app.inject({ method: 'GET', url: `/authz/user-surface-shell/${fqdn}`, headers });
+}
+
+test('the shell of a web surface: a session in the plugin’s audience, never more than it needs', async () => {
+  for (const cookie of ['authelia_session=alice', 'authelia_session=bob']) {
+    const res = await shell('/dashboard?tab=1', { cookie });
+    assert.equal(res.statusCode, 200, cookie);
+    assert.equal(res.headers['cache-control'], 'no-store');
+    for (const name of ['remote-user', 'remote-groups', 'x-lamalibre-relay-assertion']) {
+      assert.equal(res.headers[name], undefined, `${cookie}: ${name}`);
+    }
+  }
+  assert.ok(askedAuthelia.includes('https://webfx.example.com/dashboard?tab=1'));
+
+  // A grant without roles is no entitlement: the access-request page.
+  const carol = await shell('/', { cookie: 'authelia_session=carol' });
+  assert.equal(carol.statusCode, 403);
+  assert.match(carol.headers['content-type'], /^text\/html/);
+  assert.match(carol.body, /carol/);
+
+  // No session: 401 (nginx sends a page to the login).
+  for (const cookie of [
+    null,
+    'authelia_session=expired',
+    'authelia_session=alice; authelia_session=bob',
+  ]) {
+    assert.equal((await shell('/', { cookie })).statusCode, 401, String(cookie));
+  }
+
+  // A restricted site needs its grant beside the entitlement.
+  assert.equal((await shell('/', { fqdn: 'locked.example.com' })).statusCode, 200);
+  const bob = await shell('/', { fqdn: 'locked.example.com', cookie: 'authelia_session=bob' });
+  assert.equal(bob.statusCode, 403);
+  assert.match(bob.body, /bob/);
+});
+
+test('the shell answers only for a plugin-owned site it serves, named the way the vhost names it', async () => {
+  askedAuthelia.length = 0;
+  for (const [label, res] of [
+    ['a tunnel', await shell('/', { fqdn: 'piyasa.example.com' })],
+    ['a plain site', await shell('/', { fqdn: 'blog.example.com' })],
+    ['an unknown host', await shell('/', { fqdn: 'nowhere.example.com' })],
+    ['the plugin not hosted', await shell('/', { fqdn: 'unhosted.example.com' })],
+    ['served by two hosts', await shell('/', { fqdn: 'webboth.example.com' })],
+    ['Host names another site', await shell('/', { host: 'locked.example.com' })],
+    ['invalid name', await shell('/', { fqdn: 'webfx.example.com$x' })],
+  ]) {
+    assert.equal(res.statusCode, 403, label);
+    assert.equal(res.body, '', label);
+  }
+  assert.deepEqual(askedAuthelia, [], 'refused before Authelia was asked');
+});
+
+test('state: tunnels from tunnels.json; user-surface hosts from it and sites.json', () => {
+  const tunnels = tunnelInfoFromState([...STATE, 'not a tunnel']);
   const byId = new Map(tunnels.map((t) => [t.id, t]));
-  assert.deepEqual(byId.get('piyasa-id').userSurface, {
-    routes: ['market-indicators', 'fx'],
-    served: ['market-indicators', 'fx'],
-  });
-  assert.equal(byId.get('plain-id').userSurface, undefined);
-  // Bound, but no agent carries the tunnel: nothing served.
-  assert.deepEqual(byId.get('mixed-id').userSurface, { routes: ['ok'], served: [] });
-  assert.deepEqual(byId.get('legacy-id').userSurface, { routes: ['legacy'], served: [] });
-  assert.deepEqual(byId.get('moved-id').userSurface, {
-    routes: ['fx', 'elsewhere', 'unhosted', 'revoked', 'twice'],
-    served: [],
-  });
-  assert.equal(byId.get('plugin-id').userSurface, undefined);
-  assert.deepEqual(byId.get('plugin-id').plugin, { agentLabel: 'vm1', port: 9393, route: 'herd' });
-  assert.equal(byId.has('internal-id'), false);
+  assert.equal(byId.get('piyasa-id').userSurface, undefined, 'bindings are the hosts’ business');
   assert.equal(byId.has('internal-fx'), false, 'internal tunnels have no host to authorize');
-  assert.equal(byId.get('weird-id').accessMode, 'restricted');
-  assert.equal(byId.get('junk-id').userSurface, undefined);
-  const hosts = STATE.filter((t) => t.exposure !== 'internal');
-  assert.equal(tunnels.length, hosts.length + 5);
   assert.deepEqual(tunnelInfoFromState({ not: 'a list' }), []);
+
+  const hosts = userSurfaceHosts(
+    [
+      ...STATE,
+      {
+        id: 'mixed-id',
+        fqdn: 'mixed.example.com',
+        type: 'app',
+        enabled: true,
+        userSurface: { routes: ['ok', 'Bad', 'tunnels', '../x', 7, 'ok', 'a'.repeat(65)] },
+      },
+      // Tunnels persisted before `type` existed are app tunnels.
+      { id: 'legacy-id', fqdn: 'legacy.example.com', userSurface: { routes: ['legacy'] } },
+      {
+        id: 'plugin-id',
+        fqdn: 'herd.example.com',
+        type: 'plugin',
+        agentLabel: 'vm1',
+        port: 9393,
+        pluginRoute: 'herd',
+        userSurface: { routes: ['herd'] },
+      },
+      {
+        id: 'weird-id',
+        fqdn: 'weird.example.com',
+        accessMode: 'everyone',
+        userSurface: { routes: ['w'] },
+      },
+      { id: 'junk-id', fqdn: 'junk.example.com', userSurface: { routes: 'fx' } },
+    ],
+    [...SITES, { id: 'bad-owner', fqdn: 'bad.example.com', owner: { plugin: '../x' } }],
+  );
+  const byHost = new Map(hosts.map((h) => [h.id, h]));
+  assert.deepEqual(
+    [byHost.get('piyasa-id').routes, byHost.get('piyasa-id').served],
+    [
+      ['market-indicators', 'fx'],
+      ['market-indicators', 'fx'],
+    ],
+  );
+  // A binding on a tunnel whose agent does not host the plugin claims nothing.
+  assert.deepEqual(byHost.get('moved-id').served, []);
+  assert.deepEqual(byHost.get('mixed-id').routes, ['ok']);
+  assert.deepEqual(byHost.get('legacy-id').served, []);
+  assert.equal(byHost.has('plugin-id'), false, 'a plugin tunnel is no app tunnel');
+  assert.equal(byHost.has('open-id'), false, 'a public host serves no user surface');
+  assert.equal(byHost.get('weird-id').accessMode, 'restricted');
+  assert.equal(byHost.has('junk-id'), false);
+  assert.deepEqual(
+    [byHost.get('site-fx').kind, byHost.get('site-fx').routes, byHost.get('site-fx').served],
+    ['site', ['web-fx'], ['web-fx']],
+  );
+  assert.deepEqual(byHost.get('site-unhosted').served, []);
+  assert.deepEqual(byHost.get('site-both').served, []);
+  assert.deepEqual(byHost.get('both-id').served, []);
+  assert.equal(byHost.has('site-blog'), false);
+  assert.equal(byHost.has('bad-owner'), false);
 });

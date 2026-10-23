@@ -314,7 +314,8 @@ function identityApprovalRequired(identity) {
  * in for an administrator on the first reason alone:
  *
  * - `digest.unapproved` — what it brings (relay hooks, the agent half
- *   Lamaste installs, its identity block) is not what was approved;
+ *   Lamaste installs, its identity block, its web tree) is not what was
+ *   approved;
  * - `settings.secret-to-plain` — {@link settingsApprovalRequired};
  * - `identity.changed` — {@link identityApprovalRequired}.
  *
@@ -334,6 +335,7 @@ function approvalRequiredFor(staged, state, settings, identity) {
             relay: staged.relaySet,
             agentHalf: staged.agentHalf,
             identity: staged.identity,
+            web: staged.webTree,
           }),
         ]),
     ...settingsApprovalRequired(settings),
@@ -446,6 +448,10 @@ async function stageVersion(plugin, requestedVersion, record) {
     }
     entrySha256 = hookEntrySha256(moduleBytes);
   }
+  // A web surface's tree, read from the tarball: every rule checked now,
+  // its digest approved with the rest.
+  const webRoot = manifest.userSurface?.web?.root;
+  const webTree = webRoot ? await staged.readWebTree(webRoot) : null;
   // The staged version as a registry entry, so it is judged exactly as the
   // installed one will be.
   const entry = {
@@ -457,6 +463,8 @@ async function stageVersion(plugin, requestedVersion, record) {
     agentHalfPin,
     settings: manifest.settings,
     identity: identityOf(manifest),
+    userSurface: manifest.userSurface,
+    webTreeSha256: webTree?.sha256 ?? null,
   };
   const approval = installedApproval(entry);
   return {
@@ -470,6 +478,8 @@ async function stageVersion(plugin, requestedVersion, record) {
     agentHalf: approval.agentHalf,
     // The staged identity block, normalized (null: it declares none).
     identity: approval.identity,
+    // The staged web tree's manifest (null: it declares no web surface).
+    webTree,
     // The relay hook set's own digest — what the runner holds.
     relayDigest: approval.relay?.digest ?? null,
     approvalRequired: approval.required,
@@ -512,6 +522,27 @@ function identityPreview(plugin, manifest) {
   const after = identityOf(manifest) ?? null;
   if (!before && !after) return null;
   return { before, after, ...identityDiff(before, after) };
+}
+
+/**
+ * How a staged version changes the web tree, for the update's preview: the
+ * installed version's tree digest (`before`) and the staged tree
+ * (`after`: its digest, file count and size) — null when neither version
+ * declares a web surface.
+ *
+ * @param {object} plugin the installed registry entry
+ * @param {{ webTree: import('@lamalibre/lamaste').WebTreeManifest | null }} staged
+ */
+function webPreview(plugin, staged) {
+  const before = plugin.userSurface?.web ? (plugin.webTreeSha256 ?? null) : null;
+  const after = staged.webTree
+    ? {
+        sha256: staged.webTree.sha256,
+        files: staged.webTree.files.length,
+        totalBytes: staged.webTree.totalBytes,
+      }
+    : null;
+  return before === null && after === null ? null : { before, after };
 }
 
 /**
@@ -591,6 +622,7 @@ export async function updatePlugin(
         staged,
         settings,
         identity,
+        web: webPreview(plugin, staged),
         approvalRequired,
         withheldReasons,
         actor,
@@ -670,6 +702,7 @@ async function awaitApproval({
   staged,
   settings,
   identity,
+  web,
   approvalRequired,
   withheldReasons,
   actor,
@@ -688,6 +721,7 @@ async function awaitApproval({
       : null,
     settings,
     identity,
+    web,
     approvalRequired,
     ...(withheld.length > 0 ? { autoApproveWithheld: withheld } : {}),
   };
@@ -787,6 +821,8 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
         hooksEntrySha256: installed.hooksEntrySha256,
         agent: installed.manifest.agent,
         identity: identityOf(installed.manifest),
+        userSurface: installed.manifest.userSurface,
+        webTreeSha256: installed.webTreeSha256,
       };
       let approval;
       try {
@@ -802,6 +838,7 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
         installed.manifest,
         installed.hooksEntrySha256,
         staged.agentHalfPin,
+        installed.webTreeSha256,
       );
       if (approval.required) {
         await recordApprovedSet(installedEntry, approval.digest, staged.version, approvedBy);
@@ -822,6 +859,7 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
           restored.manifest,
           restored.hooksEntrySha256,
           plugin.agentHalfPin ?? null,
+          restored.webTreeSha256,
         );
         await restoreHookState(name, priorHookState);
         setPluginCapabilities(await getPluginCapabilities());

@@ -52,3 +52,36 @@ export async function checkAccess(
     templates,
   };
 }
+
+/**
+ * The roles a grant carries as an entitlement — its `context.roles` when
+ * that is a non-empty list of strings — or null. The panel's rule
+ * (`entitlements.js` `grantRoles`): a grant without roles (a desktop's
+ * local-install grant, one migrated from `user-plugin-access.json`) never
+ * makes anyone a member of a plugin's audience.
+ */
+function entitlementRoles(context: Record<string, unknown> | undefined): string[] | null {
+  const roles = context?.['roles'];
+  if (!Array.isArray(roles) || roles.length === 0) return null;
+  return roles.every((role) => typeof role === 'string') ? (roles as string[]) : null;
+}
+
+/**
+ * Whether `username` is in the audience of the plugin at `route`: an
+ * entitlement — a `plugin` grant on the route with roles — to the user or
+ * to one of their Lamaste groups. What a plugin's web surface asks before it
+ * serves the shell; the panel decides again, from its directory, on every
+ * request to the plugin's API (a disabled or removed user, a plugin not
+ * ready).
+ */
+export async function isPluginAudienceMember(username: string, route: string): Promise<boolean> {
+  const entitlements = (await listGrants({ resourceType: 'plugin', resourceId: route })).filter(
+    (g) => entitlementRoles(g.context) !== null,
+  );
+  if (entitlements.some((g) => g.principalType === 'user' && g.principalId === username)) {
+    return true;
+  }
+  if (!entitlements.some((g) => g.principalType === 'group')) return false;
+  const groups = await getGroupsForUser(username);
+  return entitlements.some((g) => g.principalType === 'group' && groups.includes(g.principalId));
+}
