@@ -141,6 +141,53 @@ export interface AdminUser {
   /** The directory's id (UUID v4); null until the directory has seen the user (within a minute). */
   readonly userId: string | null;
   readonly status: 'active' | 'disabled';
+  /** The domains the user is a member of (the multi-domain relay); empty until the directory has seen them. */
+  readonly domains: readonly string[];
+}
+
+/** A base domain of the relay, as `GET /api/domains` lists it. */
+export interface DomainView {
+  readonly name: string;
+  /** The panel's domain — `panel.`, `tunnel.`, agent panels; never removed. */
+  readonly primary: boolean;
+  /** `pending`: added, its sign-in not yet served; `active`: `auth.<name>` issued, members admitted. */
+  readonly status: 'pending' | 'active';
+  readonly createdAt: string;
+  readonly activatedAt: string | null;
+  /** How many users are members (disabled ones too). */
+  readonly members: number;
+  readonly usedBy: DomainUsage;
+}
+
+/** What keeps a domain from being removed. */
+export interface DomainUsage {
+  /** Tunnel hostnames under it. */
+  readonly tunnels: readonly string[];
+  /** Sites with a hostname or an alias under it. */
+  readonly sites: readonly string[];
+  /** Plugins that belong to it. */
+  readonly plugins: readonly string[];
+  /** Whether the registry credential's issuer is this domain's. */
+  readonly registry: boolean;
+}
+
+/** A member of a domain. */
+export interface DomainMemberView {
+  readonly userId: string;
+  readonly username: string | null;
+  readonly status: 'active' | 'disabled' | 'removed';
+  readonly addedAt: string;
+  readonly addedBy: string;
+}
+
+/** Whether `auth.<domain>` resolves to the relay — what activation needs. */
+export interface DomainDnsCheck {
+  readonly ok: boolean;
+  /** The relay's address every record must point at. */
+  readonly expectedIp: string;
+  readonly records: ReadonlyArray<{ name: string; resolvedIps: readonly string[]; ok: boolean }>;
+  /** Whether a wildcard record (`*.<domain>`) points here too. */
+  readonly wildcard: boolean;
 }
 
 /**
@@ -413,6 +460,8 @@ export interface AdminClient {
     email: string;
     password: string;
     groups?: string[];
+    /** Required once the relay has two domains (`code` `domains_required`); the one domain otherwise. */
+    domains?: string[];
   }): Promise<{ ok: boolean; user: AdminUser; warnings?: AdminWarning[] }>;
   updateUser(
     username: string,
@@ -472,6 +521,24 @@ export interface AdminClient {
     accessLogPurged: number;
   }>;
 
+  // Domains — the relay's base domains and their members (multi-domain relay)
+  getDomains(): Promise<{ domains: DomainView[] }>;
+  /** Add a domain, `pending` until activated. Refused when it overlaps one (`code` `domain_overlap`). */
+  addDomain(name: string): Promise<{ domain: DomainView }>;
+  verifyDomainDns(name: string): Promise<DomainDnsCheck>;
+  /** Issue `auth.<name>`, serve its sign-in and admit its members. */
+  activateDomain(name: string): Promise<{ domain: DomainView }>;
+  /** Refused for the primary (`primary_domain`) and while used (409 `domain_in_use`, `usedBy`). */
+  removeDomain(name: string): Promise<unknown>;
+  getDomainMembers(name: string): Promise<{ members: DomainMemberView[] }>;
+  addDomainMember(name: string, userId: string): Promise<unknown>;
+  removeDomainMember(name: string, userId: string): Promise<unknown>;
+  /** Move a plugin to another active domain — refused while one of its surfaces is served. */
+  setPluginDomain(
+    name: string,
+    domain: string,
+  ): Promise<{ name: string; domain: string; changed: boolean }>;
+
   // Invitations
   getInvitations(): Promise<{ invitations: unknown[] }>;
   createInvitation(data: {
@@ -479,6 +546,8 @@ export interface AdminClient {
     email: string;
     groups?: string[];
     expiresInDays?: number;
+    /** The domains the invited user joins on accepting — required as for {@link AdminClient.createUser}. */
+    domains?: string[];
   }): Promise<{ ok: boolean; invitation: unknown; token: string }>;
   revokeInvitation(id: string): Promise<{ ok: boolean }>;
 
@@ -491,6 +560,8 @@ export interface AdminClient {
     aliases?: string[];
     spaMode?: boolean;
     autheliaProtected?: boolean;
+    /** A managed site's domain (an active one; the primary when absent). */
+    domain?: string;
   }): Promise<{ ok: boolean; site: unknown }>;
   deleteSite(id: string): Promise<{ ok: boolean }>;
   updateSite(
@@ -847,6 +918,8 @@ export interface AdminClient {
     agentLabel?: string;
     accessMode?: string;
     maxBodySizeMb?: number;
+    /** The base domain the hostname is under (an active one; the primary when absent). */
+    domain?: string;
   }): Promise<{ ok: boolean; tunnel: unknown }>;
   /** Enable/disable, move to another carrying agent, change access mode or body limit. */
   updateTunnel(
