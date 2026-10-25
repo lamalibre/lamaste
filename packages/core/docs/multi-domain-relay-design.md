@@ -402,13 +402,61 @@ A single-domain relay on 4.6 upgrades with no change in behaviour:
   (rendered allow-lists, deny last, default deny) and Gatekeeper (projection).
   Either alone keeps a non-member out of tunnels and user/web surfaces;
   static sites rely on Authelia; OIDC on the client's authorization policy.
-- Cross-domain cookies: domains never nest, so a session cookie of one domain
-  is never sent to another's hosts; the backend cookie map strips
-  `authelia_session` by name on every domain.
+- Cross-domain cookies: domains never nest and never share a registrable
+  domain (see Security review, S7), so a session cookie of one domain is
+  never sent to another's hosts, and no application of one can set one for
+  another; the backend cookie map strips `authelia_session` by name on every
+  domain.
 - Same-site isolation between applications on one domain is unchanged
   (slice 7's deferred note: a customer's shells on its own registrable domain
   is now possible).
 - Logs and audits name domains and `userId`s, never usernames.
+
+## Security review (2026-10-25)
+
+Three independent reviews (code, threat model, access-decision correctness)
+of `a7ea95c..037c92c`. Each confirmed finding was fixed with a unit test that
+fails without the fix.
+
+| #   | Finding                                                                                                                                                                                          | Fix                                                                                                                                                                                                                                                                                    | Test                                                                                                  |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| S1  | A protected static site under no active domain (possible from 4.6) was rewritten **public** on its next edit or DNS check: `renderStaticSiteVhost` emitted no `auth_request` with a null domain. | Such a site renders closed (`location / { return 403; }`); `updateSite` refuses (`NOT_UNDER_DOMAIN`) whenever the result is protected, not only on false→true; `verifyDns` refuses before resolving. Start-up logs and notifies the admins of such sites (`result.closed`).            | multi-domain-core (update/verify refused, unprotect allowed), vhost-reconcile (closed render, notice) |
+| S2  | An OIDC client could mix `client_credentials` with user grants; Authelia gives such a client `one_factor`, so any account of any domain could authorize it.                                      | `OidcClientSchema` refuses `client_credentials` beside any other grant.                                                                                                                                                                                                                | plugin-oidc (device code, authorization code, refresh token)                                          |
+| S3  | Registry tokens were revoked only for the credential's issuer domain, while `feria login` admits the Feria plugin's domain.                                                                      | The end of **any** membership revokes the user's registry tokens (also on domain removal); an issuer-domain change revokes those of non-members of the new domain (`revokeRegistryTokensOutside`).                                                                                     | domains (stand-in Feria)                                                                              |
+| S4  | A projection write failure skipped Authelia; an Authelia failure left older, more permissive members; both only warnings.                                                                        | Both steps always tried; the first failure of a streak is audited (`domain.render.failed`, steps only) and notified (critical), its end audited (`domain.render.recovered`).                                                                                                           | domains (injected failures of each step)                                                              |
+| S5  | The auth vhost passed the client's `X-Forwarded-Host`/`-Proto` to Authelia (issuer and cookie domain).                                                                                           | `location /` sets `Host`, `X-Forwarded-Host` (the portal's literal name) and `X-Forwarded-Proto https`.                                                                                                                                                                                | nginx-vhosts                                                                                          |
+| S6  | Races: a tunnel, site, plugin move or registry credential could land on a domain being removed (every later OIDC sync then threw).                                                               | `removeDomain` holds the tunnel → sites → domains locks; `createTunnel` re-checks `domainActive` under the tunnel lock; site creation resolves its domain under the hostname locks; `setPluginDomain` already resolves under them; the credential is written under `withActiveDomain`. | multi-domain-core (tunnel refused), domains (removal waits for the tunnel lock; `domain_gone`)        |
+| S7  | Sibling domains under one registrable domain (`cust1.example.net` + `cust2.example.net`) and public suffixes were accepted: cookie tossing, login CSRF, one `SameSite` site.                     | Core server `assertDomainRegistrable` (Public Suffix List, private section included): refuses a public suffix (`public_suffix`) and a domain sharing an existing one's registrable domain (`same_registrable_domain`). The rodeo test domains became `lamaste-second.local` etc.       | multi-domain-core, domains                                                                            |
+| S8  | An interrupted vhost rename left the legacy file linked forever; a same-subdomain tunnel of another domain could take a primary's legacy file.                                                   | `renameVhosts` finishes a cut-short migration (the new file takes the old link, the old file goes); renames only for primary-domain tunnels and only when the old file's `server_name` is the tunnel's; file operations injectable.                                                    | vhost-reconcile (finished, foreign file left, nginx refusal restores)                                 |
+| S9  | Gatekeeper reloaded `domains.json` only on watch events; the panel never rewrites an unchanged file.                                                                                             | `POST /api/cache/bust` reloads it before busting; a 60 s timer reloads it too.                                                                                                                                                                                                         | gatekeeper cache-bust-domains                                                                         |
+| S10 | The relay hostnames of a pending (or not yet added) domain were not protected; a custom site could take `auth.<d>` and collide at activation.                                                    | Sites check relay hosts against every domain record (`relayDomains`); `addDomain` and `activateDomain` refuse (`relay_host_taken`) while a tunnel, site or alias holds one.                                                                                                            | multi-domain-core, domains                                                                            |
+| S11 | Removing a domain left pending invitations naming it.                                                                                                                                            | Stripped on removal (audit `invitation.domain.removed`); links use the first **active** domain.                                                                                                                                                                                        | domains                                                                                               |
+| S12 | The refusal page for a host under no domain linked to `https://auth.<host>/logout` — possibly someone else's host.                                                                               | No domain → the page names the host and links to no sign-in.                                                                                                                                                                                                                           | gatekeeper authz-domain-membership                                                                    |
+| S13 | A plugin move whose OIDC sync failed was only logged; the old domain's members stayed admitted.                                                                                                  | The identity tick runs `syncOidcClients` every minute (compare-first); the move answers a warning.                                                                                                                                                                                     | domains (the tick writes the OIDC provider)                                                           |
+| S14 | `.`/`..` path segments from the desktop, CLI and web client were resolved by curl/fetch (`/api/domains/../activate`).                                                                            | Dot-only segments are percent-encoded (`url_encode` in the desktop for every path; `pathSegment` in the CLI and web client for domain paths).                                                                                                                                          | cargo, CLI and UI unit tests                                                                          |
+| S15 | `userSubject`'s error carried the refused value.                                                                                                                                                 | The message names no value.                                                                                                                                                                                                                                                            | multi-domain-core                                                                                     |
+
+**Deviation for the user (S7):** stricter than "domains never nest" —
+domains must also have different registrable domains, and a public suffix
+is never a domain. `codelama.com.tr` and `samplepark.tr` are unaffected; two
+customers given `a.example.net` and `b.example.net` by the same owner cannot
+both be on one relay. The check uses `tldts` 7.4.18 (MIT; its one dependency
+`tldts-core` is MIT, no further dependencies), pinned exactly in
+`@lamalibre/lamaste` and kept out of the browser-safe
+`@lamalibre/lamaste/domains` (server path only:
+`server/domain-registrable.ts`).
+
+**Residual, documented in `01-concepts/security-model.md`:**
+
+- **R1.** Authelia does not (as far as known) re-check `authorization_policy`
+  on `refresh_token` grants: a user removed from a domain may keep refresh and
+  access tokens of its user-facing clients until they expire. Feria's own
+  tokens are revoked (S3). Open decision: forbid `refresh_token` on
+  user-facing clients, or revoke Authelia consents on membership loss.
+- **R2.** Authelia's session store is shared across cookie domains; isolation
+  is browser cookie scoping plus membership by username.
+- **R3.** Every membership change restarts Authelia and ends every session on
+  every domain (availability).
 
 ## Proof (rodeo)
 
@@ -565,8 +613,10 @@ list|add|verify-dns|activate|remove|members`, `plugins domain`,
 4. **Rodeo specs** — written, not run (they wait for the user's go). In
    `packages/tools/lamaste-rodeo`:
    - **Infrastructure.** B and C are `test_domain_n <primary> second|third`
-     (`tests/e2e/test-domains.sh`: the first label replaced —
-     `test.lamaste.local` → `second.lamaste.local`, `third.lamaste.local`),
+     (`tests/e2e/test-domains.sh`: a registrable domain of its own —
+     `test.lamaste.local` → `lamaste-second.local`, `lamaste-third.local`;
+     siblings such as `second.lamaste.local` are refused since the security
+     review, S7),
      the one rule, sourced by `setup-host.sh` (both suites: dnsmasq answers
      the primary and the second, the three-VM host the third too),
      `setup-visitor.sh` (`auth.` of each in `/etc/hosts` and the cloud-init

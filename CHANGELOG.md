@@ -34,6 +34,21 @@ Multi-domain relay: one relay serves several base domains — one user directory
 
 Plugins' web surfaces (slice 7): an agent-hosted plugin's users open the application its server package ships, served by the relay on a site the plugin owns, beside its user surface's API — one host, one Authelia session, no tunnel or web server of the plugin's own.
 
+### Security — multi-domain relay
+
+From the review of the feature (design doc, Security review):
+
+- A protected static site under none of the relay's domains is closed (`403`) — never rewritten without authentication on an edit or DNS check; edits that keep it protected are refused (`NOT_UNDER_DOMAIN`), and the start notifies the administrators of such sites.
+- An OIDC client is a service (`client_credentials` alone) or user-facing, never both — a mixed client skipped the domain's member policy.
+- Domains may not share a registrable domain (Public Suffix List; `same_registrable_domain`) and a public suffix is never a domain (`public_suffix`): sibling domains could set each other's cookies. Adds the dependency `tldts` 7.4.18 to `@lamalibre/lamaste` (server path only). The rodeo test domains are now `lamaste-second.local`, `lamaste-third.local`.
+- `auth.<domain>` passes Authelia its own name as `X-Forwarded-Host` / `-Proto`, never the client's.
+- Rendering always tries both Gatekeeper's projection and Authelia; a failing rendering is audited (`domain.render.failed` / `domain.render.recovered`) and raised to the administrators. Gatekeeper re-reads `domains.json` on every cache bust and every minute.
+- A domain's removal holds the tunnel and sites locks; tunnels, sites, plugin moves and the registry credential re-check their domain under them. The relay hostnames of a pending domain stay free, and adding or activating a domain is refused while something holds one (`relay_host_taken`). Removed domains are stripped from invitations; invitation links use the first active domain.
+- The end of any membership revokes the user's registry tokens; an issuer-domain change revokes those of non-members of the new domain.
+- An interrupted vhost rename is finished on the next start; only the primary's tunnels take legacy files, and only files serving their hostname.
+- The identity tick re-syncs the OIDC provider (a plugin move whose sync failed heals within a minute).
+- Dot-only path segments are percent-encoded by the desktop, the CLI and the web client; the refusal page of a host under no domain links to no sign-in; render errors never carry a username.
+
 ## [4.6.0] - 2026-10-25
 
 All lockstep packages, the desktop crate and its Tauri config move to 4.6.0; internal `@lamalibre/*` ranges become `^4.6.0`. Plugins' web surfaces (slice 7): an agent-hosted plugin's users open the application its server package ships, served by the relay on a site the plugin owns, beside its user surface's API — one host, one Authelia session, no tunnel or web server of the plugin's own.

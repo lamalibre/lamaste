@@ -58,10 +58,13 @@ Every domain, the primary first, with its member count and what uses it, and `ne
 
 Add a domain, `pending`. Body `{ "name": "codelama.com.tr" }`. **201** `{ domain }`.
 
-| Status | `code`           | When                                     |
-| ------ | ---------------- | ---------------------------------------- |
-| 400    | `invalid_domain` | Not a domain name                        |
-| 409    | `domain_overlap` | The same as, or under or above, a domain |
+| Status | `code`                    | When                                                                                                                                   |
+| ------ | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `invalid_domain`          | Not a domain name                                                                                                                      |
+| 400    | `public_suffix`           | A public suffix (`com.tr`, `github.io`), not a domain                                                                                  |
+| 409    | `domain_overlap`          | The same as, or under or above, a domain                                                                                               |
+| 409    | `same_registrable_domain` | Shares its registrable domain (eTLD+1, Public Suffix List) with a domain — an application on one could set cookies for the other       |
+| 409    | `relay_host_taken`        | A tunnel, site or alias already holds one of its relay hostnames (`auth.`, `panel.`, `tunnel.`, `agent-*`); also refused at activation |
 
 ### `POST /api/domains/:name/verify-dns`
 
