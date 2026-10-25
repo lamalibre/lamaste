@@ -737,8 +737,14 @@ export function moveWebSurfaceFromTunnel(route, tunnelId, { actor, logger }) {
         );
         throw err;
       }
+      // The port is withdrawn for new sessions only: nginx routes nothing to
+      // it any more, and restarting chisel would drop every agent's session
+      // — the plugin's internal tunnel too, its API answering 502 until the
+      // agent reconnects — and fail the requests nginx's old workers still
+      // send to the tunnel until they finish. The agent drops the binding
+      // at its next sync.
       try {
-        await deps.syncChisel();
+        await deps.syncChisel({ keepLiveSessions: true });
       } catch (err) {
         logger?.warn?.(
           { err: err instanceof Error ? err.message : String(err) },

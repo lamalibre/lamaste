@@ -30,17 +30,29 @@ export function chiselReloadsAuthfile() {
 }
 
 /**
- * Restart chisel if the change requires it. `try-restart` leaves a stopped
- * chisel stopped (see chisel-reconcile.js: a server that failed to reconcile
- * keeps chisel down until it succeeds).
+ * Whether an authfile change must restart chisel: a grant withdrawn (so
+ * live sessions drop the binding) — unless `keepLiveSessions` — or any
+ * change a chisel too old to reload its authfile would not see.
+ *
+ * @param {{ changed: boolean, revoked: boolean }} change
+ * @param {{ keepLiveSessions?: boolean }} [opts]
+ */
+export function authfileChangeNeedsRestart(change, { keepLiveSessions = false } = {}) {
+  return (change.revoked && !keepLiveSessions) || (change.changed && !runningPinnedRelease);
+}
+
+/**
+ * Restart chisel if the change requires it ({@link authfileChangeNeedsRestart}).
+ * `try-restart` leaves a stopped chisel stopped (see chisel-reconcile.js: a
+ * server that failed to reconcile keeps chisel down until it succeeds).
  *
  * @param {{ changed: boolean, revoked: boolean }} change
  * @param {import('pino').Logger} [logger]
+ * @param {{ keepLiveSessions?: boolean }} [opts]
  * @returns {Promise<{ restartOk: boolean, restartError?: string }>}
  */
-export async function applyAuthfileChange(change, logger) {
-  const needsRestart = change.revoked || (change.changed && !runningPinnedRelease);
-  if (!needsRestart) return { restartOk: true };
+export async function applyAuthfileChange(change, logger, opts = {}) {
+  if (!authfileChangeNeedsRestart(change, opts)) return { restartOk: true };
   const result = await reloadChiselAuth(execa, logger);
   return result.ok ? { restartOk: true } : { restartOk: false, restartError: result.error };
 }

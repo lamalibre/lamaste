@@ -71,10 +71,18 @@ export function getChiselStatus() {
  * grant, chisel is restarted so live sessions drop the binding. Call only
  * after the tunnel state has been written. Throws if the restart fails,
  * since a withdrawn grant would otherwise stay live.
+ *
+ * `keepLiveSessions`: withdraw the grant for new sessions only, without the
+ * restart — which drops every session, the hosting agents' internal plugin
+ * tunnels with them. Only for a port nothing routes to any more, whose
+ * agent drops the binding at its next sync (a tunnel moved to a plugin's
+ * web surface).
+ *
+ * @param {{ keepLiveSessions?: boolean }} [opts]
  */
-export async function syncChisel() {
+export async function syncChisel(opts = {}) {
   const change = await syncChiselAuthfile();
-  const { restartOk, restartError } = await applyAuthfileChange(change);
+  const { restartOk, restartError } = await applyAuthfileChange(change, undefined, opts);
   if (!restartOk) {
     throw new Error(`Chisel restart failed after withdrawing a port grant: ${restartError}`);
   }

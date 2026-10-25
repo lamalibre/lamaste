@@ -1308,6 +1308,26 @@
         },
         {
           "id": "step-90",
+          "label": "The hosting is up again after the agent's tunnel client restarted",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The hosting is up again after the agent's tunnel client restarted"
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-92",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1324,7 +1344,7 @@
           ]
         },
         {
-          "id": "step-91",
+          "id": "step-93",
           "label": "Enabling the tunnel while the site holds its name: refused (400)",
           "target": "local",
           "continueOnError": true,
@@ -1345,7 +1365,7 @@
           }
         },
         {
-          "id": "step-92",
+          "id": "step-94",
           "label": "…$(json_get \"$(body_of \"$RESP\")\" '.details')",
           "target": "local",
           "continueOnError": true,
@@ -1366,7 +1386,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-95",
           "label": "GET /api/gatekeeper/grants?resourceType=site&resourceId=${SITE_ID}",
           "target": "host",
           "op": {
@@ -1384,7 +1404,7 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-96",
           "label": "The tunnel's grant was copied to the site",
           "target": "local",
           "continueOnError": true,
@@ -1406,7 +1426,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-97",
           "label": "GET / as ${VIEWER}: the relay's shell (tree m1)",
           "target": "local",
           "continueOnError": true,
@@ -1427,7 +1447,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-98",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1444,7 +1464,7 @@
           ]
         },
         {
-          "id": "step-97",
+          "id": "step-99",
           "label": "GET ${APP}/echo: the agent half, from the site",
           "target": "local",
           "continueOnError": true,
@@ -1465,7 +1485,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-100",
           "label": "…as ${VIEWER}",
           "target": "local",
           "continueOnError": true,
@@ -1487,7 +1507,7 @@
           }
         },
         {
-          "id": "step-99",
+          "id": "step-101",
           "label": "${OUTSIDER}, still without the grant: 403 on the shell",
           "target": "local",
           "continueOnError": true,
@@ -1508,7 +1528,7 @@
           }
         },
         {
-          "id": "step-100",
+          "id": "step-102",
           "label": "…and on the API",
           "target": "local",
           "continueOnError": true,
@@ -1529,12 +1549,12 @@
           }
         }
       ],
-      "bash": "log_section \"After the move: the site serves; the tunnel kept, off and unbound\"\n\nassert_json_field \"$(tunnel_entry \"${TUNNEL_T}\")\" '\"\\(.enabled) \\(.userSurface // \"none\")\"' 'false none' \"The tunnel stays, disabled and unbound\" || true\nVHOST_STATE=$(host_exec \"a=gone; e=unlinked; test -e /etc/nginx/sites-available/lamalibre-lamaste-app-${SUB_T} && a=kept; test -e /etc/nginx/sites-enabled/lamalibre-lamaste-app-${SUB_T} && e=linked; echo \\$a \\$e\" 2>/dev/null | tail -n 1)\nassert_eq \"$VHOST_STATE\" \"kept unlinked\" \"Its vhost stays installed, unlinked — for a rollback by hand\" || true\nif wait_for 90 backend_withdrawn; then\n  log_pass \"Its port grant is withdrawn: nothing answers on the host VM's port ${PORT_T}\"\nelse\n  log_fail \"Port ${PORT_T} still answers on the host VM\"\nfi\nRESP=$(host_api_call PATCH \"tunnels/${TUNNEL_T}\" '{\"enabled\":true}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"Enabling the tunnel while the site holds its name: refused (400)\" || true\nassert_contains \"$(json_get \"$(body_of \"$RESP\")\" '.details')\" \"already served by a static site\" \"…$(json_get \"$(body_of \"$RESP\")\" '.details')\" || true\n\nRESP=$(host_api_get \"gatekeeper/grants?resourceType=site&resourceId=${SITE_ID}\")\nassert_json_field \"$RESP\" '[.grants[]? | select(.principalType == \"user\") | .principalId] | join(\",\")' \"${VIEWER}\" \"The tunnel's grant was copied to the site\" || true\nassert_contains \"$(visit_body \"$(page \"${JAR_VIEWER}\" /)\")\" \"E2E_WEB_m1\" \"GET / as ${VIEWER}: the relay's shell (tree m1)\" || true\nRESP=$(page \"${JAR_VIEWER}\" \"${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"GET ${APP}/echo: the agent half, from the site\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.caller.userId' \"${VIEWER_ID}\" \"…as ${VIEWER}\" || true\nassert_eq \"$(page_status \"${JAR_OUTSIDER}\" /)\" \"403\" \"${OUTSIDER}, still without the grant: 403 on the shell\" || true\nassert_eq \"$(page_status \"${JAR_OUTSIDER}\" \"${APP}/echo\")\" \"403\" \"…and on the API\" || true"
+      "bash": "log_section \"After the move: the site serves; the tunnel kept, off and unbound\"\n\nassert_json_field \"$(tunnel_entry \"${TUNNEL_T}\")\" '\"\\(.enabled) \\(.userSurface // \"none\")\"' 'false none' \"The tunnel stays, disabled and unbound\" || true\nVHOST_STATE=$(host_exec \"a=gone; e=unlinked; test -e /etc/nginx/sites-available/lamalibre-lamaste-app-${SUB_T} && a=kept; test -e /etc/nginx/sites-enabled/lamalibre-lamaste-app-${SUB_T} && e=linked; echo \\$a \\$e\" 2>/dev/null | tail -n 1)\nassert_eq \"$VHOST_STATE\" \"kept unlinked\" \"Its vhost stays installed, unlinked — for a rollback by hand\" || true\nif wait_for 90 backend_withdrawn; then\n  log_pass \"Its port grant is withdrawn: nothing answers on the host VM's port ${PORT_T}\"\nelse\n  log_fail \"Port ${PORT_T} still answers on the host VM\"\nfi\n# Chisel was not restarted (that would drop the plugin's internal tunnel);\n# the agent's tunnel client restarted to drop the binding, as on any tunnel\n# change of its own.\nif wait_for 90 health_up; then\n  log_pass \"The hosting is up again after the agent's tunnel client restarted\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\nRESP=$(host_api_call PATCH \"tunnels/${TUNNEL_T}\" '{\"enabled\":true}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"Enabling the tunnel while the site holds its name: refused (400)\" || true\nassert_contains \"$(json_get \"$(body_of \"$RESP\")\" '.details')\" \"already served by a static site\" \"…$(json_get \"$(body_of \"$RESP\")\" '.details')\" || true\n\nRESP=$(host_api_get \"gatekeeper/grants?resourceType=site&resourceId=${SITE_ID}\")\nassert_json_field \"$RESP\" '[.grants[]? | select(.principalType == \"user\") | .principalId] | join(\",\")' \"${VIEWER}\" \"The tunnel's grant was copied to the site\" || true\nassert_contains \"$(visit_body \"$(page \"${JAR_VIEWER}\" /)\")\" \"E2E_WEB_m1\" \"GET / as ${VIEWER}: the relay's shell (tree m1)\" || true\nRESP=$(page \"${JAR_VIEWER}\" \"${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"GET ${APP}/echo: the agent half, from the site\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.caller.userId' \"${VIEWER_ID}\" \"…as ${VIEWER}\" || true\nassert_eq \"$(page_status \"${JAR_OUTSIDER}\" /)\" \"403\" \"${OUTSIDER}, still without the grant: 403 on the shell\" || true\nassert_eq \"$(page_status \"${JAR_OUTSIDER}\" \"${APP}/echo\")\" \"403\" \"…and on the API\" || true"
     }
   ],
   "apiHelpers": [],
   "headerRaw": "# ============================================================================\n# 43 — App plugin web surface: the move from a bound tunnel (Three-VM)\n# ============================================================================\n# Slice 7's cutover: a plugin whose users reach it through a restricted\n# tunnel bound as its user surface — the tunnel's own backend, a static\n# server on the agent VM, serving the shell — moves to its web surface on\n# the same hostname with one call. The fixture (@lamalibre/e2e-webmove-server,\n# helpers.sh: write_app_install_fixture … wide m1) declares identity and a\n# web surface. From the visitor VM:\n#\n# 1. Bound, not moved: the shell comes from the tunnel's backend, the API\n#    from the agent half; a user with a role but without the tunnel's grant\n#    is refused. Nothing is offered while the tunnel is bound — moving is\n#    the way, and creating a second host is refused.\n# 2. The move, while a probe on the visitor VM asks for the page every\n#    100 ms: every answer is a 200 — the tunnel's backend, then the relay's\n#    shell, never one after the other again — no moment without an answer.\n# 3. After it: the site on the tunnel's hostname, restricted, served; the\n#    tunnel kept, disabled and unbound, its vhost installed but unlinked,\n#    its port grant withdrawn, and it cannot be enabled while the site\n#    holds its name. The\n#    tunnel's grant was copied to the site: its holder gets the shell and\n#    the API; the user without it still does not.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-webmove\"\nSERVER_PACKAGE=\"@lamalibre/e2e-webmove-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-webmove-agent\"\nAPP=\"/api/${PLUGIN}/app\"\nSUB_T=\"e2e43mv\"\nPORT_T=18443\nPOLICY_ID=\"e2e-apphost-43\"\nREMOTE_DIR=\"/var/tmp/e2e-43-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nVIEWER=\"e2e43-viewer\"\nOUTSIDER=\"e2e43-outsider\"\n# Test credentials for this run only, never printed\nVIEWER_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nOUTSIDER_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR_VIEWER=\"/tmp/e2e-43-viewer.cookies\"\nJAR_OUTSIDER=\"/tmp/e2e-43-outsider.cookies\"\nFQDN=\"\"\nTUNNEL_T=\"\"\nTUNNEL_GRANT_ID=\"\"\nVIEWER_ID=\"\"\nOUTSIDER_ID=\"\"\nSITE_ID=\"\"\nBACKEND_UNIT=\"e2e-43-backend\"\nBACKEND_DIR=\"/var/tmp/e2e-43-backend\"\nBACKEND_MARKER=\"E2E_43_BACKEND_$(date +%s)\"\nPROBE_UNIT=\"e2e-43-probe\"\nPROBE_OUT=\"/tmp/e2e-43-probe.log\"\n\nbackend_reachable() {\n  [[ \"$(host_exec \"curl -s --max-time 3 http://127.0.0.1:${PORT_T}/ || true\" 2>/dev/null)\" == *\"${BACKEND_MARKER}\"* ]]\n}\nbackend_withdrawn() {\n  [ \"$(host_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PORT_T}/ || true\" 2>/dev/null | tr -d '\\r\\n')\" = \"000\" ]\n}\nboth_in_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\" | jq -r '.change.member.status' 2>/dev/null) $(audience_row \"${PLUGIN}\" \"${OUTSIDER_ID}\" | jq -r '.change.member.status' 2>/dev/null)\" = \"active active\" ]\n}\n\n# write_probe <file> — no-gap-probe.sh: GET <url> every 100 ms for <seconds>\n# with a cookie jar, one line per answer: \"<status> backend|shell|other\"\n#\n#   bash no-gap-probe.sh <jar> <url> <seconds> <out> <backend marker>\nwrite_probe() {\n  cat > \"$1\" <<'PROBE_EOF'\n#!/usr/bin/env bash\nset -u\nend=$((SECONDS + $3))\n: > \"$4\"\nwhile [ \"$SECONDS\" -lt \"$end\" ]; do\n  resp=$(curl -sk --max-time 5 -b \"$1\" -w '\\n%{http_code}' \"$2\" 2> /dev/null || echo \"000\")\n  code=$(printf '%s\\n' \"$resp\" | tail -n 1)\n  case \"$resp\" in\n    *E2E_WEB_*) kind=shell ;;\n    *\"$5\"*) kind=backend ;;\n    *) kind=other ;;\n  esac\n  echo \"${code} ${kind}\" >> \"$4\"\n  sleep 0.1\ndone\nPROBE_EOF\n}\n\nprobe_running() { [ \"$(visitor_exec \"systemctl is-active ${PROBE_UNIT} 2>/dev/null || true\" 2>/dev/null | tail -n 1)\" = \"active\" ]; }\nprobe_done() { ! probe_running; }\n\nbegin_test \"43 — App plugin web surface: the move from a bound tunnel (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  host_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\n  if [ -n \"${TUNNEL_GRANT_ID}\" ]; then host_api_delete \"gatekeeper/grants/${TUNNEL_GRANT_ID}\" > /dev/null 2>&1 || true; fi\n  drop_plugin_grants \"${PLUGIN}\"\n  if [ -n \"${TUNNEL_T}\" ]; then host_api_delete \"tunnels/${TUNNEL_T}\" > /dev/null 2>&1 || true; fi\n  timed_exec 60 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"systemctl stop ${BACKEND_UNIT} > /dev/null 2>&1; rm -rf ${BACKEND_DIR}; true\" > /dev/null 2>&1\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"systemctl stop ${PROBE_UNIT} > /dev/null 2>&1; rm -f ${JAR_VIEWER} ${JAR_OUTSIDER} ${PROBE_OUT} /tmp/no-gap-probe.sh; sed -i '/${SUB_T}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  for id in \"${VIEWER}\" \"${OUTSIDER}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  for id in ${VIEWER_ID} ${OUTSIDER_ID}; do\n    host_api_post \"identity/directory/${id}/erase\" '{}' > /dev/null 2>&1 || true\n  done\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-webmove\"\nSERVER_PACKAGE=\"@lamalibre/e2e-webmove-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-webmove-agent\"\nAPP=\"/api/${PLUGIN}/app\"\nSUB_T=\"e2e43mv\"\nPORT_T=18443\nPOLICY_ID=\"e2e-apphost-43\"\nREMOTE_DIR=\"/var/tmp/e2e-43-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nVIEWER=\"e2e43-viewer\"\nOUTSIDER=\"e2e43-outsider\"\n# Test credentials for this run only, never printed\nVIEWER_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nOUTSIDER_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR_VIEWER=\"/tmp/e2e-43-viewer.cookies\"\nJAR_OUTSIDER=\"/tmp/e2e-43-outsider.cookies\"\nFQDN=\"\"\nTUNNEL_T=\"\"\nTUNNEL_GRANT_ID=\"\"\nVIEWER_ID=\"\"\nOUTSIDER_ID=\"\"\nSITE_ID=\"\"\nBACKEND_UNIT=\"e2e-43-backend\"\nBACKEND_DIR=\"/var/tmp/e2e-43-backend\"\nBACKEND_MARKER=\"E2E_43_BACKEND_$(date +%s)\"\nPROBE_UNIT=\"e2e-43-probe\"\nPROBE_OUT=\"/tmp/e2e-43-probe.log\"\n\nbackend_reachable() {\n  [[ \"$(host_exec \"curl -s --max-time 3 http://127.0.0.1:${PORT_T}/ || true\" 2>/dev/null)\" == *\"${BACKEND_MARKER}\"* ]]\n}\nhealth_up() { [ \"$(hosting_field \"${PLUGIN}\" '.hosting.health.state')\" = \"up\" ]; }\n# The moved tunnel's port is withdrawn for new sessions; the agent drops the\n# binding at its sync (nudged here), restarting its tunnel client.\nbackend_withdrawn() {\n  nudge_sync\n  [ \"$(host_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PORT_T}/ || true\" 2>/dev/null | tr -d '\\r\\n')\" = \"000\" ]\n}\nboth_in_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\" | jq -r '.change.member.status' 2>/dev/null) $(audience_row \"${PLUGIN}\" \"${OUTSIDER_ID}\" | jq -r '.change.member.status' 2>/dev/null)\" = \"active active\" ]\n}\n\n# write_probe <file> — no-gap-probe.sh: GET <url> every 100 ms for <seconds>\n# with a cookie jar, one line per answer: \"<status> backend|shell|other\"\n#\n#   bash no-gap-probe.sh <jar> <url> <seconds> <out> <backend marker>\nwrite_probe() {\n  cat > \"$1\" <<'PROBE_EOF'\n#!/usr/bin/env bash\nset -u\nend=$((SECONDS + $3))\n: > \"$4\"\nwhile [ \"$SECONDS\" -lt \"$end\" ]; do\n  resp=$(curl -sk --max-time 5 -b \"$1\" -w '\\n%{http_code}' \"$2\" 2> /dev/null || echo \"000\")\n  code=$(printf '%s\\n' \"$resp\" | tail -n 1)\n  case \"$resp\" in\n    *E2E_WEB_*) kind=shell ;;\n    *\"$5\"*) kind=backend ;;\n    *) kind=other ;;\n  esac\n  echo \"${code} ${kind}\" >> \"$4\"\n  sleep 0.1\ndone\nPROBE_EOF\n}\n\nprobe_running() { [ \"$(visitor_exec \"systemctl is-active ${PROBE_UNIT} 2>/dev/null || true\" 2>/dev/null | tail -n 1)\" = \"active\" ]; }\nprobe_done() { ! probe_running; }\n\nbegin_test \"43 — App plugin web surface: the move from a bound tunnel (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  host_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\n  if [ -n \"${TUNNEL_GRANT_ID}\" ]; then host_api_delete \"gatekeeper/grants/${TUNNEL_GRANT_ID}\" > /dev/null 2>&1 || true; fi\n  drop_plugin_grants \"${PLUGIN}\"\n  if [ -n \"${TUNNEL_T}\" ]; then host_api_delete \"tunnels/${TUNNEL_T}\" > /dev/null 2>&1 || true; fi\n  timed_exec 60 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"systemctl stop ${BACKEND_UNIT} > /dev/null 2>&1; rm -rf ${BACKEND_DIR}; true\" > /dev/null 2>&1\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"systemctl stop ${PROBE_UNIT} > /dev/null 2>&1; rm -f ${JAR_VIEWER} ${JAR_OUTSIDER} ${PROBE_OUT} /tmp/no-gap-probe.sh; sed -i '/${SUB_T}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  for id in \"${VIEWER}\" \"${OUTSIDER}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  for id in ${VIEWER_ID} ${OUTSIDER_ID}; do\n    host_api_post \"identity/directory/${id}/erase\" '{}' > /dev/null 2>&1 || true\n  done\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

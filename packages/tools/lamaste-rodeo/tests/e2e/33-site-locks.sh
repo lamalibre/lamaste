@@ -8,7 +8,7 @@
 #
 # 1. An upload recorded the site's size into a copy of sites.json read
 #    before the upload — overwriting a settings change made meanwhile. Here
-#    a PATCH lands while a large upload is in flight, three times: the
+#    a PATCH lands while a slowed upload is in flight, three times: the
 #    setting each PATCH made stays, and the size counts the upload.
 # 2. Two sites created under one name at the same moment: exactly one is
 #    created, the other refused.
@@ -53,14 +53,14 @@ site_field() {
   api_get "sites?limit=500" | jq -r --arg id "${SITE_ID}" ".sites[] | select(.id == \$id) | $1" 2>/dev/null || echo ""
 }
 
-# upload_while_patching <spaMode> — a large upload, slowed to a few
-# seconds (--limit-rate) so it is surely in flight, and a PATCH of spaMode
+# upload_while_patching <spaMode> — an upload slowed to some six seconds
+# (--limit-rate) so it is surely in flight, and a PATCH of spaMode
 # meanwhile; prints "<upload status> <patch status> <in flight>", the last
 # "yes" when the upload was still running once the PATCH had answered —
 # else the round proved nothing
 upload_while_patching() {
   local out="${RACE_DIR}/upload.status" patch inflight
-  _curl_mtls -o /dev/null -w '%{http_code}' --limit-rate 6M -X POST -F "file=@${BIG_FILE}" \
+  _curl_mtls -o /dev/null -w '%{http_code}' --limit-rate 150k -X POST -F "file=@${BIG_FILE}" \
     "${BASE_URL}/api/sites/${SITE_ID}/files" > "$out" 2> /dev/null &
   local pid=$!
   sleep 0.5
@@ -97,8 +97,11 @@ fi
 log_pass "Onboarding is complete"
 cleanup
 RACE_DIR=$(mktemp -d /tmp/e2e-33-XXXXXX)
-BIG_FILE="${RACE_DIR}/big.bin"
-head -c $((24 * 1024 * 1024)) /dev/urandom > "${BIG_FILE}"
+# An extension the sites API accepts
+BIG_FILE="${RACE_DIR}/big.txt"
+# Under nginx's request limit on the panel's API (1 MiB, the default: the
+# panel vhost sets none)
+head -c $((900 * 1024)) /dev/urandom > "${BIG_FILE}"
 BIG_SIZE=$(stat -c %s "${BIG_FILE}")
 log_info "A ${BIG_SIZE}-byte file to upload"
 

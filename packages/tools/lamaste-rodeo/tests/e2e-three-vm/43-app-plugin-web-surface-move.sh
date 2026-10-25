@@ -71,7 +71,11 @@ PROBE_OUT="/tmp/e2e-43-probe.log"
 backend_reachable() {
   [[ "$(host_exec "curl -s --max-time 3 http://127.0.0.1:${PORT_T}/ || true" 2>/dev/null)" == *"${BACKEND_MARKER}"* ]]
 }
+health_up() { [ "$(hosting_field "${PLUGIN}" '.hosting.health.state')" = "up" ]; }
+# The moved tunnel's port is withdrawn for new sessions; the agent drops the
+# binding at its sync (nudged here), restarting its tunnel client.
 backend_withdrawn() {
+  nudge_sync
   [ "$(host_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PORT_T}/ || true" 2>/dev/null | tr -d '\r\n')" = "000" ]
 }
 both_in_audience() {
@@ -282,6 +286,14 @@ if wait_for 90 backend_withdrawn; then
   log_pass "Its port grant is withdrawn: nothing answers on the host VM's port ${PORT_T}"
 else
   log_fail "Port ${PORT_T} still answers on the host VM"
+fi
+# Chisel was not restarted (that would drop the plugin's internal tunnel);
+# the agent's tunnel client restarted to drop the binding, as on any tunnel
+# change of its own.
+if wait_for 90 health_up; then
+  log_pass "The hosting is up again after the agent's tunnel client restarted"
+else
+  log_fail "Health: $(hosting_field "${PLUGIN}" '.hosting.health')"
 fi
 RESP=$(host_api_call PATCH "tunnels/${TUNNEL_T}" '{"enabled":true}')
 assert_eq "$(status_of "$RESP")" "400" "Enabling the tunnel while the site holds its name: refused (400)" || true
