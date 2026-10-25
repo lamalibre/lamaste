@@ -105,6 +105,18 @@ server {
         proxy_set_header X-Lamalibre-Relay-Assertion "";
     }
 
+    # Site file uploads — the one panel route that takes large bodies
+    location ~ ^/api/sites/[^/]+/files$ {
+        if ($ssl_client_verify != SUCCESS) {
+            return 496;
+        }
+        client_max_body_size 64m;
+        proxy_pass http://127.0.0.1:3100;
+        proxy_http_version 1.1;
+
+        # The headers of /api below, without the WebSocket upgrade
+    }
+
     # API paths with WebSocket upgrade support
     location /api {
         proxy_pass http://127.0.0.1:3100;
@@ -137,7 +149,8 @@ Key characteristics:
 - Uses a self-signed TLS certificate (browser will warn, this is expected)
 - Includes the mTLS snippet for client certificate enforcement
 - Error pages 495 (no cert) and 496 (bad cert) serve a static help page with import instructions
-- Two `location` blocks: `/` for standard HTTP proxy, `/api` for WebSocket-capable proxy
+- Two `location` blocks: `/` for standard HTTP proxy, `/api` for WebSocket-capable proxy — and between them the site upload location (below)
+- Request bodies: nginx's 1 MiB default everywhere but `~ ^/api/sites/[^/]+/files$`, the static site upload route (`POST /api/sites/:id/files`), which takes up to 64 MiB a request (`SITE_UPLOAD_MAX_REQUEST_MIB` in `@lamalibre/lamaste`). A regex location wins over the `/api` prefix, so the upload route alone gets the larger limit; it repeats `/api`'s certificate check and headers. A larger request is refused with 413 before the panel sees it — see [Why a body limit at one location only?](#why-a-body-limit-at-one-location-only)
 - Every location that proxies to the panel clears a client's `X-Lamalibre-Relay-Assertion` (`proxy_set_header X-Lamalibre-Relay-Assertion "";`): only Gatekeeper's, on a plugin's user surface, may reach the panel. The panel cannot write this vhost; `create-lamaste`'s redeploy refreshes it when its text differs (from 4.5)
 
 ### 2. Domain Panel Vhost (`lamalibre-lamaste-panel-domain`)
@@ -174,6 +187,18 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # Site file uploads — the one panel route that takes large bodies
+    location ~ ^/api/sites/[^/]+/files$ {
+        if ($ssl_client_verify != SUCCESS) {
+            return 496;
+        }
+        client_max_body_size 64m;
+        proxy_pass http://127.0.0.1:3100;
+        proxy_http_version 1.1;
+
+        # The headers of /api below, without the WebSocket upgrade
+    }
+
     # API paths with WebSocket upgrade support
     location /api {
         proxy_pass http://127.0.0.1:3100;
@@ -203,6 +228,8 @@ Identical to the IP vhost except:
 - Uses Let's Encrypt certificate (no browser warning)
 - `server_name` is `panel.<domain>`
 - Requires the `map $http_upgrade $connection_upgrade` block from the IP vhost (or a shared config) to be present
+
+Both carry the same site upload location with the same 64 MiB request limit; the panel rewrites this vhost at startup when its text differs, and `create-lamaste`'s redeploy refreshes the IP vhost, so an upgraded relay gets the location without re-onboarding.
 
 ### 3. Auth Vhost (`lamalibre-lamaste-auth-<domain>`)
 
@@ -1104,6 +1131,10 @@ nginx emits error 495 when no client certificate is provided and 496 when the ce
 Chisel tunnel connections and some app WebSocket connections are long-lived. nginx's default `proxy_read_timeout` of 60 seconds would close these connections, causing tunnel drops. The 24-hour timeout is effectively "never timeout" for practical purposes, while still allowing nginx to reclaim resources from genuinely dead connections.
 
 A plugin's user-surface locations are the exception: one hour, the longest the panel lets a user-surface response live. A response that outlived its user's access — an event stream left open after the user was disabled — is what the bound is there to stop; the panel also ends such a response within seconds of the change.
+
+### Why a body limit at one location only?
+
+Every panel route but one takes small JSON bodies, which Fastify limits itself behind nginx (1 MiB by default, less on routes that set their own). The exception is the static site upload, a multipart request of whole files: the panel's parser allows 50 MiB a file and counts no total, so the request needs a limit of its own, and nginx is where a request is refused before it is buffered and handed to the panel. Raising `client_max_body_size` for all of `/api` would let every route's request reach that size at nginx; a location for the upload route keeps the rest at 1 MiB. 64 MiB is above the file limit with room for multipart framing, so any file the panel accepts fits a request of its own — the uploaders (the panel's file browser, `lamaste-agent deploy`) split a larger selection into requests with `planSiteUploadBatches`.
 
 ### Why a root helper for nginx operations?
 

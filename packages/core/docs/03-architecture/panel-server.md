@@ -22,7 +22,7 @@ Fastify Server (127.0.0.1:3100)
   ├── Plugins
   │   ├── @fastify/cors
   │   ├── @fastify/cookie
-  │   ├── @fastify/multipart (50 MB limit)
+  │   ├── @fastify/multipart (50 MiB a file)
   │   ├── @fastify/websocket
   │   └── @fastify/static (SPA serving)
   │

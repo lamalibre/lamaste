@@ -247,7 +247,7 @@ Some operations succeed but produce a non-fatal warning (for example, nginx relo
 
 ## File Upload Limits
 
-The server accepts multipart file uploads up to 50 MB per file, used by the static sites file management endpoints.
+The static site upload (`POST /api/sites/:id/files`) accepts files of up to 50 MiB, at most 64 MiB a request. nginx refuses a larger request (413) at the panel vhosts' upload location; every other `/api` request is limited to nginx's 1 MiB default. See [Sites](sites.md#post-apisitesidfiles).
 
 ## Rate Limiting
 
@@ -269,7 +269,7 @@ There are two exceptions:
 | **Validation**              | Zod schemas at route level             |
 | **Error format**            | `{ "error": "...", "details": {...} }` |
 | **WebSocket protocol**      | `wss://` with JSON messages            |
-| **Max upload size**         | 50 MB per file                         |
+| **Max upload size**         | 50 MiB a file, 64 MiB a request        |
 | **Internal listen address** | `127.0.0.1:3100`                       |
 
 ### Endpoint Summary

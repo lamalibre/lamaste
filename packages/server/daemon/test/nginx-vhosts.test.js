@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { SITE_UPLOAD_MAX_REQUEST_MIB } from '@lamalibre/lamaste';
 
 const require = createRequire(import.meta.url);
 const { validateVhost, PANEL_SITE_RE } = require(
@@ -489,9 +490,10 @@ test('every location that proxies a browser to the panel clears a client’s rel
       if (!userSurface) assert.doesNotMatch(body, /relay_assertion/, `${name} ${matcher}`);
     }
   }
-  // panel (7) + primary auth (2) + second domain's auth (1: the invitation
-  // API) + agent-panel authz (1) + user surfaces (2 × 3)
-  assert.equal(checked, 17);
+  // panel (8: the site upload location too) + primary auth (2) + second
+  // domain's auth (1: the invitation API) + agent-panel authz (1) + user
+  // surfaces (2 × 3)
+  assert.equal(checked, 18);
 });
 
 test('no location proxying to a tunnel or agent backend passes Authelia’s session cookie on', async () => {
@@ -635,4 +637,46 @@ test('a Gatekeeper tunnel — authenticated too — and a protected site answer 
     /proxy_pass http:\/\/127\.0\.0\.1:9294\/authz\/refusal\/docs\.example\.com;/,
   );
   assert.match(refusal, /proxy_set_header Cookie "";/);
+});
+
+test('the panel vhost admits a large body at the site upload location alone', () => {
+  const { config } = nginx.renderPanelVhost('example.com', '/etc/letsencrypt/live/example.com/');
+  const all = locations(config);
+  const sized = all.filter(({ body }) => body.includes('client_max_body_size'));
+  assert.deepEqual(
+    sized.map((l) => l.matcher),
+    ['~ ^/api/sites/[^/]+/files$'],
+  );
+  const [upload] = sized;
+  assert.ok(upload.body.includes(`client_max_body_size ${SITE_UPLOAD_MAX_REQUEST_MIB}m;`));
+  // The size is all that differs from /api: the certificate check and the
+  // headers are the same, the WebSocket upgrade is not needed.
+  assert.ok(upload.body.includes('if ($ssl_client_verify != SUCCESS) {\n            return 496;'));
+  const api = all.find((l) => l.matcher === '/api').body;
+  const directives = (body) =>
+    body
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#') && !line.startsWith('location'));
+  assert.deepEqual(
+    directives(upload.body).filter((d) => !d.startsWith('client_max_body_size')),
+    directives(api).filter((d) => !/^proxy_set_header (Upgrade|Connection) /.test(d)),
+  );
+  // None at server level either: every other location keeps nginx's 1 MiB.
+  assert.equal(config.match(/client_max_body_size/g).length, 1);
+
+  // The regex takes the upload route and nothing else under /api.
+  const re = new RegExp(upload.matcher.slice(2));
+  const id = '3f1d2c3a-1b2c-4d5e-8f90-123456789abc';
+  assert.ok(re.test(`/api/sites/${id}/files`));
+  for (const other of [
+    '/api/sites',
+    `/api/sites/${id}`,
+    `/api/sites/${id}/files/x`,
+    `/api/sites/${id}/verify-dns`,
+    `/api/sites/a/b/files`,
+    `/api/plugins/x/settings`,
+  ]) {
+    assert.ok(!re.test(other), other);
+  }
 });

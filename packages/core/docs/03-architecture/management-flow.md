@@ -157,7 +157,7 @@ Host static websites directly on the Lamaste server, served via nginx.
 - Authelia protection (restrict access to authenticated users)
 - Per-site allowed user lists
 - File management: upload, list, and delete files via the API
-- Max upload size: 50 MB per file
+- Upload limits: 50 MiB a file, 64 MiB a request (the panel vhosts' upload location)
 
 ## API Routes
 

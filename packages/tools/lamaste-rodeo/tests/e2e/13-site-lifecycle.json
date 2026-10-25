@@ -1025,11 +1025,520 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"File extension validation\"\n# ---------------------------------------------------------------------------\n\n# Disallowed extension (.php) — should be rejected with 400\nPHP_FILE=$(mktemp /tmp/e2e-site-test-XXXXXX.php)\necho \"<?php echo 'pwned'; ?>\" > \"$PHP_FILE\"\nPHP_STATUS=$(api_upload_file_status \"sites/${SITE_ID}/files?path=.\" \"$PHP_FILE\")\nrm -f \"$PHP_FILE\"\nassert_eq \"$PHP_STATUS\" \"400\" \"Upload of .php file rejected with 400\" || true\n\n# Disallowed extension (.exe) — should be rejected with 400\nEXE_FILE=$(mktemp /tmp/e2e-site-test-XXXXXX.exe)\necho \"MZ\" > \"$EXE_FILE\"\nEXE_STATUS=$(api_upload_file_status \"sites/${SITE_ID}/files?path=.\" \"$EXE_FILE\")\nrm -f \"$EXE_FILE\"\nassert_eq \"$EXE_STATUS\" \"400\" \"Upload of .exe file rejected with 400\" || true\n\n# No extension — should be rejected with 400\nNOEXT_FILE=$(mktemp /tmp/e2e-site-test-XXXXXX)\necho \"no extension\" > \"$NOEXT_FILE\"\n# Rename to strip any suffix mktemp might add\nNOEXT_CLEAN=\"/tmp/e2e-noext-testfile\"\ncp \"$NOEXT_FILE\" \"$NOEXT_CLEAN\"\nrm -f \"$NOEXT_FILE\"\nNOEXT_STATUS=$(api_upload_file_status \"sites/${SITE_ID}/files?path=.\" \"$NOEXT_CLEAN\")\nrm -f \"$NOEXT_CLEAN\"\nassert_eq \"$NOEXT_STATUS\" \"400\" \"Upload of file with no extension rejected with 400\" || true\n\n# Allowed extension (.css) — should succeed\nCSS_FILE=$(mktemp /tmp/e2e-site-test-XXXXXX.css)\necho \"body { color: red; }\" > \"$CSS_FILE\"\nCSS_RESPONSE=$(api_upload_file \"sites/${SITE_ID}/files?path=.\" \"$CSS_FILE\")\nCSS_BASENAME=$(basename \"$CSS_FILE\")\nrm -f \"$CSS_FILE\"\nassert_json_field \"$CSS_RESPONSE\" '.ok' 'true' \"Upload of .css file succeeds\" || true\n\n# Clean up the uploaded css file\n_curl_mtls \\\n  -X DELETE \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"path\\\":\\\"${CSS_BASENAME}\\\"}\" \\\n  \"${BASE_URL}/api/sites/${SITE_ID}/files\" > /dev/null 2>&1 || true"
     },
     {
+      "id": "upload-size-limits",
+      "label": "Upload size limits",
+      "steps": [
+        {
+          "id": "step-70",
+          "label": "Set LIMITS_DIR",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-site-limits-XXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LIMITS_DIR",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "GET /api/sites/${SITE_ID}/files?path=.",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites/${SITE_ID}/files?path=."
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Set BIG_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "api_upload_file \"sites/${SITE_ID}/files?path=.\" \"${LIMITS_DIR}/big.js\""
+          },
+          "capture": [
+            {
+              "variable": "BIG_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-79",
+          "label": "A 24 MiB file uploads through the IP vhost",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BIG_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "A 24 MiB file uploads through the IP vhost"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "Set BIG_SIZE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "site_file_size big.js"
+          },
+          "capture": [
+            {
+              "variable": "BIG_SIZE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "The 24 MiB file is saved whole",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BIG_SIZE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "25165824"
+              },
+              "message": "The 24 MiB file is saved whole"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "Set DOMAIN_BIG_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -o /dev/null -w '%{http_code}' --resolve \"${PANEL_HOST}:443:127.0.0.1\" -X POST -F \"file=@${LIMITS_DIR}/big.js;filename=big-domain.js\" \"https://${PANEL_HOST}/api/sites/${SITE_ID}/files?path=.\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN_BIG_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-84",
+          "label": "A 24 MiB file uploads through ${PANEL_HOST}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DOMAIN_BIG_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "A 24 MiB file uploads through ${PANEL_HOST}"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "Set DOMAIN_BIG_SIZE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "site_file_size big-domain.js"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN_BIG_SIZE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-86",
+          "label": "The file uploaded through ${PANEL_HOST} is saved whole",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DOMAIN_BIG_SIZE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "25165824"
+              },
+              "message": "The file uploaded through ${PANEL_HOST} is saved whole"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "Set OVER_BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -w '\\n%{http_code}' -X POST -F \"file=@${LIMITS_DIR}/over.js\" \"${BASE_URL}/api/sites/${SITE_ID}/files?path=.\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "OVER_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-88",
+          "label": "Set OVER_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$OVER_BODY\" | tail -n 1"
+          },
+          "capture": [
+            {
+              "variable": "OVER_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-89",
+          "label": "Set OVER_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$OVER_BODY\" | sed '$d'"
+          },
+          "capture": [
+            {
+              "variable": "OVER_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-90",
+          "label": "A 51 MiB file is refused with 413",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OVER_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "413"
+              },
+              "message": "A 51 MiB file is refused with 413"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "The refusal names the file limit",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OVER_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "exceeds the 50.0 MB limit"
+              },
+              "message": "The refusal names the file limit"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "Set OVER_SIZE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "site_file_size over.js"
+          },
+          "capture": [
+            {
+              "variable": "OVER_SIZE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "Nothing of the 51 MiB file is kept",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OVER_SIZE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Nothing of the 51 MiB file is kept"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Set LEFTOVER_TEMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo find \"/var/www/lamaste/${SITE_ID}\" -maxdepth 1 -name '.upload-*' 2>/dev/null | wc -l | tr -d ' '"
+          },
+          "capture": [
+            {
+              "variable": "LEFTOVER_TEMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-95",
+          "label": "No upload temp file is left behind",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LEFTOVER_TEMP"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "No upload temp file is left behind"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "Set TOO_BIG_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -o /dev/null -w '%{http_code}' -X POST -F \"file=@${LIMITS_DIR}/half-a.js\" -F \"file=@${LIMITS_DIR}/half-b.js\" \"${BASE_URL}/api/sites/${SITE_ID}/files?path=.\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "TOO_BIG_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-97",
+          "label": "An 80 MiB request is refused with 413",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TOO_BIG_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "413"
+              },
+              "message": "An 80 MiB request is refused with 413"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Set REFUSED_SIZE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "site_file_size half-a.js"
+          },
+          "capture": [
+            {
+              "variable": "REFUSED_SIZE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "Nothing of the refused request is kept",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REFUSED_SIZE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Nothing of the refused request is kept"
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "Set HALF_A_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "api_upload_file \"sites/${SITE_ID}/files?path=.\" \"${LIMITS_DIR}/half-a.js\""
+          },
+          "capture": [
+            {
+              "variable": "HALF_A_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-101",
+          "label": "A 40 MiB file in a request of its own uploads",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HALF_A_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "A 40 MiB file in a request of its own uploads"
+            }
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "Set JSON_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H \"Content-Type: application/json\" --data-binary \"@${LIMITS_DIR}/big.json\" \"${BASE_URL}/api/sites\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "JSON_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-104",
+          "label": "A 2 MiB body to another /api route is refused with 413",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "JSON_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "413"
+              },
+              "message": "A 2 MiB body to another /api route is refused with 413"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Upload size limits\"\n# ---------------------------------------------------------------------------\n\n# The panel vhosts' upload location takes 64 MiB a request; the panel's\n# multipart parser 50 MiB a file. Everything else under /api keeps nginx's\n# 1 MiB.\nLIMITS_DIR=$(mktemp -d /tmp/e2e-site-limits-XXXXXX)\nhead -c $((24 * 1024 * 1024)) /dev/zero > \"${LIMITS_DIR}/big.js\"\nhead -c $((51 * 1024 * 1024)) /dev/zero > \"${LIMITS_DIR}/over.js\"\nhead -c $((40 * 1024 * 1024)) /dev/zero > \"${LIMITS_DIR}/half-a.js\"\nhead -c $((40 * 1024 * 1024)) /dev/zero > \"${LIMITS_DIR}/half-b.js\"\n\n# site_file_size <name> — the size the listing gives a root file (\"\" when absent)\nsite_file_size() {\n  api_get \"sites/${SITE_ID}/files?path=.\" \\\n    | jq -r --arg n \"$1\" '.files[] | select(.name == $n) | .size' 2>/dev/null || echo \"\"\n}\n\nBIG_RESPONSE=$(api_upload_file \"sites/${SITE_ID}/files?path=.\" \"${LIMITS_DIR}/big.js\")\nassert_json_field \"$BIG_RESPONSE\" '.ok' 'true' \"A 24 MiB file uploads through the IP vhost\" || true\nBIG_SIZE=$(site_file_size big.js)\nassert_eq \"$BIG_SIZE\" \"25165824\" \"The 24 MiB file is saved whole\" || true\n\nPANEL_HOST=\"panel.$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"\")\"\nDOMAIN_BIG_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  --resolve \"${PANEL_HOST}:443:127.0.0.1\" \\\n  -X POST -F \"file=@${LIMITS_DIR}/big.js;filename=big-domain.js\" \\\n  \"https://${PANEL_HOST}/api/sites/${SITE_ID}/files?path=.\" 2>/dev/null || echo \"000\")\nassert_eq \"$DOMAIN_BIG_STATUS\" \"200\" \"A 24 MiB file uploads through ${PANEL_HOST}\" || true\nDOMAIN_BIG_SIZE=$(site_file_size big-domain.js)\nassert_eq \"$DOMAIN_BIG_SIZE\" \"25165824\" \"The file uploaded through ${PANEL_HOST} is saved whole\" || true\n\n# A file over 50 MiB in a request under 64 MiB: the panel refuses it.\nOVER_BODY=$(_curl_mtls -w '\\n%{http_code}' \\\n  -X POST -F \"file=@${LIMITS_DIR}/over.js\" \\\n  \"${BASE_URL}/api/sites/${SITE_ID}/files?path=.\" 2>/dev/null || echo \"000\")\nOVER_STATUS=$(echo \"$OVER_BODY\" | tail -n 1)\nOVER_RESPONSE=$(echo \"$OVER_BODY\" | sed '$d')\nassert_eq \"$OVER_STATUS\" \"413\" \"A 51 MiB file is refused with 413\" || true\nassert_contains \"$OVER_RESPONSE\" \"exceeds the 50.0 MB limit\" \"The refusal names the file limit\" || true\nOVER_SIZE=$(site_file_size over.js)\nassert_eq \"$OVER_SIZE\" \"\" \"Nothing of the 51 MiB file is kept\" || true\nLEFTOVER_TEMP=$(sudo find \"/var/www/lamaste/${SITE_ID}\" -maxdepth 1 -name '.upload-*' 2>/dev/null | wc -l | tr -d ' ')\nassert_eq \"$LEFTOVER_TEMP\" \"0\" \"No upload temp file is left behind\" || true\n\n# Two 40 MiB files in one request: over 64 MiB, refused by nginx.\nTOO_BIG_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  -X POST -F \"file=@${LIMITS_DIR}/half-a.js\" -F \"file=@${LIMITS_DIR}/half-b.js\" \\\n  \"${BASE_URL}/api/sites/${SITE_ID}/files?path=.\" 2>/dev/null || echo \"000\")\nassert_eq \"$TOO_BIG_STATUS\" \"413\" \"An 80 MiB request is refused with 413\" || true\nREFUSED_SIZE=$(site_file_size half-a.js)\nassert_eq \"$REFUSED_SIZE\" \"\" \"Nothing of the refused request is kept\" || true\n\n# Each file in a request of its own goes through.\nHALF_A_RESPONSE=$(api_upload_file \"sites/${SITE_ID}/files?path=.\" \"${LIMITS_DIR}/half-a.js\")\nassert_json_field \"$HALF_A_RESPONSE\" '.ok' 'true' \"A 40 MiB file in a request of its own uploads\" || true\n\n# Any other /api route keeps nginx's 1 MiB.\nhead -c $((2 * 1024 * 1024)) /dev/zero | tr '\\0' 'a' | sed 's/^/{\"name\":\"/; s/$/\"}/' > \"${LIMITS_DIR}/big.json\"\nJSON_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  -X POST -H \"Content-Type: application/json\" --data-binary \"@${LIMITS_DIR}/big.json\" \\\n  \"${BASE_URL}/api/sites\" 2>/dev/null || echo \"000\")\nassert_eq \"$JSON_STATUS\" \"413\" \"A 2 MiB body to another /api route is refused with 413\" || true\n\nrm -rf \"$LIMITS_DIR\"\nfor f in big.js big-domain.js half-a.js; do\n  _curl_mtls -X DELETE -H \"Content-Type: application/json\" -d \"{\\\"path\\\":\\\"${f}\\\"}\" \\\n    \"${BASE_URL}/api/sites/${SITE_ID}/files\" > /dev/null 2>&1 || true\ndone"
+    },
+    {
       "id": "input-validation",
       "label": "Input validation",
       "steps": [
         {
-          "id": "step-70",
+          "id": "step-109",
           "label": "POST /api/sites",
           "target": "host",
           "op": {
@@ -1049,7 +1558,7 @@
           ]
         },
         {
-          "id": "step-71",
+          "id": "step-110",
           "label": "Duplicate site name rejected with 400",
           "target": "local",
           "continueOnError": true,
@@ -1070,7 +1579,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-111",
           "label": "POST /api/sites",
           "target": "host",
           "op": {
@@ -1093,7 +1602,7 @@
           ]
         },
         {
-          "id": "step-73",
+          "id": "step-112",
           "label": "Reserved name 'panel' rejected with 400",
           "target": "local",
           "continueOnError": true,
@@ -1114,7 +1623,7 @@
           }
         },
         {
-          "id": "step-74",
+          "id": "step-113",
           "label": "POST /api/sites",
           "target": "host",
           "op": {
@@ -1137,7 +1646,7 @@
           ]
         },
         {
-          "id": "step-75",
+          "id": "step-114",
           "label": "Reserved name 'auth' rejected with 400",
           "target": "local",
           "continueOnError": true,
@@ -1158,7 +1667,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-115",
           "label": "GET /api/sites/not-a-uuid/files?path=.",
           "target": "host",
           "op": {
@@ -1177,7 +1686,7 @@
           ]
         },
         {
-          "id": "step-77",
+          "id": "step-116",
           "label": "Invalid UUID rejected with 400",
           "target": "local",
           "continueOnError": true,
@@ -1205,7 +1714,7 @@
       "label": "Custom site aliases: validation",
       "steps": [
         {
-          "id": "step-78",
+          "id": "step-117",
           "label": "GET /api/onboarding/status",
           "target": "host",
           "op": {
@@ -1224,7 +1733,7 @@
           ]
         },
         {
-          "id": "step-79",
+          "id": "step-118",
           "label": "GET /api/onboarding/status",
           "target": "host",
           "op": {
@@ -1243,7 +1752,7 @@
           ]
         },
         {
-          "id": "step-89",
+          "id": "step-128",
           "label": "POST /api/sites",
           "target": "host",
           "op": {
@@ -1255,7 +1764,7 @@
           }
         },
         {
-          "id": "step-91",
+          "id": "step-130",
           "label": "POST /api/certs/agent",
           "target": "host",
           "op": {
@@ -1274,7 +1783,7 @@
           ]
         },
         {
-          "id": "step-92",
+          "id": "step-131",
           "label": "Agent enrolled to own the collision tunnel",
           "target": "local",
           "continueOnError": true,
@@ -1296,7 +1805,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-132",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1315,7 +1824,7 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-133",
           "label": "Extract ALIAS_TUNNEL_ID",
           "target": "local",
           "op": {
@@ -1332,7 +1841,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-134",
           "label": "Collision tunnel ${ALIAS_TUNNEL_SUB}.${DOMAIN} created",
           "target": "local",
           "continueOnError": true,
@@ -1350,7 +1859,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-135",
           "label": "POST /api/sites",
           "target": "host",
           "op": {
@@ -1370,7 +1879,7 @@
           ]
         },
         {
-          "id": "step-97",
+          "id": "step-136",
           "label": "Aliases on a managed site rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1391,7 +1900,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-137",
           "label": "Set SELF_ALIAS_STATUS",
           "target": "local",
           "op": {
@@ -1408,7 +1917,7 @@
           ]
         },
         {
-          "id": "step-99",
+          "id": "step-138",
           "label": "Alias equal to the site's own domain rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1429,7 +1938,7 @@
           }
         },
         {
-          "id": "step-101",
+          "id": "step-140",
           "label": "Set RESERVED_ALIAS_STATUS",
           "target": "local",
           "op": {
@@ -1446,7 +1955,7 @@
           ]
         },
         {
-          "id": "step-102",
+          "id": "step-141",
           "label": "Lamaste hostname ${reserved} rejected as alias (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1467,7 +1976,7 @@
           }
         },
         {
-          "id": "step-104",
+          "id": "step-143",
           "label": "Set MALFORMED_ALIAS_STATUS",
           "target": "local",
           "op": {
@@ -1484,7 +1993,7 @@
           ]
         },
         {
-          "id": "step-105",
+          "id": "step-144",
           "label": "Malformed alias rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1505,7 +2014,7 @@
           }
         },
         {
-          "id": "step-106",
+          "id": "step-145",
           "label": "Set DOTLESS_ALIAS_STATUS",
           "target": "local",
           "op": {
@@ -1522,7 +2031,7 @@
           ]
         },
         {
-          "id": "step-107",
+          "id": "step-146",
           "label": "Alias without a dot rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1543,7 +2052,7 @@
           }
         },
         {
-          "id": "step-108",
+          "id": "step-147",
           "label": "Set ELEVEN_ALIASES",
           "target": "local",
           "op": {
@@ -1560,7 +2069,7 @@
           ]
         },
         {
-          "id": "step-109",
+          "id": "step-148",
           "label": "Set TOO_MANY_STATUS",
           "target": "local",
           "op": {
@@ -1577,7 +2086,7 @@
           ]
         },
         {
-          "id": "step-110",
+          "id": "step-149",
           "label": "More than 10 aliases rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1598,7 +2107,7 @@
           }
         },
         {
-          "id": "step-111",
+          "id": "step-150",
           "label": "Set TUNNEL_ALIAS_STATUS",
           "target": "local",
           "op": {
@@ -1615,7 +2124,7 @@
           ]
         },
         {
-          "id": "step-112",
+          "id": "step-151",
           "label": "Alias equal to a tunnel's hostname rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1636,7 +2145,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-152",
           "label": "Set SITE_ALIAS_STATUS",
           "target": "local",
           "op": {
@@ -1653,7 +2162,7 @@
           ]
         },
         {
-          "id": "step-114",
+          "id": "step-153",
           "label": "Alias equal to another site's domain rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1674,7 +2183,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-154",
           "label": "GET /api/sites",
           "target": "host",
           "op": {
@@ -1692,7 +2201,7 @@
           ]
         },
         {
-          "id": "step-116",
+          "id": "step-155",
           "label": "Rejected alias creates left no site behind",
           "target": "local",
           "continueOnError": true,
@@ -1720,7 +2229,7 @@
       "label": "Custom site aliases: create and collisions",
       "steps": [
         {
-          "id": "step-117",
+          "id": "step-156",
           "label": "POST /api/sites",
           "target": "host",
           "op": {
@@ -1739,7 +2248,7 @@
           ]
         },
         {
-          "id": "step-118",
+          "id": "step-157",
           "label": "Custom site with aliases created",
           "target": "local",
           "continueOnError": true,
@@ -1761,7 +2270,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-158",
           "label": "Extract ALIAS_SITE_ID",
           "target": "local",
           "op": {
@@ -1778,7 +2287,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-159",
           "label": "Site echoes its aliases",
           "target": "local",
           "continueOnError": true,
@@ -1800,7 +2309,7 @@
           }
         },
         {
-          "id": "step-121",
+          "id": "step-160",
           "label": "Create message asks for an A record for every alias",
           "target": "local",
           "continueOnError": true,
@@ -1821,7 +2330,7 @@
           }
         },
         {
-          "id": "step-122",
+          "id": "step-161",
           "label": "POST /api/sites",
           "target": "host",
           "op": {
@@ -1841,7 +2350,7 @@
           ]
         },
         {
-          "id": "step-123",
+          "id": "step-162",
           "label": "Alias already served by another site rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1862,7 +2371,7 @@
           }
         },
         {
-          "id": "step-124",
+          "id": "step-163",
           "label": "POST /api/sites",
           "target": "host",
           "op": {
@@ -1882,7 +2391,7 @@
           ]
         },
         {
-          "id": "step-125",
+          "id": "step-164",
           "label": "Alias equal to another custom site's domain rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1903,7 +2412,7 @@
           }
         },
         {
-          "id": "step-126",
+          "id": "step-165",
           "label": "POST /api/sites",
           "target": "host",
           "op": {
@@ -1923,7 +2432,7 @@
           ]
         },
         {
-          "id": "step-127",
+          "id": "step-166",
           "label": "Domain already an alias of another site rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1944,7 +2453,7 @@
           }
         },
         {
-          "id": "step-128",
+          "id": "step-167",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1963,7 +2472,7 @@
           ]
         },
         {
-          "id": "step-129",
+          "id": "step-168",
           "label": "Tunnel on a site alias's hostname rejected",
           "target": "local",
           "continueOnError": true,
@@ -1984,7 +2493,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-169",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -2004,7 +2513,7 @@
           ]
         },
         {
-          "id": "step-131",
+          "id": "step-170",
           "label": "Tunnel on a site alias's hostname returns HTTP 400",
           "target": "local",
           "continueOnError": true,
@@ -2025,7 +2534,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-171",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -2045,7 +2554,7 @@
           ]
         },
         {
-          "id": "step-133",
+          "id": "step-172",
           "label": "Tunnel on a managed site's hostname returns HTTP 400",
           "target": "local",
           "continueOnError": true,
@@ -2066,7 +2575,7 @@
           }
         },
         {
-          "id": "step-134",
+          "id": "step-173",
           "label": "PATCH /api/sites/${SITE_ID}",
           "target": "host",
           "op": {
@@ -2086,7 +2595,7 @@
           ]
         },
         {
-          "id": "step-135",
+          "id": "step-174",
           "label": "PATCH aliases on a managed site rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -2107,7 +2616,7 @@
           }
         },
         {
-          "id": "step-136",
+          "id": "step-175",
           "label": "PATCH /api/sites/${ALIAS_SITE_ID}",
           "target": "host",
           "op": {
@@ -2127,7 +2636,7 @@
           ]
         },
         {
-          "id": "step-137",
+          "id": "step-176",
           "label": "PATCH with a reserved alias rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -2148,7 +2657,7 @@
           }
         },
         {
-          "id": "step-138",
+          "id": "step-177",
           "label": "GET /api/sites",
           "target": "host",
           "op": {
@@ -2166,7 +2675,7 @@
           ]
         },
         {
-          "id": "step-139",
+          "id": "step-178",
           "label": "Rejected PATCH left the aliases unchanged",
           "target": "local",
           "continueOnError": true,
@@ -2194,7 +2703,7 @@
       "label": "Custom site aliases: verify DNS, certificate and redirect",
       "steps": [
         {
-          "id": "step-142",
+          "id": "step-181",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -2203,7 +2712,7 @@
           }
         },
         {
-          "id": "step-143",
+          "id": "step-182",
           "label": "Set RESOLVED_WWW",
           "target": "local",
           "op": {
@@ -2220,7 +2729,7 @@
           ]
         },
         {
-          "id": "step-144",
+          "id": "step-183",
           "label": "Custom site with aliases was not created — skipping live alias checks",
           "target": "local",
           "op": {
@@ -2237,7 +2746,7 @@
           }
         },
         {
-          "id": "step-146",
+          "id": "step-185",
           "label": "dnsmasq does not resolve ${ALIAS_WWW} to ${SERVER_IP} (got '${RESOLVED_WWW}') — skipping live alias checks",
           "target": "local",
           "op": {
@@ -2254,7 +2763,7 @@
           }
         },
         {
-          "id": "step-147",
+          "id": "step-186",
           "label": "POST /api/sites/${ALIAS_SITE_ID}/verify-dns",
           "target": "host",
           "op": {
@@ -2276,7 +2785,7 @@
           }
         },
         {
-          "id": "step-148",
+          "id": "step-187",
           "label": "verify-dns succeeds once the domain and every alias resolve here",
           "target": "local",
           "continueOnError": true,
@@ -2302,7 +2811,7 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-189",
           "label": "Set SAN",
           "target": "local",
           "op": {
@@ -2323,7 +2832,7 @@
           }
         },
         {
-          "id": "step-151",
+          "id": "step-190",
           "label": "Certificate lineage covers the site's domain",
           "target": "local",
           "continueOnError": true,
@@ -2348,7 +2857,7 @@
           }
         },
         {
-          "id": "step-152",
+          "id": "step-191",
           "label": "Certificate lineage covers ${ALIAS_WWW}",
           "target": "local",
           "continueOnError": true,
@@ -2373,7 +2882,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-192",
           "label": "Certificate lineage covers ${ALIAS_IN_DOMAIN}",
           "target": "local",
           "continueOnError": true,
@@ -2398,7 +2907,7 @@
           }
         },
         {
-          "id": "step-155",
+          "id": "step-194",
           "label": "Set VHOST_CONTENT",
           "target": "local",
           "op": {
@@ -2419,7 +2928,7 @@
           }
         },
         {
-          "id": "step-156",
+          "id": "step-195",
           "label": "Vhost has a server block for the aliases",
           "target": "local",
           "continueOnError": true,
@@ -2444,7 +2953,7 @@
           }
         },
         {
-          "id": "step-157",
+          "id": "step-196",
           "label": "Alias server block 301s to the site's domain",
           "target": "local",
           "continueOnError": true,
@@ -2469,7 +2978,7 @@
           }
         },
         {
-          "id": "step-158",
+          "id": "step-197",
           "label": "Set NGINX_TEST",
           "target": "local",
           "op": {
@@ -2490,7 +2999,7 @@
           }
         },
         {
-          "id": "step-159",
+          "id": "step-198",
           "label": "nginx -t passes with the alias redirect block",
           "target": "local",
           "continueOnError": true,
@@ -2515,7 +3024,7 @@
           }
         },
         {
-          "id": "step-160",
+          "id": "step-199",
           "label": "Set REDIRECT",
           "target": "local",
           "op": {
@@ -2536,7 +3045,7 @@
           }
         },
         {
-          "id": "step-161",
+          "id": "step-200",
           "label": "Alias answers 301 to the same path on the site's domain",
           "target": "local",
           "continueOnError": true,
@@ -2561,7 +3070,7 @@
           }
         },
         {
-          "id": "step-162",
+          "id": "step-201",
           "label": "PATCH /api/sites/${ALIAS_SITE_ID}",
           "target": "host",
           "op": {
@@ -2585,7 +3094,7 @@
           }
         },
         {
-          "id": "step-163",
+          "id": "step-202",
           "label": "Adding an alias that does not resolve here rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -2610,7 +3119,7 @@
           }
         },
         {
-          "id": "step-164",
+          "id": "step-203",
           "label": "PATCH /api/sites/${ALIAS_SITE_ID}",
           "target": "host",
           "op": {
@@ -2633,7 +3142,7 @@
           }
         },
         {
-          "id": "step-165",
+          "id": "step-204",
           "label": "Rejection names the alias that must resolve first",
           "target": "local",
           "continueOnError": true,
@@ -2658,7 +3167,7 @@
           }
         },
         {
-          "id": "step-166",
+          "id": "step-205",
           "label": "GET /api/sites",
           "target": "host",
           "op": {
@@ -2680,7 +3189,7 @@
           }
         },
         {
-          "id": "step-167",
+          "id": "step-206",
           "label": "Aliases unchanged after the rejected PATCH",
           "target": "local",
           "continueOnError": true,
@@ -2705,7 +3214,7 @@
           }
         },
         {
-          "id": "step-168",
+          "id": "step-207",
           "label": "Set SAN_AFTER_UNRESOLVED",
           "target": "local",
           "op": {
@@ -2726,7 +3235,7 @@
           }
         },
         {
-          "id": "step-169",
+          "id": "step-208",
           "label": "Certificate not re-issued for the rejected alias",
           "target": "local",
           "continueOnError": true,
@@ -2751,7 +3260,7 @@
           }
         },
         {
-          "id": "step-170",
+          "id": "step-209",
           "label": "Set CALLS_BEFORE_ADD",
           "target": "local",
           "op": {
@@ -2772,7 +3281,7 @@
           }
         },
         {
-          "id": "step-171",
+          "id": "step-210",
           "label": "PATCH /api/sites/${ALIAS_SITE_ID}",
           "target": "host",
           "op": {
@@ -2795,7 +3304,7 @@
           }
         },
         {
-          "id": "step-172",
+          "id": "step-211",
           "label": "Adding a resolving alias to a live site succeeds",
           "target": "local",
           "continueOnError": true,
@@ -2821,7 +3330,7 @@
           }
         },
         {
-          "id": "step-173",
+          "id": "step-212",
           "label": "Set SAN_AFTER_ADD",
           "target": "local",
           "op": {
@@ -2842,7 +3351,7 @@
           }
         },
         {
-          "id": "step-174",
+          "id": "step-213",
           "label": "Certificate re-issued to cover ${ALIAS_BLOG}",
           "target": "local",
           "continueOnError": true,
@@ -2867,7 +3376,7 @@
           }
         },
         {
-          "id": "step-175",
+          "id": "step-214",
           "label": "Set ADD_ISSUES",
           "target": "local",
           "op": {
@@ -2888,7 +3397,7 @@
           }
         },
         {
-          "id": "step-176",
+          "id": "step-215",
           "label": "Adding an alias issues the certificate once",
           "target": "local",
           "continueOnError": true,
@@ -2913,7 +3422,7 @@
           }
         },
         {
-          "id": "step-177",
+          "id": "step-216",
           "label": "The issue keeps the site's lineage (--cert-name ${CUSTOM_DOMAIN})",
           "target": "local",
           "continueOnError": true,
@@ -2938,7 +3447,7 @@
           }
         },
         {
-          "id": "step-178",
+          "id": "step-217",
           "label": "Set BLOG_REDIRECT",
           "target": "local",
           "op": {
@@ -2959,7 +3468,7 @@
           }
         },
         {
-          "id": "step-179",
+          "id": "step-218",
           "label": "New alias answers 301 to the site's domain",
           "target": "local",
           "continueOnError": true,
@@ -2984,7 +3493,7 @@
           }
         },
         {
-          "id": "step-180",
+          "id": "step-219",
           "label": "Set CALLS_BEFORE_SWAP",
           "target": "local",
           "op": {
@@ -3005,7 +3514,7 @@
           }
         },
         {
-          "id": "step-181",
+          "id": "step-220",
           "label": "PATCH /api/sites/${ALIAS_SITE_ID}",
           "target": "host",
           "op": {
@@ -3028,7 +3537,7 @@
           }
         },
         {
-          "id": "step-182",
+          "id": "step-221",
           "label": "Aliases swapped to ${ALIAS_WWW},${ALIAS_SHOP}",
           "target": "local",
           "continueOnError": true,
@@ -3054,7 +3563,7 @@
           }
         },
         {
-          "id": "step-183",
+          "id": "step-222",
           "label": "Set SWAP_ISSUES",
           "target": "local",
           "op": {
@@ -3075,7 +3584,7 @@
           }
         },
         {
-          "id": "step-184",
+          "id": "step-223",
           "label": "Swapping aliases issues the certificate twice (union, then exact)",
           "target": "local",
           "continueOnError": true,
@@ -3100,7 +3609,7 @@
           }
         },
         {
-          "id": "step-185",
+          "id": "step-224",
           "label": "Extract UNION_ISSUE",
           "target": "local",
           "op": {
@@ -3121,7 +3630,7 @@
           }
         },
         {
-          "id": "step-186",
+          "id": "step-225",
           "label": "Extract EXACT_ISSUE",
           "target": "local",
           "op": {
@@ -3142,7 +3651,7 @@
           }
         },
         {
-          "id": "step-188",
+          "id": "step-227",
           "label": "First issue covers the union of old and new names: ${name}",
           "target": "local",
           "continueOnError": true,
@@ -3167,7 +3676,7 @@
           }
         },
         {
-          "id": "step-191",
+          "id": "step-230",
           "label": "Second issue covers the new set: ${name}",
           "target": "local",
           "continueOnError": true,
@@ -3192,7 +3701,7 @@
           }
         },
         {
-          "id": "step-194",
+          "id": "step-233",
           "label": "Second issue drops the removed alias ${name}",
           "target": "local",
           "continueOnError": true,
@@ -3217,7 +3726,7 @@
           }
         },
         {
-          "id": "step-197",
+          "id": "step-236",
           "label": "Every issue names the site's lineage (--cert-name ${CUSTOM_DOMAIN})",
           "target": "local",
           "continueOnError": true,
@@ -3242,7 +3751,7 @@
           }
         },
         {
-          "id": "step-199",
+          "id": "step-238",
           "label": "Set SAN_AFTER_SWAP",
           "target": "local",
           "op": {
@@ -3263,7 +3772,7 @@
           }
         },
         {
-          "id": "step-200",
+          "id": "step-239",
           "label": "Certificate covers the added alias ${ALIAS_SHOP}",
           "target": "local",
           "continueOnError": true,
@@ -3288,7 +3797,7 @@
           }
         },
         {
-          "id": "step-201",
+          "id": "step-240",
           "label": "Certificate no longer names the removed alias ${ALIAS_BLOG}",
           "target": "local",
           "continueOnError": true,
@@ -3313,7 +3822,7 @@
           }
         },
         {
-          "id": "step-202",
+          "id": "step-241",
           "label": "Certificate no longer names the removed alias ${ALIAS_IN_DOMAIN}",
           "target": "local",
           "continueOnError": true,
@@ -3338,7 +3847,7 @@
           }
         },
         {
-          "id": "step-203",
+          "id": "step-242",
           "label": "Set CALLS_BEFORE_REMOVE",
           "target": "local",
           "op": {
@@ -3359,7 +3868,7 @@
           }
         },
         {
-          "id": "step-204",
+          "id": "step-243",
           "label": "PATCH /api/sites/${ALIAS_SITE_ID}",
           "target": "host",
           "op": {
@@ -3382,7 +3891,7 @@
           }
         },
         {
-          "id": "step-205",
+          "id": "step-244",
           "label": "Alias list shrunk to ${ALIAS_WWW}",
           "target": "local",
           "continueOnError": true,
@@ -3408,7 +3917,7 @@
           }
         },
         {
-          "id": "step-206",
+          "id": "step-245",
           "label": "Set VHOST_AFTER_REMOVE",
           "target": "local",
           "op": {
@@ -3429,7 +3938,7 @@
           }
         },
         {
-          "id": "step-207",
+          "id": "step-246",
           "label": "Redirect block now names only ${ALIAS_WWW}",
           "target": "local",
           "continueOnError": true,
@@ -3454,7 +3963,7 @@
           }
         },
         {
-          "id": "step-208",
+          "id": "step-247",
           "label": "Removed alias gone from the vhost",
           "target": "local",
           "continueOnError": true,
@@ -3479,7 +3988,7 @@
           }
         },
         {
-          "id": "step-209",
+          "id": "step-248",
           "label": "Set REMOVE_ISSUES",
           "target": "local",
           "op": {
@@ -3500,7 +4009,7 @@
           }
         },
         {
-          "id": "step-210",
+          "id": "step-249",
           "label": "Removing an alias re-issues the certificate once, for exactly the new set",
           "target": "local",
           "continueOnError": true,
@@ -3525,7 +4034,7 @@
           }
         },
         {
-          "id": "step-211",
+          "id": "step-250",
           "label": "The re-issue keeps ${ALIAS_WWW}",
           "target": "local",
           "continueOnError": true,
@@ -3550,7 +4059,7 @@
           }
         },
         {
-          "id": "step-212",
+          "id": "step-251",
           "label": "The re-issue drops ${ALIAS_SHOP}",
           "target": "local",
           "continueOnError": true,
@@ -3575,7 +4084,7 @@
           }
         },
         {
-          "id": "step-213",
+          "id": "step-252",
           "label": "Set SAN_AFTER_REMOVE",
           "target": "local",
           "op": {
@@ -3596,7 +4105,7 @@
           }
         },
         {
-          "id": "step-214",
+          "id": "step-253",
           "label": "Certificate still covers the site's domain",
           "target": "local",
           "continueOnError": true,
@@ -3621,7 +4130,7 @@
           }
         },
         {
-          "id": "step-215",
+          "id": "step-254",
           "label": "Certificate still covers ${ALIAS_WWW}",
           "target": "local",
           "continueOnError": true,
@@ -3646,7 +4155,7 @@
           }
         },
         {
-          "id": "step-216",
+          "id": "step-255",
           "label": "Certificate no longer names the removed alias ${ALIAS_SHOP}",
           "target": "local",
           "continueOnError": true,
@@ -3678,7 +4187,7 @@
       "label": "Custom site aliases: teardown",
       "steps": [
         {
-          "id": "step-217",
+          "id": "step-256",
           "label": "DELETE /api/sites/${ALIAS_SITE_ID}",
           "target": "host",
           "op": {
@@ -3700,7 +4209,7 @@
           }
         },
         {
-          "id": "step-218",
+          "id": "step-257",
           "label": "Custom site with aliases deleted",
           "target": "local",
           "continueOnError": true,
@@ -3726,7 +4235,7 @@
           }
         },
         {
-          "id": "step-220",
+          "id": "step-259",
           "label": "DELETE /api/tunnels/${ALIAS_TUNNEL_ID}",
           "target": "host",
           "op": {
@@ -3741,7 +4250,7 @@
           }
         },
         {
-          "id": "step-222",
+          "id": "step-261",
           "label": "DELETE /api/certs/agent/${ALIAS_AGENT_LABEL}",
           "target": "host",
           "op": {
@@ -3752,7 +4261,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-225",
+          "id": "step-264",
           "label": "Alias test resources removed",
           "target": "local",
           "op": {
@@ -3769,7 +4278,7 @@
       "label": "Delete site",
       "steps": [
         {
-          "id": "step-226",
+          "id": "step-265",
           "label": "DELETE /api/sites/${SITE_ID}",
           "target": "host",
           "op": {
@@ -3787,7 +4296,7 @@
           ]
         },
         {
-          "id": "step-227",
+          "id": "step-266",
           "label": "Site deletion returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -3816,7 +4325,7 @@
       "label": "Verify site removed",
       "steps": [
         {
-          "id": "step-228",
+          "id": "step-267",
           "label": "GET /api/sites",
           "target": "host",
           "op": {
@@ -3834,7 +4343,7 @@
           ]
         },
         {
-          "id": "step-229",
+          "id": "step-268",
           "label": "Set FOUND_DELETED_SITE",
           "target": "local",
           "op": {
@@ -3851,7 +4360,7 @@
           ]
         },
         {
-          "id": "step-230",
+          "id": "step-269",
           "label": "Deleted site no longer in listing",
           "target": "local",
           "continueOnError": true,
@@ -3872,7 +4381,7 @@
           }
         },
         {
-          "id": "step-231",
+          "id": "step-270",
           "label": "GET /api/sites/${SITE_ID}/files?path=.",
           "target": "host",
           "op": {
@@ -3891,7 +4400,7 @@
           ]
         },
         {
-          "id": "step-232",
+          "id": "step-271",
           "label": "Deleted site returns 404",
           "target": "local",
           "continueOnError": true,
@@ -3916,7 +4425,7 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 13 — Site Lifecycle\n# ============================================================================\n# Verifies static site CRUD operations:\n# - Create a managed static site via POST /api/sites\n# - Verify site appears in GET /api/sites listing\n# - List files — default index.html exists\n# - Upload test file via multipart POST\n# - Verify uploaded file in listing\n# - Delete file via DELETE /api/sites/:id/files\n# - Verify file removed\n# - Update settings via PATCH (toggle spaMode)\n# - Verify settings persisted\n# - Delete site via DELETE /api/sites/:id\n# - Verify site removed from listing\n# - Validation: duplicate name, reserved name, invalid UUID\n# - Custom-domain site aliases:\n#   - validation 400s: aliases on a managed site, alias equal to the site's\n#     own domain, Lamaste hostnames (panel./auth./tunnel./base domain),\n#     malformed names, more than 10, collisions with another site's domain or\n#     alias and with a tunnel's hostname\n#   - a tunnel cannot take a hostname a site or alias already serves\n#   - verify-dns issues one certificate lineage covering the domain and every\n#     alias (real subjectAltName), and the vhost 301s aliases to the domain\n#   - PATCH aliases on a live site: an alias that does not resolve here is\n#     rejected (nothing changes); a resolving one is added to the certificate\n#     (one issue, --cert-name <domain>) and the redirect block; swapping\n#     aliases issues for the union of old and new names, then for exactly the\n#     new set; removing one re-issues once for exactly the new set and drops\n#     it from the redirect block (argv checked in the certbot shim's call log)\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 13 — Site Lifecycle\n# ============================================================================\n# Verifies static site CRUD operations:\n# - Create a managed static site via POST /api/sites\n# - Verify site appears in GET /api/sites listing\n# - List files — default index.html exists\n# - Upload test file via multipart POST\n# - Verify uploaded file in listing\n# - Delete file via DELETE /api/sites/:id/files\n# - Verify file removed\n# - Update settings via PATCH (toggle spaMode)\n# - Verify settings persisted\n# - Delete site via DELETE /api/sites/:id\n# - Verify site removed from listing\n# - Upload size limits, on the IP vhost and on panel.<domain>: a 24 MiB file\n#   uploads whole; a file over 50 MiB is refused 413 by the panel and nothing\n#   of it is kept (no cut-off file, no temp file); a request over 64 MiB is\n#   refused 413 by nginx; every other /api route keeps nginx's 1 MiB\n# - Validation: duplicate name, reserved name, invalid UUID\n# - Custom-domain site aliases:\n#   - validation 400s: aliases on a managed site, alias equal to the site's\n#     own domain, Lamaste hostnames (panel./auth./tunnel./base domain),\n#     malformed names, more than 10, collisions with another site's domain or\n#     alias and with a tunnel's hostname\n#   - a tunnel cannot take a hostname a site or alias already serves\n#   - verify-dns issues one certificate lineage covering the domain and every\n#     alias (real subjectAltName), and the vhost 301s aliases to the domain\n#   - PATCH aliases on a live site: an alias that does not resolve here is\n#     rejected (nothing changes); a resolving one is added to the certificate\n#     (one issue, --cert-name <domain>) and the redirect block; swapping\n#     aliases issues for the union of old and new names, then for exactly the\n#     new set; removing one re-issues once for exactly the new set and drops\n#     it from the redirect block (argv checked in the certbot shim's call log)\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nbegin_test \"13 — Site Lifecycle\"\n\n# redirect_after_reload <host> <path> <expected> — \"<code> <location>\" for\n# https://<host><path>, retried for up to 10 s until it equals <expected>:\n# `systemctl reload nginx` returns once nginx is signalled, and the old\n# workers answer with the previous configuration for a moment.\nredirect_after_reload() {\n  local host=\"$1\" path=\"$2\" expected=\"$3\" got=\"\"\n  for _ in $(seq 1 20); do\n    got=$(curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 10 \\\n      --resolve \"${host}:443:127.0.0.1\" \"https://${host}${path}\" 2>/dev/null || echo \"000\")\n    [ \"$got\" = \"$expected\" ] && break\n    sleep 0.5\n  done\n  echo \"$got\"\n}\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

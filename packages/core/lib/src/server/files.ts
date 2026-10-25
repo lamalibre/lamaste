@@ -292,10 +292,20 @@ export async function listFiles(
 // Upload / delete
 // ---------------------------------------------------------------------------
 
+/** An uploaded file was cut off at the upload's file size limit; nothing of it was kept. */
+export class UploadTooLargeError extends Error {
+  constructor(relativePath: string) {
+    super(`File '${relativePath}' exceeds the upload file size limit`);
+    this.name = 'UploadTooLargeError';
+  }
+}
+
 /**
  * Save an uploaded file to a site directory using streaming
  * (memory-safe for small droplets). The upload lands in a temporary file
- * next to its destination and replaces it atomically.
+ * next to its destination and replaces it atomically. A stream its parser
+ * truncated at a size limit throws {@link UploadTooLargeError} and leaves the
+ * destination as it was.
  */
 export async function saveUploadedFile(
   siteId: string,
@@ -317,10 +327,16 @@ export async function saveUploadedFile(
     await mkdir(parentDir, { recursive: true, mode: DIR_MODE });
     const writeStream = createWriteStream(tmpFile, { flags: 'wx', mode: FILE_MODE });
     await pipeline(fileStream, writeStream);
+    // A multipart parser stops a file at its size limit and ends the stream
+    // normally, marking it truncated: what arrived is not the file.
+    if ((fileStream as Readable & { truncated?: boolean }).truncated === true) {
+      throw new UploadTooLargeError(cleanPath);
+    }
     await chmod(tmpFile, FILE_MODE);
     await rename(tmpFile, destPath);
   } catch (err: unknown) {
     await unlink(tmpFile).catch(() => undefined);
+    if (err instanceof UploadTooLargeError) throw err;
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to save file: ${message}`);
   }

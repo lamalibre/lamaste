@@ -391,7 +391,10 @@ test('the panel, the auth portal and static sites are rewritten', async () => {
   assert.equal(panelWrite.name, 'lamalibre-lamaste-panel-domain');
   assert.equal(panelWrite.enabled, true);
   assert.equal(panelWrite.config, renderPanelVhost('example.com', panelCert).config);
-  assert.equal(panelWrite.config.match(/X-Lamalibre-Relay-Assertion "";/g).length, 7);
+  assert.equal(panelWrite.config.match(/X-Lamalibre-Relay-Assertion "";/g).length, 8);
+  // An older panel vhost gains the site upload location and its body limit.
+  assert.match(panelWrite.config, /location ~ \^\/api\/sites\/\[\^\/\]\+\/files\$ \{/);
+  assert.match(panelWrite.config, /client_max_body_size 64m;/);
 
   assert.equal(authWrite.name, 'lamalibre-lamaste-auth-example.com');
   assert.equal(authWrite.enabled, false, 'the link state is kept');

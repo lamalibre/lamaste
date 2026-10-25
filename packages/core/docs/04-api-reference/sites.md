@@ -548,7 +548,7 @@ curl -s --cert client.p12:password \
 
 **Content-Type:** `multipart/form-data`
 
-**File size limit:** 50 MB per file.
+**Size limits:** 50 MiB a file (`SITE_UPLOAD_MAX_FILE_BYTES` in `@lamalibre/lamaste`) and 64 MiB a request, multipart framing included (`SITE_UPLOAD_MAX_REQUEST_MIB`) — the panel vhosts' upload location sets the request limit as `client_max_body_size`. Send more in several requests: `planSiteUploadBatches(files)` splits files in order into requests within the limit. The panel's file browser and `lamaste-agent deploy` do.
 
 **Response (200):**
 
@@ -572,10 +572,12 @@ curl -s --cert client.p12:password \
 
 **Errors:**
 
-| Status | Body                             | When                                                                             |
-| ------ | -------------------------------- | -------------------------------------------------------------------------------- |
-| 400    | `{"error":"Upload failed: ..."}` | Path traversal attempt, invalid path, disallowed file extension, or stream error |
-| 404    | `{"error":"Site not found"}`     | No site with the given UUID                                                      |
+| Status | Body                                                                        | When                                                                                              |
+| ------ | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| 400    | `{"error":"Upload failed: ..."}`                                            | Path traversal attempt, invalid path, disallowed file extension, or stream error                  |
+| 404    | `{"error":"Site not found"}`                                                | No site with the given UUID                                                                       |
+| 413    | `{"error":"Upload failed: a file exceeds the 50.0 MB limit","files":[...]}` | A file over 50 MiB. Nothing of it is kept; `files` lists the files of the request saved before it |
+| 413    | nginx's error page                                                          | The request is over 64 MiB; nothing reached the panel                                             |
 
 File paths are validated to prevent directory traversal. Paths containing `..` or absolute paths are rejected.
 

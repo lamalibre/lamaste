@@ -594,21 +594,13 @@ sudo systemctl restart lamalibre-lamaste-serverd
 
 **Symptom:** Uploading a static site through the panel fails with an error.
 
-**Cause 1: File too large.**
+**Cause 1: The upload is too large (413).**
 
-The default maximum upload size is 500 MB (configurable via `maxSiteSize` in `panel.json`).
+A file may be at most 50 MiB and a request at most 64 MiB. A file over the limit is answered `413` with `Upload failed: a file exceeds the 50.0 MB limit`, and nothing of it is kept. A request over the limit is refused by nginx (`413 Request Entity Too Large`) before the panel sees it.
 
-**Fix:**
+**Fix:** Keep each file under 50 MiB. The panel's file browser and `lamaste-agent deploy` split a selection into requests within the request limit themselves; a script calling `POST /api/sites/:id/files` directly must send at most 64 MiB a request (`planSiteUploadBatches` in `@lamalibre/lamaste` splits files that way). If every request over 1 MiB is refused, the relay's panel vhosts predate the upload location: upgrade the panel (it rewrites `panel.<domain>` at startup) and re-run the installer (`npx @lamalibre/create-lamaste --yes`), whose redeploy refreshes the IP vhost on 9292.
 
-Edit `/etc/lamalibre/lamaste/panel.json` and increase `maxSiteSize`:
-
-```json
-{
-  "maxSiteSize": 1073741824
-}
-```
-
-Then restart the panel: `sudo systemctl restart lamalibre-lamaste-serverd`
+The site size limit (`maxSiteSize` in `panel.json`, 500 MB by default) refuses nothing: an upload past it succeeds with a `warning`.
 
 **Cause 2: Disk full.**
 

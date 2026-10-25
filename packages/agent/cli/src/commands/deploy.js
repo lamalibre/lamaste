@@ -2,6 +2,11 @@ import chalk from 'chalk';
 import { Listr } from 'listr2';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  SITE_UPLOAD_MAX_FILE_BYTES,
+  oversizedSiteUploads,
+  planSiteUploadBatches,
+} from '@lamalibre/lamaste';
 import { assertSupportedPlatform } from '@lamalibre/lamaste/agent';
 import { requireAgentConfig } from '@lamalibre/lamaste/agent';
 import { fetchSites, fetchSiteFiles, deleteSiteFile, uploadSiteFiles } from '../lib/panel-api.js';
@@ -119,6 +124,20 @@ export async function runDeploy(args, { label } = {}) {
     process.exit(1);
   }
 
+  // The panel refuses a file over its upload limit. Found here, before the
+  // remote files are cleared, a deploy that cannot finish never starts.
+  const oversized = oversizedSiteUploads(files);
+  if (oversized.length > 0) {
+    console.error(
+      `\n  ${chalk.red(`Files over the ${formatBytes(SITE_UPLOAD_MAX_FILE_BYTES)} upload limit:`)}\n`,
+    );
+    for (const f of oversized) {
+      console.error(`    ${chalk.yellow(formatBytes(f.size))}  ${f.relativePath}`);
+    }
+    console.error('');
+    process.exit(1);
+  }
+
   // ClamAV malware scan via Docker
   const scanTasks = new Listr(
     [
@@ -184,14 +203,12 @@ export async function runDeploy(args, { label } = {}) {
           }
 
           for (const [dir, groupFiles] of groups) {
-            // Batch in groups of 10
-            for (let i = 0; i < groupFiles.length; i += 10) {
-              const batch = groupFiles.slice(i, i + 10);
-              const uploadDir = dir === '.' ? '.' : dir;
+            // As many files per request as the panel's request limit holds
+            for (const batch of planSiteUploadBatches(groupFiles)) {
               await uploadSiteFiles(
                 config,
                 siteId,
-                uploadDir,
+                dir,
                 batch.map((f) => f.absolutePath),
               );
               uploaded += batch.length;

@@ -170,6 +170,7 @@ export {
   removeSiteDirectory,
   listFiles,
   saveUploadedFile,
+  UploadTooLargeError,
   deleteFile,
   getSiteSize,
 } from './files.js';

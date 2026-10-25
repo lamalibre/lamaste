@@ -118,6 +118,7 @@ After creating a site (whether managed or custom with verified DNS), upload your
 
 - Files are uploaded via multipart form data to `POST /api/sites/:id/files`.
 - The upload target directory can be specified with the `?path=` query parameter.
+- A file may be at most 50 MiB, a request at most 64 MiB. The file browser sends a larger selection in several requests, one after another, and refuses a file over 50 MiB before sending anything.
 - Files are served directly by nginx — no Node.js involvement in serving static content.
 - The site's total size is tracked and displayed.
 
@@ -327,6 +328,8 @@ lamaste-agent deploy blog ./dist
 ```
 
 The `deploy` command clears all existing files on the site and uploads all non-hidden files from the specified local directory. It is a full replacement, not a merge. Every deploy is a clean slate.
+
+A file over the 50 MiB upload limit stops the deploy before anything on the site is cleared. The files go up in as many requests as the 64 MiB request limit needs.
 
 You can also list sites assigned to your agent from the CLI:
 

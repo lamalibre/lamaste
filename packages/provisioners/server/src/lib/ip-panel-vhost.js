@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
+import { SITE_UPLOAD_MAX_REQUEST_MIB } from '@lamalibre/lamaste';
 import { writeFileNoFollow } from './ownership.js';
 
 /** Site name of the IP-based panel vhost (`https://<ip>:9292`). */
@@ -120,6 +121,35 @@ server {
         proxy_set_header Remote-Name "";
         proxy_set_header Remote-Email "";${ASSERTION_CLEARED}
 
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Site file uploads (mTLS required) — the one panel route that takes
+    # large bodies: a request holds up to ${SITE_UPLOAD_MAX_REQUEST_MIB} MiB of files. Every other
+    # /api request stays within nginx's 1 MiB default.
+    location ~ ^/api/sites/[^/]+/files$ {
+        if ($ssl_client_verify != SUCCESS) {
+            return 496;
+        }
+        client_max_body_size ${SITE_UPLOAD_MAX_REQUEST_MIB}m;
+        proxy_pass http://127.0.0.1:3100;
+        proxy_http_version 1.1;
+
+        # Client cert headers — set from nginx TLS variables, never passed through from client
+        proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
+        proxy_set_header X-SSL-Client-DN $ssl_client_s_dn;
+        proxy_set_header X-SSL-Client-Serial $ssl_client_serial;
+
+        # Strip Authelia identity headers — not trusted on mTLS vhost
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Groups "";
+        proxy_set_header Remote-Name "";
+        proxy_set_header Remote-Email "";${ASSERTION_CLEARED}
+
+        # Standard proxy headers
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

@@ -5,6 +5,7 @@
  * File management endpoints (list, upload, delete) and HTTP-specific auth checks remain here.
  */
 import { z } from 'zod';
+import { SITE_UPLOAD_MAX_FILE_BYTES } from '@lamalibre/lamaste';
 import {
   createSite,
   deleteSite,
@@ -31,6 +32,7 @@ import {
   removeSiteDirectory,
   listFiles,
   saveUploadedFile,
+  UploadTooLargeError,
   deleteFile,
   getSiteSize,
   validatePath,
@@ -572,6 +574,14 @@ export default async function sitesRoutes(fastify, _opts) {
           uploadedFiles.push(relativePath);
         }
       } catch (err) {
+        // A file over the limit: one being saved is refused as cut off
+        // (UploadTooLargeError); one the loop skipped, by the parser itself.
+        if (err instanceof UploadTooLargeError || err.code === 'FST_REQ_FILE_TOO_LARGE') {
+          return reply.code(413).send({
+            error: `Upload failed: a file exceeds the ${formatBytes(SITE_UPLOAD_MAX_FILE_BYTES)} limit`,
+            files: uploadedFiles,
+          });
+        }
         return reply.code(400).send({ error: `Upload failed: ${err.message}` });
       }
 
