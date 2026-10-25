@@ -2,7 +2,7 @@
 # ============================================================================
 # The base domains of the multi-domain relay's specs
 # ============================================================================
-# Sourced by setup-host.sh (both suites), setup-visitor.sh and helpers.sh —
+# Sourced by setup-host.sh (both suites), setup-visitor.sh and helpers.sh (beside it, or from /tmp/e2e on the single-VM suite's VM) —
 # the one place the specs' second and third base domains are derived.
 # A tier ships it to the VMs (tiers/provisioned.json `assets`).
 # ============================================================================

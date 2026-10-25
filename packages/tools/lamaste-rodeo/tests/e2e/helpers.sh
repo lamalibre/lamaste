@@ -11,9 +11,19 @@
 
 set -euo pipefail
 
-# test_domain_n — the specs' second and third base domains (multi-domain relay)
+# test_domain_n — the specs' second and third base domains (multi-domain relay).
+# Beside this file on the orchestrator; on the single-VM suite's VM the runner
+# uploads only the specs and helpers.sh, and the provisioned tier ships
+# test-domains.sh to /tmp/e2e (tiers/provisioned.json `assets`).
+_test_domains_sh="$(dirname "${BASH_SOURCE[0]}")/test-domains.sh"
+[ -f "${_test_domains_sh}" ] || _test_domains_sh=/tmp/e2e/test-domains.sh
+if [ ! -f "${_test_domains_sh}" ]; then
+  echo "helpers.sh: test-domains.sh not found beside helpers.sh or in /tmp/e2e (provision the 'provisioned' tier)" >&2
+  exit 1
+fi
 # shellcheck source=test-domains.sh
-source "$(dirname "${BASH_SOURCE[0]}")/test-domains.sh"
+source "${_test_domains_sh}"
+unset _test_domains_sh
 
 # `multipass exec` (1.16 on macOS) never exits when its stdout or stderr is
 # /dev/null and the remote command writes after a delay — e.g.
