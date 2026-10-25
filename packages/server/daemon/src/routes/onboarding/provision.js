@@ -12,6 +12,7 @@ import { migrateChiselCredentialsIfNeeded } from '../../lib/chisel-users.js';
 import { loadAgentRegistry } from '../../lib/mtls.js';
 import { setChiselRunningPinnedRelease } from '../../lib/chisel-runtime.js';
 import { changeUsers } from '../../lib/directory.js';
+import { ensurePrimaryDomain, syncDomainAccess } from '../../lib/domains.js';
 
 // Module-level state for provisioning
 const emitter = new EventEmitter();
@@ -156,7 +157,7 @@ async function runProvisioning(log) {
     await nginx.writePanelVhost(domain);
 
     emitProgress('configure-nginx', 'running', 'Writing auth vhost...');
-    await nginx.writeAuthVhost(domain);
+    await nginx.writeAuthVhost(domain, { primary: true });
 
     emitProgress('configure-nginx', 'running', 'Writing tunnel vhost...');
     await nginx.writeTunnelVhost(domain);
@@ -166,7 +167,6 @@ async function runProvisioning(log) {
 
     emitProgress('configure-nginx', 'running', 'Enabling sites...');
     await nginx.enableSite('lamalibre-lamaste-panel-domain');
-    await nginx.enableSite('lamalibre-lamaste-auth');
     await nginx.enableSite('lamalibre-lamaste-tunnel');
 
     emitProgress('configure-nginx', 'running', 'Testing nginx configuration...');
@@ -217,6 +217,10 @@ async function runProvisioning(log) {
     // Step 6: Finalize
     emitProgress('finalize', 'running', 'Updating configuration...');
     await updateConfig({ onboarding: { status: 'COMPLETED' } });
+    // The primary domain, with the administrator as its member, rendered
+    // into Authelia (its configuration admits nobody until then).
+    await ensurePrimaryDomain({ logger: log });
+    await syncDomainAccess({ logger: log });
 
     const result = {
       adminUsername: 'admin',

@@ -49,30 +49,40 @@ after(async () => {
 test('every generated vhost passes the lamaste-priv allow-list', async () => {
   const d = 'example.com';
   await nginx.writePanelVhost(d);
-  await nginx.writeAuthVhost(d);
+  await nginx.writeAuthVhost(d, { primary: true });
+  // A second domain's portal: Authelia and the invitation page, nothing of the panel's.
+  await nginx.writeAuthVhost('codelama.com.tr', { primary: false });
   await nginx.writeTunnelVhost(d);
-  await nginx.writePublicVhost('app1', d, 20010);
-  await nginx.writePublicVhost('app2', d, 20011, '/etc/letsencrypt/live/example.com/', {
+  await nginx.writePublicVhost('app1.example.com', d, 20010);
+  await nginx.writePublicVhost('app2.example.com', d, 20011, '/etc/letsencrypt/live/example.com/', {
     pathPrefix: 'herd',
     maxBodySizeMb: 100,
   });
-  await nginx.writeAuthenticatedVhost('app3', d, 20012, undefined, { maxBodySizeMb: 5 });
-  await nginx.writeRestrictedVhost('app4', d, 20013, undefined, {
+  await nginx.writeAuthenticatedVhost('app3.example.com', d, 20012, undefined, {
+    maxBodySizeMb: 5,
+  });
+  await nginx.writeRestrictedVhost('app4.example.com', d, 20013, undefined, {
     pathPrefix: 'shell',
     enabled: false,
   });
-  await nginx.writeAgentPanelVhost('agent-r730', d, 9393);
+  await nginx.writeAgentPanelVhost('agent-r730.example.com', d, 9393);
   // App tunnels bound as plugins' user surfaces (slice 6).
-  await nginx.writeRestrictedVhost('piyasa', d, 20014, undefined, {
+  await nginx.writeRestrictedVhost('piyasa.example.com', d, 20014, undefined, {
     maxBodySizeMb: 10,
     userSurface: [
       { route: 'market-indicators', maxBodySizeMb: 10 },
       { route: 'fx', maxBodySizeMb: 25 },
     ],
   });
-  await nginx.writeAuthenticatedVhost('kamera', d, 20015, '/etc/letsencrypt/live/example.com/', {
-    userSurface: [{ route: 'camwatch', maxBodySizeMb: 50 }],
-  });
+  await nginx.writeAuthenticatedVhost(
+    'kamera.example.com',
+    d,
+    20015,
+    '/etc/letsencrypt/live/example.com/',
+    {
+      userSurface: [{ route: 'camwatch', maxBodySizeMb: 50 }],
+    },
+  );
   await nginx.writeStaticSiteVhost(
     {
       id: '3f1d2c3a-1b2c-4d5e-8f90-123456789abc',
@@ -98,7 +108,7 @@ test('every generated vhost passes the lamaste-priv allow-list', async () => {
   );
 
   const names = await readdir(captured);
-  assert.equal(names.length, 12);
+  assert.equal(names.length, 13);
   for (const name of names) {
     assert.match(name, PANEL_SITE_RE);
     const text = await readFile(path.join(captured, name), 'utf8');
@@ -110,7 +120,7 @@ test('the auth vhost serves the OIDC discovery, JWKS and token endpoints without
   // Authelia is the relay's OpenID Connect provider: a CLI running the
   // device-code flow and Feria verifying JWTs reach these paths before any
   // session exists. They must fall through to the plain proxy location.
-  const text = await readFile(path.join(captured, 'lamalibre-lamaste-auth'), 'utf8');
+  const text = await readFile(path.join(captured, 'lamalibre-lamaste-auth-example.com'), 'utf8');
   const locations = [...text.matchAll(/location\s+(\S+)\s*\{/g)].map((m) => m[1]);
   for (const oidcPath of [
     '/.well-known/openid-configuration',
@@ -145,7 +155,7 @@ function locationBody(text, matcher) {
 
 test('the agent panel vhost lets the panel authorize every request and forwards its assertion', async () => {
   const text = await readFile(
-    path.join(captured, 'lamalibre-lamaste-agent-panel-agent-r730'),
+    path.join(captured, 'lamalibre-lamaste-agent-panel-agent-r730.example.com'),
     'utf8',
   );
 
@@ -176,7 +186,7 @@ test('the agent panel vhost lets the panel authorize every request and forwards 
 
 test('plugin tunnel vhosts carry Gatekeeper’s assertion; every other tunnel vhost clears a client’s', async () => {
   const restrictedPlugin = locationBody(
-    await readFile(path.join(captured, 'lamalibre-lamaste-app-app4'), 'utf8'),
+    await readFile(path.join(captured, 'lamalibre-lamaste-app-app4.example.com'), 'utf8'),
     '/',
   );
   assert.match(
@@ -186,13 +196,16 @@ test('plugin tunnel vhosts carry Gatekeeper’s assertion; every other tunnel vh
   assert.match(restrictedPlugin, /proxy_set_header X-Lamalibre-Relay-Assertion \$relay_assertion;/);
 
   // A public plugin tunnel has no user to vouch for — and passes on no client's assertion.
-  const publicPlugin = await readFile(path.join(captured, 'lamalibre-lamaste-app-app2'), 'utf8');
+  const publicPlugin = await readFile(
+    path.join(captured, 'lamalibre-lamaste-app-app2.example.com'),
+    'utf8',
+  );
   assert.match(publicPlugin, /proxy_set_header X-Lamalibre-Relay-Assertion "";/);
 
   // An app tunnel's backend never sees a relay assertion, public or not.
   for (const app of ['app1', 'app3']) {
     const main = locationBody(
-      await readFile(path.join(captured, `lamalibre-lamaste-app-${app}`), 'utf8'),
+      await readFile(path.join(captured, `lamalibre-lamaste-app-${app}.example.com`), 'utf8'),
       '/',
     );
     assert.match(main, /proxy_set_header X-Lamalibre-Relay-Assertion "";/, app);
@@ -212,7 +225,10 @@ test('authorization subrequests name the vhost’s own hostname, never the clien
 
   for (const app of ['app3', 'app4']) {
     const fqdn = `${app}.example.com`;
-    const text = await readFile(path.join(captured, `lamalibre-lamaste-app-${app}`), 'utf8');
+    const text = await readFile(
+      path.join(captured, `lamalibre-lamaste-app-${app}.example.com`),
+      'utf8',
+    );
     const authz = locationBody(text, '/internal/lamaste/authz');
     // The tunnel is named in the path, as the agent panel names its agent.
     assert.ok(
@@ -246,7 +262,7 @@ test('authorization subrequests name the vhost’s own hostname, never the clien
   );
   assert.ok(siteAuthz.includes('proxy_set_header X-Forwarded-Host "";'));
 
-  const auth = await readFile(path.join(captured, 'lamalibre-lamaste-auth'), 'utf8');
+  const auth = await readFile(path.join(captured, 'lamalibre-lamaste-auth-example.com'), 'utf8');
   assert.ok(
     locationBody(auth, '/internal/authelia/authz').includes(
       'proxy_set_header X-Original-URL https://auth.example.com$request_uri;',
@@ -261,7 +277,7 @@ test('a hostname that is not a plain literal is refused, not written into a vhos
     ['app', 'example.com $request_uri'],
   ]) {
     assert.throws(
-      () => nginx.renderTunnelVhost('restricted', subdomain, domain, 20013),
+      () => nginx.renderTunnelVhost('restricted', `${subdomain}.${domain}`, domain, 20013),
       /Invalid hostname/,
     );
   }
@@ -289,7 +305,10 @@ function locations(text) {
 }
 
 test('a bound tunnel vhost serves each user surface through Gatekeeper to the panel, request target untouched', async () => {
-  const text = await readFile(path.join(captured, 'lamalibre-lamaste-app-piyasa'), 'utf8');
+  const text = await readFile(
+    path.join(captured, 'lamalibre-lamaste-app-piyasa.example.com'),
+    'utf8',
+  );
   const fqdn = 'piyasa.example.com';
 
   const authz = locationBody(text, '= /internal/lamaste/user-surface-authz');
@@ -373,19 +392,28 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
 
   // Only what lamaste-priv lets through: no header hiding, no named
   // location, no default type, no variable in a proxy_pass.
-  for (const name of ['lamalibre-lamaste-app-piyasa', 'lamalibre-lamaste-app-kamera']) {
+  for (const name of [
+    'lamalibre-lamaste-app-piyasa.example.com',
+    'lamalibre-lamaste-app-kamera.example.com',
+  ]) {
     const vhost = await readFile(path.join(captured, name), 'utf8');
     assert.doesNotMatch(vhost, /proxy_hide_header|default_type|location @|proxy_pass [^;]*\$/);
     assert.doesNotThrow(() => validateVhost(vhost), name);
   }
-  const kamera = await readFile(path.join(captured, 'lamalibre-lamaste-app-kamera'), 'utf8');
+  const kamera = await readFile(
+    path.join(captured, 'lamalibre-lamaste-app-kamera.example.com'),
+    'utf8',
+  );
   assert.ok(locationBody(kamera, '^~ /api/camwatch/app/').includes('client_max_body_size 50m;'));
   assert.ok(kamera.includes('ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;'));
 });
 
 test('a tunnel vhost without a bound user surface has no user-surface location', async () => {
   for (const app of ['app1', 'app2', 'app3', 'app4']) {
-    const text = await readFile(path.join(captured, `lamalibre-lamaste-app-${app}`), 'utf8');
+    const text = await readFile(
+      path.join(captured, `lamalibre-lamaste-app-${app}.example.com`),
+      'utf8',
+    );
     assert.doesNotMatch(text, /user-surface|\/app\b/, app);
   }
 });
@@ -394,7 +422,7 @@ test('a user surface is never rendered on a public vhost, for an invalid route o
   const surface = [{ route: 'fx', maxBodySizeMb: 10 }];
   assert.throws(
     () =>
-      nginx.renderTunnelVhost('public', 'open', 'example.com', 20020, undefined, {
+      nginx.renderTunnelVhost('public', 'open.example.com', 'example.com', 20020, undefined, {
         userSurface: surface,
       }),
     /public tunnel vhost cannot serve/,
@@ -402,7 +430,7 @@ test('a user surface is never rendered on a public vhost, for an invalid route o
   for (const route of ['Fx', 'fx/../x', 'fx$host', '-fx', 'tunnels', 'a'.repeat(65)]) {
     assert.throws(
       () =>
-        nginx.renderTunnelVhost('restricted', 'x', 'example.com', 20020, undefined, {
+        nginx.renderTunnelVhost('restricted', 'x.example.com', 'example.com', 20020, undefined, {
           userSurface: [{ route, maxBodySizeMb: 10 }],
         }),
       /Invalid user-surface route/,
@@ -412,7 +440,7 @@ test('a user surface is never rendered on a public vhost, for an invalid route o
   for (const maxBodySizeMb of [0, 10241, 1.5, '10']) {
     assert.throws(
       () =>
-        nginx.renderTunnelVhost('authenticated', 'x', 'example.com', 20020, undefined, {
+        nginx.renderTunnelVhost('authenticated', 'x.example.com', 'example.com', 20020, undefined, {
           userSurface: [{ route: 'fx', maxBodySizeMb }],
         }),
       /Invalid maxBodySizeMb/,
@@ -441,8 +469,9 @@ test('every location that proxies a browser to the panel clears a client’s rel
       if (!userSurface) assert.doesNotMatch(body, /relay_assertion/, `${name} ${matcher}`);
     }
   }
-  // panel (7) + auth (2) + agent-panel authz (1) + user surfaces (2 × 3)
-  assert.equal(checked, 16);
+  // panel (7) + primary auth (2) + second domain's auth (1: the invitation
+  // API) + agent-panel authz (1) + user surfaces (2 × 3)
+  assert.equal(checked, 17);
 });
 
 test('no location proxying to a tunnel or agent backend passes Authelia’s session cookie on', async () => {
@@ -496,4 +525,83 @@ test('the panel vhost renders on the certificate it names, as the reconcile rewr
     2,
   );
   assert.throws(() => nginx.renderPanelVhost('example.com $host'), /Invalid hostname/);
+});
+
+// ---------------------------------------------------------------------------
+// The multi-domain relay
+// ---------------------------------------------------------------------------
+
+test('a second domain’s auth portal serves Authelia and invitations — never the desktop’s user-access sign-in', async () => {
+  const text = await readFile(
+    path.join(captured, 'lamalibre-lamaste-auth-codelama.com.tr'),
+    'utf8',
+  );
+  assert.match(text, /server_name auth\.codelama\.com\.tr;/);
+  assert.match(text, /live\/auth\.codelama\.com\.tr\/fullchain\.pem/);
+  assert.match(text, /location \/invite\/ \{/);
+  assert.match(text, /location \/api\/invite\/ \{/);
+  assert.match(text, /location \/ \{\s*proxy_pass http:\/\/127\.0\.0\.1:9091;/);
+  // The rate-limit zone is an http-level name: declared once, by the primary's portal.
+  assert.doesNotMatch(text, /limit_req_zone/);
+  assert.doesNotMatch(text, /user-access/);
+  assert.doesNotMatch(text, /auth_request/);
+  const primary = await readFile(path.join(captured, 'lamalibre-lamaste-auth-example.com'), 'utf8');
+  assert.match(primary, /limit_req_zone \$binary_remote_addr zone=user_access_auth/);
+  assert.match(primary, /location \/api\/user-access\/authorize \{/);
+});
+
+test('tunnel vhosts are named by their hostname; a hostname not one label under its domain is refused', () => {
+  const { name, fqdn } = nginx.renderTunnelVhost(
+    'restricted',
+    'feria.codelama.com.tr',
+    'codelama.com.tr',
+    20060,
+  );
+  assert.equal(name, 'lamalibre-lamaste-app-feria.codelama.com.tr');
+  assert.equal(fqdn, 'feria.codelama.com.tr');
+  assert.match(name, PANEL_SITE_RE);
+  assert.equal(
+    nginx.renderAgentPanelVhost('agent-r730.example.com', 'example.com', 9393).name,
+    'lamalibre-lamaste-agent-panel-agent-r730.example.com',
+  );
+  for (const [host, domain] of [
+    ['feria.samplepark.tr', 'codelama.com.tr'],
+    ['a.b.codelama.com.tr', 'codelama.com.tr'],
+    ['codelama.com.tr', 'codelama.com.tr'],
+  ]) {
+    assert.throws(() => nginx.renderTunnelVhost('public', host, domain, 20060), /not a subdomain/);
+  }
+  assert.throws(
+    () => nginx.renderAgentPanelVhost('panel.example.com', 'example.com', 9393),
+    /Invalid agent panel subdomain/,
+  );
+});
+
+test('a Gatekeeper tunnel — authenticated too — and a protected site answer Gatekeeper’s refusal page on 403, redirecting to their own domain’s sign-in', async () => {
+  for (const accessMode of ['authenticated', 'restricted']) {
+    const { config } = nginx.renderTunnelVhost(
+      accessMode,
+      'workspace.codelama.com.tr',
+      'codelama.com.tr',
+      20080,
+    );
+    assert.match(config, /error_page 403 = \/internal\/lamaste\/authz;/, accessMode);
+    assert.match(
+      config,
+      /error_page 401 =302 https:\/\/auth\.codelama\.com\.tr\/\?rd=https:\/\/workspace\.codelama\.com\.tr\$request_uri;/,
+      accessMode,
+    );
+  }
+  const site = await readFile(
+    path.join(captured, 'lamalibre-lamaste-site-4f1d2c3a-1b2c-4d5e-8f90-123456789abc'),
+    'utf8',
+  );
+  assert.match(site, /error_page 403 = \/internal\/lamaste\/refusal;/);
+  const refusal = locationBody(site, '= /internal/lamaste/refusal');
+  assert.match(refusal, /internal;/);
+  assert.match(
+    refusal,
+    /proxy_pass http:\/\/127\.0\.0\.1:9294\/authz\/refusal\/docs\.example\.com;/,
+  );
+  assert.match(refusal, /proxy_set_header Cookie "";/);
 });

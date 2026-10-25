@@ -13,14 +13,17 @@ import {
   DomainError,
   assertDomainAddable,
   assertDomainName,
+  domainMembership,
   domainOfHost,
   domainsOverlap,
   isRelayHost,
   isReservedLabel,
+  parseDomainsProjection,
 } from '@lamalibre/lamaste';
 import {
   createSite,
   createTunnel,
+  tunnelHost,
   oidcAuthorizationPolicyName,
   renderAccessControl,
   renderOidcAuthorizationPolicies,
@@ -204,27 +207,27 @@ test('access_control and OIDC policies refuse a member that is not a Lamaste use
 test('OIDC authorization policies: per domain and factor, its members admitted and everyone else refused', () => {
   assert.equal(
     oidcAuthorizationPolicyName('codelama.com.tr', 'two_factor'),
-    'lamaste:codelama.com.tr:two_factor',
+    'lamaste_codelama_com_tr_two_factor',
   );
   const policies = renderOidcAuthorizationPolicies([
     { name: 'codelama.com.tr', members: ['onur', 'ayse'] },
     { name: 'new.example', members: [] },
   ]);
   assert.deepEqual(policies, {
-    'lamaste:codelama.com.tr:one_factor': {
+    lamaste_codelama_com_tr_one_factor: {
       default_policy: 'deny',
       rules: [{ policy: 'one_factor', subject: ['user:ayse', 'user:onur'] }],
     },
-    'lamaste:codelama.com.tr:two_factor': {
+    lamaste_codelama_com_tr_two_factor: {
       default_policy: 'deny',
       rules: [{ policy: 'two_factor', subject: ['user:ayse', 'user:onur'] }],
     },
     // Authelia refuses a policy without rules, and a rule without subjects or networks.
-    'lamaste:new.example:one_factor': {
+    lamaste_new_example_one_factor: {
       default_policy: 'deny',
       rules: [{ policy: 'deny', networks: ['0.0.0.0/0', '::/0'] }],
     },
-    'lamaste:new.example:two_factor': {
+    lamaste_new_example_two_factor: {
       default_policy: 'deny',
       rules: [{ policy: 'deny', networks: ['0.0.0.0/0', '::/0'] }],
     },
@@ -277,9 +280,10 @@ test('tunnels: the same subdomain may serve on two domains; one hostname is one 
   );
 });
 
-function siteDeps(sites, tunnels, domain) {
+function siteDeps(sites, tunnels, domain, domains = ['samplepark.tr', 'codelama.com.tr']) {
   return {
     domain,
+    domains,
     email: 'ops@relay.test',
     nginx: { writeStaticSiteVhost: async () => {}, removeStaticSiteVhost: async () => {} },
     certbot: {
@@ -367,4 +371,67 @@ test('sites: agent- names, the relay’s own hosts as custom sites and aliases a
     aliases: ['www.samplepark.tr', 'samplepark.tr'],
   });
   assert.deepEqual(site.aliases, ['www.samplepark.tr', 'samplepark.tr']);
+});
+
+test('sites: sign-in on a hostname under none of the domains is refused — no session cookie reaches it', async () => {
+  const sites = [];
+  await assert.rejects(
+    createSite({
+      ...siteDeps(sites, [], 'samplepark.tr'),
+      name: 'outside',
+      type: 'custom',
+      customDomain: 'blog.example.org',
+      autheliaProtected: true,
+    }),
+    (err) => err.code === 'NOT_UNDER_DOMAIN',
+  );
+  const { site } = await createSite({
+    ...siteDeps(sites, [], 'samplepark.tr'),
+    name: 'inside',
+    type: 'custom',
+    customDomain: 'docs.codelama.com.tr',
+    autheliaProtected: true,
+  });
+  assert.equal(site.autheliaProtected, true);
+});
+
+test('a tunnel’s host: its hostname and the domain under its subdomain; none for an internal tunnel', () => {
+  assert.deepEqual(tunnelHost({ subdomain: 'feria', fqdn: 'feria.codelama.com.tr' }), {
+    fqdn: 'feria.codelama.com.tr',
+    domain: 'codelama.com.tr',
+  });
+  assert.equal(tunnelHost({ subdomain: null, fqdn: null }), null);
+  assert.equal(tunnelHost({ subdomain: 'feria', fqdn: 'other.codelama.com.tr' }), null);
+});
+
+test('Gatekeeper’s projection: only a well-formed one is read; membership by the host’s domain', () => {
+  const projection = parseDomainsProjection({
+    v: 1,
+    domains: [
+      { name: 'samplepark.tr', members: ['onur', 'cust'] },
+      { name: 'codelama.com.tr', members: ['onur'] },
+    ],
+  });
+  assert.ok(projection);
+  assert.equal(domainMembership(projection, 'workspace.codelama.com.tr', 'onur'), 'member');
+  assert.equal(domainMembership(projection, 'workspace.codelama.com.tr', 'cust'), 'not_member');
+  assert.equal(domainMembership(projection, 'SHOP.samplepark.tr', 'cust'), 'member');
+  assert.equal(domainMembership(projection, 'blog.example.org', 'onur'), 'no_domain');
+
+  for (const bad of [
+    null,
+    { v: 2, domains: [] },
+    { v: 1 },
+    { v: 1, domains: [{ name: 'Bad Domain', members: [] }] },
+    { v: 1, domains: [{ name: 'a.tr', members: ['user:onur'] }] },
+    {
+      v: 1,
+      domains: [
+        { name: 'samplepark.tr', members: [] },
+        { name: 'x.samplepark.tr', members: [] },
+      ],
+    },
+  ]) {
+    assert.equal(parseDomainsProjection(bad), null, JSON.stringify(bad));
+  }
 });

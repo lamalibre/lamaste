@@ -44,7 +44,12 @@ import { refreshHostedPluginSettings } from './lib/plugin-settings.js';
 import { startIdentityServices, stopIdentityServices } from './lib/identity-sync.js';
 import { syncOidcClients } from './lib/plugin-oidc.js';
 import { ensureRelaySigningKey } from './lib/relay-signing.js';
-import { reconcileSiteVhosts, reconcileTunnelVhosts } from './lib/vhost-reconcile.js';
+import {
+  reconcileSiteVhosts,
+  reconcileTunnelVhosts,
+  renameLegacyVhosts,
+} from './lib/vhost-reconcile.js';
+import { activeDomains, ensurePrimaryDomain } from './lib/domains.js';
 import { reconcileWebSurfaces } from './lib/web-surface.js';
 import {
   loadTicketScopeCapabilities,
@@ -216,13 +221,20 @@ async function start() {
 
   // --- Start ---
 
-  // The auth portal and static site vhosts an older version wrote name the
-  // client's Host header, not their own hostname, to Authelia. Before listen:
-  // no site change can arrive until the panel listens.
+  // The relay's domains: the primary recorded (with everyone as its member)
+  // on the first start after onboarding or an upgrade, the vhosts an older
+  // version named by subdomain renamed to their hostnames. Then the auth
+  // portals and static site vhosts an older version wrote, which name the
+  // client's Host header, not their own hostname, to Authelia. Before
+  // listen: no tunnel or site change can arrive until the panel listens.
   if (config.onboarding.status === 'COMPLETED' && config.domain) {
-    await reconcileSiteVhosts(server.log, config.domain).catch((err) => {
+    try {
+      await ensurePrimaryDomain({ logger: server.log });
+      await renameLegacyVhosts(server.log, config.domain);
+      await reconcileSiteVhosts(server.log, await activeDomains());
+    } catch (err) {
       server.log.error({ err: err.message }, 'Startup site vhost reconcile failed');
-    });
+    }
   }
 
   await server.listen({ host: '127.0.0.1', port: 3100 });

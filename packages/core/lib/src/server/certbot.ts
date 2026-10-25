@@ -485,11 +485,19 @@ export async function issueSiteCert(
 }
 
 /**
- * Determine the correct cert path for a given FQDN.
- * Returns the wildcard cert path if available, otherwise the individual cert path.
+ * Determine the correct cert path for a given FQDN under `domain` (the base
+ * domain it belongs to, null when none): the wildcard certificate of the
+ * domain when there is one and it covers the name — one label under the
+ * domain — otherwise the name's own.
  */
-export async function getCertPath(fqdn: string, domain: string, exec: ExecFn): Promise<string> {
-  if (await hasWildcardCert(domain, exec)) {
+export async function getCertPath(
+  fqdn: string,
+  domain: string | null,
+  exec: ExecFn,
+): Promise<string> {
+  const label =
+    domain !== null && fqdn.endsWith(`.${domain}`) ? fqdn.slice(0, -domain.length - 1) : '';
+  if (label !== '' && !label.includes('.') && (await hasWildcardCert(domain as string, exec))) {
     return `/etc/letsencrypt/live/${domain}/`;
   }
   return `/etc/letsencrypt/live/${fqdn}/`;

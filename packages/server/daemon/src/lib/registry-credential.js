@@ -70,9 +70,21 @@ export function resetRegistryTokenState() {
 }
 
 /**
- * What the core needs to run the OIDC chain for a credential: the relay
- * domain and the `lamaste-server` client secret. Pasted-token credentials
- * need nothing.
+ * The domain of the registry: the one whose members `feria login` admits
+ * and whose issuer the panel's tokens carry — the credential's
+ * `issuerDomain`, else the primary. Null without a domain.
+ */
+export async function registryDomain() {
+  const config = await readRegistryCredentialConfig().catch(() => null);
+  if (config?.auth.kind === 'oidc' && config.auth.issuerDomain) return config.auth.issuerDomain;
+  const { primaryDomainName } = await import('./domains.js');
+  return primaryDomainName();
+}
+
+/**
+ * What the core needs to run the OIDC chain for a credential: the primary
+ * domain (the issuer when the credential names no `issuerDomain`) and the
+ * `lamaste-server` client secret. Pasted-token credentials need nothing.
  * @param {{ auth: { kind: string } }} config
  */
 async function oidcDeps(config) {

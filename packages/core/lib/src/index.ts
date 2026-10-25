@@ -50,6 +50,7 @@ export {
   DISABLED_PLUGIN_CACHE_TTL_MS,
   PANEL_BUNDLE_CACHE_SECONDS,
   OIDC_USER_FACTORS,
+  HOSTNAME_REGEX,
 } from './constants.js';
 
 export type {
@@ -317,8 +318,11 @@ export type {
 // The relay's base domains: names, overlap, the domain of a hostname, reserved
 // labels (the multi-domain relay)
 export {
+  DOMAINS_PROJECTION_FILE,
   DOMAIN_STATUSES,
   DomainError,
+  domainMembership,
+  parseDomainsProjection,
   assertDomainAddable,
   assertDomainName,
   domainOfHost,
@@ -326,7 +330,7 @@ export {
   isRelayHost,
   isReservedLabel,
 } from './domains.js';
-export type { DomainRecord, DomainStatus } from './domains.js';
+export type { DomainRecord, DomainStatus, DomainsProjection } from './domains.js';
 
 // Authelia's session cookie: its name, how Gatekeeper reads it, and the
 // nginx map that keeps it from every tunnel and agent backend

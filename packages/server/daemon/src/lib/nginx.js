@@ -288,6 +288,39 @@ server {
   return { name: PANEL_DOMAIN_VHOST, fqdn, config };
 }
 
+/** Site name of an app or plugin tunnel's vhost: its full hostname. */
+export function appVhostName(fqdn) {
+  assertLiteralHostname(fqdn);
+  return `lamalibre-lamaste-app-${fqdn.toLowerCase()}`;
+}
+
+/** Site name of an agent panel tunnel's vhost: its full hostname. */
+export function agentPanelVhostName(fqdn) {
+  assertLiteralHostname(fqdn);
+  return `lamalibre-lamaste-agent-panel-${fqdn.toLowerCase()}`;
+}
+
+/**
+ * Site names of tunnel vhosts before the multi-domain relay, by subdomain
+ * alone (one domain): the startup reconcile renames them
+ * (vhost-reconcile.js).
+ */
+export function legacyTunnelVhostName(type, subdomain) {
+  return type === 'panel'
+    ? `lamalibre-lamaste-agent-panel-${subdomain}`
+    : `lamalibre-lamaste-app-${subdomain}`;
+}
+
+/** Refuse a tunnel hostname that is not `<label>.<domain>`. */
+function assertHostUnderDomain(fqdn, domain) {
+  assertLiteralHostname(fqdn);
+  assertLiteralHostname(domain);
+  const label = fqdn.endsWith(`.${domain}`) ? fqdn.slice(0, -domain.length - 1) : '';
+  if (label === '' || label.includes('.')) {
+    throw new Error(`Hostname ${fqdn} is not a subdomain of ${domain}`);
+  }
+}
+
 /**
  * A hostname written into a vhost as a literal. Where it names the vhost to
  * an authorization subrequest it must stay a literal — a `$` would make nginx
@@ -336,61 +369,60 @@ const AUTHZ_CLEARED_HEADERS = `
         proxy_set_header X-Forwarded-Uri "";
         proxy_set_header X-Forwarded-Method "";`;
 
+/** Site name of the auth portal vhost of `domain` (`auth.<domain>`). */
+export function authVhostName(domain) {
+  assertLiteralHostname(domain);
+  return `lamalibre-lamaste-auth-${domain}`;
+}
+
+/** Site name of the auth portal vhost before the multi-domain relay (the primary's alone). */
+export const LEGACY_AUTH_VHOST = 'lamalibre-lamaste-auth';
+
 /**
- * Write the Authelia auth portal vhost.
+ * Write the Authelia auth portal vhost of one of the relay's domains
+ * (`primary`: the panel's — see {@link renderAuthVhost}).
+ *
+ * @param {string} domain
+ * @param {{ primary: boolean, enabled?: boolean }} opts
  */
-export async function writeAuthVhost(domain) {
-  const { name, config } = renderAuthVhost(domain);
-  await writeVhostFile(name, config);
+export async function writeAuthVhost(domain, { primary, enabled = true }) {
+  const { name, config } = renderAuthVhost(domain, undefined, { primary });
+  await safeWriteVhost(name, config, `auth.${domain}`, { enabled });
   return path.join(SITES_AVAILABLE, name);
 }
 
+/** Remove the auth portal vhost of a removed domain. */
+export async function removeAuthVhost(domain) {
+  const name = authVhostName(domain);
+  if (await isSiteEnabled(name)) await disableSite(name);
+  if (await siteExists(name)) await siteAction('remove', name);
+}
+
 /**
- * Render the Authelia auth portal vhost. Pure; the startup reconcile renders
- * it on the certificate directory the installed vhost names.
+ * Render the Authelia auth portal vhost of one domain. Pure; the startup
+ * reconcile renders it on the certificate directory the installed vhost
+ * names. Every domain's portal serves Authelia and the invitation page; only
+ * the primary's — the panel's domain, which the desktop's user login
+ * exchanges at — serves `/api/user-access/authorize` and declares its rate
+ * limit zone (an http-level name, declared once).
  *
  * @param {string} domain
  * @param {string} [certPath] - certificate directory (default: the portal's own lineage)
+ * @param {{ primary?: boolean }} [opts]
  * @returns {{ name: string, fqdn: string, config: string }}
  */
-export function renderAuthVhost(domain, certPath) {
+export function renderAuthVhost(domain, certPath, { primary = true } = {}) {
   const fqdn = `auth.${domain}`;
   let certDirClean = certPath || `/etc/letsencrypt/live/${fqdn}`;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
-  const config = `# Rate limit zone for user access authorize endpoint (5 requests/minute per IP)
+  const zone = primary
+    ? `# Rate limit zone for user access authorize endpoint (5 requests/minute per IP)
 limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
 
-server {
-    listen 443 ssl;
-    server_name ${fqdn};
-
-    ssl_certificate ${certDirClean}/fullchain.pem;
-    ssl_certificate_key ${certDirClean}/privkey.pem;
-
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-
-    # Invitation page — static HTML
-    location /invite/ {
-        alias /var/www/lamaste/invite/;
-        try_files $uri /invite/index.html;
-    }
-
-    # Invitation API — proxied to panel server (no mTLS)
-    location /api/invite/ {
-        proxy_pass http://127.0.0.1:3100/api/invite/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
-    }
-
+`
+    : '';
+  const userAccess = primary
+    ? `
     # User access authorization — Authelia forward auth protects this endpoint
     # so Remote-User header is set by Authelia on successful authentication.
     location /internal/authelia/authz {
@@ -434,7 +466,39 @@ server {
 
         error_page 401 =302 $redirection_url;
     }
+`
+    : '';
+  const config = `${zone}server {
+    listen 443 ssl;
+    server_name ${fqdn};
 
+    ssl_certificate ${certDirClean}/fullchain.pem;
+    ssl_certificate_key ${certDirClean}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Invitation page — static HTML
+    location /invite/ {
+        alias /var/www/lamaste/invite/;
+        try_files $uri /invite/index.html;
+    }
+
+    # Invitation API — proxied to panel server (no mTLS)
+    location /api/invite/ {
+        proxy_pass http://127.0.0.1:3100/api/invite/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
+    }
+${userAccess}
     # Default — proxy to Authelia
     location / {
         proxy_pass http://127.0.0.1:9091;
@@ -442,7 +506,7 @@ server {
 }
 `;
 
-  return { name: 'lamalibre-lamaste-auth', fqdn, config };
+  return { name: authVhostName(domain), fqdn, config };
 }
 
 /**
@@ -709,13 +773,13 @@ ${routes.join('')}`;
  * Used for tunnels with accessMode='public'.
  */
 export async function writePublicVhost(
-  subdomain,
+  fqdn,
   domain,
   port,
   certPath,
   { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
 ) {
-  const { name, fqdn, config } = renderPublicVhost(subdomain, domain, port, certPath, {
+  const { name, config } = renderPublicVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
@@ -724,7 +788,7 @@ export async function writePublicVhost(
 }
 
 function renderPublicVhost(
-  subdomain,
+  fqdn,
   domain,
   port,
   certPath,
@@ -738,7 +802,7 @@ function renderPublicVhost(
     throw new Error("A public tunnel vhost cannot serve a plugin's user surface");
   }
 
-  const fqdn = `${subdomain}.${domain}`;
+  assertHostUnderDomain(fqdn, domain);
   const certDir = certPath || `/etc/letsencrypt/live/${fqdn}`;
   let certDirClean = certDir;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
@@ -776,7 +840,7 @@ ${TUNNEL_PROXY_HEADERS}
 }
 `;
 
-  return { name: `lamalibre-lamaste-app-${subdomain}`, fqdn, config };
+  return { name: appVhostName(fqdn), fqdn, config };
 }
 
 /**
@@ -785,17 +849,16 @@ ${TUNNEL_PROXY_HEADERS}
  * Gatekeeper handles Authelia cookie validation and forwards identity headers.
  */
 export async function writeAuthenticatedVhost(
-  subdomain,
+  fqdn,
   domain,
   port,
   certPath,
   { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
 ) {
-  const { name, fqdn, config } = renderGatekeeperTunnelVhost(subdomain, domain, port, certPath, {
+  const { name, config } = renderGatekeeperTunnelVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
-    restricted: false,
   });
   return safeWriteVhost(name, config, fqdn, { enabled });
 }
@@ -806,33 +869,32 @@ export async function writeAuthenticatedVhost(
  * On 403, Gatekeeper returns the inline access-request HTML page.
  */
 export async function writeRestrictedVhost(
-  subdomain,
+  fqdn,
   domain,
   port,
   certPath,
   { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
 ) {
-  const { name, fqdn, config } = renderGatekeeperTunnelVhost(subdomain, domain, port, certPath, {
+  const { name, config } = renderGatekeeperTunnelVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
-    restricted: true,
   });
   return safeWriteVhost(name, config, fqdn, { enabled });
 }
 
 function renderGatekeeperTunnelVhost(
-  subdomain,
+  fqdn,
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface, restricted },
+  { pathPrefix, maxBodySizeMb, userSurface },
 ) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
   }
 
-  const fqdn = `${subdomain}.${domain}`;
+  assertHostUnderDomain(fqdn, domain);
   const certDir = certPath || `/etc/letsencrypt/live/${fqdn}`;
   let certDirClean = certDir;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
@@ -841,10 +903,9 @@ function renderGatekeeperTunnelVhost(
     pathPrefix,
     maxBodySizeMb,
     userSurface,
-    restricted,
   });
 
-  return { name: `lamalibre-lamaste-app-${subdomain}`, fqdn, config };
+  return { name: appVhostName(fqdn), fqdn, config };
 }
 
 /**
@@ -853,28 +914,27 @@ function renderGatekeeperTunnelVhost(
  * the generators produce today (see vhost-reconcile.js).
  *
  * @param {'public'|'authenticated'|'restricted'} accessMode
- * @param {string} subdomain
- * @param {string} domain
+ * @param {string} fqdn the tunnel's hostname
+ * @param {string} domain the base domain it is under (its sign-in, `auth.<domain>`)
  * @param {number} port
  * @param {string} [certPath]
  * @param {{ pathPrefix?: string, maxBodySizeMb?: number, userSurface?: ReadonlyArray<{ route: string, maxBodySizeMb: number }> }} [opts]
  *   `userSurface`: the plugins' user surfaces the vhost serves (not on a public vhost)
  * @returns {{ name: string, fqdn: string, config: string }}
  */
-export function renderTunnelVhost(accessMode, subdomain, domain, port, certPath, opts = {}) {
+export function renderTunnelVhost(accessMode, fqdn, domain, port, certPath, opts = {}) {
   const { pathPrefix, maxBodySizeMb, userSurface } = opts;
   if (accessMode === 'public') {
-    return renderPublicVhost(subdomain, domain, port, certPath, {
+    return renderPublicVhost(fqdn, domain, port, certPath, {
       pathPrefix,
       maxBodySizeMb,
       userSurface,
     });
   }
-  return renderGatekeeperTunnelVhost(subdomain, domain, port, certPath, {
+  return renderGatekeeperTunnelVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
-    restricted: accessMode !== 'authenticated',
   });
 }
 
@@ -882,7 +942,8 @@ export function renderTunnelVhost(accessMode, subdomain, domain, port, certPath,
  * Build a Gatekeeper-backed nginx vhost config string.
  * Both 'authenticated' and 'restricted' modes use this — the difference
  * is handled server-side by Gatekeeper based on the tunnel's accessMode.
- * For restricted mode, the 403 body from Gatekeeper is served inline.
+ * Gatekeeper's 403 body is served inline: a restricted tunnel's access
+ * request, or the refusal page of a user who is no member of the domain.
  *
  * The subrequest names the tunnel in its path, `/authz/tunnel/<fqdn>`,
  * written here as the agent-panel vhost writes its agent's label, and
@@ -904,7 +965,7 @@ function buildGatekeeperVhost(
   certDirClean,
   port,
   domain,
-  { pathPrefix, maxBodySizeMb, userSurface = [], restricted } = {},
+  { pathPrefix, maxBodySizeMb, userSurface = [] } = {},
 ) {
   const url = originalUrl(fqdn);
   return `server {
@@ -965,12 +1026,9 @@ ${TUNNEL_PROXY_HEADERS}
         # Authentication failure -> redirect to Authelia login, back to this vhost
         error_page 401 =302 https://auth.${domain}/?rd=${url};
 
-        ${
-          restricted
-            ? `# Authorization failure -> Gatekeeper serves inline access-request page
-        error_page 403 = /internal/lamaste/authz;`
-            : ''
-        }
+        # Authorization failure -> Gatekeeper's inline page: the access
+        # request of a restricted tunnel, or not a member of this domain
+        error_page 403 = /internal/lamaste/authz;
     }
 }
 `;
@@ -1115,6 +1173,23 @@ export function renderStaticSiteVhost(site, certDir, domain) {
         proxy_buffers 4 32k;
         proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
     }
+
+    # Signed in, refused (not a member of the site's domain, or not one of
+    # its users): Gatekeeper's page says so instead of nginx's bare 403
+    location = /internal/lamaste/refusal {
+        internal;
+        auth_request off;
+
+        proxy_pass http://127.0.0.1:9294/authz/refusal/${site.fqdn};
+        proxy_pass_request_body off;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header X-Forwarded-For $remote_addr;
+
+        proxy_http_version 1.1;
+    }
 `;
     locationAuthDirectives = `
         # Clear client-supplied identity headers (Authelia re-injects on success)
@@ -1158,6 +1233,7 @@ ${
     ? `
     # Redirect unauthenticated requests to Authelia login portal
     error_page 401 =302 $redirection_url;
+    error_page 403 = /internal/lamaste/refusal;
 `
     : ''
 }
@@ -1400,34 +1476,34 @@ async function handOverVhost(fromName, name, config, fqdn) {
 }
 
 /**
- * Unlink tunnel vhost `subdomain` when it is still enabled although a
+ * Unlink the vhost of tunnel `fqdn` when it is still enabled although a
  * plugin's site holds its hostname — a move the panel did not finish (it
  * wrote the state, then stopped before the handover). Does not reload:
  * the caller's next vhost install does, or it reloads itself. Returns
  * whether it unlinked.
  *
- * @param {string} subdomain the moved tunnel's
+ * @param {string} fqdn the moved tunnel's hostname
  */
-export async function unlinkMovedAppVhost(subdomain) {
-  const name = `lamalibre-lamaste-app-${subdomain}`;
+export async function unlinkMovedAppVhost(fqdn) {
+  const name = appVhostName(fqdn);
   if (!(await isSiteEnabled(name))) return false;
   await disableSite(name);
   return true;
 }
 
 /**
- * Serve a plugin's web surface on the hostname of tunnel vhost `subdomain`
- * in one reload (see {@link handOverVhost}).
+ * Serve a plugin's web surface on the hostname of tunnel `fqdn` in one
+ * reload (see {@link handOverVhost}).
  *
- * @param {string} subdomain the tunnel's
+ * @param {string} fqdn the tunnel's hostname
  * @param {{ id: string, fqdn: string }} site
  * @param {string} certDir
  * @param {string} domain
  * @param {{ route: string, served: boolean, maxBodySizeMb: number, treesDir: string }} opts
  */
-export async function moveAppVhostToWebSurface(subdomain, site, certDir, domain, opts) {
-  const { name, fqdn, config } = renderWebSurfaceVhost(site, certDir, domain, opts);
-  await handOverVhost(`lamalibre-lamaste-app-${subdomain}`, name, config, fqdn);
+export async function moveAppVhostToWebSurface(fqdn, site, certDir, domain, opts) {
+  const { name, config } = renderWebSurfaceVhost(site, certDir, domain, opts);
+  await handOverVhost(appVhostName(fqdn), name, config, site.fqdn);
 }
 
 /**
@@ -1488,10 +1564,10 @@ export async function removeStaticSiteVhost(siteId) {
  * Remove an app vhost from sites-available and sites-enabled, then test and reload nginx.
  * Idempotent: if files don't exist, proceeds silently.
  *
- * @param {string} subdomain - The subdomain name
+ * @param {string} fqdn - The tunnel hostname
  */
-export async function removeAppVhost(subdomain) {
-  const name = `lamalibre-lamaste-app-${subdomain}`;
+export async function removeAppVhost(fqdn) {
+  const name = appVhostName(fqdn);
   await siteAction('remove', name);
 
   const result = await testConfig();
@@ -1544,10 +1620,10 @@ export async function disableSite(name) {
 /**
  * Enable an app tunnel vhost (restore symlink), test and reload nginx.
  *
- * @param {string} subdomain - The subdomain name
+ * @param {string} fqdn - The tunnel hostname
  */
-export async function enableAppVhost(subdomain) {
-  const name = `lamalibre-lamaste-app-${subdomain}`;
+export async function enableAppVhost(fqdn) {
+  const name = appVhostName(fqdn);
   await enableSite(name);
 
   const result = await testConfig();
@@ -1563,10 +1639,10 @@ export async function enableAppVhost(subdomain) {
 /**
  * Disable an app tunnel vhost (remove symlink only, keep config), test and reload nginx.
  *
- * @param {string} subdomain - The subdomain name
+ * @param {string} fqdn - The tunnel hostname
  */
-export async function disableAppVhost(subdomain) {
-  const name = `lamalibre-lamaste-app-${subdomain}`;
+export async function disableAppVhost(fqdn) {
+  const name = appVhostName(fqdn);
   await disableSite(name);
 
   const result = await testConfig();
@@ -1612,19 +1688,13 @@ export async function enableIpVhost() {
  *
  * Written through safeWriteVhost (backup, test, rollback).
  *
- * @param {string} subdomain - The subdomain name (e.g., "agent-my-agent")
+ * @param {string} fqdn - The hostname (e.g., "agent-my-agent.example.com")
  * @param {string} domain - The base domain (e.g., "example.com")
  * @param {number} port - The local port to proxy to
  * @param {string} [certPath] - Optional cert directory path override (e.g. for wildcard certs)
  */
-export async function writeAgentPanelVhost(
-  subdomain,
-  domain,
-  port,
-  certPath,
-  { enabled = true } = {},
-) {
-  const { name, fqdn, config } = renderAgentPanelVhost(subdomain, domain, port, certPath);
+export async function writeAgentPanelVhost(fqdn, domain, port, certPath, { enabled = true } = {}) {
+  const { name, config } = renderAgentPanelVhost(fqdn, domain, port, certPath);
   return safeWriteVhost(name, config, fqdn, { enabled });
 }
 
@@ -1646,13 +1716,15 @@ export async function writeAgentPanelVhost(
  * cookie never does ({@link BACKEND_COOKIE_HEADER}): the agent panel's host
  * is under the base domain like every other.
  *
- * @param {string} subdomain - `agent-<label>`
+ * @param {string} fqdn - `agent-<label>.<domain>`
  * @param {string} domain
  * @param {number} port
  * @param {string} [certPath]
  * @returns {{ name: string, fqdn: string, config: string }}
  */
-export function renderAgentPanelVhost(subdomain, domain, port, certPath) {
+export function renderAgentPanelVhost(fqdn, domain, port, certPath) {
+  assertHostUnderDomain(fqdn, domain);
+  const subdomain = fqdn.slice(0, -domain.length - 1);
   if (!/^agent-[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain)) {
     throw new Error(`Invalid agent panel subdomain for nginx vhost: ${subdomain}`);
   }
@@ -1660,7 +1732,6 @@ export function renderAgentPanelVhost(subdomain, domain, port, certPath) {
     throw new Error(`Invalid port for nginx vhost: ${port}`);
   }
   const label = subdomain.slice('agent-'.length);
-  const fqdn = `${subdomain}.${domain}`;
   const certDir = certPath || `/etc/letsencrypt/live/${fqdn}`;
   let certDirClean = certDir;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
@@ -1750,7 +1821,7 @@ ${BACKEND_COOKIE_HEADER}
 }
 `;
 
-  return { name: `lamalibre-lamaste-agent-panel-${subdomain}`, fqdn, config };
+  return { name: agentPanelVhostName(fqdn), fqdn, config };
 }
 
 /**
@@ -1791,10 +1862,10 @@ export { safeWriteVhost as installVhost };
  * Remove an agent panel vhost from sites-available and sites-enabled, then test and reload nginx.
  * Idempotent: if files don't exist, proceeds silently.
  *
- * @param {string} subdomain - The subdomain name (e.g., "agent-my-agent")
+ * @param {string} fqdn - The agent panel hostname (e.g., "agent-my-agent.example.com")
  */
-export async function removeAgentPanelVhost(subdomain) {
-  const name = `lamalibre-lamaste-agent-panel-${subdomain}`;
+export async function removeAgentPanelVhost(fqdn) {
+  const name = agentPanelVhostName(fqdn);
   await siteAction('remove', name);
 
   const result = await testConfig();
@@ -1808,10 +1879,10 @@ export async function removeAgentPanelVhost(subdomain) {
 /**
  * Enable an agent panel vhost (restore symlink), test and reload nginx.
  *
- * @param {string} subdomain - The subdomain name
+ * @param {string} fqdn - The tunnel hostname
  */
-export async function enableAgentPanelVhost(subdomain) {
-  const name = `lamalibre-lamaste-agent-panel-${subdomain}`;
+export async function enableAgentPanelVhost(fqdn) {
+  const name = agentPanelVhostName(fqdn);
   await enableSite(name);
 
   const result = await testConfig();
@@ -1826,10 +1897,10 @@ export async function enableAgentPanelVhost(subdomain) {
 /**
  * Disable an agent panel vhost (remove symlink only, keep config), test and reload nginx.
  *
- * @param {string} subdomain - The subdomain name
+ * @param {string} fqdn - The tunnel hostname
  */
-export async function disableAgentPanelVhost(subdomain) {
-  const name = `lamalibre-lamaste-agent-panel-${subdomain}`;
+export async function disableAgentPanelVhost(fqdn) {
+  const name = agentPanelVhostName(fqdn);
   await disableSite(name);
 
   const result = await testConfig();
@@ -1839,4 +1910,47 @@ export async function disableAgentPanelVhost(subdomain) {
   }
 
   await reload();
+}
+
+/**
+ * Rename installed vhosts — `[{ from, to }]` — in one nginx reload: each
+ * `from` that exists while its `to` does not is written again under `to`
+ * with the same text and link state, and unlinked; then `nginx -t`. When it
+ * passes, nginx reloads and the old files go. When it fails — or a step
+ * does — every new file goes, every old link comes back, nothing reloads,
+ * and the error is thrown. The multi-domain relay's start-up migration of
+ * vhosts named by subdomain to vhosts named by hostname.
+ *
+ * @param {ReadonlyArray<{ from: string, to: string }>} renames
+ * @returns {Promise<string[]>} the `to` names written
+ */
+export async function renameVhosts(renames) {
+  const done = [];
+  try {
+    for (const { from, to } of renames) {
+      const text = await readInstalledVhost(from);
+      if (text === null || (await siteExists(to))) continue;
+      const linked = await isSiteEnabled(from);
+      done.push({ from, to, linked });
+      await writeVhostFile(to, text);
+      if (linked) {
+        await enableSite(to);
+        await disableSite(from);
+      }
+    }
+    if (done.length === 0) return [];
+    const result = await testConfig();
+    if (!result.valid) throw new Error(`nginx -t failed after renaming vhosts: ${result.error}`);
+    await reload();
+  } catch (err) {
+    for (const { from, to, linked } of done.reverse()) {
+      await siteAction('remove', to).catch(() => {});
+      if (linked) await enableSite(from).catch(() => {});
+    }
+    throw err;
+  }
+  for (const { from } of done) {
+    await siteAction('remove', from).catch(() => {});
+  }
+  return done.map((d) => d.to);
 }

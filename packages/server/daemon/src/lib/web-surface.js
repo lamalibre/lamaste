@@ -33,6 +33,7 @@
 import crypto from 'node:crypto';
 import {
   KeyedPromiseChainMutex,
+  domainOfHost,
   isWebSurfaceSubdomain,
   siteUserSurfaceRoute,
   tunnelUserSurfaceRoutes,
@@ -45,6 +46,7 @@ import {
   removeWebTreeStore,
   stageWebTree,
   switchWebTree,
+  tunnelHost,
   webTreeStoreDir,
   withTunnelLock,
 } from '@lamalibre/lamaste/server';
@@ -53,12 +55,14 @@ import { recordAuditBestEffort } from './audit.js';
 import { getCertPath, issueTunnelCert } from './certbot.js';
 import { syncChisel } from './chisel.js';
 import { getConfig } from './config.js';
+import { activeDomainNames, pluginDomainName, primaryDomainName } from './domains.js';
 import {
   createGatekeeperGrant,
   listResourceGrants,
   revokeGatekeeperGrant,
 } from './gatekeeper-client.js';
 import {
+  appVhostName,
   installVhost,
   moveAppVhostToWebSurface,
   readInstalledVhost,
@@ -208,6 +212,15 @@ export async function webSurfaceServing(route, tunnels) {
 }
 
 /**
+ * The domain the hostname `fqdn` is under — of the active domains, the
+ * primary when it is under none (a site from before the multi-domain relay
+ * is always under the primary).
+ */
+async function hostDomain(fqdn) {
+  return domainOfHost(fqdn, await activeDomainNames()) ?? (await primaryDomainName());
+}
+
+/**
  * The vhost of the site `site` (owned by plugin `route`) as it should be
  * now, on certificate directory `certDir`.
  */
@@ -216,7 +229,7 @@ async function renderOwnedSite(site, route, certDir, tunnels) {
   const maxBodySizeMb = serving.plugin
     ? await internalTunnelBodyLimit(serving.plugin, tunnels)
     : undefined;
-  return renderWebSurfaceVhost(site, certDir, getConfig().domain, {
+  return renderWebSurfaceVhost(site, certDir, await hostDomain(site.fqdn), {
     route,
     served: serving.served,
     maxBodySizeMb: maxBodySizeMb ?? TUNNEL_MAX_BODY_MB.default,
@@ -234,11 +247,11 @@ async function reconcileOwnedSiteVhost(site, route, tunnels) {
   // A move stopped between its state writes and the handover leaves the
   // tunnel's vhost linked beside the site's, on the same hostname.
   const moved = tunnels.find((t) => t.fqdn === site.fqdn && t.enabled === false && t.subdomain);
-  const unlinked = moved ? await deps.unlinkMovedAppVhost(moved.subdomain) : false;
+  const unlinked = moved ? await deps.unlinkMovedAppVhost(moved.fqdn) : false;
   const installed = await deps.readInstalledVhost(siteVhostName(site));
   const certDir =
     (installed && vhostCertDir(installed)) ||
-    (await deps.getCertPath(site.fqdn, getConfig().domain));
+    (await deps.getCertPath(site.fqdn, await hostDomain(site.fqdn)));
   const { name, fqdn, config } = await renderOwnedSite(site, route, certDir, tunnels);
   if (installed === config) {
     if (unlinked) await deps.reloadNginx();
@@ -328,10 +341,12 @@ export async function webSurfaceStatus(route) {
   let offer = null;
   if (!site && declared && !boundTunnel) {
     const subdomain = declared.defaultSubdomain;
+    const domain = await pluginDomainName(plugin);
     offer = {
       subdomain,
+      domain,
       accessMode: declared.accessMode,
-      available: (await hostnameTaken(subdomain, sites, tunnels)) === null,
+      available: (await hostnameTaken(subdomain, domain, sites, tunnels)) === null,
     };
   }
   return {
@@ -369,21 +384,22 @@ export async function webSurfaceStatus(route) {
 // ---------------------------------------------------------------------------
 
 /**
- * Why `subdomain` (of the relay's domain) cannot be a new web surface's
- * hostname, or null when it can: reserved, held by a tunnel, or taken by a
- * site (its name, hostname or an alias).
+ * Why `subdomain` of `domain` cannot be a new web surface's hostname, or
+ * null when it can: reserved, held by a tunnel, or taken by a site (its
+ * hostname or an alias — or its name: site names are unique relay-wide).
  */
-async function hostnameTaken(subdomain, sites, tunnels) {
+async function hostnameTaken(subdomain, domain, sites, tunnels) {
   if (!isWebSurfaceSubdomain(subdomain))
     return `'${subdomain}' cannot be a web surface's subdomain`;
-  const fqdn = `${subdomain}.${getConfig().domain}`;
-  if (tunnels.some((t) => t.subdomain === subdomain || t.fqdn === fqdn)) {
-    return `a tunnel holds '${subdomain}'`;
+  const fqdn = `${subdomain}.${domain}`;
+  if (tunnels.some((t) => t.fqdn === fqdn)) {
+    return `a tunnel holds '${fqdn}'`;
   }
-  if (
-    sites.some((s) => s.name === subdomain || s.fqdn === fqdn || (s.aliases ?? []).includes(fqdn))
-  ) {
-    return `a site holds '${subdomain}'`;
+  if (sites.some((s) => s.fqdn === fqdn || (s.aliases ?? []).includes(fqdn))) {
+    return `a site holds '${fqdn}'`;
+  }
+  if (sites.some((s) => s.name === subdomain)) {
+    return `a site is named '${subdomain}'`;
   }
   return null;
 }
@@ -446,7 +462,7 @@ async function serveApprovedTree(plugin, logger) {
 }
 
 /**
- * Give plugin `route` its web surface on `subdomain` of the relay's domain
+ * Give plugin `route` its web surface on `subdomain` of the plugin's domain
  * (default: the one its manifest declares) with `accessMode` (default: the
  * declared one): a certificate, the site entry, the vhost. The plugin must
  * declare a web surface and own no site, and no tunnel may be bound as its
@@ -479,11 +495,12 @@ export function createWebSurface(route, input, { actor, logger }) {
           'bound_to_tunnel',
         );
       }
-      const taken = await hostnameTaken(subdomain, sites, tunnels);
+      const domain = await pluginDomainName(plugin);
+      const taken = await hostnameTaken(subdomain, domain, sites, tunnels);
       if (taken) throw refuse(`Cannot use '${subdomain}': ${taken}`, 409, 'hostname_taken');
 
       await serveApprovedTree(plugin, logger);
-      const fqdn = `${subdomain}.${config.domain}`;
+      const fqdn = `${subdomain}.${domain}`;
       const cert = await deps.issueTunnelCert(fqdn, config.email);
       const site = ownedSiteEntry({ id: crypto.randomUUID(), subdomain, fqdn, plugin, accessMode });
       await writeSites([...sites, site]);
@@ -697,13 +714,10 @@ export function moveWebSurfaceFromTunnel(route, tunnelId, { actor, logger }) {
       let wroteSites = false;
       let wroteTunnels = false;
       try {
-        const config = getConfig();
-        const installed = await deps.readInstalledVhost(
-          `lamalibre-lamaste-app-${tunnel.subdomain}`,
-        );
+        const { domain } = tunnelHost(tunnel);
+        const installed = await deps.readInstalledVhost(appVhostName(tunnel.fqdn));
         const certDir =
-          (installed && vhostCertDir(installed)) ||
-          (await deps.getCertPath(tunnel.fqdn, config.domain));
+          (installed && vhostCertDir(installed)) || (await deps.getCertPath(tunnel.fqdn, domain));
         // The state first — Gatekeeper reads both files on a change of
         // either, so the old vhost's API requests already resolve to the
         // site — then one reload hands the hostname over, then the port
@@ -712,7 +726,7 @@ export function moveWebSurfaceFromTunnel(route, tunnelId, { actor, logger }) {
         wroteSites = true;
         await writeTunnels(movedTunnels);
         wroteTunnels = true;
-        await deps.moveAppVhostToWebSurface(tunnel.subdomain, site, certDir, config.domain, {
+        await deps.moveAppVhostToWebSurface(tunnel.fqdn, site, certDir, domain, {
           route,
           served: (await webSurfaceServing(route, movedTunnels)).served,
           maxBodySizeMb: await internalTunnelBodyLimit(plugin, movedTunnels),

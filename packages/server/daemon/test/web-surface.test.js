@@ -323,11 +323,11 @@ before(async () => {
   T.vault = tunnel('vault', { accessMode: 'restricted' });
   await lib.writeTunnels(Object.values(T));
   for (const t of [T.taken, T.piyasa]) {
-    await lib.writeAuthenticatedVhost(t.subdomain, 'relay.test', t.port, undefined, {
+    await lib.writeAuthenticatedVhost(t.fqdn, 'relay.test', t.port, undefined, {
       maxBodySizeMb: 10,
     });
   }
-  await lib.writeRestrictedVhost('vault', 'relay.test', T.vault.port, undefined, {
+  await lib.writeRestrictedVhost(T.vault.fqdn, 'relay.test', T.vault.port, undefined, {
     maxBodySizeMb: 10,
   });
 
@@ -470,7 +470,12 @@ test('install: the tree is read and approved with the rest; served only once app
   assert.equal(ws.served, false);
   assert.equal(ws.reason, 'not_approved');
   assert.deepEqual(ws.tree, { approved: treeSha(TREE_1), current: null, previous: null });
-  assert.deepEqual(ws.offer, { subdomain: 'wf', accessMode: 'authenticated', available: true });
+  assert.deepEqual(ws.offer, {
+    subdomain: 'wf',
+    domain: 'relay.test',
+    accessMode: 'authenticated',
+    available: true,
+  });
 
   // Approved, but it owns no site: nothing is copied into a store (the
   // site's creation serves the tree — the create test below).
@@ -754,7 +759,10 @@ test('move: refused while nginx refuses — everything as it was', async () => {
   }
   assert.deepEqual(await lib.readTunnels(), before.tunnels);
   assert.deepEqual(await lib.readSites(), before.sites);
-  assert.match(await sudo.read('lamalibre-lamaste-app-piyasa'), /location \^~ \/api\/mi\/app\//);
+  assert.match(
+    await sudo.read('lamalibre-lamaste-app-piyasa.relay.test'),
+    /location \^~ \/api\/mi\/app\//,
+  );
 });
 
 test('move: the host handed to the web surface in one reload; the tunnel kept, off and unbound', async () => {
@@ -766,8 +774,12 @@ test('move: the host handed to the web surface in one reload; the tunnel kept, o
   const stored = (await lib.readTunnels()).find((t) => t.id === T.piyasa.id);
   assert.equal(stored.enabled, false);
   assert.equal(stored.userSurface, undefined);
-  assert.notEqual(await sudo.read('lamalibre-lamaste-app-piyasa'), null, 'the tunnel vhost stays');
-  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-piyasa'), false, '…unlinked');
+  assert.notEqual(
+    await sudo.read('lamalibre-lamaste-app-piyasa.relay.test'),
+    null,
+    'the tunnel vhost stays',
+  );
+  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-piyasa.relay.test'), false, '…unlinked');
   const vhost = await sudo.read(`lamalibre-lamaste-site-${ws.site.id}`);
   assert.match(vhost, /server_name piyasa\.relay\.test;/);
   assert.match(vhost, /location \^~ \/api\/mi\/app\//);
@@ -788,7 +800,7 @@ test('move: the host handed to the web surface in one reload; the tunnel kept, o
   assert.equal((await call('DELETE', '/api/plugins/mi/web-surface')).statusCode, 200);
   const back = await call('PATCH', `/api/tunnels/${T.piyasa.id}`, { enabled: true });
   assert.equal(back.statusCode, 200, back.body);
-  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-piyasa'), true);
+  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-piyasa.relay.test'), true);
 });
 
 test('move: a restricted tunnel’s grants follow it to the site', async () => {
@@ -839,7 +851,7 @@ async function addTunnel(name, overrides = {}) {
   await lib.writeTunnels([...(await lib.readTunnels()), t]);
   const write =
     t.accessMode === 'authenticated' ? lib.writeAuthenticatedVhost : lib.writeRestrictedVhost;
-  await write(name, 'relay.test', t.port, undefined, { maxBodySizeMb: 10 });
+  await write(t.fqdn, 'relay.test', t.port, undefined, { maxBodySizeMb: 10 });
   return t;
 }
 
@@ -885,7 +897,7 @@ test('move: a failure after the grants were copied revokes them and changes noth
   const sitesBefore = JSON.stringify(await lib.readSites());
   lib.setWebSurfaceDepsForTests({
     readInstalledVhost: async (name) =>
-      name === 'lamalibre-lamaste-app-vault2' ? null : sudo.read(name),
+      name === 'lamalibre-lamaste-app-vault2.relay.test' ? null : sudo.read(name),
     getCertPath: async () => {
       throw new Error('certbot unreachable');
     },
@@ -904,7 +916,7 @@ test('move: a failure after the grants were copied revokes them and changes noth
   const stored = (await lib.readTunnels()).find((x) => x.id === t.id);
   assert.equal(stored.enabled, true);
   assert.deepEqual(stored.userSurface, { routes: ['vt'] });
-  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-vault2'), true);
+  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-vault2.relay.test'), true);
 });
 
 test('reconcile: a move stopped before its handover is finished by the next refresh', async () => {
@@ -938,13 +950,13 @@ test('reconcile: a move stopped before its handover is finished by the next refr
       return moved;
     }),
   );
-  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-crash'), true);
+  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-crash.relay.test'), true);
 
   // nginx.js reads /etc/nginx/sites-enabled; here the stand-in's links.
   lib.setWebSurfaceDepsForTests({
     readInstalledVhost: sudo.read,
-    unlinkMovedAppVhost: async (subdomain) => {
-      const name = `lamalibre-lamaste-app-${subdomain}`;
+    unlinkMovedAppVhost: async (fqdn) => {
+      const name = `lamalibre-lamaste-app-${fqdn}`;
       if (!sudo.isEnabled(name)) return false;
       await lib.disableSite(name);
       return true;
@@ -955,7 +967,11 @@ test('reconcile: a move stopped before its handover is finished by the next refr
   } finally {
     lib.setWebSurfaceDepsForTests({ readInstalledVhost: sudo.read });
   }
-  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-crash'), false, 'the tunnel vhost unlinked');
+  assert.equal(
+    sudo.isEnabled('lamalibre-lamaste-app-crash.relay.test'),
+    false,
+    'the tunnel vhost unlinked',
+  );
   assert.equal(sudo.isEnabled(`lamalibre-lamaste-site-${site.id}`), true, 'the site vhost in');
   assert.match(await siteVhost(site), /server_name crash\.relay\.test;/);
 });

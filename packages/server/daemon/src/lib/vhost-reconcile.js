@@ -37,15 +37,27 @@
  * tunnel or agent backend keeps Authelia's session cookie from it
  * (`$lamaste_backend_cookie`), so an installed vhost from before that is
  * rewritten too.
+ *
+ * From the multi-domain relay, tunnel vhosts are named by their full
+ * hostname and every domain has its own auth portal
+ * (`lamalibre-lamaste-auth-<domain>`): {@link renameLegacyVhosts} renames
+ * the ones an older version named by subdomain, in one reload, before the
+ * reconcile renders them.
  */
 
-import { tunnelUserSurfaceRoutes } from '@lamalibre/lamaste';
-import { withTunnelLock } from '@lamalibre/lamaste/server';
+import { domainOfHost, tunnelUserSurfaceRoutes } from '@lamalibre/lamaste';
+import { tunnelHost, withTunnelLock } from '@lamalibre/lamaste/server';
 import {
+  LEGACY_AUTH_VHOST,
   PANEL_DOMAIN_VHOST,
+  agentPanelVhostName,
+  appVhostName,
+  authVhostName,
   installVhost,
   isSiteEnabled,
+  legacyTunnelVhostName,
   readInstalledVhost,
+  renameVhosts,
   renderAgentPanelVhost,
   renderAuthVhost,
   renderPanelVhost,
@@ -57,8 +69,6 @@ import { readSites, readTunnels } from './state.js';
 
 /** A subdomain or site id as it may appear in a site name. */
 const SITE_NAME_PART_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/;
-
-const AUTH_VHOST = 'lamalibre-lamaste-auth';
 
 /**
  * Which of a tunnel's bound routes its vhost serves now — the panel's
@@ -84,11 +94,10 @@ async function servedUserSurface(routes, tunnel) {
  * @returns {{ name: string, fqdn: string, config: string } | null}
  */
 export function expectedTunnelVhost(tunnel, certDir, userSurface = []) {
-  if (!managedTunnelVhostName(tunnel) || typeof tunnel.fqdn !== 'string') return null;
-  if (!tunnel.fqdn.startsWith(`${tunnel.subdomain}.`)) return null;
-  const domain = tunnel.fqdn.slice(tunnel.subdomain.length + 1);
+  if (!managedTunnelVhostName(tunnel)) return null;
+  const { fqdn, domain } = tunnelHost(tunnel);
   if (tunnel.type === 'panel') {
-    return renderAgentPanelVhost(tunnel.subdomain, domain, tunnel.port, certDir);
+    return renderAgentPanelVhost(fqdn, domain, tunnel.port, certDir);
   }
   // As createTunnel and updateTunnel write it: the stored access mode
   // (restricted when absent, as Gatekeeper reads it), the plugin route of a
@@ -97,21 +106,26 @@ export function expectedTunnelVhost(tunnel, certDir, userSurface = []) {
   // rendered, and a bound tunnel cannot be made public).
   const accessMode = tunnel.accessMode ?? 'restricted';
   if (accessMode === 'public' && userSurface.length > 0) return null;
-  return renderTunnelVhost(accessMode, tunnel.subdomain, domain, tunnel.port, certDir, {
+  return renderTunnelVhost(accessMode, fqdn, domain, tunnel.port, certDir, {
     ...(tunnel.type === 'plugin' && tunnel.pluginRoute ? { pathPrefix: tunnel.pluginRoute } : {}),
     ...(tunnel.maxBodySizeMb !== undefined ? { maxBodySizeMb: tunnel.maxBodySizeMb } : {}),
     ...(userSurface.length > 0 ? { userSurface } : {}),
   });
 }
 
-/** Site name of a tunnel's vhost, or null for a tunnel without one. */
+/**
+ * Site name of a tunnel's vhost — by its hostname — or null for a tunnel
+ * without one (internal, or whose state names no `<subdomain>.<domain>`).
+ */
 function managedTunnelVhostName(tunnel) {
   if (tunnel.exposure === 'internal' || typeof tunnel.subdomain !== 'string') return null;
   if (!SITE_NAME_PART_RE.test(tunnel.subdomain)) return null;
-  if (tunnel.type === 'panel') return `lamalibre-lamaste-agent-panel-${tunnel.subdomain}`;
+  const host = tunnelHost(tunnel);
+  if (host === null) return null;
+  if (tunnel.type === 'panel') return agentPanelVhostName(host.fqdn);
   // Tunnels persisted before `type` existed are app tunnels.
   if (tunnel.type === 'app' || tunnel.type === 'plugin' || tunnel.type === undefined) {
-    return `lamalibre-lamaste-app-${tunnel.subdomain}`;
+    return appVhostName(host.fqdn);
   }
   return null;
 }
@@ -299,39 +313,48 @@ const defaultSiteDeps = { readSites, readInstalledVhost, installVhost, isSiteEna
 
 /**
  * Reconcile the vhosts that proxy a browser to the panel or ask Authelia
- * directly: the panel's own (`panel.<domain>`), the auth portal
- * (`auth.<domain>`) and every static site but a plugin's web surface. Call
- * it before the panel listens — then nothing can change a site meanwhile.
+ * directly: the panel's own (`panel.<primary>`), every active domain's auth
+ * portal (`auth.<domain>`) and every static site but a plugin's web surface.
+ * Call it before the panel listens — then nothing can change a site
+ * meanwhile.
  *
  * @param {Parameters<typeof logResult>[0]} log
- * @param {string} domain
+ * @param {ReadonlyArray<{ name: string, primary: boolean }>} domains the active domains
  * @param {typeof defaultSiteDeps} [deps]
  * @returns {Promise<ReturnType<typeof newResult>>}
  */
-export async function reconcileSiteVhosts(log, domain, deps = defaultSiteDeps) {
+export async function reconcileSiteVhosts(log, domains, deps = defaultSiteDeps) {
   const result = newResult();
+  const primary = domains.find((d) => d.primary)?.name;
 
-  await reconcileOne(
-    {
-      name: PANEL_DOMAIN_VHOST,
-      label: `panel.${domain}`,
-      render: (certDir) => renderPanelVhost(domain, certDir),
-      enabled: () => deps.isSiteEnabled(PANEL_DOMAIN_VHOST),
-    },
-    result,
-    deps,
-  );
+  if (primary) {
+    await reconcileOne(
+      {
+        name: PANEL_DOMAIN_VHOST,
+        label: `panel.${primary}`,
+        render: (certDir) => renderPanelVhost(primary, certDir),
+        enabled: () => deps.isSiteEnabled(PANEL_DOMAIN_VHOST),
+      },
+      result,
+      deps,
+    );
+  }
 
-  await reconcileOne(
-    {
-      name: AUTH_VHOST,
-      label: `auth.${domain}`,
-      render: (certDir) => renderAuthVhost(domain, certDir),
-      enabled: () => deps.isSiteEnabled(AUTH_VHOST),
-    },
-    result,
-    deps,
-  );
+  for (const domain of domains) {
+    const name = authVhostName(domain.name);
+    await reconcileOne(
+      {
+        name,
+        label: `auth.${domain.name}`,
+        render: (certDir) => renderAuthVhost(domain.name, certDir, { primary: domain.primary }),
+        enabled: () => deps.isSiteEnabled(name),
+      },
+      result,
+      deps,
+    );
+  }
+
+  const names = domains.map((d) => d.name);
 
   let sites = [];
   try {
@@ -349,7 +372,12 @@ export async function reconcileSiteVhosts(log, domain, deps = defaultSiteDeps) {
       {
         name,
         label: site.fqdn ?? site.id,
-        render: (certDir) => renderStaticSiteVhost(site, certDir, domain),
+        render: (certDir) =>
+          renderStaticSiteVhost(
+            site,
+            certDir,
+            typeof site.fqdn === 'string' ? domainOfHost(site.fqdn, names) : null,
+          ),
         enabled: () => deps.isSiteEnabled(name),
         // A site still waiting for its DNS or certificate has no vhost yet.
         reportMissing: site.certIssued === true,
@@ -361,4 +389,43 @@ export async function reconcileSiteVhosts(log, domain, deps = defaultSiteDeps) {
 
   logResult(log, 'site', result);
   return result;
+}
+
+const defaultRenameDeps = { readTunnels, renameVhosts };
+
+/**
+ * Rename the vhosts an older version named by subdomain — every tunnel's
+ * (`lamalibre-lamaste-app-<subdomain>`, `-agent-panel-<subdomain>`) and the
+ * auth portal (`lamalibre-lamaste-auth`, the primary's) — to their names by
+ * hostname, in one reload ({@link renameVhosts} in nginx.js: same text, same
+ * link state; all of it undone when nginx refuses). Idempotent: a vhost
+ * already renamed, or never installed, is left alone. Before the panel
+ * listens, under the tunnel lock; a failure is logged and the old names keep
+ * serving (the next start tries again).
+ *
+ * @param {Parameters<typeof logResult>[0]} log
+ * @param {string} primary the primary domain
+ * @param {typeof defaultRenameDeps} [deps]
+ * @returns {Promise<string[]>} the names written
+ */
+export async function renameLegacyVhosts(log, primary, deps = defaultRenameDeps) {
+  return withTunnelLock(async () => {
+    const renames = [{ from: LEGACY_AUTH_VHOST, to: authVhostName(primary) }];
+    for (const tunnel of await deps.readTunnels()) {
+      const to = managedTunnelVhostName(tunnel);
+      if (to === null) continue;
+      renames.push({ from: legacyTunnelVhostName(tunnel.type, tunnel.subdomain), to });
+    }
+    try {
+      const renamed = await deps.renameVhosts(renames);
+      if (renamed.length > 0) log.info({ renamed }, 'Renamed vhosts to their hostnames');
+      return renamed;
+    } catch (err) {
+      log.error(
+        { err: err instanceof Error ? err.message : String(err) },
+        'Renaming vhosts to their hostnames failed; the old names keep serving',
+      );
+      return [];
+    }
+  });
 }

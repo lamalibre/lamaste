@@ -8,11 +8,13 @@ import path from 'node:path';
 import {
   atomicWriteJSON,
   createRelaySigner,
+  DOMAINS_PROJECTION_FILE,
   logRequestMetadata,
+  parseDomainsProjection,
   RELAY_SIGNING_KEY_FILE,
   userSurfaceHosts,
 } from '@lamalibre/lamaste';
-import type { RelaySigner, UserSurfaceHost } from '@lamalibre/lamaste';
+import type { DomainsProjection, RelaySigner, UserSurfaceHost } from '@lamalibre/lamaste';
 import {
   DEFAULT_DATA_DIR,
   GROUPS_FILE,
@@ -37,6 +39,7 @@ const dataDir = process.env.LAMALIBRE_LAMASTE_DATA_DIR ?? DEFAULT_DATA_DIR;
 const tunnelsPath = path.join(dataDir, TUNNELS_FILE);
 const sitesPath = path.join(dataDir, SITES_FILE);
 const settingsPath = path.join(dataDir, SETTINGS_FILE);
+const domainsPath = path.join(dataDir, DOMAINS_PROJECTION_FILE);
 
 /**
  * The relay's assertion signing key, created by the panel (never here). A
@@ -59,6 +62,13 @@ let userSurfaceHostsCache: UserSurfaceHost[] = [];
 
 /** Gatekeeper settings cache */
 let settingsCache: GatekeeperSettings = {};
+
+/**
+ * The domains and their members, as the panel last wrote them
+ * (`domains.json`); null while it is missing or not a projection —
+ * every authorization is refused then.
+ */
+let domainsCache: DomainsProjection | null = null;
 
 /** Authelia session cache: cookie hash → session data */
 const sessionCache = new Map<string, AutheliaSession>();
@@ -93,6 +103,10 @@ async function loadHostState(): Promise<void> {
   tunnelsCache = tunnelInfoFromState(tunnels);
   // The panel's own reading of both files (core), so both decide alike.
   userSurfaceHostsCache = userSurfaceHosts(tunnels, sites);
+}
+
+async function loadDomains(): Promise<void> {
+  domainsCache = parseDomainsProjection(await readStateFile(domainsPath));
 }
 
 async function loadSettings(): Promise<GatekeeperSettings> {
@@ -196,11 +210,13 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
 
   // Load initial state
   await loadHostState();
+  await loadDomains();
   settingsCache = await loadSettings();
 
   // Decorate server with shared state accessors
   server.decorate('getTunnels', () => tunnelsCache);
   server.decorate('getUserSurfaceHosts', () => userSurfaceHostsCache);
+  server.decorate('getDomains', () => domainsCache);
   server.decorate('getSettings', () => settingsCache);
   server.decorate('getSessionCache', () => sessionCache);
   server.decorate('getCacheVersion', () => cacheVersion);
@@ -218,6 +234,7 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   // Watch state files for changes
   watchFile(tunnelsPath, loadHostState, server.log);
   watchFile(sitesPath, loadHostState, server.log);
+  watchFile(domainsPath, loadDomains, server.log);
 
   // TODO(sqlite-step-4): groups.json and access-grants.json are now
   // .migrated stubs after first SQLite open. These watch registrations stay
@@ -351,6 +368,8 @@ declare module 'fastify' {
   interface FastifyInstance {
     getTunnels(): TunnelInfo[];
     getUserSurfaceHosts(): UserSurfaceHost[];
+    /** The domains and their members (`domains.json`); null: refuse everyone. */
+    getDomains(): DomainsProjection | null;
     getSettings(): GatekeeperSettings;
     getSessionCache(): Map<string, AutheliaSession>;
     getCacheVersion(): number;

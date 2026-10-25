@@ -167,12 +167,13 @@ test('manifest: access-token claims need their scope; client_credentials needs a
 
 test('renderOidcClient: public device-code client with the domain expanded and its claims policy', () => {
   const [client] = validateManifest(feriaManifest).oidcClients;
-  const rendered = renderOidcClient('samplepark.tr', { ...client, plugin: 'feria' });
+  const rendered = renderOidcClient({ ...client, plugin: 'feria', domain: 'samplepark.tr' });
   assert.deepEqual(rendered, {
     client_id: 'feria-cli',
     client_name: 'Feria CLI',
     public: true,
-    authorization_policy: 'two_factor',
+    // Members of the client's domain alone, with its factor.
+    authorization_policy: 'lamaste_samplepark_tr_two_factor',
     consent_mode: 'explicit',
     scopes: ['openid', 'profile', 'groups'],
     grant_types: ['urn:ietf:params:oauth:grant-type:device_code'],
@@ -184,13 +185,14 @@ test('renderOidcClient: public device-code client with the domain expanded and i
   });
   assert.ok(!('client_secret' in rendered));
   assert.throws(
-    () => renderOidcClient('d.test', { ...client, plugin: 'feria' }, DIGEST),
+    () => renderOidcClient({ ...client, plugin: 'feria', domain: 'd.test' }, DIGEST),
     /public and must not carry a secret/,
   );
 
-  const withPkce = renderOidcClient('d.test', {
+  const withPkce = renderOidcClient({
     ...client,
     plugin: 'feria',
+    domain: 'd.test',
     id: 'feria-web',
     name: undefined,
     requirePkce: true,
@@ -218,7 +220,10 @@ test('renderOidcClient: public device-code client with the domain expanded and i
 
 test('renderOidcClient: confidential client-credentials client carries the digest, no consent, basic auth', () => {
   const [client] = validateManifest({ ...feriaManifest, oidcClients: [serviceClient] }).oidcClients;
-  const rendered = renderOidcClient('samplepark.tr', { ...client, plugin: 'feria' }, DIGEST);
+  const rendered = renderOidcClient(
+    { ...client, plugin: 'feria', domain: 'samplepark.tr' },
+    DIGEST,
+  );
   assert.deepEqual(rendered, {
     client_id: 'feria-service',
     client_name: 'feria (feria-service)',
@@ -233,13 +238,12 @@ test('renderOidcClient: confidential client-credentials client carries the diges
   });
   assert.ok(!('public' in rendered));
   assert.throws(
-    () => renderOidcClient('samplepark.tr', { ...client, plugin: 'feria' }),
+    () => renderOidcClient({ ...client, plugin: 'feria', domain: 'samplepark.tr' }),
     /confidential but has no secret digest/,
   );
 
   const lamaste = renderOidcClient(
-    'samplepark.tr',
-    lamasteServerOidcClient('https://feria.samplepark.tr/'),
+    lamasteServerOidcClient('https://feria.samplepark.tr/', 'samplepark.tr'),
     DIGEST,
   );
   assert.equal(lamaste.client_id, 'lamaste-server');
@@ -249,8 +253,7 @@ test('renderOidcClient: confidential client-credentials client carries the diges
   // Even a declaration that says two_factor is rendered one_factor.
   assert.equal(
     renderOidcClient(
-      'd.test',
-      { ...client, plugin: 'feria', authorizationPolicy: 'two_factor' },
+      { ...client, plugin: 'feria', domain: 'd.test', authorizationPolicy: 'two_factor' },
       DIGEST,
     ).authorization_policy,
     'one_factor',
@@ -261,12 +264,26 @@ test('renderOidcClient: confidential client-credentials client carries the diges
   assert.equal(lamaste.token_endpoint_auth_method, 'client_secret_basic');
 });
 
+test('a client of a domain the relay does not serve is refused, not rendered', () => {
+  const [cli] = validateManifest(feriaManifest).oidcClients;
+  assert.throws(
+    () =>
+      buildOidcProviderSection([{ name: 'samplepark.tr', members: [] }], 'h', [
+        { ...cli, plugin: 'feria', domain: 'codelama.com.tr' },
+      ]),
+    /belongs to 'codelama.com.tr', no domain of this relay/,
+  );
+});
+
 test('buildOidcProviderSection: hmac secret, the key as a sentinel, claims policies, scopes, clients', () => {
   const [cli] = validateManifest(feriaManifest).oidcClients;
   const section = buildOidcProviderSection(
-    'samplepark.tr',
+    [{ name: 'samplepark.tr', members: ['onur'] }],
     'hmac-secret',
-    [{ ...cli, plugin: 'feria' }, lamasteServerOidcClient('https://feria.samplepark.tr')],
+    [
+      { ...cli, plugin: 'feria', domain: 'samplepark.tr' },
+      lamasteServerOidcClient('https://feria.samplepark.tr', 'samplepark.tr'),
+    ],
     { secretDigests: { 'lamaste-server': DIGEST }, scopes: LAMASTE_REGISTRY_OIDC_SCOPES },
   );
   assert.equal(section.hmac_secret, 'hmac-secret');
@@ -285,8 +302,8 @@ test('buildOidcProviderSection: hmac secret, the key as a sentinel, claims polic
   assert.ok(!JSON.stringify(section).includes('PRIVATE KEY'));
 
   // Without claims or custom scopes the keys are absent, not empty.
-  const bare = buildOidcProviderSection('d.test', 'h', [
-    { ...cli, plugin: 'feria', accessTokenClaims: [] },
+  const bare = buildOidcProviderSection([{ name: 'd.test', members: [] }], 'h', [
+    { ...cli, plugin: 'feria', domain: 'd.test', accessTokenClaims: [] },
   ]);
   assert.ok(!('claims_policies' in bare));
   assert.ok(!('scopes' in bare));
@@ -294,9 +311,11 @@ test('buildOidcProviderSection: hmac secret, the key as a sentinel, claims polic
 
 test('the rendered YAML reads the issuer key with a template expression at the right indent', () => {
   const [cli] = validateManifest(feriaManifest).oidcClients;
-  const section = buildOidcProviderSection('samplepark.tr', 'hmac-secret', [
-    { ...cli, plugin: 'feria' },
-  ]);
+  const section = buildOidcProviderSection(
+    [{ name: 'samplepark.tr', members: ['onur'] }],
+    'hmac-secret',
+    [{ ...cli, plugin: 'feria', domain: 'samplepark.tr' }],
+  );
   const text = render({ identity_providers: { oidc: section } });
   const expectedLine = oidcIssuerKeyTemplateLine(8);
   assert.equal(
@@ -327,11 +346,24 @@ ${expectedLine}
         access_token:
           - groups
           - preferred_username
+    authorization_policies:
+      lamaste_samplepark_tr_one_factor:
+        default_policy: deny
+        rules:
+          - policy: one_factor
+            subject:
+              - user:onur
+      lamaste_samplepark_tr_two_factor:
+        default_policy: deny
+        rules:
+          - policy: two_factor
+            subject:
+              - user:onur
     clients:
       - client_id: feria-cli
         client_name: Feria CLI
         public: true
-        authorization_policy: two_factor
+        authorization_policy: lamaste_samplepark_tr_two_factor
         consent_mode: explicit
         scopes:
           - openid
@@ -357,8 +389,13 @@ ${expectedLine}
 
 test('the writer refuses "{{" or "}}" anywhere else — the file is a Go template', () => {
   const [cli] = validateManifest(feriaManifest).oidcClients;
-  const evil = buildOidcProviderSection('samplepark.tr', 'hmac', [
-    { ...cli, plugin: 'feria', name: '{{ env "AUTHELIA_SESSION_SECRET" }}' },
+  const evil = buildOidcProviderSection([{ name: 'samplepark.tr', members: [] }], 'hmac', [
+    {
+      ...cli,
+      plugin: 'feria',
+      domain: 'samplepark.tr',
+      name: '{{ env "AUTHELIA_SESSION_SECRET" }}',
+    },
   ]);
   assert.throws(
     () => render({ identity_providers: { oidc: evil } }),

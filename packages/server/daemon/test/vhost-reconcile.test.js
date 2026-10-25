@@ -28,6 +28,7 @@ import {
   reconcileSiteVhosts,
   reconcileTunnelVhosts,
   reconcileUserSurfaceVhosts,
+  renameLegacyVhosts,
 } from '../src/lib/vhost-reconcile.js';
 
 const WILDCARD = '/etc/letsencrypt/live/example.com';
@@ -150,12 +151,19 @@ function fakeDeps(installed, { failOn, tunnels, sites = [], linked = [], served 
 const log = { info() {}, warn() {}, error() {} };
 
 test('outdated tunnel vhosts are rewritten on the certificate they name', async () => {
-  const oldPlugin = renderTunnelVhost('restricted', 'herd', 'example.com', 9400, WILDCARD, {
-    maxBodySizeMb: 50,
-  }).config; // written without the plugin route: an older, different vhost
+  const oldPlugin = renderTunnelVhost(
+    'restricted',
+    'herd.example.com',
+    'example.com',
+    9400,
+    WILDCARD,
+    {
+      maxBodySizeMb: 50,
+    },
+  ).config; // written without the plugin route: an older, different vhost
   const upToDate = renderTunnelVhost(
     'restricted',
-    'shell',
+    'shell.example.com',
     'example.com',
     9401,
     '/etc/letsencrypt/live/shell.example.com',
@@ -163,27 +171,27 @@ test('outdated tunnel vhosts are rewritten on the certificate they name', async 
   ).config;
   const appCert = '/etc/letsencrypt/live/app.example.com';
   const oldApp = namingClientHost(
-    renderTunnelVhost('restricted', 'app', 'example.com', 9402, appCert).config,
+    renderTunnelVhost('restricted', 'app.example.com', 'example.com', 9402, appCert).config,
     'app.example.com',
   );
-  const publicApp = renderTunnelVhost('public', 'open', 'example.com', 9403, WILDCARD, {
+  const publicApp = renderTunnelVhost('public', 'open.example.com', 'example.com', 9403, WILDCARD, {
     maxBodySizeMb: 10,
   }).config;
   const { deps, writes } = fakeDeps(
     {
-      'lamalibre-lamaste-agent-panel-agent-r730': OLD_PANEL,
-      'lamalibre-lamaste-app-herd': oldPlugin,
-      'lamalibre-lamaste-app-shell': upToDate,
-      'lamalibre-lamaste-app-app': oldApp,
-      'lamalibre-lamaste-app-open': publicApp,
+      'lamalibre-lamaste-agent-panel-agent-r730.example.com': OLD_PANEL,
+      'lamalibre-lamaste-app-herd.example.com': oldPlugin,
+      'lamalibre-lamaste-app-shell.example.com': upToDate,
+      'lamalibre-lamaste-app-app.example.com': oldApp,
+      'lamalibre-lamaste-app-open.example.com': publicApp,
     },
     // `app` is enabled in state but someone unlinked its vhost; `herd` is
     // disabled in state but still linked.
     {
       linked: [
-        'lamalibre-lamaste-agent-panel-agent-r730',
-        'lamalibre-lamaste-app-herd',
-        'lamalibre-lamaste-app-shell',
+        'lamalibre-lamaste-agent-panel-agent-r730.example.com',
+        'lamalibre-lamaste-app-herd.example.com',
+        'lamalibre-lamaste-app-shell.example.com',
       ],
     },
   );
@@ -201,16 +209,16 @@ test('outdated tunnel vhosts are rewritten on the certificate they name', async 
   assert.deepEqual(result.failed, []);
 
   const [panelWrite, pluginWrite, appWrite] = writes;
-  assert.equal(panelWrite.name, 'lamalibre-lamaste-agent-panel-agent-r730');
+  assert.equal(panelWrite.name, 'lamalibre-lamaste-agent-panel-agent-r730.example.com');
   assert.equal(panelWrite.enabled, true);
   assert.equal(
     panelWrite.config,
-    renderAgentPanelVhost('agent-r730', 'example.com', 9393, WILDCARD).config,
+    renderAgentPanelVhost('agent-r730.example.com', 'example.com', 9393, WILDCARD).config,
   );
   assert.match(panelWrite.config, /ssl_certificate \/etc\/letsencrypt\/live\/example\.com\//);
   assert.match(panelWrite.config, /auth_request \/internal\/lamaste\/agent-panel-authz;/);
 
-  assert.equal(pluginWrite.name, 'lamalibre-lamaste-app-herd');
+  assert.equal(pluginWrite.name, 'lamalibre-lamaste-app-herd.example.com');
   assert.equal(pluginWrite.enabled, false, 'a disabled tunnel is unlinked');
   assert.match(
     pluginWrite.config,
@@ -221,12 +229,12 @@ test('outdated tunnel vhosts are rewritten on the certificate they name', async 
 
   // An app tunnel with neither access mode nor body limit stored: restricted,
   // as Gatekeeper reads it, and no limit, as it was written.
-  assert.equal(appWrite.name, 'lamalibre-lamaste-app-app');
+  assert.equal(appWrite.name, 'lamalibre-lamaste-app-app.example.com');
   assert.equal(appWrite.fqdn, 'app.example.com');
   assert.equal(appWrite.enabled, false, 'a rewrite never links a vhost that is not linked');
   assert.equal(
     appWrite.config,
-    renderTunnelVhost('restricted', 'app', 'example.com', 9402, appCert).config,
+    renderTunnelVhost('restricted', 'app.example.com', 'example.com', 9402, appCert).config,
   );
   assert.match(
     appWrite.config,
@@ -243,15 +251,24 @@ test('outdated tunnel vhosts are rewritten on the certificate they name', async 
 test('a rewrite never adds or removes authentication on a tunnel', async () => {
   // State says restricted, the installed vhost is public — and the reverse.
   const restrictedApp = { ...app, accessMode: 'restricted' };
-  const publicVhost = renderTunnelVhost('public', 'app', 'example.com', 9402, WILDCARD).config;
+  const publicVhost = renderTunnelVhost(
+    'public',
+    'app.example.com',
+    'example.com',
+    9402,
+    WILDCARD,
+  ).config;
   const gatedVhost = namingClientHost(
-    renderTunnelVhost('authenticated', 'open', 'example.com', 9403, WILDCARD, {
+    renderTunnelVhost('authenticated', 'open.example.com', 'example.com', 9403, WILDCARD, {
       maxBodySizeMb: 10,
     }).config,
     'open.example.com',
   );
   const { deps, writes } = fakeDeps(
-    { 'lamalibre-lamaste-app-app': publicVhost, 'lamalibre-lamaste-app-open': gatedVhost },
+    {
+      'lamalibre-lamaste-app-app.example.com': publicVhost,
+      'lamalibre-lamaste-app-open.example.com': gatedVhost,
+    },
     { tunnels: [restrictedApp, open] },
   );
   const result = await reconcileTunnelVhosts(log, deps);
@@ -266,11 +283,11 @@ test('a rewrite never adds or removes authentication on a tunnel', async () => {
 test('a failed rewrite is reported and the others still happen', async () => {
   const { deps, writes } = fakeDeps(
     {
-      'lamalibre-lamaste-agent-panel-agent-r730': OLD_PANEL,
-      'lamalibre-lamaste-app-herd':
+      'lamalibre-lamaste-agent-panel-agent-r730.example.com': OLD_PANEL,
+      'lamalibre-lamaste-app-herd.example.com':
         'server {\n    ssl_certificate /x/fullchain.pem;\n    auth_request /x;\n}\n',
     },
-    { failOn: 'lamalibre-lamaste-agent-panel-agent-r730' },
+    { failOn: 'lamalibre-lamaste-agent-panel-agent-r730.example.com' },
   );
   const result = await reconcileTunnelVhosts(log, deps);
   assert.deepEqual(result.failed, [{ vhost: 'agent-r730.example.com', error: 'nginx -t failed' }]);
@@ -284,7 +301,7 @@ test('every tunnel with a hostname has an expected vhost', () => {
   assert.equal(expectedTunnelVhost({ ...app, type: 'unknown' }, WILDCARD), null);
   assert.equal(expectedTunnelVhost({ ...app, subdomain: '../x' }, WILDCARD), null);
   assert.ok(expectedTunnelVhost(panel, WILDCARD));
-  assert.equal(expectedTunnelVhost(app, WILDCARD).name, 'lamalibre-lamaste-app-app');
+  assert.equal(expectedTunnelVhost(app, WILDCARD).name, 'lamalibre-lamaste-app-app.example.com');
   // Persisted before `type` existed: an app tunnel.
   assert.equal(
     expectedTunnelVhost({ ...app, type: undefined }, WILDCARD).config,
@@ -340,7 +357,7 @@ test('the panel, the auth portal and static sites are rewritten', async () => {
   const { deps, writes } = fakeDeps(
     {
       'lamalibre-lamaste-panel-domain': panelVhostBefore45(panelCert),
-      'lamalibre-lamaste-auth': namingClientHost(
+      'lamalibre-lamaste-auth-example.com': namingClientHost(
         renderAuthVhost('example.com', WILDCARD).config,
         'auth.example.com',
       ),
@@ -360,7 +377,7 @@ test('the panel, the auth portal and static sites are rewritten', async () => {
     },
   );
 
-  const result = await reconcileSiteVhosts(log, 'example.com', deps);
+  const result = await reconcileSiteVhosts(log, [{ name: 'example.com', primary: true }], deps);
   assert.deepEqual(result.rewritten, ['panel.example.com', 'auth.example.com', 'docs.example.com']);
   assert.equal(result.unchanged, 1);
   // A site still waiting for its certificate has no vhost to report.
@@ -375,7 +392,7 @@ test('the panel, the auth portal and static sites are rewritten', async () => {
   assert.equal(panelWrite.config, renderPanelVhost('example.com', panelCert).config);
   assert.equal(panelWrite.config.match(/X-Lamalibre-Relay-Assertion "";/g).length, 7);
 
-  assert.equal(authWrite.name, 'lamalibre-lamaste-auth');
+  assert.equal(authWrite.name, 'lamalibre-lamaste-auth-example.com');
   assert.equal(authWrite.enabled, false, 'the link state is kept');
   assert.equal(authWrite.config, renderAuthVhost('example.com', WILDCARD).config);
   assert.match(authWrite.config, /ssl_certificate \/etc\/letsencrypt\/live\/example\.com\//);
@@ -395,7 +412,7 @@ test('a site whose installed vhost disagrees with its protection is left alone',
   const { deps, writes } = fakeDeps(
     {
       'lamalibre-lamaste-panel-domain': renderPanelVhost('example.com').config,
-      'lamalibre-lamaste-auth': renderAuthVhost('example.com').config,
+      'lamalibre-lamaste-auth-example.com': renderAuthVhost('example.com').config,
       [`lamalibre-lamaste-site-${protectedSite.id}`]: renderStaticSiteVhost(
         { ...protectedSite, autheliaProtected: false },
         WILDCARD,
@@ -404,7 +421,7 @@ test('a site whose installed vhost disagrees with its protection is left alone',
     },
     { sites: [protectedSite] },
   );
-  const result = await reconcileSiteVhosts(log, 'example.com', deps);
+  const result = await reconcileSiteVhosts(log, [{ name: 'example.com', primary: true }], deps);
   assert.deepEqual(writes, []);
   assert.equal(result.unchanged, 2);
   assert.equal(result.skipped.length, 1);
@@ -441,16 +458,16 @@ const servedButFx = (routes) =>
   routes.filter((r) => r !== 'fx').map((route) => ({ route, maxBodySizeMb: 10 }));
 
 const piyasaVhost = (userSurface) =>
-  renderTunnelVhost('restricted', 'piyasa', 'example.com', 9404, WILDCARD, {
+  renderTunnelVhost('restricted', 'piyasa.example.com', 'example.com', 9404, WILDCARD, {
     maxBodySizeMb: 10,
     ...(userSurface ? { userSurface } : {}),
   }).config;
 
 test('a bound tunnel’s vhost carries the user surfaces served now, and loses them when they stop', async () => {
   const before = piyasaVhost(null);
-  const linked = ['lamalibre-lamaste-app-piyasa'];
+  const linked = ['lamalibre-lamaste-app-piyasa.example.com'];
   const first = fakeDeps(
-    { 'lamalibre-lamaste-app-piyasa': before },
+    { 'lamalibre-lamaste-app-piyasa.example.com': before },
     { tunnels: [piyasa], linked, served: servedButFx },
   );
   const asked = [];
@@ -474,14 +491,14 @@ test('a bound tunnel’s vhost carries the user surfaces served now, and loses t
 
   // Up to date: left alone.
   const again = fakeDeps(
-    { 'lamalibre-lamaste-app-piyasa': write.config },
+    { 'lamalibre-lamaste-app-piyasa.example.com': write.config },
     { tunnels: [piyasa], linked, served: servedButFx },
   );
   assert.equal((await reconcileTunnelVhosts(log, again.deps)).unchanged, 1);
 
   // Its plugin no longer served (an update without identity): the location goes.
   const after = fakeDeps(
-    { 'lamalibre-lamaste-app-piyasa': write.config },
+    { 'lamalibre-lamaste-app-piyasa.example.com': write.config },
     { tunnels: [piyasa], linked, served: () => [] },
   );
   await reconcileTunnelVhosts(log, after.deps);
@@ -490,18 +507,18 @@ test('a bound tunnel’s vhost carries the user surfaces served now, and loses t
 
 test('reconcileUserSurfaceVhosts rewrites only the tunnels the route is bound to, or was released from', async () => {
   const outdated = {
-    'lamalibre-lamaste-app-piyasa': piyasaVhost(null),
+    'lamalibre-lamaste-app-piyasa.example.com': piyasaVhost(null),
     // Still serving camwatch, which was released from it.
-    'lamalibre-lamaste-app-kamera': renderTunnelVhost(
+    'lamalibre-lamaste-app-kamera.example.com': renderTunnelVhost(
       'authenticated',
-      'kamera',
+      'kamera.example.com',
       'example.com',
       9405,
       WILDCARD,
       { maxBodySizeMb: 10, userSurface: [{ route: 'camwatch', maxBodySizeMb: 10 }] },
     ).config,
-    'lamalibre-lamaste-app-app': namingClientHost(
-      renderTunnelVhost('restricted', 'app', 'example.com', 9402, WILDCARD).config,
+    'lamalibre-lamaste-app-app.example.com': namingClientHost(
+      renderTunnelVhost('restricted', 'app.example.com', 'example.com', 9402, WILDCARD).config,
       'app.example.com',
     ),
   };
@@ -512,7 +529,7 @@ test('reconcileUserSurfaceVhosts rewrites only the tunnels the route is bound to
   assert.deepEqual(result.rewritten, ['piyasa.example.com']);
   assert.deepEqual(
     one.writes.map((w) => w.name),
-    ['lamalibre-lamaste-app-piyasa'],
+    ['lamalibre-lamaste-app-piyasa.example.com'],
   );
 
   // A route released from `kamera` (its binding is gone from the state already).
@@ -539,7 +556,7 @@ test('reconcileUserSurfaceVhosts rewrites only the tunnels the route is bound to
   // and it serves nothing — reconciled by id, for no route in particular.
   const revoked = fakeDeps(
     {
-      'lamalibre-lamaste-app-piyasa': piyasaVhost([
+      'lamalibre-lamaste-app-piyasa.example.com': piyasaVhost([
         { route: 'market-indicators', maxBodySizeMb: 10 },
       ]),
     },
@@ -564,11 +581,12 @@ test('state a vhost cannot carry is reported, and a failed lookup does not stop 
 
   const { deps, writes } = fakeDeps(
     {
-      'lamalibre-lamaste-app-piyasa': piyasaVhost(null),
-      'lamalibre-lamaste-app-kamera': 'server {\n    ssl_certificate /x/fullchain.pem;\n}\n',
-      'lamalibre-lamaste-app-app': renderTunnelVhost(
+      'lamalibre-lamaste-app-piyasa.example.com': piyasaVhost(null),
+      'lamalibre-lamaste-app-kamera.example.com':
+        'server {\n    ssl_certificate /x/fullchain.pem;\n}\n',
+      'lamalibre-lamaste-app-app.example.com': renderTunnelVhost(
         'restricted',
-        'app',
+        'app.example.com',
         'example.com',
         9402,
         WILDCARD,
@@ -589,4 +607,38 @@ test('state a vhost cannot carry is reported, and a failed lookup does not stop 
   assert.deepEqual(result.failed, [{ vhost: 'kamera.example.com', error: 'state.db is locked' }]);
   assert.equal(result.unchanged, 1);
   assert.deepEqual(writes, []);
+});
+
+test('vhosts an older version named by subdomain are renamed to their hostnames, in one call; a failure keeps the old names', async () => {
+  let asked = null;
+  const logged = [];
+  const renamed = await renameLegacyVhosts(
+    { info: (o) => logged.push(o), warn() {}, error: (o) => logged.push(o) },
+    'example.com',
+    {
+      readTunnels: async () => [panel, plugin, app, internal],
+      renameVhosts: async (renames) => {
+        asked = renames;
+        return renames.map((r) => r.to);
+      },
+    },
+  );
+  assert.deepEqual(asked, [
+    { from: 'lamalibre-lamaste-auth', to: 'lamalibre-lamaste-auth-example.com' },
+    {
+      from: 'lamalibre-lamaste-agent-panel-agent-r730',
+      to: 'lamalibre-lamaste-agent-panel-agent-r730.example.com',
+    },
+    { from: 'lamalibre-lamaste-app-herd', to: 'lamalibre-lamaste-app-herd.example.com' },
+    { from: 'lamalibre-lamaste-app-app', to: 'lamalibre-lamaste-app-app.example.com' },
+  ]);
+  assert.equal(renamed.length, 4);
+
+  const failed = await renameLegacyVhosts(log, 'example.com', {
+    readTunnels: async () => [app],
+    renameVhosts: async () => {
+      throw new Error('nginx -t failed after renaming vhosts');
+    },
+  });
+  assert.deepEqual(failed, [], 'nothing renamed; the old names keep serving');
 });

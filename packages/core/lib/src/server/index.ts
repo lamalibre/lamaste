@@ -90,10 +90,12 @@ export {
   bindUnownedTunnels,
   isInternalTunnel,
   tunnelLabel,
+  tunnelHost,
   assignInternalPluginPort,
 } from './tunnels.js';
 export type {
   TunnelType,
+  TunnelHost,
   TunnelExposure,
   AccessMode,
   TunnelEntry,
@@ -225,7 +227,7 @@ export {
   startAuthelia,
   reloadAuthelia,
   isAutheliaRunning,
-  updateAccessControl as updateAutheliaAccessControl,
+  updateDomainAccess as updateAutheliaDomainAccess,
   updateOidcProvider as updateAutheliaOidcProvider,
   isOidcIssuerKeyProvisioned as isAutheliaOidcIssuerKeyProvisioned,
   renderOidcClient,
@@ -261,6 +263,7 @@ export type {
   OidcScopeDefinitions,
   OidcProviderOptions,
   AutheliaDomain,
+  DomainAccess,
   AutheliaSessionCookie,
 } from './authelia.js';
 

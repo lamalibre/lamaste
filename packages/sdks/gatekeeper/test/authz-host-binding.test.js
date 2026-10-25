@@ -67,6 +67,11 @@ before(async () => {
   const { authzRoutes } = await import('../dist/server/routes/authz.js');
   app = Fastify({ logger: false });
   app.decorate('getTunnels', () => TUNNELS);
+  // The panel's projection: every user here a member of example.com.
+  app.decorate('getDomains', () => ({
+    v: 1,
+    domains: [{ name: 'example.com', members: ['alice', 'bob', 'carol'] }],
+  }));
   app.decorate('getSessionCache', () => sessions);
   app.decorate('getCacheVersion', () => 1);
   app.decorate('getSettings', () => ({}));

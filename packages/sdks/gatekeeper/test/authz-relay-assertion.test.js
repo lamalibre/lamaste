@@ -68,6 +68,11 @@ before(async () => {
   app = Fastify({ logger: false });
   const sessions = new Map();
   app.decorate('getTunnels', () => TUNNELS);
+  // The panel's projection: every user here a member of example.com.
+  app.decorate('getDomains', () => ({
+    v: 1,
+    domains: [{ name: 'example.com', members: ['alice', 'bob', 'carol'] }],
+  }));
   app.decorate('getSessionCache', () => sessions);
   app.decorate('getCacheVersion', () => 1);
   app.decorate('getSettings', () => ({}));

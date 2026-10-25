@@ -97,10 +97,13 @@ test('accepts the content types of a web surface in a location', () => {
 test('site names: only the vhosts the panel writes', () => {
   for (const name of [
     'lamalibre-lamaste-panel-domain',
-    'lamalibre-lamaste-auth',
     'lamalibre-lamaste-tunnel',
-    'lamalibre-lamaste-app-gitlab',
-    'lamalibre-lamaste-agent-panel-agent-r730',
+    // Named by full hostname since the multi-domain relay.
+    'lamalibre-lamaste-auth-samplepark.tr',
+    'lamalibre-lamaste-auth-codelama.com.tr',
+    'lamalibre-lamaste-app-gitlab.samplepark.tr',
+    'lamalibre-lamaste-app-feria.codelama.com.tr',
+    'lamalibre-lamaste-agent-panel-agent-r730.samplepark.tr',
     'lamalibre-lamaste-site-3f1d2c3a-1b2c-4d5e-8f90-123456789abc',
   ]) {
     assert.doesNotThrow(() => assertSiteName(name, 'write'), name);
@@ -112,8 +115,30 @@ test('site names: only the vhosts the panel writes', () => {
     'lamalibre-lamaste-panel-ip',
     'lamalibre-lamaste-app-a/../../x',
     'lamalibre-lamaste-app-',
+    'lamalibre-lamaste-app-Feria.codelama.com.tr',
+    'lamalibre-lamaste-app-feria.codelama.com.tr.',
+    'lamalibre-lamaste-app-feria..codelama.com.tr',
+    'lamalibre-lamaste-auth-',
     'lamalibre-lamaste-site-not-a-uuid',
+    `lamalibre-lamaste-app-${'a'.repeat(60)}.${'b'.repeat(60)}.${'c'.repeat(60)}.${'d'.repeat(60)}.tr`,
+    // The names before the multi-domain relay: never written again …
+    'lamalibre-lamaste-auth',
+    'lamalibre-lamaste-app-gitlab',
+    'lamalibre-lamaste-agent-panel-agent-r730',
   ]) {
+    assert.throws(() => assertSiteName(name, 'write'), name);
+  }
+});
+
+test('the names before the multi-domain relay may still be renamed away: linked, unlinked, backed up, removed', () => {
+  for (const name of [
+    'lamalibre-lamaste-auth',
+    'lamalibre-lamaste-app-gitlab',
+    'lamalibre-lamaste-agent-panel-agent-r730',
+  ]) {
+    for (const action of ['enable', 'disable', 'backup', 'restore', 'discard-backup', 'remove']) {
+      assert.doesNotThrow(() => assertSiteName(name, action), `${action} ${name}`);
+    }
     assert.throws(() => assertSiteName(name, 'write'), name);
   }
 });

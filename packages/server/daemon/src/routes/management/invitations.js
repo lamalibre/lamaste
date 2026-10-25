@@ -4,6 +4,7 @@ import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamal
 import { readInvitations, withInvitationsLock, writeInvitations } from '../../lib/state.js';
 import { readUsersRaw } from '../../lib/authelia.js';
 import { getConfig } from '../../lib/config.js';
+import { domainsForNewUser, newUsersNeedDomains } from '../../lib/domains.js';
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
 
@@ -21,6 +22,9 @@ const CreateInvitationSchema = z.object({
   email: z.string().email(),
   groups: z.array(z.string()).optional().default([]),
   expiresInDays: z.number().int().min(1).max(30).optional().default(7),
+  // The domains the user becomes a member of on accepting. Required while
+  // the relay has two or more; with one, the user becomes its member.
+  domains: z.array(z.string().min(1).max(253)).max(50).optional(),
 });
 
 export default async function invitationRoutes(fastify, _opts) {
@@ -55,6 +59,19 @@ export default async function invitationRoutes(fastify, _opts) {
     },
     async (request, reply) => {
       const body = CreateInvitationSchema.parse(request.body);
+      let domains;
+      try {
+        if (body.domains === undefined && (await newUsersNeedDomains())) {
+          return reply.code(400).send({
+            error: 'Name the domains the user is invited to: this relay has more than one',
+            code: 'domains_required',
+          });
+        }
+        domains = await domainsForNewUser(body.domains);
+      } catch (err) {
+        if (!err.statusCode) throw err;
+        return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+      }
 
       // Check username doesn't already exist in Authelia
       let usersData;
@@ -97,6 +114,7 @@ export default async function invitationRoutes(fastify, _opts) {
           username: body.username,
           email: body.email,
           groups: body.groups,
+          domains,
           createdAt: now.toISOString(),
           expiresAt: expiresAt.toISOString(),
           used: false,
@@ -116,8 +134,10 @@ export default async function invitationRoutes(fastify, _opts) {
 
       const { invitation } = outcome;
       const { token } = invitation;
-      const config = getConfig();
-      const inviteUrl = config.domain ? `https://auth.${config.domain}/invite/${token}` : null;
+      // On the sign-in page of the first domain it names (the invitation
+      // page is served on every domain's auth portal).
+      const inviteDomain = invitation.domains[0] ?? getConfig().domain;
+      const inviteUrl = inviteDomain ? `https://auth.${inviteDomain}/invite/${token}` : null;
 
       return reply.code(201).send({
         ok: true,

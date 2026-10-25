@@ -56,6 +56,13 @@
  * Authelia second factors go; Gatekeeper's cached session verdicts are
  * dropped. Every reconcile offboards exactly the users it saw change.
  *
+ * **Domains** (lib/domains.js): a user created here becomes a member of
+ * the domains they are created with (`changeUsers`' `domains`) — or, while
+ * the relay has one domain, of that one, whoever created them; a removed
+ * user's memberships end in the same transaction. Every `changeUsers`
+ * renders the domains' members into Authelia and Gatekeeper's projection
+ * before Authelia restarts.
+ *
  * Audit entries name users by their id alone: never a username, a name or
  * an address.
  */
@@ -71,6 +78,12 @@ import {
   reloadAuthelia,
 } from './authelia.js';
 import { bumpUserEpoch } from './config.js';
+import {
+  deleteMembershipsSync,
+  domainsForNewUser,
+  insertMembershipsSync,
+  syncDomainAccess,
+} from './domains.js';
 import {
   bustGatekeeperSessions,
   purgeAccessLogForUser,
@@ -533,9 +546,11 @@ function assertNotEmpty(snapshot, live) {
 }
 
 /**
- * {@link reconcileDirectory} with the users lock already held.
+ * {@link reconcileDirectory} with the users lock already held. A user it
+ * creates becomes a member of `domains[username]` when given, else of the
+ * relay's one domain (none with two or more).
  *
- * @param {{ actor: string, logger?: import('pino').Logger, deleted?: string[], confirmDelayMs?: number }} opts
+ * @param {{ actor: string, logger?: import('pino').Logger, deleted?: string[], confirmDelayMs?: number, domains?: Readonly<Record<string, readonly string[]>> }} opts
  * @returns {Promise<DirectoryReconcileResult>}
  */
 async function reconcileUnlocked({
@@ -543,6 +558,7 @@ async function reconcileUnlocked({
   logger,
   deleted = [],
   confirmDelayMs = DIRECTORY_CONFIRM_DELAY_MS,
+  domains = {},
 }) {
   const db = await getStateDb();
   const live = db
@@ -566,6 +582,7 @@ async function reconcileUnlocked({
   const missing = live.filter((u) => absentFirst.has(u.username) && !snapshot.has(u.username));
 
   const now = new Date().toISOString();
+  const defaultDomains = await domainsForNewUser(undefined);
   const events = [];
   const result = { created: 0, updated: 0, removed: [], disabled: [] };
   const selectLive = db.prepare(
@@ -594,6 +611,7 @@ async function reconcileUnlocked({
       remove.run(reason, now, now, user.userId);
       result.removed.push({ userId: user.userId, username: user.username, reason });
       events.push({ action: 'directory.user.removed', details: { userId: user.userId, reason } });
+      events.push(...deleteMembershipsSync(db, user.userId, reason));
     }
     for (const [username, attrs] of snapshot) {
       const row = selectLive.get(username);
@@ -605,6 +623,8 @@ async function reconcileUnlocked({
           action: 'directory.user.created',
           details: { userId, status: attrs.status },
         });
+        const memberOf = Object.hasOwn(domains, username) ? domains[username] : defaultDomains;
+        events.push(...insertMembershipsSync(db, userId, memberOf, { actor, now }));
         continue;
       }
       const changed = [];
@@ -798,11 +818,13 @@ export function reconcileDirectory({ actor = 'lamaste', logger, confirmDelayMs }
  *    that cannot be done: a new user never inherits an earlier one's grants,
  *    groups or second factors);
  * 3. `mutate`, then reconcile the directory (`deleted` names the usernames
- *    `mutate` deletes: removed as `deleted`), offboarding every user that
+ *    `mutate` deletes: removed as `deleted`; `domains` the domains of the
+ *    users it creates — lib/domains.js), offboarding every user that
  *    reconcile saw removed or newly disabled ({@link offboardUserUnlocked});
- * 4. restart Authelia (unless `restartAuthelia` is false: onboarding starts
- *    it next) — which ends every session — and drop Gatekeeper's cached
- *    session verdicts with them;
+ * 4. render the domains' members (lib/domains.js `syncDomainAccess`), then
+ *    restart Authelia (unless `restartAuthelia` is false: onboarding starts
+ *    it next; or the rendering restarted it already) — which ends every
+ *    session — and drop Gatekeeper's cached session verdicts with them;
  * 5. with `expect` (`(users) => boolean` over users.yml's `users` map: does
  *    the file hold the intended change?), read users.yml again: Authelia's
  *    own password reset rewrites the file from what it read at start, so a
@@ -818,7 +840,7 @@ export function reconcileDirectory({ actor = 'lamaste', logger, confirmDelayMs }
  *
  * @template T
  * @param {() => Promise<T>} mutate
- * @param {{ actor: string, logger?: import('pino').Logger, creates?: string[], deleted?: string[], restartAuthelia?: boolean, autheliaStorage?: boolean, confirmDelayMs?: number, expect?: (users: Record<string, unknown>) => boolean }} opts
+ * @param {{ actor: string, logger?: import('pino').Logger, creates?: string[], deleted?: string[], domains?: Readonly<Record<string, readonly string[]>>, restartAuthelia?: boolean, autheliaStorage?: boolean, confirmDelayMs?: number, expect?: (users: Record<string, unknown>) => boolean }} opts
  * @returns {Promise<{ result: T, directory: DirectoryReconcileResult | null, warnings: Array<{ step: string, message: string }>, persisted: boolean }>}
  */
 export async function changeUsers(
@@ -828,6 +850,7 @@ export async function changeUsers(
     logger,
     creates = [],
     deleted = [],
+    domains = {},
     restartAuthelia = true,
     autheliaStorage = true,
     confirmDelayMs,
@@ -840,7 +863,7 @@ export async function changeUsers(
   const settle = async () => {
     let reconciled = null;
     try {
-      reconciled = await reconcileUnlocked({ actor, logger, deleted, confirmDelayMs });
+      reconciled = await reconcileUnlocked({ actor, logger, deleted, confirmDelayMs, domains });
     } catch (err) {
       logger?.error({ err: err.message }, 'Could not bring the user directory in line');
       warnings.push({
@@ -869,7 +892,21 @@ export async function changeUsers(
   };
 
   const restart = async () => {
+    let restarted = false;
+    try {
+      restarted = (await syncDomainAccess({ logger })).changed;
+    } catch (err) {
+      logger?.error({ err: err.message }, 'Rendering domain access after a users change failed');
+      warnings.push({
+        step: 'domains',
+        message: `Who may reach each domain was not rendered (${err.message}); the panel renders it again within a minute`,
+      });
+    }
     if (!restartAuthelia) return;
+    if (restarted) {
+      warnings.push(...(await bustCachedSessions(logger)));
+      return;
+    }
     try {
       await reloadAuthelia();
     } catch (err) {

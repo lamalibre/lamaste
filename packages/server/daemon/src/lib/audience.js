@@ -53,6 +53,7 @@ import {
   isLamasteUsername,
 } from '@lamalibre/lamaste';
 import { listDirectoryUsers, pendingPrincipalCleanups } from './directory.js';
+import { domainsByUser, primaryDomainName } from './domains.js';
 import { declaredRoleIds, grantRoles } from './entitlements.js';
 import { listGatekeeperGroups, listPluginGrants } from './gatekeeper-client.js';
 import { findPlugin, readPlugins } from './plugins.js';
@@ -276,10 +277,12 @@ function comparable(change) {
  * @param {import('./directory.js').DirectoryUser[]} users
  * @param {Map<string, string[]>} roles by username
  * @param {Map<string, AudienceRow>} stored by user id
- * @param {Set<string>} [pending] usernames with a pending principal cleanup
+ * @param {Set<string>} pending usernames with a pending principal cleanup
+ * @param {Set<string>} members ids of the members of the plugin's domain —
+ *   an entitled user who is not one holds no role (and leaves as `unentitled`)
  * @returns {{ desired: Map<string, object>, ineligible: number }}
  */
-function desiredAudience(identity, users, roles, stored, pending = new Set()) {
+function desiredAudience(identity, users, roles, stored, pending, members) {
   const attributes = identity.attributes ?? [];
   const desired = new Map();
   let ineligible = 0;
@@ -301,7 +304,10 @@ function desiredAudience(identity, users, roles, stored, pending = new Set()) {
       if (existing) leave('deleted');
       continue;
     }
-    const held = pending.has(user.username) ? undefined : roles.get(user.username);
+    const held =
+      pending.has(user.username) || !members.has(user.userId)
+        ? undefined
+        : roles.get(user.username);
     if (held && held.length > 0) {
       // A username the feed cannot carry is never a member (users.yml
       // edited outside Lamaste may hold one); counted, never named.
@@ -476,6 +482,14 @@ async function recomputeOnce(logger) {
     const groups = new Map(groupsResult.groups.map((g) => [g.name, g]));
     const users = await listDirectoryUsers();
     const pending = await pendingPrincipalCleanups();
+    const primary = await primaryDomainName();
+    const membersByDomain = new Map();
+    for (const [userId, domains] of await domainsByUser()) {
+      for (const domain of domains) {
+        if (!membersByDomain.has(domain)) membersByDomain.set(domain, new Set());
+        membersByDomain.get(domain).add(userId);
+      }
+    }
 
     for (const plugin of plugins) {
       const grants = await listPluginGrants(plugin.route);
@@ -494,6 +508,7 @@ async function recomputeOnce(logger) {
         rolesByUsername(grants.grants, groups, declared),
         stored,
         pending,
+        membersByDomain.get(plugin.domain ?? primary) ?? new Set(),
       );
       if ((loggedIneligible.get(plugin.name) ?? 0) !== ineligible) {
         loggedIneligible.set(plugin.name, ineligible);

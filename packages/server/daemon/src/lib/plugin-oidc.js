@@ -19,6 +19,13 @@
  * `identity_providers.oidc` section is written; Authelia is restarted only
  * when the section actually changed.
  *
+ * Every client belongs to a domain — its plugin's (the panel's own: the
+ * registry credential's issuer domain): `{domain}` in its audience and
+ * redirect URIs is that domain, and a user-facing client admits that
+ * domain's members alone (core `renderOidcAuthorizationPolicies`). A
+ * membership change re-renders the policies (lib/domains.js
+ * `syncDomainAccess`).
+ *
  * Best effort by design where a plugin lifecycle calls it: a failure here
  * must not fail the plugin operation — the caller logs it and the next
  * lifecycle change retries.
@@ -36,8 +43,8 @@ import {
   rotateOidcClientSecret,
 } from '@lamalibre/lamaste/server';
 
-import { getConfig } from './config.js';
 import { updateOidcProvider } from './authelia.js';
+import { domainsWithMembers, primaryDomainName } from './domains.js';
 import { readPlugins } from './plugins.js';
 import { readRegistryCredentialConfig } from './registry-credential.js';
 
@@ -45,12 +52,13 @@ const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lam
 
 /**
  * The OIDC clients every installed plugin declares, tagged with the plugin
- * name and whether the plugin is enabled. Manifests are re-read from the
- * installed packages — the plugin registry does not store them.
+ * name, its domain and whether the plugin is enabled. Manifests are re-read
+ * from the installed packages — the plugin registry does not store them.
  * @returns {Promise<Array<import('@lamalibre/lamaste/server').AutheliaOidcClient & { enabled: boolean }>>}
  */
 export async function collectPluginOidcClients() {
   const require = createRequire(`${STATE_DIR}/`);
+  const primary = await primaryDomainName();
   const clients = [];
   for (const plugin of (await readPlugins()).plugins) {
     let manifest;
@@ -61,7 +69,12 @@ export async function collectPluginOidcClients() {
       continue; // an unreadable manifest contributes no clients
     }
     for (const client of manifest.oidcClients) {
-      clients.push({ ...client, plugin: manifest.name, enabled: plugin.status === 'enabled' });
+      clients.push({
+        ...client,
+        plugin: manifest.name,
+        domain: plugin.domain ?? primary,
+        enabled: plugin.status === 'enabled',
+      });
     }
   }
   return clients;
@@ -69,20 +82,21 @@ export async function collectPluginOidcClients() {
 
 /**
  * The panel's own client, when the registry credential (stored, or the
- * candidate being verified) uses it.
- * @param {{ registryUrl: string } | null | undefined} registryAuth
+ * candidate being verified) uses it — of the credential's issuer domain.
+ * @param {{ registryUrl: string, issuerDomain?: string } | null | undefined} registryAuth
  */
-function lamasteOwnClient(registryAuth) {
+async function lamasteOwnClient(registryAuth) {
   if (!registryAuth) return [];
-  return [{ ...lamasteServerOidcClient(registryAuth.registryUrl), enabled: true }];
+  const domain = registryAuth.issuerDomain ?? (await primaryDomainName());
+  return [{ ...lamasteServerOidcClient(registryAuth.registryUrl, domain), enabled: true }];
 }
 
 /**
  * Everything Authelia should know, from the stored state.
- * @param {{ registryAuth?: { registryUrl: string } | null }} [overrides]
+ * @param {{ registryAuth?: { registryUrl: string, issuerDomain?: string } | null }} [overrides]
  *   `registryAuth` replaces the stored registry credential's say in the
- *   matter: `{ registryUrl }` while a candidate oidc credential is being
- *   verified, `null` to leave the panel's client out.
+ *   matter: `{ registryUrl, issuerDomain }` while a candidate oidc
+ *   credential is being verified, `null` to leave the panel's client out.
  */
 async function collectAllClients(overrides = {}) {
   let registryAuth;
@@ -91,9 +105,14 @@ async function collectAllClients(overrides = {}) {
   } else {
     const stored = await readRegistryCredentialConfig().catch(() => null);
     registryAuth =
-      stored && stored.auth.kind === 'oidc' ? { registryUrl: stored.registryUrl } : null;
+      stored && stored.auth.kind === 'oidc'
+        ? {
+            registryUrl: stored.registryUrl,
+            ...(stored.auth.issuerDomain ? { issuerDomain: stored.auth.issuerDomain } : {}),
+          }
+        : null;
   }
-  return [...(await collectPluginOidcClients()), ...lamasteOwnClient(registryAuth)];
+  return [...(await collectPluginOidcClients()), ...(await lamasteOwnClient(registryAuth))];
 }
 
 /**
@@ -103,7 +122,7 @@ async function collectAllClients(overrides = {}) {
  * enabled plugins served, and the panel's own scopes when its client is.
  * Pure with respect to Authelia — nothing is written.
  *
- * @param {{ registryAuth?: { registryUrl: string } | null }} [overrides] see collectAllClients
+ * @param {{ registryAuth?: { registryUrl: string, issuerDomain?: string } | null }} [overrides] see collectAllClients
  * @returns {Promise<{
  *   confidential: Array<{ id: string, plugin: string }>,
  *   served: Array<import('@lamalibre/lamaste/server').AutheliaOidcClient>,
@@ -126,17 +145,12 @@ export async function planOidcClients(overrides = {}) {
  * has no domain yet (onboarding).
  *
  * @param {import('pino').Logger} logger
- * @param {{ registryAuth?: { registryUrl: string } | null }} [overrides] see collectAllClients
+ * @param {{ registryAuth?: { registryUrl: string, issuerDomain?: string } | null }} [overrides] see collectAllClients
  * @returns {Promise<{ changed: boolean, clients: string[], createdSecrets: Array<{ id: string, plugin: string, secret: string }> } | null>}
  */
 export async function syncOidcClients(logger, overrides = {}) {
-  let domain = null;
-  try {
-    domain = getConfig().domain;
-  } catch {
-    domain = null;
-  }
-  if (!domain) {
+  const domains = await domainsWithMembers(logger);
+  if (domains.length === 0) {
     logger.debug('OIDC client sync skipped — no domain configured yet');
     return null;
   }
@@ -150,7 +164,7 @@ export async function syncOidcClients(logger, overrides = {}) {
     );
   }
 
-  const result = await updateOidcProvider(domain, served, {
+  const result = await updateOidcProvider(domains, served, {
     secretDigests: reconciled.digests,
     scopes,
   });
@@ -219,9 +233,11 @@ export async function rotatePluginOidcClientSecret(pluginName, clientId, logger)
   const rotated = await rotateOidcClientSecret(STATE_DIR, clientId);
   const digests = await readOidcClientSecretDigests(STATE_DIR);
   if (client.enabled) {
-    const domain = getConfig().domain;
     const { served, scopes } = await planOidcClients();
-    await updateOidcProvider(domain, served, { secretDigests: digests, scopes });
+    await updateOidcProvider(await domainsWithMembers(logger), served, {
+      secretDigests: digests,
+      scopes,
+    });
   }
   logger.info({ plugin: pluginName, clientId }, 'OIDC client secret rotated');
   return {

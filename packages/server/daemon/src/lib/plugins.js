@@ -74,8 +74,8 @@ async function getStmts() {
         (name, route, display_name, package_name, version, description, capabilities,
          packages, panel, config, modes, hosting, agent, hooks, hooks_entry_sha256,
          agent_half_pin, settings, identity, user_surface, web_tree_sha256, status,
-         installed_at, enabled_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         installed_at, enabled_at, domain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     deleteByName: db.prepare('DELETE FROM plugins WHERE name = ?'),
     // The plugin's audience and the state of its identity feed
@@ -146,6 +146,8 @@ function rowToPlugin(row) {
   if (row.user_surface != null) entry.userSurface = JSON.parse(row.user_surface);
   if (row.web_tree_sha256 != null) entry.webTreeSha256 = row.web_tree_sha256;
   if (row.enabled_at != null) entry.enabledAt = row.enabled_at;
+  // The domain the plugin belongs to; null: the primary (lib/domains.js).
+  entry.domain = row.domain ?? null;
   return entry;
 }
 
@@ -233,6 +235,7 @@ export async function writePlugins(data) {
         p.status,
         p.installedAt,
         nullableString(p.enabledAt),
+        nullableString(p.domain),
       );
     }
     s.commit.run();
@@ -559,6 +562,8 @@ export function installPlugin(packageName, logger) {
         nullableString(entry.webTreeSha256),
         entry.status,
         entry.installedAt,
+        null,
+        // A plugin installed now belongs to the primary domain (lib/plugin-domain.js moves it).
         null,
       );
       s.commit.run();

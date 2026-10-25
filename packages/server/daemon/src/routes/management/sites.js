@@ -18,7 +18,7 @@ import { webSurfaceServing } from '../../lib/web-surface.js';
 import { getConfig } from '../../lib/config.js';
 import { readSites, writeSites, readTunnels, withSitesLock } from '../../lib/state.js';
 import { writeStaticSiteVhost, removeStaticSiteVhost } from '../../lib/nginx.js';
-import { updateAccessControl } from '../../lib/authelia.js';
+import { activeDomainNames, resolveActiveDomain, syncDomainAccess } from '../../lib/domains.js';
 import { issueTunnelCert, getCertPath, issueSiteCert } from '../../lib/certbot.js';
 import {
   createSiteDirectory,
@@ -57,6 +57,8 @@ const CreateSiteSchema = z.object({
   aliases: z.array(AliasSchema).max(10, 'At most 10 aliases').optional(),
   spaMode: z.boolean().optional().default(false),
   autheliaProtected: z.boolean().optional().default(false),
+  /** A managed site's domain (an active one; the primary when absent). */
+  domain: z.string().min(1).max(253).optional(),
 });
 
 const UpdateSiteSchema = z.object({
@@ -107,8 +109,16 @@ function buildTunnelReadDeps() {
   return { readTunnels };
 }
 
-function buildAutheliaDeps() {
-  return { updateAccessControl };
+/**
+ * Authelia renders every site's protection together with the domains'
+ * members (lib/domains.js) — given the sites being saved.
+ */
+function buildAutheliaDeps(logger) {
+  return {
+    updateAccessControl: async (sites) => {
+      await syncDomainAccess({ logger, sites });
+    },
+  };
 }
 
 /**
@@ -126,6 +136,7 @@ function siteErrorStatus(code) {
     case 'INVALID_ALIAS':
     case 'ALIAS_IN_USE':
     case 'DNS_MISMATCH':
+    case 'NOT_UNDER_DOMAIN':
       return 400;
     case 'NOT_FOUND':
       return 404;
@@ -226,7 +237,6 @@ export default async function sitesRoutes(fastify, _opts) {
   const filesDeps = buildFilesDeps();
   const siteStateDeps = buildSiteStateDeps();
   const tunnelReadDeps = buildTunnelReadDeps();
-  const autheliaDeps = buildAutheliaDeps();
 
   // GET /api/sites
   //
@@ -287,6 +297,18 @@ export default async function sitesRoutes(fastify, _opts) {
           error: 'Domain and email must be configured before creating sites',
         });
       }
+      if (body.domain !== undefined && body.type !== 'managed') {
+        return reply.code(400).send({
+          error: "A custom site's hostname names its domain — `domain` is for managed sites",
+        });
+      }
+      let domain;
+      try {
+        domain = await resolveActiveDomain(body.domain);
+      } catch (err) {
+        return reply.code(err.statusCode ?? 400).send({ error: err.message, code: err.code });
+      }
+      const domains = await activeDomainNames();
 
       try {
         const result = await withHostnameLocks(() =>
@@ -297,7 +319,8 @@ export default async function sitesRoutes(fastify, _opts) {
             aliases: body.aliases,
             spaMode: body.spaMode,
             autheliaProtected: body.autheliaProtected,
-            domain: config.domain,
+            domain,
+            domains,
             email: config.email,
             nginx: nginxDeps,
             certbot: certbotDeps,
@@ -387,14 +410,14 @@ export default async function sitesRoutes(fastify, _opts) {
             autheliaProtected: body.autheliaProtected,
             allowedUsers: body.allowedUsers,
             aliases: body.aliases,
-            domain: config.domain,
+            domains: await activeDomainNames(),
             email: config.email,
             serverIp: config.ip,
             nginx: nginxDeps,
             certbot: certbotDeps,
             siteState: siteStateDeps,
             tunnelState: tunnelReadDeps,
-            authelia: autheliaDeps,
+            authelia: buildAutheliaDeps(request.log),
             logger: request.log,
           });
         });
@@ -443,7 +466,7 @@ export default async function sitesRoutes(fastify, _opts) {
           return verifyDns({
             id,
             serverIp: config.ip,
-            domain: config.domain,
+            domains: await activeDomainNames(),
             email: config.email,
             nginx: nginxDeps,
             certbot: certbotDeps,

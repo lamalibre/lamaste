@@ -57,11 +57,13 @@ import {
   TunnelError,
   bindUserSurface,
   releaseUserSurfaceRoute,
+  tunnelHost,
   unbindUserSurface,
 } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
 import { getConfig } from './config.js';
+import { pluginDomainName } from './domains.js';
 import { installedVersionApproved } from './plugin-hooks.js';
 import { findPluginByRoute } from './plugins.js';
 import { relaySigner } from './relay-signing.js';
@@ -225,8 +227,8 @@ export async function withUserSurfaceStatus(tunnel) {
 // ---------------------------------------------------------------------------
 
 /**
- * What core's binding workflows need from the panel — among them its domain
- * and Let's Encrypt email, which a vhost rewrite needs.
+ * What core's binding workflows need from the panel — among them its Let's
+ * Encrypt email, which a vhost rewrite needs.
  */
 function bindingOptions(id, route, logger) {
   const config = getConfig();
@@ -236,7 +238,6 @@ function bindingOptions(id, route, logger) {
   return {
     id,
     route,
-    domain: config.domain,
     email: config.email,
     nginx: tunnelNginxDeps,
     certbot: tunnelCertbotDeps,
@@ -300,6 +301,26 @@ async function assertBindableRoute(route) {
   }
 }
 
+/**
+ * Refuse binding tunnel `id` as the user surface of the plugin at `route`
+ * when the tunnel's hostname is not on the plugin's domain (400
+ * `not_plugin_domain`): a plugin's users are its domain's members.
+ */
+async function assertOnPluginDomain(id, route) {
+  const tunnel = (await readTunnels()).find((t) => t.id === id);
+  const host = tunnel ? tunnelHost(tunnel) : null;
+  if (!host) return; // core refuses a tunnel without a hostname
+  const plugin = await findPluginByRoute(route);
+  const domain = await pluginDomainName(plugin);
+  if (host.domain !== domain) {
+    throw httpError(
+      `The tunnel is on ${host.domain}; the plugin holding '${route}' belongs to ${domain}`,
+      400,
+      { code: 'not_plugin_domain' },
+    );
+  }
+}
+
 /** Whether an installed agent-hosted plugin holds `route`. */
 async function isBindableRoute(route) {
   return assertBindableRoute(route).then(
@@ -329,7 +350,11 @@ async function isBindableRoute(route) {
 export async function bindTunnelUserSurface(id, route, { actor, logger }) {
   const result = await bindUserSurface({
     ...bindingOptions(id, route, logger),
-    assertRoute: assertBindableRoute,
+    // Under the tunnel lock, as the plugin's domain changes (lib/domains.js).
+    assertRoute: async (r) => {
+      await assertBindableRoute(r);
+      await assertOnPluginDomain(id, r);
+    },
   });
   if (result.changed && !(await isBindableRoute(route))) {
     await pruneUserSurfaceBindings(route, { plugin: null, logger });

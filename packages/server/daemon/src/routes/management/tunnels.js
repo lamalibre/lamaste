@@ -32,6 +32,7 @@ import {
   isInternalPluginPort,
 } from '@lamalibre/lamaste';
 import { getConfig } from '../../lib/config.js';
+import { resolveActiveDomain } from '../../lib/domains.js';
 import { readTunnels, readSites } from '../../lib/state.js';
 import { getAgentHostFactsHash, loadAgentRegistry } from '../../lib/mtls.js';
 import { getChiselCredentialIssuedAt } from '../../lib/chisel-users.js';
@@ -147,6 +148,9 @@ const CreateTunnelSchema = z
     agentLabel: AgentLabelSchema.optional(),
     accessMode: AccessModeSchema.optional().default('restricted'),
     maxBodySizeMb: MaxBodySizeSchema.optional(),
+    // The base domain the hostname is under (an active one; the primary
+    // when absent). An agent panel is always on the primary.
+    domain: z.string().min(1).max(253).optional(),
   })
   .refine((d) => d.type !== 'plugin' || (d.pluginName && d.agentLabel), {
     message: 'pluginName and agentLabel are required for plugin tunnels',
@@ -342,6 +346,7 @@ export default async function tunnelRoutes(fastify, _opts) {
           tunnels: carried.map((t) => ({
             port: t.port,
             subdomain: t.subdomain,
+            fqdn: t.fqdn,
           })),
           // The agent-hosted plugins this agent hosts: the agent fetches a
           // plugin's config when it does not hold the secret issued at
@@ -501,6 +506,17 @@ export default async function tunnelRoutes(fastify, _opts) {
           error: 'Domain and email must be configured before creating tunnels',
         });
       }
+      let domain;
+      try {
+        domain = await resolveActiveDomain(body.domain);
+      } catch (err) {
+        return reply.code(err.statusCode ?? 400).send({ error: err.message, code: err.code });
+      }
+      if (type === 'panel' && domain !== config.domain) {
+        return reply
+          .code(400)
+          .send({ error: 'An agent panel is served on the primary domain only' });
+      }
 
       try {
         const tunnel = await createTunnel({
@@ -512,7 +528,7 @@ export default async function tunnelRoutes(fastify, _opts) {
           pluginName,
           agentLabel,
           maxBodySizeMb,
-          domain: config.domain,
+          domain,
           email: config.email,
           nginx: nginxDeps,
           certbot: certbotDeps,
@@ -589,7 +605,6 @@ export default async function tunnelRoutes(fastify, _opts) {
           agentLabel: body.agentLabel,
           accessMode: body.accessMode,
           maxBodySizeMb: body.maxBodySizeMb,
-          domain: config.domain,
           email: config.email,
           nginx: nginxDeps,
           certbot: certbotDeps,

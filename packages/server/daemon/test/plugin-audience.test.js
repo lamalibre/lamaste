@@ -128,11 +128,15 @@ before(async () => {
   await lib.loadConfig();
   autheliaStorage = createFakeAutheliaStorage();
   lib.setAutheliaForTests({
+    // No Authelia configuration to render the domains into.
+    domainAccess: async () => ({ changed: false }),
     usersFile,
     restart: async () => {},
     writeTotp: async () => {},
     userStorage: autheliaStorage.storage,
   });
+  // What the panel's start does: the primary domain, everyone its member.
+  await (await import('../src/lib/domains.js')).ensurePrimaryDomain();
   gatekeeper = installFakeGatekeeper(lib);
 
   users = {
@@ -319,6 +323,21 @@ test('a recompute that changes nothing writes nothing; a disabled user stays a m
   await saveUsers();
   await lib.recomputeAudiences();
   assert.equal((await rows('mx'))[ayse].change.member.status, 'active');
+});
+
+test('a plugin’s audience is its domain’s members: leaving the domain is leaving the audience (unentitled), coming back is coming back', async () => {
+  const domains = await import('../src/lib/domains.js');
+  const ayse = await userId('ayse');
+  assert.equal((await rows('mx'))[ayse].change.kind, 'upsert');
+  await domains.removeDomainMember('relay.test', ayse, { actor: 'admin' });
+  assert.deepEqual((await rows('mx'))[ayse].change, {
+    kind: 'remove',
+    userId: ayse,
+    reason: 'unentitled',
+    last: { username: 'ayse', displayName: 'Ayşe Yılmaz', email: 'ayse@relay.test' },
+  });
+  await domains.addDomainMember('relay.test', ayse, { actor: 'admin' });
+  assert.equal((await rows('mx'))[ayse].change.kind, 'upsert');
 });
 
 test('a user who loses every role leaves as unentitled, keeping the attributes they had then', async () => {

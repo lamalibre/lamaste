@@ -147,6 +147,78 @@ ${escapeHtml(templates.email.body)}<button class="copy-btn" onclick="copyTemplat
 </html>`;
 }
 
+/**
+ * The page a signed-in user is answered with on a host of a domain they
+ * are not a member of (the multi-domain relay): no access request — the
+ * whole domain is closed to them — but who to ask, and a way to sign in as
+ * someone else. It names no user (Authelia's refusal carries none). Shares
+ * the access-request page's look. With `site`, the page of a static site
+ * that refused a signed-in user — for its domain or its own user list
+ * (Authelia's 403 does not say which).
+ *
+ * @param domain - The base domain the requested host is under
+ * @param options - Optional admin contact info
+ * @param site - The static site's hostname, when the refusal is a site's
+ * @returns Full HTML page string
+ */
+export function buildDomainRefusalPage(
+  domain: string,
+  options?: TemplateOptions,
+  site?: string,
+): string {
+  const adminContact = options?.adminContact ?? '';
+  const adminName = options?.adminName ?? 'your administrator';
+  const heading = site
+    ? `Not allowed on <span class="fqdn">${escapeHtml(site)}</span>`
+    : `Not a member of <span class="fqdn">${escapeHtml(domain)}</span>`;
+  const explanation = site
+    ? `Your account is signed in, but it may not open this site: it is not a member of
+      ${escapeHtml(domain)}, or not one of the site's users.`
+    : `Your account is signed in, but it is not a member of this domain, so none of its
+      applications are open to it.`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Not a member — ${escapeHtml(domain)}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+      background: #09090b; color: #e4e4e7;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 1rem;
+    }
+    .card {
+      background: #18181b; border: 1px solid #27272a; border-radius: 0.75rem;
+      max-width: 560px; width: 100%; padding: 2rem;
+    }
+    .icon { font-size: 2.5rem; margin-bottom: 1rem; }
+    h1 { font-size: 1.25rem; color: #f4f4f5; margin-bottom: 0.5rem; }
+    .fqdn { color: #22d3ee; }
+    .subtitle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1rem; }
+    .contact { color: #a1a1aa; font-size: 0.8125rem; margin-top: 1.5rem; }
+    a { color: #22d3ee; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#128683;</div>
+    <h1>${heading}</h1>
+    <p class="subtitle">
+      ${explanation} Ask ${escapeHtml(adminName)} to add you if you should have access.
+    </p>
+    <p class="subtitle">
+      <a href="https://auth.${escapeAttr(domain)}/logout">Sign out</a> to sign in with another account.
+    </p>
+    ${adminContact ? `<p class="contact">Admin: <a href="mailto:${escapeAttr(adminContact)}">${escapeHtml(adminContact)}</a></p>` : ''}
+  </div>
+</body>
+</html>`;
+}
+
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, '&amp;')

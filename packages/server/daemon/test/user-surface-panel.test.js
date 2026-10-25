@@ -46,6 +46,7 @@ import {
   RELAY_PANEL_AUDIENCE,
   RELAY_PANEL_PORT,
   createRelaySigner,
+  parseDomainsProjection,
   signRelayAssertion,
 } from '@lamalibre/lamaste';
 import {
@@ -374,11 +375,15 @@ before(async () => {
   lib.setOidcSyncForTests(async () => null);
   autheliaStorage = createFakeAutheliaStorage();
   lib.setAutheliaForTests({
+    // No Authelia configuration to render the domains into.
+    domainAccess: async () => ({ changed: false }),
     usersFile,
     restart: async () => {},
     writeTotp: async () => {},
     userStorage: autheliaStorage.storage,
   });
+  // What the panel's start does: the primary domain, everyone its member.
+  await (await import('../src/lib/domains.js')).ensurePrimaryDomain();
   lib.setUserSurfaceReconcileDepsForTests(sudo.reconcileDeps(lib));
   gatekeeper = installFakeGatekeeper(lib);
   // Hosting's internal tunnel, written to tunnels.json as createTunnel
@@ -489,6 +494,8 @@ before(async () => {
       return [];
     }
   };
+  // Who may reach the domain, rendered as the panel's identity tick does.
+  await (await import('../src/lib/domains.js')).syncDomainAccess();
   gk = Fastify({ logger: false });
   const sessions = new Map();
   const gkSigner = createRelaySigner(path.join(stateDir, 'relay-signing-key.json'), {
@@ -498,6 +505,8 @@ before(async () => {
   gk.decorate('getUserSurfaceHosts', () =>
     userSurfaceHosts(readState('tunnels.json'), readState('sites.json')),
   );
+  // The projection the panel writes (lib/domains.js), as Gatekeeper reads it.
+  gk.decorate('getDomains', () => parseDomainsProjection(readState('domains.json')));
   gk.decorate('getSessionCache', () => sessions);
   gk.decorate('getCacheVersion', () => 1);
   gk.decorate('getSettings', () => ({}));

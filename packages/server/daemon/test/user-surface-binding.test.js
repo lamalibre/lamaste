@@ -150,7 +150,7 @@ async function stored(t) {
 }
 
 /** The vhost of a tunnel as nginx would read it now. */
-const vhostOf = (t) => sudo.read(`lamalibre-lamaste-app-${t.subdomain}`);
+const vhostOf = (t) => sudo.read(`lamalibre-lamaste-app-${t.fqdn}`);
 
 /** Whether a vhost serves `route`'s user surface. */
 function serves(vhost, route) {
@@ -297,11 +297,11 @@ before(async () => {
   T.away = tunnel('away', { agentLabel: 'vm2' });
   await lib.writeTunnels(Object.values(T));
   for (const t of [T.piyasa, T.spare, T.away]) {
-    await lib.writeAuthenticatedVhost(t.subdomain, 'relay.test', t.port, undefined, {
+    await lib.writeAuthenticatedVhost(t.fqdn, 'relay.test', t.port, undefined, {
       maxBodySizeMb: 10,
     });
   }
-  await lib.writeRestrictedVhost('kamera', 'relay.test', T.kamera.port, undefined, {
+  await lib.writeRestrictedVhost(T.kamera.fqdn, 'relay.test', T.kamera.port, undefined, {
     maxBodySizeMb: 10,
   });
 

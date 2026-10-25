@@ -14,6 +14,7 @@ import {
   CORE_SUBDOMAINS,
   HOSTNAME_REGEX,
   RESERVED_SUBDOMAINS,
+  isLamasteUsername,
 } from './constants.js';
 
 /** Where a domain is in its lifecycle: added, or serving (`auth.` issued, cookie rendered). */
@@ -117,4 +118,62 @@ export function isRelayHost(host: string, domains: readonly string[]): boolean {
     (CORE_SUBDOMAINS as readonly string[]).includes(label) ||
     label.startsWith(AGENT_PANEL_SUBDOMAIN_PREFIX)
   );
+}
+
+// ---------------------------------------------------------------------------
+// Gatekeeper's projection
+// ---------------------------------------------------------------------------
+
+/**
+ * The file in the relay's data directory, next to `tunnels.json`, that
+ * tells Gatekeeper who is a member of which domain. The panel writes it
+ * (0600, atomic) from its directory whenever membership, a user or a domain
+ * changes; Gatekeeper watches it and refuses every request it cannot read
+ * it for.
+ */
+export const DOMAINS_PROJECTION_FILE = 'domains.json';
+
+/** What {@link DOMAINS_PROJECTION_FILE} holds: the active domains and their active members. */
+export interface DomainsProjection {
+  readonly v: 1;
+  readonly domains: ReadonlyArray<{ readonly name: string; readonly members: readonly string[] }>;
+}
+
+/**
+ * The projection in `parsed` (a parsed `domains.json`), or null when it is
+ * not one — Gatekeeper then admits nobody. Domains must be valid and must
+ * not overlap; members are Lamaste usernames.
+ */
+export function parseDomainsProjection(parsed: unknown): DomainsProjection | null {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const { v, domains } = parsed as { v?: unknown; domains?: unknown };
+  if (v !== 1 || !Array.isArray(domains)) return null;
+  const out: Array<{ name: string; members: string[] }> = [];
+  for (const entry of domains as unknown[]) {
+    if (!entry || typeof entry !== 'object') return null;
+    const { name, members } = entry as { name?: unknown; members?: unknown };
+    if (typeof name !== 'string' || !HOSTNAME_REGEX.test(name)) return null;
+    if (out.some((d) => domainsOverlap(d.name, name))) return null;
+    if (!Array.isArray(members) || !members.every((m) => isLamasteUsername(m))) return null;
+    out.push({ name, members: [...(members as string[])] });
+  }
+  return { v: 1, domains: out };
+}
+
+/**
+ * Whether `username` is a member of the domain `host` is under:
+ * `member`, `not_member`, or `no_domain` for a host under none of them.
+ */
+export function domainMembership(
+  projection: DomainsProjection,
+  host: string,
+  username: string,
+): 'member' | 'not_member' | 'no_domain' {
+  const name = domainOfHost(
+    host,
+    projection.domains.map((d) => d.name),
+  );
+  if (name === null) return 'no_domain';
+  const domain = projection.domains.find((d) => d.name === name);
+  return domain?.members.includes(username) ? 'member' : 'not_member';
 }

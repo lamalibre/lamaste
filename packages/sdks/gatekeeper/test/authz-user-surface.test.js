@@ -48,6 +48,12 @@ let signer;
 let previousDispatcher;
 let tunnelInfoFromState;
 const sessions = new Map();
+/** The panel's projection: every user here a member of example.com (a test narrows it). */
+const ALL_MEMBERS = {
+  v: 1,
+  domains: [{ name: 'example.com', members: ['alice', 'bob', 'carol'] }],
+};
+let domainsProjection = ALL_MEMBERS;
 /** The X-Original-URL of every Authelia verification Gatekeeper made. */
 const askedAuthelia = [];
 
@@ -276,6 +282,8 @@ before(async () => {
   app = Fastify({ logger: false });
   app.decorate('getTunnels', () => tunnels);
   app.decorate('getUserSurfaceHosts', () => hosts);
+  // The panel's projection: every user here a member of example.com.
+  app.decorate('getDomains', () => domainsProjection);
   app.decorate('getSessionCache', () => sessions);
   app.decorate('getCacheVersion', () => 1);
   app.decorate('getSettings', () => ({}));
@@ -690,4 +698,16 @@ test('state: tunnels from tunnels.json; user-surface hosts from it and sites.jso
   assert.deepEqual(byHost.get('both-id').served, []);
   assert.equal(byHost.has('site-blog'), false);
   assert.equal(byHost.has('bad-owner'), false);
+});
+
+test('a user who is not a member of the host’s domain is refused with JSON, never a page', async () => {
+  domainsProjection = { v: 1, domains: [{ name: 'example.com', members: ['bob', 'carol'] }] };
+  try {
+    const res = await check('/api/market-indicators/app/notes');
+    assert.equal(res.statusCode, 403);
+    assert.deepEqual(JSON.parse(res.body), { error: 'not_a_member' });
+    assert.equal(res.headers['x-lamalibre-relay-assertion'], undefined);
+  } finally {
+    domainsProjection = ALL_MEMBERS;
+  }
 });

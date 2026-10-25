@@ -125,6 +125,8 @@ before(async () => {
   await lib.loadConfig();
   autheliaStorage = createFakeAutheliaStorage();
   lib.setAutheliaForTests({
+    // No Authelia configuration to render the domains into.
+    domainAccess: async () => ({ changed: false }),
     usersFile,
     restart: async () => {
       restarts += 1;
@@ -133,6 +135,8 @@ before(async () => {
     writeTotp: async () => {},
     userStorage: autheliaStorage.storage,
   });
+  // What the panel's start does: the primary domain, everyone its member.
+  await (await import('../src/lib/domains.js')).ensurePrimaryDomain();
   gatekeeper = installFakeGatekeeper(lib);
 
   const { default: Fastify } = await import('fastify');

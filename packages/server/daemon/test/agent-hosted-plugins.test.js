@@ -255,8 +255,14 @@ test('OIDC: an enabled agent-hosted plugin has its clients served, without being
   ]);
   assert.deepEqual(plan.scopes, {});
 
-  // What updateOidcProvider would write for it.
-  const section = buildOidcProviderSection('relay.test', 'hmac', plan.served, {
+  // What updateOidcProvider would write for it, on the plugin's domain
+  // (the primary: no panel config is loaded here, so none is named).
+  assert.deepEqual(
+    plan.served.map((c) => c.domain),
+    [null, null],
+  );
+  const served = plan.served.map((c) => ({ ...c, domain: 'relay.test' }));
+  const section = buildOidcProviderSection([{ name: 'relay.test', members: [] }], 'hmac', served, {
     secretDigests: { 'e2e-agent-hosted-service': '$pbkdf2-sha512$310000$c2FsdA$a2V5' },
   });
   assert.deepEqual(

@@ -172,42 +172,46 @@ export interface UserSurfaceDeps {
   hostingAgent(route: string): Promise<string | null>;
 }
 
-/** Writes an nginx vhost config based on tunnel type and access mode. */
+/**
+ * Writes an nginx vhost config based on tunnel type and access mode. A
+ * tunnel's vhost is named by its full hostname (`fqdn`); `domain` is the
+ * base domain the hostname is under — its sign-in is `auth.<domain>`.
+ */
 export interface NginxDeps {
   writePublicVhost(
-    subdomain: string,
+    fqdn: string,
     domain: string,
     port: number,
     certPath: string | undefined,
     opts?: VhostOptions,
   ): Promise<void>;
   writeAuthenticatedVhost(
-    subdomain: string,
+    fqdn: string,
     domain: string,
     port: number,
     certPath: string | undefined,
     opts?: VhostOptions,
   ): Promise<void>;
   writeRestrictedVhost(
-    subdomain: string,
+    fqdn: string,
     domain: string,
     port: number,
     certPath: string | undefined,
     opts?: VhostOptions,
   ): Promise<void>;
   writeAgentPanelVhost(
-    subdomain: string,
+    fqdn: string,
     domain: string,
     port: number,
     certPath: string | undefined,
     opts?: Pick<VhostOptions, 'enabled'>,
   ): Promise<void>;
-  removeAppVhost(subdomain: string): Promise<void>;
-  removeAgentPanelVhost(subdomain: string): Promise<void>;
-  enableAppVhost(subdomain: string): Promise<void>;
-  disableAppVhost(subdomain: string): Promise<void>;
-  enableAgentPanelVhost(subdomain: string): Promise<void>;
-  disableAgentPanelVhost(subdomain: string): Promise<void>;
+  removeAppVhost(fqdn: string): Promise<void>;
+  removeAgentPanelVhost(fqdn: string): Promise<void>;
+  enableAppVhost(fqdn: string): Promise<void>;
+  disableAppVhost(fqdn: string): Promise<void>;
+  enableAgentPanelVhost(fqdn: string): Promise<void>;
+  disableAgentPanelVhost(fqdn: string): Promise<void>;
 }
 
 /** Issues TLS certificates for tunnel FQDNs. */
@@ -393,22 +397,39 @@ function assertMaxBodySize(mb: number): void {
   }
 }
 
+/** A tunnel's hostname and the base domain it is under. */
+export interface TunnelHost {
+  readonly fqdn: string;
+  readonly domain: string;
+}
+
+/**
+ * The hostname of a tunnel with one — `<subdomain>.<domain>` as created —
+ * and its domain, or null for an internal plugin tunnel (no hostname) and
+ * for an entry whose hostname is not under its subdomain.
+ */
+export function tunnelHost(tunnel: Pick<TunnelEntry, 'subdomain' | 'fqdn'>): TunnelHost | null {
+  const { subdomain, fqdn } = tunnel;
+  if (!subdomain || !fqdn || !fqdn.startsWith(`${subdomain}.`)) return null;
+  return { fqdn, domain: fqdn.slice(subdomain.length + 1) };
+}
+
 function writeModeVhost(
   nginx: NginxDeps,
   accessMode: AccessMode,
-  subdomain: string,
-  domain: string,
+  host: TunnelHost,
   port: number,
   certPath: string | undefined,
   opts: VhostOptions,
 ): Promise<void> {
+  const { fqdn, domain } = host;
   if (accessMode === 'public') {
-    return nginx.writePublicVhost(subdomain, domain, port, certPath, opts);
+    return nginx.writePublicVhost(fqdn, domain, port, certPath, opts);
   }
   if (accessMode === 'authenticated') {
-    return nginx.writeAuthenticatedVhost(subdomain, domain, port, certPath, opts);
+    return nginx.writeAuthenticatedVhost(fqdn, domain, port, certPath, opts);
   }
-  return nginx.writeRestrictedVhost(subdomain, domain, port, certPath, opts);
+  return nginx.writeRestrictedVhost(fqdn, domain, port, certPath, opts);
 }
 
 /**
@@ -417,12 +438,9 @@ function writeModeVhost(
  */
 async function tunnelCertPath(
   certbot: CertbotDeps,
-  subdomain: string,
-  tunnel: Pick<TunnelEntry, 'fqdn'>,
-  domain: string,
+  fqdn: string,
   email: string,
 ): Promise<string | undefined> {
-  const fqdn = tunnel.fqdn ?? `${subdomain}.${domain}`;
   try {
     const cert = await certbot.issueTunnelCert(fqdn, email);
     return cert.certPath || undefined;
@@ -442,8 +460,7 @@ async function tunnelCertPath(
 function writeTunnelVhost(
   nginx: NginxDeps,
   tunnel: TunnelEntry,
-  subdomain: string,
-  domain: string,
+  host: TunnelHost,
   certPath: string | undefined,
   settings: {
     readonly accessMode: AccessMode;
@@ -451,7 +468,7 @@ function writeTunnelVhost(
     readonly userSurface: readonly UserSurfaceVhostRoute[];
   },
 ): Promise<void> {
-  return writeModeVhost(nginx, settings.accessMode, subdomain, domain, tunnel.port, certPath, {
+  return writeModeVhost(nginx, settings.accessMode, host, tunnel.port, certPath, {
     ...(tunnel.pluginRoute ? { pathPrefix: tunnel.pluginRoute } : {}),
     ...(settings.maxBodySizeMb !== undefined ? { maxBodySizeMb: settings.maxBodySizeMb } : {}),
     ...(settings.userSurface.length > 0 ? { userSurface: settings.userSurface } : {}),
@@ -799,9 +816,9 @@ async function createTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntr
     const certPath = certResult.certPath || undefined;
 
     if (type === 'panel') {
-      await nginx.writeAgentPanelVhost(subdomain, domain, port, certPath);
+      await nginx.writeAgentPanelVhost(fqdn, domain, port, certPath);
     } else {
-      await writeModeVhost(nginx, accessMode, subdomain, domain, port, certPath, {
+      await writeModeVhost(nginx, accessMode, { fqdn, domain }, port, certPath, {
         ...(pluginRoute ? { pathPrefix: pluginRoute } : {}),
         maxBodySizeMb,
       });
@@ -842,7 +859,7 @@ async function createTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntr
   } catch (err: unknown) {
     logger.error({ err }, 'Failed to save tunnel state');
     try {
-      await removeVhost(subdomain);
+      await removeVhost(fqdn);
     } catch (rollbackErr: unknown) {
       logger.error({ err: rollbackErr }, 'Rollback: failed to remove nginx vhost');
     }
@@ -868,7 +885,7 @@ async function createTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntr
       logger.error({ err: rollbackErr }, 'Rollback: failed to remove tunnel from state');
     }
     try {
-      await removeVhost(subdomain);
+      await removeVhost(fqdn);
     } catch (rollbackErr: unknown) {
       logger.error({ err: rollbackErr }, 'Rollback: failed to remove nginx vhost');
     }
@@ -924,12 +941,12 @@ export function deleteTunnel(
     }
     authorize?.(tunnel);
 
-    if (tunnel.subdomain !== null && !isInternalTunnel(tunnel)) {
-      logger.info({ subdomain: tunnel.subdomain }, 'Removing nginx vhost');
+    if (tunnel.fqdn !== null && !isInternalTunnel(tunnel)) {
+      logger.info({ fqdn: tunnel.fqdn }, 'Removing nginx vhost');
       if (tunnel.type === 'panel') {
-        await nginx.removeAgentPanelVhost(tunnel.subdomain);
+        await nginx.removeAgentPanelVhost(tunnel.fqdn);
       } else {
-        await nginx.removeAppVhost(tunnel.subdomain);
+        await nginx.removeAppVhost(tunnel.fqdn);
       }
     } else {
       logger.info({ tunnel: tunnelLabel(tunnel) }, 'Removing internal plugin tunnel');
@@ -955,7 +972,6 @@ export interface UpdateTunnelOptions {
   agentLabel?: string | undefined;
   accessMode?: AccessMode | undefined;
   maxBodySizeMb?: number | undefined;
-  domain: string;
   email: string;
   nginx: NginxDeps;
   certbot: CertbotDeps;
@@ -1062,20 +1078,21 @@ async function toggleTunnelLocked(
 
   // An internal tunnel has no vhost: enabling or disabling it is only the
   // chisel grant, which the sync below gives or withdraws.
-  if (tunnel.subdomain !== null && !isInternalTunnel(tunnel)) {
+  if (tunnel.fqdn !== null && !isInternalTunnel(tunnel)) {
+    const { fqdn } = tunnel;
     if (enabled) {
-      logger.info({ subdomain: tunnel.subdomain }, 'Enabling tunnel');
+      logger.info({ fqdn }, 'Enabling tunnel');
       if (isPanel) {
-        await nginx.enableAgentPanelVhost(tunnel.subdomain);
+        await nginx.enableAgentPanelVhost(fqdn);
       } else {
-        await nginx.enableAppVhost(tunnel.subdomain);
+        await nginx.enableAppVhost(fqdn);
       }
     } else {
-      logger.info({ subdomain: tunnel.subdomain }, 'Disabling tunnel');
+      logger.info({ fqdn }, 'Disabling tunnel');
       if (isPanel) {
-        await nginx.disableAgentPanelVhost(tunnel.subdomain);
+        await nginx.disableAgentPanelVhost(fqdn);
       } else {
-        await nginx.disableAppVhost(tunnel.subdomain);
+        await nginx.disableAppVhost(fqdn);
       }
     }
   } else {
@@ -1100,7 +1117,6 @@ export interface AssignTunnelOptions {
   id: string;
   agentLabel: string;
   /** For a tunnel bound as a user surface, whose vhost is rewritten. */
-  domain: string;
   email: string;
   nginx: NginxDeps;
   certbot: CertbotDeps;
@@ -1157,10 +1173,11 @@ async function assignTunnelLocked(
   const previous = tunnel.agentLabel;
   const bound = tunnelUserSurfaceRoutes(tunnel);
   let restoreVhost: (() => Promise<void>) | null = null;
-  if (bound.length > 0 && tunnel.subdomain !== null && !isInternalTunnel(tunnel)) {
+  const host = isInternalTunnel(tunnel) ? null : tunnelHost(tunnel);
+  if (bound.length > 0 && host !== null) {
     restoreVhost = await rewriteServedRoutes(
       tunnel,
-      tunnel.subdomain,
+      host,
       await opts.userSurface.servedRoutes(bound, { agentLabel: previous }),
       await opts.userSurface.servedRoutes(bound, { agentLabel }),
       opts,
@@ -1186,7 +1203,6 @@ export interface ReconfigureTunnelOptions {
   id: string;
   accessMode?: AccessMode | undefined;
   maxBodySizeMb?: number | undefined;
-  domain: string;
   email: string;
   nginx: NginxDeps;
   certbot: CertbotDeps;
@@ -1217,7 +1233,7 @@ export function reconfigureTunnel(
 async function reconfigureTunnelLocked(
   opts: ReconfigureTunnelOptions,
 ): Promise<{ ok: true; tunnel: TunnelEntry }> {
-  const { id, domain, email, nginx, certbot, state, logger } = opts;
+  const { id, email, nginx, certbot, state, logger } = opts;
 
   if (opts.maxBodySizeMb !== undefined) assertMaxBodySize(opts.maxBodySizeMb);
 
@@ -1236,7 +1252,8 @@ async function reconfigureTunnelLocked(
   // An internal tunnel has no vhost: it cannot be given an access mode, and
   // its body limit is enforced by the panel's forwarder, so only the state
   // changes.
-  if (isInternalTunnel(tunnel) || tunnel.subdomain === null) {
+  const host = isInternalTunnel(tunnel) ? null : tunnelHost(tunnel);
+  if (host === null) {
     if (opts.accessMode !== undefined) {
       throw new TunnelError(
         'An internal tunnel has no access mode — it is reachable only on the relay loopback',
@@ -1255,8 +1272,6 @@ async function reconfigureTunnelLocked(
     );
     return { ok: true as const, tunnel };
   }
-  const subdomain = tunnel.subdomain;
-
   const before = {
     accessMode: tunnel.accessMode ?? 'restricted',
     maxBodySizeMb: tunnel.maxBodySizeMb,
@@ -1277,10 +1292,10 @@ async function reconfigureTunnelLocked(
     );
   }
 
-  const certPath = await tunnelCertPath(certbot, subdomain, tunnel, domain, email);
+  const certPath = await tunnelCertPath(certbot, host.fqdn, email);
   const served = bound.length > 0 ? await opts.userSurface.servedRoutes(bound, tunnel) : [];
   const render = (settings: typeof after): Promise<void> =>
-    writeTunnelVhost(nginx, tunnel, subdomain, domain, certPath, {
+    writeTunnelVhost(nginx, tunnel, host, certPath, {
       accessMode: settings.accessMode,
       maxBodySizeMb: settings.maxBodySizeMb,
       userSurface: served,
@@ -1299,7 +1314,7 @@ async function reconfigureTunnelLocked(
   tunnel.maxBodySizeMb = after.maxBodySizeMb;
   await saveTunnelsOrRestoreVhost(state, tunnels, () => render(before), logger);
 
-  logger.info({ subdomain, from: before, to: after }, 'Tunnel reconfigured');
+  logger.info({ fqdn: host.fqdn, from: before, to: after }, 'Tunnel reconfigured');
   return { ok: true as const, tunnel };
 }
 
@@ -1312,7 +1327,6 @@ export interface UserSurfaceBindingOptions {
   id: string;
   /** The plugin route. */
   route: string;
-  domain: string;
   email: string;
   nginx: NginxDeps;
   certbot: CertbotDeps;
@@ -1366,7 +1380,7 @@ export function bindUserSurface(opts: BindUserSurfaceOptions): Promise<UserSurfa
     if (!tunnel) {
       throw new TunnelError('Tunnel not found', 'NOT_FOUND');
     }
-    const subdomain = userSurfaceHostSubdomain(tunnel);
+    const host = userSurfaceTunnelHost(tunnel);
     const current = tunnelUserSurfaceRoutes(tunnel);
     if (current.includes(route)) {
       return { ok: true as const, tunnel, changed: false };
@@ -1398,7 +1412,7 @@ export function bindUserSurface(opts: BindUserSurfaceOptions): Promise<UserSurfa
       );
     }
 
-    await rebindUserSurfaceLocked(tunnels, tunnel, subdomain, [...current, route], opts);
+    await rebindUserSurfaceLocked(tunnels, tunnel, host, [...current, route], opts);
     logger.info({ tunnel: tunnelLabel(tunnel), route }, 'User surface bound');
     return { ok: true as const, tunnel, changed: true };
   });
@@ -1421,7 +1435,8 @@ export function unbindUserSurface(
       throw new TunnelError('Tunnel not found', 'NOT_FOUND');
     }
     const current = tunnelUserSurfaceRoutes(tunnel);
-    if (!current.includes(route) || tunnel.subdomain === null) {
+    const host = tunnelHost(tunnel);
+    if (!current.includes(route) || host === null) {
       throw new TunnelError(
         `This tunnel does not serve the user surface of '${String(route)}'`,
         'NOT_FOUND',
@@ -1430,7 +1445,7 @@ export function unbindUserSurface(
     await rebindUserSurfaceLocked(
       tunnels,
       tunnel,
-      tunnel.subdomain,
+      host,
       current.filter((r) => r !== route),
       opts,
     );
@@ -1481,14 +1496,15 @@ export function releaseUserSurfaceRoute(
 }
 
 /**
- * The subdomain of a tunnel that may serve a plugin's user surface — an
+ * The host of a tunnel that may serve a plugin's user surface — an
  * enabled app tunnel an agent carries, `authenticated` or `restricted` —
  * or a refusal (`INVALID_SETTING`).
  */
-function userSurfaceHostSubdomain(tunnel: TunnelEntry): string {
+function userSurfaceTunnelHost(tunnel: TunnelEntry): TunnelHost {
   // Tunnels persisted before `type` existed are app tunnels.
   const type: string | undefined = tunnel.type;
-  if (isInternalTunnel(tunnel) || tunnel.subdomain === null || (type ?? 'app') !== 'app') {
+  const host = isInternalTunnel(tunnel) ? null : tunnelHost(tunnel);
+  if (host === null || (type ?? 'app') !== 'app') {
     throw new TunnelError(
       "Only an app tunnel's host can serve a plugin's user surface",
       'INVALID_SETTING',
@@ -1512,7 +1528,7 @@ function userSurfaceHostSubdomain(tunnel: TunnelEntry): string {
       'INVALID_SETTING',
     );
   }
-  return tunnel.subdomain;
+  return host;
 }
 
 /** Store `routes` as the tunnel's binding — none leaves no `userSurface` at all. */
@@ -1539,16 +1555,16 @@ function sameServedRoutes(
  */
 async function rewriteServedRoutes(
   tunnel: TunnelEntry,
-  subdomain: string,
+  host: TunnelHost,
   before: readonly UserSurfaceVhostRoute[],
   after: readonly UserSurfaceVhostRoute[],
-  deps: { domain: string; email: string; nginx: NginxDeps; certbot: CertbotDeps },
+  deps: { email: string; nginx: NginxDeps; certbot: CertbotDeps },
 ): Promise<(() => Promise<void>) | null> {
   if (sameServedRoutes(before, after)) return null;
-  const { domain, nginx } = deps;
-  const certPath = await tunnelCertPath(deps.certbot, subdomain, tunnel, domain, deps.email);
+  const { nginx } = deps;
+  const certPath = await tunnelCertPath(deps.certbot, host.fqdn, deps.email);
   const render = (served: readonly UserSurfaceVhostRoute[]): Promise<void> =>
-    writeTunnelVhost(nginx, tunnel, subdomain, domain, certPath, {
+    writeTunnelVhost(nginx, tunnel, host, certPath, {
       accessMode: tunnel.accessMode ?? 'restricted',
       maxBodySizeMb: tunnel.maxBodySizeMb,
       userSurface: served,
@@ -1600,13 +1616,13 @@ async function saveTunnelsOrRestoreVhost(
 async function rebindUserSurfaceLocked(
   tunnels: TunnelEntry[],
   tunnel: TunnelEntry,
-  subdomain: string,
+  host: TunnelHost,
   next: string[],
   opts: UserSurfaceBindingOptions,
 ): Promise<void> {
   const restoreVhost = await rewriteServedRoutes(
     tunnel,
-    subdomain,
+    host,
     await opts.userSurface.servedRoutes(tunnelUserSurfaceRoutes(tunnel), tunnel),
     await opts.userSurface.servedRoutes(next, tunnel),
     opts,
@@ -1659,10 +1675,12 @@ export function releaseAgentTunnels(
     const released: string[] = [];
     const releasedIds: string[] = [];
     const removedPanels: string[] = [];
+    const removedPanelHosts: string[] = [];
     const next: TunnelEntry[] = [];
     for (const t of tunnels) {
       if (t.type === 'panel' && (t.agentLabel === agentLabel || t.subdomain === panelSubdomain)) {
         removedPanels.push(t.subdomain ?? panelSubdomain);
+        if (t.fqdn) removedPanelHosts.push(t.fqdn);
         continue;
       }
       if (t.agentLabel === agentLabel) {
@@ -1679,11 +1697,11 @@ export function releaseAgentTunnels(
     }
 
     await state.writeTunnels(next);
-    for (const subdomain of removedPanels) {
+    for (const fqdn of removedPanelHosts) {
       try {
-        await nginx.removeAgentPanelVhost(subdomain);
+        await nginx.removeAgentPanelVhost(fqdn);
       } catch (err: unknown) {
-        logger.error({ err, subdomain }, 'Failed to remove a revoked agent panel vhost');
+        logger.error({ err, fqdn }, 'Failed to remove a revoked agent panel vhost');
       }
     }
     await syncOrThrow(chisel);

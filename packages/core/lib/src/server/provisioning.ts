@@ -101,7 +101,8 @@ export interface CertbotProvDeps {
 
 export interface NginxProvDeps {
   writePanelVhost(domain: string): Promise<void>;
-  writeAuthVhost(domain: string): Promise<void>;
+  /** The primary domain's auth portal (`lamalibre-lamaste-auth-<domain>`), written and linked. */
+  writeAuthVhost(domain: string, opts: { primary: boolean }): Promise<unknown>;
   writeTunnelVhost(domain: string): Promise<void>;
   enableSite(name: string): Promise<void>;
   testConfig(): Promise<{ valid: boolean; error?: string }>;
@@ -259,7 +260,7 @@ export async function provisionServer(opts: ProvisionServerOptions): Promise<Pro
     await nginxDeps.writePanelVhost(domain);
 
     emitProgress('configure-nginx', 'running', 'Writing auth vhost...');
-    await nginxDeps.writeAuthVhost(domain);
+    await nginxDeps.writeAuthVhost(domain, { primary: true });
 
     emitProgress('configure-nginx', 'running', 'Writing tunnel vhost...');
     await nginxDeps.writeTunnelVhost(domain);
@@ -269,7 +270,6 @@ export async function provisionServer(opts: ProvisionServerOptions): Promise<Pro
 
     emitProgress('configure-nginx', 'running', 'Enabling sites...');
     await nginxDeps.enableSite('lamalibre-lamaste-panel-domain');
-    await nginxDeps.enableSite('lamalibre-lamaste-auth');
     await nginxDeps.enableSite('lamalibre-lamaste-tunnel');
 
     emitProgress('configure-nginx', 'running', 'Testing nginx configuration...');

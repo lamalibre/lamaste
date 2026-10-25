@@ -282,11 +282,15 @@ export function registryIssuer(
  * credential uses `auth.kind: 'oidc'`. Lives next to the plugin clients in
  * Authelia's configuration; its secret in `oidc-clients.json`.
  */
-export function lamasteServerOidcClient(registryUrl: string): AutheliaOidcClient {
+export function lamasteServerOidcClient(
+  registryUrl: string,
+  issuerDomain: string,
+): AutheliaOidcClient {
   return {
     id: LAMASTE_SERVER_OIDC_CLIENT_ID,
     name: 'Lamaste panel (registry broker)',
     plugin: 'lamaste',
+    domain: issuerDomain,
     grantTypes: ['client_credentials'],
     scopes: [LAMASTE_REGISTRY_OIDC_SCOPE],
     audience: [registryAudience(registryUrl)],

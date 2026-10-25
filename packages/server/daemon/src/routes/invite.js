@@ -149,6 +149,11 @@ export default async function inviteRoutes(fastify, _opts) {
           // A removed user's grants, groups and second factors under the
           // username go first; a username with an OIDC identity is refused.
           creates: [invitation.username],
+          // The domains the invitation names (an invitation from before the
+          // multi-domain relay names none: the relay's one domain).
+          ...(Array.isArray(invitation.domains)
+            ? { domains: { [invitation.username]: invitation.domains } }
+            : {}),
           expect: (users) => users[invitation.username]?.password === hashedPassword,
         },
       );
@@ -191,8 +196,11 @@ export default async function inviteRoutes(fastify, _opts) {
       request.log.warn(err, 'Failed to update invitation status (user was created)');
     }
 
+    // The sign-in of the first domain the user is a member of — the primary
+    // for an invitation that names none.
     const config = getConfig();
-    const loginUrl = config.domain ? `https://auth.${config.domain}/` : null;
+    const loginDomain = invitation.domains?.[0] ?? config.domain;
+    const loginUrl = loginDomain ? `https://auth.${loginDomain}/` : null;
 
     return {
       ok: true,

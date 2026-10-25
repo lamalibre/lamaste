@@ -77,6 +77,7 @@ import {
 } from './audience.js';
 import { getConfig } from './config.js';
 import { clearPendingPrincipals, getDirectoryId, reconcileDirectory } from './directory.js';
+import { ensurePrimaryDomain, syncDomainAccess } from './domains.js';
 import { installedVersionApproved } from './plugin-hooks.js';
 import { findPlugin, findPluginByRoute, readPlugins } from './plugins.js';
 import { retainedIdentityPositions } from './retained-data.js';
@@ -874,6 +875,14 @@ export async function identityTick(logger) {
         await reconcileDirectory({ actor: 'lamaste', logger });
       } catch (err) {
         logger?.warn({ err: err.message }, 'Could not reconcile the user directory');
+      }
+      // Who may reach each domain, as the directory now says: users adopted
+      // or removed outside Lamaste, and a rendering a failure left behind.
+      try {
+        await ensurePrimaryDomain({ logger });
+        await syncDomainAccess({ logger });
+      } catch (err) {
+        logger?.warn({ err: err.message }, 'Could not render domain access');
       }
     }
     await clearPendingPrincipals({ logger });

@@ -146,6 +146,11 @@ async function gatekeeperApp({ logger = false, rateLimitPerClient } = {}) {
   const hosts = userSurfaceHosts(STATE, []);
   instance.decorate('getTunnels', () => tunnels);
   instance.decorate('getUserSurfaceHosts', () => hosts);
+  // The panel's projection: every user here a member of example.com.
+  instance.decorate('getDomains', () => ({
+    v: 1,
+    domains: [{ name: 'example.com', members: ['alice', 'bob', 'carol'] }],
+  }));
   instance.decorate('getSessionCache', () => sessions);
   instance.decorate('getCacheVersion', () => 1);
   instance.decorate('getSettings', () => ({}));

@@ -24,7 +24,7 @@ import {
   startAuthelia as startAutheliaCore,
   reloadAuthelia as reloadAutheliaCore,
   isAutheliaRunning as isAutheliaRunningCore,
-  updateAutheliaAccessControl,
+  updateAutheliaDomainAccess,
   updateAutheliaOidcProvider,
   createUserFromInvitation as createUserFromInvitationCore,
   base32Encode,
@@ -56,18 +56,23 @@ let restartAuthelia = restartRealAuthelia;
 let totpWriter = writeRealTotp;
 /** Authelia's per-user storage — replaced in tests. */
 let userStorage = realUserStorage;
+const updateRealDomainAccess = (access) => updateAutheliaDomainAccess(access, execa);
+/** Render the domains into Authelia's configuration — replaced in tests. */
+let domainAccessWriter = updateRealDomainAccess;
 
 /**
- * Point the users file, the Authelia restart, the TOTP writer and the
- * per-user storage elsewhere (tests); `null` restores Authelia's.
+ * Point the users file, the Authelia restart, the TOTP writer, the
+ * per-user storage and the domain rendering elsewhere (tests); `null`
+ * restores Authelia's.
  *
- * @param {{ usersFile?: string, restart?: () => Promise<unknown>, writeTotp?: (username: string, secret: string) => Promise<void>, userStorage?: { purgeSecondFactors: (username: string) => Promise<void>, holdsOidcIdentifier: (username: string) => Promise<boolean> } } | null} overrides
+ * @param {{ usersFile?: string, restart?: () => Promise<unknown>, writeTotp?: (username: string, secret: string) => Promise<void>, userStorage?: { purgeSecondFactors: (username: string) => Promise<void>, holdsOidcIdentifier: (username: string) => Promise<boolean> }, domainAccess?: (access: object) => Promise<{ changed: boolean }> } | null} overrides
  */
 export function setAutheliaForTests(overrides) {
   usersFile = overrides?.usersFile ?? AUTHELIA_USERS;
   restartAuthelia = overrides?.restart ?? restartRealAuthelia;
   totpWriter = overrides?.writeTotp ?? writeRealTotp;
   userStorage = overrides?.userStorage ?? realUserStorage;
+  domainAccessWriter = overrides?.domainAccess ?? updateRealDomainAccess;
 }
 
 /**
@@ -134,18 +139,27 @@ export function isAutheliaRunning() {
   return isAutheliaRunningCore(execa);
 }
 
-export function updateAccessControl(sites) {
-  return updateAutheliaAccessControl(sites, execa);
+/**
+ * Bring Authelia's session cookies, access control and OIDC authorization
+ * policies in line with the relay's domains and their members (core
+ * `updateDomainAccess`) — lib/domains.js `syncDomainAccess` alone calls it.
+ *
+ * @param {import('@lamalibre/lamaste/server').DomainAccess} access
+ * @returns {Promise<{ changed: boolean }>}
+ */
+export function updateDomainAccess(access) {
+  return domainAccessWriter(access);
 }
 
 /**
- * Make Authelia's OIDC provider serve exactly these clients.
- * @param {string} domain
+ * Make Authelia's OIDC provider serve exactly these clients, each of one of
+ * `domains` (the active domains with their members).
+ * @param {import('@lamalibre/lamaste/server').AutheliaDomain[]} domains
  * @param {import('@lamalibre/lamaste/server').AutheliaOidcClient[]} clients
  * @param {import('@lamalibre/lamaste/server').OidcProviderOptions} [options]
  */
-export function updateOidcProvider(domain, clients, options = {}) {
-  return updateAutheliaOidcProvider(domain, clients, execa, options);
+export function updateOidcProvider(domains, clients, options = {}) {
+  return updateAutheliaOidcProvider(domains, clients, execa, options);
 }
 
 /**

@@ -9,7 +9,7 @@
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import { HOSTNAME_REGEX } from '../constants.js';
-import { isRelayHost, isReservedLabel } from '../domains.js';
+import { domainOfHost, isRelayHost, isReservedLabel } from '../domains.js';
 import type { WebSurfaceAccessMode } from '../web-surface.js';
 
 // ---------------------------------------------------------------------------
@@ -78,13 +78,14 @@ export interface CertResult {
 // ---------------------------------------------------------------------------
 
 export interface SiteNginxDeps {
-  writeStaticSiteVhost(site: SiteEntry, certDir: string, domain: string): Promise<void>;
+  /** `domain`: the base domain the site's hostname is under, null for none (no sign-in). */
+  writeStaticSiteVhost(site: SiteEntry, certDir: string, domain: string | null): Promise<void>;
   removeStaticSiteVhost(siteId: string): Promise<void>;
 }
 
 export interface SiteCertbotDeps {
   issueTunnelCert(fqdn: string, email: string): Promise<CertResult>;
-  getCertPath(fqdn: string, domain: string): Promise<string>;
+  getCertPath(fqdn: string, domain: string | null): Promise<string>;
   /** One lineage named after `fqdn` covering `fqdn` and every alias. */
   issueSiteCert(
     fqdn: string,
@@ -142,6 +143,7 @@ export class SiteError extends Error {
       | 'NOT_FOUND'
       | 'NOT_CUSTOM'
       | 'ALREADY_VERIFIED'
+      | 'NOT_UNDER_DOMAIN'
       | 'DNS_MISMATCH'
       | 'AUTHELIA_FAILED'
       | 'INVALID_ALIAS'
@@ -202,6 +204,19 @@ async function resolveA(hostname: string): Promise<string[]> {
   }
 }
 
+/**
+ * Refuse sign-in on a hostname under none of the relay's domains: no
+ * domain's session cookie reaches it, so nobody could ever sign in there.
+ */
+function assertSignInDomain(fqdn: string, domains: readonly string[]): void {
+  if (domainOfHost(fqdn, domains) === null) {
+    throw new SiteError(
+      `'${fqdn}' is under none of this relay's domains — no sign-in reaches it`,
+      'NOT_UNDER_DOMAIN',
+    );
+  }
+}
+
 /** The hostnames tunnels serve; internal plugin tunnels have none and cannot collide. */
 function tunnelHostnames(tunnels: ReadonlyArray<{ fqdn: string | null }>): Set<string> {
   return new Set(tunnels.flatMap((t) => (t.fqdn ? [t.fqdn.toLowerCase()] : [])));
@@ -217,7 +232,7 @@ function validateAliases(
   selfId: string | null,
   sites: readonly SiteEntry[],
   tunnels: ReadonlyArray<{ fqdn: string | null }>,
-  domain: string,
+  domains: readonly string[],
 ): string[] {
   const normalised = [...new Set(aliases.map((a) => a.trim().toLowerCase()))];
   if (normalised.length > MAX_SITE_ALIASES) {
@@ -231,7 +246,7 @@ function validateAliases(
     if (alias === fqdn) {
       throw new SiteError(`Alias '${alias}' is the site's own domain`, 'INVALID_ALIAS');
     }
-    if (isRelayHost(alias, [domain])) {
+    if (isRelayHost(alias, domains)) {
       throw new SiteError(`'${alias}' is reserved for Lamaste itself`, 'INVALID_ALIAS');
     }
     if (tunnelHosts.has(alias)) {
@@ -271,7 +286,10 @@ export interface CreateSiteOptions {
   aliases?: string[] | undefined;
   spaMode?: boolean | undefined;
   autheliaProtected?: boolean | undefined;
+  /** A managed site's domain: its hostname is `<name>.<domain>`. */
   domain: string;
+  /** The relay's active domains — what a custom site, its aliases and sign-in are checked against. */
+  domains: readonly string[];
   email: string;
   nginx: SiteNginxDeps;
   certbot: SiteCertbotDeps;
@@ -301,6 +319,7 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
     spaMode = false,
     autheliaProtected = false,
     domain,
+    domains,
     email,
     nginx,
     certbot,
@@ -329,9 +348,10 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
   }
 
   const fqdn = type === 'managed' ? `${name}.${domain}` : customDomain!;
-  if (type === 'custom' && isRelayHost(fqdn, [domain])) {
+  if (type === 'custom' && isRelayHost(fqdn, domains)) {
     throw new SiteError(`'${fqdn}' is reserved for Lamaste itself`, 'RESERVED_NAME');
   }
+  if (autheliaProtected) assertSignInDomain(fqdn, domains);
 
   const tunnels = await tunnelState.readTunnels();
 
@@ -350,7 +370,7 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
   if (aliases.length > 0 && type !== 'custom') {
     throw new SiteError('Aliases are only supported on custom-domain sites', 'NOT_CUSTOM');
   }
-  const siteAliases = validateAliases(fqdn, aliases, null, existingSites, tunnels, domain);
+  const siteAliases = validateAliases(fqdn, aliases, null, existingSites, tunnels, domains);
 
   const id = crypto.randomUUID();
   const rootPath = files.getSiteRoot(id);
@@ -568,7 +588,8 @@ export interface UpdateSiteOptions {
   allowedUsers?: string[] | undefined;
   /** Custom-domain sites only: the complete new alias list. */
   aliases?: string[] | undefined;
-  domain: string;
+  /** The relay's active domains. */
+  domains: readonly string[];
   /** Needed only when aliases change on a live site. */
   email?: string | undefined;
   serverIp?: string | undefined;
@@ -612,7 +633,7 @@ export interface UpdateSiteResult {
  * covers every alias.
  */
 export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteResult> {
-  const { id, domain, nginx, certbot, siteState, authelia, logger } = opts;
+  const { id, domains, nginx, certbot, siteState, authelia, logger } = opts;
 
   const sites = await siteState.readSites();
   const siteIndex = sites.findIndex((s) => s.id === id);
@@ -627,6 +648,7 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
   const newAutheliaProtected =
     opts.autheliaProtected !== undefined ? opts.autheliaProtected : site.autheliaProtected;
   const newAllowedUsers = opts.allowedUsers !== undefined ? opts.allowedUsers : site.allowedUsers;
+  if (newAutheliaProtected && !site.autheliaProtected) assertSignInDomain(site.fqdn, domains);
 
   let newAliases = site.aliases ?? [];
   if (opts.aliases !== undefined) {
@@ -634,7 +656,7 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
       throw new SiteError('Aliases are only supported on custom-domain sites', 'NOT_CUSTOM');
     }
     const tunnels = opts.tunnelState ? await opts.tunnelState.readTunnels() : [];
-    newAliases = validateAliases(site.fqdn, opts.aliases, site.id, sites, tunnels, domain);
+    newAliases = validateAliases(site.fqdn, opts.aliases, site.id, sites, tunnels, domains);
   }
 
   const spaModeChanged = newSpaMode !== site.spaMode;
@@ -688,6 +710,7 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
   // Regenerate nginx vhost if the site is live and nginx-affecting settings changed
   if (site.certIssued && (spaModeChanged || autheliaChanged || aliasesChanged)) {
     try {
+      const domain = domainOfHost(site.fqdn, domains);
       const certDir =
         site.type === 'managed'
           ? await certbot.getCertPath(site.fqdn, domain)
@@ -753,7 +776,8 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
 export interface VerifyDnsOptions {
   id: string;
   serverIp: string;
-  domain: string;
+  /** The relay's active domains. */
+  domains: readonly string[];
   email: string;
   nginx: SiteNginxDeps;
   certbot: SiteCertbotDeps;
@@ -776,7 +800,7 @@ export type VerifyDnsResult =
  * On success, issues TLS cert and configures nginx.
  */
 export async function verifyDns(opts: VerifyDnsOptions): Promise<VerifyDnsResult> {
-  const { id, serverIp, domain, email, nginx, certbot, siteState, logger } = opts;
+  const { id, serverIp, domains, email, nginx, certbot, siteState, logger } = opts;
 
   const sites = await siteState.readSites();
   const site = sites.find((s) => s.id === id);
@@ -839,7 +863,7 @@ export async function verifyDns(opts: VerifyDnsOptions): Promise<VerifyDnsResult
 
   try {
     const certDir = `/etc/letsencrypt/live/${site.fqdn}/`;
-    await nginx.writeStaticSiteVhost(site, certDir, domain);
+    await nginx.writeStaticSiteVhost(site, certDir, domainOfHost(site.fqdn, domains));
   } catch (err: unknown) {
     logger.error({ err }, 'Failed to write nginx vhost for custom domain');
     throw new SiteError(

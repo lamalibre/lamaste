@@ -9,7 +9,8 @@
  *
  * `auth.kind` is `token` (a pasted long-lived Feria token) or `oidc` (the
  * panel's own `lamaste-server` client on Authelia: client-credentials grant,
- * Feria login). For `oidc` the client is written to Authelia before the
+ * Feria login; `issuerDomain` names the active domain whose issuer,
+ * `https://auth.<domain>`, the registry trusts — the primary when absent). For `oidc` the client is written to Authelia before the
  * chain is verified; if verification fails it is removed again, and the
  * error says what Feria's `auth.json` needs.
  *
@@ -30,6 +31,7 @@ import {
   verifyRegistryCredential,
   writeRegistryCredentialConfig,
 } from '../../lib/registry-credential.js';
+import { resolveActiveDomain } from '../../lib/domains.js';
 import { syncOidcClients } from '../../lib/plugin-oidc.js';
 
 const FeriaTokenSchema = z
@@ -40,7 +42,7 @@ const FeriaTokenSchema = z
 
 const AuthSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('token'), token: FeriaTokenSchema }),
-  z.object({ kind: z.literal('oidc') }),
+  z.object({ kind: z.literal('oidc'), issuerDomain: z.string().min(1).max(253).optional() }),
 ]);
 
 const PutSchema = z
@@ -64,9 +66,13 @@ const PutSchema = z
     }
   });
 
-/** The stored `auth` for a request body. */
-function authOf(body) {
-  if (body.auth?.kind === 'oidc') return { kind: 'oidc', clientId: LAMASTE_SERVER_OIDC_CLIENT_ID };
+/** The stored `auth` for a request body (`issuerDomain` resolved against the active domains). */
+async function authOf(body) {
+  if (body.auth?.kind === 'oidc') {
+    const auth = { kind: 'oidc', clientId: LAMASTE_SERVER_OIDC_CLIENT_ID };
+    if (body.auth.issuerDomain === undefined) return auth;
+    return { ...auth, issuerDomain: await resolveActiveDomain(body.auth.issuerDomain) };
+  }
   if (body.auth?.kind === 'token') return { kind: 'token', token: body.auth.token };
   return { kind: 'token', token: body.token };
 }
@@ -90,7 +96,13 @@ export default async function registryCredentialRoutes(fastify) {
     },
     async (request, reply) => {
       const body = PutSchema.parse(request.body);
-      const auth = authOf(body);
+      let auth;
+      try {
+        auth = await authOf(body);
+      } catch (err) {
+        if (!err.statusCode) throw err;
+        return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+      }
       const candidate = { registryUrl: body.registryUrl, auth };
 
       // The panel's own client must exist in Authelia (with a secret in the
@@ -98,7 +110,10 @@ export default async function registryCredentialRoutes(fastify) {
       if (auth.kind === 'oidc') {
         try {
           const synced = await syncOidcClients(request.log, {
-            registryAuth: { registryUrl: body.registryUrl },
+            registryAuth: {
+              registryUrl: body.registryUrl,
+              ...(auth.issuerDomain ? { issuerDomain: auth.issuerDomain } : {}),
+            },
           });
           if (!synced) {
             return reply.code(503).send({ error: 'Complete onboarding (set a domain) first' });

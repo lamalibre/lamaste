@@ -149,8 +149,11 @@ export async function runStatus({ label }) {
       console.log(`  ${d('No tunnels configured.')}`);
     } else {
       for (const t of tunnels) {
+        // The tunnel's own hostname: it may be on another domain of the relay
+        // than the one this agent enrolled with.
+        const host = t.fqdn ? b(t.fqdn) : `${b(t.subdomain)}.${config.domain || '?'}`;
         console.log(
-          `  ${c('•')} ${b(t.subdomain)}.${config.domain || '?'} → localhost:${t.port}${t.description ? d(` (${t.description})`) : ''}`,
+          `  ${c('•')} ${host} → localhost:${t.port}${t.description ? d(` (${t.description})`) : ''}`,
         );
       }
     }

@@ -21,6 +21,12 @@ import {
   getDirectoryUser,
   usersFileError,
 } from '../../lib/directory.js';
+import {
+  domainsByUser,
+  domainsForNewUser,
+  domainsOfUser,
+  newUsersNeedDomains,
+} from '../../lib/domains.js';
 
 const CreateUserSchema = z.object({
   username: z
@@ -35,6 +41,9 @@ const CreateUserSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(128),
   groups: z.array(z.string()).optional().default([]),
+  // The domains the user is a member of — required while the relay has two
+  // or more; with one, the user becomes its member.
+  domains: z.array(z.string().min(1).max(253)).max(50).optional(),
 });
 
 const UsernameParamSchema = z.object({
@@ -130,6 +139,7 @@ export default async function usersRoutes(fastify, _opts) {
       try {
         const users = await readUsers();
         const directory = await directoryUsersByUsername();
+        const memberships = await domainsByUser();
         const listed = users
           .map((user) => {
             const known = directory.get(user.username);
@@ -137,6 +147,7 @@ export default async function usersRoutes(fastify, _opts) {
               ...user,
               userId: known?.userId ?? null,
               status: known?.status ?? (user.disabled ? 'disabled' : 'active'),
+              domains: (known && memberships.get(known.userId)) ?? [],
             };
           })
           .sort((a, b) => a.username.localeCompare(b.username));
@@ -159,6 +170,19 @@ export default async function usersRoutes(fastify, _opts) {
     },
     async (request, reply) => {
       const body = CreateUserSchema.parse(request.body);
+
+      let domains;
+      try {
+        if (body.domains === undefined && (await newUsersNeedDomains())) {
+          return reply.code(400).send({
+            error: 'Name the domains the user is a member of: this relay has more than one',
+            code: 'domains_required',
+          });
+        }
+        domains = await domainsForNewUser(body.domains);
+      } catch (err) {
+        return sendFailure(request, reply, err, 'Failed to read the domains');
+      }
 
       try {
         // Refused before a password is hashed; checked again under the lock.
@@ -198,6 +222,7 @@ export default async function usersRoutes(fastify, _opts) {
             // A removed user's grants, groups and second factors under the
             // username go first; a username with an OIDC identity is refused.
             creates: [body.username],
+            domains: { [body.username]: domains },
             expect: (users) => users[body.username]?.password === hash,
           },
         ));
@@ -217,6 +242,7 @@ export default async function usersRoutes(fastify, _opts) {
           disabled: false,
           userId: created?.userId ?? null,
           status: 'active',
+          domains: created ? await domainsOfUser(created.userId) : [],
         },
         ...(warnings.length > 0 ? { warnings } : {}),
       });

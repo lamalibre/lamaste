@@ -81,21 +81,37 @@ class UsageError extends Error {}
 // ---------------------------------------------------------------------------
 
 const LABEL = '[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?';
+/** A full hostname, lower case, two labels at least — what names a vhost since the multi-domain relay. */
+const HOST = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+';
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 
-/** Vhosts the panel writes. */
+/**
+ * Vhosts the panel writes: the panel's and chisel's (primary domain), one
+ * auth portal per domain, a tunnel's by its full hostname, a site's by id.
+ */
 const PANEL_SITE_RE = new RegExp(
-  `^lamalibre-lamaste-(?:panel-domain|auth|tunnel|app-${LABEL}|agent-panel-${LABEL}|site-${UUID})$`,
+  `^lamalibre-lamaste-(?:panel-domain|tunnel|auth-${HOST}|app-${HOST}|agent-panel-${HOST}|site-${UUID})$`,
 );
+
+/**
+ * Vhost names before the multi-domain relay — the auth portal and tunnels
+ * by subdomain alone. The panel renames them at start; it may still link,
+ * unlink, back up, restore and remove them, but never write one.
+ */
+const LEGACY_SITE_RE = new RegExp(`^lamalibre-lamaste-(?:auth|app-${LABEL}|agent-panel-${LABEL})$`);
 
 /** Vhosts create-lamaste writes that the panel may only switch on and off. */
 const TOGGLE_ONLY_SITES = new Set(['lamalibre-lamaste-panel-ip']);
 
+/** The longest site name: a file name, with room for its `.bak`. */
+const MAX_SITE_NAME = 250;
+
 function assertSiteName(name, action) {
-  if (typeof name !== 'string' || name.length > 128) {
+  if (typeof name !== 'string' || name.length > MAX_SITE_NAME) {
     throw new UsageError('invalid site name');
   }
   if (PANEL_SITE_RE.test(name)) return;
+  if (action !== 'write' && LEGACY_SITE_RE.test(name)) return;
   if ((action === 'enable' || action === 'disable') && TOGGLE_ONLY_SITES.has(name)) return;
   throw new UsageError(`site name not allowed for ${action}: ${name}`);
 }
