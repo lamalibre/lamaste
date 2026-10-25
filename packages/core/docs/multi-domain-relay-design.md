@@ -450,10 +450,49 @@ name. Specs (written after slice 7's campaign, run only with the user's go):
    renderers are wired, and `updateAccessControl`'s own site loop removed,
    in wave 2 together with membership — wiring them alone would deny every
    user. `NginxDeps` by `fqdn` moves to wave 2 with `nginx.js`.
-2. **serverd + Gatekeeper + lamaste-priv**: migration 0016, domain routes,
-   membership + offboarding + audience, Authelia/projection rendering, vhost
-   renames, registry credential, Gatekeeper forbidden path + projection +
-   refusal page; tests.
+2. **serverd + Gatekeeper + lamaste-priv** — done. state.db `0016_domains.sql`
+   (`domains`, `domain_members` with seq triggers, `plugins.domain`);
+   `lib/domains.js` (records, `ensurePrimaryDomain`, membership,
+   lifecycle with rollback, `syncDomainAccess` rendering Authelia and the
+   `domains.json` projection), `lib/plugin-domain.js`, routes
+   `routes/management/domains.js`; the directory gives new users their
+   domains and ends a removed user's memberships in its transaction;
+   `changeUsers` renders before Authelia restarts; audiences are entitled ∩
+   members; OIDC clients carry their plugin's domain; vhosts by hostname
+   with `renameLegacyVhosts` at start; per-domain auth vhosts; Gatekeeper
+   (`authz.ts`: Authelia 403 kept, projection check, `buildDomainRefusalPage`,
+   `/authz/refusal/:fqdn`); `lamaste-priv` names. Tests: serverd
+   `domains.test.js`, `multi-domain-core.test.js`, Gatekeeper
+   `authz-domain-membership.test.js`, and the existing suites updated.
+
+   **Deviations, for review:**
+   - OIDC authorization policy names are `lamaste_<domain with . as _>_<factor>`,
+     not `lamaste:<domain>:<factor>`: Authelia's configuration loader
+     (koanf) splits key paths at dots. Domain labels hold no `_`, so the
+     names stay unambiguous.
+   - A web surface is created on its plugin's domain (decision 5); its
+     create request takes no `domain` (one would only have to equal it).
+     Moving the plugin (`PUT /api/plugins/:name/domain`) is refused while a
+     tunnel is bound as its user surface or it owns a web surface
+     (409 `surface_bound`).
+   - `plugins.domain` NULL means the primary; nothing is rewritten at the
+     upgrade. A plugin is installed on the primary and moved afterwards.
+   - Sign-in on a hostname under no domain is refused when a site is
+     created or protected (`NOT_UNDER_DOMAIN`, 400): no session cookie
+     reaches it. Such a site's rules render a deny alone.
+   - A static site's refusal page (`/authz/refusal/:fqdn`) cannot tell a
+     non-member from a user the site's own list leaves out (Authelia's 403
+     says neither): it says both.
+   - Members may be added to a pending domain, so an activation goes live
+     with them; pending domains are rendered nowhere.
+   - `changeUsers` skips its own Authelia restart when the domain rendering
+     restarted it already (one restart per change).
+   - An agent with `tunnels:write` may create (restricted) tunnels on any
+     active domain, as on the primary before.
+   - `renameVhosts` (nginx.js) is unit-tested through its caller only —
+     nginx.js reads `/etc/nginx`; the rename itself is proven by single-VM
+     spec 34.
+
 3. **UI, desktop, CLI, docs**.
 4. **Rodeo specs** (45–47, single-VM 34).
 
