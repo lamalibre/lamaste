@@ -718,10 +718,11 @@ function gatekeeperSubrequest(check, fqdn) {
  * - `/internal/lamaste/user-surface-401` answers a request without a
  *   session with Gatekeeper's JSON 401 — an application's request is never
  *   redirected to the login page.
- * - `/internal/lamaste/user-surface-403` answers a refused request with
- *   Gatekeeper's JSON refusal (`/authz/user-surface-refusal/<fqdn>`, asked
- *   as the subrequest was): under `auth_request` nginx keeps only the
- *   subrequest's status, never its body.
+ * - `/internal/lamaste/user-surface-403` answers a refused request with its
+ *   refusal as JSON: under `auth_request` nginx keeps only the subrequest's
+ *   status and headers, never its body, so Gatekeeper names the refusal in
+ *   `X-Lamalibre-Refusal` and the location answers `not_a_member` for that
+ *   value and `forbidden` for anything else.
  *
  * Each route's locations pass the assertion, and nothing else of the
  * browser's credentials ({@link USER_SURFACE_PROXY_HEADERS}), to the panel
@@ -747,6 +748,7 @@ function userSurfaceLocations(fqdn, userSurface) {
     const block = `{
         auth_request /internal/lamaste/user-surface-authz;
         auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;
+        auth_request_set $lamaste_refusal $upstream_http_x_lamalibre_refusal;
 
         # The user, vouched for by Gatekeeper to the panel for this one request
         proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;
@@ -761,7 +763,7 @@ ${USER_SURFACE_PROXY_HEADERS}
         proxy_read_timeout ${USER_SURFACE_MAX_RESPONSE_SECONDS}s;
         proxy_send_timeout ${USER_SURFACE_MAX_RESPONSE_SECONDS}s;
 
-        # No session: a JSON 401, never a redirect; refused: Gatekeeper's JSON 403
+        # No session: a JSON 401, never a redirect; refused: the refusal as JSON
         error_page 401 = /internal/lamaste/user-surface-401;
         error_page 403 = /internal/lamaste/user-surface-403;
     }`;
@@ -781,7 +783,14 @@ ${USER_SURFACE_PROXY_HEADERS}
     }
 
     location = /internal/lamaste/user-surface-403 {
-        ${gatekeeperSubrequest('user-surface-refusal', fqdn)}
+        internal;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        if ($lamaste_refusal = not_a_member) {
+            return 403 '{"error":"not_a_member"}';
+        }
+        return 403 '{"error":"forbidden"}';
     }
 
     location = /internal/lamaste/user-surface-401 {

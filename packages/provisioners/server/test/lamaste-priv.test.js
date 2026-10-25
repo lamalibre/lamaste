@@ -69,6 +69,8 @@ const refused = {
   'types entry without a media type': location('  types { html htm; }'),
   'types entry with a dotted extension': location('  types { text/html .html; }'),
   'types entry with no extension': location('  types { text/html; }'),
+  'default_type naming a file': location('  default_type /etc/shadow;'),
+  'default_type at server level': server(' default_type application/json;'),
 };
 
 for (const [name, text] of Object.entries(refused)) {
@@ -90,6 +92,16 @@ test('accepts the content types of a web surface in a location', () => {
   validateVhost(
     location(
       '  types {\n   text/javascript js mjs;\n   application/manifest+json webmanifest;\n   image/svg+xml svg;\n  }',
+    ),
+  );
+});
+
+test('accepts a user surface’s JSON refusal: a media type and a fixed body', () => {
+  validateVhost(
+    location(
+      '  internal;\n  default_type application/json;\n' +
+        '  if ($lamaste_refusal = not_a_member) {\n   return 403 \'{"error":"not_a_member"}\';\n  }\n' +
+        '  return 403 \'{"error":"forbidden"}\';',
     ),
   );
 });

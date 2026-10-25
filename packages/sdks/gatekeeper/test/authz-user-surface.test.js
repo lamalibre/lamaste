@@ -311,12 +311,11 @@ function check(
     url = `https://${fqdn}${target}`,
     method = 'GET',
     cookie = 'authelia_session=alice',
-    route = 'user-surface',
   } = {},
 ) {
   const headers = { host, 'x-original-url': url, 'x-original-method': method };
   if (cookie !== null) headers.cookie = cookie;
-  return app.inject({ method: 'GET', url: `/authz/${route}/${fqdn}`, headers });
+  return app.inject({ method: 'GET', url: `/authz/user-surface/${fqdn}`, headers });
 }
 
 /** Verify an answer's assertion as the panel does. */
@@ -514,8 +513,10 @@ test('a restricted tunnel needs the user’s grant', async () => {
   });
   assert.equal(refused.statusCode, 403);
   assert.equal(refused.headers['x-lamalibre-relay-assertion'], undefined);
-  // JSON, not the access-request page: the caller is an application's request.
-  assert.deepEqual(JSON.parse(refused.body), { error: 'forbidden' });
+  // Not the access-request page: the caller is an application's request —
+  // the refusal is named for nginx to answer with as JSON.
+  assert.equal(refused.body, '');
+  assert.equal(refused.headers['x-lamalibre-refusal'], 'forbidden');
 });
 
 test('a user an assertion cannot carry is refused; without the relay key, 503', async () => {
@@ -705,40 +706,23 @@ test('a user who is not a member of the host’s domain is refused with JSON, ne
   try {
     const res = await check('/api/market-indicators/app/notes');
     assert.equal(res.statusCode, 403);
-    assert.deepEqual(JSON.parse(res.body), { error: 'not_a_member' });
+    assert.equal(res.headers['x-lamalibre-refusal'], 'not_a_member');
     assert.equal(res.headers['x-lamalibre-relay-assertion'], undefined);
   } finally {
     domainsProjection = ALL_MEMBERS;
   }
 });
 
-test('a refused request is answered with its refusal as JSON, asked again — never an assertion', async () => {
-  const refusal = (target, opts = {}) => check(target, { ...opts, route: 'user-surface-refusal' });
-
-  // Not a member of the host's domain.
-  domainsProjection = domainsIndex([{ name: 'example.com', members: ['bob', 'carol'] }]);
-  try {
-    const res = await refusal('/api/market-indicators/app/notes');
-    assert.equal(res.statusCode, 403);
-    assert.deepEqual(JSON.parse(res.body), { error: 'not_a_member' });
-    assert.equal(res.headers['x-lamalibre-relay-assertion'], undefined);
-    assert.equal(res.headers['cache-control'], 'no-store');
-  } finally {
-    domainsProjection = ALL_MEMBERS;
-  }
-
-  // Refused for another reason: a path off the user surface.
-  const off = await refusal('/api/market-indicators/admin/x');
+test('a refusal is named in X-Lamalibre-Refusal for nginx; an allowed request and a 401 carry none', async () => {
+  const off = await check('/api/market-indicators/admin/x');
   assert.equal(off.statusCode, 403);
-  assert.deepEqual(JSON.parse(off.body), { error: 'forbidden' });
+  assert.equal(off.headers['x-lamalibre-refusal'], 'forbidden');
 
-  // No session: Gatekeeper's JSON 401.
-  const anonymous = await refusal('/api/market-indicators/app/notes', { cookie: null });
+  const anonymous = await check('/api/market-indicators/app/notes', { cookie: null });
   assert.equal(anonymous.statusCode, 401);
+  assert.equal(anonymous.headers['x-lamalibre-refusal'], undefined);
 
-  // Allowed by now: that request was still refused, and gets no assertion.
-  const allowed = await refusal('/api/market-indicators/app/notes');
-  assert.equal(allowed.statusCode, 403);
-  assert.deepEqual(JSON.parse(allowed.body), { error: 'forbidden' });
-  assert.equal(allowed.headers['x-lamalibre-relay-assertion'], undefined);
+  const allowed = await check('/api/market-indicators/app/notes');
+  assert.equal(allowed.statusCode, 200);
+  assert.equal(allowed.headers['x-lamalibre-refusal'], undefined);
 });

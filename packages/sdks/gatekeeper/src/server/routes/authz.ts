@@ -20,6 +20,12 @@ import { buildAccessRequestPage, buildDomainRefusalPage } from '../../lib/templa
 import { logAccessRequest } from '../routes/diagnostic.js';
 import type { AutheliaSession, TunnelInfo } from '../../lib/types.js';
 
+/**
+ * The header a user-surface 403 names its refusal in — `not_a_member` or
+ * `forbidden` — for nginx to answer the application with as JSON.
+ */
+const USER_SURFACE_REFUSAL_HEADER = 'X-Lamalibre-Refusal';
+
 /** Hard cap on session cache entries to prevent memory exhaustion on 512MB droplets. */
 const MAX_SESSION_CACHE_ENTRIES = 10_000;
 
@@ -279,32 +285,18 @@ export async function authzRoutes(
    * 200 with the assertion (never cacheable, no `Remote-*`), 401 without a
    * session (nginx answers with `/authz/user-surface-unauthenticated`), 403
    * for anything else refused — never the access-request page, never a
-   * redirect: the caller is an application's request. 503 while the relay
-   * signing key is unusable.
+   * redirect: the caller is an application's request. A 403 names its
+   * refusal in `X-Lamalibre-Refusal` (`not_a_member` for a user who is not a
+   * member of the host's domain, `forbidden` otherwise): nginx keeps only a
+   * subrequest's status and headers, never its body, and answers the
+   * application with that refusal as JSON. 503 while the relay signing key is
+   * unusable.
    */
   fastify.get<{ Params: { fqdn: string } }>(
     '/authz/user-surface/:fqdn',
     { config: authzRateLimit },
     async (request, reply) =>
       authorizeUserSurfaceRequest(fastify, request, reply, request.params.fqdn),
-  );
-
-  /**
-   * GET /authz/user-surface-refusal/:fqdn — what a user surface answers a
-   * request `/authz/user-surface/:fqdn` refused (nginx `error_page 403`:
-   * under `auth_request` nginx keeps only the subrequest's status, never its
-   * body). The same decision, asked again with the same headers, answered
-   * with its refusal as JSON — `{ error: 'not_a_member' }` for a user who is
-   * not a member of the host's domain, `{ error: 'forbidden' }` otherwise —
-   * and never an assertion: a request allowed by now was still refused.
-   */
-  fastify.get<{ Params: { fqdn: string } }>(
-    '/authz/user-surface-refusal/:fqdn',
-    { config: authzRateLimit },
-    async (request, reply) =>
-      authorizeUserSurfaceRequest(fastify, request, reply, request.params.fqdn, {
-        refusalOnly: true,
-      }),
   );
 
   /**
@@ -627,14 +619,13 @@ async function authorizeUserSurfaceRequest(
   request: FastifyRequest,
   reply: FastifyReply,
   fqdn: string,
-  { refusalOnly = false }: { refusalOnly?: boolean } = {},
 ): Promise<FastifyReply> {
   const requestId = request.id;
   // Single use: nothing of this answer may be cached, a refusal included.
   reply.header('Cache-Control', 'no-store');
   const refuse = (reason: string, extra: Record<string, unknown> = {}): FastifyReply => {
     request.log.info({ requestId, reason, tunnel: fqdn, ...extra }, 'user-surface authz denied');
-    return reply.code(403).send({ error: 'forbidden' });
+    return reply.code(403).header(USER_SURFACE_REFUSAL_HEADER, 'forbidden').send();
   };
 
   if (!TUNNEL_FQDN_RE.test(fqdn)) return refuse('invalid_tunnel_name');
@@ -678,7 +669,7 @@ async function authorizeUserSurfaceRequest(
     originalUrl,
     parsed.hostname,
   );
-  if (!answer) return reply.code(401).send({ error: 'unauthenticated' });
+  if (!answer) return reply.code(401).send();
   const checked = checkDomain(fastify, answer, parsed.hostname);
   if ('refused' in checked) {
     // An application's request: JSON, never a page.
@@ -686,7 +677,7 @@ async function authorizeUserSurfaceRequest(
       { requestId, reason: checked.refused.reason, tunnel: fqdn },
       'user-surface authz denied',
     );
-    return reply.code(403).send({ error: 'not_a_member' });
+    return reply.code(403).header(USER_SURFACE_REFUSAL_HEADER, 'not_a_member').send();
   }
   const { session } = checked;
 
@@ -702,10 +693,6 @@ async function authorizeUserSurfaceRequest(
       return refuse('no_matching_grant', { resourceType: host.kind, resourceId: host.id });
     }
   }
-
-  // Asked again for a refused request's answer: allowed by now, but that
-  // request was refused — never an assertion for it.
-  if (refusalOnly) return refuse('allowed_since');
 
   const key = await currentRelayKey(fastify, request);
   if (!key) {

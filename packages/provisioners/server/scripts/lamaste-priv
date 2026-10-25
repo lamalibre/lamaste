@@ -351,6 +351,9 @@ const RULES = {
     // rather than the host's mime.types (entries checked below).
     types: { block: 'types', args: argc(0, 0) },
     internal: { args: argc(0, 0) },
+    // The type of a body the location writes itself (a user surface's JSON
+    // refusal): a media type, never a file.
+    default_type: { args: (a) => a.length === 1 && /^[a-z]+\/[a-z0-9.+-]{1,64}$/.test(a[0]) },
     return: { args: argc(1, 2) },
     rewrite: { args: rewriteArgs },
     root: { args: (a) => a.length === 1 && webrootPath(a[0]) },

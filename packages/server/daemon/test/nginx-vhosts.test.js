@@ -344,15 +344,22 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
   // Gatekeeper's rate limit keys on the address nginx saw, never one a client sent.
   assert.ok(unauthenticated.includes('proxy_set_header X-Forwarded-For $remote_addr;'));
 
-  // A refusal is asked again for its JSON body (auth_request keeps only the status),
-  // exactly as the subrequest asked.
+  // A refusal answered as JSON from Gatekeeper's X-Lamalibre-Refusal (auth_request
+  // keeps the subrequest's status and headers, never its body), only ever one of
+  // two fixed bodies; Gatekeeper is never asked twice.
   const refused = locationBody(text, '= /internal/lamaste/user-surface-403');
   assert.match(refused, /^\s*internal;$/m);
-  assert.ok(
-    refused.includes(`proxy_pass http://127.0.0.1:9294/authz/user-surface-refusal/${fqdn};`),
-  );
-  assert.ok(refused.includes(`proxy_set_header X-Original-URL https://${fqdn}$request_uri;`));
-  assert.ok(refused.includes('proxy_set_header Cookie $http_cookie;'));
+  for (const line of [
+    'default_type application/json;',
+    'add_header Cache-Control "no-store" always;',
+    'add_header X-Content-Type-Options "nosniff" always;',
+    'if ($lamaste_refusal = not_a_member) {',
+    `return 403 '{"error":"not_a_member"}';`,
+    `return 403 '{"error":"forbidden"}';`,
+  ]) {
+    assert.ok(refused.includes(line), `403: ${line}`);
+  }
+  assert.doesNotMatch(refused, /proxy_pass/);
 
   for (const [route, limit] of [
     ['market-indicators', 10],
@@ -389,6 +396,7 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
         'proxy_send_timeout 3600s;',
         'error_page 401 = /internal/lamaste/user-surface-401;',
         'error_page 403 = /internal/lamaste/user-surface-403;',
+        'auth_request_set $lamaste_refusal $upstream_http_x_lamalibre_refusal;',
       ]) {
         assert.ok(body.includes(line), `${matcher}: ${line}`);
       }
@@ -402,13 +410,14 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
   assert.match(main, /proxy_pass http:\/\/127\.0\.0\.1:20014;/);
 
   // Only what lamaste-priv lets through: no header hiding, no named
-  // location, no default type, no variable in a proxy_pass.
+  // location, no variable in a proxy_pass (a default type only in the JSON
+  // refusal's location — lamaste-priv allows it in locations alone).
   for (const name of [
     'lamalibre-lamaste-app-piyasa.example.com',
     'lamalibre-lamaste-app-kamera.example.com',
   ]) {
     const vhost = await readFile(path.join(captured, name), 'utf8');
-    assert.doesNotMatch(vhost, /proxy_hide_header|default_type|location @|proxy_pass [^;]*\$/);
+    assert.doesNotMatch(vhost, /proxy_hide_header|location @|proxy_pass [^;]*\$/);
     assert.doesNotThrow(() => validateVhost(vhost), name);
   }
   const kamera = await readFile(
