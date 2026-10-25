@@ -1,20 +1,6 @@
-import dns from 'node:dns/promises';
-import { CORE_SUBDOMAINS } from '@lamalibre/lamaste';
+import { CORE_SUBDOMAINS, DNS_WILDCARD_PROBE_LABEL } from '@lamalibre/lamaste';
+import { resolveHostA as resolveA } from '@lamalibre/lamaste/server';
 import { getConfig, updateConfig } from '../../lib/config.js';
-
-/**
- * Resolve A records for a hostname, returning an empty array on expected DNS errors.
- */
-async function resolveA(hostname) {
-  try {
-    return await dns.resolve4(hostname);
-  } catch (err) {
-    if (err.code === 'ENOTFOUND' || err.code === 'ENODATA' || err.code === 'ETIMEOUT') {
-      return [];
-    }
-    throw err;
-  }
-}
 
 /**
  * Build a human-readable diagnostic message for the DNS verification result.
@@ -69,7 +55,7 @@ export default async function dnsRoute(fastify, _opts) {
     const [coreResolved, apexResolvedIps, wildcardResolvedIps] = await Promise.all([
       Promise.all(coreNames.map((name) => resolveA(name))),
       resolveA(domain),
-      resolveA(`test-lamaste-check.${domain}`),
+      resolveA(`${DNS_WILDCARD_PROBE_LABEL}.${domain}`),
     ]);
 
     const records = coreNames.map((name, i) => {

@@ -288,6 +288,12 @@ export function pluginHostCapability(route: string): string {
 export const CORE_SUBDOMAINS = ['panel', 'auth', 'tunnel'] as const;
 
 /**
+ * The label a DNS check resolves under a domain to see whether a wildcard
+ * record is in place: unlikely to have an explicit record of its own.
+ */
+export const DNS_WILDCARD_PROBE_LABEL = 'test-lamaste-check';
+
+/**
  * Subdomains no tunnel or site may take: the relay's own
  * ({@link CORE_SUBDOMAINS}) and the names a domain conventionally keeps for
  * other services.

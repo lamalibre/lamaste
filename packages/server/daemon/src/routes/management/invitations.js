@@ -1,10 +1,15 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamalibre/lamaste';
+import {
+  DomainNameSchema,
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+  USERNAME_REGEX,
+} from '@lamalibre/lamaste';
 import { readInvitations, withInvitationsLock, writeInvitations } from '../../lib/state.js';
 import { readUsersRaw } from '../../lib/authelia.js';
-import { getConfig } from '../../lib/config.js';
-import { domainsForNewUser, newUsersNeedDomains } from '../../lib/domains.js';
+import { domainsForNewUser, invitationSignInDomain } from '../../lib/domains.js';
+import { sendFailure } from '../../lib/app-error.js';
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
 
@@ -24,7 +29,7 @@ const CreateInvitationSchema = z.object({
   expiresInDays: z.number().int().min(1).max(30).optional().default(7),
   // The domains the user becomes a member of on accepting. Required while
   // the relay has two or more; with one, the user becomes its member.
-  domains: z.array(z.string().min(1).max(253)).max(50).optional(),
+  domains: z.array(DomainNameSchema).max(50).optional(),
 });
 
 export default async function invitationRoutes(fastify, _opts) {
@@ -61,16 +66,9 @@ export default async function invitationRoutes(fastify, _opts) {
       const body = CreateInvitationSchema.parse(request.body);
       let domains;
       try {
-        if (body.domains === undefined && (await newUsersNeedDomains())) {
-          return reply.code(400).send({
-            error: 'Name the domains the user is invited to: this relay has more than one',
-            code: 'domains_required',
-          });
-        }
-        domains = await domainsForNewUser(body.domains);
+        domains = await domainsForNewUser(body.domains, { required: true });
       } catch (err) {
-        if (!err.statusCode) throw err;
-        return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+        return sendFailure(request, reply, err, 'Failed to read the domains');
       }
 
       // Check username doesn't already exist in Authelia
@@ -136,7 +134,7 @@ export default async function invitationRoutes(fastify, _opts) {
       const { token } = invitation;
       // On the sign-in page of the first domain it names (the invitation
       // page is served on every domain's auth portal).
-      const inviteDomain = invitation.domains[0] ?? getConfig().domain;
+      const inviteDomain = await invitationSignInDomain(invitation);
       const inviteUrl = inviteDomain ? `https://auth.${inviteDomain}/invite/${token}` : null;
 
       return reply.code(201).send({

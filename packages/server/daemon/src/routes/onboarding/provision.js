@@ -12,7 +12,7 @@ import { migrateChiselCredentialsIfNeeded } from '../../lib/chisel-users.js';
 import { loadAgentRegistry } from '../../lib/mtls.js';
 import { setChiselRunningPinnedRelease } from '../../lib/chisel-runtime.js';
 import { changeUsers } from '../../lib/directory.js';
-import { ensurePrimaryDomain, syncDomainAccess } from '../../lib/domains.js';
+import { ensurePrimaryDomain, listDomainMembers, syncDomainAccess } from '../../lib/domains.js';
 
 // Module-level state for provisioning
 const emitter = new EventEmitter();
@@ -116,15 +116,6 @@ async function runProvisioning(log) {
         'Authelia is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation.',
       );
     }
-    emitProgress('install-authelia', 'running', 'Writing configuration...');
-
-    const secrets = {
-      jwtSecret: crypto.randomBytes(32).toString('hex'),
-      sessionSecret: crypto.randomBytes(32).toString('hex'),
-      storageEncryptionKey: crypto.randomBytes(32).toString('hex'),
-    };
-    await authelia.writeAutheliaConfig(domain, secrets);
-
     emitProgress('install-authelia', 'running', 'Creating admin user...');
     adminPassword = crypto.randomBytes(16).toString('base64url');
     // Through the users lock, and into the user directory — which reconciles
@@ -140,6 +131,21 @@ async function runProvisioning(log) {
     for (const warning of created.warnings) {
       log.warn({ step: warning.step }, warning.message);
     }
+
+    // The primary domain with the administrator as its member, so that the
+    // configuration Authelia first starts with already admits them (the
+    // panel renders every later change).
+    emitProgress('install-authelia', 'running', 'Writing configuration...');
+    await ensurePrimaryDomain({ logger: log });
+    const members = (await listDomainMembers(domain))
+      .filter((m) => m.status === 'active')
+      .map((m) => m.username);
+    const secrets = {
+      jwtSecret: crypto.randomBytes(32).toString('hex'),
+      sessionSecret: crypto.randomBytes(32).toString('hex'),
+      storageEncryptionKey: crypto.randomBytes(32).toString('hex'),
+    };
+    await authelia.writeAutheliaConfig(domain, secrets, members);
 
     emitProgress('install-authelia', 'running', 'Starting Authelia service...');
     await authelia.startAuthelia();
@@ -217,9 +223,7 @@ async function runProvisioning(log) {
     // Step 6: Finalize
     emitProgress('finalize', 'running', 'Updating configuration...');
     await updateConfig({ onboarding: { status: 'COMPLETED' } });
-    // The primary domain, with the administrator as its member, rendered
-    // into Authelia (its configuration admits nobody until then).
-    await ensurePrimaryDomain({ logger: log });
+    // Gatekeeper's projection of the domain (Authelia holds it already).
     await syncDomainAccess({ logger: log });
 
     const result = {

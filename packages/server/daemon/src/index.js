@@ -229,8 +229,8 @@ async function start() {
   // listen: no tunnel or site change can arrive until the panel listens.
   if (config.onboarding.status === 'COMPLETED' && config.domain) {
     try {
-      await ensurePrimaryDomain({ logger: server.log });
-      await renameLegacyVhosts(server.log, config.domain);
+      const primary = await ensurePrimaryDomain({ logger: server.log });
+      await renameLegacyVhosts(server.log, primary);
       await reconcileSiteVhosts(server.log, await activeDomains());
     } catch (err) {
       server.log.error({ err: err.message }, 'Startup site vhost reconcile failed');

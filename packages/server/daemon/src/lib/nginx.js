@@ -6,6 +6,7 @@ import {
   RELAY_PANEL_PORT,
   USER_SURFACE_MAX_RESPONSE_SECONDS,
   isUserSurfaceRoute,
+  labelUnder,
   userSurfaceApiPath,
   WEB_TREE_CONTENT_TYPES,
 } from '@lamalibre/lamaste';
@@ -288,16 +289,21 @@ server {
   return { name: PANEL_DOMAIN_VHOST, fqdn, config };
 }
 
+/** The site-name prefixes of the vhosts named by a hostname (lamaste-priv checks the same). */
+const APP_VHOST_PREFIX = 'lamalibre-lamaste-app-';
+const AGENT_PANEL_VHOST_PREFIX = 'lamalibre-lamaste-agent-panel-';
+const AUTH_VHOST_PREFIX = 'lamalibre-lamaste-auth-';
+
 /** Site name of an app or plugin tunnel's vhost: its full hostname. */
 export function appVhostName(fqdn) {
   assertLiteralHostname(fqdn);
-  return `lamalibre-lamaste-app-${fqdn.toLowerCase()}`;
+  return `${APP_VHOST_PREFIX}${fqdn.toLowerCase()}`;
 }
 
 /** Site name of an agent panel tunnel's vhost: its full hostname. */
 export function agentPanelVhostName(fqdn) {
   assertLiteralHostname(fqdn);
-  return `lamalibre-lamaste-agent-panel-${fqdn.toLowerCase()}`;
+  return `${AGENT_PANEL_VHOST_PREFIX}${fqdn.toLowerCase()}`;
 }
 
 /**
@@ -306,19 +312,21 @@ export function agentPanelVhostName(fqdn) {
  * (vhost-reconcile.js).
  */
 export function legacyTunnelVhostName(type, subdomain) {
-  return type === 'panel'
-    ? `lamalibre-lamaste-agent-panel-${subdomain}`
-    : `lamalibre-lamaste-app-${subdomain}`;
+  return `${type === 'panel' ? AGENT_PANEL_VHOST_PREFIX : APP_VHOST_PREFIX}${subdomain}`;
 }
 
-/** Refuse a tunnel hostname that is not `<label>.<domain>`. */
+/**
+ * The label of tunnel hostname `fqdn` under `domain` — one label, as a
+ * tunnel's is — or a refusal.
+ */
 function assertHostUnderDomain(fqdn, domain) {
   assertLiteralHostname(fqdn);
   assertLiteralHostname(domain);
-  const label = fqdn.endsWith(`.${domain}`) ? fqdn.slice(0, -domain.length - 1) : '';
-  if (label === '' || label.includes('.')) {
+  const label = labelUnder(fqdn, domain);
+  if (label === null || label.includes('.')) {
     throw new Error(`Hostname ${fqdn} is not a subdomain of ${domain}`);
   }
+  return label;
 }
 
 /**
@@ -372,7 +380,7 @@ const AUTHZ_CLEARED_HEADERS = `
 /** Site name of the auth portal vhost of `domain` (`auth.<domain>`). */
 export function authVhostName(domain) {
   assertLiteralHostname(domain);
-  return `lamalibre-lamaste-auth-${domain}`;
+  return `${AUTH_VHOST_PREFIX}${domain.toLowerCase()}`;
 }
 
 /** Site name of the auth portal vhost before the multi-domain relay (the primary's alone). */
@@ -391,11 +399,20 @@ export async function writeAuthVhost(domain, { primary, enabled = true }) {
   return path.join(SITES_AVAILABLE, name);
 }
 
-/** Remove the auth portal vhost of a removed domain. */
+/**
+ * Remove the auth portal vhost of a removed domain, then test and reload:
+ * `auth.<domain>` stops being served at once.
+ */
 export async function removeAuthVhost(domain) {
   const name = authVhostName(domain);
-  if (await isSiteEnabled(name)) await disableSite(name);
-  if (await siteExists(name)) await siteAction('remove', name);
+  await siteAction('remove', name);
+
+  const result = await testConfig();
+  if (!result.valid) {
+    throw new Error(`Nginx config test failed after removing vhost ${name}: ${result.error}`);
+  }
+
+  await reload();
 }
 
 /**
@@ -844,31 +861,12 @@ ${TUNNEL_PROXY_HEADERS}
 }
 
 /**
- * Write an authenticated vhost — Authelia via Gatekeeper, all authenticated users allowed.
- * Used for tunnels with accessMode='authenticated'.
- * Gatekeeper handles Authelia cookie validation and forwards identity headers.
+ * Write the vhost of an `authenticated` or `restricted` tunnel — one and
+ * the same: nginx asks Gatekeeper about every request, and Gatekeeper
+ * decides by the tunnel's access mode in tunnels.json (any member of the
+ * domain, or only those with a grant) and serves its refusal pages inline.
  */
-export async function writeAuthenticatedVhost(
-  fqdn,
-  domain,
-  port,
-  certPath,
-  { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
-) {
-  const { name, config } = renderGatekeeperTunnelVhost(fqdn, domain, port, certPath, {
-    pathPrefix,
-    maxBodySizeMb,
-    userSurface,
-  });
-  return safeWriteVhost(name, config, fqdn, { enabled });
-}
-
-/**
- * Write a restricted vhost — Authelia via Gatekeeper, only granted users/groups allowed.
- * Used for tunnels with accessMode='restricted'.
- * On 403, Gatekeeper returns the inline access-request HTML page.
- */
-export async function writeRestrictedVhost(
+export async function writeGatekeeperVhost(
   fqdn,
   domain,
   port,
@@ -1723,8 +1721,7 @@ export async function writeAgentPanelVhost(fqdn, domain, port, certPath, { enabl
  * @returns {{ name: string, fqdn: string, config: string }}
  */
 export function renderAgentPanelVhost(fqdn, domain, port, certPath) {
-  assertHostUnderDomain(fqdn, domain);
-  const subdomain = fqdn.slice(0, -domain.length - 1);
+  const subdomain = assertHostUnderDomain(fqdn, domain);
   if (!/^agent-[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain)) {
     throw new Error(`Invalid agent panel subdomain for nginx vhost: ${subdomain}`);
   }

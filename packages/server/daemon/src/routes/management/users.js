@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamalibre/lamaste';
+import {
+  DomainNameSchema,
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+  USERNAME_REGEX,
+} from '@lamalibre/lamaste';
 import {
   readUsers,
   readUsersRaw,
@@ -9,7 +14,7 @@ import {
   writeTotpToDatabase,
 } from '../../lib/authelia.js';
 import { revokeUserRegistryTokens } from '../../lib/registry-credential.js';
-import { httpError } from '../../lib/app-error.js';
+import { httpError, sendFailure } from '../../lib/app-error.js';
 import { actorFromRequest } from '../../lib/actor.js';
 import { recordAuditBestEffort } from '../../lib/audit.js';
 import {
@@ -21,12 +26,7 @@ import {
   getDirectoryUser,
   usersFileError,
 } from '../../lib/directory.js';
-import {
-  domainsByUser,
-  domainsForNewUser,
-  domainsOfUser,
-  newUsersNeedDomains,
-} from '../../lib/domains.js';
+import { domainsByUser, domainsForNewUser, domainsOfUser } from '../../lib/domains.js';
 
 const CreateUserSchema = z.object({
   username: z
@@ -43,7 +43,7 @@ const CreateUserSchema = z.object({
   groups: z.array(z.string()).optional().default([]),
   // The domains the user is a member of — required while the relay has two
   // or more; with one, the user becomes its member.
-  domains: z.array(z.string().min(1).max(253)).max(50).optional(),
+  domains: z.array(DomainNameSchema).max(50).optional(),
 });
 
 const UsernameParamSchema = z.object({
@@ -110,22 +110,6 @@ function isEnabledAdmin(entry) {
   );
 }
 
-/**
- * Answer a refusal a users change threw (an error with `statusCode`: its
- * message and `code`), or a 500 for anything else — logged either way when
- * it is the panel's own failure.
- */
-function sendFailure(request, reply, err, fallback) {
-  if (Number.isInteger(err.statusCode)) {
-    if (err.statusCode >= 500) request.log.error(err.cause ?? err, err.message);
-    return reply
-      .code(err.statusCode)
-      .send({ error: err.message, ...(err.code ? { code: err.code } : {}) });
-  }
-  request.log.error(err, fallback);
-  return reply.code(500).send({ error: fallback });
-}
-
 export default async function usersRoutes(fastify, _opts) {
   // GET /api/users — list all users (no sensitive fields): users.yml's, with
   // each one's directory id (null until the directory has seen them, within
@@ -173,13 +157,7 @@ export default async function usersRoutes(fastify, _opts) {
 
       let domains;
       try {
-        if (body.domains === undefined && (await newUsersNeedDomains())) {
-          return reply.code(400).send({
-            error: 'Name the domains the user is a member of: this relay has more than one',
-            code: 'domains_required',
-          });
-        }
-        domains = await domainsForNewUser(body.domains);
+        domains = await domainsForNewUser(body.domains, { required: true });
       } catch (err) {
         return sendFailure(request, reply, err, 'Failed to read the domains');
       }

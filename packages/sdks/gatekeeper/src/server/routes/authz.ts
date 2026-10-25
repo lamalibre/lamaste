@@ -337,18 +337,11 @@ export async function authzRoutes(
     async (request, reply) => {
       const { fqdn } = request.params;
       if (!TUNNEL_FQDN_RE.test(fqdn)) return reply.code(403).send();
-      const settings = fastify.getSettings();
-      return reply
-        .code(403)
-        .header('Cache-Control', 'no-store')
-        .type('text/html; charset=utf-8')
-        .send(
-          buildDomainRefusalPage(
-            domainShownFor(fastify, fqdn),
-            { adminContact: settings.adminEmail, adminName: settings.adminName },
-            fqdn.toLowerCase(),
-          ),
-        );
+      return sendRefusalPage(fastify, request, reply, fqdn, {
+        reason: 'site_refused',
+        domain: domainShownFor(fastify, fqdn),
+        site: fqdn.toLowerCase(),
+      });
     },
   );
 
@@ -416,11 +409,9 @@ async function authenticatedSession(
     sessionCache.delete(cacheKey);
   }
   const validated = await validateWithAuthelia(presented.value, originalUrl, requestId);
-  if (validated === FORBIDDEN) {
-    // Never cached: a membership added a moment later must be seen.
-    request.log.info({ requestId, reason: 'authelia_forbidden', fqdn: hostname }, 'authz denied');
-    return FORBIDDEN;
-  }
+  // Never cached: a membership added a moment later must be seen. Logged
+  // by the refusal that answers it.
+  if (validated === FORBIDDEN) return FORBIDDEN;
   if (!validated) {
     request.log.info({ requestId, reason: 'authelia_rejected', fqdn: hostname }, 'authz denied');
     return null;
@@ -442,40 +433,52 @@ async function authenticatedSession(
  * itself when the projection names none for it (or is unreadable).
  */
 function domainShownFor(fastify: FastifyInstance, hostname: string): string {
-  const projection = fastify.getDomains();
-  return (
-    (projection
-      ? domainOfHost(
-          hostname,
-          projection.domains.map((d) => d.name),
-        )
-      : null) ?? hostname.toLowerCase()
-  );
+  const index = fastify.getDomains();
+  return (index ? domainOfHost(hostname, index.names) : null) ?? hostname.toLowerCase();
+}
+
+/** Why a signed-in user may not reach a host's domain, and the domain to name. */
+interface DomainRefusal {
+  readonly reason: 'authelia_forbidden' | 'not_a_member';
+  readonly domain: string;
 }
 
 /**
- * Whether the session's user may reach `hostname`: a member of the domain
- * it is under, as the panel's projection (`domains.json`) says. Checked
- * after Authelia — which renders the same membership — on every request,
+ * The session's user admitted to `hostname`'s domain — or why not:
+ * Authelia refused them for the host (its rendered membership), or the
+ * panel's projection (`domains.json`) does not list them as a member of the
+ * domain the host is under. Checked after Authelia on every request,
  * cached sessions too; a missing or unreadable projection, or a host under
  * no domain, is a refusal (fail closed).
  */
-function isDomainMember(fastify: FastifyInstance, hostname: string, username: string): boolean {
-  const projection = fastify.getDomains();
-  return projection !== null && domainMembership(projection, hostname, username) === 'member';
+function checkDomain(
+  fastify: FastifyInstance,
+  answer: AutheliaSession | typeof FORBIDDEN,
+  hostname: string,
+): { readonly session: AutheliaSession } | { readonly refused: DomainRefusal } {
+  if (answer === FORBIDDEN) {
+    return { refused: { reason: 'authelia_forbidden', domain: domainShownFor(fastify, hostname) } };
+  }
+  const index = fastify.getDomains();
+  const verdict = index ? domainMembership(index, hostname, answer.username) : null;
+  if (verdict?.member) return { session: answer };
+  return {
+    refused: { reason: 'not_a_member', domain: verdict?.domain ?? hostname.toLowerCase() },
+  };
 }
 
 /**
- * Answer a signed-in user who may not reach `hostname`'s domain with the
- * refusal page (nginx serves it inline, `error_page 403`). Logged with the
- * host and the reason — never the user.
+ * Answer a refused request with a refusal page — nginx serves it inline
+ * (`error_page 403`): a signed-in user who may not reach the host's domain,
+ * or (`site`) a static site that refused one. Logged with the host and the
+ * reason — never the user.
  */
-function refuseDomain(
+function sendRefusalPage(
   fastify: FastifyInstance,
   request: FastifyRequest,
   reply: FastifyReply,
   hostname: string,
-  reason: string,
+  { reason, domain, site }: { reason: string; domain: string; site?: string },
 ): FastifyReply {
   request.log.info({ requestId: request.id, reason, fqdn: hostname }, 'authz denied');
   const settings = fastify.getSettings();
@@ -484,10 +487,11 @@ function refuseDomain(
     .header('Cache-Control', 'no-store')
     .type('text/html; charset=utf-8')
     .send(
-      buildDomainRefusalPage(domainShownFor(fastify, hostname), {
-        adminContact: settings.adminEmail,
-        adminName: settings.adminName,
-      }),
+      buildDomainRefusalPage(
+        domain,
+        { adminContact: settings.adminEmail, adminName: settings.adminName },
+        site,
+      ),
     );
 }
 
@@ -535,20 +539,13 @@ async function authorizeTunnelRequest(
     return reply.code(401).send();
   }
 
-  const session = await authenticatedSession(
-    fastify,
-    request,
-    cookie,
-    originalUrl,
-    parsed.hostname,
-  );
-  if (session === FORBIDDEN) {
-    return refuseDomain(fastify, request, reply, parsed.hostname, 'authelia_forbidden');
+  const answer = await authenticatedSession(fastify, request, cookie, originalUrl, parsed.hostname);
+  if (!answer) return reply.code(401).send();
+  const checked = checkDomain(fastify, answer, parsed.hostname);
+  if ('refused' in checked) {
+    return sendRefusalPage(fastify, request, reply, parsed.hostname, checked.refused);
   }
-  if (!session) return reply.code(401).send();
-  if (!isDomainMember(fastify, parsed.hostname, session.username)) {
-    return refuseDomain(fastify, request, reply, parsed.hostname, 'not_a_member');
-  }
+  const { session } = checked;
 
   // Check access mode
   if (tunnel.accessMode === 'public' || tunnel.accessMode === 'authenticated') {
@@ -654,29 +651,24 @@ async function authorizeUserSurfaceRequest(
   // plugin not hosted at all, or a route another host would serve too.
   if (!host.served.includes(route)) return refuse('not_hosting_agent', { route });
 
-  const session = await authenticatedSession(
+  const answer = await authenticatedSession(
     fastify,
     request,
     request.headers['cookie'],
     originalUrl,
     parsed.hostname,
   );
-  // An application's request: JSON, never a page.
-  if (session === FORBIDDEN) {
+  if (!answer) return reply.code(401).send();
+  const checked = checkDomain(fastify, answer, parsed.hostname);
+  if ('refused' in checked) {
+    // An application's request: JSON, never a page.
     request.log.info(
-      { requestId, reason: 'authelia_forbidden', tunnel: fqdn },
+      { requestId, reason: checked.refused.reason, tunnel: fqdn },
       'user-surface authz denied',
     );
     return reply.code(403).send({ error: 'not_a_member' });
   }
-  if (!session) return reply.code(401).send();
-  if (!isDomainMember(fastify, parsed.hostname, session.username)) {
-    request.log.info(
-      { requestId, reason: 'not_a_member', tunnel: fqdn },
-      'user-surface authz denied',
-    );
-    return reply.code(403).send({ error: 'not_a_member' });
-  }
+  const { session } = checked;
 
   if (host.accessMode !== 'authenticated') {
     // restricted — the user's grant for the host (the tunnel, or the site),
@@ -753,20 +745,19 @@ async function authorizeUserSurfaceShellRequest(
   const [route] = host.routes;
   if (route === undefined || !host.served.includes(route)) return refuse('not_served', { route });
 
-  const session = await authenticatedSession(
+  const answer = await authenticatedSession(
     fastify,
     request,
     request.headers['cookie'],
     originalUrl,
     parsed.hostname,
   );
-  if (session === FORBIDDEN) {
-    return refuseDomain(fastify, request, reply, parsed.hostname, 'authelia_forbidden');
+  if (!answer) return reply.code(401).send();
+  const checked = checkDomain(fastify, answer, parsed.hostname);
+  if ('refused' in checked) {
+    return sendRefusalPage(fastify, request, reply, parsed.hostname, checked.refused);
   }
-  if (!session) return reply.code(401).send();
-  if (!isDomainMember(fastify, parsed.hostname, session.username)) {
-    return refuseDomain(fastify, request, reply, parsed.hostname, 'not_a_member');
-  }
+  const { session } = checked;
 
   const settings = fastify.getSettings();
   const templateOptions = { adminContact: settings.adminEmail, adminName: settings.adminName };

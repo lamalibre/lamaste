@@ -267,14 +267,17 @@ export function autheliaIssuer(domain: string): string {
 }
 
 /**
- * The issuer an OIDC registry credential's tokens carry: its
- * `issuerDomain`'s, else the primary domain's.
+ * The registry's domain: an OIDC credential's `issuerDomain`, else the
+ * primary domain — whose issuer the panel's tokens carry and whose members
+ * `feria login` admits.
  */
-export function registryIssuer(
-  auth: Extract<RegistryAuth, { kind: 'oidc' }>,
-  primaryDomain: string,
-): string {
-  return autheliaIssuer(auth.issuerDomain ?? primaryDomain);
+export function registryIssuerDomain(auth: RegistryAuth, primaryDomain: string): string {
+  return auth.kind === 'oidc' && auth.issuerDomain ? auth.issuerDomain : primaryDomain;
+}
+
+/** The issuer an OIDC registry credential's tokens carry ({@link registryIssuerDomain}'s). */
+export function registryIssuer(auth: RegistryAuth, primaryDomain: string): string {
+  return autheliaIssuer(registryIssuerDomain(auth, primaryDomain));
 }
 
 /**

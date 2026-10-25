@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 
-import { renderAccessControl } from '@lamalibre/lamaste/server';
+import { renderAccessControl, renderOidcAuthorizationPolicies } from '@lamalibre/lamaste/server';
 
 import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
@@ -35,6 +35,13 @@ let gatekeeper;
 /** What Authelia was last told: `{ domains, sites }`. */
 let rendered = null;
 let renders = 0;
+/**
+ * Authelia's OIDC authorization policies as its two writers leave them:
+ * the domain rendering and the OIDC provider (each writes them whole).
+ */
+let policies = null;
+/** Holds the OIDC provider's write until released (a test of the two writers). */
+let oidcGate = null;
 /** What activation and removal asked of certbot and nginx. */
 const activation = [];
 let failVhost = false;
@@ -122,8 +129,17 @@ before(async () => {
     domainAccess: async (access) => {
       const changed = JSON.stringify(access) !== JSON.stringify(rendered);
       rendered = structuredClone(access);
+      policies = renderOidcAuthorizationPolicies(access.domains);
       if (changed) renders += 1;
       return { changed };
+    },
+    oidcProvider: async (domains, clients) => {
+      if (oidcGate) {
+        oidcGate.entered();
+        await oidcGate.released;
+      }
+      policies = renderOidcAuthorizationPolicies(domains);
+      return { changed: true, clients: clients.length };
     },
   });
   lib.setDomainActivationForTests({
@@ -445,4 +461,33 @@ test('a plugin belongs to the primary until moved to an active domain; moving it
     (await call('PUT', '/api/plugins/nope/domain', { domain: 'samplepark.tr' })).statusCode,
     404,
   );
+});
+
+test('one writer of the members’ OIDC policies: a membership ended while the OIDC provider is written stays ended', async () => {
+  const onur = await idOf('onur');
+  await call('PUT', `/api/domains/codelama.com.tr/members/${onur}`);
+  const policy = () => policies.lamaste_codelama_com_tr_two_factor.rules[0];
+  assert.deepEqual(policy().subject, ['user:onur']);
+
+  // The OIDC provider is being written (a plugin change) when the
+  // membership ends: it read the members before, and writes after.
+  let entered;
+  let release;
+  oidcGate = {
+    entered: () => entered(),
+    released: new Promise((resolve) => (release = resolve)),
+  };
+  const insideWrite = new Promise((resolve) => (entered = resolve));
+  const { syncOidcClients } = await import('../src/lib/plugin-oidc.js');
+  const logger = { info() {}, warn() {}, error() {}, debug() {} };
+  const oidc = syncOidcClients(logger);
+  await insideWrite;
+  const removal = call('DELETE', `/api/domains/codelama.com.tr/members/${onur}`);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  release();
+  oidcGate = null;
+  await Promise.all([oidc, removal]);
+
+  assert.deepEqual(policy(), { policy: 'deny', networks: ['0.0.0.0/0', '::/0'] });
+  assert.deepEqual(renderedMembers()['codelama.com.tr'], []);
 });

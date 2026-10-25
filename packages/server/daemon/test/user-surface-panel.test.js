@@ -46,6 +46,7 @@ import {
   RELAY_PANEL_AUDIENCE,
   RELAY_PANEL_PORT,
   createRelaySigner,
+  indexDomainsProjection,
   parseDomainsProjection,
   signRelayAssertion,
 } from '@lamalibre/lamaste';
@@ -506,7 +507,10 @@ before(async () => {
     userSurfaceHosts(readState('tunnels.json'), readState('sites.json')),
   );
   // The projection the panel writes (lib/domains.js), as Gatekeeper reads it.
-  gk.decorate('getDomains', () => parseDomainsProjection(readState('domains.json')));
+  gk.decorate('getDomains', () => {
+    const projection = parseDomainsProjection(readState('domains.json'));
+    return projection ? indexDomainsProjection(projection) : null;
+  });
   gk.decorate('getSessionCache', () => sessions);
   gk.decorate('getCacheVersion', () => 1);
   gk.decorate('getSettings', () => ({}));

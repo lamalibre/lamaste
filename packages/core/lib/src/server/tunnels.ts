@@ -185,14 +185,12 @@ export interface NginxDeps {
     certPath: string | undefined,
     opts?: VhostOptions,
   ): Promise<void>;
-  writeAuthenticatedVhost(
-    fqdn: string,
-    domain: string,
-    port: number,
-    certPath: string | undefined,
-    opts?: VhostOptions,
-  ): Promise<void>;
-  writeRestrictedVhost(
+  /**
+   * An `authenticated` or `restricted` tunnel's vhost — one and the same:
+   * nginx asks Gatekeeper, which decides by the tunnel's access mode in
+   * tunnels.json (and the user's membership of the domain).
+   */
+  writeGatekeeperVhost(
     fqdn: string,
     domain: string,
     port: number,
@@ -414,6 +412,13 @@ export function tunnelHost(tunnel: Pick<TunnelEntry, 'subdomain' | 'fqdn'>): Tun
   return { fqdn, domain: fqdn.slice(subdomain.length + 1) };
 }
 
+/** The host of a tunnel that has a vhost — not an internal one — or null. */
+export function vhostTunnelHost(
+  tunnel: Pick<TunnelEntry, 'subdomain' | 'fqdn' | 'exposure'>,
+): TunnelHost | null {
+  return isInternalTunnel(tunnel) ? null : tunnelHost(tunnel);
+}
+
 function writeModeVhost(
   nginx: NginxDeps,
   accessMode: AccessMode,
@@ -423,13 +428,8 @@ function writeModeVhost(
   opts: VhostOptions,
 ): Promise<void> {
   const { fqdn, domain } = host;
-  if (accessMode === 'public') {
-    return nginx.writePublicVhost(fqdn, domain, port, certPath, opts);
-  }
-  if (accessMode === 'authenticated') {
-    return nginx.writeAuthenticatedVhost(fqdn, domain, port, certPath, opts);
-  }
-  return nginx.writeRestrictedVhost(fqdn, domain, port, certPath, opts);
+  const write = accessMode === 'public' ? nginx.writePublicVhost : nginx.writeGatekeeperVhost;
+  return write(fqdn, domain, port, certPath, opts);
 }
 
 /**
@@ -1173,7 +1173,7 @@ async function assignTunnelLocked(
   const previous = tunnel.agentLabel;
   const bound = tunnelUserSurfaceRoutes(tunnel);
   let restoreVhost: (() => Promise<void>) | null = null;
-  const host = isInternalTunnel(tunnel) ? null : tunnelHost(tunnel);
+  const host = vhostTunnelHost(tunnel);
   if (bound.length > 0 && host !== null) {
     restoreVhost = await rewriteServedRoutes(
       tunnel,
@@ -1252,7 +1252,7 @@ async function reconfigureTunnelLocked(
   // An internal tunnel has no vhost: it cannot be given an access mode, and
   // its body limit is enforced by the panel's forwarder, so only the state
   // changes.
-  const host = isInternalTunnel(tunnel) ? null : tunnelHost(tunnel);
+  const host = vhostTunnelHost(tunnel);
   if (host === null) {
     if (opts.accessMode !== undefined) {
       throw new TunnelError(
@@ -1503,7 +1503,7 @@ export function releaseUserSurfaceRoute(
 function userSurfaceTunnelHost(tunnel: TunnelEntry): TunnelHost {
   // Tunnels persisted before `type` existed are app tunnels.
   const type: string | undefined = tunnel.type;
-  const host = isInternalTunnel(tunnel) ? null : tunnelHost(tunnel);
+  const host = vhostTunnelHost(tunnel);
   if (host === null || (type ?? 'app') !== 'app') {
     throw new TunnelError(
       "Only an app tunnel's host can serve a plugin's user surface",

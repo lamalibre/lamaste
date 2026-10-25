@@ -59,13 +59,17 @@ let userStorage = realUserStorage;
 const updateRealDomainAccess = (access) => updateAutheliaDomainAccess(access, execa);
 /** Render the domains into Authelia's configuration — replaced in tests. */
 let domainAccessWriter = updateRealDomainAccess;
+const updateRealOidcProvider = (domains, clients, options) =>
+  updateAutheliaOidcProvider(domains, clients, execa, options);
+/** Write Authelia's OIDC provider — replaced in tests. */
+let oidcProviderWriter = updateRealOidcProvider;
 
 /**
  * Point the users file, the Authelia restart, the TOTP writer, the
  * per-user storage and the domain rendering elsewhere (tests); `null`
  * restores Authelia's.
  *
- * @param {{ usersFile?: string, restart?: () => Promise<unknown>, writeTotp?: (username: string, secret: string) => Promise<void>, userStorage?: { purgeSecondFactors: (username: string) => Promise<void>, holdsOidcIdentifier: (username: string) => Promise<boolean> }, domainAccess?: (access: object) => Promise<{ changed: boolean }> } | null} overrides
+ * @param {{ usersFile?: string, restart?: () => Promise<unknown>, writeTotp?: (username: string, secret: string) => Promise<void>, userStorage?: { purgeSecondFactors: (username: string) => Promise<void>, holdsOidcIdentifier: (username: string) => Promise<boolean> }, domainAccess?: (access: object) => Promise<{ changed: boolean }>, oidcProvider?: (domains: object[], clients: object[], options: object) => Promise<{ changed: boolean, clients: number }> } | null} overrides
  */
 export function setAutheliaForTests(overrides) {
   usersFile = overrides?.usersFile ?? AUTHELIA_USERS;
@@ -73,6 +77,7 @@ export function setAutheliaForTests(overrides) {
   totpWriter = overrides?.writeTotp ?? writeRealTotp;
   userStorage = overrides?.userStorage ?? realUserStorage;
   domainAccessWriter = overrides?.domainAccess ?? updateRealDomainAccess;
+  oidcProviderWriter = overrides?.oidcProvider ?? updateRealOidcProvider;
 }
 
 /**
@@ -100,8 +105,8 @@ export function isAutheliaInstalled() {
   return isAutheliaInstalledCore();
 }
 
-export function writeAutheliaConfig(domain, secrets) {
-  return writeAutheliaConfigCore(domain, secrets);
+export function writeAutheliaConfig(domain, secrets, members = []) {
+  return writeAutheliaConfigCore(domain, secrets, members);
 }
 
 /** Add the default administrator to users.yml (onboarding) — inside `changeUsers`. */
@@ -159,7 +164,7 @@ export function updateDomainAccess(access) {
  * @param {import('@lamalibre/lamaste/server').OidcProviderOptions} [options]
  */
 export function updateOidcProvider(domains, clients, options = {}) {
-  return updateAutheliaOidcProvider(domains, clients, execa, options);
+  return oidcProviderWriter(domains, clients, options);
 }
 
 /**

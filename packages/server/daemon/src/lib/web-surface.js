@@ -33,7 +33,6 @@
 import crypto from 'node:crypto';
 import {
   KeyedPromiseChainMutex,
-  domainOfHost,
   isWebSurfaceSubdomain,
   siteUserSurfaceRoute,
   tunnelUserSurfaceRoutes,
@@ -42,6 +41,7 @@ import {
 import {
   TUNNEL_MAX_BODY_MB,
   WEB_TREES_ROOT,
+  hostnameHolder,
   readWebTreeStore,
   removeWebTreeStore,
   stageWebTree,
@@ -55,7 +55,7 @@ import { recordAuditBestEffort } from './audit.js';
 import { getCertPath, issueTunnelCert } from './certbot.js';
 import { syncChisel } from './chisel.js';
 import { getConfig } from './config.js';
-import { activeDomainNames, pluginDomainName, primaryDomainName } from './domains.js';
+import { domainOfHostname, pluginDomainName } from './domains.js';
 import {
   createGatekeeperGrant,
   listResourceGrants,
@@ -212,24 +212,25 @@ export async function webSurfaceServing(route, tunnels) {
 }
 
 /**
- * The domain the hostname `fqdn` is under — of the active domains, the
- * primary when it is under none (a site from before the multi-domain relay
- * is always under the primary).
+ * The active domain a plugin's site is under — always one: it is created
+ * on its plugin's domain, and a domain a site uses cannot be removed.
  */
-async function hostDomain(fqdn) {
-  return domainOfHost(fqdn, await activeDomainNames()) ?? (await primaryDomainName());
+async function siteDomain(site) {
+  const domain = await domainOfHostname(site.fqdn);
+  if (domain === null) throw new Error(`${site.fqdn} is under none of the relay's active domains`);
+  return domain;
 }
 
 /**
- * The vhost of the site `site` (owned by plugin `route`) as it should be
- * now, on certificate directory `certDir`.
+ * The vhost of the site `site` (owned by plugin `route`, under `domain`)
+ * as it should be now, on certificate directory `certDir`.
  */
-async function renderOwnedSite(site, route, certDir, tunnels) {
+async function renderOwnedSite(site, route, certDir, tunnels, domain) {
   const serving = await webSurfaceServing(route, tunnels);
   const maxBodySizeMb = serving.plugin
     ? await internalTunnelBodyLimit(serving.plugin, tunnels)
     : undefined;
-  return renderWebSurfaceVhost(site, certDir, await hostDomain(site.fqdn), {
+  return renderWebSurfaceVhost(site, certDir, domain, {
     route,
     served: serving.served,
     maxBodySizeMb: maxBodySizeMb ?? TUNNEL_MAX_BODY_MB.default,
@@ -249,10 +250,10 @@ async function reconcileOwnedSiteVhost(site, route, tunnels) {
   const moved = tunnels.find((t) => t.fqdn === site.fqdn && t.enabled === false && t.subdomain);
   const unlinked = moved ? await deps.unlinkMovedAppVhost(moved.fqdn) : false;
   const installed = await deps.readInstalledVhost(siteVhostName(site));
+  const domain = await siteDomain(site);
   const certDir =
-    (installed && vhostCertDir(installed)) ||
-    (await deps.getCertPath(site.fqdn, await hostDomain(site.fqdn)));
-  const { name, fqdn, config } = await renderOwnedSite(site, route, certDir, tunnels);
+    (installed && vhostCertDir(installed)) || (await deps.getCertPath(site.fqdn, domain));
+  const { name, fqdn, config } = await renderOwnedSite(site, route, certDir, tunnels, domain);
   if (installed === config) {
     if (unlinked) await deps.reloadNginx();
     return unlinked;
@@ -392,12 +393,8 @@ async function hostnameTaken(subdomain, domain, sites, tunnels) {
   if (!isWebSurfaceSubdomain(subdomain))
     return `'${subdomain}' cannot be a web surface's subdomain`;
   const fqdn = `${subdomain}.${domain}`;
-  if (tunnels.some((t) => t.fqdn === fqdn)) {
-    return `a tunnel holds '${fqdn}'`;
-  }
-  if (sites.some((s) => s.fqdn === fqdn || (s.aliases ?? []).includes(fqdn))) {
-    return `a site holds '${fqdn}'`;
-  }
+  const holder = hostnameHolder(fqdn, { tunnels, sites });
+  if (holder) return `${holder.kind === 'tunnel' ? 'a tunnel' : 'a site'} holds '${fqdn}'`;
   if (sites.some((s) => s.name === subdomain)) {
     return `a site is named '${subdomain}'`;
   }
@@ -505,7 +502,13 @@ export function createWebSurface(route, input, { actor, logger }) {
       const site = ownedSiteEntry({ id: crypto.randomUUID(), subdomain, fqdn, plugin, accessMode });
       await writeSites([...sites, site]);
       try {
-        const { name, config: vhost } = await renderOwnedSite(site, route, cert.certPath, tunnels);
+        const { name, config: vhost } = await renderOwnedSite(
+          site,
+          route,
+          cert.certPath,
+          tunnels,
+          domain,
+        );
         await deps.installVhost(name, vhost, fqdn, { enabled: true });
       } catch (err) {
         await writeSites(sites);

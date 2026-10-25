@@ -9,6 +9,8 @@
  * them, and both decide a hostname's domain here.
  */
 
+import { z } from 'zod';
+
 import {
   AGENT_PANEL_SUBDOMAIN_PREFIX,
   CORE_SUBDOMAINS,
@@ -56,6 +58,26 @@ export function assertDomainName(name: unknown): asserts name is string {
 function isAtOrUnder(host: string, domain: string): boolean {
   return host === domain || host.endsWith(`.${domain}`);
 }
+
+/**
+ * What `host` holds before `.<domain>` — `feria` of `feria.codelama.com.tr`,
+ * `a.b` of `a.b.codelama.com.tr` — or null when it is not under `domain`
+ * (the apex included). Case-insensitive; the label comes lower case.
+ */
+export function labelUnder(host: string, domain: string): string | null {
+  const lower = host.toLowerCase();
+  const suffix = `.${domain.toLowerCase()}`;
+  return lower.endsWith(suffix) && lower.length > suffix.length
+    ? lower.slice(0, -suffix.length)
+    : null;
+}
+
+/** A domain name as an API takes one: trimmed of case, then {@link assertDomainName}'s rule. */
+export const DomainNameSchema = z
+  .string()
+  .max(253)
+  .transform((value) => value.toLowerCase())
+  .pipe(z.string().regex(HOSTNAME_REGEX, 'Not a domain name'));
 
 /**
  * True when two domains are one, or one is under the other. A browser sends
@@ -109,11 +131,9 @@ export function isReservedLabel(label: string): boolean {
  * `www.<domain>`.
  */
 export function isRelayHost(host: string, domains: readonly string[]): boolean {
-  const lower = host.toLowerCase();
-  const domain = domainOfHost(lower, domains);
-  if (domain === null || lower === domain) return false;
-  const label = lower.slice(0, -(domain.length + 1));
-  if (label.includes('.')) return false;
+  const domain = domainOfHost(host, domains);
+  const label = domain === null ? null : labelUnder(host, domain);
+  if (label === null || label.includes('.')) return false;
   return (
     (CORE_SUBDOMAINS as readonly string[]).includes(label) ||
     label.startsWith(AGENT_PANEL_SUBDOMAIN_PREFIX)
@@ -160,20 +180,29 @@ export function parseDomainsProjection(parsed: unknown): DomainsProjection | nul
   return { v: 1, domains: out };
 }
 
+/** A projection indexed for lookups: its domain names, each one's members as a set. */
+export interface DomainsIndex {
+  readonly names: readonly string[];
+  readonly members: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+/** Index a projection once (Gatekeeper does when it reads `domains.json`). */
+export function indexDomainsProjection(projection: DomainsProjection): DomainsIndex {
+  return {
+    names: projection.domains.map((d) => d.name),
+    members: new Map(projection.domains.map((d) => [d.name, new Set(d.members)])),
+  };
+}
+
 /**
- * Whether `username` is a member of the domain `host` is under:
- * `member`, `not_member`, or `no_domain` for a host under none of them.
+ * The domain `host` is under (null: none) and whether `username` is a
+ * member of it.
  */
 export function domainMembership(
-  projection: DomainsProjection,
+  index: DomainsIndex,
   host: string,
   username: string,
-): 'member' | 'not_member' | 'no_domain' {
-  const name = domainOfHost(
-    host,
-    projection.domains.map((d) => d.name),
-  );
-  if (name === null) return 'no_domain';
-  const domain = projection.domains.find((d) => d.name === name);
-  return domain?.members.includes(username) ? 'member' : 'not_member';
+): { readonly domain: string | null; readonly member: boolean } {
+  const domain = domainOfHost(host, index.names);
+  return { domain, member: domain !== null && index.members.get(domain)?.has(username) === true };
 }

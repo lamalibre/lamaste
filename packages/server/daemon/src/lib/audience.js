@@ -53,7 +53,7 @@ import {
   isLamasteUsername,
 } from '@lamalibre/lamaste';
 import { listDirectoryUsers, pendingPrincipalCleanups } from './directory.js';
-import { domainsByUser, primaryDomainName } from './domains.js';
+import { membersByDomain, pluginDomainOr, primaryDomainName } from './domains.js';
 import { declaredRoleIds, grantRoles } from './entitlements.js';
 import { listGatekeeperGroups, listPluginGrants } from './gatekeeper-client.js';
 import { findPlugin, readPlugins } from './plugins.js';
@@ -483,13 +483,7 @@ async function recomputeOnce(logger) {
     const users = await listDirectoryUsers();
     const pending = await pendingPrincipalCleanups();
     const primary = await primaryDomainName();
-    const membersByDomain = new Map();
-    for (const [userId, domains] of await domainsByUser()) {
-      for (const domain of domains) {
-        if (!membersByDomain.has(domain)) membersByDomain.set(domain, new Set());
-        membersByDomain.get(domain).add(userId);
-      }
-    }
+    const members = await membersByDomain();
 
     for (const plugin of plugins) {
       const grants = await listPluginGrants(plugin.route);
@@ -508,7 +502,7 @@ async function recomputeOnce(logger) {
         rolesByUsername(grants.grants, groups, declared),
         stored,
         pending,
-        membersByDomain.get(plugin.domain ?? primary) ?? new Set(),
+        members.get(pluginDomainOr(plugin, primary)) ?? new Set(),
       );
       if ((loggedIneligible.get(plugin.name) ?? 0) !== ineligible) {
         loggedIneligible.set(plugin.name, ineligible);

@@ -8,9 +8,9 @@ import {
   generateTotpSecret,
   writeTotpToDatabase,
 } from '../lib/authelia.js';
-import { getConfig } from '../lib/config.js';
 import { httpError } from '../lib/app-error.js';
 import { changeUsers, usersFileError } from '../lib/directory.js';
+import { invitationSignInDomain } from '../lib/domains.js';
 
 /**
  * Find an invitation by token using a constant-time comparison.
@@ -196,10 +196,8 @@ export default async function inviteRoutes(fastify, _opts) {
       request.log.warn(err, 'Failed to update invitation status (user was created)');
     }
 
-    // The sign-in of the first domain the user is a member of — the primary
-    // for an invitation that names none.
-    const config = getConfig();
-    const loginDomain = invitation.domains?.[0] ?? config.domain;
+    // The sign-in of the first domain the user is a member of.
+    const loginDomain = await invitationSignInDomain(invitation);
     const loginUrl = loginDomain ? `https://auth.${loginDomain}/` : null;
 
     return {

@@ -15,7 +15,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
+
 import { MockAgent, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
+import { indexDomainsProjection } from '@lamalibre/lamaste';
 
 let dir;
 let app;
@@ -78,7 +80,7 @@ before(async () => {
   app = Fastify({ logger: false });
   app.decorate('getTunnels', () => TUNNELS);
   app.decorate('getUserSurfaceHosts', () => []);
-  app.decorate('getDomains', () => projection);
+  app.decorate('getDomains', () => (projection ? indexDomainsProjection(projection) : null));
   app.decorate('getSessionCache', () => sessions);
   app.decorate('getCacheVersion', () => 1);
   app.decorate('getSettings', () => ({

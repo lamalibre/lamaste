@@ -22,17 +22,20 @@ import {
   updateTunnel,
   TUNNEL_MAX_BODY_MB,
   grantedTunnelsFor,
+  hostnameHolder,
   TunnelError,
 } from '@lamalibre/lamaste/server';
 import {
   AGENT_LABEL_REGEX,
+  DomainNameSchema,
   INTERNAL_PLUGIN_PORT_RANGE,
   PLUGIN_AGENT_CN_PREFIX,
   RESERVED_TUNNEL_PORTS,
   isInternalPluginPort,
 } from '@lamalibre/lamaste';
 import { getConfig } from '../../lib/config.js';
-import { resolveActiveDomain } from '../../lib/domains.js';
+import { primaryDomainName, resolveActiveDomain } from '../../lib/domains.js';
+import { sendFailure } from '../../lib/app-error.js';
 import { readTunnels, readSites } from '../../lib/state.js';
 import { getAgentHostFactsHash, loadAgentRegistry } from '../../lib/mtls.js';
 import { getChiselCredentialIssuedAt } from '../../lib/chisel-users.js';
@@ -150,7 +153,7 @@ const CreateTunnelSchema = z
     maxBodySizeMb: MaxBodySizeSchema.optional(),
     // The base domain the hostname is under (an active one; the primary
     // when absent). An agent panel is always on the primary.
-    domain: z.string().min(1).max(253).optional(),
+    domain: DomainNameSchema.optional(),
   })
   .refine((d) => d.type !== 'plugin' || (d.pluginName && d.agentLabel), {
     message: 'pluginName and agentLabel are required for plugin tunnels',
@@ -231,9 +234,8 @@ function maxBodyCeiling(request) {
  * every workflow giving a site a hostname holds too.
  */
 async function siteServing(fqdn) {
-  const sites = await readSites();
-  const site = sites.find((s) => s.fqdn === fqdn || (s.aliases ?? []).includes(fqdn));
-  return site ? `by a static site ('${site.name}')` : null;
+  const holder = hostnameHolder(fqdn, { sites: await readSites() });
+  return holder ? `by a static site ('${holder.name}')` : null;
 }
 
 /**
@@ -510,9 +512,9 @@ export default async function tunnelRoutes(fastify, _opts) {
       try {
         domain = await resolveActiveDomain(body.domain);
       } catch (err) {
-        return reply.code(err.statusCode ?? 400).send({ error: err.message, code: err.code });
+        return sendFailure(request, reply, err, 'Failed to read the domains');
       }
-      if (type === 'panel' && domain !== config.domain) {
+      if (type === 'panel' && domain !== (await primaryDomainName())) {
         return reply
           .code(400)
           .send({ error: 'An agent panel is served on the primary domain only' });

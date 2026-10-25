@@ -14,6 +14,7 @@
  */
 
 import { CORE_SUBDOMAINS, HOSTNAME_REGEX } from '../constants.js';
+import { labelUnder } from '../domains.js';
 
 /** `lamaste-certbot issue|renew|renew-all|list` — see the provisioner's scripts/. */
 export const CERTBOT_WRAPPER = '/usr/local/sbin/lamaste-certbot';
@@ -495,10 +496,9 @@ export async function getCertPath(
   domain: string | null,
   exec: ExecFn,
 ): Promise<string> {
-  const label =
-    domain !== null && fqdn.endsWith(`.${domain}`) ? fqdn.slice(0, -domain.length - 1) : '';
-  if (label !== '' && !label.includes('.') && (await hasWildcardCert(domain as string, exec))) {
-    return `/etc/letsencrypt/live/${domain}/`;
+  const label = domain === null ? null : labelUnder(fqdn, domain);
+  if (domain !== null && label !== null && !label.includes('.')) {
+    if (await hasWildcardCert(domain, exec)) return `/etc/letsencrypt/live/${domain}/`;
   }
   return `/etc/letsencrypt/live/${fqdn}/`;
 }

@@ -58,23 +58,23 @@ test('every generated vhost passes the lamaste-priv allow-list', async () => {
     pathPrefix: 'herd',
     maxBodySizeMb: 100,
   });
-  await nginx.writeAuthenticatedVhost('app3.example.com', d, 20012, undefined, {
+  await nginx.writeGatekeeperVhost('app3.example.com', d, 20012, undefined, {
     maxBodySizeMb: 5,
   });
-  await nginx.writeRestrictedVhost('app4.example.com', d, 20013, undefined, {
+  await nginx.writeGatekeeperVhost('app4.example.com', d, 20013, undefined, {
     pathPrefix: 'shell',
     enabled: false,
   });
   await nginx.writeAgentPanelVhost('agent-r730.example.com', d, 9393);
   // App tunnels bound as plugins' user surfaces (slice 6).
-  await nginx.writeRestrictedVhost('piyasa.example.com', d, 20014, undefined, {
+  await nginx.writeGatekeeperVhost('piyasa.example.com', d, 20014, undefined, {
     maxBodySizeMb: 10,
     userSurface: [
       { route: 'market-indicators', maxBodySizeMb: 10 },
       { route: 'fx', maxBodySizeMb: 25 },
     ],
   });
-  await nginx.writeAuthenticatedVhost(
+  await nginx.writeGatekeeperVhost(
     'kamera.example.com',
     d,
     20015,

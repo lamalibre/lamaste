@@ -273,6 +273,8 @@ before(async () => {
   core = await import('@lamalibre/lamaste/server');
   shared = await import('@lamalibre/lamaste');
   await lib.loadConfig();
+  // What the panel's start does: the primary domain on record.
+  await (await import('../src/lib/domains.js')).ensurePrimaryDomain();
   lib.setOidcSyncForTests(async () => null);
   lib.setGatekeeperClientForTests(gatekeeper);
   lib.setUserSurfaceReconcileDepsForTests(sudo.reconcileDeps(lib));
@@ -323,11 +325,11 @@ before(async () => {
   T.vault = tunnel('vault', { accessMode: 'restricted' });
   await lib.writeTunnels(Object.values(T));
   for (const t of [T.taken, T.piyasa]) {
-    await lib.writeAuthenticatedVhost(t.fqdn, 'relay.test', t.port, undefined, {
+    await lib.writeGatekeeperVhost(t.fqdn, 'relay.test', t.port, undefined, {
       maxBodySizeMb: 10,
     });
   }
-  await lib.writeRestrictedVhost(T.vault.fqdn, 'relay.test', T.vault.port, undefined, {
+  await lib.writeGatekeeperVhost(T.vault.fqdn, 'relay.test', T.vault.port, undefined, {
     maxBodySizeMb: 10,
   });
 
@@ -849,9 +851,7 @@ async function addTunnel(name, overrides = {}) {
   const t = tunnel(name, overrides);
   T[name] = t;
   await lib.writeTunnels([...(await lib.readTunnels()), t]);
-  const write =
-    t.accessMode === 'authenticated' ? lib.writeAuthenticatedVhost : lib.writeRestrictedVhost;
-  await write(t.fqdn, 'relay.test', t.port, undefined, { maxBodySizeMb: 10 });
+  await lib.writeGatekeeperVhost(t.fqdn, 'relay.test', t.port, undefined, { maxBodySizeMb: 10 });
   return t;
 }
 

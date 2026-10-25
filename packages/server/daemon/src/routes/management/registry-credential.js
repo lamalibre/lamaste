@@ -31,6 +31,8 @@ import {
   verifyRegistryCredential,
   writeRegistryCredentialConfig,
 } from '../../lib/registry-credential.js';
+import { DomainNameSchema } from '@lamalibre/lamaste';
+import { sendFailure } from '../../lib/app-error.js';
 import { resolveActiveDomain } from '../../lib/domains.js';
 import { syncOidcClients } from '../../lib/plugin-oidc.js';
 
@@ -42,7 +44,7 @@ const FeriaTokenSchema = z
 
 const AuthSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('token'), token: FeriaTokenSchema }),
-  z.object({ kind: z.literal('oidc'), issuerDomain: z.string().min(1).max(253).optional() }),
+  z.object({ kind: z.literal('oidc'), issuerDomain: DomainNameSchema.optional() }),
 ]);
 
 const PutSchema = z
@@ -100,8 +102,7 @@ export default async function registryCredentialRoutes(fastify) {
       try {
         auth = await authOf(body);
       } catch (err) {
-        if (!err.statusCode) throw err;
-        return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+        return sendFailure(request, reply, err, 'Failed to read the domains');
       }
       const candidate = { registryUrl: body.registryUrl, auth };
 

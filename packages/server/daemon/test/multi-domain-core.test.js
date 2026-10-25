@@ -18,11 +18,14 @@ import {
   domainsOverlap,
   isRelayHost,
   isReservedLabel,
+  labelUnder,
+  indexDomainsProjection,
   parseDomainsProjection,
 } from '@lamalibre/lamaste';
 import {
   createSite,
   createTunnel,
+  hostnameHolder,
   tunnelHost,
   oidcAuthorizationPolicyName,
   renderAccessControl,
@@ -241,7 +244,7 @@ function tunnelDeps(tunnels, domain) {
     domain,
     email: 'ops@relay.test',
     nginx: {
-      writeRestrictedVhost: async () => {},
+      writeGatekeeperVhost: async () => {},
       removeAppVhost: async () => {},
     },
     certbot: { issueTunnelCert: async () => ({ skipped: true, certPath: '/x/' }) },
@@ -413,10 +416,23 @@ test('Gatekeeper’s projection: only a well-formed one is read; membership by t
     ],
   });
   assert.ok(projection);
-  assert.equal(domainMembership(projection, 'workspace.codelama.com.tr', 'onur'), 'member');
-  assert.equal(domainMembership(projection, 'workspace.codelama.com.tr', 'cust'), 'not_member');
-  assert.equal(domainMembership(projection, 'SHOP.samplepark.tr', 'cust'), 'member');
-  assert.equal(domainMembership(projection, 'blog.example.org', 'onur'), 'no_domain');
+  const index = indexDomainsProjection(projection);
+  assert.deepEqual(domainMembership(index, 'workspace.codelama.com.tr', 'onur'), {
+    domain: 'codelama.com.tr',
+    member: true,
+  });
+  assert.deepEqual(domainMembership(index, 'workspace.codelama.com.tr', 'cust'), {
+    domain: 'codelama.com.tr',
+    member: false,
+  });
+  assert.deepEqual(domainMembership(index, 'SHOP.samplepark.tr', 'cust'), {
+    domain: 'samplepark.tr',
+    member: true,
+  });
+  assert.deepEqual(domainMembership(index, 'blog.example.org', 'onur'), {
+    domain: null,
+    member: false,
+  });
 
   for (const bad of [
     null,
@@ -434,4 +450,32 @@ test('Gatekeeper’s projection: only a well-formed one is read; membership by t
   ]) {
     assert.equal(parseDomainsProjection(bad), null, JSON.stringify(bad));
   }
+});
+
+test('the label of a hostname under a domain: lower case, more than one label too; none at or outside it', () => {
+  assert.equal(labelUnder('Feria.CodeLama.com.tr', 'codelama.com.tr'), 'feria');
+  assert.equal(labelUnder('a.b.codelama.com.tr', 'codelama.com.tr'), 'a.b');
+  assert.equal(labelUnder('codelama.com.tr', 'codelama.com.tr'), null);
+  assert.equal(labelUnder('xcodelama.com.tr', 'codelama.com.tr'), null);
+});
+
+test('who holds a hostname: a tunnel, a site or a site’s alias — leaving a site out of its own check', () => {
+  const tunnels = [{ fqdn: 'feria.codelama.com.tr' }, { fqdn: null }];
+  const sites = [
+    { id: 's1', name: 'company', fqdn: 'codelama.com.tr', aliases: ['www.codelama.com.tr'] },
+  ];
+  assert.deepEqual(hostnameHolder('FERIA.codelama.com.tr', { tunnels, sites }), {
+    kind: 'tunnel',
+    name: 'feria.codelama.com.tr',
+  });
+  assert.deepEqual(hostnameHolder('codelama.com.tr', { tunnels, sites }), {
+    kind: 'site',
+    name: 'company',
+  });
+  assert.deepEqual(hostnameHolder('www.codelama.com.tr', { sites }), {
+    kind: 'alias',
+    name: 'company',
+  });
+  assert.equal(hostnameHolder('www.codelama.com.tr', { sites, selfSiteId: 's1' }), null);
+  assert.equal(hostnameHolder('free.codelama.com.tr', { tunnels, sites }), null);
 });

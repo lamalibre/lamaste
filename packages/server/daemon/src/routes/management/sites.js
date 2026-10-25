@@ -13,7 +13,8 @@ import {
   SiteError,
   withTunnelLock,
 } from '@lamalibre/lamaste/server';
-import { AppError } from '../../lib/app-error.js';
+import { DomainNameSchema } from '@lamalibre/lamaste';
+import { AppError, sendFailure } from '../../lib/app-error.js';
 import { webSurfaceServing } from '../../lib/web-surface.js';
 import { getConfig } from '../../lib/config.js';
 import { readSites, writeSites, readTunnels, withSitesLock } from '../../lib/state.js';
@@ -58,7 +59,7 @@ const CreateSiteSchema = z.object({
   spaMode: z.boolean().optional().default(false),
   autheliaProtected: z.boolean().optional().default(false),
   /** A managed site's domain (an active one; the primary when absent). */
-  domain: z.string().min(1).max(253).optional(),
+  domain: DomainNameSchema.optional(),
 });
 
 const UpdateSiteSchema = z.object({
@@ -115,7 +116,7 @@ function buildTunnelReadDeps() {
  */
 function buildAutheliaDeps(logger) {
   return {
-    updateAccessControl: async (sites) => {
+    renderAccess: async (sites) => {
       await syncDomainAccess({ logger, sites });
     },
   };
@@ -306,7 +307,7 @@ export default async function sitesRoutes(fastify, _opts) {
       try {
         domain = await resolveActiveDomain(body.domain);
       } catch (err) {
-        return reply.code(err.statusCode ?? 400).send({ error: err.message, code: err.code });
+        return sendFailure(request, reply, err, 'Failed to read the domains');
       }
       const domains = await activeDomainNames();
 

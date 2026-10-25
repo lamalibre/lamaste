@@ -1,5 +1,21 @@
 import type { AccessRequestTemplates, TemplateOptions } from './types.js';
 
+/** The look every page Gatekeeper serves shares: the panel's dark terminal style. */
+const BASE_CSS = `    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+      background: #09090b; color: #e4e4e7;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 1rem;
+    }
+    .card {
+      background: #18181b; border: 1px solid #27272a; border-radius: 0.75rem;
+      max-width: 560px; width: 100%; padding: 2rem;
+    }
+    .icon { font-size: 2.5rem; margin-bottom: 1rem; }
+    h1 { font-size: 1.25rem; color: #f4f4f5; margin-bottom: 0.5rem; }
+    .fqdn { color: #22d3ee; }`;
+
 /**
  * Generate pre-filled message templates for requesting access to a resource.
  *
@@ -58,20 +74,7 @@ export function buildAccessRequestPage(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Access Required — ${escapeHtml(resourceFqdn)}</title>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
-      background: #09090b; color: #e4e4e7;
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
-      padding: 1rem;
-    }
-    .card {
-      background: #18181b; border: 1px solid #27272a; border-radius: 0.75rem;
-      max-width: 560px; width: 100%; padding: 2rem;
-    }
-    .icon { font-size: 2.5rem; margin-bottom: 1rem; }
-    h1 { font-size: 1.25rem; color: #f4f4f5; margin-bottom: 0.5rem; }
-    .fqdn { color: #22d3ee; }
+${BASE_CSS}
     .subtitle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1.5rem; }
     .section-label {
       color: #71717a; font-size: 0.75rem; text-transform: uppercase;
@@ -183,20 +186,7 @@ export function buildDomainRefusalPage(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Not a member — ${escapeHtml(domain)}</title>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
-      background: #09090b; color: #e4e4e7;
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
-      padding: 1rem;
-    }
-    .card {
-      background: #18181b; border: 1px solid #27272a; border-radius: 0.75rem;
-      max-width: 560px; width: 100%; padding: 2rem;
-    }
-    .icon { font-size: 2.5rem; margin-bottom: 1rem; }
-    h1 { font-size: 1.25rem; color: #f4f4f5; margin-bottom: 0.5rem; }
-    .fqdn { color: #22d3ee; }
+${BASE_CSS}
     .subtitle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1rem; }
     .contact { color: #a1a1aa; font-size: 0.8125rem; margin-top: 1.5rem; }
     a { color: #22d3ee; text-decoration: none; }

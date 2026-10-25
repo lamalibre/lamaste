@@ -7,8 +7,7 @@
 
 import {
   writePublicVhost,
-  writeAuthenticatedVhost,
-  writeRestrictedVhost,
+  writeGatekeeperVhost,
   removeAppVhost,
   enableAppVhost,
   disableAppVhost,
@@ -23,8 +22,7 @@ import { readTunnels, writeTunnels } from './state.js';
 
 export const tunnelNginxDeps = Object.freeze({
   writePublicVhost,
-  writeAuthenticatedVhost,
-  writeRestrictedVhost,
+  writeGatekeeperVhost,
   writeAgentPanelVhost,
   removeAppVhost,
   removeAgentPanelVhost,

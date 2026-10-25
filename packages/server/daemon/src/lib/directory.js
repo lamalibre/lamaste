@@ -582,7 +582,12 @@ async function reconcileUnlocked({
   const missing = live.filter((u) => absentFirst.has(u.username) && !snapshot.has(u.username));
 
   const now = new Date().toISOString();
-  const defaultDomains = await domainsForNewUser(undefined);
+  // The domains of a user this reconcile creates without being told theirs:
+  // read only when it creates one.
+  const creating = [...snapshot.keys()].some(
+    (username) => !Object.hasOwn(domains, username) && !live.some((u) => u.username === username),
+  );
+  const defaultDomains = creating ? await domainsForNewUser(undefined) : [];
   const events = [];
   const result = { created: 0, updated: 0, removed: [], disabled: [] };
   const selectLive = db.prepare(

@@ -181,6 +181,7 @@ export async function isAutheliaInstalled(): Promise<boolean> {
 export async function writeAutheliaConfig(
   domain: string,
   secrets: AutheliaSecrets,
+  members: readonly string[] = [],
 ): Promise<string> {
   const { jwtSecret, sessionSecret, storageEncryptionKey } = secrets;
 
@@ -208,8 +209,9 @@ export async function writeAutheliaConfig(
         },
       },
     },
-    // Nobody until the panel renders the members (updateDomainAccess).
-    access_control: renderAccessControl([{ name: domain, members: [] }], []),
+    // The primary domain's members (onboarding: its administrator) — the
+    // panel renders every later change (updateDomainAccess).
+    access_control: renderAccessControl([{ name: domain, members }], []),
     session: {
       // Authelia's default cookie name, from the one constant everything
       // that reads or strips it uses: Gatekeeper reads the session from it

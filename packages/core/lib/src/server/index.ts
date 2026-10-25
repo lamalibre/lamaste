@@ -91,6 +91,7 @@ export {
   isInternalTunnel,
   tunnelLabel,
   tunnelHost,
+  vhostTunnelHost,
   assignInternalPluginPort,
 } from './tunnels.js';
 export type {
@@ -127,7 +128,15 @@ export type {
 } from './tunnels.js';
 
 // --- Sites ---
-export { SiteError, createSite, deleteSite, updateSite, verifyDns } from './sites.js';
+export {
+  SiteError,
+  createSite,
+  deleteSite,
+  hostnameHolder,
+  resolveHostA,
+  updateSite,
+  verifyDns,
+} from './sites.js';
 export type {
   SiteType,
   SiteEntry,
@@ -140,6 +149,7 @@ export type {
   SiteStateDeps,
   TunnelReadDeps,
   AutheliaDeps as SiteAutheliaDeps,
+  HostnameHolder,
   CreateSiteOptions,
   CreateSiteResult,
   DeleteSiteOptions,
@@ -148,20 +158,6 @@ export type {
   VerifyDnsOptions,
   VerifyDnsResult,
 } from './sites.js';
-
-// --- Access Control ---
-export { syncAllAccessControl } from './access-control.js';
-export type {
-  SiteEntry as AccessControlSiteEntry,
-  PluginTunnelGrant,
-  TunnelEntry as AccessControlTunnelEntry,
-  AccessControlLogger,
-  AutheliaDeps as AccessControlAutheliaDeps,
-  GrantStateDeps,
-  TunnelStateDeps as AccessControlTunnelStateDeps,
-  SiteStateDeps as AccessControlSiteStateDeps,
-  SyncAccessControlOptions,
-} from './access-control.js';
 
 // --- Files (static site filesystem helpers) ---
 export {
@@ -550,6 +546,7 @@ export {
   registryAudience,
   autheliaIssuer,
   registryIssuer,
+  registryIssuerDomain,
   lamasteServerOidcClient,
   requestClientCredentialsToken,
   loginToRegistry,

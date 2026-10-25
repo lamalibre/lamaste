@@ -297,11 +297,11 @@ before(async () => {
   T.away = tunnel('away', { agentLabel: 'vm2' });
   await lib.writeTunnels(Object.values(T));
   for (const t of [T.piyasa, T.spare, T.away]) {
-    await lib.writeAuthenticatedVhost(t.fqdn, 'relay.test', t.port, undefined, {
+    await lib.writeGatekeeperVhost(t.fqdn, 'relay.test', t.port, undefined, {
       maxBodySizeMb: 10,
     });
   }
-  await lib.writeRestrictedVhost(T.kamera.fqdn, 'relay.test', T.kamera.port, undefined, {
+  await lib.writeGatekeeperVhost(T.kamera.fqdn, 'relay.test', T.kamera.port, undefined, {
     maxBodySizeMb: 10,
   });
 
@@ -663,7 +663,7 @@ test('core: the per-host cap, and a failed save that restores the vhost', async 
     domain: 'relay.test',
     email: 'ops@relay.test',
     nginx: {
-      writeAuthenticatedVhost: async (_s, _d, _p, _c, opts) => {
+      writeGatekeeperVhost: async (_s, _d, _p, _c, opts) => {
         writes.push((opts.userSurface ?? []).map((r) => r.route));
       },
     },
@@ -728,7 +728,7 @@ test('core: moving a bound tunnel re-renders what it serves first; a failed save
     domain: 'relay.test',
     email: 'ops@relay.test',
     nginx: {
-      writeAuthenticatedVhost: async (_s, _d, _p, _c, opts) => {
+      writeGatekeeperVhost: async (_s, _d, _p, _c, opts) => {
         writes.push((opts.userSurface ?? []).map((r) => r.route));
       },
     },

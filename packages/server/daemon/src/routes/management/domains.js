@@ -17,27 +17,21 @@
  */
 
 import { z } from 'zod';
-import { HOSTNAME_REGEX } from '@lamalibre/lamaste';
+import { DomainNameSchema } from '@lamalibre/lamaste';
 import { actorFromRequest } from '../../lib/actor.js';
+import { sendFailure } from '../../lib/app-error.js';
 import {
   activateDomain,
   addDomain,
   addDomainMember,
-  domainUsage,
+  domainsOverview,
   getDomain,
   listDomainMembers,
-  listDomains,
   removeDomain,
   removeDomainMember,
   verifyDomainDns,
 } from '../../lib/domains.js';
 import { setPluginDomain } from '../../lib/plugin-domain.js';
-
-const DomainNameSchema = z
-  .string()
-  .max(253)
-  .transform((v) => v.toLowerCase())
-  .pipe(z.string().regex(HOSTNAME_REGEX, 'Not a domain name'));
 
 const NameParamSchema = z.object({ name: DomainNameSchema });
 const MemberParamsSchema = z.object({ name: DomainNameSchema, userId: z.string().uuid() });
@@ -45,31 +39,10 @@ const AddDomainSchema = z.object({ name: DomainNameSchema }).strict();
 const PluginParamSchema = z.object({ name: z.string().min(1).max(200) });
 const PluginDomainSchema = z.object({ domain: DomainNameSchema }).strict();
 
-/** Answer a refusal lib/domains.js threw (`statusCode`, `code`, `usedBy`); rethrow anything else. */
-function refusal(reply, err) {
-  if (!Number.isInteger(err.statusCode)) throw err;
-  return reply.code(err.statusCode).send({
-    error: err.message,
-    ...(err.code ? { code: err.code } : {}),
-    ...(err.usedBy ? { usedBy: err.usedBy } : {}),
-  });
-}
-
 export default async function domainRoutes(fastify) {
   const admin = { preHandler: fastify.requireRole(['admin']) };
 
-  fastify.get('/domains', admin, async () => {
-    const domains = await listDomains();
-    const out = [];
-    for (const domain of domains) {
-      out.push({
-        ...domain,
-        members: (await listDomainMembers(domain.name)).length,
-        usedBy: await domainUsage(domain.name),
-      });
-    }
-    return { domains: out };
-  });
+  fastify.get('/domains', admin, async () => ({ domains: await domainsOverview() }));
 
   fastify.post('/domains', admin, async (request, reply) => {
     const { name } = AddDomainSchema.parse(request.body);
@@ -80,7 +53,7 @@ export default async function domainRoutes(fastify) {
       });
       return reply.code(201).send({ domain });
     } catch (err) {
-      return refusal(reply, err);
+      return sendFailure(request, reply, err, 'The domain change failed');
     }
   });
 
@@ -92,7 +65,7 @@ export default async function domainRoutes(fastify) {
       try {
         return await verifyDomainDns(name);
       } catch (err) {
-        return refusal(reply, err);
+        return sendFailure(request, reply, err, 'The domain change failed');
       }
     },
   );
@@ -109,7 +82,7 @@ export default async function domainRoutes(fastify) {
         });
         return { domain };
       } catch (err) {
-        return refusal(reply, err);
+        return sendFailure(request, reply, err, 'The domain change failed');
       }
     },
   );
@@ -119,7 +92,7 @@ export default async function domainRoutes(fastify) {
     try {
       return await removeDomain(name, { actor: actorFromRequest(request), logger: request.log });
     } catch (err) {
-      return refusal(reply, err);
+      return sendFailure(request, reply, err, 'The domain change failed');
     }
   });
 
@@ -139,7 +112,7 @@ export default async function domainRoutes(fastify) {
         logger: request.log,
       });
     } catch (err) {
-      return refusal(reply, err);
+      return sendFailure(request, reply, err, 'The domain change failed');
     }
   });
 
@@ -151,7 +124,7 @@ export default async function domainRoutes(fastify) {
         logger: request.log,
       });
     } catch (err) {
-      return refusal(reply, err);
+      return sendFailure(request, reply, err, 'The domain change failed');
     }
   });
 
@@ -164,7 +137,7 @@ export default async function domainRoutes(fastify) {
         logger: request.log,
       });
     } catch (err) {
-      return refusal(reply, err);
+      return sendFailure(request, reply, err, 'The domain change failed');
     }
   });
 }

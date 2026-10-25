@@ -22,3 +22,27 @@ export class AppError extends Error {
 export function httpError(message, statusCode, extra = {}) {
   return Object.assign(new Error(message), { statusCode, ...extra });
 }
+
+/**
+ * Answer a refusal a route's work threw — an error with `statusCode`: its
+ * message, `code` and `usedBy` when it carries them — or a 500 with
+ * `fallback` for anything else. A 5xx and any other error are logged; a
+ * plain error never reaches the client with its message.
+ *
+ * @param {import('fastify').FastifyRequest} request
+ * @param {import('fastify').FastifyReply} reply
+ * @param {Error & { statusCode?: number, code?: string, usedBy?: object, cause?: unknown }} err
+ * @param {string} fallback
+ */
+export function sendFailure(request, reply, err, fallback) {
+  if (Number.isInteger(err.statusCode)) {
+    if (err.statusCode >= 500) request.log.error(err.cause ?? err, err.message);
+    return reply.code(err.statusCode).send({
+      error: err.message,
+      ...(err.code ? { code: err.code } : {}),
+      ...(err.usedBy ? { usedBy: err.usedBy } : {}),
+    });
+  }
+  request.log.error(err, fallback);
+  return reply.code(500).send({ error: fallback });
+}

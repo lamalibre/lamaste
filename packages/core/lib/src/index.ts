@@ -51,6 +51,7 @@ export {
   PANEL_BUNDLE_CACHE_SECONDS,
   OIDC_USER_FACTORS,
   HOSTNAME_REGEX,
+  DNS_WILDCARD_PROBE_LABEL,
 } from './constants.js';
 
 export type {
@@ -321,7 +322,10 @@ export {
   DOMAINS_PROJECTION_FILE,
   DOMAIN_STATUSES,
   DomainError,
+  DomainNameSchema,
   domainMembership,
+  indexDomainsProjection,
+  labelUnder,
   parseDomainsProjection,
   assertDomainAddable,
   assertDomainName,
@@ -330,7 +334,7 @@ export {
   isRelayHost,
   isReservedLabel,
 } from './domains.js';
-export type { DomainRecord, DomainStatus, DomainsProjection } from './domains.js';
+export type { DomainRecord, DomainStatus, DomainsIndex, DomainsProjection } from './domains.js';
 
 // Authelia's session cookie: its name, how Gatekeeper reads it, and the
 // nginx map that keeps it from every tunnel and agent backend
@@ -464,6 +468,7 @@ export {
   PromiseChainMutex,
   KeyedPromiseChainMutex,
   atomicWriteJSON,
+  atomicWriteJSONIfChanged,
   readJSONFile,
 } from './file-helpers.js';
 

@@ -15,25 +15,29 @@
  * `updateDomainAccess`) and into Gatekeeper's projection
  * (`domains.json`), both by {@link syncDomainAccess}: after every
  * membership, user, domain and site change, and every minute (the identity
- * tick). A disabled user keeps their memberships and is rendered nowhere;
- * a deleted user loses them (lib/directory.js). While the relay has one
- * domain every new user becomes its member (decision 1); with two or more,
- * a new user is given the domains they are created with.
+ * tick). Everything that writes what members may do — that rendering and
+ * the OIDC provider (lib/plugin-oidc.js, whose clients name the domains'
+ * policies) — reads the members inside one lock ({@link withDomainRendering}),
+ * so a membership that ended is never written back from an older read. A
+ * disabled user keeps their memberships and is rendered nowhere; a deleted
+ * user loses them (lib/directory.js). While the relay has one domain every
+ * new user becomes its member (decision 1); with two or more, a new user is
+ * given the domains they are created with.
  *
  * Audit entries name domains and user ids, never a username.
  */
 
-import dns from 'node:dns/promises';
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
 import {
+  DNS_WILDCARD_PROBE_LABEL,
   DOMAINS_PROJECTION_FILE,
   PromiseChainMutex,
   assertDomainAddable,
-  atomicWriteJSON,
+  atomicWriteJSONIfChanged,
   domainOfHost,
   isLamasteUsername,
 } from '@lamalibre/lamaste';
+import { registryIssuerDomain, resolveHostA } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
 import { updateDomainAccess } from './authelia.js';
@@ -45,7 +49,10 @@ const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lam
 
 /** One change of the domains or their members at a time. */
 const domainsMutex = new PromiseChainMutex();
-/** One rendering at a time: two would race on Authelia's file and the projection. */
+/**
+ * One writer of what members may do at a time — Authelia's domain access,
+ * the projection, the OIDC provider — each reading the members under it.
+ */
 const renderMutex = new PromiseChainMutex();
 
 /**
@@ -68,9 +75,37 @@ function rowToDomain(row) {
   };
 }
 
+/** `fn(db)` in one `BEGIN IMMEDIATE` transaction, rolled back when it throws. */
+function inTransaction(db, fn) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = fn(db);
+    db.exec('COMMIT');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/** `panel.json`'s domain — the primary's name — or null before onboarding set one (or loaded it). */
+function configDomain() {
+  try {
+    return getConfig().domain ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Reading
 // ---------------------------------------------------------------------------
+
+/** One domain's row, or null. */
+function domainRow(db, name) {
+  const row = db.prepare('SELECT * FROM domains WHERE name = ?').get(name);
+  return row ? rowToDomain(row) : null;
+}
 
 /**
  * Every domain: the primary first, then by name.
@@ -84,9 +119,7 @@ export async function listDomains() {
 
 /** One domain by name, or null. */
 export async function getDomain(name) {
-  const db = await getStateDb();
-  const row = db.prepare('SELECT * FROM domains WHERE name = ?').get(name);
-  return row ? rowToDomain(row) : null;
+  return domainRow(await getStateDb(), name);
 }
 
 /** The active domains (the primary first). */
@@ -106,51 +139,70 @@ export async function activeDomainNames() {
  */
 export async function primaryDomainName() {
   const db = await getStateDb();
-  const row = db.prepare('SELECT name FROM domains WHERE is_primary = 1').get();
-  if (row) return row.name;
-  try {
-    return getConfig().domain ?? null;
-  } catch {
-    return null;
-  }
+  return db.prepare('SELECT name FROM domains WHERE is_primary = 1').get()?.name ?? configDomain();
 }
 
 /**
- * The domain a plugin belongs to: its own (`plugins.domain`), else the
- * primary.
+ * The active domain hostname `fqdn` is under, or null when it is under none
+ * of them.
+ *
+ * @param {string} fqdn
+ */
+export async function domainOfHostname(fqdn) {
+  return domainOfHost(fqdn, await activeDomainNames());
+}
+
+/** The domain a plugin belongs to: its own (`plugins.domain`), else `primary`. Pure. */
+export function pluginDomainOr(plugin, primary) {
+  return plugin?.domain ?? primary;
+}
+
+/**
+ * The domain a plugin belongs to: its own, else the primary.
  *
  * @param {{ domain?: string | null } | null | undefined} plugin
  */
 export async function pluginDomainName(plugin) {
-  return plugin?.domain ?? (await primaryDomainName());
+  return pluginDomainOr(plugin, await primaryDomainName());
 }
 
-/** The domains `userId` is a member of, by name. */
-export async function domainsOfUser(userId) {
-  const db = await getStateDb();
-  return db
-    .prepare('SELECT domain FROM domain_members WHERE user_id = ? ORDER BY domain')
-    .all(userId)
-    .map((row) => row.domain);
+/**
+ * The domain whose sign-in an invitation sends its user to: the first it
+ * names, else the primary (an invitation from before the multi-domain
+ * relay names none).
+ */
+export async function invitationSignInDomain(invitation) {
+  return invitation?.domains?.[0] ?? (await primaryDomainName());
+}
+
+/**
+ * The registry's domain: the one whose members `feria login` admits and
+ * whose issuer the panel's tokens carry — an OIDC credential's
+ * `issuerDomain`, else the primary (also without a credential).
+ */
+export async function registryDomain() {
+  const { readRegistryCredentialConfig } = await import('./registry-credential.js');
+  const config = await readRegistryCredentialConfig().catch(() => null);
+  const primary = await primaryDomainName();
+  return config ? registryIssuerDomain(config.auth, primary) : primary;
 }
 
 /**
  * The active domain `requested` names — the primary when it names none — or
- * a 400 the route answers with: a tunnel, a site, a web surface or a plugin
- * is put only on a domain that serves.
+ * a 400 the route answers with: a tunnel, a site or a plugin is put only on
+ * a domain that serves.
  *
  * @param {string | undefined | null} requested
  * @returns {Promise<string>}
  */
 export async function resolveActiveDomain(requested) {
-  const domains = await activeDomains();
   if (requested === undefined || requested === null) {
-    const primary = domains.find((d) => d.primary)?.name ?? (await primaryDomainName());
+    const primary = await primaryDomainName();
     if (!primary) throw httpError('The panel has no domain yet', 400, { code: 'no_domain' });
     return primary;
   }
   const wanted = String(requested).toLowerCase();
-  if (!domains.some((d) => d.name === wanted)) {
+  if (!(await activeDomainNames()).includes(wanted)) {
     throw httpError(`'${wanted}' is not an active domain of this relay`, 400, {
       code: 'unknown_domain',
     });
@@ -190,34 +242,59 @@ export async function listDomainMembers(name) {
 export async function domainsByUser() {
   const db = await getStateDb();
   const map = new Map();
-  for (const row of db
+  for (const { user_id: userId, domain } of db
     .prepare('SELECT user_id, domain FROM domain_members ORDER BY domain')
     .all()) {
-    const list = map.get(row.user_id) ?? [];
-    list.push(row.domain);
-    map.set(row.user_id, list);
+    map.set(userId, [...(map.get(userId) ?? []), domain]);
   }
   return map;
 }
 
 /**
- * The usernames of the active members of `name` — active users only, as
- * every rendering names them.
+ * Each domain's members, by domain: their user ids.
  *
- * @param {string} name
- * @returns {Promise<Set<string>>}
+ * @returns {Promise<Map<string, Set<string>>>}
  */
-export async function activeMemberUsernames(name) {
+export async function membersByDomain() {
   const db = await getStateDb();
-  return new Set(
+  const map = new Map();
+  for (const { domain, user_id: userId } of db
+    .prepare('SELECT domain, user_id FROM domain_members')
+    .all()) {
+    if (!map.has(domain)) map.set(domain, new Set());
+    map.get(domain).add(userId);
+  }
+  return map;
+}
+
+/** The domains `userId` is a member of, by name. */
+export async function domainsOfUser(userId) {
+  const db = await getStateDb();
+  return db
+    .prepare('SELECT domain FROM domain_members WHERE user_id = ? ORDER BY domain')
+    .all(userId)
+    .map((row) => row.domain);
+}
+
+/**
+ * The domains, the primary first, with how many members each has and what
+ * uses it (as {@link domainUsage}) — read once for all of them.
+ */
+export async function domainsOverview() {
+  const db = await getStateDb();
+  const domains = await listDomains();
+  const counts = new Map(
     db
-      .prepare(
-        `SELECT u.username FROM domain_members dm JOIN directory_users u ON u.user_id = dm.user_id
-         WHERE dm.domain = ? AND u.status = 'active' AND u.username IS NOT NULL`,
-      )
-      .all(name)
-      .map((row) => row.username),
+      .prepare('SELECT domain, COUNT(*) AS n FROM domain_members GROUP BY domain')
+      .all()
+      .map((row) => [row.domain, row.n]),
   );
+  const usage = await usageByDomain(domains.map((d) => d.name));
+  return domains.map((d) => ({
+    ...d,
+    members: counts.get(d.name) ?? 0,
+    usedBy: usage.get(d.name),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -229,16 +306,26 @@ export async function activeMemberUsernames(name) {
  * domain; pending ones too, so an activation goes live with its members),
  * or — when none are requested and the relay has exactly one domain — that
  * one. With two or more domains and none requested: none (a user adopted
- * from users.yml waits for an administrator). Throws a 400 on an unknown
- * domain.
+ * from users.yml waits for an administrator), or with `required` a 400
+ * `domains_required` (the users API and invitations). Throws a 400
+ * `unknown_domain` on a domain the relay does not have.
  *
  * @param {readonly string[] | undefined} requested
+ * @param {{ required?: boolean }} [opts]
  * @returns {Promise<string[]>}
  */
-export async function domainsForNewUser(requested) {
+export async function domainsForNewUser(requested, { required = false } = {}) {
   const domains = await listDomains();
   if (requested === undefined) {
-    return domains.length === 1 ? [domains[0].name] : [];
+    if (domains.length === 1) return [domains[0].name];
+    if (required && domains.length > 1) {
+      throw httpError(
+        'Name the domains the user is a member of: this relay has more than one',
+        400,
+        { code: 'domains_required' },
+      );
+    }
+    return [];
   }
   const names = new Set(domains.map((d) => d.name));
   const wanted = [...new Set(requested.map((d) => String(d).toLowerCase()))];
@@ -249,14 +336,6 @@ export async function domainsForNewUser(requested) {
     });
   }
   return wanted;
-}
-
-/**
- * Whether a user created now needs domains named: the relay has more than
- * one domain (with one, they become its member).
- */
-export async function newUsersNeedDomains() {
-  return (await listDomains()).length > 1;
 }
 
 /**
@@ -294,15 +373,13 @@ export function insertMembershipsSync(db, userId, domains, { actor, now }) {
  * @returns {Array<{ action: string, details: object }>}
  */
 export function deleteMembershipsSync(db, userId, reason) {
-  const domains = db
-    .prepare('SELECT domain FROM domain_members WHERE user_id = ?')
+  return db
+    .prepare('DELETE FROM domain_members WHERE user_id = ? RETURNING domain')
     .all(userId)
-    .map((row) => row.domain);
-  db.prepare('DELETE FROM domain_members WHERE user_id = ?').run(userId);
-  return domains.map((domain) => ({
-    action: 'directory.membership.removed',
-    details: { domain, userId, reason },
-  }));
+    .map(({ domain }) => ({
+      action: 'directory.membership.removed',
+      details: { domain, userId, reason },
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -324,32 +401,21 @@ export async function ensurePrimaryDomain({ logger } = {}) {
     const db = await getStateDb();
     const existing = db.prepare('SELECT name FROM domains WHERE is_primary = 1').get();
     if (existing) return existing.name;
-    let domain;
-    try {
-      domain = getConfig().domain;
-    } catch {
-      domain = null;
-    }
+    const domain = configDomain();
     if (!domain) return null;
     const now = new Date().toISOString();
-    let members = 0;
-    db.exec('BEGIN IMMEDIATE');
-    try {
+    const members = inTransaction(db, () => {
       db.prepare(
         `INSERT INTO domains (name, is_primary, status, created_at, activated_at)
          VALUES (?, 1, 'active', ?, ?)`,
       ).run(domain, now, now);
-      members = db
+      return db
         .prepare(
           `INSERT INTO domain_members (domain, user_id, added_at, added_by)
            SELECT ?, user_id, ?, 'migration' FROM directory_users WHERE status <> 'removed'`,
         )
         .run(domain, now).changes;
-      db.exec('COMMIT');
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
-    }
+    });
     await recordAuditBestEffort(
       { actor: 'lamaste', action: 'domain.added', details: { domain, primary: true, members } },
       logger,
@@ -362,10 +428,6 @@ export async function ensurePrimaryDomain({ logger } = {}) {
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
-
-function projectionPath() {
-  return path.join(STATE_DIR, DOMAINS_PROJECTION_FILE);
-}
 
 /** The protected-site rules Authelia renders, from `sites.json`. */
 function protectedSiteRules(sites) {
@@ -384,14 +446,14 @@ let loggedIneligible = 0;
 
 /**
  * The active domains with the usernames of their active members — what
- * Authelia and Gatekeeper are told (lib/plugin-oidc.js renders the OIDC
- * provider's policies from it too). A username users.yml holds that is not
- * a Lamaste username is never rendered (counted, never named).
+ * Authelia and Gatekeeper are told. A username users.yml holds that is not
+ * a Lamaste username is never rendered (counted, never named). Read it
+ * under {@link withDomainRendering} to write anything from it.
  *
  * @param {import('pino').Logger} [logger]
  * @returns {Promise<Array<{ name: string, members: string[] }>>}
  */
-export async function domainsWithMembers(logger) {
+async function domainsWithMembers(logger) {
   const db = await getStateDb();
   const domains = await activeDomains();
   const rows = db
@@ -421,15 +483,20 @@ export async function domainsWithMembers(logger) {
   return domains.map((d) => ({ name: d.name, members: byDomain.get(d.name) ?? [] }));
 }
 
-/** Write Gatekeeper's projection when it differs from the file. */
-async function writeProjection(projection) {
-  const text = JSON.stringify(projection);
-  try {
-    if (JSON.stringify(JSON.parse(await readFile(projectionPath(), 'utf-8'))) === text) return;
-  } catch {
-    // Missing or unreadable: written below.
-  }
-  await atomicWriteJSON(projectionPath(), projection, { mode: 0o600 });
+/**
+ * Run `fn(domains)` — `domains` the active domains with their active
+ * members, read now — as the one writer of what members may do: two
+ * writers would each write their own reading, and the later one could put
+ * back a member the earlier had removed. Every write of Authelia's domain
+ * access, the projection and the OIDC provider goes through here.
+ *
+ * @template T
+ * @param {(domains: Array<{ name: string, members: string[] }>) => Promise<T>} fn
+ * @param {{ logger?: import('pino').Logger }} [opts]
+ * @returns {Promise<T>}
+ */
+export function withDomainRendering(fn, { logger } = {}) {
+  return renderMutex.run(async () => fn(await domainsWithMembers(logger)));
 }
 
 /**
@@ -445,25 +512,33 @@ async function writeProjection(projection) {
  * @returns {Promise<{ changed: boolean, domains: number }>}
  */
 export function syncDomainAccess({ logger, sites } = {}) {
-  return renderMutex.run(async () => {
-    const domains = await domainsWithMembers(logger);
-    if (domains.length === 0) return { changed: false, domains: 0 };
-    await writeProjection({ v: 1, domains });
-    const { changed } = await updateDomainAccess({
-      domains,
-      sites: protectedSiteRules(sites ?? (await readSites())),
-    });
-    if (changed) logger?.info({ domains: domains.length }, 'Authelia domain access updated');
-    return { changed, domains: domains.length };
-  });
+  return withDomainRendering(
+    async (domains) => {
+      if (domains.length === 0) return { changed: false, domains: 0 };
+      await atomicWriteJSONIfChanged(
+        path.join(STATE_DIR, DOMAINS_PROJECTION_FILE),
+        { v: 1, domains },
+        { mode: 0o600 },
+      );
+      const { changed } = await updateDomainAccess({
+        domains,
+        sites: protectedSiteRules(sites ?? (await readSites())),
+      });
+      if (changed) logger?.info({ domains: domains.length }, 'Authelia domain access updated');
+      return { changed, domains: domains.length };
+    },
+    { logger },
+  );
 }
 
 /**
- * After a change of who may reach a domain: render it, drop Gatekeeper's
- * cached session verdicts and recompute the plugins' audiences (a plugin's
- * audience is its domain's members). Returns the warnings.
+ * After a change of who may reach a domain: render it and — when the change
+ * reaches a rendering (`effective`: an active user on an active domain) —
+ * drop Gatekeeper's cached session verdicts and recompute the plugins'
+ * audiences (a plugin's audience is its domain's members). Returns the
+ * warnings.
  */
-async function settleMembership(logger) {
+async function settleMembership(logger, { effective = true } = {}) {
   const warnings = [];
   try {
     await syncDomainAccess({ logger });
@@ -474,6 +549,7 @@ async function settleMembership(logger) {
       message: `Authelia was not updated (${err.message}); the panel renders it again within a minute`,
     });
   }
+  if (!effective) return warnings;
   const { bustGatekeeperSessions } = await import('./gatekeeper-client.js');
   const busted = await bustGatekeeperSessions();
   if (!busted.ok) {
@@ -487,6 +563,9 @@ async function settleMembership(logger) {
   return warnings;
 }
 
+/** `{ warnings }` when there are any, else nothing — what a route's answer carries. */
+const withWarnings = (warnings) => (warnings.length > 0 ? { warnings } : {});
+
 // ---------------------------------------------------------------------------
 // Membership
 // ---------------------------------------------------------------------------
@@ -494,7 +573,7 @@ async function settleMembership(logger) {
 /** The directory row of `userId`, or a 404 / 409 the route answers with. */
 function memberCandidate(db, userId) {
   const row = db
-    .prepare('SELECT user_id, status FROM directory_users WHERE user_id = ?')
+    .prepare('SELECT user_id, status, username FROM directory_users WHERE user_id = ?')
     .get(userId);
   if (!row) throw httpError('User not found', 404, { code: 'user_not_found' });
   if (row.status === 'removed') {
@@ -504,9 +583,9 @@ function memberCandidate(db, userId) {
 }
 
 function domainOr404(db, name) {
-  const row = db.prepare('SELECT * FROM domains WHERE name = ?').get(name);
-  if (!row) throw httpError('Domain not found', 404, { code: 'domain_not_found' });
-  return rowToDomain(row);
+  const domain = domainRow(db, name);
+  if (!domain) throw httpError('Domain not found', 404, { code: 'domain_not_found' });
+  return domain;
 }
 
 /**
@@ -519,19 +598,25 @@ function domainOr404(db, name) {
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
  */
 export async function addDomainMember(name, userId, { actor, logger }) {
-  const added = await domainsMutex.run(async () => {
+  const change = await domainsMutex.run(async () => {
     const db = await getStateDb();
-    domainOr404(db, name);
-    memberCandidate(db, userId);
+    const domain = domainOr404(db, name);
+    const user = memberCandidate(db, userId);
     const events = insertMembershipsSync(db, userId, [name], {
       actor,
       now: new Date().toISOString(),
     });
     for (const event of events) await recordAuditBestEffort({ actor, ...event }, logger);
-    return events.length > 0;
+    return {
+      added: events.length > 0,
+      effective: domain.status === 'active' && user.status === 'active',
+    };
   });
-  const warnings = added ? await settleMembership(logger) : [];
-  return { added, ...(warnings.length > 0 ? { warnings } : {}) };
+  if (!change.added) return { added: false };
+  return {
+    added: true,
+    ...withWarnings(await settleMembership(logger, { effective: change.effective })),
+  };
 }
 
 /**
@@ -547,10 +632,11 @@ export async function addDomainMember(name, userId, { actor, logger }) {
 export async function removeDomainMember(name, userId, { actor, logger }) {
   const removed = await domainsMutex.run(async () => {
     const db = await getStateDb();
-    domainOr404(db, name);
+    const domain = domainOr404(db, name);
     const row = db
       .prepare(
-        'SELECT u.username FROM domain_members dm JOIN directory_users u USING (user_id) WHERE dm.domain = ? AND dm.user_id = ?',
+        `SELECT u.username, u.status FROM domain_members dm JOIN directory_users u USING (user_id)
+         WHERE dm.domain = ? AND dm.user_id = ?`,
       )
       .get(name, userId);
     if (!row) return null;
@@ -563,14 +649,17 @@ export async function removeDomainMember(name, userId, { actor, logger }) {
       },
       logger,
     );
-    return { username: row.username };
+    return {
+      username: row.username,
+      effective: domain.status === 'active' && row.status === 'active',
+    };
   });
   if (!removed) return { removed: false };
-  const warnings = await settleMembership(logger);
+  const warnings = await settleMembership(logger, { effective: removed.effective });
   if (removed.username) {
     warnings.push(...(await revokeRegistryTokensFor(name, removed.username, userId, logger)));
   }
-  return { removed: true, ...(warnings.length > 0 ? { warnings } : {}) };
+  return { removed: true, ...withWarnings(warnings) };
 }
 
 /**
@@ -579,8 +668,8 @@ export async function removeDomainMember(name, userId, { actor, logger }) {
  */
 async function revokeRegistryTokensFor(domain, username, userId, logger) {
   try {
-    const { registryDomain, revokeUserRegistryTokens } = await import('./registry-credential.js');
     if ((await registryDomain()) !== domain) return [];
+    const { revokeUserRegistryTokens } = await import('./registry-credential.js');
     await revokeUserRegistryTokens(username, { deleted: true }, logger, { userId });
     return [];
   } catch (err) {
@@ -615,24 +704,15 @@ export async function addDomain(name, { actor, logger }) {
         ? httpError(err.message, 409, { code: 'domain_overlap' })
         : httpError(err.message, 400, { code: 'invalid_domain' });
     }
-    const now = new Date().toISOString();
     db.prepare(
       "INSERT INTO domains (name, is_primary, status, created_at) VALUES (?, 0, 'pending', ?)",
-    ).run(name, now);
+    ).run(name, new Date().toISOString());
     await recordAuditBestEffort(
       { actor, action: 'domain.added', details: { domain: name, primary: false } },
       logger,
     );
-    return rowToDomain(db.prepare('SELECT * FROM domains WHERE name = ?').get(name));
+    return domainRow(db, name);
   });
-}
-
-async function resolveA(hostname) {
-  try {
-    return await dns.resolve4(hostname);
-  } catch {
-    return [];
-  }
 }
 
 /**
@@ -643,24 +723,25 @@ async function resolveA(hostname) {
  * @param {string} name
  */
 export async function verifyDomainDns(name) {
-  const db = await getStateDb();
-  domainOr404(db, name);
+  domainOr404(await getStateDb(), name);
   const expectedIp = getConfig().ip;
   const authName = `auth.${name}`;
   const [auth, wildcard] = await Promise.all([
-    resolveA(authName),
-    resolveA(`test-lamaste-check.${name}`),
+    resolveHostA(authName),
+    resolveHostA(`${DNS_WILDCARD_PROBE_LABEL}.${name}`),
   ]);
+  const ok = auth.includes(expectedIp);
   return {
-    ok: auth.includes(expectedIp),
+    ok,
     expectedIp,
-    records: [{ name: authName, resolvedIps: auth, ok: auth.includes(expectedIp) }],
+    records: [{ name: authName, resolvedIps: auth, ok }],
     wildcard: wildcard.includes(expectedIp),
   };
 }
 
 /** What activation needs from nginx and certbot (the real ones unless a test gives others). */
 async function activationDeps() {
+  if (activationOverride) return activationOverride;
   const nginx = await import('./nginx.js');
   const certbot = await import('./certbot.js');
   return {
@@ -695,7 +776,7 @@ export async function activateDomain(name, { actor, logger }) {
     if (domain.status === 'active') return null;
     const { email } = getConfig();
     if (!email) throw httpError('The panel has no email for certificates', 400);
-    const deps = activationOverride ?? (await activationDeps());
+    const deps = await activationDeps();
     const fqdn = `auth.${name}`;
     try {
       await deps.issueCert(fqdn, email);
@@ -711,9 +792,8 @@ export async function activateDomain(name, { actor, logger }) {
         code: 'nginx_failed',
       });
     }
-    const now = new Date().toISOString();
     db.prepare("UPDATE domains SET status = 'active', activated_at = ? WHERE name = ?").run(
-      now,
+      new Date().toISOString(),
       name,
     );
     try {
@@ -731,12 +811,41 @@ export async function activateDomain(name, { actor, logger }) {
       { actor, action: 'domain.activated', details: { domain: name } },
       logger,
     );
-    return rowToDomain(db.prepare('SELECT * FROM domains WHERE name = ?').get(name));
+    return domainRow(db, name);
   });
   if (activated === null) return getDomain(name);
   const { bustGatekeeperSessions } = await import('./gatekeeper-client.js');
   await bustGatekeeperSessions();
   return activated;
+}
+
+/**
+ * What uses each of `names`: tunnels and sites (a hostname or an alias
+ * under it), plugins that belong to it, the registry credential's issuer —
+ * the state read once.
+ *
+ * @param {readonly string[]} names
+ * @returns {Promise<Map<string, { tunnels: string[], sites: string[], plugins: string[], registry: boolean }>>}
+ */
+async function usageByDomain(names) {
+  const usage = new Map(
+    names.map((n) => [n, { tunnels: [], sites: [], plugins: [], registry: false }]),
+  );
+  const of = (host) => (typeof host === 'string' ? usage.get(domainOfHost(host, names)) : null);
+  for (const t of await readTunnels()) of(t.fqdn)?.tunnels.push(t.fqdn);
+  for (const s of await readSites()) {
+    const hosts = [s.fqdn, ...(s.aliases ?? [])];
+    for (const name of new Set(hosts.map((h) => domainOfHost(h, names)).filter(Boolean))) {
+      usage.get(name).sites.push(s.fqdn);
+    }
+  }
+  const db = await getStateDb();
+  for (const row of db.prepare('SELECT name, domain FROM plugins ORDER BY name').all()) {
+    if (row.domain) usage.get(row.domain)?.plugins.push(row.name);
+  }
+  const registry = await registryDomain().catch(() => null);
+  if (registry && usage.has(registry)) usage.get(registry).registry = true;
+  return usage;
 }
 
 /**
@@ -746,19 +855,7 @@ export async function activateDomain(name, { actor, logger }) {
  * @param {string} name
  */
 export async function domainUsage(name) {
-  const under = (host) => typeof host === 'string' && domainOfHost(host, [name]) !== null;
-  const tunnels = (await readTunnels()).filter((t) => under(t.fqdn)).map((t) => t.fqdn);
-  const sites = (await readSites())
-    .filter((s) => under(s.fqdn) || (s.aliases ?? []).some(under))
-    .map((s) => s.fqdn);
-  const db = await getStateDb();
-  const plugins = db
-    .prepare('SELECT name FROM plugins WHERE domain = ? ORDER BY name')
-    .all(name)
-    .map((r) => r.name);
-  const { registryDomain } = await import('./registry-credential.js');
-  const registry = (await registryDomain().catch(() => null)) === name;
-  return { tunnels, sites, plugins, registry };
+  return (await usageByDomain([name])).get(name);
 }
 
 /**
@@ -771,32 +868,25 @@ export async function domainUsage(name) {
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
  */
 export async function removeDomain(name, { actor, logger }) {
-  const removed = await domainsMutex.run(async () => {
+  const active = await domainsMutex.run(async () => {
     const db = await getStateDb();
     const domain = domainOr404(db, name);
     if (domain.primary) {
       throw httpError('The primary domain cannot be removed', 400, { code: 'primary_domain' });
     }
     const usedBy = await domainUsage(name);
-    if (
-      usedBy.tunnels.length + usedBy.sites.length + usedBy.plugins.length > 0 ||
-      usedBy.registry
-    ) {
+    const { tunnels, sites, plugins, registry } = usedBy;
+    if (tunnels.length + sites.length + plugins.length > 0 || registry) {
       throw httpError(`Domain '${name}' is in use`, 409, { code: 'domain_in_use', usedBy });
     }
-    const members = db
-      .prepare('SELECT user_id FROM domain_members WHERE domain = ?')
-      .all(name)
-      .map((r) => r.user_id);
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      db.prepare('DELETE FROM domain_members WHERE domain = ?').run(name);
+    const members = inTransaction(db, () => {
+      const ended = db
+        .prepare('DELETE FROM domain_members WHERE domain = ? RETURNING user_id')
+        .all(name)
+        .map((r) => r.user_id);
       db.prepare('DELETE FROM domains WHERE name = ?').run(name);
-      db.exec('COMMIT');
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
-    }
+      return ended;
+    });
     for (const userId of members) {
       await recordAuditBestEffort(
         {
@@ -808,7 +898,7 @@ export async function removeDomain(name, { actor, logger }) {
       );
     }
     if (domain.status === 'active') {
-      const deps = activationOverride ?? (await activationDeps());
+      const deps = await activationDeps();
       await deps.removeAuthVhost(name).catch((err) => {
         logger?.warn(
           { domain: name, err: err.message },
@@ -820,8 +910,10 @@ export async function removeDomain(name, { actor, logger }) {
       { actor, action: 'domain.removed', details: { domain: name, members: members.length } },
       logger,
     );
-    return true;
+    return domain.status === 'active';
   });
-  const warnings = removed ? await settleMembership(logger) : [];
-  return { removed: true, ...(warnings.length > 0 ? { warnings } : {}) };
+  return {
+    removed: true,
+    ...withWarnings(await settleMembership(logger, { effective: active })),
+  };
 }

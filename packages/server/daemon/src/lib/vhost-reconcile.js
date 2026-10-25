@@ -46,7 +46,7 @@
  */
 
 import { domainOfHost, tunnelUserSurfaceRoutes } from '@lamalibre/lamaste';
-import { tunnelHost, withTunnelLock } from '@lamalibre/lamaste/server';
+import { tunnelHost, vhostTunnelHost, withTunnelLock } from '@lamalibre/lamaste/server';
 import {
   LEGACY_AUTH_VHOST,
   PANEL_DOMAIN_VHOST,
@@ -118,9 +118,10 @@ export function expectedTunnelVhost(tunnel, certDir, userSurface = []) {
  * without one (internal, or whose state names no `<subdomain>.<domain>`).
  */
 function managedTunnelVhostName(tunnel) {
-  if (tunnel.exposure === 'internal' || typeof tunnel.subdomain !== 'string') return null;
-  if (!SITE_NAME_PART_RE.test(tunnel.subdomain)) return null;
-  const host = tunnelHost(tunnel);
+  if (typeof tunnel.subdomain !== 'string' || !SITE_NAME_PART_RE.test(tunnel.subdomain)) {
+    return null;
+  }
+  const host = vhostTunnelHost(tunnel);
   if (host === null) return null;
   if (tunnel.type === 'panel') return agentPanelVhostName(host.fqdn);
   // Tunnels persisted before `type` existed are app tunnels.

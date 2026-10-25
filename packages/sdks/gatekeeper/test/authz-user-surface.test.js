@@ -29,6 +29,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
+
+import { domainsIndex } from './domains-fixture.js';
 import { MockAgent, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 import {
   NonceStore,
@@ -49,10 +51,7 @@ let previousDispatcher;
 let tunnelInfoFromState;
 const sessions = new Map();
 /** The panel's projection: every user here a member of example.com (a test narrows it). */
-const ALL_MEMBERS = {
-  v: 1,
-  domains: [{ name: 'example.com', members: ['alice', 'bob', 'carol'] }],
-};
+const ALL_MEMBERS = domainsIndex();
 let domainsProjection = ALL_MEMBERS;
 /** The X-Original-URL of every Authelia verification Gatekeeper made. */
 const askedAuthelia = [];
@@ -701,7 +700,7 @@ test('state: tunnels from tunnels.json; user-surface hosts from it and sites.jso
 });
 
 test('a user who is not a member of the host’s domain is refused with JSON, never a page', async () => {
-  domainsProjection = { v: 1, domains: [{ name: 'example.com', members: ['bob', 'carol'] }] };
+  domainsProjection = domainsIndex([{ name: 'example.com', members: ['bob', 'carol'] }]);
   try {
     const res = await check('/api/market-indicators/app/notes');
     assert.equal(res.statusCode, 403);

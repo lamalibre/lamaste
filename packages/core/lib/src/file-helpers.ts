@@ -12,6 +12,8 @@ import crypto from 'node:crypto';
 import { readFile, rename, open, mkdir, unlink, lstat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { canonicalJson } from './app-job-signature.js';
+
 // ---------------------------------------------------------------------------
 // Promise-chain mutex
 // ---------------------------------------------------------------------------
@@ -175,6 +177,27 @@ export async function atomicWriteJSON(
       throw err;
     }
   }
+}
+
+/**
+ * {@link atomicWriteJSON}, unless the file already holds the same value —
+ * compared canonically (key order aside), so a file read back and written
+ * in another order is no change. Returns whether it wrote. A missing or
+ * unreadable file is written.
+ */
+export async function atomicWriteJSONIfChanged(
+  filePath: string,
+  data: unknown,
+  options: AtomicWriteOptions = {},
+): Promise<boolean> {
+  try {
+    const current: unknown = JSON.parse(await readFile(filePath, 'utf-8'));
+    if (canonicalJson(current) === canonicalJson(data)) return false;
+  } catch {
+    // Missing, unreadable or not JSON: written below.
+  }
+  await atomicWriteJSON(filePath, data, options);
+  return true;
 }
 
 /**

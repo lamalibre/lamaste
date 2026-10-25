@@ -215,8 +215,8 @@ replaces `updateAccessControl`'s rule building:
 Members are rendered by **username** (Authelia's subject), active users only
 (a disabled or removed user is absent). Rendering is called from
 `changeUsers` (after the directory settles, before the Authelia restart it
-already does), from every membership change, from site changes (as
-`syncAllAccessControl` today) and at start. One `rewriteAutheliaConfig` per
+already does), from every membership change, from site changes (core `sites.ts` calls its
+`renderAccess` dependency with the sites it saves) and at start. One `rewriteAutheliaConfig` per
 change; unchanged output = no restart.
 
 Membership is **not** rendered as Authelia groups in `users.yml` (decision
@@ -492,6 +492,25 @@ name. Specs (written after slice 7's campaign, run only with the user's go):
    - `renameVhosts` (nginx.js) is unit-tested through its caller only —
      nginx.js reads `/etc/nginx`; the rename itself is proven by single-VM
      spec 34.
+
+   **After review (`/simplify`):** one writer of what members may do —
+   `withDomainRendering` in `lib/domains.js` holds the lock under which
+   Authelia's domain access, the projection and the OIDC provider are
+   written, each reading the members inside it (before, the OIDC provider
+   could write back policies from an older read; `domains.test.js` proves
+   the order). `authenticated` and `restricted` tunnels share one vhost
+   writer (`writeGatekeeperVhost`): their vhosts are identical, Gatekeeper
+   decides by the access mode. A removed domain's `auth.` vhost goes with a
+   test and reload. Shared helpers: core `labelUnder`, `hostnameHolder`,
+   `DomainNameSchema`, `resolveHostA`, `registryIssuerDomain`,
+   `atomicWriteJSONIfChanged`, `indexDomainsProjection` (Gatekeeper indexes
+   the projection once); daemon `sendFailure` (lib/app-error.js),
+   `domainOfHostname`, `invitationSignInDomain`, `domainsOverview`.
+   `domainsForNewUser(…, { required })` answers `domains_required`.
+   Onboarding writes Authelia's first configuration with the administrator
+   as the primary's member, so Authelia starts once. The dead
+   `syncAllAccessControl` is gone; sites' `AutheliaDeps.updateAccessControl`
+   is `renderAccess`.
 
 3. **UI, desktop, CLI, docs**.
 4. **Rodeo specs** (45–47, single-VM 34).

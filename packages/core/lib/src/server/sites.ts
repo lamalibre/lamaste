@@ -112,7 +112,8 @@ export interface TunnelReadDeps {
 }
 
 export interface AutheliaDeps {
-  updateAccessControl(sites: SiteEntry[]): Promise<void>;
+  /** Render who may reach which host, with `sites` as they are being saved. */
+  renderAccess(sites: SiteEntry[]): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,7 +193,7 @@ const DNS_ERROR_CODES: ReadonlySet<string> = new Set([
  * address here: callers ask "does this name point at this server?", and the
  * answer is no. Anything else is a bug and is rethrown.
  */
-async function resolveA(hostname: string): Promise<string[]> {
+export async function resolveHostA(hostname: string): Promise<string[]> {
   try {
     return await dns.resolve4(hostname);
   } catch (err: unknown) {
@@ -217,9 +218,39 @@ function assertSignInDomain(fqdn: string, domains: readonly string[]): void {
   }
 }
 
-/** The hostnames tunnels serve; internal plugin tunnels have none and cannot collide. */
-function tunnelHostnames(tunnels: ReadonlyArray<{ fqdn: string | null }>): Set<string> {
-  return new Set(tunnels.flatMap((t) => (t.fqdn ? [t.fqdn.toLowerCase()] : [])));
+/** What serves a hostname: a tunnel, a site, or a site's alias (by the site's name). */
+export type HostnameHolder =
+  | { readonly kind: 'tunnel'; readonly name: string }
+  | { readonly kind: 'site'; readonly name: string }
+  | { readonly kind: 'alias'; readonly name: string };
+
+/**
+ * Who serves `fqdn` among `tunnels` (an internal plugin tunnel has no
+ * hostname) and `sites` (their hostnames and aliases), leaving out the site
+ * `selfSiteId` — or null. Hostnames compare case-insensitively. A hostname
+ * is served by at most one of them.
+ */
+export function hostnameHolder(
+  fqdn: string,
+  {
+    tunnels = [],
+    sites = [],
+    selfSiteId = null,
+  }: {
+    tunnels?: ReadonlyArray<{ readonly fqdn: string | null }>;
+    sites?: ReadonlyArray<Pick<SiteEntry, 'id' | 'name' | 'fqdn' | 'aliases'>>;
+    selfSiteId?: string | null;
+  },
+): HostnameHolder | null {
+  const wanted = fqdn.toLowerCase();
+  const tunnel = tunnels.find((t) => t.fqdn?.toLowerCase() === wanted);
+  if (tunnel) return { kind: 'tunnel', name: wanted };
+  for (const site of sites) {
+    if (site.id === selfSiteId) continue;
+    if (site.fqdn.toLowerCase() === wanted) return { kind: 'site', name: site.name };
+    if ((site.aliases ?? []).includes(wanted)) return { kind: 'alias', name: site.name };
+  }
+  return null;
 }
 
 /**
@@ -238,7 +269,6 @@ function validateAliases(
   if (normalised.length > MAX_SITE_ALIASES) {
     throw new SiteError(`At most ${MAX_SITE_ALIASES} aliases per site`, 'INVALID_ALIAS');
   }
-  const tunnelHosts = tunnelHostnames(tunnels);
   for (const alias of normalised) {
     if (!HOSTNAME_REGEX.test(alias)) {
       throw new SiteError(`Invalid alias hostname '${alias}'`, 'INVALID_ALIAS');
@@ -249,14 +279,12 @@ function validateAliases(
     if (isRelayHost(alias, domains)) {
       throw new SiteError(`'${alias}' is reserved for Lamaste itself`, 'INVALID_ALIAS');
     }
-    if (tunnelHosts.has(alias)) {
+    const holder = hostnameHolder(alias, { tunnels, sites, selfSiteId: selfId });
+    if (holder?.kind === 'tunnel') {
       throw new SiteError(`'${alias}' is already in use by a tunnel`, 'ALIAS_IN_USE');
     }
-    const owner = sites.find(
-      (s) => s.id !== selfId && (s.fqdn === alias || (s.aliases ?? []).includes(alias)),
-    );
-    if (owner) {
-      throw new SiteError(`'${alias}' is already served by site '${owner.name}'`, 'ALIAS_IN_USE');
+    if (holder) {
+      throw new SiteError(`'${alias}' is already served by site '${holder.name}'`, 'ALIAS_IN_USE');
     }
   }
   return normalised;
@@ -268,7 +296,7 @@ function validateAliases(
 async function unresolvedNames(names: readonly string[], serverIp: string): Promise<string[]> {
   const missing: string[] = [];
   for (const name of names) {
-    const ips = await resolveA(name);
+    const ips = await resolveHostA(name);
     if (!ips.includes(serverIp)) missing.push(name);
   }
   return missing;
@@ -355,16 +383,17 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
 
   const tunnels = await tunnelState.readTunnels();
 
-  if (existingSites.find((s) => s.fqdn === fqdn)) {
-    throw new SiteError(`Domain '${fqdn}' is already in use by another site`, 'FQDN_IN_USE');
-  }
-
-  if (tunnelHostnames(tunnels).has(fqdn)) {
+  const holder = hostnameHolder(fqdn, { tunnels, sites: existingSites });
+  if (holder?.kind === 'tunnel') {
     throw new SiteError(`Domain '${fqdn}' is already in use by a tunnel`, 'FQDN_TUNNEL_COLLISION');
   }
-
-  if (existingSites.find((s) => (s.aliases ?? []).includes(fqdn))) {
-    throw new SiteError(`Domain '${fqdn}' is already an alias of another site`, 'FQDN_IN_USE');
+  if (holder) {
+    throw new SiteError(
+      holder.kind === 'site'
+        ? `Domain '${fqdn}' is already in use by another site`
+        : `Domain '${fqdn}' is already an alias of another site`,
+      'FQDN_IN_USE',
+    );
   }
 
   if (aliases.length > 0 && type !== 'custom') {
@@ -755,7 +784,7 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
   if (autheliaChanged || usersChanged) {
     try {
       const allSites = await siteState.readSites();
-      await authelia.updateAccessControl(allSites);
+      await authelia.renderAccess(allSites);
       logger.info({}, 'Authelia access control updated');
     } catch (err: unknown) {
       logger.error({ err }, 'Failed to update Authelia access control');
@@ -817,7 +846,7 @@ export async function verifyDns(opts: VerifyDnsOptions): Promise<VerifyDnsResult
     return { ok: true, message: 'DNS already verified and certificate issued' };
   }
 
-  const resolvedIps = await resolveA(site.fqdn);
+  const resolvedIps = await resolveHostA(site.fqdn);
   const dnsOk = resolvedIps.includes(serverIp);
 
   if (!dnsOk) {
@@ -841,7 +870,7 @@ export async function verifyDns(opts: VerifyDnsOptions): Promise<VerifyDnsResult
       ok: false,
       fqdn: pending[0] ?? site.fqdn,
       expectedIp: serverIp,
-      resolvedIps: await resolveA(pending[0] ?? site.fqdn),
+      resolvedIps: await resolveHostA(pending[0] ?? site.fqdn),
       message: `Add A records pointing ${pending.join(', ')} to ${serverIp} — every alias shares the site's certificate.`,
     };
   }

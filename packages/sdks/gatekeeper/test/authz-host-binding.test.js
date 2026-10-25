@@ -18,6 +18,8 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
+
+import { domainsIndex } from './domains-fixture.js';
 import { MockAgent, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 
 let dir;
@@ -68,10 +70,7 @@ before(async () => {
   app = Fastify({ logger: false });
   app.decorate('getTunnels', () => TUNNELS);
   // The panel's projection: every user here a member of example.com.
-  app.decorate('getDomains', () => ({
-    v: 1,
-    domains: [{ name: 'example.com', members: ['alice', 'bob', 'carol'] }],
-  }));
+  app.decorate('getDomains', () => domainsIndex());
   app.decorate('getSessionCache', () => sessions);
   app.decorate('getCacheVersion', () => 1);
   app.decorate('getSettings', () => ({}));

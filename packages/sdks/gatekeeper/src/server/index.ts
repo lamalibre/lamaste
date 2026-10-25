@@ -9,12 +9,13 @@ import {
   atomicWriteJSON,
   createRelaySigner,
   DOMAINS_PROJECTION_FILE,
+  indexDomainsProjection,
   logRequestMetadata,
   parseDomainsProjection,
   RELAY_SIGNING_KEY_FILE,
   userSurfaceHosts,
 } from '@lamalibre/lamaste';
-import type { DomainsProjection, RelaySigner, UserSurfaceHost } from '@lamalibre/lamaste';
+import type { DomainsIndex, RelaySigner, UserSurfaceHost } from '@lamalibre/lamaste';
 import {
   DEFAULT_DATA_DIR,
   GROUPS_FILE,
@@ -65,10 +66,10 @@ let settingsCache: GatekeeperSettings = {};
 
 /**
  * The domains and their members, as the panel last wrote them
- * (`domains.json`); null while it is missing or not a projection —
- * every authorization is refused then.
+ * (`domains.json`), indexed for lookups; null while it is missing or not a
+ * projection — every authorization is refused then.
  */
-let domainsCache: DomainsProjection | null = null;
+let domainsCache: DomainsIndex | null = null;
 
 /** Authelia session cache: cookie hash → session data */
 const sessionCache = new Map<string, AutheliaSession>();
@@ -106,7 +107,8 @@ async function loadHostState(): Promise<void> {
 }
 
 async function loadDomains(): Promise<void> {
-  domainsCache = parseDomainsProjection(await readStateFile(domainsPath));
+  const projection = parseDomainsProjection(await readStateFile(domainsPath));
+  domainsCache = projection ? indexDomainsProjection(projection) : null;
 }
 
 async function loadSettings(): Promise<GatekeeperSettings> {
@@ -369,7 +371,7 @@ declare module 'fastify' {
     getTunnels(): TunnelInfo[];
     getUserSurfaceHosts(): UserSurfaceHost[];
     /** The domains and their members (`domains.json`); null: refuse everyone. */
-    getDomains(): DomainsProjection | null;
+    getDomains(): DomainsIndex | null;
     getSettings(): GatekeeperSettings;
     getSessionCache(): Map<string, AutheliaSession>;
     getCacheVersion(): number;

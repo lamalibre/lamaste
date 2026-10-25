@@ -27,6 +27,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 import Fastify from 'fastify';
+
+import { domainsIndex } from './domains-fixture.js';
 import rateLimit from '@fastify/rate-limit';
 import { MockAgent, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 import { createRelaySigner, userSurfaceHosts } from '@lamalibre/lamaste';
@@ -147,10 +149,7 @@ async function gatekeeperApp({ logger = false, rateLimitPerClient } = {}) {
   instance.decorate('getTunnels', () => tunnels);
   instance.decorate('getUserSurfaceHosts', () => hosts);
   // The panel's projection: every user here a member of example.com.
-  instance.decorate('getDomains', () => ({
-    v: 1,
-    domains: [{ name: 'example.com', members: ['alice', 'bob', 'carol'] }],
-  }));
+  instance.decorate('getDomains', () => domainsIndex());
   instance.decorate('getSessionCache', () => sessions);
   instance.decorate('getCacheVersion', () => 1);
   instance.decorate('getSettings', () => ({}));
