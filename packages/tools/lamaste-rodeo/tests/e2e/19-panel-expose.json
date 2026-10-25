@@ -403,23 +403,6 @@
         },
         {
           "id": "step-52",
-          "label": "Extract PANEL_SUBDOMAIN",
-          "target": "local",
-          "op": {
-            "type": "set",
-            "variable": "PANEL_SUBDOMAIN",
-            "from": {
-              "kind": "jq",
-              "input": {
-                "kind": "var",
-                "name": "EXPOSE_RESPONSE"
-              },
-              "expression": ".tunnel.subdomain"
-            }
-          }
-        },
-        {
-          "id": "step-53",
           "label": "Panel subdomain matches agent-<label>",
           "target": "local",
           "continueOnError": true,
@@ -441,7 +424,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-53",
           "label": "Panel tunnel port matches",
           "target": "local",
           "continueOnError": true,
@@ -463,7 +446,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-54",
           "label": "Panel tunnel has an FQDN",
           "target": "local",
           "continueOnError": true,
@@ -481,7 +464,7 @@
           }
         },
         {
-          "id": "step-56",
+          "id": "step-55",
           "label": "Panel tunnel has a createdAt timestamp",
           "target": "local",
           "continueOnError": true,
@@ -499,7 +482,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-56",
           "label": "Panel tunnel agentLabel matches",
           "target": "local",
           "continueOnError": true,
@@ -521,7 +504,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-57",
           "label": "Exposed panel tunnel: ${PANEL_FQDN} (ID: ${PANEL_TUNNEL_ID})",
           "target": "local",
           "op": {
@@ -531,14 +514,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Expose panel: POST /api/tunnels/expose-panel\"\n# ---------------------------------------------------------------------------\n\nEXPOSE_RESPONSE=$(agent_api_post \"tunnels/expose-panel\" \"{\\\"port\\\":${PANEL_PORT}}\")\nassert_json_field \"$EXPOSE_RESPONSE\" '.ok' 'true' \"Expose panel returned ok: true\" || true\nassert_json_field_not_empty \"$EXPOSE_RESPONSE\" '.tunnel.id' \"Panel tunnel has an ID\" || true\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.type' 'panel' \"Panel tunnel type is 'panel'\" || true\n\nPANEL_TUNNEL_ID=$(echo \"$EXPOSE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nPANEL_FQDN=$(echo \"$EXPOSE_RESPONSE\" | jq -r '.tunnel.fqdn' 2>/dev/null || echo \"\")\nPANEL_SUBDOMAIN=$(echo \"$EXPOSE_RESPONSE\" | jq -r '.tunnel.subdomain' 2>/dev/null || echo \"\")\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.subdomain' \"agent-${AGENT_LABEL}\" \"Panel subdomain matches agent-<label>\" || true\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.port' \"$PANEL_PORT\" \"Panel tunnel port matches\" || true\nassert_json_field_not_empty \"$EXPOSE_RESPONSE\" '.tunnel.fqdn' \"Panel tunnel has an FQDN\" || true\nassert_json_field_not_empty \"$EXPOSE_RESPONSE\" '.tunnel.createdAt' \"Panel tunnel has a createdAt timestamp\" || true\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.agentLabel' \"$AGENT_LABEL\" \"Panel tunnel agentLabel matches\" || true\n\nlog_info \"Exposed panel tunnel: ${PANEL_FQDN} (ID: ${PANEL_TUNNEL_ID})\""
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Expose panel: POST /api/tunnels/expose-panel\"\n# ---------------------------------------------------------------------------\n\nEXPOSE_RESPONSE=$(agent_api_post \"tunnels/expose-panel\" \"{\\\"port\\\":${PANEL_PORT}}\")\nassert_json_field \"$EXPOSE_RESPONSE\" '.ok' 'true' \"Expose panel returned ok: true\" || true\nassert_json_field_not_empty \"$EXPOSE_RESPONSE\" '.tunnel.id' \"Panel tunnel has an ID\" || true\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.type' 'panel' \"Panel tunnel type is 'panel'\" || true\n\nPANEL_TUNNEL_ID=$(echo \"$EXPOSE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nPANEL_FQDN=$(echo \"$EXPOSE_RESPONSE\" | jq -r '.tunnel.fqdn' 2>/dev/null || echo \"\")\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.subdomain' \"agent-${AGENT_LABEL}\" \"Panel subdomain matches agent-<label>\" || true\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.port' \"$PANEL_PORT\" \"Panel tunnel port matches\" || true\nassert_json_field_not_empty \"$EXPOSE_RESPONSE\" '.tunnel.fqdn' \"Panel tunnel has an FQDN\" || true\nassert_json_field_not_empty \"$EXPOSE_RESPONSE\" '.tunnel.createdAt' \"Panel tunnel has a createdAt timestamp\" || true\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.agentLabel' \"$AGENT_LABEL\" \"Panel tunnel agentLabel matches\" || true\n\nlog_info \"Exposed panel tunnel: ${PANEL_FQDN} (ID: ${PANEL_TUNNEL_ID})\""
     },
     {
       "id": "verify-panel-tunnel-in-tunnel-listing",
       "label": "Verify panel tunnel in tunnel listing",
       "steps": [
         {
-          "id": "step-59",
+          "id": "step-58",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -556,7 +539,7 @@
           ]
         },
         {
-          "id": "step-60",
+          "id": "step-59",
           "label": "Set FOUND_TYPE",
           "target": "local",
           "op": {
@@ -573,7 +556,7 @@
           ]
         },
         {
-          "id": "step-61",
+          "id": "step-60",
           "label": "Panel tunnel shows type 'panel' in listing",
           "target": "local",
           "continueOnError": true,
@@ -594,7 +577,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-61",
           "label": "Set FOUND_LABEL",
           "target": "local",
           "op": {
@@ -611,7 +594,7 @@
           ]
         },
         {
-          "id": "step-63",
+          "id": "step-62",
           "label": "Panel tunnel shows correct agentLabel in listing",
           "target": "local",
           "continueOnError": true,
@@ -639,7 +622,7 @@
       "label": "Verify nginx mTLS vhost created (not app vhost)",
       "steps": [
         {
-          "id": "step-66",
+          "id": "step-65",
           "label": "mTLS panel vhost exists at $VHOST_PATH",
           "target": "local",
           "op": {
@@ -649,7 +632,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-67",
           "label": "mTLS panel vhost exists at $VHOST_ALT",
           "target": "local",
           "op": {
@@ -659,7 +642,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-68",
           "label": "mTLS panel vhost not found at $VHOST_PATH",
           "target": "local",
           "op": {
@@ -669,7 +652,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-70",
           "label": "No app vhost created (correct — panel uses mTLS vhost)",
           "target": "local",
           "op": {
@@ -679,7 +662,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-71",
           "label": "App vhost was created instead of mTLS panel vhost",
           "target": "local",
           "op": {
@@ -689,7 +672,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-72",
           "label": "Set NGINX_TEST",
           "target": "local",
           "op": {
@@ -706,7 +689,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-73",
           "label": "nginx -t passes after panel expose",
           "target": "local",
           "continueOnError": true,
@@ -727,14 +710,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify nginx mTLS vhost created (not app vhost)\"\n# ---------------------------------------------------------------------------\n\n# Named by the panel tunnel's full hostname (the multi-domain relay).\nVHOST_NAME=\"lamalibre-lamaste-agent-panel-${PANEL_FQDN}\"\nVHOST_PATH=\"/etc/nginx/sites-enabled/${VHOST_NAME}\"\n\nif [ -f \"$VHOST_PATH\" ] || [ -L \"$VHOST_PATH\" ]; then\n  log_pass \"mTLS panel vhost exists at $VHOST_PATH\"\nelse\n  VHOST_ALT=\"/etc/nginx/sites-available/${VHOST_NAME}\"\n  if [ -f \"$VHOST_ALT\" ]; then\n    log_pass \"mTLS panel vhost exists at $VHOST_ALT\"\n  else\n    log_fail \"mTLS panel vhost not found at $VHOST_PATH\"\n  fi\nfi\n\n# Verify it is NOT an app vhost (app vhosts use lamalibre-lamaste-app- prefix)\nAPP_VHOST=\"/etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_FQDN}\"\nif [ ! -f \"$APP_VHOST\" ] && [ ! -L \"$APP_VHOST\" ]; then\n  log_pass \"No app vhost created (correct — panel uses mTLS vhost)\"\nelse\n  log_fail \"App vhost was created instead of mTLS panel vhost\"\nfi\n\n# Verify nginx config is valid\nNGINX_TEST=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after panel expose\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify nginx mTLS vhost created (not app vhost)\"\n# ---------------------------------------------------------------------------\n\n# Named by the panel tunnel's full hostname (the multi-domain relay).\nVHOST_NAME=\"$(vhost_name agent-panel \"${PANEL_FQDN}\")\"\nVHOST_PATH=\"/etc/nginx/sites-enabled/${VHOST_NAME}\"\n\nif [ -f \"$VHOST_PATH\" ] || [ -L \"$VHOST_PATH\" ]; then\n  log_pass \"mTLS panel vhost exists at $VHOST_PATH\"\nelse\n  VHOST_ALT=\"/etc/nginx/sites-available/${VHOST_NAME}\"\n  if [ -f \"$VHOST_ALT\" ]; then\n    log_pass \"mTLS panel vhost exists at $VHOST_ALT\"\n  else\n    log_fail \"mTLS panel vhost not found at $VHOST_PATH\"\n  fi\nfi\n\n# Verify it is NOT an app vhost (app vhosts use lamalibre-lamaste-app- prefix)\nAPP_VHOST=\"$(vhost_linked app \"${PANEL_FQDN}\")\"\nif [ ! -f \"$APP_VHOST\" ] && [ ! -L \"$APP_VHOST\" ]; then\n  log_pass \"No app vhost created (correct — panel uses mTLS vhost)\"\nelse\n  log_fail \"App vhost was created instead of mTLS panel vhost\"\nfi\n\n# Verify nginx config is valid\nNGINX_TEST=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after panel expose\" || true"
     },
     {
       "id": "verify-agent-panel-status-after-expose",
       "label": "Verify agent-panel-status after expose",
       "steps": [
         {
-          "id": "step-75",
+          "id": "step-74",
           "label": "GET /api/tunnels/agent-panel-status",
           "target": "agent",
           "op": {
@@ -752,7 +735,7 @@
           ]
         },
         {
-          "id": "step-76",
+          "id": "step-75",
           "label": "Panel shows as enabled after expose",
           "target": "local",
           "continueOnError": true,
@@ -774,7 +757,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-76",
           "label": "Panel status FQDN matches",
           "target": "local",
           "continueOnError": true,
@@ -796,7 +779,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-77",
           "label": "Panel status port matches",
           "target": "local",
           "continueOnError": true,
@@ -825,7 +808,7 @@
       "label": "Duplicate expose returns 409",
       "steps": [
         {
-          "id": "step-79",
+          "id": "step-78",
           "label": "POST /api/tunnels/expose-panel",
           "target": "agent",
           "op": {
@@ -845,7 +828,7 @@
           ]
         },
         {
-          "id": "step-80",
+          "id": "step-79",
           "label": "Duplicate panel expose returns 409 Conflict",
           "target": "local",
           "continueOnError": true,
@@ -873,7 +856,7 @@
       "label": "Validation: agent- prefix reserved for non-panel tunnels",
       "steps": [
         {
-          "id": "step-81",
+          "id": "step-80",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -893,7 +876,7 @@
           ]
         },
         {
-          "id": "step-82",
+          "id": "step-81",
           "label": "agent- prefix rejected for non-panel tunnel (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -921,7 +904,7 @@
       "label": "Capability check: agent without panel:expose gets 403",
       "steps": [
         {
-          "id": "step-83",
+          "id": "step-82",
           "label": "POST /api/certs/agent",
           "target": "host",
           "op": {
@@ -943,7 +926,7 @@
           ]
         },
         {
-          "id": "step-84",
+          "id": "step-83",
           "label": "Agent cert without panel:expose created",
           "target": "local",
           "continueOnError": true,
@@ -965,7 +948,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-84",
           "label": "Extract NOPANEL_P12_PW",
           "target": "local",
           "op": {
@@ -982,7 +965,7 @@
           }
         },
         {
-          "id": "step-91",
+          "id": "step-90",
           "label": "Set NOPANEL_EXPOSE_STATUS",
           "target": "local",
           "op": {
@@ -999,7 +982,7 @@
           ]
         },
         {
-          "id": "step-92",
+          "id": "step-91",
           "label": "Expose panel returns 403 without panel:expose capability",
           "target": "local",
           "continueOnError": true,
@@ -1020,7 +1003,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-92",
           "label": "Set NOPANEL_STATUS",
           "target": "local",
           "op": {
@@ -1037,7 +1020,7 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-93",
           "label": "Agent panel status returns 403 without panel:expose capability",
           "target": "local",
           "continueOnError": true,
@@ -1058,7 +1041,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-94",
           "label": "Set NOPANEL_RETRACT_STATUS",
           "target": "local",
           "op": {
@@ -1075,7 +1058,7 @@
           ]
         },
         {
-          "id": "step-96",
+          "id": "step-95",
           "label": "Retract panel returns 403 without panel:expose capability",
           "target": "local",
           "continueOnError": true,
@@ -1103,7 +1086,7 @@
       "label": "Ownership: another agent cannot see or change a panel tunnel",
       "steps": [
         {
-          "id": "step-97",
+          "id": "step-96",
           "label": "Set NOPANEL_LIST",
           "target": "local",
           "op": {
@@ -1120,7 +1103,7 @@
           ]
         },
         {
-          "id": "step-98",
+          "id": "step-97",
           "label": "Set NOPANEL_SEES_PANEL",
           "target": "local",
           "op": {
@@ -1137,7 +1120,7 @@
           ]
         },
         {
-          "id": "step-99",
+          "id": "step-98",
           "label": "Another agent's GET /api/tunnels omits the panel tunnel",
           "target": "local",
           "continueOnError": true,
@@ -1158,7 +1141,7 @@
           }
         },
         {
-          "id": "step-100",
+          "id": "step-99",
           "label": "Set NOPANEL_TOGGLE_STATUS",
           "target": "local",
           "op": {
@@ -1175,7 +1158,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-100",
           "label": "Another agent's PATCH of the panel tunnel returns 404",
           "target": "local",
           "continueOnError": true,
@@ -1196,7 +1179,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-101",
           "label": "Set NOPANEL_DELETE_STATUS",
           "target": "local",
           "op": {
@@ -1213,7 +1196,7 @@
           ]
         },
         {
-          "id": "step-103",
+          "id": "step-102",
           "label": "Another agent's DELETE of the panel tunnel returns 404",
           "target": "local",
           "continueOnError": true,
@@ -1234,7 +1217,7 @@
           }
         },
         {
-          "id": "step-104",
+          "id": "step-103",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -1252,7 +1235,7 @@
           ]
         },
         {
-          "id": "step-105",
+          "id": "step-104",
           "label": "Panel tunnel untouched by the other agent's attempts",
           "target": "local",
           "continueOnError": true,
@@ -1273,7 +1256,7 @@
           }
         },
         {
-          "id": "step-106",
+          "id": "step-105",
           "label": "PATCH /api/tunnels/${PANEL_TUNNEL_ID}",
           "target": "host",
           "op": {
@@ -1295,7 +1278,7 @@
           ]
         },
         {
-          "id": "step-107",
+          "id": "step-106",
           "label": "Admin cannot reassign a panel tunnel (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1316,7 +1299,7 @@
           }
         },
         {
-          "id": "step-108",
+          "id": "step-107",
           "label": "PATCH /api/tunnels/${PANEL_TUNNEL_ID}",
           "target": "host",
           "op": {
@@ -1338,7 +1321,7 @@
           ]
         },
         {
-          "id": "step-109",
+          "id": "step-108",
           "label": "Admin cannot reconfigure a panel tunnel (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1366,7 +1349,7 @@
       "label": "Capability check: owner without panel:expose cannot PATCH or DELETE its panel tunnel",
       "steps": [
         {
-          "id": "step-110",
+          "id": "step-109",
           "label": "PATCH /api/certs/agent/${AGENT_LABEL}/capabilities",
           "target": "host",
           "op": {
@@ -1388,7 +1371,7 @@
           ]
         },
         {
-          "id": "step-111",
+          "id": "step-110",
           "label": "Owner's panel:expose capability removed",
           "target": "local",
           "continueOnError": true,
@@ -1409,7 +1392,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-111",
           "label": "PATCH /api/tunnels/${PANEL_TUNNEL_ID}",
           "target": "agent",
           "op": {
@@ -1431,7 +1414,7 @@
           ]
         },
         {
-          "id": "step-113",
+          "id": "step-112",
           "label": "PATCH own panel tunnel returns 403 without panel:expose",
           "target": "local",
           "continueOnError": true,
@@ -1452,7 +1435,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-113",
           "label": "DELETE /api/tunnels/${PANEL_TUNNEL_ID}",
           "target": "agent",
           "op": {
@@ -1471,7 +1454,7 @@
           ]
         },
         {
-          "id": "step-115",
+          "id": "step-114",
           "label": "DELETE own panel tunnel returns 403 without panel:expose",
           "target": "local",
           "continueOnError": true,
@@ -1492,7 +1475,7 @@
           }
         },
         {
-          "id": "step-116",
+          "id": "step-115",
           "label": "PATCH /api/certs/agent/${AGENT_LABEL}/capabilities",
           "target": "host",
           "op": {
@@ -1514,7 +1497,7 @@
           ]
         },
         {
-          "id": "step-117",
+          "id": "step-116",
           "label": "Owner's panel:expose capability restored",
           "target": "local",
           "continueOnError": true,
@@ -1542,7 +1525,7 @@
       "label": "Ownership: agent-scoped tunnels",
       "steps": [
         {
-          "id": "step-121",
+          "id": "step-120",
           "label": "Set OWN_RESPONSE",
           "target": "local",
           "op": {
@@ -1559,7 +1542,7 @@
           ]
         },
         {
-          "id": "step-122",
+          "id": "step-121",
           "label": "Agent created a tunnel without naming an owner",
           "target": "local",
           "continueOnError": true,
@@ -1581,7 +1564,7 @@
           }
         },
         {
-          "id": "step-123",
+          "id": "step-122",
           "label": "Agent-created tunnel is owned by the creating agent",
           "target": "local",
           "continueOnError": true,
@@ -1603,7 +1586,7 @@
           }
         },
         {
-          "id": "step-124",
+          "id": "step-123",
           "label": "Extract OWN_TUNNEL_ID",
           "target": "local",
           "op": {
@@ -1620,7 +1603,7 @@
           }
         },
         {
-          "id": "step-125",
+          "id": "step-124",
           "label": "Set FOREIGN_CREATE_STATUS",
           "target": "local",
           "op": {
@@ -1637,7 +1620,7 @@
           ]
         },
         {
-          "id": "step-126",
+          "id": "step-125",
           "label": "Agent POST naming another agent as owner returns 403",
           "target": "local",
           "continueOnError": true,
@@ -1658,7 +1641,7 @@
           }
         },
         {
-          "id": "step-127",
+          "id": "step-126",
           "label": "Set OWN_LIST",
           "target": "local",
           "op": {
@@ -1679,7 +1662,7 @@
           }
         },
         {
-          "id": "step-128",
+          "id": "step-127",
           "label": "Set OWN_LISTED",
           "target": "local",
           "op": {
@@ -1700,7 +1683,7 @@
           }
         },
         {
-          "id": "step-129",
+          "id": "step-128",
           "label": "Agent's GET /api/tunnels lists its own tunnel",
           "target": "local",
           "continueOnError": true,
@@ -1725,7 +1708,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-129",
           "label": "Extract OWN_FOREIGN",
           "target": "local",
           "op": {
@@ -1746,7 +1729,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-130",
           "label": "Agent's GET /api/tunnels holds no other agent's tunnel",
           "target": "local",
           "continueOnError": true,
@@ -1771,7 +1754,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-131",
           "label": "GET /api/tunnels",
           "target": "agent",
           "op": {
@@ -1793,7 +1776,7 @@
           }
         },
         {
-          "id": "step-133",
+          "id": "step-132",
           "label": "Set PANEL_AGENT_SEES_OWN",
           "target": "local",
           "op": {
@@ -1814,7 +1797,7 @@
           }
         },
         {
-          "id": "step-134",
+          "id": "step-133",
           "label": "Other agent's GET /api/tunnels omits this agent's tunnel",
           "target": "local",
           "continueOnError": true,
@@ -1839,7 +1822,7 @@
           }
         },
         {
-          "id": "step-135",
+          "id": "step-134",
           "label": "Set OWN_CONFIG",
           "target": "local",
           "op": {
@@ -1860,7 +1843,7 @@
           }
         },
         {
-          "id": "step-136",
+          "id": "step-135",
           "label": "Agent's agent-config is its own",
           "target": "local",
           "continueOnError": true,
@@ -1886,7 +1869,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-136",
           "label": "Set OWN_CONFIG_PORT",
           "target": "local",
           "op": {
@@ -1907,7 +1890,7 @@
           }
         },
         {
-          "id": "step-138",
+          "id": "step-137",
           "label": "Agent's agent-config lists its own tunnel",
           "target": "local",
           "continueOnError": true,
@@ -1932,7 +1915,7 @@
           }
         },
         {
-          "id": "step-139",
+          "id": "step-138",
           "label": "Extract OWN_CONFIG_ARGS",
           "target": "local",
           "op": {
@@ -1953,7 +1936,7 @@
           }
         },
         {
-          "id": "step-140",
+          "id": "step-139",
           "label": "Agent's chiselArgs omit another agent's panel port",
           "target": "local",
           "continueOnError": true,
@@ -1978,7 +1961,7 @@
           }
         },
         {
-          "id": "step-141",
+          "id": "step-140",
           "label": "Set WIDEN_CONFIG",
           "target": "local",
           "op": {
@@ -1999,7 +1982,7 @@
           }
         },
         {
-          "id": "step-142",
+          "id": "step-141",
           "label": "agent-config?agent=<other> still returns the caller's own config",
           "target": "local",
           "continueOnError": true,
@@ -2025,7 +2008,7 @@
           }
         },
         {
-          "id": "step-143",
+          "id": "step-142",
           "label": "Set OWN_REASSIGN_STATUS",
           "target": "local",
           "op": {
@@ -2046,7 +2029,7 @@
           }
         },
         {
-          "id": "step-144",
+          "id": "step-143",
           "label": "Agent cannot reassign its own tunnel (HTTP 403)",
           "target": "local",
           "continueOnError": true,
@@ -2071,7 +2054,7 @@
           }
         },
         {
-          "id": "step-145",
+          "id": "step-144",
           "label": "Set OWN_PUBLIC_STATUS",
           "target": "local",
           "op": {
@@ -2092,7 +2075,7 @@
           }
         },
         {
-          "id": "step-146",
+          "id": "step-145",
           "label": "Agent cannot set its own tunnel's access mode to public (HTTP 403)",
           "target": "local",
           "continueOnError": true,
@@ -2117,7 +2100,7 @@
           }
         },
         {
-          "id": "step-147",
+          "id": "step-146",
           "label": "Set OWN_BODY_RESPONSE",
           "target": "local",
           "op": {
@@ -2138,7 +2121,7 @@
           }
         },
         {
-          "id": "step-148",
+          "id": "step-147",
           "label": "Agent can change its own tunnel's request body limit",
           "target": "local",
           "continueOnError": true,
@@ -2164,7 +2147,7 @@
           }
         },
         {
-          "id": "step-149",
+          "id": "step-148",
           "label": "Agent's tunnel stays restricted",
           "target": "local",
           "continueOnError": true,
@@ -2190,7 +2173,7 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-149",
           "label": "Set OWN_BODY_MAX",
           "target": "local",
           "op": {
@@ -2211,7 +2194,7 @@
           }
         },
         {
-          "id": "step-151",
+          "id": "step-150",
           "label": "Agent can set its tunnel's body limit to 100 MiB",
           "target": "local",
           "continueOnError": true,
@@ -2237,7 +2220,7 @@
           }
         },
         {
-          "id": "step-152",
+          "id": "step-151",
           "label": "Set OWN_BODY_OVER_STATUS",
           "target": "local",
           "op": {
@@ -2258,7 +2241,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-152",
           "label": "Agent cannot set a body limit above 100 MiB (HTTP 403)",
           "target": "local",
           "continueOnError": true,
@@ -2283,7 +2266,7 @@
           }
         },
         {
-          "id": "step-154",
+          "id": "step-153",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -2305,7 +2288,7 @@
           }
         },
         {
-          "id": "step-155",
+          "id": "step-154",
           "label": "Refused body limit left the tunnel at 100 MiB",
           "target": "local",
           "continueOnError": true,
@@ -2330,7 +2313,7 @@
           }
         },
         {
-          "id": "step-156",
+          "id": "step-155",
           "label": "PATCH /api/tunnels/${OWN_TUNNEL_ID}",
           "target": "host",
           "op": {
@@ -2355,7 +2338,7 @@
           }
         },
         {
-          "id": "step-157",
+          "id": "step-156",
           "label": "An administrator can set a body limit above 100 MiB",
           "target": "local",
           "continueOnError": true,
@@ -2381,7 +2364,7 @@
           }
         },
         {
-          "id": "step-158",
+          "id": "step-157",
           "label": "Set OWN_CREATE_OVER_STATUS",
           "target": "local",
           "op": {
@@ -2402,7 +2385,7 @@
           }
         },
         {
-          "id": "step-159",
+          "id": "step-158",
           "label": "Agent cannot create a tunnel with a body limit above 100 MiB (HTTP 403)",
           "target": "local",
           "continueOnError": true,
@@ -2427,7 +2410,7 @@
           }
         },
         {
-          "id": "step-160",
+          "id": "step-159",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -2449,7 +2432,7 @@
           }
         },
         {
-          "id": "step-161",
+          "id": "step-160",
           "label": "Refused create left no tunnel behind",
           "target": "local",
           "continueOnError": true,
@@ -2474,7 +2457,7 @@
           }
         },
         {
-          "id": "step-162",
+          "id": "step-161",
           "label": "Set OWN_DELETE_RESPONSE",
           "target": "local",
           "op": {
@@ -2495,7 +2478,7 @@
           }
         },
         {
-          "id": "step-163",
+          "id": "step-162",
           "label": "Agent deleted its own tunnel",
           "target": "local",
           "continueOnError": true,
@@ -2521,7 +2504,7 @@
           }
         },
         {
-          "id": "step-165",
+          "id": "step-164",
           "label": "Agent-owned tunnel was not created — skipping agent-scoped ownership checks",
           "target": "local",
           "op": {
@@ -2545,7 +2528,7 @@
       "label": "Cross-agent spoofing: generic POST /api/tunnels with type=panel",
       "steps": [
         {
-          "id": "step-166",
+          "id": "step-165",
           "label": "POST /api/tunnels",
           "target": "agent",
           "op": {
@@ -2565,7 +2548,7 @@
           ]
         },
         {
-          "id": "step-167",
+          "id": "step-166",
           "label": "Cross-agent panel tunnel spoofing rejected (HTTP 403)",
           "target": "local",
           "continueOnError": true,
@@ -2586,7 +2569,7 @@
           }
         },
         {
-          "id": "step-168",
+          "id": "step-167",
           "label": "POST /api/tunnels",
           "target": "agent",
           "op": {
@@ -2605,7 +2588,7 @@
           ]
         },
         {
-          "id": "step-169",
+          "id": "step-168",
           "label": "Spoofing rejected by the panel-label check",
           "target": "local",
           "continueOnError": true,
@@ -2626,7 +2609,7 @@
           }
         },
         {
-          "id": "step-170",
+          "id": "step-169",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -2644,7 +2627,7 @@
           ]
         },
         {
-          "id": "step-171",
+          "id": "step-170",
           "label": "No spoofed panel tunnel was created",
           "target": "local",
           "continueOnError": true,
@@ -2672,7 +2655,7 @@
       "label": "Retract panel: DELETE /api/tunnels/retract-panel",
       "steps": [
         {
-          "id": "step-172",
+          "id": "step-171",
           "label": "DELETE /api/tunnels/retract-panel",
           "target": "agent",
           "op": {
@@ -2690,7 +2673,7 @@
           ]
         },
         {
-          "id": "step-173",
+          "id": "step-172",
           "label": "Retract panel returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -2712,7 +2695,7 @@
           }
         },
         {
-          "id": "step-174",
+          "id": "step-173",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -2730,7 +2713,7 @@
           ]
         },
         {
-          "id": "step-175",
+          "id": "step-174",
           "label": "Set FOUND_AFTER",
           "target": "local",
           "op": {
@@ -2747,7 +2730,7 @@
           ]
         },
         {
-          "id": "step-176",
+          "id": "step-175",
           "label": "Panel tunnel no longer in list after retract",
           "target": "local",
           "continueOnError": true,
@@ -2768,7 +2751,7 @@
           }
         },
         {
-          "id": "step-177",
+          "id": "step-176",
           "label": "mTLS panel vhost removed after retract",
           "target": "local",
           "op": {
@@ -2778,7 +2761,7 @@
           }
         },
         {
-          "id": "step-178",
+          "id": "step-177",
           "label": "mTLS panel vhost still exists after retract",
           "target": "local",
           "op": {
@@ -2788,7 +2771,7 @@
           }
         },
         {
-          "id": "step-179",
+          "id": "step-178",
           "label": "Set NGINX_TEST_AFTER",
           "target": "local",
           "op": {
@@ -2805,7 +2788,7 @@
           ]
         },
         {
-          "id": "step-180",
+          "id": "step-179",
           "label": "nginx -t passes after panel retract",
           "target": "local",
           "continueOnError": true,
@@ -2833,7 +2816,7 @@
       "label": "Verify agent-panel-status after retract",
       "steps": [
         {
-          "id": "step-182",
+          "id": "step-181",
           "label": "GET /api/tunnels/agent-panel-status",
           "target": "agent",
           "op": {
@@ -2851,7 +2834,7 @@
           ]
         },
         {
-          "id": "step-183",
+          "id": "step-182",
           "label": "Panel shows as disabled after retract",
           "target": "local",
           "continueOnError": true,
@@ -2880,7 +2863,7 @@
       "label": "Retract nonexistent panel returns 404",
       "steps": [
         {
-          "id": "step-184",
+          "id": "step-183",
           "label": "DELETE /api/tunnels/retract-panel",
           "target": "agent",
           "op": {
@@ -2899,7 +2882,7 @@
           ]
         },
         {
-          "id": "step-185",
+          "id": "step-184",
           "label": "Retract nonexistent panel returns 404",
           "target": "local",
           "continueOnError": true,
@@ -2927,7 +2910,7 @@
       "label": "Validation: expose-panel with invalid port",
       "steps": [
         {
-          "id": "step-186",
+          "id": "step-185",
           "label": "POST /api/tunnels/expose-panel",
           "target": "agent",
           "op": {
@@ -2949,7 +2932,7 @@
           ]
         },
         {
-          "id": "step-187",
+          "id": "step-186",
           "label": "Port below 1024 rejected (HTTP $INVALID_PORT_STATUS)",
           "target": "local",
           "op": {
@@ -2974,7 +2957,7 @@
           }
         },
         {
-          "id": "step-188",
+          "id": "step-187",
           "label": "Port below 1024 should be rejected (got HTTP $INVALID_PORT_STATUS)",
           "target": "local",
           "op": {
@@ -2999,7 +2982,7 @@
           }
         },
         {
-          "id": "step-190",
+          "id": "step-189",
           "label": "POST /api/tunnels/expose-panel",
           "target": "agent",
           "op": {
@@ -3019,7 +3002,7 @@
           ]
         },
         {
-          "id": "step-191",
+          "id": "step-190",
           "label": "expose-panel on reserved port ${reserved_port} rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -3040,7 +3023,7 @@
           }
         },
         {
-          "id": "step-193",
+          "id": "step-192",
           "label": "GET /api/tunnels/agent-panel-status",
           "target": "agent",
           "op": {
@@ -3059,7 +3042,7 @@
           ]
         },
         {
-          "id": "step-194",
+          "id": "step-193",
           "label": "Rejected expose-panel calls exposed nothing",
           "target": "local",
           "continueOnError": true,
@@ -3087,7 +3070,7 @@
       "label": "Revoking an agent releases its tunnels",
       "steps": [
         {
-          "id": "step-195",
+          "id": "step-194",
           "label": "POST /api/tunnels/expose-panel",
           "target": "agent",
           "op": {
@@ -3106,7 +3089,7 @@
           ]
         },
         {
-          "id": "step-196",
+          "id": "step-195",
           "label": "Panel exposed again before revocation",
           "target": "local",
           "continueOnError": true,
@@ -3128,7 +3111,7 @@
           }
         },
         {
-          "id": "step-197",
+          "id": "step-196",
           "label": "Extract REEXPOSED_SUBDOMAIN",
           "target": "local",
           "op": {
@@ -3145,7 +3128,7 @@
           }
         },
         {
-          "id": "step-198",
+          "id": "step-197",
           "label": "Extract REEXPOSED_FQDN",
           "target": "local",
           "op": {
@@ -3162,7 +3145,7 @@
           }
         },
         {
-          "id": "step-199",
+          "id": "step-198",
           "label": "Extract PANEL_TUNNEL_ID",
           "target": "local",
           "op": {
@@ -3179,7 +3162,7 @@
           }
         },
         {
-          "id": "step-200",
+          "id": "step-199",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -3198,7 +3181,7 @@
           ]
         },
         {
-          "id": "step-201",
+          "id": "step-200",
           "label": "App tunnel created for ${AGENT_LABEL}",
           "target": "local",
           "continueOnError": true,
@@ -3220,7 +3203,7 @@
           }
         },
         {
-          "id": "step-202",
+          "id": "step-201",
           "label": "Extract RELEASE_TUNNEL_ID",
           "target": "local",
           "op": {
@@ -3237,7 +3220,7 @@
           }
         },
         {
-          "id": "step-203",
+          "id": "step-202",
           "label": "DELETE /api/certs/agent/${AGENT_LABEL}",
           "target": "host",
           "op": {
@@ -3255,7 +3238,7 @@
           ]
         },
         {
-          "id": "step-204",
+          "id": "step-203",
           "label": "Agent ${AGENT_LABEL} revoked",
           "target": "local",
           "continueOnError": true,
@@ -3277,7 +3260,7 @@
           }
         },
         {
-          "id": "step-205",
+          "id": "step-204",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -3295,7 +3278,7 @@
           ]
         },
         {
-          "id": "step-206",
+          "id": "step-205",
           "label": "Set PANEL_LEFT",
           "target": "local",
           "op": {
@@ -3312,7 +3295,7 @@
           ]
         },
         {
-          "id": "step-207",
+          "id": "step-206",
           "label": "Revoked agent's panel tunnel (${REEXPOSED_SUBDOMAIN}) deleted",
           "target": "local",
           "continueOnError": true,
@@ -3333,7 +3316,7 @@
           }
         },
         {
-          "id": "step-209",
+          "id": "step-208",
           "label": "Revoked agent's panel vhost removed",
           "target": "local",
           "op": {
@@ -3347,7 +3330,7 @@
           }
         },
         {
-          "id": "step-210",
+          "id": "step-209",
           "label": "Revoked agent's panel vhost still present",
           "target": "local",
           "op": {
@@ -3364,7 +3347,7 @@
           }
         },
         {
-          "id": "step-212",
+          "id": "step-211",
           "label": "Set RELEASED",
           "target": "local",
           "op": {
@@ -3381,7 +3364,7 @@
           ]
         },
         {
-          "id": "step-213",
+          "id": "step-212",
           "label": "Revoked agent's app tunnel keeps its hostname",
           "target": "local",
           "continueOnError": true,
@@ -3403,7 +3386,7 @@
           }
         },
         {
-          "id": "step-214",
+          "id": "step-213",
           "label": "Revoked agent's app tunnel has no owner (dark until reassigned)",
           "target": "local",
           "continueOnError": true,
@@ -3425,7 +3408,7 @@
           }
         },
         {
-          "id": "step-215",
+          "id": "step-214",
           "label": "Set RELEASED_GRANTS",
           "target": "local",
           "op": {
@@ -3442,7 +3425,7 @@
           ]
         },
         {
-          "id": "step-216",
+          "id": "step-215",
           "label": "Released tunnel's port is granted to no chisel user",
           "target": "local",
           "continueOnError": true,
@@ -3463,7 +3446,7 @@
           }
         },
         {
-          "id": "step-217",
+          "id": "step-216",
           "label": "Set NGINX_TEST_REVOKE",
           "target": "local",
           "op": {
@@ -3480,7 +3463,7 @@
           ]
         },
         {
-          "id": "step-218",
+          "id": "step-217",
           "label": "nginx -t passes after the revocation",
           "target": "local",
           "continueOnError": true,
@@ -3501,7 +3484,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Revoking an agent releases its tunnels\"\n# ---------------------------------------------------------------------------\n\n# The panel agent exposes its panel again and is given an app tunnel\nREEXPOSE_RESPONSE=$(agent_api_post \"tunnels/expose-panel\" \"{\\\"port\\\":${PANEL_PORT}}\")\nassert_json_field \"$REEXPOSE_RESPONSE\" '.ok' 'true' \"Panel exposed again before revocation\" || true\nREEXPOSED_SUBDOMAIN=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.subdomain // empty' 2>/dev/null || echo \"\")\nREEXPOSED_FQDN=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.fqdn // empty' 2>/dev/null || echo \"\")\nPANEL_TUNNEL_ID=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.id // empty' 2>/dev/null || echo \"\")\n\nRELEASE_RESPONSE=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${RELEASE_SUBDOMAIN}\\\",\\\"port\\\":${RELEASE_PORT},\\\"description\\\":\\\"released on revoke\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$RELEASE_RESPONSE\" '.tunnel.agentLabel' \"$AGENT_LABEL\" \"App tunnel created for ${AGENT_LABEL}\" || true\nRELEASE_TUNNEL_ID=$(echo \"$RELEASE_RESPONSE\" | jq -r '.tunnel.id // empty' 2>/dev/null || echo \"\")\n\nREVOKE_RESPONSE=$(api_delete \"certs/agent/${AGENT_LABEL}\")\nassert_json_field \"$REVOKE_RESPONSE\" '.ok' 'true' \"Agent ${AGENT_LABEL} revoked\" || true\n\nTUNNELS_AFTER_REVOKE=$(api_get \"tunnels\")\nPANEL_LEFT=$(echo \"$TUNNELS_AFTER_REVOKE\" | jq --arg sd \"$REEXPOSED_SUBDOMAIN\" '[.tunnels[] | select(.subdomain == $sd)] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$PANEL_LEFT\" \"0\" \"Revoked agent's panel tunnel (${REEXPOSED_SUBDOMAIN}) deleted\" || true\nif [ -n \"$REEXPOSED_SUBDOMAIN\" ] && [ ! -e \"/etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${REEXPOSED_FQDN}\" ] \\\n  && [ ! -e \"/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${REEXPOSED_FQDN}\" ]; then\n  log_pass \"Revoked agent's panel vhost removed\"\nelse\n  log_fail \"Revoked agent's panel vhost still present\"\nfi\nPANEL_TUNNEL_ID=\"\"\n\nRELEASED=$(echo \"$TUNNELS_AFTER_REVOKE\" | jq -c --arg id \"$RELEASE_TUNNEL_ID\" '.tunnels[] | select(.id == $id)' 2>/dev/null || echo \"\")\nassert_json_field \"$RELEASED\" '.subdomain' \"$RELEASE_SUBDOMAIN\" \"Revoked agent's app tunnel keeps its hostname\" || true\nassert_json_field \"$RELEASED\" '.agentLabel // \"none\"' \"none\" \"Revoked agent's app tunnel has no owner (dark until reassigned)\" || true\nRELEASED_GRANTS=$(sudo cat /etc/lamalibre/lamaste/chisel-users 2>/dev/null \\\n  | jq -r --arg g \"^R:127\\\\.0\\\\.0\\\\.1:${RELEASE_PORT}\\$\" '[to_entries[] | select(any(.value[]; . == $g))] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$RELEASED_GRANTS\" \"0\" \"Released tunnel's port is granted to no chisel user\" || true\n\nNGINX_TEST_REVOKE=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST_REVOKE\" \"syntax is ok\" \"nginx -t passes after the revocation\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Revoking an agent releases its tunnels\"\n# ---------------------------------------------------------------------------\n\n# The panel agent exposes its panel again and is given an app tunnel\nREEXPOSE_RESPONSE=$(agent_api_post \"tunnels/expose-panel\" \"{\\\"port\\\":${PANEL_PORT}}\")\nassert_json_field \"$REEXPOSE_RESPONSE\" '.ok' 'true' \"Panel exposed again before revocation\" || true\nREEXPOSED_SUBDOMAIN=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.subdomain // empty' 2>/dev/null || echo \"\")\nREEXPOSED_FQDN=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.fqdn // empty' 2>/dev/null || echo \"\")\nPANEL_TUNNEL_ID=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.id // empty' 2>/dev/null || echo \"\")\n\nRELEASE_RESPONSE=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${RELEASE_SUBDOMAIN}\\\",\\\"port\\\":${RELEASE_PORT},\\\"description\\\":\\\"released on revoke\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$RELEASE_RESPONSE\" '.tunnel.agentLabel' \"$AGENT_LABEL\" \"App tunnel created for ${AGENT_LABEL}\" || true\nRELEASE_TUNNEL_ID=$(echo \"$RELEASE_RESPONSE\" | jq -r '.tunnel.id // empty' 2>/dev/null || echo \"\")\n\nREVOKE_RESPONSE=$(api_delete \"certs/agent/${AGENT_LABEL}\")\nassert_json_field \"$REVOKE_RESPONSE\" '.ok' 'true' \"Agent ${AGENT_LABEL} revoked\" || true\n\nTUNNELS_AFTER_REVOKE=$(api_get \"tunnels\")\nPANEL_LEFT=$(echo \"$TUNNELS_AFTER_REVOKE\" | jq --arg sd \"$REEXPOSED_SUBDOMAIN\" '[.tunnels[] | select(.subdomain == $sd)] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$PANEL_LEFT\" \"0\" \"Revoked agent's panel tunnel (${REEXPOSED_SUBDOMAIN}) deleted\" || true\nif [ -n \"$REEXPOSED_SUBDOMAIN\" ] && [ ! -e \"$(vhost_linked agent-panel \"${REEXPOSED_FQDN}\")\" ] \\\n  && [ ! -e \"$(vhost_available agent-panel \"${REEXPOSED_FQDN}\")\" ]; then\n  log_pass \"Revoked agent's panel vhost removed\"\nelse\n  log_fail \"Revoked agent's panel vhost still present\"\nfi\nPANEL_TUNNEL_ID=\"\"\n\nRELEASED=$(echo \"$TUNNELS_AFTER_REVOKE\" | jq -c --arg id \"$RELEASE_TUNNEL_ID\" '.tunnels[] | select(.id == $id)' 2>/dev/null || echo \"\")\nassert_json_field \"$RELEASED\" '.subdomain' \"$RELEASE_SUBDOMAIN\" \"Revoked agent's app tunnel keeps its hostname\" || true\nassert_json_field \"$RELEASED\" '.agentLabel // \"none\"' \"none\" \"Revoked agent's app tunnel has no owner (dark until reassigned)\" || true\nRELEASED_GRANTS=$(sudo cat /etc/lamalibre/lamaste/chisel-users 2>/dev/null \\\n  | jq -r --arg g \"^R:127\\\\.0\\\\.0\\\\.1:${RELEASE_PORT}\\$\" '[to_entries[] | select(any(.value[]; . == $g))] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$RELEASED_GRANTS\" \"0\" \"Released tunnel's port is granted to no chisel user\" || true\n\nNGINX_TEST_REVOKE=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST_REVOKE\" \"syntax is ok\" \"nginx -t passes after the revocation\" || true"
     }
   ],
   "apiHelpers": [

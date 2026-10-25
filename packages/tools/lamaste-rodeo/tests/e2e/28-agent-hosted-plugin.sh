@@ -73,11 +73,8 @@ log_section "Stand-in registry serving the fixture plugins"
 
 rm -rf "${WORK_DIR}"
 mkdir -p "${WORK_DIR}"
-write_stub_registry "${WORK_DIR}/stub-registry.mjs"
 write_agent_hosted_fixture_plugins "${WORK_DIR}/fixtures"
-pkill -f '[s]tub-registry.mjs' 2>/dev/null || true
-nohup node "${WORK_DIR}/stub-registry.mjs" --port "${STUB_PORT}" --admin-token "${STUB_ADMIN_TOKEN}" --issuer "https://auth.${DOMAIN}" --audience "${STUB_URL}" --jwks-url http://127.0.0.1:9091/jwks.json --package "${WORK_DIR}/fixtures/agent-hosted" --package "${WORK_DIR}/fixtures/agent-hosted-paged" &> "${WORK_DIR}/stub.log" &
-if wait_for_http "${STUB_URL}/-/ping" 30; then
+if start_stub_registry "${WORK_DIR}" "${WORK_DIR}/fixtures/agent-hosted" "${WORK_DIR}/fixtures/agent-hosted-paged"; then
   log_pass "Stand-in registry is up on ${STUB_URL}"
 else
   log_fail "Stand-in registry did not start: $(cat "${WORK_DIR}/stub.log" 2>/dev/null)"

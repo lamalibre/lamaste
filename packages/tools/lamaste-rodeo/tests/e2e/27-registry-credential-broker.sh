@@ -115,11 +115,8 @@ log_info "Agent label: ${AGENT_LABEL}"
 
 log_section "Stand-in registry"
 
-write_stub_registry "${WORK_DIR}/stub-registry.mjs"
 write_oidc_fixture_plugin "${WORK_DIR}/fixture"
-pkill -f '[s]tub-registry.mjs' 2>/dev/null || true
-nohup node "${WORK_DIR}/stub-registry.mjs" --port "${STUB_PORT}" --admin-token "${STUB_ADMIN_TOKEN}" --issuer "https://auth.${DOMAIN}" --audience "${STUB_URL}" --jwks-url http://127.0.0.1:9091/jwks.json --package "${WORK_DIR}/fixture" &> "${WORK_DIR}/stub.log" &
-if wait_for_http "${STUB_URL}/-/ping" 30; then
+if start_stub_registry "${WORK_DIR}" "${WORK_DIR}/fixture"; then
   log_pass "Stand-in registry is up on ${STUB_URL}"
 else
   log_fail "Stand-in registry did not start: $(cat "${WORK_DIR}/stub.log" 2>/dev/null)"

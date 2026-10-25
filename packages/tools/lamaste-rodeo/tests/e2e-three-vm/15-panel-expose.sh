@@ -234,18 +234,18 @@ log_section "Verify mTLS nginx vhost on host"
 # ---------------------------------------------------------------------------
 
 # Panel vhosts use lamalibre-lamaste-agent-panel- prefix (not lamalibre-lamaste-app-)
-VHOST_EXISTS=$(host_exec "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} && echo yes || echo no")
+VHOST_EXISTS=$(host_exec "test -f $(vhost_linked agent-panel "${PANEL_FQDN}") -o -L $(vhost_linked agent-panel "${PANEL_FQDN}") && echo yes || echo no")
 assert_eq "$VHOST_EXISTS" "yes" "mTLS panel vhost exists in sites-enabled" || true
 
 # Verify no app vhost was created (panel uses mTLS, not Authelia)
-APP_VHOST_EXISTS=$(host_exec "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_FQDN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_FQDN} && echo yes || echo no")
+APP_VHOST_EXISTS=$(host_exec "test -f $(vhost_linked app "${PANEL_FQDN}") -o -L $(vhost_linked app "${PANEL_FQDN}") && echo yes || echo no")
 assert_eq "$APP_VHOST_EXISTS" "no" "No Authelia app vhost created for panel tunnel" || true
 
 NGINX_TEST=$(host_exec "nginx -t 2>&1 || true")
 assert_contains "$NGINX_TEST" "syntax is ok" "nginx -t passes after panel expose" || true
 
 # lamaste-agentd trusts no header the relay sends but the relay assertion
-PANEL_VHOST="/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${PANEL_FQDN}"
+PANEL_VHOST="$(vhost_available agent-panel "${PANEL_FQDN}")"
 VHOST_AUTHZ=$(host_exec "grep -cF 'auth_request /internal/lamaste/agent-panel-authz;' ${PANEL_VHOST} 2>/dev/null || true")
 assert_eq "$VHOST_AUTHZ" "1" "Panel vhost asks the panel to authorize every request" || true
 VHOST_ASSERTION=$(host_exec "grep -cF 'proxy_set_header X-Lamalibre-Relay-Assertion \$relay_assertion;' ${PANEL_VHOST} 2>/dev/null || true")
@@ -335,7 +335,7 @@ log_section "Verify vhost removed after retract"
 
 sleep 2  # wait for nginx reload
 
-VHOST_AFTER=$(host_exec "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} && echo yes || echo no")
+VHOST_AFTER=$(host_exec "test -f $(vhost_linked agent-panel "${PANEL_FQDN}") -o -L $(vhost_linked agent-panel "${PANEL_FQDN}") && echo yes || echo no")
 assert_eq "$VHOST_AFTER" "no" "mTLS panel vhost removed after retract" || true
 
 NGINX_TEST_AFTER=$(host_exec "nginx -t 2>&1 || true")

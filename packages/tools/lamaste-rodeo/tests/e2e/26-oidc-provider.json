@@ -119,7 +119,7 @@
       "label": "Stand-in registry serving the fixture plugin",
       "steps": [
         {
-          "id": "step-18",
+          "id": "step-15",
           "label": "Stand-in registry is up on ${STUB_URL}",
           "target": "local",
           "op": {
@@ -129,7 +129,7 @@
           }
         },
         {
-          "id": "step-19",
+          "id": "step-16",
           "label": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)",
           "target": "local",
           "op": {
@@ -139,7 +139,7 @@
           }
         },
         {
-          "id": "step-22",
+          "id": "step-19",
           "label": "Panel npm configured for the stand-in registry",
           "target": "local",
           "op": {
@@ -149,14 +149,14 @@
           }
         }
       ],
-      "bash": "log_section \"Stand-in registry serving the fixture plugin\"\n\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_oidc_fixture_plugin \"${WORK_DIR}/fixture\"\npkill -f '[s]tub-registry.mjs' 2>/dev/null || true\nnohup node \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json --package \"${WORK_DIR}/fixture\" &> \"${WORK_DIR}/stub.log\" &\nif wait_for_http \"${STUB_URL}/-/ping\" 30; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)\"\n  end_test\n  exit $?\nfi\n\n# The panel installs server plugins with npm from its state directory; the\n# project-level .npmrc there points @lamalibre at the stand-in registry.\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nlog_pass \"Panel npm configured for the stand-in registry\"\n\n# ===========================================================================\n# 2. Install: the confidential client's secret is handed out once\n# ==========================================================================="
+      "bash": "log_section \"Stand-in registry serving the fixture plugin\"\n\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nwrite_oidc_fixture_plugin \"${WORK_DIR}/fixture\"\nif start_stub_registry \"${WORK_DIR}\" \"${WORK_DIR}/fixture\"; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)\"\n  end_test\n  exit $?\nfi\n\n# The panel installs server plugins with npm from its state directory; the\n# project-level .npmrc there points @lamalibre at the stand-in registry.\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nlog_pass \"Panel npm configured for the stand-in registry\"\n\n# ===========================================================================\n# 2. Install: the confidential client's secret is handed out once\n# ==========================================================================="
     },
     {
       "id": "install-the-fixture-plugin",
       "label": "Install the fixture plugin",
       "steps": [
         {
-          "id": "step-23",
+          "id": "step-20",
           "label": "POST /api/plugins/install",
           "target": "host",
           "op": {
@@ -175,7 +175,7 @@
           ]
         },
         {
-          "id": "step-24",
+          "id": "step-21",
           "label": "Fixture plugin installed",
           "target": "local",
           "continueOnError": true,
@@ -197,7 +197,7 @@
           }
         },
         {
-          "id": "step-25",
+          "id": "step-22",
           "label": "Plugin name is ${PLUGIN_NAME}",
           "target": "local",
           "continueOnError": true,
@@ -219,7 +219,7 @@
           }
         },
         {
-          "id": "step-26",
+          "id": "step-23",
           "label": "One confidential client secret created by the install",
           "target": "local",
           "continueOnError": true,
@@ -241,7 +241,7 @@
           }
         },
         {
-          "id": "step-27",
+          "id": "step-24",
           "label": "Secret belongs to e2e-oidc-service",
           "target": "local",
           "continueOnError": true,
@@ -263,7 +263,7 @@
           }
         },
         {
-          "id": "step-28",
+          "id": "step-25",
           "label": "Extract SERVICE_SECRET",
           "target": "local",
           "op": {
@@ -280,7 +280,7 @@
           }
         },
         {
-          "id": "step-29",
+          "id": "step-26",
           "label": "Install response carries the secret",
           "target": "local",
           "continueOnError": true,
@@ -301,7 +301,7 @@
           }
         },
         {
-          "id": "step-30",
+          "id": "step-27",
           "label": "The registry row carries no secret",
           "target": "local",
           "continueOnError": true,
@@ -322,7 +322,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-28",
           "label": "Set SECRET_STORE_MODE",
           "target": "local",
           "op": {
@@ -339,7 +339,7 @@
           ]
         },
         {
-          "id": "step-32",
+          "id": "step-29",
           "label": "oidc-clients.json is 0600 lamaste",
           "target": "local",
           "continueOnError": true,
@@ -360,7 +360,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-30",
           "label": "Set STORED_PLUGIN",
           "target": "local",
           "op": {
@@ -377,7 +377,7 @@
           ]
         },
         {
-          "id": "step-34",
+          "id": "step-31",
           "label": "Secret store attributes the client to the plugin",
           "target": "local",
           "continueOnError": true,
@@ -398,7 +398,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-32",
           "label": "Set SECTION_BEFORE_ENABLE",
           "target": "local",
           "op": {
@@ -415,7 +415,7 @@
           ]
         },
         {
-          "id": "step-36",
+          "id": "step-33",
           "label": "A disabled plugin's clients are not served",
           "target": "local",
           "continueOnError": true,
@@ -443,7 +443,7 @@
       "label": "Enable the plugin — Authelia configuration",
       "steps": [
         {
-          "id": "step-37",
+          "id": "step-34",
           "label": "POST /api/plugins/${PLUGIN_NAME}/enable",
           "target": "host",
           "op": {
@@ -461,7 +461,7 @@
           ]
         },
         {
-          "id": "step-38",
+          "id": "step-35",
           "label": "Plugin enabled",
           "target": "local",
           "continueOnError": true,
@@ -483,7 +483,7 @@
           }
         },
         {
-          "id": "step-39",
+          "id": "step-36",
           "label": "Enable creates no new secret (install already did)",
           "target": "local",
           "continueOnError": true,
@@ -505,7 +505,7 @@
           }
         },
         {
-          "id": "step-40",
+          "id": "step-37",
           "label": "Authelia is active after the restart",
           "target": "local",
           "op": {
@@ -515,7 +515,7 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-38",
           "label": "Authelia is not active after the OIDC update",
           "target": "local",
           "op": {
@@ -525,7 +525,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-39",
           "label": "Sleep 3s",
           "target": "local",
           "op": {
@@ -534,7 +534,7 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-40",
           "label": "Set CONFIG_YML",
           "target": "local",
           "op": {
@@ -551,7 +551,7 @@
           ]
         },
         {
-          "id": "step-44",
+          "id": "step-41",
           "label": "Public device-code client rendered",
           "target": "local",
           "continueOnError": true,
@@ -572,7 +572,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-42",
           "label": "Confidential client rendered",
           "target": "local",
           "continueOnError": true,
@@ -593,7 +593,7 @@
           }
         },
         {
-          "id": "step-46",
+          "id": "step-43",
           "label": "Public client references its claims policy",
           "target": "local",
           "continueOnError": true,
@@ -614,7 +614,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-44",
           "label": "Claims policies section present",
           "target": "local",
           "continueOnError": true,
@@ -635,7 +635,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-45",
           "label": "Claims policy copies preferred_username into access tokens",
           "target": "local",
           "continueOnError": true,
@@ -656,7 +656,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-46",
           "label": "Confidential client uses client_secret_basic",
           "target": "local",
           "continueOnError": true,
@@ -677,7 +677,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-47",
           "label": "Confidential client secret is a pbkdf2-sha512 digest",
           "target": "local",
           "continueOnError": true,
@@ -698,7 +698,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-48",
           "label": "The plaintext secret is not in Authelia's configuration",
           "target": "local",
           "continueOnError": true,
@@ -719,7 +719,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-49",
           "label": "Issuer key referenced through the template expression",
           "target": "local",
           "continueOnError": true,
@@ -740,7 +740,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-50",
           "label": "No private key inlined in the configuration",
           "target": "local",
           "continueOnError": true,
@@ -761,7 +761,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-51",
           "label": "Audience whitelisted",
           "target": "local",
           "continueOnError": true,
@@ -782,7 +782,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-52",
           "label": "Audience {domain} expanded to the relay domain",
           "target": "local",
           "continueOnError": true,
@@ -803,7 +803,7 @@
           }
         },
         {
-          "id": "step-56",
+          "id": "step-53",
           "label": "Set KEY_STAT",
           "target": "local",
           "op": {
@@ -820,7 +820,7 @@
           ]
         },
         {
-          "id": "step-57",
+          "id": "step-54",
           "label": "Issuer key is 0600 lamaste-authelia",
           "target": "local",
           "continueOnError": true,
@@ -841,7 +841,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-55",
           "label": "Set KEY_READABLE_BY_PANEL",
           "target": "local",
           "op": {
@@ -858,7 +858,7 @@
           ]
         },
         {
-          "id": "step-59",
+          "id": "step-56",
           "label": "The panel user cannot read the issuer key",
           "target": "local",
           "continueOnError": true,
@@ -879,7 +879,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-57",
           "label": "Set UNIT_FILTER",
           "target": "local",
           "op": {
@@ -896,7 +896,7 @@
           ]
         },
         {
-          "id": "step-61",
+          "id": "step-58",
           "label": "Authelia unit enables the template configuration filter",
           "target": "local",
           "continueOnError": true,
@@ -924,7 +924,7 @@
       "label": "Discovery document and JWKS",
       "steps": [
         {
-          "id": "step-62",
+          "id": "step-59",
           "label": "Set DISCOVERY",
           "target": "local",
           "op": {
@@ -941,7 +941,7 @@
           ]
         },
         {
-          "id": "step-63",
+          "id": "step-60",
           "label": "Issuer is https://auth.${DOMAIN}",
           "target": "local",
           "continueOnError": true,
@@ -963,7 +963,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-61",
           "label": "Device authorization endpoint advertised",
           "target": "local",
           "continueOnError": true,
@@ -985,7 +985,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-62",
           "label": "Token endpoint advertised",
           "target": "local",
           "continueOnError": true,
@@ -1007,7 +1007,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-63",
           "label": "JWKS URI advertised",
           "target": "local",
           "continueOnError": true,
@@ -1029,7 +1029,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-64",
           "label": "client_credentials grant supported",
           "target": "local",
           "continueOnError": true,
@@ -1050,7 +1050,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-65",
           "label": "device_code grant supported",
           "target": "local",
           "continueOnError": true,
@@ -1071,7 +1071,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-66",
           "label": "Set JWKS",
           "target": "local",
           "op": {
@@ -1088,7 +1088,7 @@
           ]
         },
         {
-          "id": "step-70",
+          "id": "step-67",
           "label": "Set RS256_KEYS",
           "target": "local",
           "op": {
@@ -1105,7 +1105,7 @@
           ]
         },
         {
-          "id": "step-71",
+          "id": "step-68",
           "label": "JWKS carries one RS256 RSA key",
           "target": "local",
           "continueOnError": true,
@@ -1126,7 +1126,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-69",
           "label": "Key id is lamaste-oidc",
           "target": "local",
           "continueOnError": true,
@@ -1148,7 +1148,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-70",
           "label": "Key use is sig",
           "target": "local",
           "continueOnError": true,
@@ -1177,7 +1177,7 @@
       "label": "Client-credentials token request",
       "steps": [
         {
-          "id": "step-74",
+          "id": "step-71",
           "label": "Set TOKEN_RESPONSE",
           "target": "local",
           "op": {
@@ -1194,7 +1194,7 @@
           ]
         },
         {
-          "id": "step-75",
+          "id": "step-72",
           "label": "Extract ACCESS_TOKEN",
           "target": "local",
           "op": {
@@ -1211,7 +1211,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-73",
           "label": "Token endpoint issued an access token ($(echo \"$TOKEN_RESPONSE\" | jq -c 'del(.access_token)'))",
           "target": "local",
           "continueOnError": true,
@@ -1232,7 +1232,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-74",
           "label": "Token type is bearer",
           "target": "local",
           "continueOnError": true,
@@ -1254,7 +1254,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-75",
           "label": "Set CLAIMS",
           "target": "local",
           "op": {
@@ -1275,7 +1275,7 @@
           }
         },
         {
-          "id": "step-79",
+          "id": "step-76",
           "label": "JWT iss is https://auth.${DOMAIN}",
           "target": "local",
           "continueOnError": true,
@@ -1301,7 +1301,7 @@
           }
         },
         {
-          "id": "step-80",
+          "id": "step-77",
           "label": "JWT client_id is the client",
           "target": "local",
           "continueOnError": true,
@@ -1327,7 +1327,7 @@
           }
         },
         {
-          "id": "step-81",
+          "id": "step-78",
           "label": "JWT sub falls back to the client id (no end-user)",
           "target": "local",
           "continueOnError": true,
@@ -1353,7 +1353,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-79",
           "label": "\") != null",
           "target": "local",
           "continueOnError": true,
@@ -1379,7 +1379,7 @@
           }
         },
         {
-          "id": "step-83",
+          "id": "step-80",
           "label": "JWT scp carries registry_read",
           "target": "local",
           "continueOnError": true,
@@ -1405,7 +1405,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-81",
           "label": "Set WRONG_SECRET_STATUS",
           "target": "local",
           "op": {
@@ -1422,7 +1422,7 @@
           ]
         },
         {
-          "id": "step-85",
+          "id": "step-82",
           "label": "A wrong secret is refused",
           "target": "local",
           "continueOnError": true,
@@ -1450,7 +1450,7 @@
       "label": "Client metadata and secret rotation",
       "steps": [
         {
-          "id": "step-86",
+          "id": "step-83",
           "label": "GET /api/plugins/${PLUGIN_NAME}/oidc-clients",
           "target": "host",
           "op": {
@@ -1468,7 +1468,7 @@
           ]
         },
         {
-          "id": "step-87",
+          "id": "step-84",
           "label": "Two clients listed",
           "target": "local",
           "continueOnError": true,
@@ -1490,7 +1490,7 @@
           }
         },
         {
-          "id": "step-88",
+          "id": "step-85",
           "label": "e2e-oidc-cli is public",
           "target": "local",
           "continueOnError": true,
@@ -1512,7 +1512,7 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-86",
           "label": "e2e-oidc-cli asks for groups and preferred_username in access tokens",
           "target": "local",
           "continueOnError": true,
@@ -1534,7 +1534,7 @@
           }
         },
         {
-          "id": "step-90",
+          "id": "step-87",
           "label": "e2e-oidc-service is confidential",
           "target": "local",
           "continueOnError": true,
@@ -1556,7 +1556,7 @@
           }
         },
         {
-          "id": "step-91",
+          "id": "step-88",
           "label": "Not rotated yet",
           "target": "local",
           "continueOnError": true,
@@ -1578,7 +1578,7 @@
           }
         },
         {
-          "id": "step-92",
+          "id": "step-89",
           "label": "Listing never shows the secret",
           "target": "local",
           "continueOnError": true,
@@ -1599,7 +1599,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-90",
           "label": "POST /api/plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-service/rotate-secret",
           "target": "host",
           "op": {
@@ -1617,7 +1617,7 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-91",
           "label": "Secret rotated",
           "target": "local",
           "continueOnError": true,
@@ -1639,7 +1639,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-92",
           "label": "Extract NEW_SECRET",
           "target": "local",
           "op": {
@@ -1656,7 +1656,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-93",
           "label": "Rotation returns the new secret",
           "target": "local",
           "continueOnError": true,
@@ -1677,7 +1677,7 @@
           }
         },
         {
-          "id": "step-97",
+          "id": "step-94",
           "label": "The new secret differs from the old one",
           "target": "local",
           "continueOnError": true,
@@ -1698,7 +1698,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-95",
           "label": "POST /api/plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-cli/rotate-secret",
           "target": "host",
           "op": {
@@ -1717,7 +1717,7 @@
           ]
         },
         {
-          "id": "step-99",
+          "id": "step-96",
           "label": "A public client has no secret to rotate",
           "target": "local",
           "continueOnError": true,
@@ -1738,7 +1738,7 @@
           }
         },
         {
-          "id": "step-100",
+          "id": "step-97",
           "label": "POST /api/plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-nope/rotate-secret",
           "target": "host",
           "op": {
@@ -1757,7 +1757,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-98",
           "label": "An undeclared client is 404",
           "target": "local",
           "continueOnError": true,
@@ -1778,7 +1778,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-99",
           "label": "Authelia is active after the rotation",
           "target": "local",
           "op": {
@@ -1788,7 +1788,7 @@
           }
         },
         {
-          "id": "step-103",
+          "id": "step-100",
           "label": "Authelia is not active after the rotation",
           "target": "local",
           "op": {
@@ -1798,7 +1798,7 @@
           }
         },
         {
-          "id": "step-104",
+          "id": "step-101",
           "label": "Sleep 3s",
           "target": "local",
           "op": {
@@ -1807,7 +1807,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-102",
           "label": "Set OLD_SECRET_STATUS",
           "target": "local",
           "op": {
@@ -1824,7 +1824,7 @@
           ]
         },
         {
-          "id": "step-106",
+          "id": "step-103",
           "label": "The old secret no longer works",
           "target": "local",
           "continueOnError": true,
@@ -1845,7 +1845,7 @@
           }
         },
         {
-          "id": "step-107",
+          "id": "step-104",
           "label": "Set NEW_SECRET_STATUS",
           "target": "local",
           "op": {
@@ -1862,7 +1862,7 @@
           ]
         },
         {
-          "id": "step-108",
+          "id": "step-105",
           "label": "The new secret works",
           "target": "local",
           "continueOnError": true,
@@ -1883,7 +1883,7 @@
           }
         },
         {
-          "id": "step-109",
+          "id": "step-106",
           "label": "GET /api/plugins/${PLUGIN_NAME}/oidc-clients",
           "target": "host",
           "op": {
@@ -1902,7 +1902,7 @@
           ]
         },
         {
-          "id": "step-110",
+          "id": "step-107",
           "label": "Listing records the rotation time",
           "target": "local",
           "continueOnError": true,
@@ -1930,7 +1930,7 @@
       "label": "Disable and uninstall",
       "steps": [
         {
-          "id": "step-111",
+          "id": "step-108",
           "label": "POST /api/plugins/${PLUGIN_NAME}/disable",
           "target": "host",
           "op": {
@@ -1948,7 +1948,7 @@
           ]
         },
         {
-          "id": "step-112",
+          "id": "step-109",
           "label": "Plugin disabled",
           "target": "local",
           "continueOnError": true,
@@ -1970,7 +1970,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-110",
           "label": "Authelia is active after the removal",
           "target": "local",
           "op": {
@@ -1980,7 +1980,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-111",
           "label": "Authelia is not active after the removal",
           "target": "local",
           "op": {
@@ -1990,7 +1990,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-112",
           "label": "Set CLI_AFTER_DISABLE",
           "target": "local",
           "op": {
@@ -2007,7 +2007,7 @@
           ]
         },
         {
-          "id": "step-116",
+          "id": "step-113",
           "label": "Set SERVICE_AFTER_DISABLE",
           "target": "local",
           "op": {
@@ -2024,7 +2024,7 @@
           ]
         },
         {
-          "id": "step-117",
+          "id": "step-114",
           "label": "Public client removed from Authelia",
           "target": "local",
           "continueOnError": true,
@@ -2045,7 +2045,7 @@
           }
         },
         {
-          "id": "step-118",
+          "id": "step-115",
           "label": "Confidential client removed from Authelia",
           "target": "local",
           "continueOnError": true,
@@ -2066,7 +2066,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-116",
           "label": "Set SECRET_AFTER_DISABLE",
           "target": "local",
           "op": {
@@ -2083,7 +2083,7 @@
           ]
         },
         {
-          "id": "step-120",
+          "id": "step-117",
           "label": "Disabling keeps the secret (the plugin is still installed)",
           "target": "local",
           "continueOnError": true,
@@ -2104,7 +2104,7 @@
           }
         },
         {
-          "id": "step-121",
+          "id": "step-118",
           "label": "DELETE /api/plugins/${PLUGIN_NAME}",
           "target": "host",
           "op": {
@@ -2122,7 +2122,7 @@
           ]
         },
         {
-          "id": "step-122",
+          "id": "step-119",
           "label": "Plugin uninstalled",
           "target": "local",
           "continueOnError": true,
@@ -2144,7 +2144,7 @@
           }
         },
         {
-          "id": "step-123",
+          "id": "step-120",
           "label": "Set SECRET_AFTER_UNINSTALL",
           "target": "local",
           "op": {
@@ -2161,7 +2161,7 @@
           ]
         },
         {
-          "id": "step-124",
+          "id": "step-121",
           "label": "Uninstalling deletes the secret",
           "target": "local",
           "continueOnError": true,

@@ -26,6 +26,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../e2e/helpers.sh"
 # shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh
 source "${SCRIPT_DIR}/app-plugin-harness.sh"
+MD_SPEC=48
 # shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh
 source "${SCRIPT_DIR}/multi-domain-harness.sh"
 
@@ -52,8 +53,8 @@ MEMBER_PASSWORD="E2e-$(openssl rand -hex 12)"
 CUST_PASSWORD="E2e-$(openssl rand -hex 12)"
 MEMBER_ID=""
 CUST_ID=""
-JAR_MEMBER="/tmp/e2e-48-member.cookies"
-JAR_CUST="/tmp/e2e-48-cust.cookies"
+JAR_MEMBER=$(md_jar member)
+JAR_CUST=$(md_jar cust)
 SUB_A="e2e48us"
 PORT_A=18481
 TUNNEL_A=""
@@ -75,10 +76,9 @@ cleanup() {
   for id in "${MEMBER}" "${CUST}"; do
     host_api_delete "users/${id}?erase=true" > /dev/null 2>&1 || true
   done
-  timed_exec 30 multipass exec "${VISITOR_VM}" -- sudo bash -c "rm -f ${JAR_MEMBER} ${JAR_CUST}; true" > /dev/null 2>&1
   nudge_sync
   app_plugin_cleanup
-  md_cleanup_domains
+  md_cleanup
 }
 trap cleanup EXIT
 
@@ -87,7 +87,7 @@ log_section "Pre-flight"
 # ---------------------------------------------------------------------------
 
 app_plugin_preflight
-md_preflight
+md_setup
 FQDN="${SUB_A}.${DOMAIN}"
 if agent_has_node_sqlite; then
   log_pass "The agent VM's Node.js has node:sqlite, which the agent half's projection needs"
@@ -169,9 +169,8 @@ log_section "The member reaches the agent half; the customer of B gets JSON not_
 md_wait_authelia "${DOMAIN}"
 SECRET_M=$(reset_totp "${MEMBER}")
 SECRET_C=$(reset_totp "${CUST}")
-wait_for_next_totp_window
-md_sign_in "${MEMBER}" "${MEMBER_PASSWORD}" "${SECRET_M}" "${JAR_MEMBER}" "${FQDN}" "${DOMAIN}"
-md_sign_in "${CUST}" "${CUST_PASSWORD}" "${SECRET_C}" "${JAR_CUST}" "${FQDN}" "${DOMAIN}"
+md_sign_in "${MEMBER}" "${MEMBER_PASSWORD}" "${SECRET_M}" "${JAR_MEMBER}" "${FQDN}"
+md_sign_in "${CUST}" "${CUST_PASSWORD}" "${SECRET_C}" "${JAR_CUST}" "${FQDN}"
 
 RESP=$(visit "${JAR_MEMBER}" "https://${FQDN}${APP}/echo")
 assert_eq "$(visit_status "$RESP")" "200" "GET ${APP}/echo as ${MEMBER}: 200" || true

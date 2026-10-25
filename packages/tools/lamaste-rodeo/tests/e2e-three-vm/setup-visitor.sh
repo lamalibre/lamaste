@@ -34,11 +34,6 @@ fi
 
 HOST_IP="$1"
 TEST_DOMAIN="$2"
-# The multi-domain specs' second and third base domains (as setup-host.sh
-# and rodeo.hooks.js derive them): their sign-in pages resolve from the
-# start; a spec adds its own hostnames under them.
-TEST_DOMAIN_2="${TEST_DOMAIN_2:-second.${TEST_DOMAIN#*.}}"
-TEST_DOMAIN_3="${TEST_DOMAIN_3:-third.${TEST_DOMAIN#*.}}"
 E2E_CA_CERT_B64="$3"
 
 # ---------------------------------------------------------------------------
@@ -46,6 +41,12 @@ E2E_CA_CERT_B64="$3"
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${LOGGING_LIB:-${SCRIPT_DIR}/logging.sh}"
+# shellcheck source=../e2e/test-domains.sh
+source "${SCRIPT_DIR}/test-domains.sh" 2>/dev/null || source "${SCRIPT_DIR}/../e2e/test-domains.sh"
+# The multi-domain specs' second and third base domains: their sign-in pages
+# resolve from the start; a spec adds its own hostnames under them.
+TEST_DOMAIN_2=$(test_domain_n "${TEST_DOMAIN}" second)
+TEST_DOMAIN_3=$(test_domain_n "${TEST_DOMAIN}" third)
 init_log "setup-visitor"
 
 # ---------------------------------------------------------------------------

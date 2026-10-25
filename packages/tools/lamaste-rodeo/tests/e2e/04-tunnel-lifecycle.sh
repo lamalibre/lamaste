@@ -224,7 +224,7 @@ log_section "Verify nginx configuration"
 # Check vhost file exists
 DOMAIN=$(api_get "onboarding/status" | jq -r '.domain' 2>/dev/null || echo "unknown")
 # Named by the tunnel's full hostname (the multi-domain relay).
-VHOST_NAME="lamalibre-lamaste-app-${TEST_SUBDOMAIN}.${DOMAIN}"
+VHOST_NAME="$(vhost_name app "${TEST_SUBDOMAIN}.${DOMAIN}")"
 VHOST_PATH="/etc/nginx/sites-enabled/${VHOST_NAME}"
 VHOST_AVAILABLE="/etc/nginx/sites-available/${VHOST_NAME}"
 

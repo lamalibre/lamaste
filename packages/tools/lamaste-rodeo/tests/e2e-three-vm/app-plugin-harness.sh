@@ -112,11 +112,13 @@ host_api_delete() {
   host_exec "${CURL_MTLS} -X DELETE -H 'Accept: application/json' '${PANEL}/$1'"
 }
 # host_api_call <method> <path> [json] — the body, then the HTTP status on a
-# line of its own (status_of / body_of split them)
+# line of its own (status_of / body_of split them). API_TIMEOUT=<seconds>
+# for a call longer than CURL_MTLS's 30 s (the multipass call is bounded too).
 host_api_call() {
-  local data=""
+  local data="" limit="${API_TIMEOUT:-30}" out
   if [ -n "${3:-}" ]; then data="-H 'Content-Type: application/json' -d '$3'"; fi
-  host_exec "${CURL_MTLS} -X $1 -H 'Accept: application/json' ${data} -w '\n%{http_code}' '${PANEL}/$2' || true" 2>/dev/null || echo "000"
+  out=$(timed_exec $((limit + 20)) multipass exec "${HOST_VM}" -- sudo bash -c "${CURL_MTLS} --max-time ${limit} -X $1 -H 'Accept: application/json' ${data} -w '\n%{http_code}' '${PANEL}/$2' || true" 2>/dev/null)
+  if [ -n "$out" ]; then printf '%s\n' "$out"; else echo "000"; fi
 }
 status_of() { printf '%s\n' "$1" | tail -n 1; }
 body_of() { printf '%s\n' "$1" | sed '$d'; }
@@ -282,8 +284,11 @@ sync_log_since() { agent_exec "tail -n +$(($1 + 1)) ${AGENT_DIR}/logs/sync.log 2
 # lamaste-agent able to enable the app host helper. Sets DOMAIN,
 # HOST_AGENT_LABEL, APPHOST_STATUS_BEFORE and AUDIT_BASE; ends the spec
 # (skip or failure) otherwise.
-app_plugin_preflight() {
-  local onboarding enrolled timer
+# relay_preflight — onboarding complete (else the spec is skipped), DOMAIN
+# (the relay's primary domain), HOST_AGENT_LABEL enrolled, AUDIT_BASE for
+# audit_count
+relay_preflight() {
+  local onboarding enrolled
   onboarding=$(host_api_get "onboarding/status" 2>/dev/null || echo '{}')
   if [ "$(echo "$onboarding" | jq -r '.status' 2>/dev/null || echo unknown)" != "COMPLETED" ]; then
     log_skip "Onboarding not completed — skipping"
@@ -307,7 +312,14 @@ app_plugin_preflight() {
     exit $?
   fi
   log_pass "Agent ${HOST_AGENT_LABEL} is enrolled on the host"
+  AUDIT_BASE=$(host_api_get "audit?limit=1" | jq '.entries[0].id // 0' 2>/dev/null || echo "0")
+}
 
+# app_plugin_preflight — relay_preflight, then what an app plugin needs on the
+# agent VM: the sync timer, an apphost-capable lamaste-agent
+app_plugin_preflight() {
+  local timer
+  relay_preflight
   timer=$(user_systemctl "is-active ${SYNC_TIMER} 2>/dev/null || true")
   assert_eq "$timer" "active" "Sync timer ${SYNC_TIMER} is active on the agent VM" || true
 
@@ -318,8 +330,6 @@ app_plugin_preflight() {
     exit $?
   fi
   log_pass "The agent VM's lamaste-agent has the apphost command"
-
-  AUDIT_BASE=$(host_api_get "audit?limit=1" | jq '.entries[0].id // 0' 2>/dev/null || echo "0")
 }
 
 # app_host_helper_was_enabled — "true" when the helper was installed before the spec

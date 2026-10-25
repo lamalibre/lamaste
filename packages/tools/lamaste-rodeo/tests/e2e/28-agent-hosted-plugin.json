@@ -119,7 +119,7 @@
       "label": "Stand-in registry serving the fixture plugins",
       "steps": [
         {
-          "id": "step-20",
+          "id": "step-17",
           "label": "Stand-in registry is up on ${STUB_URL}",
           "target": "local",
           "op": {
@@ -129,7 +129,7 @@
           }
         },
         {
-          "id": "step-21",
+          "id": "step-18",
           "label": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)",
           "target": "local",
           "op": {
@@ -139,7 +139,7 @@
           }
         },
         {
-          "id": "step-24",
+          "id": "step-21",
           "label": "Panel npm configured for the stand-in registry",
           "target": "local",
           "op": {
@@ -149,14 +149,14 @@
           }
         }
       ],
-      "bash": "log_section \"Stand-in registry serving the fixture plugins\"\n\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_agent_hosted_fixture_plugins \"${WORK_DIR}/fixtures\"\npkill -f '[s]tub-registry.mjs' 2>/dev/null || true\nnohup node \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json --package \"${WORK_DIR}/fixtures/agent-hosted\" --package \"${WORK_DIR}/fixtures/agent-hosted-paged\" &> \"${WORK_DIR}/stub.log\" &\nif wait_for_http \"${STUB_URL}/-/ping\" 30; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)\"\n  end_test\n  exit $?\nfi\n\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nlog_pass \"Panel npm configured for the stand-in registry\"\n\n# ===========================================================================\n# 2. Install: hosting recorded, a panel declaration refused\n# ==========================================================================="
+      "bash": "log_section \"Stand-in registry serving the fixture plugins\"\n\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nwrite_agent_hosted_fixture_plugins \"${WORK_DIR}/fixtures\"\nif start_stub_registry \"${WORK_DIR}\" \"${WORK_DIR}/fixtures/agent-hosted\" \"${WORK_DIR}/fixtures/agent-hosted-paged\"; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)\"\n  end_test\n  exit $?\nfi\n\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nlog_pass \"Panel npm configured for the stand-in registry\"\n\n# ===========================================================================\n# 2. Install: hosting recorded, a panel declaration refused\n# ==========================================================================="
     },
     {
       "id": "install-the-agent-hosted-fixture",
       "label": "Install the agent-hosted fixture",
       "steps": [
         {
-          "id": "step-25",
+          "id": "step-22",
           "label": "POST /api/plugins/install",
           "target": "host",
           "op": {
@@ -176,7 +176,7 @@
           ]
         },
         {
-          "id": "step-26",
+          "id": "step-23",
           "label": "An agent-hosted manifest declaring panel pages is refused",
           "target": "local",
           "continueOnError": true,
@@ -197,7 +197,7 @@
           }
         },
         {
-          "id": "step-27",
+          "id": "step-24",
           "label": "GET /api/plugins",
           "target": "host",
           "op": {
@@ -215,7 +215,7 @@
           ]
         },
         {
-          "id": "step-28",
+          "id": "step-25",
           "label": "The refused plugin is not in the registry",
           "target": "local",
           "continueOnError": true,
@@ -236,7 +236,7 @@
           }
         },
         {
-          "id": "step-29",
+          "id": "step-26",
           "label": "Set PAGED_ON_DISK",
           "target": "local",
           "op": {
@@ -253,7 +253,7 @@
           ]
         },
         {
-          "id": "step-30",
+          "id": "step-27",
           "label": "The refused package was uninstalled",
           "target": "local",
           "continueOnError": true,
@@ -274,7 +274,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-28",
           "label": "POST /api/plugins/install",
           "target": "host",
           "op": {
@@ -293,7 +293,7 @@
           ]
         },
         {
-          "id": "step-32",
+          "id": "step-29",
           "label": "Agent-hosted fixture installed",
           "target": "local",
           "continueOnError": true,
@@ -315,7 +315,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-30",
           "label": "Plugin name is ${PLUGIN_NAME}",
           "target": "local",
           "continueOnError": true,
@@ -337,7 +337,7 @@
           }
         },
         {
-          "id": "step-34",
+          "id": "step-31",
           "label": "Install records hosting agent",
           "target": "local",
           "continueOnError": true,
@@ -359,7 +359,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-32",
           "label": "A public client needs no secret",
           "target": "local",
           "continueOnError": true,
@@ -381,7 +381,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-33",
           "label": "GET /api/plugins",
           "target": "host",
           "op": {
@@ -399,7 +399,7 @@
           ]
         },
         {
-          "id": "step-37",
+          "id": "step-34",
           "label": "GET /api/plugins reports hosting agent",
           "target": "local",
           "continueOnError": true,
@@ -420,7 +420,7 @@
           }
         },
         {
-          "id": "step-38",
+          "id": "step-35",
           "label": "Set SECTION_BEFORE_ENABLE",
           "target": "local",
           "op": {
@@ -437,7 +437,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-36",
           "label": "A disabled plugin's client is not served",
           "target": "local",
           "continueOnError": true,
@@ -465,7 +465,7 @@
       "label": "Enable — the OIDC client reaches Authelia",
       "steps": [
         {
-          "id": "step-40",
+          "id": "step-37",
           "label": "POST /api/plugins/${PLUGIN_NAME}/enable",
           "target": "host",
           "op": {
@@ -483,7 +483,7 @@
           ]
         },
         {
-          "id": "step-41",
+          "id": "step-38",
           "label": "Plugin enabled",
           "target": "local",
           "continueOnError": true,
@@ -505,7 +505,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-39",
           "label": "Authelia is active after the OIDC update",
           "target": "local",
           "op": {
@@ -515,7 +515,7 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-40",
           "label": "Authelia is not active after the OIDC update",
           "target": "local",
           "op": {
@@ -525,7 +525,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-41",
           "label": "Sleep 3s",
           "target": "local",
           "op": {
@@ -534,7 +534,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-42",
           "label": "Set CONFIG_YML",
           "target": "local",
           "op": {
@@ -551,7 +551,7 @@
           ]
         },
         {
-          "id": "step-46",
+          "id": "step-43",
           "label": "Device-code client rendered",
           "target": "local",
           "continueOnError": true,
@@ -572,7 +572,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-44",
           "label": "Client references its claims policy",
           "target": "local",
           "continueOnError": true,
@@ -593,7 +593,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-45",
           "label": "Audience {domain} expanded to the relay domain",
           "target": "local",
           "continueOnError": true,
@@ -614,7 +614,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-46",
           "label": "Set DISCOVERY",
           "target": "local",
           "op": {
@@ -631,7 +631,7 @@
           ]
         },
         {
-          "id": "step-50",
+          "id": "step-47",
           "label": "Discovery document answers with the relay's issuer",
           "target": "local",
           "continueOnError": true,
@@ -653,7 +653,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-48",
           "label": "Device authorization endpoint advertised",
           "target": "local",
           "continueOnError": true,
@@ -675,7 +675,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-49",
           "label": "Set JWKS",
           "target": "local",
           "op": {
@@ -692,7 +692,7 @@
           ]
         },
         {
-          "id": "step-53",
+          "id": "step-50",
           "label": "Set RS256_KEYS",
           "target": "local",
           "op": {
@@ -709,7 +709,7 @@
           ]
         },
         {
-          "id": "step-54",
+          "id": "step-51",
           "label": "JWKS carries one RS256 key",
           "target": "local",
           "continueOnError": true,
@@ -730,7 +730,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-52",
           "label": "Set DEVICE_RESPONSE",
           "target": "local",
           "op": {
@@ -747,7 +747,7 @@
           ]
         },
         {
-          "id": "step-56",
+          "id": "step-53",
           "label": "Extract DEVICE_CODE",
           "target": "local",
           "op": {
@@ -764,7 +764,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-54",
           "label": "Authelia starts a device-code login for the client ($(echo \"$DEVICE_RESPONSE\" | jq -c 'del(.device_code)'))",
           "target": "local",
           "continueOnError": true,
@@ -792,7 +792,7 @@
       "label": "Panel restart — the plugin host skips the agent-hosted plugin",
       "steps": [
         {
-          "id": "step-58",
+          "id": "step-55",
           "label": "Set RESTARTED_AT",
           "target": "local",
           "op": {
@@ -809,7 +809,7 @@
           ]
         },
         {
-          "id": "step-64",
+          "id": "step-61",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -818,7 +818,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-63",
           "label": "Panel healthy after the restart with the plugin enabled",
           "target": "local",
           "op": {
@@ -833,7 +833,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-64",
           "label": "Panel not healthy within 60 seconds of restart",
           "target": "local",
           "op": {
@@ -848,7 +848,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-65",
           "label": "Set PANEL_JOURNAL",
           "target": "local",
           "op": {
@@ -865,7 +865,7 @@
           ]
         },
         {
-          "id": "step-69",
+          "id": "step-66",
           "label": "Plugin host logged that it skipped the agent-hosted plugin",
           "target": "local",
           "continueOnError": true,
@@ -886,7 +886,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-67",
           "label": "The plugin's code was never imported",
           "target": "local",
           "continueOnError": true,
@@ -907,7 +907,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-68",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -926,7 +926,7 @@
           ]
         },
         {
-          "id": "step-72",
+          "id": "step-69",
           "label": "Nothing is mounted under /api/${PLUGIN_NAME}",
           "target": "local",
           "continueOnError": true,
@@ -947,7 +947,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-70",
           "label": "GET /api/${PLUGIN_NAME}/panel.js",
           "target": "host",
           "op": {
@@ -966,7 +966,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-71",
           "label": "No panel bundle is served",
           "target": "local",
           "continueOnError": true,
@@ -987,7 +987,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-72",
           "label": "Set STILL_SERVED",
           "target": "local",
           "op": {
@@ -1004,7 +1004,7 @@
           ]
         },
         {
-          "id": "step-76",
+          "id": "step-73",
           "label": "The client is still served after the restart",
           "target": "local",
           "continueOnError": true,
@@ -1025,7 +1025,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-74",
           "label": "POST /api/storage/bindings",
           "target": "host",
           "op": {
@@ -1045,7 +1045,7 @@
           ]
         },
         {
-          "id": "step-78",
+          "id": "step-75",
           "label": "Storage cannot be bound to an agent-hosted plugin",
           "target": "local",
           "continueOnError": true,
@@ -1066,7 +1066,7 @@
           }
         },
         {
-          "id": "step-79",
+          "id": "step-76",
           "label": "Set CLI_LIST",
           "target": "local",
           "op": {
@@ -1083,7 +1083,7 @@
           ]
         },
         {
-          "id": "step-80",
+          "id": "step-77",
           "label": "lamaste-server plugins list shows the hosting",
           "target": "local",
           "continueOnError": true,
@@ -1111,7 +1111,7 @@
       "label": "Disable and uninstall",
       "steps": [
         {
-          "id": "step-81",
+          "id": "step-78",
           "label": "POST /api/plugins/${PLUGIN_NAME}/disable",
           "target": "host",
           "op": {
@@ -1129,7 +1129,7 @@
           ]
         },
         {
-          "id": "step-82",
+          "id": "step-79",
           "label": "Plugin disabled",
           "target": "local",
           "continueOnError": true,
@@ -1151,7 +1151,7 @@
           }
         },
         {
-          "id": "step-83",
+          "id": "step-80",
           "label": "Authelia is active after the removal",
           "target": "local",
           "op": {
@@ -1161,7 +1161,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-81",
           "label": "Authelia is not active after the removal",
           "target": "local",
           "op": {
@@ -1171,7 +1171,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-82",
           "label": "Set CLI_AFTER_DISABLE",
           "target": "local",
           "op": {
@@ -1188,7 +1188,7 @@
           ]
         },
         {
-          "id": "step-86",
+          "id": "step-83",
           "label": "Disabling removes the client from Authelia",
           "target": "local",
           "continueOnError": true,
@@ -1209,7 +1209,7 @@
           }
         },
         {
-          "id": "step-87",
+          "id": "step-84",
           "label": "DELETE /api/plugins/${PLUGIN_NAME}",
           "target": "host",
           "op": {
@@ -1227,7 +1227,7 @@
           ]
         },
         {
-          "id": "step-88",
+          "id": "step-85",
           "label": "Plugin uninstalled",
           "target": "local",
           "continueOnError": true,
@@ -1249,7 +1249,7 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-86",
           "label": "GET /api/plugins",
           "target": "host",
           "op": {
@@ -1267,7 +1267,7 @@
           ]
         },
         {
-          "id": "step-90",
+          "id": "step-87",
           "label": "The plugin is gone from the registry",
           "target": "local",
           "continueOnError": true,
@@ -1295,7 +1295,7 @@
       "label": "Lifecycle through lamaste-server plugins",
       "steps": [
         {
-          "id": "step-91",
+          "id": "step-88",
           "label": "Set LEGACY_BEFORE",
           "target": "local",
           "op": {
@@ -1312,7 +1312,7 @@
           ]
         },
         {
-          "id": "step-92",
+          "id": "step-89",
           "label": "Set CLI_INSTALL",
           "target": "local",
           "op": {
@@ -1329,7 +1329,7 @@
           ]
         },
         {
-          "id": "step-93",
+          "id": "step-90",
           "label": "CLI install answers with the panel's registry entry",
           "target": "local",
           "continueOnError": true,
@@ -1351,7 +1351,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-91",
           "label": "GET /api/plugins",
           "target": "host",
           "op": {
@@ -1369,7 +1369,7 @@
           ]
         },
         {
-          "id": "step-95",
+          "id": "step-92",
           "label": "The panel serves the plugin the CLI installed",
           "target": "local",
           "continueOnError": true,
@@ -1390,7 +1390,7 @@
           }
         },
         {
-          "id": "step-97",
+          "id": "step-94",
           "label": "Authelia is active after the CLI enable",
           "target": "local",
           "op": {
@@ -1400,7 +1400,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-95",
           "label": "Authelia is not active after the CLI enable",
           "target": "local",
           "op": {
@@ -1410,7 +1410,7 @@
           }
         },
         {
-          "id": "step-99",
+          "id": "step-96",
           "label": "Set CLI_CLIENT",
           "target": "local",
           "op": {
@@ -1427,7 +1427,7 @@
           ]
         },
         {
-          "id": "step-100",
+          "id": "step-97",
           "label": "CLI enable writes the plugin's client to Authelia",
           "target": "local",
           "continueOnError": true,
@@ -1448,7 +1448,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-99",
           "label": "Set CLI_CLIENT_GONE",
           "target": "local",
           "op": {
@@ -1465,7 +1465,7 @@
           ]
         },
         {
-          "id": "step-103",
+          "id": "step-100",
           "label": "CLI disable removes the client",
           "target": "local",
           "continueOnError": true,
@@ -1486,7 +1486,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-102",
           "label": "GET /api/plugins",
           "target": "host",
           "op": {
@@ -1504,7 +1504,7 @@
           ]
         },
         {
-          "id": "step-106",
+          "id": "step-103",
           "label": "CLI uninstall removes it from the panel's registry",
           "target": "local",
           "continueOnError": true,
@@ -1525,7 +1525,7 @@
           }
         },
         {
-          "id": "step-107",
+          "id": "step-104",
           "label": "Set LEGACY_AFTER",
           "target": "local",
           "op": {
@@ -1542,7 +1542,7 @@
           ]
         },
         {
-          "id": "step-108",
+          "id": "step-105",
           "label": "The CLI leaves plugins.json untouched",
           "target": "local",
           "continueOnError": true,

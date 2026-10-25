@@ -77,8 +77,6 @@ to_legacy() {
   if [ "$linked" = "yes" ]; then sudo ln -s "${AVAILABLE}/$2" "${ENABLED}/$2"; fi
 }
 
-panel_up() { [ "$(api_get "health" 2>/dev/null | jq -r '.status' 2>/dev/null || echo "")" = "ok" ]; }
-
 # ---------------------------------------------------------------------------
 log_section "Pre-flight: check onboarding is complete"
 # ---------------------------------------------------------------------------
@@ -112,9 +110,9 @@ assert_json_field "$RESP" '.tunnel.fqdn' "${OFF_FQDN}" "Tunnel ${OFF_FQDN}" || t
 RESP=$(api_patch "tunnels/${TUNNEL_OFF}" '{"enabled":false}')
 assert_json_field "$RESP" '.tunnel.enabled' 'false' "…disabled" || true
 
-assert_eq "$(link_state "lamalibre-lamaste-app-${ON_FQDN}")" "available linked" "4.7 names the enabled tunnel's vhost by its full hostname, linked" || true
-assert_eq "$(link_state "lamalibre-lamaste-app-${OFF_FQDN}")" "available unlinked" "…the disabled one's too, not linked" || true
-assert_eq "$(link_state "lamalibre-lamaste-auth-${DOMAIN}")" "available linked" "…and the auth portal's by its domain" || true
+assert_eq "$(link_state "$(vhost_name app "${ON_FQDN}")")" "available linked" "4.7 names the enabled tunnel's vhost by its full hostname, linked" || true
+assert_eq "$(link_state "$(vhost_name app "${OFF_FQDN}")")" "available unlinked" "…the disabled one's too, not linked" || true
+assert_eq "$(link_state "$(vhost_name auth "${DOMAIN}")")" "available linked" "…and the auth portal's by its domain" || true
 
 BEFORE="$(host_status "${ON_FQDN}") $(host_status "${OFF_FQDN}") $(host_status "${AUTH_FQDN}")"
 log_info "Before: ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}"
@@ -125,9 +123,9 @@ log_info "Before: ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}"
 
 log_section "The vhosts put back under their 4.6 names"
 
-to_legacy "lamalibre-lamaste-app-${ON_FQDN}" "lamalibre-lamaste-app-${SUB_ON}"
-to_legacy "lamalibre-lamaste-app-${OFF_FQDN}" "lamalibre-lamaste-app-${SUB_OFF}"
-to_legacy "lamalibre-lamaste-auth-${DOMAIN}" "lamalibre-lamaste-auth"
+to_legacy "$(vhost_name app "${ON_FQDN}")" "lamalibre-lamaste-app-${SUB_ON}"
+to_legacy "$(vhost_name app "${OFF_FQDN}")" "lamalibre-lamaste-app-${SUB_OFF}"
+to_legacy "$(vhost_name auth "${DOMAIN}")" "lamalibre-lamaste-auth"
 if sudo nginx -t > /dev/null 2>&1 && sudo systemctl reload nginx; then
   log_pass "nginx serves the 4.6 names"
 else
@@ -144,22 +142,14 @@ assert_eq "$(host_status "${ON_FQDN}") $(host_status "${OFF_FQDN}") $(host_statu
 log_section "The panel restarted: every vhost renamed to its full hostname"
 
 sudo systemctl restart lamalibre-lamaste-serverd
-PANEL_BACK=false
-for _ in $(seq 1 30); do
-  if panel_up; then
-    PANEL_BACK=true
-    break
-  fi
-  sleep 2
-done
-if [ "$PANEL_BACK" = "true" ]; then
+if wait_for_http "${BASE_URL}/api/health" 60 --cert "${CERT_PATH}" --key "${KEY_PATH}" --cacert "${CA_PATH}"; then
   log_pass "The panel is back"
 else
   log_fail "The panel did not come back after its restart"
 fi
-assert_eq "$(link_state "lamalibre-lamaste-app-${ON_FQDN}")" "available linked" "${ON_FQDN}: renamed, still linked" || true
-assert_eq "$(link_state "lamalibre-lamaste-app-${OFF_FQDN}")" "available unlinked" "${OFF_FQDN}: renamed, still not linked" || true
-assert_eq "$(link_state "lamalibre-lamaste-auth-${DOMAIN}")" "available linked" "The auth portal: renamed to lamalibre-lamaste-auth-${DOMAIN}, linked" || true
+assert_eq "$(link_state "$(vhost_name app "${ON_FQDN}")")" "available linked" "${ON_FQDN}: renamed, still linked" || true
+assert_eq "$(link_state "$(vhost_name app "${OFF_FQDN}")")" "available unlinked" "${OFF_FQDN}: renamed, still not linked" || true
+assert_eq "$(link_state "$(vhost_name auth "${DOMAIN}")")" "available linked" "The auth portal: renamed to lamalibre-lamaste-auth-${DOMAIN}, linked" || true
 assert_eq "$(link_state "lamalibre-lamaste-app-${SUB_ON}") $(link_state "lamalibre-lamaste-app-${SUB_OFF}") $(link_state lamalibre-lamaste-auth)" \
   "gone unlinked gone unlinked gone unlinked" "No 4.6 name is left, as a file or a link" || true
 if sudo nginx -t > /dev/null 2>&1; then
@@ -194,11 +184,11 @@ assert_eq "$(echo "$USERS" | jq --arg d "${DOMAIN}" '[.users[]? | select((.domai
 
 log_section "lamaste-priv writes no vhost under a 4.6 name or an unknown dotted one"
 
-RC=$(printf 'server {\n listen 443 ssl;\n}\n' | sudo /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-app-e2e34legacy > /dev/null 2>&1; echo $?)
-assert_not_eq "$RC" "0" "write lamalibre-lamaste-app-e2e34legacy (a 4.6 name) is refused (exit ${RC})" || true
+OUT=$(printf 'server {\n listen 443 ssl;\n}\n' | sudo /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-app-e2e34legacy 2>&1 > /dev/null || true)
+assert_contains "$OUT" "site name not allowed for write" "write lamalibre-lamaste-app-e2e34legacy (a 4.6 name) is refused for its name" || true
 assert_eq "$(link_state lamalibre-lamaste-app-e2e34legacy)" "gone unlinked" "…and leaves no file" || true
-RC=$(printf 'server {\n listen 443 ssl;\n}\n' | sudo /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-x-e2e34.example.test > /dev/null 2>&1; echo $?)
-assert_not_eq "$RC" "0" "write lamalibre-lamaste-x-e2e34.example.test (a dotted name it does not know) is refused (exit ${RC})" || true
+OUT=$(printf 'server {\n listen 443 ssl;\n}\n' | sudo /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-x-e2e34.example.test 2>&1 > /dev/null || true)
+assert_contains "$OUT" "site name not allowed for write" "write lamalibre-lamaste-x-e2e34.example.test (a dotted name it does not know) is refused for its name" || true
 assert_eq "$(link_state lamalibre-lamaste-x-e2e34.example.test)" "gone unlinked" "…and leaves no file" || true
 
 end_test

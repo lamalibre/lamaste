@@ -184,7 +184,6 @@ assert_json_field "$EXPOSE_RESPONSE" '.tunnel.type' 'panel' "Panel tunnel type i
 
 PANEL_TUNNEL_ID=$(echo "$EXPOSE_RESPONSE" | jq -r '.tunnel.id' 2>/dev/null || echo "")
 PANEL_FQDN=$(echo "$EXPOSE_RESPONSE" | jq -r '.tunnel.fqdn' 2>/dev/null || echo "")
-PANEL_SUBDOMAIN=$(echo "$EXPOSE_RESPONSE" | jq -r '.tunnel.subdomain' 2>/dev/null || echo "")
 assert_json_field "$EXPOSE_RESPONSE" '.tunnel.subdomain' "agent-${AGENT_LABEL}" "Panel subdomain matches agent-<label>" || true
 assert_json_field "$EXPOSE_RESPONSE" '.tunnel.port' "$PANEL_PORT" "Panel tunnel port matches" || true
 assert_json_field_not_empty "$EXPOSE_RESPONSE" '.tunnel.fqdn' "Panel tunnel has an FQDN" || true
@@ -209,7 +208,7 @@ log_section "Verify nginx mTLS vhost created (not app vhost)"
 # ---------------------------------------------------------------------------
 
 # Named by the panel tunnel's full hostname (the multi-domain relay).
-VHOST_NAME="lamalibre-lamaste-agent-panel-${PANEL_FQDN}"
+VHOST_NAME="$(vhost_name agent-panel "${PANEL_FQDN}")"
 VHOST_PATH="/etc/nginx/sites-enabled/${VHOST_NAME}"
 
 if [ -f "$VHOST_PATH" ] || [ -L "$VHOST_PATH" ]; then
@@ -224,7 +223,7 @@ else
 fi
 
 # Verify it is NOT an app vhost (app vhosts use lamalibre-lamaste-app- prefix)
-APP_VHOST="/etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_FQDN}"
+APP_VHOST="$(vhost_linked app "${PANEL_FQDN}")"
 if [ ! -f "$APP_VHOST" ] && [ ! -L "$APP_VHOST" ]; then
   log_pass "No app vhost created (correct — panel uses mTLS vhost)"
 else
@@ -554,8 +553,8 @@ assert_json_field "$REVOKE_RESPONSE" '.ok' 'true' "Agent ${AGENT_LABEL} revoked"
 TUNNELS_AFTER_REVOKE=$(api_get "tunnels")
 PANEL_LEFT=$(echo "$TUNNELS_AFTER_REVOKE" | jq --arg sd "$REEXPOSED_SUBDOMAIN" '[.tunnels[] | select(.subdomain == $sd)] | length' 2>/dev/null || echo "unknown")
 assert_eq "$PANEL_LEFT" "0" "Revoked agent's panel tunnel (${REEXPOSED_SUBDOMAIN}) deleted" || true
-if [ -n "$REEXPOSED_SUBDOMAIN" ] && [ ! -e "/etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${REEXPOSED_FQDN}" ] \
-  && [ ! -e "/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${REEXPOSED_FQDN}" ]; then
+if [ -n "$REEXPOSED_SUBDOMAIN" ] && [ ! -e "$(vhost_linked agent-panel "${REEXPOSED_FQDN}")" ] \
+  && [ ! -e "$(vhost_available agent-panel "${REEXPOSED_FQDN}")" ]; then
   log_pass "Revoked agent's panel vhost removed"
 else
   log_fail "Revoked agent's panel vhost still present"

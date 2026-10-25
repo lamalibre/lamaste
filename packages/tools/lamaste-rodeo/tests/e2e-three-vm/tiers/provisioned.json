@@ -20,10 +20,11 @@
       "logging.sh",
       "vm-api-helper.sh",
       "vm-api-status-helper.sh",
-      "certbot-shim.sh"
+      "certbot-shim.sh",
+      "../e2e/test-domains.sh"
     ],
     "agent": ["setup-agent.sh", "logging.sh"],
-    "visitor": ["setup-visitor.sh", "logging.sh"]
+    "visitor": ["setup-visitor.sh", "logging.sh", "../e2e/test-domains.sh"]
   },
   "outputs": {
     "hostIp": { "from": "HOST_IP_CRED", "scope": "credentials" },

@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# test_domain_n — the specs' second and third base domains (multi-domain relay)
+# shellcheck source=test-domains.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test-domains.sh"
+
 # `multipass exec` (1.16 on macOS) never exits when its stdout or stderr is
 # /dev/null and the remote command writes after a delay — e.g.
 # `multipass exec vm -- bash -c "sleep 1; echo x" >/dev/null` hangs forever,
@@ -2718,4 +2722,91 @@ AGENTD_EOF
 # Print the JSON payload of a JWT (needs node, which every VM has).
 decode_jwt_payload() {
   node -e 'const p = process.argv[1].split(".")[1]; process.stdout.write(Buffer.from(p, "base64url").toString())' "$1"
+}
+
+# ---------------------------------------------------------------------------
+# The multi-domain relay: vhost names, Authelia's configuration, domains
+# ---------------------------------------------------------------------------
+
+# vhost_name <app|agent-panel|auth> <hostname | domain> — the site name the
+# panel gives a vhost: a tunnel's (app, agent-panel) by its full hostname,
+# an auth portal's by its domain (4.6 named them by subdomain alone)
+vhost_name() { printf 'lamalibre-lamaste-%s-%s\n' "$1" "$2"; }
+vhost_available() { printf '/etc/nginx/sites-available/%s\n' "$(vhost_name "$1" "$2")"; }
+vhost_linked() { printf '/etc/nginx/sites-enabled/%s\n' "$(vhost_name "$1" "$2")"; }
+
+# AUTHELIA_CONFIG_JSON — the shell command printing Authelia's configuration
+# as JSON (python3's YAML — cloud-init's — with the Go template line of the
+# issuer key left out). Run it as root where Authelia runs: on this VM
+# (`sudo bash -c "${AUTHELIA_CONFIG_JSON}"`) or the host VM (`host_exec`).
+AUTHELIA_CONFIG_JSON="python3 -c 'import json,yaml; print(json.dumps(yaml.safe_load(\"\".join(l for l in open(\"/etc/authelia/configuration.yml\") if \"{{\" not in l))))'"
+
+# AUTHELIA_RULES_UNDER — a jq filter (with $d): the access_control rules for
+# domain $d and the hosts under it, keys sorted by `jq -S`
+# shellcheck disable=SC2016 # a jq program
+AUTHELIA_RULES_UNDER='[(.access_control.rules // [])[] | select([(.domain | if type == "string" then [.] else . end)[] | ltrimstr("*.") | . == $d or endswith("." + $d)] | any)]'
+
+# start_stub_registry <work dir> <package dir>... — the stand-in Feria
+# (write_stub_registry) on STUB_PORT, as STUB_ADMIN_TOKEN, trusting the
+# relay's issuer, serving the packages; returns once it answers (1 when it
+# does not within 30 s — its log is <work dir>/stub.log)
+start_stub_registry() {
+  local work="$1" pkg
+  shift
+  local packages=()
+  for pkg in "$@"; do packages+=(--package "$pkg"); done
+  write_stub_registry "${work}/stub-registry.mjs"
+  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true
+  nohup node "${work}/stub-registry.mjs" --port "${STUB_PORT}" --admin-token "${STUB_ADMIN_TOKEN}" --issuer "https://auth.${DOMAIN}" --audience "${STUB_URL}" --jwks-url http://127.0.0.1:9091/jwks.json "${packages[@]}" &> "${work}/stub.log" &
+  wait_for_http "${STUB_URL}/-/ping" 30
+}
+
+# On one VM (single-VM specs): the relay's sign-in pages through this VM's nginx.
+
+# local_domain_dns <domain> — this VM's dnsmasq answers <domain> as the
+# relay's own (setup-host.sh adds the second base domain; a VM restored from
+# an older snapshot lacks it)
+local_domain_dns() {
+  local conf=/etc/dnsmasq.d/lamaste-test.conf address
+  if ! sudo grep -q "^address=/$1/" "$conf"; then
+    address=$(sudo sed -n "s#^address=/${DOMAIN}/##p" "$conf" | head -n 1)
+    echo "address=/$1/${address:-127.0.0.1}" | sudo tee -a "$conf" > /dev/null
+    sudo systemctl restart dnsmasq
+  fi
+}
+
+# local_wait_authelia <domain> — Authelia answers at auth.<domain> (after a restart)
+local_wait_authelia() {
+  wait_for_http "https://auth.$1/api/health" 90 --resolve "auth.$1:443:127.0.0.1" ||
+    log_fail "Authelia does not answer at auth.$1"
+}
+
+# local_reset_totp <username> — a fresh TOTP secret (the panel's reset); prints it
+local_reset_totp() {
+  api_post "users/$1/reset-totp" '{}' | jq -r '.totpUri // empty' | sed -n 's/.*secret=\([A-Z2-7]*\).*/\1/p'
+}
+
+# local_sign_in <username> <password> <secret> <jar> <domain> — Authelia's two
+# factors at auth.<domain> into <jar>; SIGN_IN_RESULT is "<first> <second>"
+# (OK OK). A code is used once: a user signing in again within the same 30 s
+# step waits for the next one (the step is remembered here, so never call it
+# in a command substitution).
+local_sign_in() {
+  local body first code second step key resolve="--resolve auth.$5:443:127.0.0.1"
+  key="_TOTP_STEP_${1//[^A-Za-z0-9]/_}"
+  step=$(($(date +%s) / 30))
+  if [ "${!key:-}" = "$step" ]; then
+    wait_for_next_totp_window
+    step=$(($(date +%s) / 30))
+  fi
+  printf -v "$key" '%s' "$step"
+  rm -f "$4"
+  body=$(jq -c -n --arg u "$1" --arg p "$2" --arg t "https://auth.$5/" '{username: $u, password: $p, keepMeLoggedIn: false, targetURL: $t}')
+  # shellcheck disable=SC2086 # resolve is two words on purpose
+  first=$(curl -sk --max-time 15 ${resolve} -c "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://auth.$5/api/firstfactor" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || echo "none")
+  code=$(oathtool --totp --base32 "$3" 2>/dev/null || echo "")
+  body=$(jq -c -n --arg c "$code" --arg t "https://auth.$5/" '{token: $c, targetURL: $t}')
+  # shellcheck disable=SC2086
+  second=$(curl -sk --max-time 15 ${resolve} -b "$4" -c "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://auth.$5/api/secondfactor/totp" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || echo "none")
+  SIGN_IN_RESULT="${first} ${second}"
 }

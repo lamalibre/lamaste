@@ -46,6 +46,8 @@ BASE_URL="https://127.0.0.1:9292"
 # Logging
 # ---------------------------------------------------------------------------
 source "${LOGGING_LIB:-${SCRIPT_DIR}/logging.sh}"
+# shellcheck source=../e2e/test-domains.sh
+source "${SCRIPT_DIR}/test-domains.sh" 2>/dev/null || source "${SCRIPT_DIR}/../e2e/test-domains.sh"
 init_log "setup-host"
 
 # ---------------------------------------------------------------------------
@@ -145,19 +147,14 @@ log_step "[2/10] Installing dnsmasq..."
 run_cmd "apt-get update" apt-get update -qq
 run_cmd "Install dnsmasq, jq, oathtool, and sqlite3" apt-get install -y -qq dnsmasq jq oathtool sqlite3
 
-# Configure wildcard resolution: *.TEST_DOMAIN -> HOST_IP, and the same for
-# the multi-domain specs' second and third base domains (the primary's
-# first label replaced by `second` / `third`: test.lamaste.local →
-# second.lamaste.local, third.lamaste.local — rodeo.hooks.js derives them
-# the same way). They resolve here from the start; the specs add them to a
-# relay as they need them.
-TEST_DOMAIN_2="${TEST_DOMAIN_2:-second.${TEST_DOMAIN#*.}}"
-TEST_DOMAIN_3="${TEST_DOMAIN_3:-third.${TEST_DOMAIN#*.}}"
+# Configure wildcard resolution: *.TEST_DOMAIN -> HOST_IP. The multi-domain
+# specs' second and third base domains (test-domains.sh) resolve the same way
+# from the start; the specs add them to a relay as they need them.
 mkdir -p /etc/dnsmasq.d
 {
   echo "address=/${TEST_DOMAIN}/${HOST_IP}"
-  echo "address=/${TEST_DOMAIN_2}/${HOST_IP}"
-  echo "address=/${TEST_DOMAIN_3}/${HOST_IP}"
+  echo "address=/$(test_domain_n "${TEST_DOMAIN}" second)/${HOST_IP}"
+  echo "address=/$(test_domain_n "${TEST_DOMAIN}" third)/${HOST_IP}"
 } > /etc/dnsmasq.d/lamaste-test.conf
 
 run_cmd "Restart dnsmasq" systemctl restart dnsmasq

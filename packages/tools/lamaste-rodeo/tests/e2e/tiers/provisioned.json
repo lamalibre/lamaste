@@ -20,7 +20,8 @@
       "logging.sh",
       "vm-api-helper.sh",
       "vm-api-status-helper.sh",
-      "certbot-shim.sh"
+      "certbot-shim.sh",
+      "test-domains.sh"
     ]
   },
   "sections": [

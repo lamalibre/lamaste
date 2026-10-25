@@ -564,17 +564,29 @@ list|add|verify-dns|activate|remove|members`, `plugins domain`,
 
 4. **Rodeo specs** — written, not run (they wait for the user's go). In
    `packages/tools/lamaste-rodeo`:
-   - **Infrastructure.** B and C are the primary's first label replaced by
-     `second` / `third` (`test.lamaste.local` → `second.lamaste.local`,
-     `third.lamaste.local`), derived in one rule by `setup-host.sh` (both
-     suites: dnsmasq answers all three), `setup-visitor.sh` (`auth.` of each
-     in `/etc/hosts` and the cloud-init template) and `rodeo.hooks.js`
-     `buildTestEnv` (`TEST_DOMAIN_2`, `TEST_DOMAIN_3`). No tier variable: the
-     tier runner injects only `HOST_IP` and `TEST_DOMAIN`. The specs make
-     sure of the DNS again (`md_dns`) — a VM restored from an older snapshot
-     predates it. Shared helpers: `tests/e2e-three-vm/multi-domain-harness.sh`
-     (on top of `app-plugin-harness.sh`, whose `sign_in` takes the domain of
-     the sign-in page as an optional sixth argument).
+   - **Infrastructure.** B and C are `test_domain_n <primary> second|third`
+     (`tests/e2e/test-domains.sh`: the first label replaced —
+     `test.lamaste.local` → `second.lamaste.local`, `third.lamaste.local`),
+     the one rule, sourced by `setup-host.sh` (both suites: dnsmasq answers
+     the primary and the second, the three-VM host the third too),
+     `setup-visitor.sh` (`auth.` of each in `/etc/hosts` and the cloud-init
+     template) and `helpers.sh`, and shipped to the VMs as a tier asset. No
+     tier or test variable: the tier runner injects only `HOST_IP` and
+     `TEST_DOMAIN`. The specs make sure of the DNS again (`md_dns`,
+     `local_domain_dns`) — a VM restored from an older snapshot predates it.
+     Shared helpers: `tests/e2e/helpers.sh` (`vhost_name` /
+     `vhost_available` / `vhost_linked`, `AUTHELIA_CONFIG_JSON` and
+     `AUTHELIA_RULES_UNDER`, `start_stub_registry` — now used by 26, 27, 28 and
+     35 — and the single-VM `local_sign_in`, `local_reset_totp`,
+     `local_wait_authelia`, `local_domain_dns`) and
+     `tests/e2e-three-vm/multi-domain-harness.sh` (on top of
+     `app-plugin-harness.sh`, whose preflight is split into `relay_preflight`
+     and the app-plugin checks, whose `host_api_call` takes `API_TIMEOUT`, and
+     whose `sign_in` takes the sign-in page's domain). A user signs in again
+     within the same 30 s TOTP step only after waiting for the next one
+     (tracked per user); a fresh secret needs no wait. Membership is read
+     from `GET /api/domains/:name/members`; Gatekeeper's projection only where
+     its own check is the point.
    - **three-VM 45 — a developer on two domains**: B added, DNS checked
      (`auth.B` the one required record), activated, two session cookies; the
      developer in both domains' rules and projections; signed in at `auth.A`,
@@ -585,18 +597,22 @@ list|add|verify-dns|activate|remove|members`, `plugins domain`,
    - **three-VM 46 — a customer on one domain**: members of B only reach B;
      signed in at `auth.A`, A's authenticated tunnel and A's
      Authelia-protected static site answer the domain refusal page (403, no
-     `Location`); Gatekeeper's own check — the projection rewritten without
-     the customer refuses them while Authelia still admits them, a missing
-     projection refuses everyone, restored lets them in; removed from B,
-     refused at the next request and gone from the directory and projection
-     (audited by id); deleted, every membership ends, audited
-     `directory.membership.removed` reason `deleted`, by directory id only.
+     `Location`); Gatekeeper's own check — the projection held without the
+     customer (immutable, `chattr +i`, so the panel's once-a-minute render
+     cannot undo it) refuses them while Authelia still admits them; no
+     projection (a directory in its place: the panel's rename fails,
+     Gatekeeper reads none) refuses everyone; restored, they are let in;
+     every wait is `AUTHZ_SETTLE_SECONDS` (nginx keeps an authorization's
+     200 for 10 s); removed from B and signed in at `auth.B` again (the
+     removal restarted Authelia), the refusal page — audited by id; deleted,
+     every membership ends, audited `directory.membership.removed` reason
+     `deleted`, by directory id only.
    - **three-VM 47 — a third domain**: snapshot of A's and B's rendered
-     rules, their projection members and a reachability matrix; C added
-     and activated with a member and a tunnel; A's and B's rules byte-equal,
-     the projection unchanged, every request of the matrix answers as before
-     (signed in again — C's activation restarted Authelia); C's member
-     reaches C only.
+     rules, their member lists and a reachability matrix (one visitor call);
+     C added and activated with a member and a tunnel; A's and B's rules
+     byte-equal, their member lists unchanged, every request of the matrix
+     answers as before (signed in again — C's activation restarted
+     Authelia); C's member reaches C only; A's session is sent to `auth.C`.
    - **three-VM 48 — a plugin's user surface** (split from 46: installing and
      hosting an app plugin alone takes minutes, and rodeo ends a spec at ten):
      a member of A with a role reaches the agent half; a customer of B,
@@ -609,7 +625,8 @@ list|add|verify-dns|activate|remove|members`, `plugins domain`,
      `nginx -t` passes, every host answers as before; one domain, the
      primary, every user its member, `newUsersNeedDomains` false;
      `lamaste-priv` refuses `write` for a 4.6 name and for an unknown dotted
-     name. This is the nginx side of the rename that has no unit test.
+     name — for the name (`site name not allowed for write`), as three-VM 01
+     now asserts its content refusal names the directive. This is the nginx side of the rename that has no unit test.
    - **single-VM 35 — OIDC sign-in by membership** (moved from 46: the
      stand-in registry and fixture-plugin setup of spec 26 is single-VM; an
      authorization-code client, not device code, because Authelia's

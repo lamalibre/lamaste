@@ -4,15 +4,14 @@
 # The multi-domain relay's three-VM specs (45–48): shared helpers
 # ============================================================================
 # Sourced after ../e2e/helpers.sh and app-plugin-harness.sh (host_api_*,
-# visit, sign_in, reset_totp, users_call, wait_for, audit_count).
+# visit, sign_in, reset_totp, users_call, wait_for). A spec sets MD_SPEC (its
+# number) first: its cookie jars are named after it.
 #
 # The relay's primary domain (DOMAIN, onboarding's) is base domain A; B and
-# C are the primary's first label replaced by `second` / `third`
-# (test.lamaste.local → second.lamaste.local, third.lamaste.local) — what
+# C are test_domain_n's second and third (../e2e/test-domains.sh) — what
 # setup-host.sh's dnsmasq and setup-visitor.sh's /etc/hosts already resolve
-# on a fresh provisioning, and rodeo.hooks.js passes as TEST_DOMAIN_2/3.
-# Specs make sure of them again (md_dns), because a VM restored from an
-# older snapshot predates them.
+# on a fresh provisioning. Specs make sure of them again (md_dns), because a
+# VM restored from an older snapshot predates them.
 #
 # Every rendering of the relay's members changes Authelia's configuration
 # and restarts it, and Authelia keeps its sessions in memory: adding or
@@ -21,59 +20,47 @@
 # anyone signs in, or sign in again after one (md_wait_authelia).
 # ============================================================================
 
+MD_SPEC="${MD_SPEC:-md}"
 DOMAIN_2=""
 DOMAIN_3=""
 # Domains a spec added (and removes again in its cleanup, when nothing uses them)
 ADDED_DOMAINS=""
 # The visitor's /etc/hosts lines a spec added, by this marker
 MD_HOSTS_MARK="# lamaste-e2e-multi-domain"
-# A long call: activation issues a certificate and restarts Authelia.
-CURL_MTLS_LONG="${CURL_MTLS} --max-time 150"
+# How long a change of who may pass takes to reach every request: nginx keeps
+# an authorization's 200 for 10 s (Gatekeeper's Cache-Control), Gatekeeper's
+# file watcher reads the projection on its next event.
+AUTHZ_SETTLE_SECONDS=30
+# Gatekeeper's projection of the panel's directory, and where a spec keeps
+# the panel's own while it changes it
+PROJECTION="/etc/lamalibre/lamaste/domains.json"
+PROJECTION_SAVED="/var/tmp/e2e-md-domains.json"
 
-# md_preflight — onboarding complete; DOMAIN (A), DOMAIN_2 (B), DOMAIN_3
-# (C); the agent enrolled; the visitor can make Authelia's second factor;
-# AUDIT_BASE for audit_count
-md_preflight() {
-  local onboarding enrolled
-  onboarding=$(host_api_get "onboarding/status" 2>/dev/null || echo '{}')
-  if [ "$(json_get "$onboarding" '.status')" != "COMPLETED" ]; then
-    log_skip "Onboarding not completed — skipping"
-    end_test
-    exit $?
-  fi
-  DOMAIN=$(json_get "$onboarding" '.domain // empty')
-  if [ -z "$DOMAIN" ]; then
-    log_skip "No domain configured — skipping"
-    end_test
-    exit $?
-  fi
-  DOMAIN_2="${TEST_DOMAIN_2:-second.${DOMAIN#*.}}"
-  DOMAIN_3="${TEST_DOMAIN_3:-third.${DOMAIN#*.}}"
-  log_pass "Onboarding is complete: A = ${DOMAIN} (primary), B = ${DOMAIN_2}, C = ${DOMAIN_3}"
-
-  HOST_AGENT_LABEL=$(agent_config_field "agentLabel")
-  HOST_AGENT_LABEL="${HOST_AGENT_LABEL:-test-agent}"
-  enrolled=$(host_api_get "certs/agent" | jq -r "[.agents[]? | select(.label == \"${HOST_AGENT_LABEL}\" and (.revoked // false) == false)] | length" 2>/dev/null || echo "0")
-  if [ "$enrolled" = "0" ]; then
-    log_skip "Agent ${HOST_AGENT_LABEL} is not enrolled on the host — skipping"
-    end_test
-    exit $?
-  fi
-  log_pass "Agent ${HOST_AGENT_LABEL} is enrolled on the host"
+# md_setup — B and C named; the visitor can make Authelia's second factor.
+# After relay_preflight or app_plugin_preflight.
+md_setup() {
+  DOMAIN_2=$(test_domain_n "${DOMAIN}" second)
+  DOMAIN_3=$(test_domain_n "${DOMAIN}" third)
+  log_pass "Base domains: A = ${DOMAIN} (primary), B = ${DOMAIN_2}, C = ${DOMAIN_3}"
   if ! visitor_has_oathtool; then
     log_fail "The visitor VM has no oathtool: no one can sign in"
     end_test
     exit $?
   fi
-  AUDIT_BASE=$(host_api_get "audit?limit=1" | jq '.entries[0].id // 0' 2>/dev/null || echo "0")
 }
 
-# md_api <method> <path> [json] — host_api_call with a long timeout
-md_api() {
-  local data=""
-  if [ -n "${3:-}" ]; then data="-H 'Content-Type: application/json' -d '$3'"; fi
-  timed_exec 170 multipass exec "${HOST_VM}" -- sudo bash -c "${CURL_MTLS_LONG} -X $1 -H 'Accept: application/json' ${data} -w '\n%{http_code}' '${PANEL}/$2' || true" 2>/dev/null || echo "000"
+# md_preflight — relay_preflight, then md_setup
+md_preflight() {
+  relay_preflight
+  md_setup
 }
+
+# md_jar <name> — a visitor cookie jar of this spec
+md_jar() { echo "/tmp/e2e-md-${MD_SPEC}-$1.cookies"; }
+
+# md_api <method> <path> [json] — host_api_call with a long timeout:
+# activation issues a certificate and restarts Authelia
+md_api() { API_TIMEOUT=150 host_api_call "$@"; }
 
 # md_dns <domain> — the host's dnsmasq answers <domain> and every name under
 # it with the host's address; the visitor resolves its sign-in page
@@ -95,34 +82,38 @@ domain_entry() {
   host_api_get "domains" 2>/dev/null | jq -c --arg n "$1" '[.domains[]? | select(.name == $n)] | first // null' 2>/dev/null || echo "null"
 }
 
+# domain_members <domain> — its members' usernames as the panel lists them, sorted, comma-separated
+domain_members() {
+  host_api_get "domains/$1/members" 2>/dev/null | jq -r '[.members[]?.username] | sort | join(",")' 2>/dev/null || echo ""
+}
+
 # md_domain_active <name> — the domain exists and is active: added (and
 # remembered in ADDED_DOMAINS) when it is not there, its DNS checked,
 # activated when pending. Asserts each step.
 md_domain_active() {
-  local name="$1" entry resp
+  local name="$1" status resp
   md_dns "$name"
-  entry=$(domain_entry "$name")
-  if [ "$entry" = "null" ]; then
+  status=$(json_get "$(domain_entry "$name")" '.status // "none"')
+  if [ "$status" = "none" ]; then
     resp=$(md_api POST "domains" "{\"name\":\"${name}\"}")
     assert_eq "$(status_of "$resp")" "201" "Domain ${name} added (201)" || true
-    assert_json_field "$(body_of "$resp")" '.domain.status' 'pending' "…pending until activated" || true
+    status=$(json_get "$(body_of "$resp")" '.domain.status')
+    assert_eq "$status" "pending" "…pending until activated" || true
     ADDED_DOMAINS="${ADDED_DOMAINS} ${name}"
   fi
   resp=$(md_api POST "domains/${name}/verify-dns")
   assert_json_field "$(body_of "$resp")" '.ok' 'true' "DNS of ${name}: auth.${name} resolves to the relay" || true
   assert_json_field "$(body_of "$resp")" '[.records[] | select(.required)] | map(.name) | join(",")' "auth.${name}" "…the one required record is auth.${name}" || true
-  if [ "$(json_get "$(domain_entry "$name")" '.status')" != "active" ]; then
+  if [ "$status" != "active" ]; then
     resp=$(md_api POST "domains/${name}/activate")
-    assert_eq "$(status_of "$resp")" "200" "Domain ${name} activated" || true
+    status=$(json_get "$(body_of "$resp")" '.domain.status')
   fi
-  assert_json_field "$(domain_entry "$name")" '.status' 'active' "${name} is active" || true
+  assert_eq "$status" "active" "${name} is active" || true
   md_wait_authelia "$name"
 }
 
 # authelia_up <domain> — the sign-in page of <domain> answers the visitor
-authelia_up() {
-  [ "$(visit_status "$(visit - "https://auth.$1/api/health")")" = "200" ]
-}
+authelia_up() { [ "$(visit_status "$(visit - "https://auth.$1/api/health")")" = "200" ]; }
 
 # md_wait_authelia [domain] — Authelia answers again after a restart
 md_wait_authelia() {
@@ -148,16 +139,38 @@ user_domains() {
   host_api_get "users" 2>/dev/null | jq -r --arg u "$1" '[.users[]? | select(.username == $u) | .domains[]?] | sort | join(",")' 2>/dev/null || echo ""
 }
 
-# md_backend <port> <marker> — a static server on the agent VM answering
-# /index.html with <marker> on 127.0.0.1:<port>
-md_backend() {
-  agent_exec "pkill -f '[p]ython3 -m http.server $1 ' 2>/dev/null; mkdir -p /var/tmp/e2e-md-$1 && echo '$2' > /var/tmp/e2e-md-$1/index.html" > /dev/null 2>&1 || true
-  agent_exec "nohup python3 -m http.server $1 --bind 127.0.0.1 -d /var/tmp/e2e-md-$1 &>/dev/null & exit" > /dev/null 2>&1 || true
+# md_backends <port:marker>... — a static server on the agent VM for each,
+# answering /index.html with <marker> on 127.0.0.1:<port>; the agent's sync
+# started once; then each asserted reachable through chisel
+md_backends() {
+  local pair port marker
+  for pair in "$@"; do
+    port="${pair%%:*}"
+    marker="${pair#*:}"
+    agent_exec "pkill -f '[p]ython3 -m http.server ${port} ' 2>/dev/null; mkdir -p /var/tmp/e2e-md-${port} && echo '${marker}' > /var/tmp/e2e-md-${port}/index.html" > /dev/null 2>&1 || true
+    agent_exec "nohup python3 -m http.server ${port} --bind 127.0.0.1 -d /var/tmp/e2e-md-${port} &>/dev/null & exit" > /dev/null 2>&1 || true
+  done
+  nudge_sync
+  for pair in "$@"; do
+    if wait_for 120 tunnel_reachable "${pair%%:*}" "${pair#*:}"; then
+      log_pass "Port ${pair%%:*}: the backend answers through chisel"
+    else
+      log_fail "Port ${pair%%:*}: the backend does not answer through chisel"
+    fi
+  done
 }
 
-# md_backend_stop <port>
+# md_backend_stop <port...>
 md_backend_stop() {
-  timed_exec 30 multipass exec "${AGENT_VM}" -- sudo bash -c "pkill -f '[p]ython3 -m http.server $1 ' 2>/dev/null; rm -rf /var/tmp/e2e-md-$1; true" > /dev/null 2>&1
+  local port
+  for port in "$@"; do
+    timed_exec 30 multipass exec "${AGENT_VM}" -- sudo bash -c "pkill -f '[p]ython3 -m http.server ${port} ' 2>/dev/null; rm -rf /var/tmp/e2e-md-${port}; true" > /dev/null 2>&1
+  done
+}
+
+# tunnel_reachable <port> <marker> — the backend answers through chisel on the host VM
+tunnel_reachable() {
+  [ "$(host_exec "curl -s --max-time 3 http://127.0.0.1:$1/index.html || true" 2>/dev/null | tr -d '\r\n')" = "$2" ]
 }
 
 # md_tunnel <variable> <subdomain> <domain> <port> <access mode> — a tunnel
@@ -175,15 +188,21 @@ md_tunnel() {
   printf -v "$1" '%s' "$id"
 }
 
-# tunnel_reachable <port> <marker> — the backend answers through chisel on the host VM
-tunnel_reachable() {
-  [ "$(host_exec "curl -s --max-time 3 http://127.0.0.1:$1/index.html || true" 2>/dev/null | tr -d '\r\n')" = "$2" ]
-}
-
-# md_sign_in <username> <password> <secret> <jar> <host> <domain> — sign_in at
-# auth.<domain>, asserted
+# md_sign_in <username> <password> <secret> <jar> <host> — sign_in at the
+# sign-in page of <host>'s domain (a tunnel's hostname is one label under
+# it), asserted. A TOTP code is used once: a user signing in again within the
+# same 30 s step waits for the next one (the step is remembered per user —
+# never call this in a command substitution).
 md_sign_in() {
-  assert_eq "$(sign_in "$1" "$2" "$3" "$4" "$5" "$6")" "OK OK" "$1 signed in at auth.$6 (password, TOTP)" || true
+  local domain="${5#*.}" key step
+  key="MD_TOTP_STEP_${1//[^A-Za-z0-9]/_}"
+  step=$(($(date +%s) / 30))
+  if [ "${!key:-}" = "$step" ]; then
+    wait_for_next_totp_window
+    step=$(($(date +%s) / 30))
+  fi
+  printf -v "$key" '%s' "$step"
+  assert_eq "$(sign_in "$1" "$2" "$3" "$4" "$5" "${domain}")" "OK OK" "$1 signed in at auth.${domain} (password, TOTP)" || true
 }
 
 # outcome <jar | -> <url> — "<status> <redirect host | ->" of one request from the visitor
@@ -198,6 +217,14 @@ outcome() {
   fi
 }
 
+# assert_served <jar> <url> <marker> <what> — 200, from the backend
+assert_served() {
+  local resp
+  resp=$(visit "$1" "$2")
+  assert_eq "$(visit_status "$resp")" "200" "$4: 200" || true
+  assert_contains "$(visit_body "$resp")" "$3" "…from its backend" || true
+}
+
 # assert_domain_refusal <response of visit> <domain> <what> — the refusal page
 # of a signed-in non-member: 403, the page names <domain>, no redirect
 assert_domain_refusal() {
@@ -207,37 +234,58 @@ assert_domain_refusal() {
   assert_not_contains "$(visit_headers "$1" | tr '[:upper:]' '[:lower:]')" "location:" "…never a redirect to a sign-in page (no login loop)" || true
 }
 
-# access_rules_of <domain> — the access_control rules Authelia holds for
-# <domain> and the hosts under it (python3's YAML on the host VM — the
-# configuration is a Go template only in its issuer-key line), canonical JSON
-access_rules_of() {
-  host_exec "python3 -c 'import json,sys,yaml
-d=sys.argv[1]
-c=yaml.safe_load(\"\".join(l for l in open(\"/etc/authelia/configuration.yml\") if \"{{\" not in l))
-under=lambda h: h==d or h.endswith(\".\"+d)
-rules=[r for r in (c.get(\"access_control\") or {}).get(\"rules\") or [] if any(under(h.lstrip(\"*.\")) for h in ([r[\"domain\"]] if isinstance(r[\"domain\"],str) else r[\"domain\"]))]
-print(json.dumps(rules,sort_keys=True,separators=(\",\",\":\")))' $(printf %q "$1")" 2>/dev/null | tail -n 1 || echo ""
+# authelia_config — Authelia's configuration on the host VM, as JSON
+authelia_config() { host_exec "${AUTHELIA_CONFIG_JSON}" 2>/dev/null | tail -n 1 || echo '{}'; }
+
+# access_rules_of <domain> — Authelia's access_control rules for <domain> and the hosts under it, canonical JSON
+access_rules_of() { authelia_config | jq -S -c --arg d "$1" "${AUTHELIA_RULES_UNDER}" 2>/dev/null || echo ""; }
+
+# session_cookie_domains — the domains of Authelia's session cookies, sorted, comma-separated
+session_cookie_domains() { authelia_config | jq -r '[.session.cookies[]?.domain] | sort | join(",")' 2>/dev/null || echo ""; }
+
+# membership_removed <userId> — the directory.membership.removed audit entries
+# of a user since the spec began, as a JSON array
+membership_removed() {
+  host_api_get "audit?action=directory.membership.removed&limit=200" 2>/dev/null |
+    jq -c --arg id "$1" --argjson base "${AUDIT_BASE}" '[.entries[]? | select(.id > $base and .details.userId == $id)]' 2>/dev/null || echo "[]"
 }
 
-# session_cookie_domains — the domains of Authelia's session.cookies, sorted, comma-separated
-session_cookie_domains() {
-  host_exec "python3 -c 'import yaml
-c=yaml.safe_load(\"\".join(l for l in open(\"/etc/authelia/configuration.yml\") if \"{{\" not in l))
-print(\",\".join(sorted(x[\"domain\"] for x in c[\"session\"][\"cookies\"])))'" 2>/dev/null | tail -n 1 || echo ""
-}
+# --- Gatekeeper's projection (spec 46: Gatekeeper's own check) -------------
+#
+# The panel rewrites the projection whenever it renders — at least once a
+# minute — and only when its content differs. To hold a change against it,
+# the spec makes the file immutable, or puts a directory where the file was
+# (the panel's rename fails on both; Gatekeeper reads a directory as no
+# projection).
 
-# projection_members <domain> — the members Gatekeeper's domains.json holds
-# for <domain>, sorted, comma-separated ('-' when the domain is not there)
+# projection_members <domain> — the members the projection holds for
+# <domain>, sorted, comma-separated ('-' when the domain is not there)
 projection_members() {
-  host_exec "jq -r --arg d $(printf %q "$1") '[.domains[] | select(.name == \$d)] | if length == 0 then \"-\" else (.[0].members | sort | join(\",\")) end' /etc/lamalibre/lamaste/domains.json" 2>/dev/null | tail -n 1 || echo ""
+  host_exec "jq -r --arg d $(printf %q "$1") '[.domains[] | select(.name == \$d)] | if length == 0 then \"-\" else (.[0].members | sort | join(\",\")) end' ${PROJECTION}" 2>/dev/null | tail -n 1 || echo ""
 }
 
-# md_cleanup_domains — remove the domains this spec added (refused while
-# something still uses them; the spec's own cleanup removes those first)
-md_cleanup_domains() {
+# projection_hold <jq filter> — the panel's projection kept aside, then
+# replaced by itself through <filter> (lamaste, 0600) and made immutable
+projection_hold() {
+  host_exec "test -f ${PROJECTION_SAVED} || cp -p ${PROJECTION} ${PROJECTION_SAVED}; jq -c $(printf %q "$1") ${PROJECTION_SAVED} > ${PROJECTION}.e2e && chown lamaste:lamaste ${PROJECTION}.e2e && chmod 0600 ${PROJECTION}.e2e && chattr -i ${PROJECTION} 2>/dev/null; mv ${PROJECTION}.e2e ${PROJECTION} && chattr +i ${PROJECTION}" > /dev/null 2>&1 || true
+}
+
+# projection_withdraw — no projection at all (a directory where it was)
+projection_withdraw() {
+  host_exec "test -f ${PROJECTION_SAVED} || cp -p ${PROJECTION} ${PROJECTION_SAVED}; chattr -i ${PROJECTION} 2>/dev/null; rm -f ${PROJECTION} && mkdir ${PROJECTION}" > /dev/null 2>&1 || true
+}
+
+# projection_restore — the panel's own projection back (nothing when none is kept aside)
+projection_restore() {
+  timed_exec 30 multipass exec "${HOST_VM}" -- sudo bash -c "if [ -f ${PROJECTION_SAVED} ]; then chattr -i ${PROJECTION} 2>/dev/null; if [ -d ${PROJECTION} ]; then rmdir ${PROJECTION}; fi; install -o lamaste -g lamaste -m 0600 ${PROJECTION_SAVED} ${PROJECTION} && rm -f ${PROJECTION_SAVED}; fi; true" > /dev/null 2>&1
+}
+
+# md_cleanup — what every spec's trap ends with: the projection back, the
+# domains the spec added removed (refused while something still uses them:
+# the spec's own cleanup removes those first), its jars and hosts lines gone
+md_cleanup() {
   local d
-  for d in ${ADDED_DOMAINS}; do
-    timed_exec 120 multipass exec "${HOST_VM}" -- sudo bash -c "${CURL_MTLS_LONG} -X DELETE '${PANEL}/domains/${d}' > /dev/null 2>&1; true" > /dev/null 2>&1
-  done
-  timed_exec 30 multipass exec "${VISITOR_VM}" -- sudo bash -c "sed -i '/${MD_HOSTS_MARK}\$/d' /etc/hosts; true" > /dev/null 2>&1
+  projection_restore
+  for d in ${ADDED_DOMAINS}; do md_api DELETE "domains/${d}" > /dev/null 2>&1 || true; done
+  timed_exec 30 multipass exec "${VISITOR_VM}" -- sudo bash -c "rm -f /tmp/e2e-md-${MD_SPEC}-*.cookies; sed -i '/${MD_HOSTS_MARK}\$/d' /etc/hosts; true" > /dev/null 2>&1
 }

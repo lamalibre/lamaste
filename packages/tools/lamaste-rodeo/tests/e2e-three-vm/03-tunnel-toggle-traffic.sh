@@ -350,7 +350,7 @@ else
   log_fail "Tunnel content still accessible after tunnel disable"
 fi
 
-VHOST_EXISTS=$(host_exec "test -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${TUNNEL_FQDN} && echo yes || echo no")
+VHOST_EXISTS=$(host_exec "test -L $(vhost_linked app "${TUNNEL_FQDN}") && echo yes || echo no")
 assert_eq "$VHOST_EXISTS" "no" "Nginx vhost symlink removed after disable" || true
 
 if port_stays_closed "$TUNNEL_PORT" "$PAGE" 10; then

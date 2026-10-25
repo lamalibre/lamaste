@@ -75,6 +75,23 @@
           }
         },
         {
+          "id": "step-2",
+          "label": "Set DOMAIN_2",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "test_domain_n \"${DOMAIN}\" second"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN_2",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
           "id": "step-3",
           "label": "Onboarding is complete: A = ${DOMAIN}, B = ${DOMAIN_2}",
           "target": "local",
@@ -83,52 +100,16 @@
             "level": "pass",
             "message": "Onboarding is complete: A = ${DOMAIN}, B = ${DOMAIN_2}"
           }
-        },
-        {
-          "id": "step-50",
-          "label": "Sleep 2s",
-          "target": "local",
-          "op": {
-            "type": "sleep",
-            "seconds": 2
-          }
-        },
-        {
-          "id": "step-52",
-          "label": "Authelia does not answer at auth.$1",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "Authelia does not answer at auth.$1"
-          }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(api_get \"onboarding/status\" 2>/dev/null || echo '{}')\nif [ \"$(echo \"$ONBOARDING\" | jq -r '.status' 2>/dev/null || echo unknown)\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nDOMAIN=$(echo \"$ONBOARDING\" | jq -r '.domain // empty')\nDOMAIN_2=\"${TEST_DOMAIN_2:-second.${DOMAIN#*.}}\"\nlog_pass \"Onboarding is complete: A = ${DOMAIN}, B = ${DOMAIN_2}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-35\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_mdoidc_00000000000000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-mdoidc-server\"\nPLUGIN_NAME=\"e2e-mdoidc\"\nCLIENT_ID=\"e2e-mdoidc-web\"\nREDIRECT_URI=\"https://e2e-mdoidc.example.test/callback\"\nDEV=\"e2e35-dev\"\nCUST=\"e2e35-cust\"\n# Test credentials for this run only, never printed\nDEV_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCUST_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nADDED_B=\"\"\nDNSMASQ_CONF=\"/etc/dnsmasq.d/lamaste-test.conf\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  api_post \"plugins/${PLUGIN_NAME}/disable\" > /dev/null 2>&1 || true\n  api_delete \"plugins/${PLUGIN_NAME}\" > /dev/null 2>&1 || true\n  for u in \"${DEV}\" \"${CUST}\"; do api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true; done\n  if [ -n \"${ADDED_B}\" ]; then CURL_TIMEOUT=150 api_delete \"domains/${DOMAIN_2}\" > /dev/null 2>&1 || true; fi\n  sudo rm -f \"${STATE_DIR}/.npmrc\"\n  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# portal <domain> — curl's --resolve for auth.<domain> on this VM\nportal() { echo \"--resolve auth.$1:443:127.0.0.1\"; }\n\n# sign_in <username> <password> <secret> <jar> <domain> — both factors at\n# auth.<domain> into <jar>; prints \"<first> <second>\"\nsign_in() {\n  local body first code second\n  rm -f \"$4\"\n  body=$(jq -c -n --arg u \"$1\" --arg p \"$2\" --arg t \"https://auth.$5/\" '{username: $u, password: $p, keepMeLoggedIn: false, targetURL: $t}')\n  # shellcheck disable=SC2046 # portal is two words on purpose\n  first=$(curl -sk --max-time 15 $(portal \"$5\") -c \"$4\" -X POST -H 'Content-Type: application/json' -d \"$body\" \"https://auth.$5/api/firstfactor\" 2>/dev/null | jq -r '.status // \"none\"' 2>/dev/null || echo \"none\")\n  code=$(oathtool --totp --base32 \"$3\" 2>/dev/null || echo \"\")\n  body=$(jq -c -n --arg c \"$code\" --arg t \"https://auth.$5/\" '{token: $c, targetURL: $t}')\n  # shellcheck disable=SC2046\n  second=$(curl -sk --max-time 15 $(portal \"$5\") -b \"$4\" -c \"$4\" -X POST -H 'Content-Type: application/json' -d \"$body\" \"https://auth.$5/api/secondfactor/totp\" 2>/dev/null | jq -r '.status // \"none\"' 2>/dev/null || echo \"none\")\n  echo \"${first} ${second}\"\n}\n\n# authorize <jar> <domain> — an authorization request for the client at\n# auth.<domain> with the session in <jar>; prints Authelia's Location\nauthorize() {\n  local verifier challenge state\n  verifier=$(openssl rand -hex 32)\n  challenge=$(printf '%s' \"$verifier\" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')\n  state=$(openssl rand -hex 16)\n  # shellcheck disable=SC2046\n  curl -sk --max-time 15 $(portal \"$2\") -b \"$1\" -o /dev/null -w '%{redirect_url}' -G \\\n    --data-urlencode \"client_id=${CLIENT_ID}\" --data-urlencode \"redirect_uri=${REDIRECT_URI}\" \\\n    --data-urlencode 'response_type=code' --data-urlencode 'scope=openid profile' \\\n    --data-urlencode \"state=${state}\" --data-urlencode \"code_challenge=${challenge}\" \\\n    --data-urlencode 'code_challenge_method=S256' \\\n    \"https://auth.$2/api/oidc/authorization\" 2>/dev/null || echo \"\"\n}\n\n# authelia_yaml client <client id> — the authorization_policy Authelia holds for the client\n# authelia_yaml policy <name> — the subjects of an authorization policy's rules, sorted, comma-separated\nauthelia_yaml() {\n  sudo python3 -c 'import json,sys,yaml\nc=yaml.safe_load(\"\".join(l for l in open(\"/etc/authelia/configuration.yml\") if \"{{\" not in l))\no=(c.get(\"identity_providers\") or {}).get(\"oidc\") or {}\nif sys.argv[1]==\"client\":\n  print(next((x.get(\"authorization_policy\",\"\") for x in o.get(\"clients\") or [] if x.get(\"client_id\")==sys.argv[2]),\"\"))\nelse:\n  p=(o.get(\"authorization_policies\") or {}).get(sys.argv[2]) or {}\n  print(\",\".join(sorted(s for r in p.get(\"rules\") or [] for s in (r.get(\"subject\") or []))))' \"$@\" 2>/dev/null || echo \"\"\n}\n\n# shellcheck disable=SC2046\nauthelia_up() { [ \"$(curl -sk --max-time 5 $(portal \"$1\") -o /dev/null -w '%{http_code}' \"https://auth.$1/api/health\" 2>/dev/null || echo 000)\" = \"200\" ]; }\nwait_authelia() {\n  local _\n  for _ in $(seq 1 45); do\n    if authelia_up \"$1\"; then return 0; fi\n    sleep 2\n  done\n  log_fail \"Authelia does not answer at auth.$1\"\n}\n\n# ===========================================================================\n# 1. Domain B, the users, the plugin\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(api_get \"onboarding/status\" 2>/dev/null || echo '{}')\nif [ \"$(echo \"$ONBOARDING\" | jq -r '.status' 2>/dev/null || echo unknown)\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nDOMAIN=$(echo \"$ONBOARDING\" | jq -r '.domain // empty')\nDOMAIN_2=$(test_domain_n \"${DOMAIN}\" second)\nlog_pass \"Onboarding is complete: A = ${DOMAIN}, B = ${DOMAIN_2}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-35\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_mdoidc_00000000000000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-mdoidc-server\"\nPLUGIN_NAME=\"e2e-mdoidc\"\nCLIENT_ID=\"e2e-mdoidc-web\"\nREDIRECT_URI=\"https://e2e-mdoidc.example.test/callback\"\nDEV=\"e2e35-dev\"\nCUST=\"e2e35-cust\"\n# Test credentials for this run only, never printed\nDEV_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCUST_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nADDED_B=\"\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  api_post \"plugins/${PLUGIN_NAME}/disable\" > /dev/null 2>&1 || true\n  api_delete \"plugins/${PLUGIN_NAME}\" > /dev/null 2>&1 || true\n  for u in \"${DEV}\" \"${CUST}\"; do api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true; done\n  if [ -n \"${ADDED_B}\" ]; then CURL_TIMEOUT=150 api_delete \"domains/${DOMAIN_2}\" > /dev/null 2>&1 || true; fi\n  sudo rm -f \"${STATE_DIR}/.npmrc\"\n  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# portal <domain> — curl's --resolve for auth.<domain> on this VM\nportal() { echo \"--resolve auth.$1:443:127.0.0.1\"; }\n\n# authorize <jar> <domain> — an authorization request for the client at\n# auth.<domain> with the session in <jar>; prints Authelia's Location\nauthorize() {\n  local verifier challenge state\n  verifier=$(openssl rand -hex 32)\n  challenge=$(printf '%s' \"$verifier\" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')\n  state=$(openssl rand -hex 16)\n  # shellcheck disable=SC2046\n  curl -sk --max-time 15 $(portal \"$2\") -b \"$1\" -o /dev/null -w '%{redirect_url}' -G \\\n    --data-urlencode \"client_id=${CLIENT_ID}\" --data-urlencode \"redirect_uri=${REDIRECT_URI}\" \\\n    --data-urlencode 'response_type=code' --data-urlencode 'scope=openid profile' \\\n    --data-urlencode \"state=${state}\" --data-urlencode \"code_challenge=${challenge}\" \\\n    --data-urlencode 'code_challenge_method=S256' \\\n    \"https://auth.$2/api/oidc/authorization\" 2>/dev/null || echo \"\"\n}\n\n# client_policy <client id> — the authorization_policy Authelia holds for the client\nclient_policy() {\n  sudo bash -c \"${AUTHELIA_CONFIG_JSON}\" | jq -r --arg c \"$1\" '[.identity_providers.oidc.clients[]? | select(.client_id == $c) | .authorization_policy] | first // \"\"' 2>/dev/null || echo \"\"\n}\n\n# policy_subjects <name> — the subjects of an authorization policy's rules, sorted, comma-separated\npolicy_subjects() {\n  sudo bash -c \"${AUTHELIA_CONFIG_JSON}\" | jq -r --arg p \"$1\" '[.identity_providers.oidc.authorization_policies[$p].rules[]?.subject[]?] | sort | join(\",\")' 2>/dev/null || echo \"\"\n}\n\n# ===========================================================================\n# 1. Domain B, the users, the plugin\n# ==========================================================================="
     },
     {
       "id": "domain-b-active-a-developer-of-a-and-b-a-customer-of-b",
       "label": "Domain B active; a developer of A and B, a customer of B",
       "steps": [
         {
-          "id": "step-54",
-          "label": "Set HOST_ADDRESS",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "sudo sed -n \"s#^address=/${DOMAIN}/##p\" \"${DNSMASQ_CONF}\" | head -n 1"
-          },
-          "capture": [
-            {
-              "variable": "HOST_ADDRESS",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-57",
+          "id": "step-33",
           "label": "POST /api/domains",
           "target": "host",
           "op": {
@@ -147,7 +128,7 @@
           ]
         },
         {
-          "id": "step-58",
+          "id": "step-34",
           "label": "Domain ${DOMAIN_2} added",
           "target": "local",
           "continueOnError": true,
@@ -169,7 +150,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-36",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -186,7 +167,7 @@
           ]
         },
         {
-          "id": "step-61",
+          "id": "step-37",
           "label": "Domain ${DOMAIN_2} active",
           "target": "local",
           "continueOnError": true,
@@ -208,7 +189,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-40",
           "label": "POST /api/users",
           "target": "host",
           "op": {
@@ -227,7 +208,7 @@
           ]
         },
         {
-          "id": "step-65",
+          "id": "step-41",
           "label": "${DEV}: a member of A and B",
           "target": "local",
           "continueOnError": true,
@@ -249,7 +230,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-42",
           "label": "POST /api/users",
           "target": "host",
           "op": {
@@ -268,7 +249,7 @@
           ]
         },
         {
-          "id": "step-67",
+          "id": "step-43",
           "label": "${CUST}: a member of B only",
           "target": "local",
           "continueOnError": true,
@@ -290,14 +271,14 @@
           }
         }
       ],
-      "bash": "log_section \"Domain B active; a developer of A and B, a customer of B\"\n\n# B resolves here as A does (setup-host.sh adds it; a VM from an older snapshot lacks it).\nif ! sudo grep -q \"^address=/${DOMAIN_2}/\" \"${DNSMASQ_CONF}\"; then\n  HOST_ADDRESS=$(sudo sed -n \"s#^address=/${DOMAIN}/##p\" \"${DNSMASQ_CONF}\" | head -n 1)\n  echo \"address=/${DOMAIN_2}/${HOST_ADDRESS:-127.0.0.1}\" | sudo tee -a \"${DNSMASQ_CONF}\" > /dev/null\n  sudo systemctl restart dnsmasq\nfi\nif [ \"$(api_get \"domains\" | jq -r --arg n \"${DOMAIN_2}\" '[.domains[]? | select(.name == $n)] | length')\" = \"0\" ]; then\n  RESP=$(api_post \"domains\" \"{\\\"name\\\":\\\"${DOMAIN_2}\\\"}\")\n  assert_json_field \"$RESP\" '.domain.status' 'pending' \"Domain ${DOMAIN_2} added\" || true\n  ADDED_B=\"yes\"\nfi\nRESP=$(CURL_TIMEOUT=150 api_post \"domains/${DOMAIN_2}/activate\")\nassert_json_field \"$RESP\" '.domain.status' 'active' \"Domain ${DOMAIN_2} active\" || true\nwait_authelia \"${DOMAIN_2}\"\n\nfor u in \"${DEV}\" \"${CUST}\"; do api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true; done\nRESP=$(api_post \"users\" \"{\\\"username\\\":\\\"${DEV}\\\",\\\"displayname\\\":\\\"E2E Dev\\\",\\\"email\\\":\\\"${DEV}@example.test\\\",\\\"password\\\":\\\"${DEV_PASSWORD}\\\",\\\"groups\\\":[],\\\"domains\\\":[\\\"${DOMAIN}\\\",\\\"${DOMAIN_2}\\\"]}\")\nassert_json_field \"$RESP\" '.user.domains | sort | join(\",\")' \"$(printf '%s\\n%s\\n' \"${DOMAIN}\" \"${DOMAIN_2}\" | sort | paste -sd, -)\" \"${DEV}: a member of A and B\" || true\nRESP=$(api_post \"users\" \"{\\\"username\\\":\\\"${CUST}\\\",\\\"displayname\\\":\\\"E2E Cust\\\",\\\"email\\\":\\\"${CUST}@example.test\\\",\\\"password\\\":\\\"${CUST_PASSWORD}\\\",\\\"groups\\\":[],\\\"domains\\\":[\\\"${DOMAIN_2}\\\"]}\")\nassert_json_field \"$RESP\" '.user.domains | join(\",\")' \"${DOMAIN_2}\" \"${CUST}: a member of B only\" || true"
+      "bash": "log_section \"Domain B active; a developer of A and B, a customer of B\"\n\nlocal_domain_dns \"${DOMAIN_2}\"\nif [ \"$(api_get \"domains\" | jq -r --arg n \"${DOMAIN_2}\" '[.domains[]? | select(.name == $n)] | length')\" = \"0\" ]; then\n  RESP=$(api_post \"domains\" \"{\\\"name\\\":\\\"${DOMAIN_2}\\\"}\")\n  assert_json_field \"$RESP\" '.domain.status' 'pending' \"Domain ${DOMAIN_2} added\" || true\n  ADDED_B=\"yes\"\nfi\nRESP=$(CURL_TIMEOUT=150 api_post \"domains/${DOMAIN_2}/activate\")\nassert_json_field \"$RESP\" '.domain.status' 'active' \"Domain ${DOMAIN_2} active\" || true\nlocal_wait_authelia \"${DOMAIN_2}\"\n\nfor u in \"${DEV}\" \"${CUST}\"; do api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true; done\nRESP=$(api_post \"users\" \"{\\\"username\\\":\\\"${DEV}\\\",\\\"displayname\\\":\\\"E2E Dev\\\",\\\"email\\\":\\\"${DEV}@example.test\\\",\\\"password\\\":\\\"${DEV_PASSWORD}\\\",\\\"groups\\\":[],\\\"domains\\\":[\\\"${DOMAIN}\\\",\\\"${DOMAIN_2}\\\"]}\")\nassert_json_field \"$RESP\" '.user.domains | sort | join(\",\")' \"$(printf '%s\\n%s\\n' \"${DOMAIN}\" \"${DOMAIN_2}\" | sort | paste -sd, -)\" \"${DEV}: a member of A and B\" || true\nRESP=$(api_post \"users\" \"{\\\"username\\\":\\\"${CUST}\\\",\\\"displayname\\\":\\\"E2E Cust\\\",\\\"email\\\":\\\"${CUST}@example.test\\\",\\\"password\\\":\\\"${CUST_PASSWORD}\\\",\\\"groups\\\":[],\\\"domains\\\":[\\\"${DOMAIN_2}\\\"]}\")\nassert_json_field \"$RESP\" '.user.domains | join(\",\")' \"${DOMAIN_2}\" \"${CUST}: a member of B only\" || true"
     },
     {
       "id": "the-plugin-with-an-authorization-code-client-served-by-a-stand-in-registry",
       "label": "The plugin with an authorization-code client, served by a stand-in registry",
       "steps": [
         {
-          "id": "step-74",
+          "id": "step-47",
           "label": "Stand-in registry is up on ${STUB_URL}",
           "target": "local",
           "op": {
@@ -307,7 +288,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-48",
           "label": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)",
           "target": "local",
           "op": {
@@ -317,7 +298,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-51",
           "label": "POST /api/plugins/install",
           "target": "host",
           "op": {
@@ -336,7 +317,7 @@
           ]
         },
         {
-          "id": "step-79",
+          "id": "step-52",
           "label": "Fixture plugin installed",
           "target": "local",
           "continueOnError": true,
@@ -358,7 +339,7 @@
           }
         },
         {
-          "id": "step-80",
+          "id": "step-53",
           "label": "POST /api/plugins/${PLUGIN_NAME}/enable",
           "target": "host",
           "op": {
@@ -376,7 +357,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-54",
           "label": "Plugin enabled",
           "target": "local",
           "continueOnError": true,
@@ -398,7 +379,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-55",
           "label": "The plugin belongs to the primary domain A",
           "target": "local",
           "continueOnError": true,
@@ -420,14 +401,14 @@
           }
         }
       ],
-      "bash": "log_section \"The plugin with an authorization-code client, served by a stand-in registry\"\n\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_oidc_domain_fixture_plugin \"${WORK_DIR}/fixture\"\npkill -f '[s]tub-registry.mjs' 2>/dev/null || true\nnohup node \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json --package \"${WORK_DIR}/fixture\" &> \"${WORK_DIR}/stub.log\" &\nif wait_for_http \"${STUB_URL}/-/ping\" 30; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)\"\n  end_test\n  exit $?\nfi\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\nsudo install -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nRESP=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PLUGIN_PACKAGE}\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"Fixture plugin installed\" || true\nRESP=$(api_post \"plugins/${PLUGIN_NAME}/enable\")\nassert_json_field \"$RESP\" '.status' 'enabled' \"Plugin enabled\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN_NAME}\")\" '.plugin.domain' \"${DOMAIN}\" \"The plugin belongs to the primary domain A\" || true\nwait_authelia \"${DOMAIN}\"\n\n# ===========================================================================\n# 2. A's client admits A's members\n# ==========================================================================="
+      "bash": "log_section \"The plugin with an authorization-code client, served by a stand-in registry\"\n\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nwrite_oidc_domain_fixture_plugin \"${WORK_DIR}/fixture\"\nif start_stub_registry \"${WORK_DIR}\" \"${WORK_DIR}/fixture\"; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)\"\n  end_test\n  exit $?\nfi\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\nsudo install -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nRESP=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PLUGIN_PACKAGE}\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"Fixture plugin installed\" || true\nRESP=$(api_post \"plugins/${PLUGIN_NAME}/enable\")\nassert_json_field \"$RESP\" '.status' 'enabled' \"Plugin enabled\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN_NAME}\")\" '.plugin.domain' \"${DOMAIN}\" \"The plugin belongs to the primary domain A\" || true\nlocal_wait_authelia \"${DOMAIN}\"\n\n# ===========================================================================\n# 2. A's client admits A's members\n# ==========================================================================="
     },
     {
       "id": "the-client-belongs-to-a-a-s-members-sign-in-a-customer-of-b-does-not",
       "label": "The client belongs to A: A's members sign in, a customer of B does not",
       "steps": [
         {
-          "id": "step-86",
+          "id": "step-59",
           "label": "The client's authorization_policy is A's two-factor policy",
           "target": "local",
           "continueOnError": true,
@@ -437,7 +418,7 @@
               "kind": "eq",
               "actual": {
                 "kind": "expr",
-                "template": "$(authelia_yaml client \"${CLIENT_ID}\")"
+                "template": "$(client_policy \"${CLIENT_ID}\")"
               },
               "expected": {
                 "kind": "var",
@@ -448,12 +429,12 @@
           }
         },
         {
-          "id": "step-87",
+          "id": "step-60",
           "label": "Set SUBJECTS_A",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "authelia_yaml policy \"${POLICY_A}\""
+            "command": "policy_subjects \"${POLICY_A}\""
           },
           "capture": [
             {
@@ -465,7 +446,7 @@
           ]
         },
         {
-          "id": "step-88",
+          "id": "step-61",
           "label": "A's policy names ${DEV}",
           "target": "local",
           "continueOnError": true,
@@ -486,7 +467,7 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-62",
           "label": "…not ${CUST}",
           "target": "local",
           "continueOnError": true,
@@ -507,47 +488,41 @@
           }
         },
         {
-          "id": "step-90",
-          "label": "POST /api/users/${DEV}/reset-totp",
-          "target": "host",
+          "id": "step-63",
+          "label": "Set SECRET_DEV",
+          "target": "local",
           "op": {
-            "type": "api",
-            "method": "POST",
-            "path": "users/${DEV}/reset-totp",
-            "body": {}
+            "type": "exec",
+            "command": "local_reset_totp \"${DEV}\""
           },
           "capture": [
             {
               "variable": "SECRET_DEV",
               "from": {
-                "kind": "jq",
-                "expression": ".totpUri // empty"
+                "kind": "body"
               }
             }
           ]
         },
         {
-          "id": "step-91",
-          "label": "POST /api/users/${CUST}/reset-totp",
-          "target": "host",
+          "id": "step-64",
+          "label": "Set SECRET_CUST",
+          "target": "local",
           "op": {
-            "type": "api",
-            "method": "POST",
-            "path": "users/${CUST}/reset-totp",
-            "body": {}
+            "type": "exec",
+            "command": "local_reset_totp \"${CUST}\""
           },
           "capture": [
             {
               "variable": "SECRET_CUST",
               "from": {
-                "kind": "jq",
-                "expression": ".totpUri // empty"
+                "kind": "body"
               }
             }
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-67",
           "label": "${DEV} signed in at auth.A",
           "target": "local",
           "continueOnError": true,
@@ -556,8 +531,8 @@
             "check": {
               "kind": "eq",
               "actual": {
-                "kind": "expr",
-                "template": "$(sign_in \"${DEV}\" \"${DEV_PASSWORD}\" \"${SECRET_DEV}\" \"${WORK_DIR}/dev-a.jar\" \"${DOMAIN}\")"
+                "kind": "var",
+                "name": "SIGN_IN_RESULT"
               },
               "expected": {
                 "kind": "literal",
@@ -568,7 +543,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-69",
           "label": "${CUST} signed in at auth.A (valid credentials)",
           "target": "local",
           "continueOnError": true,
@@ -577,8 +552,8 @@
             "check": {
               "kind": "eq",
               "actual": {
-                "kind": "expr",
-                "template": "$(sign_in \"${CUST}\" \"${CUST_PASSWORD}\" \"${SECRET_CUST}\" \"${WORK_DIR}/cust-a.jar\" \"${DOMAIN}\")"
+                "kind": "var",
+                "name": "SIGN_IN_RESULT"
               },
               "expected": {
                 "kind": "literal",
@@ -589,7 +564,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-70",
           "label": "Set LOCATION",
           "target": "local",
           "op": {
@@ -606,7 +581,7 @@
           ]
         },
         {
-          "id": "step-97",
+          "id": "step-71",
           "label": "${DEV}'s authorization request at auth.A is answered with a redirect",
           "target": "local",
           "continueOnError": true,
@@ -627,7 +602,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-72",
           "label": "…that goes on, no error (${LOCATION%%\\?*})",
           "target": "local",
           "continueOnError": true,
@@ -648,7 +623,7 @@
           }
         },
         {
-          "id": "step-99",
+          "id": "step-73",
           "label": "Set LOCATION",
           "target": "local",
           "op": {
@@ -665,7 +640,7 @@
           ]
         },
         {
-          "id": "step-100",
+          "id": "step-74",
           "label": "${CUST}'s is sent back to the client's redirect URI",
           "target": "local",
           "continueOnError": true,
@@ -686,7 +661,7 @@
           }
         },
         {
-          "id": "step-101",
+          "id": "step-75",
           "label": "…refused: access_denied (not a member of A)",
           "target": "local",
           "continueOnError": true,
@@ -707,14 +682,14 @@
           }
         }
       ],
-      "bash": "log_section \"The client belongs to A: A's members sign in, a customer of B does not\"\n\nPOLICY_A=\"lamaste_${DOMAIN//./_}_two_factor\"\nPOLICY_B=\"lamaste_${DOMAIN_2//./_}_two_factor\"\nassert_eq \"$(authelia_yaml client \"${CLIENT_ID}\")\" \"${POLICY_A}\" \"The client's authorization_policy is A's two-factor policy\" || true\nSUBJECTS_A=$(authelia_yaml policy \"${POLICY_A}\")\nassert_contains \",${SUBJECTS_A},\" \",user:${DEV},\" \"A's policy names ${DEV}\" || true\nassert_not_contains \",${SUBJECTS_A},\" \",user:${CUST},\" \"…not ${CUST}\" || true\n\nSECRET_DEV=$(api_post \"users/${DEV}/reset-totp\" '{}' | jq -r '.totpUri // empty' | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p')\nSECRET_CUST=$(api_post \"users/${CUST}/reset-totp\" '{}' | jq -r '.totpUri // empty' | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p')\nwait_authelia \"${DOMAIN}\"\nwait_for_next_totp_window\nassert_eq \"$(sign_in \"${DEV}\" \"${DEV_PASSWORD}\" \"${SECRET_DEV}\" \"${WORK_DIR}/dev-a.jar\" \"${DOMAIN}\")\" \"OK OK\" \"${DEV} signed in at auth.A\" || true\nassert_eq \"$(sign_in \"${CUST}\" \"${CUST_PASSWORD}\" \"${SECRET_CUST}\" \"${WORK_DIR}/cust-a.jar\" \"${DOMAIN}\")\" \"OK OK\" \"${CUST} signed in at auth.A (valid credentials)\" || true\n\nLOCATION=$(authorize \"${WORK_DIR}/dev-a.jar\" \"${DOMAIN}\")\nassert_not_eq \"${LOCATION}\" \"\" \"${DEV}'s authorization request at auth.A is answered with a redirect\" || true\nassert_not_contains \"${LOCATION}\" \"error=\" \"…that goes on, no error (${LOCATION%%\\?*})\" || true\nLOCATION=$(authorize \"${WORK_DIR}/cust-a.jar\" \"${DOMAIN}\")\nassert_contains \"${LOCATION}\" \"${REDIRECT_URI}\" \"${CUST}'s is sent back to the client's redirect URI\" || true\nassert_contains \"${LOCATION}\" \"error=access_denied\" \"…refused: access_denied (not a member of A)\" || true\n\n# ===========================================================================\n# 3. Moved to B\n# ==========================================================================="
+      "bash": "log_section \"The client belongs to A: A's members sign in, a customer of B does not\"\n\nPOLICY_A=\"lamaste_${DOMAIN//./_}_two_factor\"\nPOLICY_B=\"lamaste_${DOMAIN_2//./_}_two_factor\"\nassert_eq \"$(client_policy \"${CLIENT_ID}\")\" \"${POLICY_A}\" \"The client's authorization_policy is A's two-factor policy\" || true\nSUBJECTS_A=$(policy_subjects \"${POLICY_A}\")\nassert_contains \",${SUBJECTS_A},\" \",user:${DEV},\" \"A's policy names ${DEV}\" || true\nassert_not_contains \",${SUBJECTS_A},\" \",user:${CUST},\" \"…not ${CUST}\" || true\n\nSECRET_DEV=$(local_reset_totp \"${DEV}\")\nSECRET_CUST=$(local_reset_totp \"${CUST}\")\nlocal_wait_authelia \"${DOMAIN}\"\nlocal_sign_in \"${DEV}\" \"${DEV_PASSWORD}\" \"${SECRET_DEV}\" \"${WORK_DIR}/dev-a.jar\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${DEV} signed in at auth.A\" || true\nlocal_sign_in \"${CUST}\" \"${CUST_PASSWORD}\" \"${SECRET_CUST}\" \"${WORK_DIR}/cust-a.jar\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${CUST} signed in at auth.A (valid credentials)\" || true\n\nLOCATION=$(authorize \"${WORK_DIR}/dev-a.jar\" \"${DOMAIN}\")\nassert_not_eq \"${LOCATION}\" \"\" \"${DEV}'s authorization request at auth.A is answered with a redirect\" || true\nassert_not_contains \"${LOCATION}\" \"error=\" \"…that goes on, no error (${LOCATION%%\\?*})\" || true\nLOCATION=$(authorize \"${WORK_DIR}/cust-a.jar\" \"${DOMAIN}\")\nassert_contains \"${LOCATION}\" \"${REDIRECT_URI}\" \"${CUST}'s is sent back to the client's redirect URI\" || true\nassert_contains \"${LOCATION}\" \"error=access_denied\" \"…refused: access_denied (not a member of A)\" || true\n\n# ===========================================================================\n# 3. Moved to B\n# ==========================================================================="
     },
     {
       "id": "the-plugin-moved-to-b-b-s-members-sign-in",
       "label": "The plugin moved to B: B's members sign in",
       "steps": [
         {
-          "id": "step-102",
+          "id": "step-76",
           "label": "PUT /api/plugins/${PLUGIN_NAME}/domain",
           "target": "host",
           "op": {
@@ -733,7 +708,7 @@
           ]
         },
         {
-          "id": "step-103",
+          "id": "step-77",
           "label": "PUT /api/plugins/${PLUGIN_NAME}/domain {domain: B}",
           "target": "local",
           "continueOnError": true,
@@ -755,7 +730,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-79",
           "label": "The client's authorization_policy is B's two-factor policy",
           "target": "local",
           "continueOnError": true,
@@ -765,7 +740,7 @@
               "kind": "eq",
               "actual": {
                 "kind": "expr",
-                "template": "$(authelia_yaml client \"${CLIENT_ID}\")"
+                "template": "$(client_policy \"${CLIENT_ID}\")"
               },
               "expected": {
                 "kind": "var",
@@ -776,12 +751,12 @@
           }
         },
         {
-          "id": "step-106",
+          "id": "step-80",
           "label": "Set SUBJECTS_B",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "authelia_yaml policy \"${POLICY_B}\""
+            "command": "policy_subjects \"${POLICY_B}\""
           },
           "capture": [
             {
@@ -793,7 +768,7 @@
           ]
         },
         {
-          "id": "step-107",
+          "id": "step-81",
           "label": "B's policy names ${CUST}",
           "target": "local",
           "continueOnError": true,
@@ -814,7 +789,7 @@
           }
         },
         {
-          "id": "step-108",
+          "id": "step-82",
           "label": "…and ${DEV}",
           "target": "local",
           "continueOnError": true,
@@ -835,7 +810,7 @@
           }
         },
         {
-          "id": "step-110",
+          "id": "step-84",
           "label": "${CUST} signed in at auth.B",
           "target": "local",
           "continueOnError": true,
@@ -844,8 +819,8 @@
             "check": {
               "kind": "eq",
               "actual": {
-                "kind": "expr",
-                "template": "$(sign_in \"${CUST}\" \"${CUST_PASSWORD}\" \"${SECRET_CUST}\" \"${WORK_DIR}/cust-b.jar\" \"${DOMAIN_2}\")"
+                "kind": "var",
+                "name": "SIGN_IN_RESULT"
               },
               "expected": {
                 "kind": "literal",
@@ -856,7 +831,7 @@
           }
         },
         {
-          "id": "step-111",
+          "id": "step-85",
           "label": "Set LOCATION",
           "target": "local",
           "op": {
@@ -873,7 +848,7 @@
           ]
         },
         {
-          "id": "step-112",
+          "id": "step-86",
           "label": "${CUST}'s authorization request at auth.B is answered with a redirect",
           "target": "local",
           "continueOnError": true,
@@ -894,7 +869,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-87",
           "label": "…that goes on now, no error",
           "target": "local",
           "continueOnError": true,
@@ -915,14 +890,14 @@
           }
         }
       ],
-      "bash": "log_section \"The plugin moved to B: B's members sign in\"\n\nRESP=$(api_put \"plugins/${PLUGIN_NAME}/domain\" \"{\\\"domain\\\":\\\"${DOMAIN_2}\\\"}\")\nassert_json_field \"$RESP\" '\"\\(.domain) \\(.changed)\"' \"${DOMAIN_2} true\" \"PUT /api/plugins/${PLUGIN_NAME}/domain {domain: B}\" || true\nwait_authelia \"${DOMAIN_2}\"\nassert_eq \"$(authelia_yaml client \"${CLIENT_ID}\")\" \"${POLICY_B}\" \"The client's authorization_policy is B's two-factor policy\" || true\nSUBJECTS_B=$(authelia_yaml policy \"${POLICY_B}\")\nassert_contains \",${SUBJECTS_B},\" \",user:${CUST},\" \"B's policy names ${CUST}\" || true\nassert_contains \",${SUBJECTS_B},\" \",user:${DEV},\" \"…and ${DEV}\" || true\n\nwait_for_next_totp_window\nassert_eq \"$(sign_in \"${CUST}\" \"${CUST_PASSWORD}\" \"${SECRET_CUST}\" \"${WORK_DIR}/cust-b.jar\" \"${DOMAIN_2}\")\" \"OK OK\" \"${CUST} signed in at auth.B\" || true\nLOCATION=$(authorize \"${WORK_DIR}/cust-b.jar\" \"${DOMAIN_2}\")\nassert_not_eq \"${LOCATION}\" \"\" \"${CUST}'s authorization request at auth.B is answered with a redirect\" || true\nassert_not_contains \"${LOCATION}\" \"error=\" \"…that goes on now, no error\" || true\n\n# ===========================================================================\n# 4. An issuer per domain\n# ==========================================================================="
+      "bash": "log_section \"The plugin moved to B: B's members sign in\"\n\nRESP=$(api_put \"plugins/${PLUGIN_NAME}/domain\" \"{\\\"domain\\\":\\\"${DOMAIN_2}\\\"}\")\nassert_json_field \"$RESP\" '\"\\(.domain) \\(.changed)\"' \"${DOMAIN_2} true\" \"PUT /api/plugins/${PLUGIN_NAME}/domain {domain: B}\" || true\nlocal_wait_authelia \"${DOMAIN_2}\"\nassert_eq \"$(client_policy \"${CLIENT_ID}\")\" \"${POLICY_B}\" \"The client's authorization_policy is B's two-factor policy\" || true\nSUBJECTS_B=$(policy_subjects \"${POLICY_B}\")\nassert_contains \",${SUBJECTS_B},\" \",user:${CUST},\" \"B's policy names ${CUST}\" || true\nassert_contains \",${SUBJECTS_B},\" \",user:${DEV},\" \"…and ${DEV}\" || true\n\nlocal_sign_in \"${CUST}\" \"${CUST_PASSWORD}\" \"${SECRET_CUST}\" \"${WORK_DIR}/cust-b.jar\" \"${DOMAIN_2}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${CUST} signed in at auth.B\" || true\nLOCATION=$(authorize \"${WORK_DIR}/cust-b.jar\" \"${DOMAIN_2}\")\nassert_not_eq \"${LOCATION}\" \"\" \"${CUST}'s authorization request at auth.B is answered with a redirect\" || true\nassert_not_contains \"${LOCATION}\" \"error=\" \"…that goes on now, no error\" || true\n\n# ===========================================================================\n# 4. An issuer per domain\n# ==========================================================================="
     },
     {
       "id": "an-issuer-per-domain",
       "label": "An issuer per domain",
       "steps": [
         {
-          "id": "step-114",
+          "id": "step-88",
           "label": "Set ISSUER_B",
           "target": "local",
           "op": {
@@ -939,7 +914,7 @@
           ]
         },
         {
-          "id": "step-115",
+          "id": "step-89",
           "label": "Set ISSUER_A",
           "target": "local",
           "op": {
@@ -956,7 +931,7 @@
           ]
         },
         {
-          "id": "step-116",
+          "id": "step-90",
           "label": "auth.B's discovery: issuer https://auth.${DOMAIN_2}",
           "target": "local",
           "continueOnError": true,
@@ -977,7 +952,7 @@
           }
         },
         {
-          "id": "step-117",
+          "id": "step-91",
           "label": "auth.A's: https://auth.${DOMAIN}",
           "target": "local",
           "continueOnError": true,
