@@ -159,32 +159,46 @@ ${escapeHtml(templates.email.body)}<button class="copy-btn" onclick="copyTemplat
  * that refused a signed-in user — for its domain or its own user list
  * (Authelia's 403 does not say which).
  *
- * @param domain - The base domain the requested host is under
+ * @param domain - The base domain the requested host is under; null when it
+ *   is under none (the page then links to no sign-in: there is none to trust)
  * @param options - Optional admin contact info
  * @param site - The static site's hostname, when the refusal is a site's
  * @returns Full HTML page string
  */
 export function buildDomainRefusalPage(
-  domain: string,
+  domain: string | null,
   options?: TemplateOptions,
   site?: string,
 ): string {
   const adminContact = options?.adminContact ?? '';
   const adminName = options?.adminName ?? 'your administrator';
-  const heading = site
-    ? `Not allowed on <span class="fqdn">${escapeHtml(site)}</span>`
-    : `Not a member of <span class="fqdn">${escapeHtml(domain)}</span>`;
-  const explanation = site
-    ? `Your account is signed in, but it may not open this site: it is not a member of
+  const heading =
+    site || domain === null
+      ? `Not allowed on <span class="fqdn">${escapeHtml(site ?? '')}</span>`
+      : `Not a member of <span class="fqdn">${escapeHtml(domain)}</span>`;
+  const explanation =
+    domain === null
+      ? `Your account is signed in, but this host is under none of this relay's domains,
+      so nobody may open it.`
+      : site
+        ? `Your account is signed in, but it may not open this site: it is not a member of
       ${escapeHtml(domain)}, or not one of the site's users.`
-    : `Your account is signed in, but it is not a member of this domain, so none of its
+        : `Your account is signed in, but it is not a member of this domain, so none of its
       applications are open to it.`;
+  // Only a domain of this relay has a sign-in to send the user to; a host
+  // under none could name a stranger's.
+  const signOut =
+    domain === null
+      ? ''
+      : `<p class="subtitle">
+      <a href="https://auth.${escapeAttr(domain)}/logout">Sign out</a> to sign in with another account.
+    </p>`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Not a member — ${escapeHtml(domain)}</title>
+  <title>Not allowed — ${escapeHtml(domain ?? site ?? '')}</title>
   <style>
 ${BASE_CSS}
     .subtitle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1rem; }
@@ -200,9 +214,7 @@ ${BASE_CSS}
     <p class="subtitle">
       ${explanation} Ask ${escapeHtml(adminName)} to add you if you should have access.
     </p>
-    <p class="subtitle">
-      <a href="https://auth.${escapeAttr(domain)}/logout">Sign out</a> to sign in with another account.
-    </p>
+    ${signOut}
     ${adminContact ? `<p class="contact">Admin: <a href="mailto:${escapeAttr(adminContact)}">${escapeHtml(adminContact)}</a></p>` : ''}
   </div>
 </body>

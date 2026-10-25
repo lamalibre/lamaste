@@ -84,3 +84,13 @@ export function sameDomains(a, b) {
   const right = new Set(b ?? []);
   return left.size === right.size && [...left].every((d) => right.has(d));
 }
+
+/**
+ * One URL path segment, percent-encoded — a segment of dots (`.`, `..`)
+ * too, which `fetch` would otherwise resolve (`/api/domains/../activate` →
+ * `/api/activate`).
+ */
+export function pathSegment(value) {
+  const text = String(value);
+  return text === '.' || text === '..' ? '%2E'.repeat(text.length) : encodeURIComponent(text);
+}

@@ -263,7 +263,7 @@ function validateAliases(
   selfId: string | null,
   sites: readonly SiteEntry[],
   tunnels: ReadonlyArray<{ fqdn: string | null }>,
-  domains: readonly string[],
+  relayDomains: readonly string[],
 ): string[] {
   const normalised = [...new Set(aliases.map((a) => a.trim().toLowerCase()))];
   if (normalised.length > MAX_SITE_ALIASES) {
@@ -276,7 +276,7 @@ function validateAliases(
     if (alias === fqdn) {
       throw new SiteError(`Alias '${alias}' is the site's own domain`, 'INVALID_ALIAS');
     }
-    if (isRelayHost(alias, domains)) {
+    if (isRelayHost(alias, relayDomains)) {
       throw new SiteError(`'${alias}' is reserved for Lamaste itself`, 'INVALID_ALIAS');
     }
     const holder = hostnameHolder(alias, { tunnels, sites, selfSiteId: selfId });
@@ -318,6 +318,13 @@ export interface CreateSiteOptions {
   domain: string;
   /** The relay's active domains — what a custom site, its aliases and sign-in are checked against. */
   domains: readonly string[];
+  /**
+   * Every domain record, pending ones too — what the relay's own hostnames
+   * (`auth.`, `panel.`, `tunnel.`, `agent-*` of each) are kept free on, so a
+   * custom site or an alias never takes one before its domain goes live.
+   * Default: `domains`.
+   */
+  relayDomains?: readonly string[] | undefined;
   email: string;
   nginx: SiteNginxDeps;
   certbot: SiteCertbotDeps;
@@ -376,7 +383,7 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
   }
 
   const fqdn = type === 'managed' ? `${name}.${domain}` : customDomain!;
-  if (type === 'custom' && isRelayHost(fqdn, domains)) {
+  if (type === 'custom' && isRelayHost(fqdn, opts.relayDomains ?? domains)) {
     throw new SiteError(`'${fqdn}' is reserved for Lamaste itself`, 'RESERVED_NAME');
   }
   if (autheliaProtected) assertSignInDomain(fqdn, domains);
@@ -399,7 +406,14 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
   if (aliases.length > 0 && type !== 'custom') {
     throw new SiteError('Aliases are only supported on custom-domain sites', 'NOT_CUSTOM');
   }
-  const siteAliases = validateAliases(fqdn, aliases, null, existingSites, tunnels, domains);
+  const siteAliases = validateAliases(
+    fqdn,
+    aliases,
+    null,
+    existingSites,
+    tunnels,
+    opts.relayDomains ?? domains,
+  );
 
   const id = crypto.randomUUID();
   const rootPath = files.getSiteRoot(id);
@@ -619,6 +633,13 @@ export interface UpdateSiteOptions {
   aliases?: string[] | undefined;
   /** The relay's active domains. */
   domains: readonly string[];
+  /**
+   * Every domain record, pending ones too — what the relay's own hostnames
+   * (`auth.`, `panel.`, `tunnel.`, `agent-*` of each) are kept free on, so a
+   * custom site or an alias never takes one before its domain goes live.
+   * Default: `domains`.
+   */
+  relayDomains?: readonly string[] | undefined;
   /** Needed only when aliases change on a live site. */
   email?: string | undefined;
   serverIp?: string | undefined;
@@ -677,7 +698,10 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
   const newAutheliaProtected =
     opts.autheliaProtected !== undefined ? opts.autheliaProtected : site.autheliaProtected;
   const newAllowedUsers = opts.allowedUsers !== undefined ? opts.allowedUsers : site.allowedUsers;
-  if (newAutheliaProtected && !site.autheliaProtected) assertSignInDomain(site.fqdn, domains);
+  // Whenever the result is protected — not only when protection is turned
+  // on: a site protected before its host belonged to no domain (4.6) must not
+  // be rewritten. Turning protection off stays possible.
+  if (newAutheliaProtected) assertSignInDomain(site.fqdn, domains);
 
   let newAliases = site.aliases ?? [];
   if (opts.aliases !== undefined) {
@@ -685,7 +709,14 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
       throw new SiteError('Aliases are only supported on custom-domain sites', 'NOT_CUSTOM');
     }
     const tunnels = opts.tunnelState ? await opts.tunnelState.readTunnels() : [];
-    newAliases = validateAliases(site.fqdn, opts.aliases, site.id, sites, tunnels, domains);
+    newAliases = validateAliases(
+      site.fqdn,
+      opts.aliases,
+      site.id,
+      sites,
+      tunnels,
+      opts.relayDomains ?? domains,
+    );
   }
 
   const spaModeChanged = newSpaMode !== site.spaMode;
@@ -841,6 +872,10 @@ export async function verifyDns(opts: VerifyDnsOptions): Promise<VerifyDnsResult
   if (site.type !== 'custom') {
     throw new SiteError('DNS verification is only needed for custom domains', 'NOT_CUSTOM');
   }
+
+  // A protected site's vhost asks a domain's sign-in: refuse before anything
+  // is resolved or issued when the host is under none.
+  if (site.autheliaProtected) assertSignInDomain(site.fqdn, domains);
 
   if (site.dnsVerified && site.certIssued) {
     return { ok: true, message: 'DNS already verified and certificate issued' };

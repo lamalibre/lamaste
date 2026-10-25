@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { domainRows, usageText } from '../src/domains.js';
+import { domainPath, domainRows, pathSegment, usageText } from '../src/domains.js';
 
 test('a row per domain: its state, members and what uses it', () => {
   assert.deepEqual(
@@ -37,4 +37,11 @@ test('a row per domain: its state, members and what uses it', () => {
 test('a domain name a panel answer carries is terminal text', () => {
   const [row] = domainRows([{ name: 'evil\u001b[31m.example', status: 'active', members: 0 }]);
   assert.ok(!row.name.includes('\u001b'));
+});
+
+test('domain paths: a segment of dots is encoded, never resolved by curl', () => {
+  assert.equal(domainPath('..', '/activate'), '/api/domains/%2E%2E/activate');
+  assert.equal(pathSegment('.'), '%2E');
+  assert.equal(domainPath('codelama.com.tr'), '/api/domains/codelama.com.tr');
+  assert.equal(pathSegment('a/b'), 'a%2Fb');
 });

@@ -23,8 +23,12 @@ import {
   parseDomainsProjection,
 } from '@lamalibre/lamaste';
 import {
+  assertDomainRegistrable,
   createSite,
   createTunnel,
+  registrableDomain,
+  updateSite,
+  verifyDns,
   hostnameHolder,
   tunnelHost,
   oidcAuthorizationPolicyName,
@@ -203,8 +207,16 @@ test('access_control: the same members render the same rules, whatever their ord
 
 test('access_control and OIDC policies refuse a member that is not a Lamaste username', () => {
   const bad = [{ name: 'samplepark.tr', members: ['onur', 'group:admins'] }];
-  assert.throws(() => renderAccessControl(bad, []), /Not a Lamaste username/);
-  assert.throws(() => renderOidcAuthorizationPolicies(bad), /Not a Lamaste username/);
+  // The refusal never repeats the value (it reaches logs and warnings).
+  for (const render of [
+    () => renderAccessControl(bad, []),
+    () => renderOidcAuthorizationPolicies(bad),
+  ]) {
+    assert.throws(
+      render,
+      (err) => /not a Lamaste username/.test(err.message) && !err.message.includes('group:admins'),
+    );
+  }
 });
 
 test('OIDC authorization policies: per domain and factor, its members admitted and everyone else refused', () => {
@@ -478,4 +490,104 @@ test('who holds a hostname: a tunnel, a site or a site’s alias — leaving a s
   });
   assert.equal(hostnameHolder('www.codelama.com.tr', { sites, selfSiteId: 's1' }), null);
   assert.equal(hostnameHolder('free.codelama.com.tr', { tunnels, sites }), null);
+});
+
+// --- security review fixes ----------------------------------------------------
+
+test('domains with one registrable domain, and public suffixes, are refused side by side', () => {
+  assert.equal(registrableDomain('feria.codelama.com.tr'), 'codelama.com.tr');
+  assertDomainRegistrable('codelama.com.tr', ['samplepark.tr']);
+  assertDomainRegistrable('a.github.io', ['b.github.io']); // two sites of the private section
+  assert.throws(
+    () => assertDomainRegistrable('cust2.example.net', ['samplepark.tr', 'cust1.example.net']),
+    (err) => err.code === 'SAME_REGISTRABLE_DOMAIN' && /example\.net/.test(err.message),
+  );
+  for (const suffix of ['com.tr', 'github.io']) {
+    assert.throws(
+      () => assertDomainRegistrable(suffix, ['samplepark.tr']),
+      (err) => err.code === 'PUBLIC_SUFFIX',
+      suffix,
+    );
+  }
+  assert.throws(
+    () => assertDomainRegistrable('x.samplepark.tr', ['samplepark.tr']),
+    (err) => err.code === 'DOMAIN_OVERLAP',
+  );
+});
+
+test('tunnels: a domain removed after the caller resolved it is refused under the tunnel lock', async () => {
+  const tunnels = [];
+  await assert.rejects(
+    createTunnel({
+      ...tunnelDeps(tunnels, 'codelama.com.tr'),
+      domainActive: async () => false,
+      subdomain: 'late',
+      port: 20090,
+      agentLabel: 'vm1',
+    }),
+    (err) => err.code === 'DOMAIN_NOT_CONFIGURED' && /codelama\.com\.tr/.test(err.message),
+  );
+  assert.deepEqual(tunnels, []);
+});
+
+test('a protected site under none of the domains is never rewritten open: edits and DNS checks are refused', async () => {
+  // As 4.6 could leave one: protected, outside every domain, live.
+  const legacy = {
+    id: '11111111-2222-4333-8444-555555555555',
+    name: 'legacy',
+    fqdn: 'docs.customer.example',
+    type: 'custom',
+    spaMode: false,
+    autheliaProtected: true,
+    allowedUsers: [],
+    dnsVerified: true,
+    certIssued: true,
+    rootPath: '/var/www/lamaste/11111111-2222-4333-8444-555555555555/',
+    createdAt: '2026-10-01T00:00:00.000Z',
+    totalSize: 0,
+  };
+  const sites = [legacy];
+  const writes = [];
+  const deps = {
+    ...siteDeps(sites, [], 'samplepark.tr'),
+    nginx: {
+      writeStaticSiteVhost: async (site, certDir, domain) => writes.push(domain),
+      removeStaticSiteVhost: async () => {},
+    },
+    authelia: { renderAccess: async () => {} },
+  };
+  await assert.rejects(
+    updateSite({ ...deps, id: legacy.id, spaMode: true }),
+    (err) => err.code === 'NOT_UNDER_DOMAIN',
+  );
+  await assert.rejects(
+    verifyDns({ ...deps, id: legacy.id, serverIp: '203.0.113.10' }),
+    (err) => err.code === 'NOT_UNDER_DOMAIN',
+  );
+  assert.deepEqual(writes, [], 'no vhost written');
+  // Turning protection off stays possible.
+  await updateSite({ ...deps, id: legacy.id, autheliaProtected: false });
+  assert.equal(sites[0].autheliaProtected, false);
+});
+
+test('sites: the relay hostnames of a pending domain are kept free too', async () => {
+  const sites = [];
+  const deps = {
+    ...siteDeps(sites, [], 'samplepark.tr'),
+    relayDomains: ['samplepark.tr', 'codelama.com.tr', 'next.example'],
+  };
+  await assert.rejects(
+    createSite({ ...deps, name: 'phish', type: 'custom', customDomain: 'auth.next.example' }),
+    (err) => err.code === 'RESERVED_NAME',
+  );
+  await assert.rejects(
+    createSite({
+      ...deps,
+      name: 'shop',
+      type: 'custom',
+      customDomain: 'shop.next.example',
+      aliases: ['panel.next.example'],
+    }),
+    (err) => err.code === 'INVALID_ALIAS',
+  );
 });

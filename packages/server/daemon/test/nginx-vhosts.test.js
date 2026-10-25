@@ -541,6 +541,17 @@ test('a second domain’s auth portal serves Authelia and invitations — never 
   assert.match(text, /location \/invite\/ \{/);
   assert.match(text, /location \/api\/invite\/ \{/);
   assert.match(text, /location \/ \{\s*proxy_pass http:\/\/127\.0\.0\.1:9091;/);
+  // Authelia derives the issuer and cookie domain from the forwarded host:
+  // the portal's own name, never the client's.
+  const portal = locationBody(text, '/');
+  for (const line of [
+    'proxy_set_header Host auth.codelama.com.tr;',
+    'proxy_set_header X-Forwarded-Host auth.codelama.com.tr;',
+    'proxy_set_header X-Forwarded-Proto https;',
+  ]) {
+    assert.ok(portal.includes(line), line);
+  }
+  assert.doesNotMatch(portal, /\$http_x_forwarded_host|\$host\b/);
   // The rate-limit zone is an http-level name: declared once, by the primary's portal.
   assert.doesNotMatch(text, /limit_req_zone/);
   assert.doesNotMatch(text, /user-access/);

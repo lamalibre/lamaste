@@ -737,7 +737,8 @@ export function renderSessionCookies(domains: readonly string[]): AutheliaSessio
 /** `user:<name>` for a member, refusing anything but a Lamaste username. */
 function userSubject(username: string): string {
   if (!isLamasteUsername(username)) {
-    throw new Error(`Not a Lamaste username: ${JSON.stringify(username)}`);
+    // Never the value itself: the message can reach logs and warnings.
+    throw new Error('A member is not a Lamaste username');
   }
   return `user:${username}`;
 }

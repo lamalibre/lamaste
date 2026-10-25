@@ -7,9 +7,12 @@
 # A tier ships it to the VMs (tiers/provisioned.json `assets`).
 # ============================================================================
 
-# test_domain_n <primary> <label> — a base domain beside <primary>: its first
-# label replaced by <label> (test.lamaste.local, second → second.lamaste.local).
-# Never under or over <primary>, so one relay may hold both.
+# test_domain_n <primary> <label> — a base domain beside <primary> with a
+# registrable domain of its own (the relay refuses two domains under one
+# registrable domain — they would share cookies on it): the label below the
+# primary's suffix gets -<label> (test.lamaste.local, second →
+# lamaste-second.local). Never under, over or beside <primary>.
 test_domain_n() {
-  printf '%s.%s\n' "$2" "${1#*.}"
+  local rest="${1#*.}"
+  printf '%s-%s.%s\n' "${rest%%.*}" "$2" "${rest#*.}"
 }

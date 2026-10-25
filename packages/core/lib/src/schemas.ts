@@ -210,6 +210,18 @@ export const OidcClientSchema = z
         message: 'The authorization_code grant requires at least one redirect URI',
       });
     }
+    // A client is a service (client_credentials alone) or a user-facing
+    // client, never both: Authelia gives a client_credentials client
+    // one_factor, never a domain's member policy, so a user grant beside it
+    // would admit any account of the relay. Declare two clients.
+    const userGrants = client.grantTypes.filter((g) => g !== 'client_credentials');
+    if (clientCredentials && userGrants.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['grantTypes'],
+        message: `The client_credentials grant must be a client's only grant (declare ${userGrants.join(', ')} on a second, user-facing client)`,
+      });
+    }
     // Authelia (validator/identity_providers.go, v4.39.28) applies both
     // rules whenever client_credentials is among the grants, not only when
     // it is the sole grant.

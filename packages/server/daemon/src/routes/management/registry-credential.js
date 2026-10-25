@@ -33,7 +33,12 @@ import {
 } from '../../lib/registry-credential.js';
 import { DomainNameSchema } from '@lamalibre/lamaste';
 import { sendFailure } from '../../lib/app-error.js';
-import { resolveActiveDomain } from '../../lib/domains.js';
+import {
+  registryDomain,
+  resolveActiveDomain,
+  revokeRegistryTokensOutside,
+  withActiveDomain,
+} from '../../lib/domains.js';
 import { syncOidcClients } from '../../lib/plugin-oidc.js';
 
 const FeriaTokenSchema = z
@@ -149,7 +154,23 @@ export default async function registryCredentialRoutes(fastify) {
         owner: verified.owner,
         configuredAt: new Date().toISOString(),
       };
-      await writeRegistryCredentialConfig(config);
+      // Written while its issuer domain is still active (a domain's removal
+      // checks the credential under the same lock).
+      const domainBefore = await registryDomain();
+      try {
+        await withActiveDomain(auth.issuerDomain, () => writeRegistryCredentialConfig(config));
+      } catch (err) {
+        return sendFailure(request, reply, err, 'Failed to store the registry credential');
+      }
+      // Who may hold a registry token follows the issuer domain: a change
+      // takes the tokens of everyone who is not a member of the new one.
+      const domainAfter = await registryDomain();
+      if (domainAfter && domainAfter !== domainBefore) {
+        const warnings = await revokeRegistryTokensOutside(domainAfter, request.log);
+        if (warnings.length > 0) {
+          request.log.warn({ warnings: warnings.length }, 'Some registry tokens were not revoked');
+        }
+      }
       // The stored credential now decides whether Authelia carries the client.
       await syncOidcClients(request.log).catch((err) =>
         request.log.warn(

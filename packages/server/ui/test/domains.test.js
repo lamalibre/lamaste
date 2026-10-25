@@ -14,6 +14,7 @@ import {
   explainDomainRefusal,
   memberCandidates,
   needsDomainChoice,
+  pathSegment,
   sameDomains,
 } from '../src/admin/lib/domains.js';
 
@@ -87,4 +88,11 @@ test('two domain lists are the same whatever their order', () => {
   assert.equal(sameDomains(['b.example', 'a.example'], ['a.example', 'b.example']), true);
   assert.equal(sameDomains(['a.example'], ['a.example', 'b.example']), false);
   assert.equal(sameDomains([], undefined), true);
+});
+
+test('a path segment of dots is encoded, never resolved by fetch', () => {
+  assert.equal(pathSegment('..'), '%2E%2E');
+  assert.equal(pathSegment('.'), '%2E');
+  assert.equal(pathSegment('codelama.com.tr'), 'codelama.com.tr');
+  assert.equal(pathSegment('a/b'), 'a%2Fb');
 });

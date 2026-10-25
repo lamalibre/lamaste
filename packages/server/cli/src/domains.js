@@ -32,3 +32,18 @@ export function usageText(usedBy) {
   if (usedBy.registry) parts.push('the registry credential');
   return parts.join(', ');
 }
+
+/**
+ * One URL path segment, percent-encoded — a segment of dots (`.`, `..`)
+ * too, which curl would otherwise resolve (`/api/domains/../activate` →
+ * `/api/activate`).
+ */
+export function pathSegment(value) {
+  const text = String(value);
+  return text === '.' || text === '..' ? '%2E'.repeat(text.length) : encodeURIComponent(text);
+}
+
+/** `/api/domains/<name><rest>`. */
+export function domainPath(name, rest = '') {
+  return `/api/domains/${pathSegment(name)}${rest}`;
+}

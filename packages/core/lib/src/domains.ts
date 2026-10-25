@@ -45,7 +45,7 @@ export interface DomainRecord {
 
 /** Why a domain name is refused. */
 export class DomainError extends Error {
-  readonly code: 'INVALID_DOMAIN' | 'DOMAIN_OVERLAP';
+  readonly code: 'INVALID_DOMAIN' | 'DOMAIN_OVERLAP' | 'PUBLIC_SUFFIX' | 'SAME_REGISTRABLE_DOMAIN';
 
   constructor(message: string, code: DomainError['code']) {
     super(message);

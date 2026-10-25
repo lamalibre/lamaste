@@ -14,6 +14,7 @@
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -45,6 +46,8 @@ let oidcGate = null;
 /** What activation and removal asked of certbot and nginx. */
 const activation = [];
 let failVhost = false;
+/** Authelia refuses its domain access (a render failure). */
+let failAccess = false;
 
 const person = (displayname, email, groups = [], extra = {}) => ({
   displayname,
@@ -127,6 +130,7 @@ before(async () => {
     writeTotp: async () => {},
     userStorage: createFakeAutheliaStorage().storage,
     domainAccess: async (access) => {
+      if (failAccess) throw new Error('Authelia did not restart');
       const changed = JSON.stringify(access) !== JSON.stringify(rendered);
       rendered = structuredClone(access);
       policies = renderOidcAuthorizationPolicies(access.domains);
@@ -532,4 +536,186 @@ test('one writer of the members’ OIDC policies: a membership ended while the O
 
   assert.deepEqual(policy(), { policy: 'deny', networks: ['0.0.0.0/0', '::/0'] });
   assert.deepEqual(renderedMembers()['codelama.com.tr'], []);
+});
+
+// ---------------------------------------------------------------------------
+// Security review fixes
+// ---------------------------------------------------------------------------
+
+const quietLog = { info() {}, warn() {}, error() {}, debug() {} };
+
+test('domains under one registrable domain, and public suffixes, are refused', async () => {
+  const first = await call('POST', '/api/domains', { name: 'cust1.example.net' });
+  assert.equal(first.statusCode, 201, first.body);
+  const sibling = await call('POST', '/api/domains', { name: 'cust2.example.net' });
+  assert.equal(sibling.statusCode, 409);
+  assert.equal(sibling.json().code, 'same_registrable_domain');
+  const suffix = await call('POST', '/api/domains', { name: 'github.io' });
+  assert.equal(suffix.statusCode, 400);
+  assert.equal(suffix.json().code, 'public_suffix');
+  assert.equal((await call('DELETE', '/api/domains/cust1.example.net')).statusCode, 200);
+});
+
+test('the relay hostnames of a domain must be free before it is added or activated', async () => {
+  const site = (fqdn) => ({
+    id: '22222222-3333-4444-8555-666666666666',
+    name: 'early',
+    fqdn,
+    type: 'custom',
+    spaMode: false,
+    autheliaProtected: false,
+    allowedUsers: [],
+    dnsVerified: false,
+    certIssued: false,
+    rootPath: '/var/www/lamaste/22222222-3333-4444-8555-666666666666/',
+    createdAt: new Date().toISOString(),
+    totalSize: 0,
+  });
+  await lib.writeSites([site('auth.later.example')]);
+  const refused = await call('POST', '/api/domains', { name: 'later.example' });
+  assert.equal(refused.statusCode, 409);
+  assert.equal(refused.json().code, 'relay_host_taken');
+
+  await lib.writeSites([]);
+  assert.equal((await call('POST', '/api/domains', { name: 'later.example' })).statusCode, 201);
+  // Taken while it was pending (written past the API, as an older panel could).
+  await lib.writeSites([site('panel.later.example')]);
+  const activation = await call('POST', '/api/domains/later.example/activate');
+  assert.equal(activation.statusCode, 409);
+  assert.equal(activation.json().code, 'relay_host_taken');
+  assert.equal((await lib.getDomain('later.example')).status, 'pending');
+  await lib.writeSites([]);
+  assert.equal((await call('DELETE', '/api/domains/later.example')).statusCode, 200);
+});
+
+test('a removed domain is forgotten by invitations; an invitation signs in at its first active domain', async () => {
+  await call('POST', '/api/domains', { name: 'gone.example' });
+  await lib.writeInvitations([
+    { id: 'i1', token: 'x'.repeat(64), domains: ['gone.example', 'samplepark.tr'] },
+  ]);
+  assert.equal(
+    await lib.invitationSignInDomain({ domains: ['gone.example', 'samplepark.tr'] }),
+    'samplepark.tr',
+    'a pending domain has no sign-in page yet',
+  );
+  assert.equal((await call('DELETE', '/api/domains/gone.example')).statusCode, 200);
+  assert.deepEqual((await lib.readInvitations())[0].domains, ['samplepark.tr']);
+  assert.deepEqual((await audits('invitation.domain.removed')).at(0).details, {
+    domain: 'gone.example',
+    invitations: 1,
+  });
+  await lib.writeInvitations([]);
+});
+
+test('a domain is removed under the tunnel lock: a tunnel or site being put on it finishes first', async () => {
+  await call('POST', '/api/domains', { name: 'racing.example' });
+  const { withTunnelLock } = await import('@lamalibre/lamaste/server');
+  let release;
+  const held = withTunnelLock(() => new Promise((resolve) => (release = resolve)));
+  let removed = false;
+  const removal = lib
+    .removeDomain('racing.example', { actor: 'admin', logger: quietLog })
+    .then(() => {
+      removed = true;
+    });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(removed, false, 'the removal waits for the tunnel lock');
+  release();
+  await held;
+  await removal;
+  assert.equal(removed, true);
+  // A write that names it afterwards is refused, not stored.
+  await assert.rejects(
+    lib.withActiveDomain('racing.example', async () => assert.fail('ran on a removed domain')),
+    (err) => err.code === 'domain_gone',
+  );
+  assert.equal(await lib.isActiveDomain('samplepark.tr'), true);
+});
+
+test('rendering: both steps are always tried; a failure streak is audited and notified once, its end once', async () => {
+  const { listNotifications } = await import('../src/lib/notifications.js');
+  const projectionPath = path.join(stateDir, 'domains.json');
+  const before = (await audits('domain.render.failed')).length;
+
+  // Gatekeeper's projection cannot be written: Authelia is rendered all the same.
+  await rm(projectionPath, { force: true });
+  await mkdir(projectionPath);
+  const rendersBefore = renders;
+  const onur = await idOf('onur');
+  const answer = await call('PUT', `/api/domains/samplepark.tr/members/${onur}`);
+  assert.equal(answer.statusCode, 200);
+  await lib.syncDomainAccess({ logger: quietLog }).catch(() => {});
+  failAccess = true;
+  await assert.rejects(lib.syncDomainAccess({ logger: quietLog }), /gatekeeper: .*; authelia:/);
+  assert.ok(renders >= rendersBefore);
+  const failed = await audits('domain.render.failed');
+  assert.equal(failed.length - before, 1, 'one audit for the streak');
+  assert.deepEqual(failed.at(0).details, { steps: ['gatekeeper'] });
+  const notices = await listNotifications({ limit: 10 });
+  assert.ok(
+    notices.notifications.some((n) => n.level === 'critical' && /rendered/.test(n.message)),
+  );
+
+  // Authelia alone failing: the projection is written anyway.
+  await rm(projectionPath, { recursive: true });
+  await assert.rejects(lib.syncDomainAccess({ logger: quietLog }), /^Error: authelia:|authelia:/);
+  assert.ok((await projection()).domains.length > 0, 'the projection was written');
+
+  failAccess = false;
+  await lib.syncDomainAccess({ logger: quietLog });
+  assert.equal((await audits('domain.render.recovered')).length, 1);
+});
+
+test('any membership that ends takes the user’s registry tokens; an issuer change takes those of non-members', async () => {
+  const revoked = [];
+  const feria = createServer((req, res) => {
+    const url = new URL(req.url, 'http://x');
+    if (req.method === 'DELETE' && url.pathname === '/-/feria/tokens') {
+      revoked.push(url.searchParams.get('owner'));
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ revoked: [] }));
+  });
+  await new Promise((resolve) => feria.listen(0, '127.0.0.1', resolve));
+  const { writeRegistryCredentialConfig, clearRegistryCredentialConfig } =
+    await import('../src/lib/registry-credential.js');
+  try {
+    // A pasted token: the registry's issuer domain is the primary.
+    await writeRegistryCredentialConfig({
+      provider: 'feria',
+      registryUrl: `http://127.0.0.1:${feria.address().port}/`,
+      scope: '@lamalibre',
+      auth: { kind: 'token', token: 'feria_test_service_token_000000' },
+      configuredAt: new Date().toISOString(),
+    });
+    const onur = await idOf('onur');
+    await call('PUT', `/api/domains/codelama.com.tr/members/${onur}`);
+    revoked.length = 0;
+    // Feria may well sit on codelama.com.tr while the credential names the
+    // primary: the end of that membership takes the tokens too.
+    const ended = await call('DELETE', `/api/domains/codelama.com.tr/members/${onur}`);
+    assert.equal(ended.statusCode, 200, ended.body);
+    assert.deepEqual(revoked, ['user:onur']);
+
+    revoked.length = 0;
+    await lib.revokeRegistryTokensOutside('codelama.com.tr', quietLog);
+    assert.ok(revoked.includes('user:onur'), 'not a member of the new issuer domain');
+    assert.ok(revoked.every((owner) => owner.startsWith('user:')));
+  } finally {
+    await clearRegistryCredentialConfig();
+    await new Promise((resolve) => feria.close(resolve));
+  }
+});
+
+test('the identity tick syncs the OIDC provider too — a plugin move whose sync failed is healed', async () => {
+  const { identityTick } = await import('../src/lib/identity-sync.js');
+  let writes = 0;
+  const previous = oidcGate;
+  oidcGate = { entered: () => (writes += 1), released: Promise.resolve() };
+  try {
+    await identityTick(quietLog);
+  } finally {
+    oidcGate = previous;
+  }
+  assert.ok(writes > 0, 'the tick wrote the OIDC provider');
 });

@@ -159,6 +159,27 @@ test('manifest: access-token claims need their scope; client_credentials needs a
       ),
     /may not have the scopes openid/,
   );
+  // A service grant beside a user grant would skip the domain's member
+  // policy (Authelia gives client_credentials one_factor): refused, whatever
+  // the scopes.
+  for (const userGrant of [
+    'urn:ietf:params:oauth:grant-type:device_code',
+    'authorization_code',
+    'refresh_token',
+  ]) {
+    assert.throws(
+      () =>
+        validateManifest(
+          withClient({
+            ...serviceClient,
+            grantTypes: ['client_credentials', userGrant],
+            redirectUris: ['https://feria.{domain}/callback'],
+          }),
+        ),
+      /client_credentials grant must be a client's only grant/,
+      userGrant,
+    );
+  }
   const parsed = validateManifest(withClient(serviceClient)).oidcClients[0];
   assert.equal(parsed.confidential, true);
   assert.equal(parsed.authorizationPolicy, 'one_factor');

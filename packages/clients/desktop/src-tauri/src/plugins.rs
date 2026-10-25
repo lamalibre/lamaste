@@ -7,8 +7,13 @@
 //! surviving piece of this module is `url_encode`, which `admin_commands`
 //! still depends on for percent-encoding URL path segments.
 
-/// Percent-encode a string for safe use in URL path segments.
+/// Percent-encode a string for safe use in URL path segments. A segment
+/// that is all dots (`.`, `..`) is encoded too: curl would otherwise resolve
+/// it (`/api/domains/../activate` → `/api/activate`).
 pub(crate) fn url_encode(s: &str) -> String {
+    if s == "." || s == ".." {
+        return "%2E".repeat(s.len());
+    }
     let mut encoded = String::with_capacity(s.len());
     for byte in s.bytes() {
         match byte {
@@ -21,4 +26,17 @@ pub(crate) fn url_encode(s: &str) -> String {
         }
     }
     encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::url_encode;
+
+    #[test]
+    fn dot_segments_are_encoded_never_resolved() {
+        assert_eq!(url_encode(".."), "%2E%2E");
+        assert_eq!(url_encode("."), "%2E");
+        assert_eq!(url_encode("codelama.com.tr"), "codelama.com.tr");
+        assert_eq!(url_encode("a/b"), "a%2Fb");
+    }
 }

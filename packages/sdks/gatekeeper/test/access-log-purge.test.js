@@ -63,6 +63,7 @@ before(async () => {
   app.decorate('getSettings', () => ({}));
   app.decorate('updateSettings', () => {});
   app.decorate('bustCache', () => {});
+  app.decorate('reloadDomains', async () => {});
   await app.register(diagnostic.diagnosticRoutes, { prefix: '/api' });
   await app.ready();
 });

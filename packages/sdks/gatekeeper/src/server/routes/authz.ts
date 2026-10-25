@@ -432,15 +432,16 @@ async function authenticatedSession(
  * The domain `hostname` is under — of the panel's projection; `hostname`
  * itself when the projection names none for it (or is unreadable).
  */
-function domainShownFor(fastify: FastifyInstance, hostname: string): string {
+function domainShownFor(fastify: FastifyInstance, hostname: string): string | null {
   const index = fastify.getDomains();
-  return (index ? domainOfHost(hostname, index.names) : null) ?? hostname.toLowerCase();
+  return index ? domainOfHost(hostname, index.names) : null;
 }
 
 /** Why a signed-in user may not reach a host's domain, and the domain to name. */
 interface DomainRefusal {
   readonly reason: 'authelia_forbidden' | 'not_a_member';
-  readonly domain: string;
+  /** Null: the host is under none of the relay's domains (or no projection). */
+  readonly domain: string | null;
 }
 
 /**
@@ -463,7 +464,7 @@ function checkDomain(
   const verdict = index ? domainMembership(index, hostname, answer.username) : null;
   if (verdict?.member) return { session: answer };
   return {
-    refused: { reason: 'not_a_member', domain: verdict?.domain ?? hostname.toLowerCase() },
+    refused: { reason: 'not_a_member', domain: verdict?.domain ?? null },
   };
 }
 
@@ -478,7 +479,7 @@ function sendRefusalPage(
   request: FastifyRequest,
   reply: FastifyReply,
   hostname: string,
-  { reason, domain, site }: { reason: string; domain: string; site?: string },
+  { reason, domain, site }: { reason: string; domain: string | null; site?: string },
 ): FastifyReply {
   request.log.info({ requestId: request.id, reason, fqdn: hostname }, 'authz denied');
   const settings = fastify.getSettings();
@@ -490,7 +491,8 @@ function sendRefusalPage(
       buildDomainRefusalPage(
         domain,
         { adminContact: settings.adminEmail, adminName: settings.adminName },
-        site,
+        // A host under no domain is named itself: there is no domain to name.
+        site ?? (domain === null ? hostname.toLowerCase() : undefined),
       ),
     );
 }

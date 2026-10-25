@@ -22,6 +22,7 @@ import {
   renderPanelVhost,
   renderStaticSiteVhost,
   renderTunnelVhost,
+  renameVhosts,
 } from '../src/lib/nginx.js';
 import {
   expectedTunnelVhost,
@@ -616,7 +617,15 @@ test('vhosts an older version named by subdomain are renamed to their hostnames,
     { info: (o) => logged.push(o), warn() {}, error: (o) => logged.push(o) },
     'example.com',
     {
-      readTunnels: async () => [panel, plugin, app, internal],
+      // A same-subdomain tunnel of another domain never takes an old file:
+      // names by subdomain existed on the primary domain alone.
+      readTunnels: async () => [
+        panel,
+        plugin,
+        app,
+        internal,
+        { ...app, id: 'other', fqdn: 'app.codelama.com.tr' },
+      ],
       renameVhosts: async (renames) => {
         asked = renames;
         return renames.map((r) => r.to);
@@ -624,13 +633,26 @@ test('vhosts an older version named by subdomain are renamed to their hostnames,
     },
   );
   assert.deepEqual(asked, [
-    { from: 'lamalibre-lamaste-auth', to: 'lamalibre-lamaste-auth-example.com' },
+    {
+      from: 'lamalibre-lamaste-auth',
+      to: 'lamalibre-lamaste-auth-example.com',
+      serverName: 'auth.example.com',
+    },
     {
       from: 'lamalibre-lamaste-agent-panel-agent-r730',
       to: 'lamalibre-lamaste-agent-panel-agent-r730.example.com',
+      serverName: 'agent-r730.example.com',
     },
-    { from: 'lamalibre-lamaste-app-herd', to: 'lamalibre-lamaste-app-herd.example.com' },
-    { from: 'lamalibre-lamaste-app-app', to: 'lamalibre-lamaste-app-app.example.com' },
+    {
+      from: 'lamalibre-lamaste-app-herd',
+      to: 'lamalibre-lamaste-app-herd.example.com',
+      serverName: 'herd.example.com',
+    },
+    {
+      from: 'lamalibre-lamaste-app-app',
+      to: 'lamalibre-lamaste-app-app.example.com',
+      serverName: 'app.example.com',
+    },
   ]);
   assert.equal(renamed.length, 4);
 
@@ -641,4 +663,158 @@ test('vhosts an older version named by subdomain are renamed to their hostnames,
     },
   });
   assert.deepEqual(failed, [], 'nothing renamed; the old names keep serving');
+});
+
+/** In-memory sites-available / sites-enabled for renameVhosts. */
+function fakeSites(available, enabled, { valid = true } = {}) {
+  const files = new Map(Object.entries(available));
+  const links = new Set(enabled);
+  const steps = [];
+  return {
+    files,
+    links,
+    steps,
+    ops: {
+      readInstalledVhost: async (n) => files.get(n) ?? null,
+      siteExists: async (n) => files.has(n),
+      isSiteEnabled: async (n) => links.has(n),
+      writeVhostFile: async (n, t) => {
+        steps.push(['write', n]);
+        files.set(n, t);
+      },
+      enableSite: async (n) => {
+        steps.push(['enable', n]);
+        links.add(n);
+      },
+      disableSite: async (n) => {
+        steps.push(['disable', n]);
+        links.delete(n);
+      },
+      removeSite: async (n) => {
+        steps.push(['remove', n]);
+        files.delete(n);
+        links.delete(n);
+      },
+      testConfig: async () => ({ valid, error: valid ? null : 'duplicate server_name' }),
+      reload: async () => steps.push(['reload']),
+    },
+  };
+}
+
+const OLD_APP = 'server {\n    listen 443 ssl;\n    server_name app.example.com;\n}\n';
+
+test('renameVhosts: a migration a crash cut short is finished — the old file goes, the new one takes its link', async () => {
+  const sites = fakeSites(
+    {
+      'lamalibre-lamaste-app-app': OLD_APP,
+      'lamalibre-lamaste-app-app.example.com': OLD_APP,
+    },
+    ['lamalibre-lamaste-app-app'],
+  );
+  const renamed = await renameVhosts(
+    [
+      {
+        from: 'lamalibre-lamaste-app-app',
+        to: 'lamalibre-lamaste-app-app.example.com',
+        serverName: 'app.example.com',
+      },
+    ],
+    sites.ops,
+  );
+  assert.deepEqual(renamed, ['lamalibre-lamaste-app-app.example.com']);
+  assert.equal(sites.files.has('lamalibre-lamaste-app-app'), false, 'the old file is gone');
+  assert.deepEqual([...sites.links], ['lamalibre-lamaste-app-app.example.com']);
+  assert.ok(sites.steps.some(([s]) => s === 'reload'));
+});
+
+test('renameVhosts: an old file serving another host is left alone; nginx refusing restores every link', async () => {
+  const foreign = fakeSites(
+    { 'lamalibre-lamaste-app-app': OLD_APP.replace('app.example.com', 'app.other.example') },
+    ['lamalibre-lamaste-app-app'],
+  );
+  const none = await renameVhosts(
+    [
+      {
+        from: 'lamalibre-lamaste-app-app',
+        to: 'lamalibre-lamaste-app-app.example.com',
+        serverName: 'app.example.com',
+      },
+    ],
+    foreign.ops,
+  );
+  assert.deepEqual(none, []);
+  assert.deepEqual(foreign.steps, [], 'nothing written, linked or reloaded');
+
+  const refused = fakeSites(
+    {
+      'lamalibre-lamaste-app-app': OLD_APP,
+      'lamalibre-lamaste-app-app.example.com': OLD_APP,
+      'lamalibre-lamaste-auth': 'server {\n    server_name auth.example.com;\n}\n',
+    },
+    ['lamalibre-lamaste-app-app', 'lamalibre-lamaste-auth'],
+    { valid: false },
+  );
+  await assert.rejects(
+    renameVhosts(
+      [
+        {
+          from: 'lamalibre-lamaste-app-app',
+          to: 'lamalibre-lamaste-app-app.example.com',
+          serverName: 'app.example.com',
+        },
+        {
+          from: 'lamalibre-lamaste-auth',
+          to: 'lamalibre-lamaste-auth-example.com',
+          serverName: 'auth.example.com',
+        },
+      ],
+      refused.ops,
+    ),
+    /nginx -t failed/,
+  );
+  assert.deepEqual(
+    [...refused.links].sort(),
+    ['lamalibre-lamaste-app-app', 'lamalibre-lamaste-auth'],
+    'the old links are back',
+  );
+  assert.ok(
+    refused.files.has('lamalibre-lamaste-app-app.example.com'),
+    'a file that was there stays',
+  );
+  assert.equal(refused.files.has('lamalibre-lamaste-auth-example.com'), false, 'a new file goes');
+});
+
+test('a protected static site under none of the relay domains renders closed, and the start says so', async () => {
+  const site = {
+    id: '11111111-2222-4333-8444-555555555555',
+    name: 'legacy',
+    fqdn: 'docs.customer.example',
+    type: 'custom',
+    spaMode: false,
+    autheliaProtected: true,
+    allowedUsers: [],
+    certIssued: true,
+    rootPath: '/var/www/lamaste/11111111-2222-4333-8444-555555555555/',
+  };
+  const { config } = renderStaticSiteVhost(
+    site,
+    '/etc/letsencrypt/live/docs.customer.example',
+    null,
+  );
+  assert.match(config, /location \/ \{\s*return 403;\s*\}/, 'nothing served without a sign-in');
+  assert.doesNotMatch(config, /try_files/);
+  assert.doesNotMatch(config, /auth_request/);
+
+  const notices = [];
+  const result = await reconcileSiteVhosts(log, [{ name: 'example.com', primary: true }], {
+    readSites: async () => [site],
+    readInstalledVhost: async () => null,
+    installVhost: async () => {},
+    isSiteEnabled: async () => true,
+    notify: async (n) => notices.push(n),
+  });
+  assert.deepEqual(result.closed, ['docs.customer.example']);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].level, 'warning');
+  assert.match(notices[0].message, /docs\.customer\.example/);
 });

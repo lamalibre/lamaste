@@ -63,12 +63,22 @@ export async function setPluginDomain(name, domain, { actor, logger }) {
   );
   if (result.changed) {
     const { syncOidcClients } = await import('./plugin-oidc.js');
-    await syncOidcClients(logger).catch((err) =>
+    try {
+      await syncOidcClients(logger);
+    } catch (err) {
       logger.warn(
         { plugin: name, err: err.message },
         'OIDC clients not rewritten for a new domain',
-      ),
-    );
+      );
+      // The identity tick syncs them again within a minute; until then the
+      // old domain's members still sign in to its clients — say so.
+      result.warnings = [
+        {
+          step: 'oidc',
+          message: `The plugin's OIDC clients still admit the previous domain's members (${err.message}); the panel retries within a minute`,
+        },
+      ];
+    }
     const { recomputeAudiences } = await import('./audience.js');
     await recomputeAudiences({ logger });
   }

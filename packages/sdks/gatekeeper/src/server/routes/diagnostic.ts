@@ -243,8 +243,11 @@ export async function diagnosticRoutes(fastify: FastifyInstance): Promise<void> 
     }
   });
 
-  // POST /api/cache/bust — invalidate all cached auth decisions
-  fastify.post('/cache/bust', async (_request: FastifyRequest, reply: FastifyReply) => {
+  // POST /api/cache/bust — invalidate all cached auth decisions. The panel
+  // calls it after every membership change: the projection is read again
+  // first, so a missed watch event never leaves a removed member admitted.
+  fastify.post('/cache/bust', async (_request: FastifyRequest, _reply: FastifyReply) => {
+    await fastify.reloadDomains();
     fastify.bustCache();
     return { ok: true };
   });

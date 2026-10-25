@@ -6,7 +6,8 @@
  * `tunnel.`, agent panels). Others are added (`pending`), then activated —
  * `auth.<domain>` issued and its vhost written, its session cookie rendered
  * into Authelia — and serve tunnels, sites and plugins of their own. Domains
- * never overlap (core `assertDomainAddable`).
+ * never overlap and never share a registrable domain (core
+ * `assertDomainRegistrable`).
  *
  * **Membership** (`domain_members`, state.db 0016) is explicit, by user id:
  * a person reaches a domain only as its member. It is rendered — active
@@ -32,19 +33,31 @@ import {
   DNS_WILDCARD_PROBE_LABEL,
   DOMAINS_PROJECTION_FILE,
   PromiseChainMutex,
-  assertDomainAddable,
   atomicWriteJSONIfChanged,
   domainOfHost,
+  isRelayHost,
   isIdentityUuid,
   isLamasteUsername,
 } from '@lamalibre/lamaste';
-import { registryIssuerDomain, resolveHostA } from '@lamalibre/lamaste/server';
+import {
+  assertDomainRegistrable,
+  registryIssuerDomain,
+  resolveHostA,
+  withTunnelLock,
+} from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
 import { updateDomainAccess } from './authelia.js';
 import { getConfig } from './config.js';
 import { getStateDb } from './state-db.js';
-import { readSites, readTunnels } from './state.js';
+import {
+  readInvitations,
+  readSites,
+  readTunnels,
+  withInvitationsLock,
+  withSitesLock,
+  writeInvitations,
+} from './state.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
@@ -123,6 +136,41 @@ export async function getDomain(name) {
   return domainRow(await getStateDb(), name);
 }
 
+/** Every domain's name, pending ones too — what the relay's own hostnames are kept free on. */
+export async function domainNames() {
+  return (await listDomains()).map((d) => d.name);
+}
+
+/**
+ * A tunnel, site or alias that holds one of the relay's own hostnames of
+ * `name` (`auth.`, `panel.`, `tunnel.`, `agent-*`): what was created there
+ * before the domain was added — its hostname, or null. A domain is added
+ * and activated only when none does: its sign-in vhost would share a
+ * `server_name` with it.
+ *
+ * @param {string} name
+ */
+async function relayHostTaken(name) {
+  const [tunnels, sites] = await Promise.all([readTunnels(), readSites()]);
+  const hosts = [
+    ...tunnels.flatMap((t) => (t.fqdn ? [t.fqdn] : [])),
+    ...sites.flatMap((s) => [s.fqdn, ...(s.aliases ?? [])]),
+  ];
+  return hosts.find((host) => isRelayHost(host, [name])) ?? null;
+}
+
+/** Refuse (409 `relay_host_taken`) while something holds one of `name`'s relay hostnames. */
+async function assertRelayHostsFree(name) {
+  const taken = await relayHostTaken(name);
+  if (taken !== null) {
+    throw httpError(
+      `'${taken}' is served by a tunnel or a site — the relay's own name on ${name}; remove it first`,
+      409,
+      { code: 'relay_host_taken' },
+    );
+  }
+}
+
 /** The active domains (the primary first). */
 export async function activeDomains() {
   return (await listDomains()).filter((d) => d.status === 'active');
@@ -181,12 +229,14 @@ export async function pluginDomainName(plugin) {
 }
 
 /**
- * The domain whose sign-in an invitation sends its user to: the first it
- * names, else the primary (an invitation from before the multi-domain
+ * The domain whose sign-in an invitation sends its user to: the first active
+ * one it names, else the primary (an invitation from before the multi-domain
  * relay names none).
  */
 export async function invitationSignInDomain(invitation) {
-  return invitation?.domains?.[0] ?? (await primaryDomainName());
+  // The first that serves: a pending domain has no sign-in page yet.
+  const active = await activeDomainNames();
+  return (invitation?.domains ?? []).find((d) => active.includes(d)) ?? (await primaryDomainName());
 }
 
 /**
@@ -222,6 +272,41 @@ export async function resolveActiveDomain(requested) {
     });
   }
   return wanted;
+}
+
+/**
+ * Whether `name` is an active domain now. A workflow that puts a tunnel, a
+ * site or a plugin on a domain asks it again under the tunnel or sites
+ * lock — the locks `removeDomain` holds — so nothing lands on a domain
+ * removed after the caller resolved it.
+ *
+ * @param {string} name
+ */
+export async function isActiveDomain(name) {
+  return (await activeDomainNames()).includes(name);
+}
+
+/**
+ * Run `fn` while `name` (when given) is an active domain and cannot be
+ * removed: under the domains lock, which `removeDomain` holds for its usage
+ * check. A 409 `domain_gone` when it is no longer active — for writes that
+ * name a domain outside the tunnel and sites locks (the registry
+ * credential).
+ *
+ * @template T
+ * @param {string | undefined | null} name
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export function withActiveDomain(name, fn) {
+  return domainsMutex.run(async () => {
+    if (name && !(await isActiveDomain(name))) {
+      throw httpError(`'${name}' is no longer an active domain of this relay`, 409, {
+        code: 'domain_gone',
+      });
+    }
+    return fn();
+  });
 }
 
 /**
@@ -528,13 +613,22 @@ export function withDomainRendering(fn, { logger } = {}) {
 }
 
 /**
- * Render the domains and their members: Gatekeeper's projection first, then
+ * Whether the last rendering failed — so a failure streak is audited and
+ * notified once, and its end once.
+ */
+let renderFailing = false;
+
+/**
+ * Render the domains and their members: Gatekeeper's projection, then
  * Authelia's session cookies, `access_control` and OIDC authorization
  * policies (`sites`: the protected sites, `sites.json` unless given — a
- * site change passes the sites it is saving). Authelia restarts only when
- * its configuration changed. Nothing before onboarding made a domain.
- * Throws when Authelia's configuration cannot be written (the projection
- * is written already, so Gatekeeper refuses what Authelia may still let in).
+ * site change passes the sites it is saving). Both are always attempted —
+ * one failing never keeps the other at older, more permissive members.
+ * Authelia restarts only when its configuration changed. Nothing before
+ * onboarding made a domain. Throws when either failed (callers report a
+ * warning; the identity tick renders again within a minute); the first
+ * failure of a streak is audited (`domain.render.failed`) and notified to
+ * the administrators, its end audited (`domain.render.recovered`).
  *
  * @param {{ logger?: import('pino').Logger, sites?: readonly object[] }} [opts]
  * @returns {Promise<{ changed: boolean, domains: number }>}
@@ -543,20 +637,59 @@ export function syncDomainAccess({ logger, sites } = {}) {
   return withDomainRendering(
     async (domains) => {
       if (domains.length === 0) return { changed: false, domains: 0 };
-      await atomicWriteJSONIfChanged(
-        path.join(STATE_DIR, DOMAINS_PROJECTION_FILE),
-        { v: 1, domains },
-        { mode: 0o600 },
-      );
-      const { changed } = await updateDomainAccess({
-        domains,
-        sites: protectedSiteRules(sites ?? (await readSites())),
-      });
-      if (changed) logger?.info({ domains: domains.length }, 'Authelia domain access updated');
+      const failures = [];
+      try {
+        await atomicWriteJSONIfChanged(
+          path.join(STATE_DIR, DOMAINS_PROJECTION_FILE),
+          { v: 1, domains },
+          { mode: 0o600 },
+        );
+      } catch (err) {
+        failures.push({ step: 'gatekeeper', message: err.message });
+      }
+      let changed = false;
+      try {
+        ({ changed } = await updateDomainAccess({
+          domains,
+          sites: protectedSiteRules(sites ?? (await readSites())),
+        }));
+        if (changed) logger?.info({ domains: domains.length }, 'Authelia domain access updated');
+      } catch (err) {
+        failures.push({ step: 'authelia', message: err.message });
+      }
+      await recordRenderOutcome(failures, logger);
+      if (failures.length > 0) {
+        throw new Error(failures.map((f) => `${f.step}: ${f.message}`).join('; '));
+      }
       return { changed, domains: domains.length };
     },
     { logger },
   );
+}
+
+/** Audit and notify the start and the end of a failure streak (steps only, never members). */
+async function recordRenderOutcome(failures, logger) {
+  const failing = failures.length > 0;
+  if (failing === renderFailing) return;
+  renderFailing = failing;
+  const steps = failures.map((f) => f.step);
+  await recordAuditBestEffort(
+    failing
+      ? { actor: 'lamaste', action: 'domain.render.failed', details: { steps } }
+      : { actor: 'lamaste', action: 'domain.render.recovered', details: {} },
+    logger,
+  );
+  if (failing) {
+    const { notifyAdminsBestEffort } = await import('./notifications.js');
+    await notifyAdminsBestEffort(
+      {
+        source: 'lamaste',
+        level: 'critical',
+        message: `Who may reach the relay's domains could not be rendered (${steps.join(', ')}): a membership that ended may still let its user in. The panel retries every minute.`,
+      },
+      logger,
+    );
+  }
 }
 
 /**
@@ -573,8 +706,8 @@ async function settleMembership(logger, { effective = true } = {}) {
   } catch (err) {
     logger?.error({ err: err.message }, 'Rendering domain access failed');
     warnings.push({
-      step: 'authelia',
-      message: `Authelia was not updated (${err.message}); the panel renders it again within a minute`,
+      step: 'render',
+      message: `Domain access was not fully rendered (${err.message}); the panel renders it again within a minute`,
     });
   }
   if (!effective) return warnings;
@@ -706,7 +839,7 @@ export async function removeDomainMember(name, user, { actor, logger }) {
   if (!removed) return { removed: false };
   const warnings = await settleMembership(logger, { effective: removed.effective });
   if (removed.username) {
-    warnings.push(...(await revokeRegistryTokensFor(name, removed.username, userId, logger)));
+    warnings.push(...(await revokeRegistryTokensFor(removed.username, userId, logger)));
   }
   return { removed: true, ...withWarnings(warnings) };
 }
@@ -715,8 +848,7 @@ export async function removeDomainMember(name, user, { actor, logger }) {
  * Make user `userId`'s memberships exactly `domains` — the users API's edit:
  * the difference applied in one transaction, each membership audited as
  * `addDomainMember` / `removeDomainMember` audit them. Then one rendering,
- * and registry tokens revoked for a membership of the registry's domain
- * that ended. Throws a 400 `unknown_domain` for a domain the relay does not
+ * and the user's registry tokens revoked when a membership ended. Throws a 400 `unknown_domain` for a domain the relay does not
  * have, a 404 / 409 for a user it cannot be.
  *
  * @param {string} userId
@@ -763,21 +895,25 @@ export async function setUserDomains(userId, domains, { actor, logger }) {
   });
   if (!change.changed) return { domains: wanted, changed: false };
   const warnings = await settleMembership(logger, { effective: change.effective });
-  if (change.username) {
-    for (const domain of change.ended) {
-      warnings.push(...(await revokeRegistryTokensFor(domain, change.username, userId, logger)));
-    }
+  if (change.username && change.ended.length > 0) {
+    warnings.push(...(await revokeRegistryTokensFor(change.username, userId, logger)));
   }
   return { domains: wanted, changed: true, ...withWarnings(warnings) };
 }
 
 /**
- * Revoke a user's registry tokens when `domain` is the registry's — the
- * domain its sign-in (`feria login`) admits members of. Returns warnings.
+ * Revoke a user's registry tokens because one of their memberships ended —
+ * any of them: which domain's members `feria login` admits (the Feria
+ * plugin's domain) and which issuer the credential trusts (`issuerDomain`)
+ * are set apart, so a single "registry domain" would miss one. Best effort
+ * (they sign in again); returns warnings.
+ *
+ * @param {string} username
+ * @param {string} userId
+ * @param {import('pino').Logger} [logger]
  */
-async function revokeRegistryTokensFor(domain, username, userId, logger) {
+async function revokeRegistryTokensFor(username, userId, logger) {
   try {
-    if ((await registryDomain()) !== domain) return [];
     const { revokeUserRegistryTokens } = await import('./registry-credential.js');
     await revokeUserRegistryTokens(username, { deleted: true }, logger, { userId });
     return [];
@@ -785,6 +921,31 @@ async function revokeRegistryTokensFor(domain, username, userId, logger) {
     logger?.warn({ userId, err: err.message }, 'Registry tokens were not revoked');
     return [{ step: 'registry', message: `Registry tokens were not revoked: ${err.message}` }];
   }
+}
+
+/**
+ * Revoke the registry tokens of every user who is not a member of `domain`
+ * — after the registry credential's issuer domain became `domain`: who may
+ * hold a token follows the new domain. Best effort; returns warnings.
+ *
+ * @param {string} domain
+ * @param {import('pino').Logger} [logger]
+ */
+export async function revokeRegistryTokensOutside(domain, logger) {
+  const db = await getStateDb();
+  const outside = db
+    .prepare(
+      `SELECT u.user_id, u.username FROM directory_users u
+        WHERE u.status != 'removed' AND u.username IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM domain_members m
+                           WHERE m.user_id = u.user_id AND m.domain = ?)`,
+    )
+    .all(domain);
+  const warnings = [];
+  for (const row of outside) {
+    warnings.push(...(await revokeRegistryTokensFor(row.username, row.user_id, logger)));
+  }
+  return warnings;
 }
 
 // ---------------------------------------------------------------------------
@@ -807,12 +968,16 @@ export async function addDomain(name, { actor, logger }) {
       .all()
       .map((r) => r.name);
     try {
-      assertDomainAddable(name, existing);
+      assertDomainRegistrable(name, existing);
     } catch (err) {
-      throw err.code === 'DOMAIN_OVERLAP'
-        ? httpError(err.message, 409, { code: 'domain_overlap' })
-        : httpError(err.message, 400, { code: 'invalid_domain' });
+      if (err.code === 'DOMAIN_OVERLAP' || err.code === 'SAME_REGISTRABLE_DOMAIN') {
+        throw httpError(err.message, 409, { code: err.code.toLowerCase() });
+      }
+      throw httpError(err.message, 400, {
+        code: err.code === 'PUBLIC_SUFFIX' ? 'public_suffix' : 'invalid_domain',
+      });
     }
+    await assertRelayHostsFree(name);
     db.prepare(
       "INSERT INTO domains (name, is_primary, status, created_at) VALUES (?, 0, 'pending', ?)",
     ).run(name, new Date().toISOString());
@@ -896,6 +1061,7 @@ export async function activateDomain(name, { actor, logger }) {
     const db = await getStateDb();
     const domain = domainOr404(db, name);
     if (domain.status === 'active') return null;
+    await assertRelayHostsFree(name);
     const { email } = getConfig();
     if (!email) throw httpError('The panel has no email for certificates', 400);
     const deps = await activationDeps();
@@ -990,52 +1156,95 @@ export async function domainUsage(name) {
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
  */
 export async function removeDomain(name, { actor, logger }) {
-  const active = await domainsMutex.run(async () => {
-    const db = await getStateDb();
-    const domain = domainOr404(db, name);
-    if (domain.primary) {
-      throw httpError('The primary domain cannot be removed', 400, { code: 'primary_domain' });
-    }
-    const usedBy = await domainUsage(name);
-    const { tunnels, sites, plugins, registry } = usedBy;
-    if (tunnels.length + sites.length + plugins.length > 0 || registry) {
-      throw httpError(`Domain '${name}' is in use`, 409, { code: 'domain_in_use', usedBy });
-    }
-    const members = inTransaction(db, () => {
-      const ended = db
-        .prepare('DELETE FROM domain_members WHERE domain = ? RETURNING user_id')
-        .all(name)
-        .map((r) => r.user_id);
-      db.prepare('DELETE FROM domains WHERE name = ?').run(name);
-      return ended;
+  // Under the tunnel and sites locks, as every workflow that puts a tunnel,
+  // a site or a plugin on a domain re-checks the domain under them: nothing
+  // lands on a domain between this usage check and its removal.
+  const removed = await withTunnelLock(() =>
+    withSitesLock(() => domainsMutex.run(() => removeDomainHeld(name, { actor, logger }))),
+  );
+  const warnings = await settleMembership(logger, { effective: removed.active });
+  // An invitation still naming the domain would grant it again if the name
+  // were ever added back (to someone else): it forgets it.
+  try {
+    const stripped = await withInvitationsLock(async () => {
+      const invitations = await readInvitations();
+      let count = 0;
+      const kept = invitations.map((inv) => {
+        if (!Array.isArray(inv.domains) || !inv.domains.includes(name)) return inv;
+        count += 1;
+        return { ...inv, domains: inv.domains.filter((d) => d !== name) };
+      });
+      if (count > 0) await writeInvitations(kept);
+      return count;
     });
-    for (const userId of members) {
+    if (stripped > 0) {
       await recordAuditBestEffort(
         {
           actor,
-          action: 'directory.membership.removed',
-          details: { domain: name, userId, reason: 'domain-removed' },
+          action: 'invitation.domain.removed',
+          details: { domain: name, invitations: stripped },
         },
         logger,
       );
     }
-    if (domain.status === 'active') {
-      const deps = await activationDeps();
-      await deps.removeAuthVhost(name).catch((err) => {
-        logger?.warn(
-          { domain: name, err: err.message },
-          'The auth vhost of a removed domain stayed',
-        );
-      });
+  } catch (err) {
+    logger?.warn({ domain: name, err: err.message }, 'Invitations still name a removed domain');
+    warnings.push({
+      step: 'invitations',
+      message: `Invitations still name ${name} (${err.message})`,
+    });
+  }
+  // Any membership that ends takes its user's registry tokens.
+  for (const member of removed.members) {
+    if (member.username) {
+      warnings.push(...(await revokeRegistryTokensFor(member.username, member.userId, logger)));
     }
+  }
+  return { removed: true, ...withWarnings(warnings) };
+}
+
+async function removeDomainHeld(name, { actor, logger }) {
+  const db = await getStateDb();
+  const domain = domainOr404(db, name);
+  if (domain.primary) {
+    throw httpError('The primary domain cannot be removed', 400, { code: 'primary_domain' });
+  }
+  const usedBy = await domainUsage(name);
+  const { tunnels, sites, plugins, registry } = usedBy;
+  if (tunnels.length + sites.length + plugins.length > 0 || registry) {
+    throw httpError(`Domain '${name}' is in use`, 409, { code: 'domain_in_use', usedBy });
+  }
+  const members = inTransaction(db, () => {
+    const ended = db
+      .prepare(
+        `DELETE FROM domain_members WHERE domain = ?
+          RETURNING user_id AS userId,
+                    (SELECT username FROM directory_users u
+                      WHERE u.user_id = domain_members.user_id) AS username`,
+      )
+      .all(name);
+    db.prepare('DELETE FROM domains WHERE name = ?').run(name);
+    return ended;
+  });
+  for (const { userId } of members) {
     await recordAuditBestEffort(
-      { actor, action: 'domain.removed', details: { domain: name, members: members.length } },
+      {
+        actor,
+        action: 'directory.membership.removed',
+        details: { domain: name, userId, reason: 'domain-removed' },
+      },
       logger,
     );
-    return domain.status === 'active';
-  });
-  return {
-    removed: true,
-    ...withWarnings(await settleMembership(logger, { effective: active })),
-  };
+  }
+  if (domain.status === 'active') {
+    const deps = await activationDeps();
+    await deps.removeAuthVhost(name).catch((err) => {
+      logger?.warn({ domain: name, err: err.message }, 'The auth vhost of a removed domain stayed');
+    });
+  }
+  await recordAuditBestEffort(
+    { actor, action: 'domain.removed', details: { domain: name, members: members.length } },
+    logger,
+  );
+  return { active: domain.status === 'active', members };
 }

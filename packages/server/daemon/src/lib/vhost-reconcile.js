@@ -65,6 +65,7 @@ import {
   renderTunnelVhost,
   vhostCertDir,
 } from './nginx.js';
+import { notifyAdminsBestEffort } from './notifications.js';
 import { readSites, readTunnels } from './state.js';
 
 /** A subdomain or site id as it may appear in a site name. */
@@ -310,7 +311,13 @@ export async function reconcileUserSurfaceVhosts(
   });
 }
 
-const defaultSiteDeps = { readSites, readInstalledVhost, installVhost, isSiteEnabled };
+const defaultSiteDeps = {
+  readSites,
+  readInstalledVhost,
+  installVhost,
+  isSiteEnabled,
+  notify: notifyAdminsBestEffort,
+};
 
 /**
  * Reconcile the vhosts that proxy a browser to the panel or ask Authelia
@@ -363,11 +370,21 @@ export async function reconcileSiteVhosts(log, domains, deps = defaultSiteDeps) 
   } catch (err) {
     result.failed.push({ vhost: 'sites', error: err instanceof Error ? err.message : String(err) });
   }
+  const closed = [];
   for (const site of sites) {
     if (typeof site.id !== 'string' || !SITE_NAME_PART_RE.test(site.id)) continue;
     // A plugin's web surface is its plugin's to render (lib/web-surface.js
     // `reconcileWebSurfaces`, once plugins and hostings can be read).
     if (site.owner) continue;
+    // Protected, but under none of the relay's domains (possible since 4.6):
+    // no sign-in can admit anyone, and its vhost renders closed.
+    if (
+      site.autheliaProtected &&
+      typeof site.fqdn === 'string' &&
+      domainOfHost(site.fqdn, names) === null
+    ) {
+      closed.push(site.fqdn);
+    }
     const name = `lamalibre-lamaste-site-${site.id}`;
     await reconcileOne(
       {
@@ -387,6 +404,22 @@ export async function reconcileSiteVhosts(log, domains, deps = defaultSiteDeps) 
       deps,
     );
   }
+
+  if (closed.length > 0) {
+    log.warn(
+      { sites: closed },
+      'protected static sites under none of the relay domains are closed (403)',
+    );
+    await deps.notify(
+      {
+        source: 'lamaste',
+        level: 'warning',
+        message: `Protected static sites under none of this relay's domains answer 403 to everyone: ${closed.join(', ')}. Add their domain, or turn protection off.`,
+      },
+      log,
+    );
+  }
+  result.closed = closed;
 
   logResult(log, 'site', result);
   return result;
@@ -411,11 +444,21 @@ const defaultRenameDeps = { readTunnels, renameVhosts };
  */
 export async function renameLegacyVhosts(log, primary, deps = defaultRenameDeps) {
   return withTunnelLock(async () => {
-    const renames = [{ from: LEGACY_AUTH_VHOST, to: authVhostName(primary) }];
+    const renames = [
+      { from: LEGACY_AUTH_VHOST, to: authVhostName(primary), serverName: `auth.${primary}` },
+    ];
     for (const tunnel of await deps.readTunnels()) {
       const to = managedTunnelVhostName(tunnel);
       if (to === null) continue;
-      renames.push({ from: legacyTunnelVhostName(tunnel.type, tunnel.subdomain), to });
+      // Names by subdomain existed only on the primary domain, and an old
+      // file is the tunnel's only when it serves the tunnel's hostname — a
+      // same-subdomain tunnel of another domain never takes it.
+      if (tunnel.fqdn !== `${tunnel.subdomain}.${primary}`) continue;
+      renames.push({
+        from: legacyTunnelVhostName(tunnel.type, tunnel.subdomain),
+        to,
+        serverName: tunnel.fqdn,
+      });
     }
     try {
       const renamed = await deps.renameVhosts(renames);

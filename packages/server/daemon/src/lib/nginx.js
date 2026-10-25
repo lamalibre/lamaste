@@ -516,9 +516,17 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
         proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
     }
 ${userAccess}
-    # Default — proxy to Authelia
+    # Default — proxy to Authelia. Authelia takes the OIDC issuer and the
+    # session cookie's domain from X-Forwarded-Host / -Proto: this portal's
+    # own name, never what the client sent. (A location that sets any
+    # header inherits none of the server's.)
     location / {
         proxy_pass http://127.0.0.1:9091;
+        proxy_set_header Host ${fqdn};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host ${fqdn};
+        proxy_set_header X-Forwarded-Proto https;
     }
 }
 `;
@@ -1150,6 +1158,9 @@ export function renderStaticSiteVhost(site, certDir, domain) {
 
   let autheliaBlock = '';
   let locationAuthDirectives = '';
+  // A protected site under none of the relay's domains has no sign-in that
+  // could admit anyone: it is closed, never served without authentication.
+  const closed = site.autheliaProtected && !domain;
 
   if (site.autheliaProtected && domain) {
     autheliaBlock = `
@@ -1224,7 +1235,7 @@ export function renderStaticSiteVhost(site, certDir, domain) {
     add_header X-Content-Type-Options nosniff always;
 ${autheliaBlock}
     location / {${locationAuthDirectives}
-        ${tryFiles};
+        ${closed ? 'return 403' : tryFiles};
     }
 ${
   site.autheliaProtected && domain
@@ -1909,45 +1920,80 @@ export async function disableAgentPanelVhost(fqdn) {
   await reload();
 }
 
+/** The file operations {@link renameVhosts} uses (tests pass stand-ins). */
+const renameFileOps = {
+  readInstalledVhost: (name) => readInstalledVhost(name),
+  siteExists: (name) => siteExists(name),
+  isSiteEnabled: (name) => isSiteEnabled(name),
+  writeVhostFile: (name, text) => writeVhostFile(name, text),
+  enableSite: (name) => enableSite(name),
+  disableSite: (name) => disableSite(name),
+  removeSite: (name) => siteAction('remove', name),
+  testConfig: () => testConfig(),
+  reload: () => reload(),
+};
+
 /**
- * Rename installed vhosts — `[{ from, to }]` — in one nginx reload: each
- * `from` that exists while its `to` does not is written again under `to`
- * with the same text and link state, and unlinked; then `nginx -t`. When it
- * passes, nginx reloads and the old files go. When it fails — or a step
- * does — every new file goes, every old link comes back, nothing reloads,
- * and the error is thrown. The multi-domain relay's start-up migration of
- * vhosts named by subdomain to vhosts named by hostname.
+ * Rename installed vhosts — `[{ from, to, serverName? }]` — in one nginx
+ * reload: each `from` that exists is written again under `to` with the same
+ * text and link state, and unlinked; then `nginx -t`. When it passes, nginx
+ * reloads and the old files go. When it fails — or a step does — every new
+ * file goes, every old link comes back, nothing reloads, and the error is
+ * thrown. The multi-domain relay's start-up migration of vhosts named by
+ * subdomain to vhosts named by hostname.
  *
- * @param {ReadonlyArray<{ from: string, to: string }>} renames
- * @returns {Promise<string[]>} the `to` names written
+ * A `from` whose `to` exists already — a migration a crash cut short — is
+ * finished, not skipped: `to` takes `from`'s link and `from` goes, so a
+ * stale old file never outlives its tunnel. `serverName`, when given, must
+ * be the old file's `server_name`: a file that serves another host is
+ * nobody's to rename.
+ *
+ * @param {ReadonlyArray<{ from: string, to: string, serverName?: string }>} renames
+ * @param {typeof renameFileOps} [ops]
+ * @returns {Promise<string[]>} the `to` names written or finished
  */
-export async function renameVhosts(renames) {
+export async function renameVhosts(renames, ops = renameFileOps) {
   const done = [];
   try {
-    for (const { from, to } of renames) {
-      const text = await readInstalledVhost(from);
-      if (text === null || (await siteExists(to))) continue;
-      const linked = await isSiteEnabled(from);
-      done.push({ from, to, linked });
-      await writeVhostFile(to, text);
+    for (const { from, to, serverName } of renames) {
+      const text = await ops.readInstalledVhost(from);
+      if (text === null) continue;
+      if (serverName !== undefined && !servesHost(text, serverName)) continue;
+      const linked = await ops.isSiteEnabled(from);
+      if (await ops.siteExists(to)) {
+        const toLinked = await ops.isSiteEnabled(to);
+        done.push({ from, to, linked, existed: true, linkedTo: linked && !toLinked });
+        if (linked && !toLinked) await ops.enableSite(to);
+        if (linked) await ops.disableSite(from);
+        continue;
+      }
+      done.push({ from, to, linked, existed: false, linkedTo: linked });
+      await ops.writeVhostFile(to, text);
       if (linked) {
-        await enableSite(to);
-        await disableSite(from);
+        await ops.enableSite(to);
+        await ops.disableSite(from);
       }
     }
     if (done.length === 0) return [];
-    const result = await testConfig();
+    const result = await ops.testConfig();
     if (!result.valid) throw new Error(`nginx -t failed after renaming vhosts: ${result.error}`);
-    await reload();
+    await ops.reload();
   } catch (err) {
-    for (const { from, to, linked } of done.reverse()) {
-      await siteAction('remove', to).catch(() => {});
-      if (linked) await enableSite(from).catch(() => {});
+    for (const { from, to, linked, existed, linkedTo } of done.reverse()) {
+      if (!existed) await ops.removeSite(to).catch(() => {});
+      else if (linkedTo) await ops.disableSite(to).catch(() => {});
+      if (linked) await ops.enableSite(from).catch(() => {});
     }
     throw err;
   }
   for (const { from } of done) {
-    await siteAction('remove', from).catch(() => {});
+    await ops.removeSite(from).catch(() => {});
   }
   return done.map((d) => d.to);
+}
+
+/** True when vhost `text`'s first `server_name` is exactly `host`. */
+function servesHost(text, host) {
+  const match = /^\s*server_name\s+([^;\s]+)\s*;/m.exec(text);
+  return match !== null && match[1].toLowerCase() === host.toLowerCase();
 }

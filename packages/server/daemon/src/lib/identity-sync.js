@@ -884,6 +884,15 @@ export async function identityTick(logger) {
       } catch (err) {
         logger?.warn({ err: err.message }, 'Could not render domain access');
       }
+      // The OIDC provider too, as the plugins and the members now say: a
+      // plugin moved to another domain whose sync failed is healed here.
+      // Compare-first, so a steady relay writes nothing.
+      try {
+        const { syncOidcClients } = await import('./plugin-oidc.js');
+        await syncOidcClients(logger);
+      } catch (err) {
+        logger?.warn({ err: err.message }, 'Could not sync the OIDC clients');
+      }
     }
     await clearPendingPrincipals({ logger });
     await recomputeAudiences({ logger });

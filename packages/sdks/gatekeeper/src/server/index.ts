@@ -106,6 +106,9 @@ async function loadHostState(): Promise<void> {
   userSurfaceHostsCache = userSurfaceHosts(tunnels, sites);
 }
 
+/** How often `domains.json` is read again whatever the watcher saw. */
+const DOMAINS_RELOAD_INTERVAL_MS = 60_000;
+
 async function loadDomains(): Promise<void> {
   const projection = parseDomainsProjection(await readStateFile(domainsPath));
   domainsCache = projection ? indexDomainsProjection(projection) : null;
@@ -228,6 +231,7 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
     sessionCache.clear();
   };
   server.decorate('bustCache', bustCache);
+  server.decorate('reloadDomains', loadDomains);
   registerCacheInvalidator(bustCache);
   server.decorate('updateSettings', (s: GatekeeperSettings) => {
     settingsCache = s;
@@ -237,6 +241,16 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   watchFile(tunnelsPath, loadHostState, server.log);
   watchFile(sitesPath, loadHostState, server.log);
   watchFile(domainsPath, loadDomains, server.log);
+  // A watch event can be missed, and the panel never rewrites an unchanged
+  // projection: read it again every minute too (and on every cache bust —
+  // the panel busts after each membership change).
+  const domainsTimer = setInterval(() => {
+    loadDomains().catch((err: unknown) =>
+      server.log.warn({ err: (err as Error).message }, 'Could not reload domains.json'),
+    );
+  }, DOMAINS_RELOAD_INTERVAL_MS);
+  domainsTimer.unref();
+  server.addHook('onClose', async () => clearInterval(domainsTimer));
 
   // TODO(sqlite-step-4): groups.json and access-grants.json are now
   // .migrated stubs after first SQLite open. These watch registrations stay
@@ -377,6 +391,8 @@ declare module 'fastify' {
     getCacheVersion(): number;
     getRelaySigner(): RelaySigner;
     bustCache(): void;
+    /** Read `domains.json` again now. */
+    reloadDomains(): Promise<void>;
     updateSettings(s: GatekeeperSettings): void;
   }
 }

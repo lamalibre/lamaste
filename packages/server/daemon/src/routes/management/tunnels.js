@@ -34,7 +34,7 @@ import {
   isInternalPluginPort,
 } from '@lamalibre/lamaste';
 import { getConfig } from '../../lib/config.js';
-import { primaryDomainName, resolveActiveDomain } from '../../lib/domains.js';
+import { isActiveDomain, primaryDomainName, resolveActiveDomain } from '../../lib/domains.js';
 import { sendFailure } from '../../lib/app-error.js';
 import { readTunnels, readSites } from '../../lib/state.js';
 import { getAgentHostFactsHash, loadAgentRegistry } from '../../lib/mtls.js';
@@ -531,6 +531,7 @@ export default async function tunnelRoutes(fastify, _opts) {
           agentLabel,
           maxBodySizeMb,
           domain,
+          domainActive: isActiveDomain,
           email: config.email,
           nginx: nginxDeps,
           certbot: certbotDeps,

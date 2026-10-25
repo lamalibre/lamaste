@@ -4,6 +4,7 @@
  */
 
 import { apiFetch } from './api.js';
+import { pathSegment } from '../admin/lib/domains.js';
 
 /**
  * POST `data` as JSON — or nothing at all when there is no data: the panel
@@ -64,7 +65,7 @@ function removalQuery({ force = false, purge = false } = {}) {
 
 /** `/api/domains/<name><rest>`. */
 function domainPath(name, rest = '') {
-  return `/api/domains/${encodeURIComponent(name)}${rest}`;
+  return `/api/domains/${pathSegment(name)}${rest}`;
 }
 
 /** `/api/plugins/<name>/<rest>`. */
@@ -99,10 +100,8 @@ export const webAdminClient = {
   activateDomain: (name) => jsonPost(domainPath(name, '/activate')),
   removeDomain: (name) => jsonDelete(domainPath(name)),
   getDomainMembers: (name) => apiFetch(domainPath(name, '/members')),
-  addDomainMember: (name, user) =>
-    jsonPut(domainPath(name, `/members/${encodeURIComponent(user)}`)),
-  removeDomainMember: (name, user) =>
-    jsonDelete(domainPath(name, `/members/${encodeURIComponent(user)}`)),
+  addDomainMember: (name, user) => jsonPut(domainPath(name, `/members/${pathSegment(user)}`)),
+  removeDomainMember: (name, user) => jsonDelete(domainPath(name, `/members/${pathSegment(user)}`)),
   setPluginDomain: (name, domain) => jsonPut(pluginPath(name, 'domain'), { domain }),
 
   // --- Invitations ---

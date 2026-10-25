@@ -24,12 +24,10 @@ import { panelRequest } from '../panel-api.js';
 import { emit, emitComplete } from '../ndjson.js';
 import { fail } from '../fail.js';
 import { terminalText } from '../plugin-settings.js';
-import { domainRows } from '../domains.js';
+import { domainPath, domainRows, pathSegment } from '../domains.js';
 
 /** A panel request, or exit with its refusal. */
 const call = (json, ...args) => panelRequest(...args).catch((err) => fail(err.message, json, err));
-
-const domainPath = (name, rest = '') => `/api/domains/${encodeURIComponent(name)}${rest}`;
 
 /**
  * @param {string[]} args
@@ -159,7 +157,7 @@ async function membersCmd(name, rest, { json }) {
   const result = await call(
     json,
     action === 'add' ? 'PUT' : 'DELETE',
-    domainPath(name, `/members/${encodeURIComponent(user)}`),
+    domainPath(name, `/members/${pathSegment(user)}`),
   );
   if (json) {
     emitComplete(result);

@@ -621,3 +621,6 @@ export type {
   AgentHalfCallOptions,
   AgentHalfCallResult,
 } from '../agent-half-call.js';
+
+// --- Base domains side by side: the Public Suffix List (multi-domain relay) ---
+export { assertDomainRegistrable, registrableDomain } from './domain-registrable.js';

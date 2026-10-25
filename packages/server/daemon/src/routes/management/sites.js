@@ -19,7 +19,12 @@ import { webSurfaceServing } from '../../lib/web-surface.js';
 import { getConfig } from '../../lib/config.js';
 import { readSites, writeSites, readTunnels, withSitesLock } from '../../lib/state.js';
 import { writeStaticSiteVhost, removeStaticSiteVhost } from '../../lib/nginx.js';
-import { activeDomainNames, resolveActiveDomain, syncDomainAccess } from '../../lib/domains.js';
+import {
+  activeDomainNames,
+  domainNames,
+  resolveActiveDomain,
+  syncDomainAccess,
+} from '../../lib/domains.js';
 import { issueTunnelCert, getCertPath, issueSiteCert } from '../../lib/certbot.js';
 import {
   createSiteDirectory,
@@ -303,16 +308,10 @@ export default async function sitesRoutes(fastify, _opts) {
           error: "A custom site's hostname names its domain — `domain` is for managed sites",
         });
       }
-      let domain;
       try {
-        domain = await resolveActiveDomain(body.domain);
-      } catch (err) {
-        return sendFailure(request, reply, err, 'Failed to read the domains');
-      }
-      const domains = await activeDomainNames();
-
-      try {
-        const result = await withHostnameLocks(() =>
+        // The domain is resolved under the hostname locks — those a domain's
+        // removal takes — so the site never lands on a removed domain.
+        const result = await withHostnameLocks(async () =>
           createSite({
             name: body.name,
             type: body.type,
@@ -320,8 +319,9 @@ export default async function sitesRoutes(fastify, _opts) {
             aliases: body.aliases,
             spaMode: body.spaMode,
             autheliaProtected: body.autheliaProtected,
-            domain,
-            domains,
+            domain: await resolveActiveDomain(body.domain),
+            domains: await activeDomainNames(),
+            relayDomains: await domainNames(),
             email: config.email,
             nginx: nginxDeps,
             certbot: certbotDeps,
@@ -342,6 +342,9 @@ export default async function sitesRoutes(fastify, _opts) {
             error: 'Failed to create site',
             details: err.message,
           });
+        }
+        if (Number.isInteger(err.statusCode)) {
+          return sendFailure(request, reply, err, 'Failed to read the domains');
         }
         request.log.error(err, 'Failed to create site');
         return reply.code(500).send({
@@ -412,6 +415,7 @@ export default async function sitesRoutes(fastify, _opts) {
             allowedUsers: body.allowedUsers,
             aliases: body.aliases,
             domains: await activeDomainNames(),
+            relayDomains: await domainNames(),
             email: config.email,
             serverIp: config.ip,
             nginx: nginxDeps,
