@@ -722,22 +722,31 @@ afterwards).
 Fixed on the way:
 
 - **Product — a user surface's refusal was nginx's page, not JSON.** Under
-  `auth_request` nginx keeps only the subrequest's status, never its body,
-  so Gatekeeper's `{ error: 'not_a_member' }` never reached an application
-  (spec 48). The user-surface locations now send a 403 to
-  `/internal/lamaste/user-surface-403`, which asks Gatekeeper's
-  `/authz/user-surface-refusal/:fqdn` — the same decision asked again, its
-  refusal as JSON (`not_a_member`, else `forbidden`), never an assertion (a
-  request allowed by now was still refused). Tests: Gatekeeper
-  authz-user-surface, serverd nginx-vhosts.
+  `auth_request` nginx keeps only the subrequest's status and headers, never
+  its body, so Gatekeeper's `{ error: 'not_a_member' }` never reached an
+  application (spec 48). Gatekeeper now names the refusal in
+  `X-Lamalibre-Refusal` (`not_a_member`, else `forbidden`) on the one
+  decision it makes; the user-surface locations capture it
+  (`auth_request_set $lamaste_refusal …`) and send a 403 to
+  `/internal/lamaste/user-surface-403`, which answers one of two fixed JSON
+  bodies (`if ($lamaste_refusal = not_a_member)`, else `forbidden`) —
+  Gatekeeper is never asked twice. `lamaste-priv` allows `default_type` (a
+  media type) in a location for it. Tests: Gatekeeper authz-user-surface,
+  serverd nginx-vhosts, lamaste-priv.
 - **Product — Authelia was talked to before it listened.** `reloadAuthelia`
   and `startAuthelia` slept 2 s and asked systemd whether Authelia was active
   (it is as soon as the process is spawned). Setting the registry credential
   to OIDC restarts Authelia to add the panel's client and then asks its
   token endpoint: "fetch failed" (spec 43, on its second run — a race the
-  relay's frequent restarts made common). Both now wait until systemd says
-  active and `GET http://127.0.0.1:9091/api/health` answers 200 (30 s at
-  most). Test: serverd authelia-ready.
+  relay's frequent restarts made common). Both now wait for core
+  `autheliaReady` — `GET http://127.0.0.1:9091/api/health` answering 200,
+  30 s at most, ended at once when systemd reports the unit failed; a
+  rollback's restart waits 10 s at most, so a configuration that stays broken
+  does not hold the domains' rendering lock for a second full wait. The other
+  places that started Authelia and paused wait the same way: the Services
+  page's start/restart/reload (serverd `services.js`), a redeploy
+  (`create-lamaste`), and the rodeo reset between tests (`rodeo.hooks.js`,
+  `run-all.sh`, polling the health endpoint). Test: serverd authelia-ready.
 - **Spec harness — a TOTP code reused across a step boundary** (spec 46).
   `md_sign_in` recorded the step before signing in; a sign-in begun at a
   step's last second took the next step's code, so a second sign-in in that
@@ -750,7 +759,21 @@ Fixed on the way:
 - **Campaign environment — the VMs' MTU.** The orchestrator's uplink was a
   VPN tunnel (MTU 1420) that drops ICMP "fragmentation needed" for the VMs'
   NATed traffic: full-size TLS packets vanished (npm `ECONNRESET`, chisel's
-  GitHub download reset). `node-ready` (both suites) sets the VMs' MTU to 1400.
+  GitHub download reset). `node-ready` (both suites) sets the VMs' MTU to
+  1400 at once and persists it in a netplan drop-in on the `default` entry
+  rodeo's static address extends (`99-lamaste-mtu.yaml`), so it survives the
+  tier's snapshot/restore and a reboot.
+
+Follow-ups outside this repository (not done here):
+
+- **rodeo's single-VM runner** should upload what `helpers.sh` sources (rodeo
+  `agent/suite.ts`); `helpers.sh` falling back to the tier's
+  `/tmp/e2e/test-domains.sh` stands in until it does.
+- **The MTU at a deeper layer** — an MSS clamp on the orchestrator or rodeo's
+  VM launch configuration — so no project's tiers need to know about the
+  uplink.
+- One constant for Authelia's loopback base URL, shared by `authelia.ts` and
+  `registry-credential.ts` (a nit).
 
 The three points the specs could not prove without running:
 

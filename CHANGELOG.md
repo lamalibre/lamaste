@@ -31,7 +31,8 @@ Multi-domain relay: one relay serves several base domains — one user directory
 
 - Managed sites refuse `agent-` names; custom sites and aliases refuse the relay's own hosts on any domain (`panel.`, `auth.`, `tunnel.`, `agent-*`); a domain's apex may now be an alias. Signing in on a hostname under none of the relay's domains is refused (`NOT_UNDER_DOMAIN`).
 - `authenticated` and `restricted` tunnels share one vhost; Gatekeeper decides by the access mode.
-- A user surface answers a refused request with Gatekeeper's JSON refusal (`{ "error": "not_a_member" }` for a user who is not a member of the host's domain, `{ "error": "forbidden" }` otherwise) instead of nginx's 403 page: nginx asks `GET /authz/user-surface-refusal/:fqdn`, which never issues an assertion.
+- A user surface answers a refused request with its refusal as JSON — `{ "error": "not_a_member" }` for a user who is not a member of the host's domain, `{ "error": "forbidden" }` otherwise — instead of nginx's 403 page: Gatekeeper names the refusal in `X-Lamalibre-Refusal`, nginx answers with one of those two bodies.
+- Starting or restarting Authelia waits until it serves requests (its health endpoint answers), not a fixed 2 s: everywhere the relay starts or restarts it — the panel's rendering, the Services page, a redeploy.
 
 ### Security — multi-domain relay
 
