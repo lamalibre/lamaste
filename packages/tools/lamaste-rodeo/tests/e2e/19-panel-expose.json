@@ -727,7 +727,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify nginx mTLS vhost created (not app vhost)\"\n# ---------------------------------------------------------------------------\n\nVHOST_NAME=\"lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN}\"\nVHOST_PATH=\"/etc/nginx/sites-enabled/${VHOST_NAME}\"\n\nif [ -f \"$VHOST_PATH\" ] || [ -L \"$VHOST_PATH\" ]; then\n  log_pass \"mTLS panel vhost exists at $VHOST_PATH\"\nelse\n  VHOST_ALT=\"/etc/nginx/sites-available/${VHOST_NAME}\"\n  if [ -f \"$VHOST_ALT\" ]; then\n    log_pass \"mTLS panel vhost exists at $VHOST_ALT\"\n  else\n    log_fail \"mTLS panel vhost not found at $VHOST_PATH\"\n  fi\nfi\n\n# Verify it is NOT an app vhost (app vhosts use lamalibre-lamaste-app- prefix)\nAPP_VHOST=\"/etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN}\"\nif [ ! -f \"$APP_VHOST\" ] && [ ! -L \"$APP_VHOST\" ]; then\n  log_pass \"No app vhost created (correct — panel uses mTLS vhost)\"\nelse\n  log_fail \"App vhost was created instead of mTLS panel vhost\"\nfi\n\n# Verify nginx config is valid\nNGINX_TEST=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after panel expose\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify nginx mTLS vhost created (not app vhost)\"\n# ---------------------------------------------------------------------------\n\n# Named by the panel tunnel's full hostname (the multi-domain relay).\nVHOST_NAME=\"lamalibre-lamaste-agent-panel-${PANEL_FQDN}\"\nVHOST_PATH=\"/etc/nginx/sites-enabled/${VHOST_NAME}\"\n\nif [ -f \"$VHOST_PATH\" ] || [ -L \"$VHOST_PATH\" ]; then\n  log_pass \"mTLS panel vhost exists at $VHOST_PATH\"\nelse\n  VHOST_ALT=\"/etc/nginx/sites-available/${VHOST_NAME}\"\n  if [ -f \"$VHOST_ALT\" ]; then\n    log_pass \"mTLS panel vhost exists at $VHOST_ALT\"\n  else\n    log_fail \"mTLS panel vhost not found at $VHOST_PATH\"\n  fi\nfi\n\n# Verify it is NOT an app vhost (app vhosts use lamalibre-lamaste-app- prefix)\nAPP_VHOST=\"/etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_FQDN}\"\nif [ ! -f \"$APP_VHOST\" ] && [ ! -L \"$APP_VHOST\" ]; then\n  log_pass \"No app vhost created (correct — panel uses mTLS vhost)\"\nelse\n  log_fail \"App vhost was created instead of mTLS panel vhost\"\nfi\n\n# Verify nginx config is valid\nNGINX_TEST=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after panel expose\" || true"
     },
     {
       "id": "verify-agent-panel-status-after-expose",
@@ -3146,6 +3146,23 @@
         },
         {
           "id": "step-198",
+          "label": "Extract REEXPOSED_FQDN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "REEXPOSED_FQDN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "REEXPOSE_RESPONSE"
+              },
+              "expression": ".tunnel.fqdn // empty"
+            }
+          }
+        },
+        {
+          "id": "step-199",
           "label": "Extract PANEL_TUNNEL_ID",
           "target": "local",
           "op": {
@@ -3162,7 +3179,7 @@
           }
         },
         {
-          "id": "step-199",
+          "id": "step-200",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -3181,7 +3198,7 @@
           ]
         },
         {
-          "id": "step-200",
+          "id": "step-201",
           "label": "App tunnel created for ${AGENT_LABEL}",
           "target": "local",
           "continueOnError": true,
@@ -3203,7 +3220,7 @@
           }
         },
         {
-          "id": "step-201",
+          "id": "step-202",
           "label": "Extract RELEASE_TUNNEL_ID",
           "target": "local",
           "op": {
@@ -3220,7 +3237,7 @@
           }
         },
         {
-          "id": "step-202",
+          "id": "step-203",
           "label": "DELETE /api/certs/agent/${AGENT_LABEL}",
           "target": "host",
           "op": {
@@ -3238,7 +3255,7 @@
           ]
         },
         {
-          "id": "step-203",
+          "id": "step-204",
           "label": "Agent ${AGENT_LABEL} revoked",
           "target": "local",
           "continueOnError": true,
@@ -3260,7 +3277,7 @@
           }
         },
         {
-          "id": "step-204",
+          "id": "step-205",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -3278,7 +3295,7 @@
           ]
         },
         {
-          "id": "step-205",
+          "id": "step-206",
           "label": "Set PANEL_LEFT",
           "target": "local",
           "op": {
@@ -3295,7 +3312,7 @@
           ]
         },
         {
-          "id": "step-206",
+          "id": "step-207",
           "label": "Revoked agent's panel tunnel (${REEXPOSED_SUBDOMAIN}) deleted",
           "target": "local",
           "continueOnError": true,
@@ -3316,7 +3333,7 @@
           }
         },
         {
-          "id": "step-208",
+          "id": "step-209",
           "label": "Revoked agent's panel vhost removed",
           "target": "local",
           "op": {
@@ -3330,7 +3347,7 @@
           }
         },
         {
-          "id": "step-209",
+          "id": "step-210",
           "label": "Revoked agent's panel vhost still present",
           "target": "local",
           "op": {
@@ -3347,7 +3364,7 @@
           }
         },
         {
-          "id": "step-211",
+          "id": "step-212",
           "label": "Set RELEASED",
           "target": "local",
           "op": {
@@ -3364,7 +3381,7 @@
           ]
         },
         {
-          "id": "step-212",
+          "id": "step-213",
           "label": "Revoked agent's app tunnel keeps its hostname",
           "target": "local",
           "continueOnError": true,
@@ -3386,7 +3403,7 @@
           }
         },
         {
-          "id": "step-213",
+          "id": "step-214",
           "label": "Revoked agent's app tunnel has no owner (dark until reassigned)",
           "target": "local",
           "continueOnError": true,
@@ -3408,7 +3425,7 @@
           }
         },
         {
-          "id": "step-214",
+          "id": "step-215",
           "label": "Set RELEASED_GRANTS",
           "target": "local",
           "op": {
@@ -3425,7 +3442,7 @@
           ]
         },
         {
-          "id": "step-215",
+          "id": "step-216",
           "label": "Released tunnel's port is granted to no chisel user",
           "target": "local",
           "continueOnError": true,
@@ -3446,7 +3463,7 @@
           }
         },
         {
-          "id": "step-216",
+          "id": "step-217",
           "label": "Set NGINX_TEST_REVOKE",
           "target": "local",
           "op": {
@@ -3463,7 +3480,7 @@
           ]
         },
         {
-          "id": "step-217",
+          "id": "step-218",
           "label": "nginx -t passes after the revocation",
           "target": "local",
           "continueOnError": true,
@@ -3484,7 +3501,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Revoking an agent releases its tunnels\"\n# ---------------------------------------------------------------------------\n\n# The panel agent exposes its panel again and is given an app tunnel\nREEXPOSE_RESPONSE=$(agent_api_post \"tunnels/expose-panel\" \"{\\\"port\\\":${PANEL_PORT}}\")\nassert_json_field \"$REEXPOSE_RESPONSE\" '.ok' 'true' \"Panel exposed again before revocation\" || true\nREEXPOSED_SUBDOMAIN=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.subdomain // empty' 2>/dev/null || echo \"\")\nPANEL_TUNNEL_ID=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.id // empty' 2>/dev/null || echo \"\")\n\nRELEASE_RESPONSE=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${RELEASE_SUBDOMAIN}\\\",\\\"port\\\":${RELEASE_PORT},\\\"description\\\":\\\"released on revoke\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$RELEASE_RESPONSE\" '.tunnel.agentLabel' \"$AGENT_LABEL\" \"App tunnel created for ${AGENT_LABEL}\" || true\nRELEASE_TUNNEL_ID=$(echo \"$RELEASE_RESPONSE\" | jq -r '.tunnel.id // empty' 2>/dev/null || echo \"\")\n\nREVOKE_RESPONSE=$(api_delete \"certs/agent/${AGENT_LABEL}\")\nassert_json_field \"$REVOKE_RESPONSE\" '.ok' 'true' \"Agent ${AGENT_LABEL} revoked\" || true\n\nTUNNELS_AFTER_REVOKE=$(api_get \"tunnels\")\nPANEL_LEFT=$(echo \"$TUNNELS_AFTER_REVOKE\" | jq --arg sd \"$REEXPOSED_SUBDOMAIN\" '[.tunnels[] | select(.subdomain == $sd)] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$PANEL_LEFT\" \"0\" \"Revoked agent's panel tunnel (${REEXPOSED_SUBDOMAIN}) deleted\" || true\nif [ -n \"$REEXPOSED_SUBDOMAIN\" ] && [ ! -e \"/etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${REEXPOSED_SUBDOMAIN}\" ] \\\n  && [ ! -e \"/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${REEXPOSED_SUBDOMAIN}\" ]; then\n  log_pass \"Revoked agent's panel vhost removed\"\nelse\n  log_fail \"Revoked agent's panel vhost still present\"\nfi\nPANEL_TUNNEL_ID=\"\"\n\nRELEASED=$(echo \"$TUNNELS_AFTER_REVOKE\" | jq -c --arg id \"$RELEASE_TUNNEL_ID\" '.tunnels[] | select(.id == $id)' 2>/dev/null || echo \"\")\nassert_json_field \"$RELEASED\" '.subdomain' \"$RELEASE_SUBDOMAIN\" \"Revoked agent's app tunnel keeps its hostname\" || true\nassert_json_field \"$RELEASED\" '.agentLabel // \"none\"' \"none\" \"Revoked agent's app tunnel has no owner (dark until reassigned)\" || true\nRELEASED_GRANTS=$(sudo cat /etc/lamalibre/lamaste/chisel-users 2>/dev/null \\\n  | jq -r --arg g \"^R:127\\\\.0\\\\.0\\\\.1:${RELEASE_PORT}\\$\" '[to_entries[] | select(any(.value[]; . == $g))] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$RELEASED_GRANTS\" \"0\" \"Released tunnel's port is granted to no chisel user\" || true\n\nNGINX_TEST_REVOKE=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST_REVOKE\" \"syntax is ok\" \"nginx -t passes after the revocation\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Revoking an agent releases its tunnels\"\n# ---------------------------------------------------------------------------\n\n# The panel agent exposes its panel again and is given an app tunnel\nREEXPOSE_RESPONSE=$(agent_api_post \"tunnels/expose-panel\" \"{\\\"port\\\":${PANEL_PORT}}\")\nassert_json_field \"$REEXPOSE_RESPONSE\" '.ok' 'true' \"Panel exposed again before revocation\" || true\nREEXPOSED_SUBDOMAIN=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.subdomain // empty' 2>/dev/null || echo \"\")\nREEXPOSED_FQDN=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.fqdn // empty' 2>/dev/null || echo \"\")\nPANEL_TUNNEL_ID=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.id // empty' 2>/dev/null || echo \"\")\n\nRELEASE_RESPONSE=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${RELEASE_SUBDOMAIN}\\\",\\\"port\\\":${RELEASE_PORT},\\\"description\\\":\\\"released on revoke\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$RELEASE_RESPONSE\" '.tunnel.agentLabel' \"$AGENT_LABEL\" \"App tunnel created for ${AGENT_LABEL}\" || true\nRELEASE_TUNNEL_ID=$(echo \"$RELEASE_RESPONSE\" | jq -r '.tunnel.id // empty' 2>/dev/null || echo \"\")\n\nREVOKE_RESPONSE=$(api_delete \"certs/agent/${AGENT_LABEL}\")\nassert_json_field \"$REVOKE_RESPONSE\" '.ok' 'true' \"Agent ${AGENT_LABEL} revoked\" || true\n\nTUNNELS_AFTER_REVOKE=$(api_get \"tunnels\")\nPANEL_LEFT=$(echo \"$TUNNELS_AFTER_REVOKE\" | jq --arg sd \"$REEXPOSED_SUBDOMAIN\" '[.tunnels[] | select(.subdomain == $sd)] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$PANEL_LEFT\" \"0\" \"Revoked agent's panel tunnel (${REEXPOSED_SUBDOMAIN}) deleted\" || true\nif [ -n \"$REEXPOSED_SUBDOMAIN\" ] && [ ! -e \"/etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${REEXPOSED_FQDN}\" ] \\\n  && [ ! -e \"/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${REEXPOSED_FQDN}\" ]; then\n  log_pass \"Revoked agent's panel vhost removed\"\nelse\n  log_fail \"Revoked agent's panel vhost still present\"\nfi\nPANEL_TUNNEL_ID=\"\"\n\nRELEASED=$(echo \"$TUNNELS_AFTER_REVOKE\" | jq -c --arg id \"$RELEASE_TUNNEL_ID\" '.tunnels[] | select(.id == $id)' 2>/dev/null || echo \"\")\nassert_json_field \"$RELEASED\" '.subdomain' \"$RELEASE_SUBDOMAIN\" \"Revoked agent's app tunnel keeps its hostname\" || true\nassert_json_field \"$RELEASED\" '.agentLabel // \"none\"' \"none\" \"Revoked agent's app tunnel has no owner (dark until reassigned)\" || true\nRELEASED_GRANTS=$(sudo cat /etc/lamalibre/lamaste/chisel-users 2>/dev/null \\\n  | jq -r --arg g \"^R:127\\\\.0\\\\.0\\\\.1:${RELEASE_PORT}\\$\" '[to_entries[] | select(any(.value[]; . == $g))] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$RELEASED_GRANTS\" \"0\" \"Released tunnel's port is granted to no chisel user\" || true\n\nNGINX_TEST_REVOKE=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST_REVOKE\" \"syntax is ok\" \"nginx -t passes after the revocation\" || true"
     }
   ],
   "apiHelpers": [

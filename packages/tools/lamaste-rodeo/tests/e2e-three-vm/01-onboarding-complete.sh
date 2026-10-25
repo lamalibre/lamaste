@@ -234,9 +234,9 @@ UNIT_OWNER=$(host_exec "stat -c '%U' /etc/systemd/system/chisel.service /etc/sys
 assert_eq "$UNIT_OWNER" "root" "chisel and Authelia units are root-owned" || true
 
 # The helper refuses a vhost that would make nginx (root) open a file
-EVIL_VHOST_RC=$(host_exec "printf 'server {\n listen 443 ssl;\n access_log /etc/cron.d/e2e;\n}\n' | sudo -u lamaste sudo -n /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-app-e2e-evil >/dev/null 2>&1; echo \$?")
+EVIL_VHOST_RC=$(host_exec "printf 'server {\n listen 443 ssl;\n access_log /etc/cron.d/e2e;\n}\n' | sudo -u lamaste sudo -n /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-app-e2e-evil.${TEST_DOMAIN} >/dev/null 2>&1; echo \$?")
 assert_eq "$EVIL_VHOST_RC" "2" "lamaste-priv refuses a vhost with access_log (exit 2)" || true
-EVIL_VHOST_FILE=$(host_exec "test -e /etc/nginx/sites-available/lamalibre-lamaste-app-e2e-evil && echo yes || echo no")
+EVIL_VHOST_FILE=$(host_exec "test -e /etc/nginx/sites-available/lamalibre-lamaste-app-e2e-evil.${TEST_DOMAIN} && echo yes || echo no")
 assert_eq "$EVIL_VHOST_FILE" "no" "The refused vhost was not written" || true
 OLD_MV_RULE=$(host_exec "sudo -u lamaste sudo -n /usr/bin/mv /tmp/site-index-x -t /etc/sudoers.d /var/www/lamaste/y >/dev/null 2>&1 && echo allowed || echo denied")
 assert_eq "$OLD_MV_RULE" "denied" "The former mv wildcard rule is gone" || true

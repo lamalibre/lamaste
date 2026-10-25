@@ -48,6 +48,16 @@
 
 import { runTier } from '@lamalibre/rodeo/agent';
 
+/**
+ * A base domain beside the suite's: `domain` with its first label replaced
+ * by `label` (test.lamaste.local → second.lamaste.local). Never under or
+ * over `domain`, so a relay may hold both.
+ */
+function siblingDomain(domain, label) {
+  if (!domain || !domain.includes('.')) return '';
+  return `${label}.${domain.slice(domain.indexOf('.') + 1)}`;
+}
+
 // ---------------------------------------------------------------------------
 // Public hook contract
 // ---------------------------------------------------------------------------
@@ -197,6 +207,11 @@ export default {
       AGENT_IP: vmIps[vmNames.agent] || '',
       VISITOR_IP: vmIps[vmNames.visitor] || '',
       TEST_DOMAIN: domain,
+      // The multi-domain specs' second and third base domains: the primary's
+      // first label replaced (test.lamaste.local → second.lamaste.local), as
+      // setup-host.sh and setup-visitor.sh derive them.
+      TEST_DOMAIN_2: siblingDomain(domain, 'second'),
+      TEST_DOMAIN_3: siblingDomain(domain, 'third'),
       ADMIN_PASSWORD: 'not-used-mTLS-only',
       AGENT_P12_PASSWORD: s.credentials?.agentP12Password || 'not-used-enrollment-flow',
       TEST_USER: 'testuser',

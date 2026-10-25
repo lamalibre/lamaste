@@ -1,0 +1,799 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 48,
+    "name": "Multi-domain relay: a plugin's user surface on another domain",
+    "suite": "e2e-three-vm",
+    "description": "48 — Multi-domain relay: a plugin's user surface on another domain (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-mdsurf"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-mdsurf-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-mdsurf-agent"
+    },
+    "APP": {
+      "value": "/api/${PLUGIN}/app",
+      "expression": true
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-48"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-48-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "MEMBER": {
+      "value": "e2e48-member"
+    },
+    "CUST": {
+      "value": "e2e48-cust"
+    },
+    "JAR_MEMBER": {
+      "value": "/tmp/e2e-48-member.cookies"
+    },
+    "JAR_CUST": {
+      "value": "/tmp/e2e-48-cust.cookies"
+    },
+    "SUB_A": {
+      "value": "e2e48us"
+    },
+    "PORT_A": {
+      "value": "18481"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE users/${id}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${id}?erase=true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nmd_preflight\nFQDN=\"${SUB_A}.${DOMAIN}\"\nif agent_has_node_sqlite; then\n  log_pass \"The agent VM's Node.js has node:sqlite, which the agent half's projection needs\"\nelse\n  log_fail \"The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run\"\n  end_test\n  exit $?\nfi\ndrop_plugin_grants \"${PLUGIN}\"\n\n# ===========================================================================\n# 1. Domain B, the users, the plugin\n# ==========================================================================="
+    },
+    {
+      "id": "domain-b-a-member-of-a-and-a-customer-of-b-the-plugin-installed-on-a",
+      "label": "Domain B; a member of A and a customer of B; the plugin installed on A",
+      "steps": [
+        {
+          "id": "step-9",
+          "label": "Both have a directory id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${MEMBER_ID}\") $(is_uuid \"${CUST_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true true"
+              },
+              "message": "Both have a directory id"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-48-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Fixture built: ${SERVER_PACKAGE} (identity: viewer, editor) and its agent package",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixture built: ${SERVER_PACKAGE} (identity: viewer, editor) and its agent package"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Installed ${SERVER_PACKAGE}@1.0.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed ${SERVER_PACKAGE}@1.0.0"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "…it belongs to the primary domain A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_get \"plugins/${PLUGIN}\")"
+              },
+              "path": ".plugin.domain",
+              "expected": {
+                "kind": "var",
+                "name": "DOMAIN"
+              },
+              "message": "…it belongs to the primary domain A"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Set DIGEST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$INSTALL\" '.hooks.approval.digest // empty'"
+          },
+          "capture": [
+            {
+              "variable": "DIGEST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPROVED"
+              },
+              "path": ".hooks.approval.state",
+              "expected": {
+                "kind": "literal",
+                "value": "approved"
+              },
+              "message": "Approved"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "POST /api/plugins/${PLUGIN}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/enable",
+            "body": {}
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 300 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "The relay's health of the hosting is up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The relay's health of the hosting is up"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Ready: its agent half's first complete sync ended at the head",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Ready: its agent half's first complete sync ended at the head"
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')"
+          }
+        }
+      ],
+      "bash": "log_section \"Domain B; a member of A and a customer of B; the plugin installed on A\"\n\nmd_domain_active \"${DOMAIN_2}\"\n# Every users.yml write of the spec, before anyone signs in.\nmd_user MEMBER_ID \"${MEMBER}\" \"${MEMBER_PASSWORD}\" \"[\\\"${DOMAIN}\\\"]\"\nmd_user CUST_ID \"${CUST}\" \"${CUST_PASSWORD}\" \"[\\\"${DOMAIN_2}\\\"]\"\nassert_eq \"$(is_uuid \"${MEMBER_ID}\") $(is_uuid \"${CUST_ID}\")\" \"true true\" \"Both have a directory id\" || true\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-48-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/surf\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none wide; then\n  log_fail \"The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE} (identity: viewer, editor) and its agent package\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/surf/server fixtures/surf/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\n\nINSTALL=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${SERVER_PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}\")\" '.plugin.domain' \"${DOMAIN}\" \"…it belongs to the primary domain A\" || true\nDIGEST=$(json_get \"$INSTALL\" '.hooks.approval.digest // empty')\nAPPROVED=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"${DIGEST}\\\"}\")\nassert_json_field \"$APPROVED\" '.hooks.approval.state' 'approved' \"Approved\" || true\nhost_api_post \"plugins/${PLUGIN}/enable\" '{}' > /dev/null\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nif wait_for 60 health_up; then\n  log_pass \"The relay's health of the hosting is up\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\nif wait_for 120 identity_ready \"${PLUGIN}\"; then\n  log_pass \"Ready: its agent half's first complete sync ended at the head\"\nelse\n  log_fail \"Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')\"\nfi\n\n# ===========================================================================\n# 2. The user surface on A\n# ==========================================================================="
+    },
+    {
+      "id": "bound-to-an-authenticated-tunnel-on-a-the-member-entitled",
+      "label": "Bound to an authenticated tunnel on A; the member entitled",
+      "steps": [
+        {
+          "id": "step-31",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "…served",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".tunnel.userSurfaceStatus[0] | \"\\(.route) \\(.served)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${PLUGIN} true"
+              },
+              "message": "…served"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${MEMBER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "${MEMBER} entitled as viewer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${MEMBER} entitled as viewer"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "…an active member of the audience",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…an active member of the audience"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "The audience: $(audience_row \"${PLUGIN}\" \"${MEMBER_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The audience: $(audience_row \"${PLUGIN}\" \"${MEMBER_ID}\")"
+          }
+        }
+      ],
+      "bash": "log_section \"Bound to an authenticated tunnel on A; the member entitled\"\n\nmd_tunnel TUNNEL_A \"${SUB_A}\" \"${DOMAIN}\" \"${PORT_A}\" authenticated\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL_A}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/tunnels/${TUNNEL_A}/user-surface {route: ${PLUGIN}}\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.tunnel.userSurfaceStatus[0] | \"\\(.route) \\(.served)\"' \"${PLUGIN} true\" \"…served\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${MEMBER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${MEMBER} entitled as viewer\" || true\nif wait_for 30 member_in_audience; then\n  log_pass \"…an active member of the audience\"\nelse\n  log_fail \"The audience: $(audience_row \"${PLUGIN}\" \"${MEMBER_ID}\")\"\nfi\n\n# ===========================================================================\n# 3. A member, and a customer of B\n# ==========================================================================="
+    },
+    {
+      "id": "the-member-reaches-the-agent-half-the-customer-of-b-gets-json-not-a-member",
+      "label": "The member reaches the agent half; the customer of B gets JSON not_a_member",
+      "steps": [
+        {
+          "id": "step-39",
+          "label": "Set SECRET_M",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${MEMBER}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_M",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Set SECRET_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${CUST}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_MEMBER}\" \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "GET ${APP}/echo as ${MEMBER}: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "GET ${APP}/echo as ${MEMBER}: 200"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "…the caller the panel signed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "\"\\(.caller.type) \\(.caller.userId) \\(.caller.username)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "user ${MEMBER_ID} ${MEMBER}"
+              },
+              "message": "…the caller the panel signed"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_CUST}\" \"https://${FQDN}${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "GET ${APP}/echo as ${CUST} (a member of B only): 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "GET ${APP}/echo as ${CUST} (a member of B only): 403"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "…JSON {error: not_a_member}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "not_a_member"
+              },
+              "message": "…JSON {error: not_a_member}"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "…never a redirect",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location:"
+              },
+              "message": "…never a redirect"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "…and nothing of another user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MEMBER"
+              },
+              "message": "…and nothing of another user"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The member reaches the agent half; the customer of B gets JSON not_a_member\"\n\nmd_wait_authelia \"${DOMAIN}\"\nSECRET_M=$(reset_totp \"${MEMBER}\")\nSECRET_C=$(reset_totp \"${CUST}\")\nwait_for_next_totp_window\nmd_sign_in \"${MEMBER}\" \"${MEMBER_PASSWORD}\" \"${SECRET_M}\" \"${JAR_MEMBER}\" \"${FQDN}\" \"${DOMAIN}\"\nmd_sign_in \"${CUST}\" \"${CUST_PASSWORD}\" \"${SECRET_C}\" \"${JAR_CUST}\" \"${FQDN}\" \"${DOMAIN}\"\n\nRESP=$(visit \"${JAR_MEMBER}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"GET ${APP}/echo as ${MEMBER}: 200\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.caller.type) \\(.caller.userId) \\(.caller.username)\"' \"user ${MEMBER_ID} ${MEMBER}\" \"…the caller the panel signed\" || true\n\nRESP=$(visit \"${JAR_CUST}\" \"https://${FQDN}${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"GET ${APP}/echo as ${CUST} (a member of B only): 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.error' 'not_a_member' \"…JSON {error: not_a_member}\" || true\nassert_not_contains \"$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\" \"location:\" \"…never a redirect\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"${MEMBER}\" \"…and nothing of another user\" || true\n\n# ===========================================================================\n# 4. A served plugin keeps its domain\n# ==========================================================================="
+    },
+    {
+      "id": "the-plugin-cannot-move-to-b-while-it-is-served-on-a",
+      "label": "The plugin cannot move to B while it is served on A",
+      "steps": [
+        {
+          "id": "step-52",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/domain\" \"{\\\"domain\\\":\\\"${DOMAIN_2}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "PUT /api/plugins/${PLUGIN}/domain {domain: B}: 409 while bound on A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "PUT /api/plugins/${PLUGIN}/domain {domain: B}: 409 while bound on A"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "…surface_bound",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "surface_bound"
+              },
+              "message": "…surface_bound"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "…it still belongs to A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_get \"plugins/${PLUGIN}\")"
+              },
+              "path": ".plugin.domain",
+              "expected": {
+                "kind": "var",
+                "name": "DOMAIN"
+              },
+              "message": "…it still belongs to A"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The plugin cannot move to B while it is served on A\"\n\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/domain\" \"{\\\"domain\\\":\\\"${DOMAIN_2}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"PUT /api/plugins/${PLUGIN}/domain {domain: B}: 409 while bound on A\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'surface_bound' \"…surface_bound\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}\")\" '.plugin.domain' \"${DOMAIN}\" \"…it still belongs to A\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 48 — Multi-domain relay: a plugin's user surface on another domain (Three-VM)\n# ============================================================================\n# The customer case of spec 46, on a plugin's user surface (slice 6): split\n# out because installing and hosting an app plugin alone takes minutes, and\n# rodeo ends a spec at ten minutes. A is the relay's primary domain, B a\n# second one (multi-domain-harness.sh).\n#\n# An app plugin whose manifest declares identity (fixture\n# @lamalibre/e2e-mdsurf-server, helpers.sh: write_app_install_fixture …\n# wide, as spec 40's) belongs to A — a plugin's domain is the primary unless\n# moved. Its user surface is bound to an authenticated tunnel on A.\n#\n# 1. A member of A with the viewer role: /api/<route>/app/echo answers with\n#    the caller the panel signed.\n# 2. A customer, member of B only, signed in at auth.A with valid\n#    credentials: 403, JSON {error: not_a_member} — an application's\n#    request gets an answer it can act on, never a page or a redirect.\n# 3. The plugin cannot be moved to B while it is served on A's host (409).\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-mdsurf\"\nSERVER_PACKAGE=\"@lamalibre/e2e-mdsurf-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-mdsurf-agent\"\nAPP=\"/api/${PLUGIN}/app\"\nPOLICY_ID=\"e2e-apphost-48\"\nREMOTE_DIR=\"/var/tmp/e2e-48-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nMEMBER=\"e2e48-member\"\nCUST=\"e2e48-cust\"\n# Test credentials for this run only, never printed\nMEMBER_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCUST_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nMEMBER_ID=\"\"\nCUST_ID=\"\"\nJAR_MEMBER=\"/tmp/e2e-48-member.cookies\"\nJAR_CUST=\"/tmp/e2e-48-cust.cookies\"\nSUB_A=\"e2e48us\"\nPORT_A=18481\nTUNNEL_A=\"\"\nFQDN=\"\"\nDIGEST=\"\"\n\nhealth_up() { [ \"$(hosting_field \"${PLUGIN}\" '.hosting.health.state')\" = \"up\" ]; }\nmember_in_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"${MEMBER_ID}\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\nbegin_test \"48 — Multi-domain relay: a plugin's user surface on another domain (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  drop_plugin_grants \"${PLUGIN}\"\n  if [ -n \"${TUNNEL_A}\" ]; then host_api_delete \"tunnels/${TUNNEL_A}\" > /dev/null 2>&1 || true; fi\n  for id in \"${MEMBER}\" \"${CUST}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  timed_exec 30 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR_MEMBER} ${JAR_CUST}; true\" > /dev/null 2>&1\n  nudge_sync\n  app_plugin_cleanup\n  md_cleanup_domains\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

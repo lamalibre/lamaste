@@ -65,7 +65,7 @@ AUTHED_SUBDOMAIN="e2ehostconfusion"
 AUTHED_PORT=18091
 AUTHED_FQDN="${AUTHED_SUBDOMAIN}.${TEST_DOMAIN}"
 AUTHED_TUNNEL_ID=""
-TUNNEL_VHOST="/etc/nginx/sites-available/lamalibre-lamaste-app-${TUNNEL_SUBDOMAIN}"
+TUNNEL_VHOST="/etc/nginx/sites-available/lamalibre-lamaste-app-${TUNNEL_FQDN}"
 
 # ---------------------------------------------------------------------------
 # Cleanup on exit — runs even when assertions fail

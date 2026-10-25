@@ -983,6 +983,58 @@ FIXTURE_EOF
 FIXTURE_EOF
 }
 
+# write_oidc_domain_fixture_plugin dir
+# Writes the plugin package of spec 35 (the multi-domain relay's OIDC
+# sign-in) into <dir>: @lamalibre/e2e-mdoidc-server, a server plugin
+# declaring one public authorization-code client (PKCE, a fixed redirect URI
+# nothing listens on — the spec reads Authelia's redirect, it never follows
+# it). The client signs people in with two factors; which people is the
+# plugin's domain's member list.
+write_oidc_domain_fixture_plugin() {
+  local dir="$1"
+  mkdir -p "$dir"
+  cat > "${dir}/package.json" <<'FIXTURE_EOF'
+{
+  "name": "@lamalibre/e2e-mdoidc-server",
+  "version": "0.1.0",
+  "description": "Lamaste e2e fixture: a plugin with an authorization-code OIDC client",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "lamaste-plugin.json"],
+  "license": "PolyForm-Noncommercial-1.0.0"
+}
+FIXTURE_EOF
+  cat > "${dir}/index.js" <<'FIXTURE_EOF'
+export default async function e2eMdOidcPlugin(fastify) {
+  fastify.get('/ping', async () => ({ ok: true, plugin: 'e2e-mdoidc' }));
+}
+FIXTURE_EOF
+  cat > "${dir}/lamaste-plugin.json" <<'FIXTURE_EOF'
+{
+  "name": "e2e-mdoidc",
+  "displayName": "E2E multi-domain OIDC fixture",
+  "version": "0.1.0",
+  "description": "Declares a public authorization-code client",
+  "modes": ["server", "agent"],
+  "packages": { "server": "@lamalibre/e2e-mdoidc-server", "agent": "@lamalibre/e2e-mdoidc-server" },
+  "capabilities": [],
+  "panel": {},
+  "config": {},
+  "oidcClients": [
+    {
+      "id": "e2e-mdoidc-web",
+      "name": "E2E multi-domain web",
+      "grantTypes": ["authorization_code"],
+      "scopes": ["openid", "profile"],
+      "redirectUris": ["https://e2e-mdoidc.example.test/callback"],
+      "requirePkce": true,
+      "authorizationPolicy": "two_factor"
+    }
+  ]
+}
+FIXTURE_EOF
+}
+
 # write_agent_hosted_fixture_plugins dir
 # Writes two agent-hosted ("hosting": "agent") plugin packages for spec 28:
 #   <dir>/agent-hosted        @lamalibre/e2e-agent-hosted-server — declares a

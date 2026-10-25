@@ -657,7 +657,7 @@
           "target": "host",
           "op": {
             "type": "exec",
-            "command": "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} && echo yes || echo no"
+            "command": "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} && echo yes || echo no"
           },
           "capture": [
             {
@@ -695,7 +695,7 @@
           "target": "host",
           "op": {
             "type": "exec",
-            "command": "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN} && echo yes || echo no"
+            "command": "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_FQDN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_FQDN} && echo yes || echo no"
           },
           "capture": [
             {
@@ -842,7 +842,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify mTLS nginx vhost on host\"\n# ---------------------------------------------------------------------------\n\n# Panel vhosts use lamalibre-lamaste-agent-panel- prefix (not lamalibre-lamaste-app-)\nVHOST_EXISTS=$(host_exec \"test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} && echo yes || echo no\")\nassert_eq \"$VHOST_EXISTS\" \"yes\" \"mTLS panel vhost exists in sites-enabled\" || true\n\n# Verify no app vhost was created (panel uses mTLS, not Authelia)\nAPP_VHOST_EXISTS=$(host_exec \"test -f /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN} && echo yes || echo no\")\nassert_eq \"$APP_VHOST_EXISTS\" \"no\" \"No Authelia app vhost created for panel tunnel\" || true\n\nNGINX_TEST=$(host_exec \"nginx -t 2>&1 || true\")\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after panel expose\" || true\n\n# lamaste-agentd trusts no header the relay sends but the relay assertion\nPANEL_VHOST=\"/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN}\"\nVHOST_AUTHZ=$(host_exec \"grep -cF 'auth_request /internal/lamaste/agent-panel-authz;' ${PANEL_VHOST} 2>/dev/null || true\")\nassert_eq \"$VHOST_AUTHZ\" \"1\" \"Panel vhost asks the panel to authorize every request\" || true\nVHOST_ASSERTION=$(host_exec \"grep -cF 'proxy_set_header X-Lamalibre-Relay-Assertion \\$relay_assertion;' ${PANEL_VHOST} 2>/dev/null || true\")\nassert_eq \"$VHOST_ASSERTION\" \"1\" \"Panel vhost forwards the relay assertion\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify mTLS nginx vhost on host\"\n# ---------------------------------------------------------------------------\n\n# Panel vhosts use lamalibre-lamaste-agent-panel- prefix (not lamalibre-lamaste-app-)\nVHOST_EXISTS=$(host_exec \"test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} && echo yes || echo no\")\nassert_eq \"$VHOST_EXISTS\" \"yes\" \"mTLS panel vhost exists in sites-enabled\" || true\n\n# Verify no app vhost was created (panel uses mTLS, not Authelia)\nAPP_VHOST_EXISTS=$(host_exec \"test -f /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_FQDN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_FQDN} && echo yes || echo no\")\nassert_eq \"$APP_VHOST_EXISTS\" \"no\" \"No Authelia app vhost created for panel tunnel\" || true\n\nNGINX_TEST=$(host_exec \"nginx -t 2>&1 || true\")\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after panel expose\" || true\n\n# lamaste-agentd trusts no header the relay sends but the relay assertion\nPANEL_VHOST=\"/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${PANEL_FQDN}\"\nVHOST_AUTHZ=$(host_exec \"grep -cF 'auth_request /internal/lamaste/agent-panel-authz;' ${PANEL_VHOST} 2>/dev/null || true\")\nassert_eq \"$VHOST_AUTHZ\" \"1\" \"Panel vhost asks the panel to authorize every request\" || true\nVHOST_ASSERTION=$(host_exec \"grep -cF 'proxy_set_header X-Lamalibre-Relay-Assertion \\$relay_assertion;' ${PANEL_VHOST} 2>/dev/null || true\")\nassert_eq \"$VHOST_ASSERTION\" \"1\" \"Panel vhost forwards the relay assertion\" || true"
     },
     {
       "id": "verify-agent-panel-status-after-expose",
@@ -1386,7 +1386,7 @@
           "target": "host",
           "op": {
             "type": "exec",
-            "command": "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} && echo yes || echo no"
+            "command": "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} && echo yes || echo no"
           },
           "capture": [
             {
@@ -1457,7 +1457,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify vhost removed after retract\"\n# ---------------------------------------------------------------------------\n\nsleep 2  # wait for nginx reload\n\nVHOST_AFTER=$(host_exec \"test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} && echo yes || echo no\")\nassert_eq \"$VHOST_AFTER\" \"no\" \"mTLS panel vhost removed after retract\" || true\n\nNGINX_TEST_AFTER=$(host_exec \"nginx -t 2>&1 || true\")\nassert_contains \"$NGINX_TEST_AFTER\" \"syntax is ok\" \"nginx -t passes after panel retract\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify vhost removed after retract\"\n# ---------------------------------------------------------------------------\n\nsleep 2  # wait for nginx reload\n\nVHOST_AFTER=$(host_exec \"test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_FQDN} && echo yes || echo no\")\nassert_eq \"$VHOST_AFTER\" \"no\" \"mTLS panel vhost removed after retract\" || true\n\nNGINX_TEST_AFTER=$(host_exec \"nginx -t 2>&1 || true\")\nassert_contains \"$NGINX_TEST_AFTER\" \"syntax is ok\" \"nginx -t passes after panel retract\" || true"
     },
     {
       "id": "verify-status-after-retract",

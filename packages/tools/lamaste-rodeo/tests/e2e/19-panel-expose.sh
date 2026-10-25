@@ -208,7 +208,8 @@ assert_eq "$FOUND_LABEL" "$AGENT_LABEL" "Panel tunnel shows correct agentLabel i
 log_section "Verify nginx mTLS vhost created (not app vhost)"
 # ---------------------------------------------------------------------------
 
-VHOST_NAME="lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN}"
+# Named by the panel tunnel's full hostname (the multi-domain relay).
+VHOST_NAME="lamalibre-lamaste-agent-panel-${PANEL_FQDN}"
 VHOST_PATH="/etc/nginx/sites-enabled/${VHOST_NAME}"
 
 if [ -f "$VHOST_PATH" ] || [ -L "$VHOST_PATH" ]; then
@@ -223,7 +224,7 @@ else
 fi
 
 # Verify it is NOT an app vhost (app vhosts use lamalibre-lamaste-app- prefix)
-APP_VHOST="/etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN}"
+APP_VHOST="/etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_FQDN}"
 if [ ! -f "$APP_VHOST" ] && [ ! -L "$APP_VHOST" ]; then
   log_pass "No app vhost created (correct — panel uses mTLS vhost)"
 else
@@ -540,6 +541,7 @@ log_section "Revoking an agent releases its tunnels"
 REEXPOSE_RESPONSE=$(agent_api_post "tunnels/expose-panel" "{\"port\":${PANEL_PORT}}")
 assert_json_field "$REEXPOSE_RESPONSE" '.ok' 'true' "Panel exposed again before revocation" || true
 REEXPOSED_SUBDOMAIN=$(echo "$REEXPOSE_RESPONSE" | jq -r '.tunnel.subdomain // empty' 2>/dev/null || echo "")
+REEXPOSED_FQDN=$(echo "$REEXPOSE_RESPONSE" | jq -r '.tunnel.fqdn // empty' 2>/dev/null || echo "")
 PANEL_TUNNEL_ID=$(echo "$REEXPOSE_RESPONSE" | jq -r '.tunnel.id // empty' 2>/dev/null || echo "")
 
 RELEASE_RESPONSE=$(api_post "tunnels" "{\"subdomain\":\"${RELEASE_SUBDOMAIN}\",\"port\":${RELEASE_PORT},\"description\":\"released on revoke\",\"agentLabel\":\"${AGENT_LABEL}\"}")
@@ -552,8 +554,8 @@ assert_json_field "$REVOKE_RESPONSE" '.ok' 'true' "Agent ${AGENT_LABEL} revoked"
 TUNNELS_AFTER_REVOKE=$(api_get "tunnels")
 PANEL_LEFT=$(echo "$TUNNELS_AFTER_REVOKE" | jq --arg sd "$REEXPOSED_SUBDOMAIN" '[.tunnels[] | select(.subdomain == $sd)] | length' 2>/dev/null || echo "unknown")
 assert_eq "$PANEL_LEFT" "0" "Revoked agent's panel tunnel (${REEXPOSED_SUBDOMAIN}) deleted" || true
-if [ -n "$REEXPOSED_SUBDOMAIN" ] && [ ! -e "/etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${REEXPOSED_SUBDOMAIN}" ] \
-  && [ ! -e "/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${REEXPOSED_SUBDOMAIN}" ]; then
+if [ -n "$REEXPOSED_SUBDOMAIN" ] && [ ! -e "/etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${REEXPOSED_FQDN}" ] \
+  && [ ! -e "/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${REEXPOSED_FQDN}" ]; then
   log_pass "Revoked agent's panel vhost removed"
 else
   log_fail "Revoked agent's panel vhost still present"

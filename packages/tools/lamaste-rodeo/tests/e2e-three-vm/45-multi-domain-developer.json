@@ -1,0 +1,795 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 45,
+    "name": "Multi-domain relay: a developer on two domains",
+    "suite": "e2e-three-vm",
+    "description": "45 — Multi-domain relay: a developer on two domains (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {
+    "DEV": {
+      "value": "e2e45-dev"
+    },
+    "JAR_A": {
+      "value": "/tmp/e2e-45-dev-a.cookies"
+    },
+    "JAR_B": {
+      "value": "/tmp/e2e-45-dev-b.cookies"
+    },
+    "SUB_A": {
+      "value": "e2e45a"
+    },
+    "SUB_B": {
+      "value": "e2e45b"
+    },
+    "SUB_R": {
+      "value": "e2e45r"
+    },
+    "PORT_A": {
+      "value": "18451"
+    },
+    "PORT_B": {
+      "value": "18452"
+    },
+    "PORT_R": {
+      "value": "18453"
+    },
+    "MARKER_A": {
+      "value": "E2E_45_A_$timestamp()",
+      "expression": true
+    },
+    "MARKER_B": {
+      "value": "E2E_45_B_$timestamp()",
+      "expression": true
+    },
+    "MARKER_R": {
+      "value": "E2E_45_R_$timestamp()",
+      "expression": true
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE tunnels/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${id}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE users/${DEV}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${DEV}?erase=true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "domain-b-added-its-dns-checked-activated",
+      "label": "Domain B added, its DNS checked, activated",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "Set COOKIES",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "session_cookie_domains"
+          },
+          "capture": [
+            {
+              "variable": "COOKIES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Authelia holds a session cookie for A (${DOMAIN})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",${COOKIES},"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",${DOMAIN},"
+              },
+              "message": "Authelia holds a session cookie for A (${DOMAIN})"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "…and one for B (${DOMAIN_2})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",${COOKIES},"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",${DOMAIN_2},"
+              },
+              "message": "…and one for B (${DOMAIN_2})"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "A is the primary domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(domain_entry \"${DOMAIN}\")"
+              },
+              "path": "\"\\(.primary) \\(.status)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true active"
+              },
+              "message": "A is the primary domain"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "B is not",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(domain_entry \"${DOMAIN_2}\")"
+              },
+              "path": ".primary",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "B is not"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\nmd_preflight\n\n# ===========================================================================\n# 1. A second domain\n# ==========================================================================="
+    },
+    {
+      "id": "a-developer-member-of-a-and-b",
+      "label": "A developer, member of A and B",
+      "steps": [
+        {
+          "id": "step-8",
+          "label": "…one directory id for both domains",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${DEV_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…one directory id for both domains"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Set EXPECTED_DOMAINS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "printf '%s\\n%s\\n' \"${DOMAIN}\" \"${DOMAIN_2}\" | sort | paste -sd, -"
+          },
+          "capture": [
+            {
+              "variable": "EXPECTED_DOMAINS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "GET /api/users lists ${DEV}'s domains: A and B",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_domains \"${DEV}\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "EXPECTED_DOMAINS"
+              },
+              "message": "GET /api/users lists ${DEV}'s domains: A and B"
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Gatekeeper's projection: ${DEV} is a member of A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(projection_members \"${DOMAIN}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",${DEV},"
+              },
+              "message": "Gatekeeper's projection: ${DEV} is a member of A"
+            }
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "…and of B",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(projection_members \"${DOMAIN_2}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",${DEV},"
+              },
+              "message": "…and of B"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Domain B added, its DNS checked, activated\"\n\nmd_domain_active \"${DOMAIN_2}\"\nCOOKIES=$(session_cookie_domains)\nassert_contains \",${COOKIES},\" \",${DOMAIN},\" \"Authelia holds a session cookie for A (${DOMAIN})\" || true\nassert_contains \",${COOKIES},\" \",${DOMAIN_2},\" \"…and one for B (${DOMAIN_2})\" || true\nassert_json_field \"$(domain_entry \"${DOMAIN}\")\" '\"\\(.primary) \\(.status)\"' 'true active' \"A is the primary domain\" || true\nassert_json_field \"$(domain_entry \"${DOMAIN_2}\")\" '.primary' 'false' \"B is not\" || true\n\n# ===========================================================================\n# 2. The developer, member of both\n# ==========================================================================="
+    },
+    {
+      "id": "an-authenticated-tunnel-on-a-and-on-b-a-restricted-one-on-b",
+      "label": "An authenticated tunnel on A and on B, a restricted one on B",
+      "steps": [
+        {
+          "id": "step-24",
+          "label": "Port ${pair%%:*}: the backend answers through chisel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Port ${pair%%:*}: the backend answers through chisel"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Port ${pair%%:*}: the backend does not answer through chisel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Port ${pair%%:*}: the backend does not answer through chisel"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "B's tunnel vhost is named by its full hostname",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_exec \"ls /etc/nginx/sites-enabled\" 2>/dev/null)"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "lamalibre-lamaste-app-${SUB_B}.${DOMAIN_2}"
+              },
+              "message": "B's tunnel vhost is named by its full hostname"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A developer, member of A and B\"\n\nmd_user DEV_ID \"${DEV}\" \"${DEV_PASSWORD}\" \"[\\\"${DOMAIN}\\\",\\\"${DOMAIN_2}\\\"]\"\nassert_eq \"$(is_uuid \"${DEV_ID}\")\" \"true\" \"…one directory id for both domains\" || true\nEXPECTED_DOMAINS=$(printf '%s\\n%s\\n' \"${DOMAIN}\" \"${DOMAIN_2}\" | sort | paste -sd, -)\nassert_eq \"$(user_domains \"${DEV}\")\" \"${EXPECTED_DOMAINS}\" \"GET /api/users lists ${DEV}'s domains: A and B\" || true\nassert_contains \"$(access_rules_of \"${DOMAIN}\")\" \"\\\"user:${DEV}\\\"\" \"A's rendered access rules admit ${DEV}\" || true\nassert_contains \"$(access_rules_of \"${DOMAIN_2}\")\" \"\\\"user:${DEV}\\\"\" \"…and B's\" || true\nassert_eq \"$(access_rules_of \"${DOMAIN_2}\" | jq -c '.[-1]')\" \"{\\\"domain\\\":[\\\"${DOMAIN_2}\\\",\\\"*.${DOMAIN_2}\\\"],\\\"policy\\\":\\\"deny\\\"}\" \"B's last rule refuses everyone else on B and every host under it\" || true\nassert_contains \",$(projection_members \"${DOMAIN}\"),\" \",${DEV},\" \"Gatekeeper's projection: ${DEV} is a member of A\" || true\nassert_contains \",$(projection_members \"${DOMAIN_2}\"),\" \",${DEV},\" \"…and of B\" || true\n\n# ===========================================================================\n# 3. Tunnels on both domains\n# ==========================================================================="
+    },
+    {
+      "id": "signed-in-at-auth-a-a-s-tunnel-b-sends-them-to-auth-b",
+      "label": "Signed in at auth.A: A's tunnel; B sends them to auth.B",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "Set SECRET",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${DEV}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "${DEV}'s TOTP secret reset (one secret for every domain)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "SECRET"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "${DEV}'s TOTP secret reset (one secret for every domain)"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_A}\" \"https://${SUB_A}.${DOMAIN}/index.html\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "A's authenticated tunnel: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "A's authenticated tunnel: 200"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "…from its backend",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER_A"
+              },
+              "message": "…from its backend"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "B's tunnel without a session: to B's own sign-in page (auth.${DOMAIN_2})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(outcome - \"https://${SUB_B}.${DOMAIN_2}/index.html\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "302 auth.${DOMAIN_2}"
+              },
+              "message": "B's tunnel without a session: to B's own sign-in page (auth.${DOMAIN_2})"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "…with A's session too: a browser never sends A's cookie to B",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(outcome \"${JAR_A}\" \"https://${SUB_B}.${DOMAIN_2}/index.html\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "302 auth.${DOMAIN_2}"
+              },
+              "message": "…with A's session too: a browser never sends A's cookie to B"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An authenticated tunnel on A and on B, a restricted one on B\"\n\nmd_tunnel TUNNEL_A \"${SUB_A}\" \"${DOMAIN}\" \"${PORT_A}\" authenticated\nmd_tunnel TUNNEL_B \"${SUB_B}\" \"${DOMAIN_2}\" \"${PORT_B}\" authenticated\nmd_tunnel TUNNEL_R \"${SUB_R}\" \"${DOMAIN_2}\" \"${PORT_R}\" restricted\nmd_backend \"${PORT_A}\" \"${MARKER_A}\"\nmd_backend \"${PORT_B}\" \"${MARKER_B}\"\nmd_backend \"${PORT_R}\" \"${MARKER_R}\"\nnudge_sync\nfor pair in \"${PORT_A}:${MARKER_A}\" \"${PORT_B}:${MARKER_B}\" \"${PORT_R}:${MARKER_R}\"; do\n  if wait_for 120 tunnel_reachable \"${pair%%:*}\" \"${pair#*:}\"; then\n    log_pass \"Port ${pair%%:*}: the backend answers through chisel\"\n  else\n    log_fail \"Port ${pair%%:*}: the backend does not answer through chisel\"\n  fi\ndone\nassert_contains \"$(host_exec \"ls /etc/nginx/sites-enabled\" 2>/dev/null)\" \"lamalibre-lamaste-app-${SUB_B}.${DOMAIN_2}\" \"B's tunnel vhost is named by its full hostname\" || true\n\n# ===========================================================================\n# 4. One account, a sign-in per domain\n# ==========================================================================="
+    },
+    {
+      "id": "signed-in-at-auth-b-with-the-same-password-and-totp-secret-b-s-tunnel",
+      "label": "Signed in at auth.B with the same password and TOTP secret: B's tunnel",
+      "steps": [
+        {
+          "id": "step-40",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_B}\" \"https://${SUB_B}.${DOMAIN_2}/index.html\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "B's authenticated tunnel: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "B's authenticated tunnel: 200"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "…from its backend",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER_B"
+              },
+              "message": "…from its backend"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "A's session still opens A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit \"${JAR_A}\" \"https://${SUB_A}.${DOMAIN}/index.html\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "A's session still opens A"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Signed in at auth.A: A's tunnel; B sends them to auth.B\"\n\nmd_wait_authelia \"${DOMAIN}\"\nSECRET=$(reset_totp \"${DEV}\")\nassert_not_eq \"${SECRET}\" \"\" \"${DEV}'s TOTP secret reset (one secret for every domain)\" || true\nwait_for_next_totp_window\nmd_sign_in \"${DEV}\" \"${DEV_PASSWORD}\" \"${SECRET}\" \"${JAR_A}\" \"${SUB_A}.${DOMAIN}\" \"${DOMAIN}\"\n\nRESP=$(visit \"${JAR_A}\" \"https://${SUB_A}.${DOMAIN}/index.html\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"A's authenticated tunnel: 200\" || true\nassert_contains \"$(visit_body \"$RESP\")\" \"${MARKER_A}\" \"…from its backend\" || true\n\nassert_eq \"$(outcome - \"https://${SUB_B}.${DOMAIN_2}/index.html\")\" \"302 auth.${DOMAIN_2}\" \"B's tunnel without a session: to B's own sign-in page (auth.${DOMAIN_2})\" || true\nassert_eq \"$(outcome \"${JAR_A}\" \"https://${SUB_B}.${DOMAIN_2}/index.html\")\" \"302 auth.${DOMAIN_2}\" \"…with A's session too: a browser never sends A's cookie to B\" || true"
+    },
+    {
+      "id": "b-s-restricted-tunnel-the-access-request-page-then-a-grant",
+      "label": "B's restricted tunnel: the access-request page, then a grant",
+      "steps": [
+        {
+          "id": "step-44",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_B}\" \"https://${SUB_R}.${DOMAIN_2}/index.html\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "Without a grant: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Without a grant: 403"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "…the access-request page (a member of B, not granted this tunnel)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Access Required"
+              },
+              "message": "…the access-request page (a member of B, not granted this tunnel)"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "…nothing of the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER_R"
+              },
+              "message": "…nothing of the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "POST /api/gatekeeper/grants",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/grants",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "GRANT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Set GRANT_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$GRANT\" '.grant.grantId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "GRANT_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "A grant for ${DEV} on ${SUB_R}.${DOMAIN_2}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "GRANT_ID"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "A grant for ${DEV} on ${SUB_R}.${DOMAIN_2}"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_B}\" \"https://${SUB_R}.${DOMAIN_2}/index.html\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "With the grant: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "With the grant: 200"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "…from its backend",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER_R"
+              },
+              "message": "…from its backend"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Signed in at auth.B with the same password and TOTP secret: B's tunnel\"\n\nwait_for_next_totp_window\nmd_sign_in \"${DEV}\" \"${DEV_PASSWORD}\" \"${SECRET}\" \"${JAR_B}\" \"${SUB_B}.${DOMAIN_2}\" \"${DOMAIN_2}\"\nRESP=$(visit \"${JAR_B}\" \"https://${SUB_B}.${DOMAIN_2}/index.html\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"B's authenticated tunnel: 200\" || true\nassert_contains \"$(visit_body \"$RESP\")\" \"${MARKER_B}\" \"…from its backend\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_A}\" \"https://${SUB_A}.${DOMAIN}/index.html\")\")\" \"200\" \"A's session still opens A\" || true\n\n# ===========================================================================\n# 5. restricted narrows one application on B\n# ==========================================================================="
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 45 — Multi-domain relay: a developer on two domains (Three-VM)\n# ============================================================================\n# The multi-domain relay's first acceptance case (design: packages/core/docs/\n# multi-domain-relay-design.md, \"Proof\"): one relay, one directory, a member\n# list per base domain. A is the relay's primary domain, B a second one\n# (multi-domain-harness.sh). A developer is a member of both:\n#\n# 1. B is added, its DNS checked (auth.B is the one required record) and\n#    activated: Authelia carries a session cookie per domain (A and B).\n# 2. The developer, created a member of A and B, is in both domains' rendered\n#    rules and in Gatekeeper's projection of both.\n# 3. Signed in at auth.A, the developer reaches an authenticated tunnel on\n#    A. A's session opens nothing on B: B's tunnel sends them to auth.B —\n#    B's own sign-in page, not A's. Signed in there with the same password\n#    and TOTP secret, B's tunnel is reached.\n# 4. On B, `restricted` still narrows one application: without a grant the\n#    access-request page, with one the tunnel.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n\nrequire_commands multipass curl jq perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nDEV=\"e2e45-dev\"\n# Test credentials for this run only, never printed\nDEV_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nDEV_ID=\"\"\nJAR_A=\"/tmp/e2e-45-dev-a.cookies\"\nJAR_B=\"/tmp/e2e-45-dev-b.cookies\"\nSUB_A=\"e2e45a\"\nSUB_B=\"e2e45b\"\nSUB_R=\"e2e45r\"\nPORT_A=18451\nPORT_B=18452\nPORT_R=18453\nTUNNEL_A=\"\"\nTUNNEL_B=\"\"\nTUNNEL_R=\"\"\nGRANT_ID=\"\"\nMARKER_A=\"E2E_45_A_$(date +%s)\"\nMARKER_B=\"E2E_45_B_$(date +%s)\"\nMARKER_R=\"E2E_45_R_$(date +%s)\"\n\nbegin_test \"45 — Multi-domain relay: a developer on two domains (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id port\n  if [ -n \"${GRANT_ID}\" ]; then host_api_delete \"gatekeeper/grants/${GRANT_ID}\" > /dev/null 2>&1 || true; fi\n  for id in ${TUNNEL_A} ${TUNNEL_B} ${TUNNEL_R}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  for port in ${PORT_A} ${PORT_B} ${PORT_R}; do md_backend_stop \"${port}\"; done\n  host_api_delete \"users/${DEV}?erase=true\" > /dev/null 2>&1 || true\n  timed_exec 30 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR_A} ${JAR_B}; true\" > /dev/null 2>&1\n  md_cleanup_domains\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

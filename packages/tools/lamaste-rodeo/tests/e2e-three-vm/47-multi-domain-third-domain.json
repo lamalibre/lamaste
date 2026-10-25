@@ -1,0 +1,619 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 47,
+    "name": "Multi-domain relay: a third domain changes nothing else",
+    "suite": "e2e-three-vm",
+    "description": "47 — Multi-domain relay: a third domain changes nothing else (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {
+    "USER_A": {
+      "value": "e2e47-a"
+    },
+    "USER_B": {
+      "value": "e2e47-b"
+    },
+    "USER_C": {
+      "value": "e2e47-c"
+    },
+    "SUB_A": {
+      "value": "e2e47a"
+    },
+    "SUB_B": {
+      "value": "e2e47b"
+    },
+    "SUB_C": {
+      "value": "e2e47c"
+    },
+    "PORT_A": {
+      "value": "18471"
+    },
+    "PORT_B": {
+      "value": "18472"
+    },
+    "PORT_C": {
+      "value": "18473"
+    },
+    "MARKER_A": {
+      "value": "E2E_47_A_$timestamp()",
+      "expression": true
+    },
+    "MARKER_B": {
+      "value": "E2E_47_B_$timestamp()",
+      "expression": true
+    },
+    "MARKER_C": {
+      "value": "E2E_47_C_$timestamp()",
+      "expression": true
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE tunnels/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${id}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE users/${u}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${u}?erase=true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "${DOMAIN_3} is left over from an interrupted run — removed first",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "${DOMAIN_3} is left over from an interrupted run — removed first"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\nmd_preflight\nif [ \"$(domain_entry \"${DOMAIN_3}\")\" != \"null\" ]; then\n  log_info \"${DOMAIN_3} is left over from an interrupted run — removed first\"\n  md_api DELETE \"domains/${DOMAIN_3}\" > /dev/null || true\nfi\n\n# ===========================================================================\n# 1. Two domains, a member of each; the snapshot\n# ==========================================================================="
+    },
+    {
+      "id": "a-member-of-a-a-member-of-b-a-tunnel-on-each",
+      "label": "A member of A, a member of B, a tunnel on each",
+      "steps": [
+        {
+          "id": "step-6",
+          "label": "Both have a directory id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${ID_A}\") $(is_uuid \"${ID_B}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true true"
+              },
+              "message": "Both have a directory id"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Port ${pair%%:*}: the backend answers through chisel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Port ${pair%%:*}: the backend answers through chisel"
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Port ${pair%%:*}: the backend does not answer through chisel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Port ${pair%%:*}: the backend does not answer through chisel"
+          }
+        }
+      ],
+      "bash": "log_section \"A member of A, a member of B, a tunnel on each\"\n\nmd_domain_active \"${DOMAIN_2}\"\nmd_user ID_A \"${USER_A}\" \"${PASSWORD_A}\" \"[\\\"${DOMAIN}\\\"]\"\nmd_user ID_B \"${USER_B}\" \"${PASSWORD_B}\" \"[\\\"${DOMAIN_2}\\\"]\"\nassert_eq \"$(is_uuid \"${ID_A}\") $(is_uuid \"${ID_B}\")\" \"true true\" \"Both have a directory id\" || true\nmd_tunnel TUNNEL_A \"${SUB_A}\" \"${DOMAIN}\" \"${PORT_A}\" authenticated\nmd_tunnel TUNNEL_B \"${SUB_B}\" \"${DOMAIN_2}\" \"${PORT_B}\" authenticated\nmd_backend \"${PORT_A}\" \"${MARKER_A}\"\nmd_backend \"${PORT_B}\" \"${MARKER_B}\"\nnudge_sync\nfor pair in \"${PORT_A}:${MARKER_A}\" \"${PORT_B}:${MARKER_B}\"; do\n  if wait_for 120 tunnel_reachable \"${pair%%:*}\" \"${pair#*:}\"; then\n    log_pass \"Port ${pair%%:*}: the backend answers through chisel\"\n  else\n    log_fail \"Port ${pair%%:*}: the backend does not answer through chisel\"\n  fi\ndone"
+    },
+    {
+      "id": "the-snapshot-rules-projection-reachability",
+      "label": "The snapshot: rules, projection, reachability",
+      "steps": [
+        {
+          "id": "step-17",
+          "label": "Set RULES_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "access_rules_of \"${DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "RULES_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Set RULES_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "access_rules_of \"${DOMAIN_2}\""
+          },
+          "capture": [
+            {
+              "variable": "RULES_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "Set MEMBERS_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "projection_members \"${DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "MEMBERS_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "Set MEMBERS_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "projection_members \"${DOMAIN_2}\""
+          },
+          "capture": [
+            {
+              "variable": "MEMBERS_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Set SECRET_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${USER_A}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Set SECRET_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${USER_B}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Set BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "matrix"
+          },
+          "capture": [
+            {
+              "variable": "BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Each reaches its own domain's tunnel and is refused on the other's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BEFORE"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "a@${SUB_A}=200 a@${SUB_B}=403 b@${SUB_A}=403 b@${SUB_B}=200"
+              },
+              "message": "Each reaches its own domain's tunnel and is refused on the other's"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The snapshot: rules, projection, reachability\"\n\nmd_wait_authelia \"${DOMAIN}\"\nRULES_A=$(access_rules_of \"${DOMAIN}\")\nRULES_B=$(access_rules_of \"${DOMAIN_2}\")\nMEMBERS_A=$(projection_members \"${DOMAIN}\")\nMEMBERS_B=$(projection_members \"${DOMAIN_2}\")\nassert_contains \"${RULES_A}\" \"\\\"user:${USER_A}\\\"\" \"A's rules admit ${USER_A}\" || true\nassert_not_contains \"${RULES_A}\" \"\\\"user:${USER_B}\\\"\" \"…not ${USER_B}\" || true\nassert_contains \"${RULES_B}\" \"\\\"user:${USER_B}\\\"\" \"B's rules admit ${USER_B}\" || true\nassert_not_contains \"${RULES_B}\" \"\\\"user:${USER_A}\\\"\" \"…not ${USER_A}\" || true\n\nSECRET_A=$(reset_totp \"${USER_A}\")\nSECRET_B=$(reset_totp \"${USER_B}\")\nsign_in_everywhere\nBEFORE=$(matrix)\nassert_eq \"${BEFORE}\" \"a@${SUB_A}=200 a@${SUB_B}=403 b@${SUB_A}=403 b@${SUB_B}=200\" \"Each reaches its own domain's tunnel and is refused on the other's\" || true\n\n# ===========================================================================\n# 2. A third domain\n# ==========================================================================="
+    },
+    {
+      "id": "domain-c-added-and-activated-with-a-member-of-its-own-and-a-tunnel",
+      "label": "Domain C added and activated, with a member of its own and a tunnel",
+      "steps": [
+        {
+          "id": "step-32",
+          "label": "${USER_C} has a directory id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${ID_C}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "${USER_C} has a directory id"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Port ${PORT_C}: C's backend answers through chisel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Port ${PORT_C}: C's backend answers through chisel"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Port ${PORT_C}: C's backend does not answer through chisel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Port ${PORT_C}: C's backend does not answer through chisel"
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Authelia holds a session cookie for C",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(session_cookie_domains)"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "DOMAIN_3"
+              },
+              "message": "Authelia holds a session cookie for C"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Domain C added and activated, with a member of its own and a tunnel\"\n\nmd_domain_active \"${DOMAIN_3}\"\nmd_user ID_C \"${USER_C}\" \"${PASSWORD_C}\" \"[\\\"${DOMAIN_3}\\\"]\"\nassert_eq \"$(is_uuid \"${ID_C}\")\" \"true\" \"${USER_C} has a directory id\" || true\nmd_tunnel TUNNEL_C \"${SUB_C}\" \"${DOMAIN_3}\" \"${PORT_C}\" authenticated\nmd_backend \"${PORT_C}\" \"${MARKER_C}\"\nnudge_sync\nif wait_for 120 tunnel_reachable \"${PORT_C}\" \"${MARKER_C}\"; then\n  log_pass \"Port ${PORT_C}: C's backend answers through chisel\"\nelse\n  log_fail \"Port ${PORT_C}: C's backend does not answer through chisel\"\nfi\nassert_contains \"$(session_cookie_domains)\" \"${DOMAIN_3}\" \"Authelia holds a session cookie for C\" || true\n\n# ===========================================================================\n# 3. Nothing else changed\n# ==========================================================================="
+    },
+    {
+      "id": "a-and-b-the-same-rules-the-same-members-the-same-answers",
+      "label": "A and B: the same rules, the same members, the same answers",
+      "steps": [
+        {
+          "id": "step-39",
+          "label": "A's rendered rules are byte-equal to the snapshot",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(access_rules_of \"${DOMAIN}\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "RULES_A"
+              },
+              "message": "A's rendered rules are byte-equal to the snapshot"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "B's rendered rules are byte-equal to the snapshot",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(access_rules_of \"${DOMAIN_2}\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "RULES_B"
+              },
+              "message": "B's rendered rules are byte-equal to the snapshot"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Gatekeeper's projection of A is unchanged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(projection_members \"${DOMAIN}\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "MEMBERS_A"
+              },
+              "message": "Gatekeeper's projection of A is unchanged"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "…and of B",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(projection_members \"${DOMAIN_2}\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "MEMBERS_B"
+              },
+              "message": "…and of B"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "…and holds C with its one member",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(projection_members \"${DOMAIN_3}\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "USER_C"
+              },
+              "message": "…and holds C with its one member"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Signed in again: every request answers as before (${BEFORE})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(matrix)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "BEFORE"
+              },
+              "message": "Signed in again: every request answers as before (${BEFORE})"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A and B: the same rules, the same members, the same answers\"\n\nassert_eq \"$(access_rules_of \"${DOMAIN}\")\" \"${RULES_A}\" \"A's rendered rules are byte-equal to the snapshot\" || true\nassert_eq \"$(access_rules_of \"${DOMAIN_2}\")\" \"${RULES_B}\" \"B's rendered rules are byte-equal to the snapshot\" || true\nassert_eq \"$(projection_members \"${DOMAIN}\")\" \"${MEMBERS_A}\" \"Gatekeeper's projection of A is unchanged\" || true\nassert_eq \"$(projection_members \"${DOMAIN_2}\")\" \"${MEMBERS_B}\" \"…and of B\" || true\nassert_eq \"$(projection_members \"${DOMAIN_3}\")\" \"${USER_C}\" \"…and holds C with its one member\" || true\n\nmd_wait_authelia \"${DOMAIN}\"\nsign_in_everywhere\nassert_eq \"$(matrix)\" \"${BEFORE}\" \"Signed in again: every request answers as before (${BEFORE})\" || true\n\n# ===========================================================================\n# 4. C's member reaches C only\n# ==========================================================================="
+    },
+    {
+      "id": "c-s-member-c-s-tunnel-refused-on-a-and-b",
+      "label": "C's member: C's tunnel, refused on A and B",
+      "steps": [
+        {
+          "id": "step-47",
+          "label": "Set SECRET_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${USER_C}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"$(jar c \"${DOMAIN_3}\")\" \"https://${SUB_C}.${DOMAIN_3}/index.html\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "${USER_C} on C's tunnel: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${USER_C} on C's tunnel: 200"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "…from its backend",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER_C"
+              },
+              "message": "…from its backend"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"$(jar a \"${DOMAIN}\")\" \"https://${SUB_C}.${DOMAIN_3}/index.html\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
+          "label": "${USER_A}'s session of A opens nothing on C: to C's sign-in page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "302"
+              },
+              "message": "${USER_A}'s session of A opens nothing on C: to C's sign-in page"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"C's member: C's tunnel, refused on A and B\"\n\nSECRET_C=$(reset_totp \"${USER_C}\")\nwait_for_next_totp_window\nmd_sign_in \"${USER_C}\" \"${PASSWORD_C}\" \"${SECRET_C}\" \"$(jar c \"${DOMAIN_3}\")\" \"${SUB_C}.${DOMAIN_3}\" \"${DOMAIN_3}\"\nmd_sign_in \"${USER_C}\" \"${PASSWORD_C}\" \"${SECRET_C}\" \"$(jar c \"${DOMAIN}\")\" \"${SUB_A}.${DOMAIN}\" \"${DOMAIN}\"\nwait_for_next_totp_window\nmd_sign_in \"${USER_C}\" \"${PASSWORD_C}\" \"${SECRET_C}\" \"$(jar c \"${DOMAIN_2}\")\" \"${SUB_B}.${DOMAIN_2}\" \"${DOMAIN_2}\"\nRESP=$(visit \"$(jar c \"${DOMAIN_3}\")\" \"https://${SUB_C}.${DOMAIN_3}/index.html\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"${USER_C} on C's tunnel: 200\" || true\nassert_contains \"$(visit_body \"$RESP\")\" \"${MARKER_C}\" \"…from its backend\" || true\nassert_domain_refusal \"$(visit \"$(jar c \"${DOMAIN}\")\" \"https://${SUB_A}.${DOMAIN}/index.html\")\" \"${DOMAIN}\" \"${USER_C} on A's tunnel\"\nassert_domain_refusal \"$(visit \"$(jar c \"${DOMAIN_2}\")\" \"https://${SUB_B}.${DOMAIN_2}/index.html\")\" \"${DOMAIN_2}\" \"${USER_C} on B's tunnel\"\nRESP=$(visit \"$(jar a \"${DOMAIN}\")\" \"https://${SUB_C}.${DOMAIN_3}/index.html\")\nassert_eq \"$(visit_status \"$RESP\")\" \"302\" \"${USER_A}'s session of A opens nothing on C: to C's sign-in page\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 47 — Multi-domain relay: a third domain changes nothing else (Three-VM)\n# ============================================================================\n# The multi-domain relay's third acceptance case (design: packages/core/\n# docs/multi-domain-relay-design.md, \"Proof\"): adding a customer domain\n# must not change who can reach any other. A is the relay's primary\n# domain, B and C added ones (multi-domain-harness.sh).\n#\n# 1. A member of A and a member of B, an authenticated tunnel on each. A\n#    snapshot: A's and B's rendered access rules, Gatekeeper's projection\n#    of A and B, and a reachability matrix — each user, signed in at both\n#    sign-in pages, on each tunnel.\n# 2. C is added and activated, with a new member of C and a tunnel on C.\n# 3. A's and B's rules are byte-equal to the snapshot, so is the projection\n#    of A and B; signed in again (C's activation restarted Authelia and\n#    ended every session), every request of the matrix answers as before.\n# 4. C's member reaches C's tunnel, and is refused on A's and B's with the\n#    domain refusal page.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n\nrequire_commands multipass curl jq perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nUSER_A=\"e2e47-a\"\nUSER_B=\"e2e47-b\"\nUSER_C=\"e2e47-c\"\n# Test credentials for this run only, never printed\nPASSWORD_A=\"E2e-$(openssl rand -hex 12)\"\nPASSWORD_B=\"E2e-$(openssl rand -hex 12)\"\nPASSWORD_C=\"E2e-$(openssl rand -hex 12)\"\nID_A=\"\"\nID_B=\"\"\nID_C=\"\"\nSECRET_A=\"\"\nSECRET_B=\"\"\nSECRET_C=\"\"\nSUB_A=\"e2e47a\"\nSUB_B=\"e2e47b\"\nSUB_C=\"e2e47c\"\nPORT_A=18471\nPORT_B=18472\nPORT_C=18473\nTUNNEL_A=\"\"\nTUNNEL_B=\"\"\nTUNNEL_C=\"\"\nMARKER_A=\"E2E_47_A_$(date +%s)\"\nMARKER_B=\"E2E_47_B_$(date +%s)\"\nMARKER_C=\"E2E_47_C_$(date +%s)\"\n\n# jar <user> <domain> — a visitor cookie jar per user and sign-in page\njar() { echo \"/tmp/e2e-47-$1-$2.cookies\"; }\n\n# sign_in_everywhere — USER_A and USER_B, each at auth.A and auth.B, in a\n# fresh TOTP window (a code used in the current one is refused)\nsign_in_everywhere() {\n  wait_for_next_totp_window\n  md_sign_in \"${USER_A}\" \"${PASSWORD_A}\" \"${SECRET_A}\" \"$(jar a \"${DOMAIN}\")\" \"${SUB_A}.${DOMAIN}\" \"${DOMAIN}\"\n  md_sign_in \"${USER_B}\" \"${PASSWORD_B}\" \"${SECRET_B}\" \"$(jar b \"${DOMAIN_2}\")\" \"${SUB_B}.${DOMAIN_2}\" \"${DOMAIN_2}\"\n  wait_for_next_totp_window\n  md_sign_in \"${USER_A}\" \"${PASSWORD_A}\" \"${SECRET_A}\" \"$(jar a \"${DOMAIN_2}\")\" \"${SUB_B}.${DOMAIN_2}\" \"${DOMAIN_2}\"\n  md_sign_in \"${USER_B}\" \"${PASSWORD_B}\" \"${SECRET_B}\" \"$(jar b \"${DOMAIN}\")\" \"${SUB_A}.${DOMAIN}\" \"${DOMAIN}\"\n}\n\n# matrix — \"<user>@<tunnel>=<status>\" for each user (with the session of\n# the tunnel's domain) on each of A's and B's tunnels, space-separated\nmatrix() {\n  local u host d out=\"\"\n  for u in a b; do\n    for host in \"${SUB_A}.${DOMAIN}\" \"${SUB_B}.${DOMAIN_2}\"; do\n      d=\"${host#*.}\"\n      out=\"${out} ${u}@${host%%.*}=$(visit_status \"$(visit \"$(jar \"$u\" \"$d\")\" \"https://${host}/index.html\")\")\"\n    done\n  done\n  echo \"${out# }\"\n}\n\nbegin_test \"47 — Multi-domain relay: a third domain changes nothing else (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id port u d\n  for id in ${TUNNEL_A} ${TUNNEL_B} ${TUNNEL_C}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  for port in ${PORT_A} ${PORT_B} ${PORT_C}; do md_backend_stop \"${port}\"; done\n  for u in \"${USER_A}\" \"${USER_B}\" \"${USER_C}\"; do\n    host_api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true\n  done\n  for u in a b c; do\n    for d in \"${DOMAIN}\" \"${DOMAIN_2}\" \"${DOMAIN_3}\"; do\n      timed_exec 15 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f $(jar \"$u\" \"$d\"); true\" > /dev/null 2>&1\n    done\n  done\n  md_cleanup_domains\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

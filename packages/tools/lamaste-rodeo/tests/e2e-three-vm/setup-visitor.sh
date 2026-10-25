@@ -34,6 +34,11 @@ fi
 
 HOST_IP="$1"
 TEST_DOMAIN="$2"
+# The multi-domain specs' second and third base domains (as setup-host.sh
+# and rodeo.hooks.js derive them): their sign-in pages resolve from the
+# start; a spec adds its own hostnames under them.
+TEST_DOMAIN_2="${TEST_DOMAIN_2:-second.${TEST_DOMAIN#*.}}"
+TEST_DOMAIN_3="${TEST_DOMAIN_3:-third.${TEST_DOMAIN#*.}}"
 E2E_CA_CERT_B64="$3"
 
 # ---------------------------------------------------------------------------
@@ -88,6 +93,8 @@ sed -i '/# lamaste-e2e-test$/d' /etc/hosts
   echo "${HOST_IP}  panel.${TEST_DOMAIN}  # lamaste-e2e-test"
   echo "${HOST_IP}  auth.${TEST_DOMAIN}  # lamaste-e2e-test"
   echo "${HOST_IP}  tunnel.${TEST_DOMAIN}  # lamaste-e2e-test"
+  echo "${HOST_IP}  auth.${TEST_DOMAIN_2}  # lamaste-e2e-test"
+  echo "${HOST_IP}  auth.${TEST_DOMAIN_3}  # lamaste-e2e-test"
 } >> /etc/hosts
 
 # Also inject into the cloud-init hosts template so entries survive snapshot
@@ -101,6 +108,8 @@ if [ -f "${TMPL}" ]; then
     echo "${HOST_IP}  panel.${TEST_DOMAIN}  # lamaste-e2e-test"
     echo "${HOST_IP}  auth.${TEST_DOMAIN}  # lamaste-e2e-test"
     echo "${HOST_IP}  tunnel.${TEST_DOMAIN}  # lamaste-e2e-test"
+    echo "${HOST_IP}  auth.${TEST_DOMAIN_2}  # lamaste-e2e-test"
+    echo "${HOST_IP}  auth.${TEST_DOMAIN_3}  # lamaste-e2e-test"
   } >> "${TMPL}"
 fi
 

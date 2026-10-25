@@ -1516,17 +1516,19 @@ reset_totp() {
   host_api_post "users/$1/reset-totp" '{}' 2>/dev/null | jq -r '.totpUri // empty' 2>/dev/null | sed -n 's/.*secret=\([A-Z2-7]*\).*/\1/p' || true
 }
 
-# sign_in <username> <password> <totp secret> <cookie jar> <host> — Authelia's
-# two factors from the visitor VM into <jar>, for a page of <host>; prints
+# sign_in <username> <password> <totp secret> <cookie jar> <host> [<domain>] —
+# Authelia's two factors from the visitor VM into <jar>, for a page of
+# <host>, at the sign-in page of <domain> (the relay's primary domain unless
+# named: each base domain signs in at its own auth.<domain>); prints
 # "<first> <second>" (OK OK)
 sign_in() {
-  local body first code second
+  local body first code second portal="auth.${6:-${DOMAIN}}"
   visitor_exec "rm -f $(printf %q "$4")" > /dev/null 2>&1 || true
   body=$(jq -c -n --arg u "$1" --arg p "$2" --arg t "https://$5/" '{username: $u, password: $p, keepMeLoggedIn: false, targetURL: $t}')
-  first=$(visitor_exec "curl -sk --max-time 15 -c $(q "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://auth.${DOMAIN}/api/firstfactor") || true" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || true)
+  first=$(visitor_exec "curl -sk --max-time 15 -c $(q "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://${portal}/api/firstfactor") || true" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || true)
   code=$(visitor_exec "oathtool --totp --base32 $(printf %q "$3")" 2>/dev/null | tail -n 1 || true)
   body=$(jq -c -n --arg c "$code" --arg t "https://$5/" '{token: $c, targetURL: $t}')
-  second=$(visitor_exec "curl -sk --max-time 15 -b $(q "$4") -c $(q "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://auth.${DOMAIN}/api/secondfactor/totp") || true" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || true)
+  second=$(visitor_exec "curl -sk --max-time 15 -b $(q "$4") -c $(q "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://${portal}/api/secondfactor/totp") || true" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || true)
   echo "${first:-none} ${second:-none}"
 }
 

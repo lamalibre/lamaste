@@ -280,7 +280,7 @@ assert_eq "$SWITCHES" "2" "…one switch, never back" || true
 log_section "After the move: the site serves; the tunnel kept, off and unbound"
 
 assert_json_field "$(tunnel_entry "${TUNNEL_T}")" '"\(.enabled) \(.userSurface // "none")"' 'false none' "The tunnel stays, disabled and unbound" || true
-VHOST_STATE=$(host_exec "a=gone; e=unlinked; test -e /etc/nginx/sites-available/lamalibre-lamaste-app-${SUB_T} && a=kept; test -e /etc/nginx/sites-enabled/lamalibre-lamaste-app-${SUB_T} && e=linked; echo \$a \$e" 2>/dev/null | tail -n 1)
+VHOST_STATE=$(host_exec "a=gone; e=unlinked; test -e /etc/nginx/sites-available/lamalibre-lamaste-app-${SUB_T}.${DOMAIN} && a=kept; test -e /etc/nginx/sites-enabled/lamalibre-lamaste-app-${SUB_T}.${DOMAIN} && e=linked; echo \$a \$e" 2>/dev/null | tail -n 1)
 assert_eq "$VHOST_STATE" "kept unlinked" "Its vhost stays installed, unlinked — for a rollback by hand" || true
 if wait_for 90 backend_withdrawn; then
   log_pass "Its port grant is withdrawn: nothing answers on the host VM's port ${PORT_T}"

@@ -1,0 +1,891 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 34,
+    "name": "Multi-domain relay: a single-domain relay upgraded in place",
+    "suite": "e2e",
+    "description": "34 — Multi-domain relay: a single-domain relay upgraded in place (Single-VM)",
+    "deps": [],
+    "requires": ["curl", "jq", "nginx"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE tunnels/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${id}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE certs/agent/${AGENT_LABEL_34}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL_34}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Extract DOMAIN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DOMAIN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ONBOARDING"
+              },
+              "expression": ".domain // empty"
+            }
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Onboarding is complete (domain ${DOMAIN})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete (domain ${DOMAIN})"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(api_get \"onboarding/status\" 2>/dev/null || echo '{}')\nif [ \"$(echo \"$ONBOARDING\" | jq -r '.status' 2>/dev/null || echo unknown)\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nDOMAIN=$(echo \"$ONBOARDING\" | jq -r '.domain // empty')\nlog_pass \"Onboarding is complete (domain ${DOMAIN})\"\nON_FQDN=\"${SUB_ON}.${DOMAIN}\"\nOFF_FQDN=\"${SUB_OFF}.${DOMAIN}\"\nAUTH_FQDN=\"auth.${DOMAIN}\"\n\n# ===========================================================================\n# 1. Two tunnels: one enabled, one disabled\n# ==========================================================================="
+    },
+    {
+      "id": "two-tunnels-one-disabled-how-each-host-answers",
+      "label": "Two tunnels, one disabled; how each host answers",
+      "steps": [
+        {
+          "id": "step-6",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "AGENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Agent ${AGENT_LABEL_34} enrolled (it carries the tunnels)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AGENT"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent ${AGENT_LABEL_34} enrolled (it carries the tunnels)"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Extract TUNNEL_ON",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TUNNEL_ON",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "expression": ".tunnel.id // empty"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Tunnel ${ON_FQDN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".tunnel.fqdn",
+              "expected": {
+                "kind": "var",
+                "name": "ON_FQDN"
+              },
+              "message": "Tunnel ${ON_FQDN}"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Extract TUNNEL_OFF",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TUNNEL_OFF",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "expression": ".tunnel.id // empty"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Tunnel ${OFF_FQDN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".tunnel.fqdn",
+              "expected": {
+                "kind": "var",
+                "name": "OFF_FQDN"
+              },
+              "message": "Tunnel ${OFF_FQDN}"
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "PATCH /api/tunnels/${TUNNEL_OFF}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${TUNNEL_OFF}",
+            "body": {
+              "enabled": false
+            }
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "…disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".tunnel.enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "…disabled"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "4.7 names the enabled tunnel's vhost by its full hostname, linked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_state \"lamalibre-lamaste-app-${ON_FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "available linked"
+              },
+              "message": "4.7 names the enabled tunnel's vhost by its full hostname, linked"
+            }
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "…the disabled one's too, not linked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_state \"lamalibre-lamaste-app-${OFF_FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "available unlinked"
+              },
+              "message": "…the disabled one's too, not linked"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "…and the auth portal's by its domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_state \"lamalibre-lamaste-auth-${DOMAIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "available linked"
+              },
+              "message": "…and the auth portal's by its domain"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Before: ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Before: ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}"
+          }
+        }
+      ],
+      "bash": "log_section \"Two tunnels, one disabled; how each host answers\"\n\nAGENT=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL_34}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$AGENT\" '.ok' 'true' \"Agent ${AGENT_LABEL_34} enrolled (it carries the tunnels)\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_ON}\\\",\\\"port\\\":${PORT_ON},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL_34}\\\"}\")\nTUNNEL_ON=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${ON_FQDN}\" \"Tunnel ${ON_FQDN}\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_OFF}\\\",\\\"port\\\":${PORT_OFF},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL_34}\\\"}\")\nTUNNEL_OFF=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${OFF_FQDN}\" \"Tunnel ${OFF_FQDN}\" || true\nRESP=$(api_patch \"tunnels/${TUNNEL_OFF}\" '{\"enabled\":false}')\nassert_json_field \"$RESP\" '.tunnel.enabled' 'false' \"…disabled\" || true\n\nassert_eq \"$(link_state \"lamalibre-lamaste-app-${ON_FQDN}\")\" \"available linked\" \"4.7 names the enabled tunnel's vhost by its full hostname, linked\" || true\nassert_eq \"$(link_state \"lamalibre-lamaste-app-${OFF_FQDN}\")\" \"available unlinked\" \"…the disabled one's too, not linked\" || true\nassert_eq \"$(link_state \"lamalibre-lamaste-auth-${DOMAIN}\")\" \"available linked\" \"…and the auth portal's by its domain\" || true\n\nBEFORE=\"$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")\"\nlog_info \"Before: ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}\"\n\n# ===========================================================================\n# 2. The vhosts as 4.6 left them\n# ==========================================================================="
+    },
+    {
+      "id": "the-vhosts-put-back-under-their-4-6-names",
+      "label": "The vhosts put back under their 4.6 names",
+      "steps": [
+        {
+          "id": "step-24",
+          "label": "nginx serves the 4.6 names",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "nginx serves the 4.6 names"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "nginx -t refused the 4.6 names",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "nginx -t refused the 4.6 names"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "4.6 names in place, link state as it was",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_state \"lamalibre-lamaste-app-${SUB_ON}\") $(link_state \"lamalibre-lamaste-app-${SUB_OFF}\") $(link_state lamalibre-lamaste-auth)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "available linked available unlinked available linked"
+              },
+              "message": "4.6 names in place, link state as it was"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "…every host answers as before",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "BEFORE"
+              },
+              "message": "…every host answers as before"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The vhosts put back under their 4.6 names\"\n\nto_legacy \"lamalibre-lamaste-app-${ON_FQDN}\" \"lamalibre-lamaste-app-${SUB_ON}\"\nto_legacy \"lamalibre-lamaste-app-${OFF_FQDN}\" \"lamalibre-lamaste-app-${SUB_OFF}\"\nto_legacy \"lamalibre-lamaste-auth-${DOMAIN}\" \"lamalibre-lamaste-auth\"\nif sudo nginx -t > /dev/null 2>&1 && sudo systemctl reload nginx; then\n  log_pass \"nginx serves the 4.6 names\"\nelse\n  log_fail \"nginx -t refused the 4.6 names\"\nfi\nassert_eq \"$(link_state \"lamalibre-lamaste-app-${SUB_ON}\") $(link_state \"lamalibre-lamaste-app-${SUB_OFF}\") $(link_state lamalibre-lamaste-auth)\" \\\n  \"available linked available unlinked available linked\" \"4.6 names in place, link state as it was\" || true\nassert_eq \"$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")\" \"${BEFORE}\" \"…every host answers as before\" || true\n\n# ===========================================================================\n# 3. The panel starts: renamed\n# ==========================================================================="
+    },
+    {
+      "id": "the-panel-restarted-every-vhost-renamed-to-its-full-hostname",
+      "label": "The panel restarted: every vhost renamed to its full hostname",
+      "steps": [
+        {
+          "id": "step-33",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "The panel is back",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The panel is back"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PANEL_BACK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "The panel did not come back after its restart",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The panel did not come back after its restart"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "PANEL_BACK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "${ON_FQDN}: renamed, still linked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_state \"lamalibre-lamaste-app-${ON_FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "available linked"
+              },
+              "message": "${ON_FQDN}: renamed, still linked"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "${OFF_FQDN}: renamed, still not linked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_state \"lamalibre-lamaste-app-${OFF_FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "available unlinked"
+              },
+              "message": "${OFF_FQDN}: renamed, still not linked"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "The auth portal: renamed to lamalibre-lamaste-auth-${DOMAIN}, linked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_state \"lamalibre-lamaste-auth-${DOMAIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "available linked"
+              },
+              "message": "The auth portal: renamed to lamalibre-lamaste-auth-${DOMAIN}, linked"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "No 4.6 name is left, as a file or a link",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_state \"lamalibre-lamaste-app-${SUB_ON}\") $(link_state \"lamalibre-lamaste-app-${SUB_OFF}\") $(link_state lamalibre-lamaste-auth)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "gone unlinked gone unlinked gone unlinked"
+              },
+              "message": "No 4.6 name is left, as a file or a link"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "nginx -t passes",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "nginx -t passes"
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "nginx -t fails after the rename",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "nginx -t fails after the rename"
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Every host answers as before (${BEFORE})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "BEFORE"
+              },
+              "message": "Every host answers as before (${BEFORE})"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "The panel logged the rename",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The panel logged the rename"
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "No rename line found in the panel's journal",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "No rename line found in the panel's journal"
+          }
+        }
+      ],
+      "bash": "log_section \"The panel restarted: every vhost renamed to its full hostname\"\n\nsudo systemctl restart lamalibre-lamaste-serverd\nPANEL_BACK=false\nfor _ in $(seq 1 30); do\n  if panel_up; then\n    PANEL_BACK=true\n    break\n  fi\n  sleep 2\ndone\nif [ \"$PANEL_BACK\" = \"true\" ]; then\n  log_pass \"The panel is back\"\nelse\n  log_fail \"The panel did not come back after its restart\"\nfi\nassert_eq \"$(link_state \"lamalibre-lamaste-app-${ON_FQDN}\")\" \"available linked\" \"${ON_FQDN}: renamed, still linked\" || true\nassert_eq \"$(link_state \"lamalibre-lamaste-app-${OFF_FQDN}\")\" \"available unlinked\" \"${OFF_FQDN}: renamed, still not linked\" || true\nassert_eq \"$(link_state \"lamalibre-lamaste-auth-${DOMAIN}\")\" \"available linked\" \"The auth portal: renamed to lamalibre-lamaste-auth-${DOMAIN}, linked\" || true\nassert_eq \"$(link_state \"lamalibre-lamaste-app-${SUB_ON}\") $(link_state \"lamalibre-lamaste-app-${SUB_OFF}\") $(link_state lamalibre-lamaste-auth)\" \\\n  \"gone unlinked gone unlinked gone unlinked\" \"No 4.6 name is left, as a file or a link\" || true\nif sudo nginx -t > /dev/null 2>&1; then\n  log_pass \"nginx -t passes\"\nelse\n  log_fail \"nginx -t fails after the rename\"\nfi\nassert_eq \"$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")\" \"${BEFORE}\" \"Every host answers as before (${BEFORE})\" || true\nif sudo journalctl -u lamalibre-lamaste-serverd --since \"-2min\" --no-pager 2>/dev/null | grep -q \"lamalibre-lamaste-app-${SUB_ON}\"; then\n  log_pass \"The panel logged the rename\"\nelse\n  log_info \"No rename line found in the panel's journal\"\nfi\n\n# ===========================================================================\n# 4. One domain, everyone its member\n# ==========================================================================="
+    },
+    {
+      "id": "one-domain-the-primary-every-user-its-member",
+      "label": "One domain, the primary; every user its member",
+      "steps": [
+        {
+          "id": "step-46",
+          "label": "GET /api/domains",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "domains"
+          },
+          "capture": [
+            {
+              "variable": "DOMAINS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "One domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DOMAINS"
+              },
+              "path": ".domains | length",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "One domain"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "…the primary, ${DOMAIN}, active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DOMAINS"
+              },
+              "path": ".domains[0] | \"\\(.name) \\(.primary) \\(.status)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${DOMAIN} true active"
+              },
+              "message": "…the primary, ${DOMAIN}, active"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "…new users need no domains while it is the only one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DOMAINS"
+              },
+              "path": ".newUsersNeedDomains",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "…new users need no domains while it is the only one"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "USERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "…each user's domains are exactly the primary",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$USERS\" | jq --arg d \"${DOMAIN}\" '[.users[]? | select((.domains // []) != [$d])] | length')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…each user's domains are exactly the primary"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"One domain, the primary; every user its member\"\n\nDOMAINS=$(api_get \"domains\" 2>/dev/null || echo '{}')\nassert_json_field \"$DOMAINS\" '.domains | length' '1' \"One domain\" || true\nassert_json_field \"$DOMAINS\" '.domains[0] | \"\\(.name) \\(.primary) \\(.status)\"' \"${DOMAIN} true active\" \"…the primary, ${DOMAIN}, active\" || true\nassert_json_field \"$DOMAINS\" '.newUsersNeedDomains' 'false' \"…new users need no domains while it is the only one\" || true\nUSERS=$(api_get \"users\" 2>/dev/null || echo '{}')\nassert_eq \"$(echo \"$DOMAINS\" | jq -r '.domains[0].members')\" \"$(echo \"$USERS\" | jq '[.users[]? | select((.status // \"active\") != \"removed\")] | length')\" \"Every user is a member of it\" || true\nassert_eq \"$(echo \"$USERS\" | jq --arg d \"${DOMAIN}\" '[.users[]? | select((.domains // []) != [$d])] | length')\" \"0\" \"…each user's domains are exactly the primary\" || true\n\n# ===========================================================================\n# 5. lamaste-priv\n# ==========================================================================="
+    },
+    {
+      "id": "lamaste-priv-writes-no-vhost-under-a-4-6-name-or-an-unknown-dotted-one",
+      "label": "lamaste-priv writes no vhost under a 4.6 name or an unknown dotted one",
+      "steps": [
+        {
+          "id": "step-53",
+          "label": "Set RC",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "printf 'server {\\n listen 443 ssl;\\n}\\n' | sudo /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-app-e2e34legacy > /dev/null 2>&1; echo $?"
+          },
+          "capture": [
+            {
+              "variable": "RC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "write lamalibre-lamaste-app-e2e34legacy (a 4.6 name) is refused (exit ${RC})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "RC"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "write lamalibre-lamaste-app-e2e34legacy (a 4.6 name) is refused (exit ${RC})"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "…and leaves no file",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_state lamalibre-lamaste-app-e2e34legacy)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "gone unlinked"
+              },
+              "message": "…and leaves no file"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Set RC",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "printf 'server {\\n listen 443 ssl;\\n}\\n' | sudo /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-x-e2e34.example.test > /dev/null 2>&1; echo $?"
+          },
+          "capture": [
+            {
+              "variable": "RC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "write lamalibre-lamaste-x-e2e34.example.test (a dotted name it does not know) is refused (exit ${RC})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "RC"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "write lamalibre-lamaste-x-e2e34.example.test (a dotted name it does not know) is refused (exit ${RC})"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "…and leaves no file",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_state lamalibre-lamaste-x-e2e34.example.test)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "gone unlinked"
+              },
+              "message": "…and leaves no file"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"lamaste-priv writes no vhost under a 4.6 name or an unknown dotted one\"\n\nRC=$(printf 'server {\\n listen 443 ssl;\\n}\\n' | sudo /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-app-e2e34legacy > /dev/null 2>&1; echo $?)\nassert_not_eq \"$RC\" \"0\" \"write lamalibre-lamaste-app-e2e34legacy (a 4.6 name) is refused (exit ${RC})\" || true\nassert_eq \"$(link_state lamalibre-lamaste-app-e2e34legacy)\" \"gone unlinked\" \"…and leaves no file\" || true\nRC=$(printf 'server {\\n listen 443 ssl;\\n}\\n' | sudo /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-x-e2e34.example.test > /dev/null 2>&1; echo $?)\nassert_not_eq \"$RC\" \"0\" \"write lamalibre-lamaste-x-e2e34.example.test (a dotted name it does not know) is refused (exit ${RC})\" || true\nassert_eq \"$(link_state lamalibre-lamaste-x-e2e34.example.test)\" \"gone unlinked\" \"…and leaves no file\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 34 — Multi-domain relay: a single-domain relay upgraded in place (Single-VM)\n# ============================================================================\n# A relay of 4.6 knows one domain and names its vhosts by subdomain\n# (lamalibre-lamaste-app-<subdomain>, lamalibre-lamaste-auth). From 4.7 they\n# are named by full hostname (lamalibre-lamaste-app-<fqdn>,\n# lamalibre-lamaste-auth-<domain>) and the panel renames what it finds when\n# it starts (design: packages/core/docs/multi-domain-relay-design.md,\n# \"Upgrade in place\"). Here:\n#\n# 1. Two tunnels, one enabled and one disabled; how each host answers.\n# 2. Their vhosts and the auth portal's put back under the 4.6 names, link\n#    state as it was (the enabled one linked, the disabled one not).\n# 3. The panel restarted: every vhost renamed to its full hostname, link\n#    state kept, the legacy names gone, nginx -t passes, every host answers\n#    as before.\n# 4. One domain, the primary, active; every user its member; new users\n#    need no domains.\n# 5. lamaste-priv writes no vhost under a 4.6 name, nor under a dotted name\n#    it does not know.\n#\n# This is the nginx side of the rename that has no unit test (the panel's\n# nginx.js works on the real /etc/nginx).\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq nginx\n\nbegin_test \"34 — Multi-domain relay: a single-domain relay upgraded in place\"\n\nRUN_ID=\"$(date +%s)\"\nAGENT_LABEL_34=\"md-upgrade-e2e-${RUN_ID}\"\nSUB_ON=\"e2e34on\"\nSUB_OFF=\"e2e34off\"\nPORT_ON=19934\nPORT_OFF=19935\nTUNNEL_ON=\"\"\nTUNNEL_OFF=\"\"\nAVAILABLE=\"/etc/nginx/sites-available\"\nENABLED=\"/etc/nginx/sites-enabled\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${TUNNEL_ON} ${TUNNEL_OFF}; do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${AGENT_LABEL_34}\" > /dev/null 2>&1 || true\n  sudo rm -f \"${AVAILABLE}/lamalibre-lamaste-app-e2e34legacy\" \"${AVAILABLE}/lamalibre-lamaste-x-e2e34.example.test\"\n}\ntrap cleanup EXIT\n\n# host_status <hostname> — how nginx answers https://<hostname>/ on this VM\nhost_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve \"$1:443:127.0.0.1\" \"https://$1/\" 2>/dev/null || echo \"000\"\n}\n\n# link_state <site name> — \"available linked\" / \"available unlinked\" / \"gone …\"\nlink_state() {\n  local a=gone e=unlinked\n  if sudo test -e \"${AVAILABLE}/$1\"; then a=available; fi\n  if sudo test -L \"${ENABLED}/$1\"; then e=linked; fi\n  echo \"$a $e\"\n}\n\n# to_legacy <new name> <legacy name> — the vhost under its 4.6 name, linked\n# under it if it was linked under the new one\nto_legacy() {\n  local linked=no\n  if sudo test -L \"${ENABLED}/$1\"; then linked=yes; fi\n  sudo mv \"${AVAILABLE}/$1\" \"${AVAILABLE}/$2\"\n  sudo rm -f \"${ENABLED}/$1\"\n  if [ \"$linked\" = \"yes\" ]; then sudo ln -s \"${AVAILABLE}/$2\" \"${ENABLED}/$2\"; fi\n}\n\npanel_up() { [ \"$(api_get \"health\" 2>/dev/null | jq -r '.status' 2>/dev/null || echo \"\")\" = \"ok\" ]; }\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

@@ -181,7 +181,7 @@ fi
 log_section "The vhost, the signing key, the public key"
 # ---------------------------------------------------------------------------
 
-PANEL_VHOST="/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-agent-${PANEL_AGENT}"
+PANEL_VHOST="/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${PANEL_FQDN}"
 VHOST_AUTHZ=$(host_exec "grep -cF 'auth_request /internal/lamaste/agent-panel-authz;' ${PANEL_VHOST} 2>/dev/null || true")
 assert_eq "$VHOST_AUTHZ" "1" "Panel vhost asks the panel to authorize every request" || true
 
