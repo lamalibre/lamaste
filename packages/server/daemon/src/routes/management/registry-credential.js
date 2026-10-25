@@ -34,7 +34,7 @@ import {
 import { DomainNameSchema } from '@lamalibre/lamaste';
 import { sendFailure } from '../../lib/app-error.js';
 import { resolveActiveDomain } from '../../lib/domains.js';
-import { syncOidcClients } from '../../lib/plugin-oidc.js';
+import { syncOidcClients, withRegistryCandidate } from '../../lib/plugin-oidc.js';
 
 const FeriaTokenSchema = z
   .string()
@@ -106,55 +106,80 @@ export default async function registryCredentialRoutes(fastify) {
       }
       const candidate = { registryUrl: body.registryUrl, auth };
 
-      // The panel's own client must exist in Authelia (with a secret in the
-      // store) before the chain can be exercised.
-      if (auth.kind === 'oidc') {
-        try {
-          const synced = await syncOidcClients(request.log, {
-            registryAuth: {
+      // An oidc candidate is what every sync serves until it is stored or
+      // dropped — the identity tick's too, which would otherwise remove the
+      // panel's client from Authelia under the verification.
+      const registryAuth =
+        auth.kind === 'oidc'
+          ? {
               registryUrl: body.registryUrl,
               ...(auth.issuerDomain ? { issuerDomain: auth.issuerDomain } : {}),
-            },
-          });
-          if (!synced) {
-            return reply.code(503).send({ error: 'Complete onboarding (set a domain) first' });
+            }
+          : undefined;
+      const asCandidate = (fn) => (registryAuth ? withRegistryCandidate(registryAuth, fn) : fn());
+      const outcome = await asCandidate(async () => {
+        // The panel's own client must exist in Authelia (with a secret in the
+        // store) before the chain can be exercised.
+        if (registryAuth) {
+          try {
+            if (!(await syncOidcClients(request.log))) {
+              return { status: 503, body: { error: 'Complete onboarding (set a domain) first' } };
+            }
+          } catch (err) {
+            return {
+              status: 500,
+              body: {
+                error: `Could not register the ${LAMASTE_SERVER_OIDC_CLIENT_ID} client in Authelia: ${err.message}`,
+              },
+            };
           }
-        } catch (err) {
-          return reply.code(500).send({
-            error: `Could not register the ${LAMASTE_SERVER_OIDC_CLIENT_ID} client in Authelia: ${err.message}`,
-          });
         }
-      }
 
-      let verified;
-      try {
-        verified = await verifyRegistryCredential(candidate);
-      } catch (err) {
-        if (auth.kind === 'oidc') {
+        let verified;
+        try {
+          verified = await verifyRegistryCredential(candidate);
+        } catch (err) {
+          const status = err instanceof RegistryCredentialError ? err.statusCode : 502;
+          return { status, body: { error: err.message }, rollBack: Boolean(registryAuth) };
+        }
+
+        const config = {
+          provider: 'feria',
+          registryUrl: body.registryUrl,
+          scope: body.scope ?? '@lamalibre',
+          auth,
+          owner: verified.owner,
+          configuredAt: new Date().toISOString(),
+        };
+        try {
+          return {
+            verified,
+            config,
+            warnings: await setRegistryCredential(config, { logger: request.log }),
+          };
+        } catch (err) {
+          return { failure: err };
+        }
+      });
+      if (outcome.failure) {
+        return sendFailure(
+          request,
+          reply,
+          outcome.failure,
+          'Failed to store the registry credential',
+        );
+      }
+      if (outcome.status) {
+        if (outcome.rollBack) {
           // Leave Authelia as the stored credential says — the candidate is
           // not kept.
           await syncOidcClients(request.log).catch((syncErr) =>
             request.log.warn({ err: syncErr.message }, 'Failed to roll back the OIDC client'),
           );
         }
-        const status = err instanceof RegistryCredentialError ? err.statusCode : 502;
-        return reply.code(status).send({ error: err.message });
+        return reply.code(outcome.status).send(outcome.body);
       }
-
-      const config = {
-        provider: 'feria',
-        registryUrl: body.registryUrl,
-        scope: body.scope ?? '@lamalibre',
-        auth,
-        owner: verified.owner,
-        configuredAt: new Date().toISOString(),
-      };
-      let warnings;
-      try {
-        warnings = await setRegistryCredential(config, { logger: request.log });
-      } catch (err) {
-        return sendFailure(request, reply, err, 'Failed to store the registry credential');
-      }
+      const { verified, config, warnings } = outcome;
       // The stored credential now decides whether Authelia carries the client.
       await syncOidcClients(request.log).catch((err) =>
         request.log.warn(

@@ -320,6 +320,31 @@ test('OIDC: a plugin installed before refresh tokens were refused is served with
   }
 });
 
+test('OIDC: a registry credential being set is served by every sync until it is stored or dropped', async () => {
+  const { writePlugins } = await import('../src/lib/plugins.js');
+  const { planOidcClients, withRegistryCandidate } = await import('../src/lib/plugin-oidc.js');
+  await writePlugins({ plugins: [] });
+  const panelClient = async () =>
+    (await planOidcClients()).served.some((c) => c.id === 'lamaste-server');
+
+  assert.equal(await panelClient(), false, 'no credential stored: no panel client');
+  // As the identity tick plans while PUT /api/registry-credential verifies:
+  // the candidate's client stays, Authelia is not rewritten under the check.
+  const during = await withRegistryCandidate({ registryUrl: 'https://feria.relay.test' }, () =>
+    panelClient(),
+  );
+  assert.equal(during, true);
+  assert.equal(await panelClient(), false, 'dropped once the candidate is done');
+
+  // An explicit override still wins over the candidate (the route's own rollback).
+  const overridden = await withRegistryCandidate(
+    { registryUrl: 'https://feria.relay.test' },
+    async () =>
+      (await planOidcClients({ registryAuth: null })).served.some((c) => c.id === 'lamaste-server'),
+  );
+  assert.equal(overridden, false);
+});
+
 test('OIDC: disabling serves none of its clients but keeps the confidential secret planned', async () => {
   const { writePlugins } = await import('../src/lib/plugins.js');
   const { planOidcClients } = await import('../src/lib/plugin-oidc.js');

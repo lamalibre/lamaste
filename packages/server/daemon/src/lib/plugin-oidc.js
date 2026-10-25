@@ -34,7 +34,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { validateInstalledManifest } from '@lamalibre/lamaste';
+import { PromiseChainMutex, validateInstalledManifest } from '@lamalibre/lamaste';
 import {
   LAMASTE_REGISTRY_OIDC_SCOPES,
   LAMASTE_SERVER_OIDC_CLIENT_ID,
@@ -98,6 +98,37 @@ async function lamasteOwnClient(registryAuth) {
 }
 
 /**
+ * A registry credential being set (`PUT /api/registry-credential`): its
+ * `registryAuth` while the panel's client is synced, the chain verified and
+ * the credential stored. Every sync that names no override serves it — the
+ * identity tick's every-minute sync included, which otherwise reads the
+ * stored credential, removes the client the candidate needs and restarts
+ * Authelia under the verification's token request.
+ * @type {{ registryUrl: string, issuerDomain?: string } | null | undefined}
+ */
+let registryCandidate;
+const registryCandidateMutex = new PromiseChainMutex();
+
+/**
+ * Run `fn` with `registryAuth` as the candidate registry credential
+ * (see {@link registryCandidate}); one candidate at a time.
+ * @template T
+ * @param {{ registryUrl: string, issuerDomain?: string } | null} registryAuth
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export function withRegistryCandidate(registryAuth, fn) {
+  return registryCandidateMutex.run(async () => {
+    registryCandidate = registryAuth;
+    try {
+      return await fn();
+    } finally {
+      registryCandidate = undefined;
+    }
+  });
+}
+
+/**
  * Everything Authelia should know, from the stored state.
  * @param {{ registryAuth?: { registryUrl: string, issuerDomain?: string } | null }} [overrides]
  *   `registryAuth` replaces the stored registry credential's say in the
@@ -108,6 +139,8 @@ async function collectAllClients(overrides = {}) {
   let registryAuth;
   if (overrides.registryAuth !== undefined) {
     registryAuth = overrides.registryAuth;
+  } else if (registryCandidate !== undefined) {
+    registryAuth = registryCandidate;
   } else {
     const stored = await readRegistryCredentialConfig().catch(() => null);
     registryAuth =
