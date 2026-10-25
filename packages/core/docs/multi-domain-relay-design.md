@@ -714,10 +714,10 @@ from the worktree; the core library came from the dev Feria (this branch's
 `@lamalibre/lamaste` published there as 4.6.0 for the run, removed
 afterwards).
 
-| Suite     | Specs                                                 | Result                                                                                                                                                                            |
-| --------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| single-VM | 01, 03 (dependencies), 04, 19, 34, 35                 | all pass (no skip)                                                                                                                                                                |
-| three-VM  | 01, 03, 15, 22, 32, 43, 45, 46, 47, 48; regression 40 | all pass after the fixes below (no skip); after the /simplify rework a second campaign on fresh VMs ran 01, 40, 43, 45, 46, 47, 48 (40 re-run after the credential-candidate fix) |
+| Suite     | Specs                                                 | Result                                                                                                                                                                                                                                                                                     |
+| --------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| single-VM | 01, 03 (dependencies), 04, 19, 34, 35                 | all pass (no skip)                                                                                                                                                                                                                                                                         |
+| three-VM  | 01, 03, 15, 22, 32, 43, 45, 46, 47, 48; regression 40 | all pass after the fixes below (no skip); after the /simplify rework a second campaign on fresh VMs ran 01, 40, 43, 45, 46, 47, 48 (40 re-run after the credential-candidate fix); 40 (121 checks) and 43 (50) re-run on `8109547`, the OIDC sync planned and written under the one writer |
 
 Fixed on the way:
 
