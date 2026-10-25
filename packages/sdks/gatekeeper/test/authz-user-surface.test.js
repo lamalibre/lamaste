@@ -311,11 +311,12 @@ function check(
     url = `https://${fqdn}${target}`,
     method = 'GET',
     cookie = 'authelia_session=alice',
+    route = 'user-surface',
   } = {},
 ) {
   const headers = { host, 'x-original-url': url, 'x-original-method': method };
   if (cookie !== null) headers.cookie = cookie;
-  return app.inject({ method: 'GET', url: `/authz/user-surface/${fqdn}`, headers });
+  return app.inject({ method: 'GET', url: `/authz/${route}/${fqdn}`, headers });
 }
 
 /** Verify an answer's assertion as the panel does. */
@@ -513,8 +514,8 @@ test('a restricted tunnel needs the user’s grant', async () => {
   });
   assert.equal(refused.statusCode, 403);
   assert.equal(refused.headers['x-lamalibre-relay-assertion'], undefined);
-  // Not the access-request page: the caller is an application's request.
-  assert.equal(refused.body, '');
+  // JSON, not the access-request page: the caller is an application's request.
+  assert.deepEqual(JSON.parse(refused.body), { error: 'forbidden' });
 });
 
 test('a user an assertion cannot carry is refused; without the relay key, 503', async () => {
@@ -709,4 +710,35 @@ test('a user who is not a member of the host’s domain is refused with JSON, ne
   } finally {
     domainsProjection = ALL_MEMBERS;
   }
+});
+
+test('a refused request is answered with its refusal as JSON, asked again — never an assertion', async () => {
+  const refusal = (target, opts = {}) => check(target, { ...opts, route: 'user-surface-refusal' });
+
+  // Not a member of the host's domain.
+  domainsProjection = domainsIndex([{ name: 'example.com', members: ['bob', 'carol'] }]);
+  try {
+    const res = await refusal('/api/market-indicators/app/notes');
+    assert.equal(res.statusCode, 403);
+    assert.deepEqual(JSON.parse(res.body), { error: 'not_a_member' });
+    assert.equal(res.headers['x-lamalibre-relay-assertion'], undefined);
+    assert.equal(res.headers['cache-control'], 'no-store');
+  } finally {
+    domainsProjection = ALL_MEMBERS;
+  }
+
+  // Refused for another reason: a path off the user surface.
+  const off = await refusal('/api/market-indicators/admin/x');
+  assert.equal(off.statusCode, 403);
+  assert.deepEqual(JSON.parse(off.body), { error: 'forbidden' });
+
+  // No session: Gatekeeper's JSON 401.
+  const anonymous = await refusal('/api/market-indicators/app/notes', { cookie: null });
+  assert.equal(anonymous.statusCode, 401);
+
+  // Allowed by now: that request was still refused, and gets no assertion.
+  const allowed = await refusal('/api/market-indicators/app/notes');
+  assert.equal(allowed.statusCode, 403);
+  assert.deepEqual(JSON.parse(allowed.body), { error: 'forbidden' });
+  assert.equal(allowed.headers['x-lamalibre-relay-assertion'], undefined);
 });

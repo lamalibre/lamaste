@@ -344,6 +344,16 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
   // Gatekeeper's rate limit keys on the address nginx saw, never one a client sent.
   assert.ok(unauthenticated.includes('proxy_set_header X-Forwarded-For $remote_addr;'));
 
+  // A refusal is asked again for its JSON body (auth_request keeps only the status),
+  // exactly as the subrequest asked.
+  const refused = locationBody(text, '= /internal/lamaste/user-surface-403');
+  assert.match(refused, /^\s*internal;$/m);
+  assert.ok(
+    refused.includes(`proxy_pass http://127.0.0.1:9294/authz/user-surface-refusal/${fqdn};`),
+  );
+  assert.ok(refused.includes(`proxy_set_header X-Original-URL https://${fqdn}$request_uri;`));
+  assert.ok(refused.includes('proxy_set_header Cookie $http_cookie;'));
+
   for (const [route, limit] of [
     ['market-indicators', 10],
     ['fx', 25],
@@ -378,6 +388,7 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
         'proxy_read_timeout 3600s;',
         'proxy_send_timeout 3600s;',
         'error_page 401 = /internal/lamaste/user-surface-401;',
+        'error_page 403 = /internal/lamaste/user-surface-403;',
       ]) {
         assert.ok(body.includes(line), `${matcher}: ${line}`);
       }

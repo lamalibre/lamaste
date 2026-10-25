@@ -718,6 +718,10 @@ function gatekeeperSubrequest(check, fqdn) {
  * - `/internal/lamaste/user-surface-401` answers a request without a
  *   session with Gatekeeper's JSON 401 — an application's request is never
  *   redirected to the login page.
+ * - `/internal/lamaste/user-surface-403` answers a refused request with
+ *   Gatekeeper's JSON refusal (`/authz/user-surface-refusal/<fqdn>`, asked
+ *   as the subrequest was): under `auth_request` nginx keeps only the
+ *   subrequest's status, never its body.
  *
  * Each route's locations pass the assertion, and nothing else of the
  * browser's credentials ({@link USER_SURFACE_PROXY_HEADERS}), to the panel
@@ -757,8 +761,9 @@ ${USER_SURFACE_PROXY_HEADERS}
         proxy_read_timeout ${USER_SURFACE_MAX_RESPONSE_SECONDS}s;
         proxy_send_timeout ${USER_SURFACE_MAX_RESPONSE_SECONDS}s;
 
-        # No session: a JSON 401, never a redirect
+        # No session: a JSON 401, never a redirect; refused: Gatekeeper's JSON 403
         error_page 401 = /internal/lamaste/user-surface-401;
+        error_page 403 = /internal/lamaste/user-surface-403;
     }`;
     const apiPath = userSurfaceApiPath(route);
     return `
@@ -773,6 +778,10 @@ ${USER_SURFACE_PROXY_HEADERS}
     # vouches for the session's user to the panel, for one request each.
     location = /internal/lamaste/user-surface-authz {
         ${gatekeeperSubrequest('user-surface', fqdn)}
+    }
+
+    location = /internal/lamaste/user-surface-403 {
+        ${gatekeeperSubrequest('user-surface-refusal', fqdn)}
     }
 
     location = /internal/lamaste/user-surface-401 {

@@ -290,6 +290,24 @@ export async function authzRoutes(
   );
 
   /**
+   * GET /authz/user-surface-refusal/:fqdn — what a user surface answers a
+   * request `/authz/user-surface/:fqdn` refused (nginx `error_page 403`:
+   * under `auth_request` nginx keeps only the subrequest's status, never its
+   * body). The same decision, asked again with the same headers, answered
+   * with its refusal as JSON — `{ error: 'not_a_member' }` for a user who is
+   * not a member of the host's domain, `{ error: 'forbidden' }` otherwise —
+   * and never an assertion: a request allowed by now was still refused.
+   */
+  fastify.get<{ Params: { fqdn: string } }>(
+    '/authz/user-surface-refusal/:fqdn',
+    { config: authzRateLimit },
+    async (request, reply) =>
+      authorizeUserSurfaceRequest(fastify, request, reply, request.params.fqdn, {
+        refusalOnly: true,
+      }),
+  );
+
+  /**
    * GET /authz/user-surface-shell/:fqdn — the nginx auth_request target of
    * every path of a plugin-owned site but its user surface's API: the shell
    * of the plugin's web surface (`userSurface.web`). The vhost names the
@@ -609,13 +627,14 @@ async function authorizeUserSurfaceRequest(
   request: FastifyRequest,
   reply: FastifyReply,
   fqdn: string,
+  { refusalOnly = false }: { refusalOnly?: boolean } = {},
 ): Promise<FastifyReply> {
   const requestId = request.id;
   // Single use: nothing of this answer may be cached, a refusal included.
   reply.header('Cache-Control', 'no-store');
   const refuse = (reason: string, extra: Record<string, unknown> = {}): FastifyReply => {
     request.log.info({ requestId, reason, tunnel: fqdn, ...extra }, 'user-surface authz denied');
-    return reply.code(403).send();
+    return reply.code(403).send({ error: 'forbidden' });
   };
 
   if (!TUNNEL_FQDN_RE.test(fqdn)) return refuse('invalid_tunnel_name');
@@ -659,7 +678,7 @@ async function authorizeUserSurfaceRequest(
     originalUrl,
     parsed.hostname,
   );
-  if (!answer) return reply.code(401).send();
+  if (!answer) return reply.code(401).send({ error: 'unauthenticated' });
   const checked = checkDomain(fastify, answer, parsed.hostname);
   if ('refused' in checked) {
     // An application's request: JSON, never a page.
@@ -683,6 +702,10 @@ async function authorizeUserSurfaceRequest(
       return refuse('no_matching_grant', { resourceType: host.kind, resourceId: host.id });
     }
   }
+
+  // Asked again for a refused request's answer: allowed by now, but that
+  // request was refused — never an assertion for it.
+  if (refusalOnly) return refuse('allowed_since');
 
   const key = await currentRelayKey(fastify, request);
   if (!key) {
