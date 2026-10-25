@@ -190,19 +190,19 @@ md_tunnel() {
 
 # md_sign_in <username> <password> <secret> <jar> <host> — sign_in at the
 # sign-in page of <host>'s domain (a tunnel's hostname is one label under
-# it), asserted. A TOTP code is used once: a user signing in again within the
-# same 30 s step waits for the next one (the step is remembered per user —
-# never call this in a command substitution).
+# it), asserted. A TOTP code is used once: a user signing in again before the
+# step of their last code has passed waits for the next one. The step is the
+# one when the sign-in ended (the code is made during it, and a sign-in begun
+# at a step's last second takes the next step's code); it is remembered per
+# user — never call this in a command substitution.
 md_sign_in() {
-  local domain="${5#*.}" key step
+  local domain="${5#*.}" key
   key="MD_TOTP_STEP_${1//[^A-Za-z0-9]/_}"
-  step=$(($(date +%s) / 30))
-  if [ "${!key:-}" = "$step" ]; then
+  while [ -n "${!key:-}" ] && [ "$(($(date +%s) / 30))" -le "${!key}" ]; do
     wait_for_next_totp_window
-    step=$(($(date +%s) / 30))
-  fi
-  printf -v "$key" '%s' "$step"
+  done
   assert_eq "$(sign_in "$1" "$2" "$3" "$4" "$5" "${domain}")" "OK OK" "$1 signed in at auth.${domain} (password, TOTP)" || true
+  printf -v "$key" '%s' "$(($(date +%s) / 30))"
 }
 
 # outcome <jar | -> <url> — "<status> <redirect host | ->" of one request from the visitor

@@ -623,7 +623,8 @@ list|add|verify-dns|activate|remove|members`, `plugins domain`,
    of a new user are set in the panel or with `domains members … add` after
    it is created.
 
-4. **Rodeo specs** — written, not run (they wait for the user's go). In
+4. **Rodeo specs** — written in wave 4, run on fresh VMs on 2026-10-25 (see
+   _Rodeo: run, results_ below). In
    `packages/tools/lamaste-rodeo`:
    - **Infrastructure.** B and C are `test_domain_n <primary> second|third`
      (`tests/e2e/test-domains.sh`: a registrable domain of its own —
@@ -704,6 +705,64 @@ list|add|verify-dns|activate|remove|members`, `plugins domain`,
      hostname): single-VM 04 and 19, three-VM 01 (lamaste-priv's content
      check now under a valid name — a 4.6 name is refused before the
      content is read), 03, 15, 22, 32 and 43.
+
+### Rodeo: run, results (2026-10-25)
+
+Run on fresh Multipass VMs (development profile), Lamaste installed from
+this branch: create-lamaste vendors serverd, the CLI, the UI and Gatekeeper
+from the worktree; the core library came from the dev Feria (this branch's
+`@lamalibre/lamaste` published there as 4.6.0 for the run, removed
+afterwards).
+
+| Suite     | Specs                                                     | Result                                   |
+| --------- | --------------------------------------------------------- | ---------------------------------------- |
+| single-VM | 01, 03 (dependencies), 04, 19, 34, 35                     | all pass (no skip)                       |
+| three-VM  | 01, 03, 15, 22, 32, 43, 45, 46, 47, 48; regression 40, 43 | all pass after the fixes below (no skip) |
+
+Fixed on the way:
+
+- **Product — a user surface's refusal was nginx's page, not JSON.** Under
+  `auth_request` nginx keeps only the subrequest's status, never its body,
+  so Gatekeeper's `{ error: 'not_a_member' }` never reached an application
+  (spec 48). The user-surface locations now send a 403 to
+  `/internal/lamaste/user-surface-403`, which asks Gatekeeper's
+  `/authz/user-surface-refusal/:fqdn` — the same decision asked again, its
+  refusal as JSON (`not_a_member`, else `forbidden`), never an assertion (a
+  request allowed by now was still refused). Tests: Gatekeeper
+  authz-user-surface, serverd nginx-vhosts.
+- **Spec harness — a TOTP code reused across a step boundary** (spec 46).
+  `md_sign_in` recorded the step before signing in; a sign-in begun at a
+  step's last second took the next step's code, so a second sign-in in that
+  step reused it and Authelia refused it ("already used this code
+  recently"). The step is now the one when the sign-in ended, and a user
+  waits while the current step is not later than it.
+- **Spec harness — single-VM specs could not find `test-domains.sh`.** The
+  VM runner uploads only the specs and `helpers.sh`; `helpers.sh` now falls
+  back to the provisioned tier's copy in `/tmp/e2e`.
+- **Campaign environment — the VMs' MTU.** The orchestrator's uplink was a
+  VPN tunnel (MTU 1420) that drops ICMP "fragmentation needed" for the VMs'
+  NATed traffic: full-size TLS packets vanished (npm `ECONNRESET`, chisel's
+  GitHub download reset). `node-ready` (both suites) sets the VMs' MTU to 1400.
+
+The three points the specs could not prove without running:
+
+- **Authelia completes a sign-in for a host the user is not a member of.**
+  It does: a member of B only, signing in at `auth.A` for A's tunnel, passes
+  both factors (`OK OK`); the refusal comes afterwards, from Authelia's rules
+  and Gatekeeper — the domain refusal page, `403`, no redirect (specs 46,
+  48).
+- **Spec 35's consent redirect and `access_denied`.** A member's
+  authorization request at `auth.A` is redirected on to
+  `https://auth.<A>/consent/openid/decision` (no error); a non-member's is
+  sent back to the client's redirect URI with `error=access_denied`; after the
+  plugin moves to B the same non-member's request at `auth.B` goes on, and
+  `auth.<A>` / `auth.<B>` each advertise their own issuer.
+- **The nginx side of the vhost rename.** Spec 34 planted the 4.6 names (an
+  enabled and a disabled tunnel, the auth portal), restarted the panel: all
+  renamed by full hostname with their link state kept, no 4.6 name left as a
+  file or link, `nginx -t` passes, every host answers as before; one domain,
+  every user its member; `lamaste-priv` refuses `write` for a 4.6 name and for
+  an unknown dotted name, each for its name, and leaves no file.
 
 ## Decisions (agreed 2026-10-25)
 
