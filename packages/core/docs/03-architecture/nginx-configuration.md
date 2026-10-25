@@ -439,25 +439,34 @@ server {
     # /internal/lamaste/user-surface-authz, -401 and the /api/market-indicators/app
     # locations — exactly the user-surface locations of a bound tunnel
 
-    location / {
+    # A script, style, font or image the current tree lacks: the previous
+    # tree's (a page still running the old shell), else 404
+    location ~* [.](?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|gif|webp|avif|ico)$ {
         if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+        if ($http_service_worker) { return 404; }
         add_header Content-Security-Policy "default-src 'self'; script-src 'self'; ..." always;
-        # X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, COOP, Cache-Control no-cache
+        # X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, COOP, CORP, Cache-Control no-cache
+        types { text/javascript js mjs; text/css css; ... }   # core WEB_TREE_CONTENT_TYPES
         try_files $uri @previous;
     }
 
-    # A file the current tree lacks: the previous tree's, else the shell
-    location @previous {
-        # the same headers
-        root /var/www/lamaste/apps/market-indicators/previous;
+    # Everything else: the current tree's file, else the shell
+    location / {
+        # the same method check, worker refusal, headers and types
         try_files $uri /index.html;
+    }
+
+    location @previous {
+        # the same headers and types
+        root /var/www/lamaste/apps/market-indicators/previous;
+        try_files $uri =404;
     }
 }
 ```
 
-`auth_request` sits at server level so every location of the shell asks Gatekeeper — the API's locations name their own subrequest, and the internal ones turn it `off`. The shell's headers are set in its two locations only: the API's answers are the panel's to head. `current` and `previous` are links the panel switches with a rename (see [Serving the tree](../04-api-reference/agent-hosted-plugins.md#serving-the-tree)); nginx follows them per request. While the surface is not served, the vhost answers everything with `503` (`Cache-Control: no-store`).
+`auth_request` sits at server level so every location of the shell asks Gatekeeper — the API's locations name their own subrequest, and the internal ones turn it `off`. The API's prefix location is `^~`, so the subresource regex never takes an API path. The shell's headers are set in its locations only: the API's answers are the panel's to head. A document, an SVG or a manifest is never served from the previous tree, and a service worker's script (`Service-Worker: script`) is always `404` — a worker would outlive the tree that installed it. The `types` block names each extension's content type from core's list (`lamaste-priv` accepts a `types` block in a location — `media/type ext…` entries only, no `include`) rather than trust the host's `mime.types`, which differs between nginx versions. `current` and `previous` are links the panel switches with a rename (see [Serving the tree](../04-api-reference/agent-hosted-plugins.md#serving-the-tree)); nginx follows them per request. While the surface is not served, the vhost answers everything with `503` (`Cache-Control: no-store`, a worker's script `404`) — and, once the plugin is uninstalled, `Clear-Site-Data: "storage"`.
 
-Moving a bound tunnel's host to a web surface hands the hostname over in **one reload**: the tunnel's vhost is unlinked, the site's written and linked, `nginx -t` run, nginx reloaded once, and only then the tunnel's file removed; on a failed test both are put back.
+Moving a bound tunnel's host to a web surface hands the hostname over in **one reload**: the tunnel's vhost is unlinked, the site's written and linked, `nginx -t` run, nginx reloaded once; the tunnel's file stays installed, unlinked, so the tunnel can be enabled again once the site is deleted. On a failed test both are put back.
 
 ### 7. Public Tunnel Vhost (`lamalibre-lamaste-app-<name>`, access mode: public)
 
@@ -691,7 +700,7 @@ An `authenticated` or `restricted` app tunnel bound as the user surface of agent
     # The user surface of plugin "market-indicators"
     location = /api/market-indicators/app { ... }   # the same block as below
 
-    location /api/market-indicators/app/ {
+    location ^~ /api/market-indicators/app/ {
         auth_request /internal/lamaste/user-surface-authz;
         auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;
 

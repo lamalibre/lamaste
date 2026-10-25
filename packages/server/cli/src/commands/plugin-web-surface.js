@@ -239,7 +239,7 @@ export async function webSurfaceCmd(args, { json }) {
     );
     console.log(
       chalk.dim(
-        `  The tunnel ${terminalText(tunnel.id)} stays, disabled and unbound, for a rollback by hand.`,
+        `  The tunnel ${terminalText(tunnel.id)} stays, disabled and unbound, its vhost unlinked: delete the web surface, then enable the tunnel, to roll back by hand.`,
       ),
     );
     printWebSurface(name, result.webSurface);
@@ -259,4 +259,11 @@ export async function webSurfaceCmd(args, { json }) {
   console.log(
     `\n  ${chalk.green('✓')} The web surface of ${plugin} is deleted: ${chalk.cyan(terminalText(site.fqdn))} no longer answers\n`,
   );
+  if (Array.isArray(result.grantsNotRevoked) && result.grantsNotRevoked.length > 0) {
+    console.log(
+      chalk.yellow(
+        `  Gatekeeper kept ${result.grantsNotRevoked.length} grant(s) on the deleted site — they name a site that no longer exists; their ids are in the audit log\n`,
+      ),
+    );
+  }
 }

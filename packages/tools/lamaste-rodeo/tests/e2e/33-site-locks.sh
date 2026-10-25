@@ -53,17 +53,21 @@ site_field() {
   api_get "sites?limit=500" | jq -r --arg id "${SITE_ID}" ".sites[] | select(.id == \$id) | $1" 2>/dev/null || echo ""
 }
 
-# upload_while_patching <spaMode> — a large upload, and a PATCH of spaMode
-# while it is in flight; prints "<upload status> <patch status>"
+# upload_while_patching <spaMode> — a large upload, slowed to a few
+# seconds (--limit-rate) so it is surely in flight, and a PATCH of spaMode
+# meanwhile; prints "<upload status> <patch status> <in flight>", the last
+# "yes" when the upload was still running once the PATCH had answered —
+# else the round proved nothing
 upload_while_patching() {
-  local out="${RACE_DIR}/upload.status" patch
-  _curl_mtls -o /dev/null -w '%{http_code}' -X POST -F "file=@${BIG_FILE}" \
+  local out="${RACE_DIR}/upload.status" patch inflight
+  _curl_mtls -o /dev/null -w '%{http_code}' --limit-rate 6M -X POST -F "file=@${BIG_FILE}" \
     "${BASE_URL}/api/sites/${SITE_ID}/files" > "$out" 2> /dev/null &
   local pid=$!
-  sleep 0.1
+  sleep 0.5
   patch=$(api_patch_status "sites/${SITE_ID}" "{\"spaMode\":$1}")
+  if kill -0 "$pid" 2> /dev/null; then inflight=yes; else inflight=no; fi
   wait "$pid" || true
-  echo "$(cat "$out" 2> /dev/null || echo 000) ${patch}"
+  echo "$(cat "$out" 2> /dev/null || echo 000) ${patch} ${inflight}"
 }
 
 # race <label> <api path> <json> <label> <api path> <json> — two POSTs at
@@ -109,7 +113,7 @@ assert_json_field "$CREATE" '.ok' 'true' "Site ${SITE_NAME} created" || true
 for round in 1 2 3; do
   if [ $((round % 2)) -eq 1 ]; then WANT=true; else WANT=false; fi
   STATUSES=$(upload_while_patching "${WANT}")
-  assert_eq "${STATUSES}" "200 200" "Round ${round}: the upload and the PATCH (spaMode ${WANT}) both answered 200" || true
+  assert_eq "${STATUSES}" "200 200 yes" "Round ${round}: the upload and the PATCH (spaMode ${WANT}) both answered 200, the PATCH while the upload ran" || true
   assert_eq "$(site_field '.spaMode')" "${WANT}" "Round ${round}: spaMode is ${WANT} — the upload did not write back the copy it read before" || true
 done
 SIZE=$(site_field '.totalSize')

@@ -254,6 +254,9 @@ const URI_PATH_RE = /^\/[A-Za-z0-9._~/-]*$/;
 /** A named location (`location @previous`), the target of a try_files fallback. */
 const NAMED_LOCATION_RE = /^@[a-z][a-z0-9_]{0,31}$/;
 const TRY_FILES_ARG_RE = /^[A-Za-z0-9._/$=-]{1,256}$/;
+/** A `types` entry: a media type, then the extensions served with it. */
+const MEDIA_TYPE_RE = /^[a-z]+\/[a-z0-9.+-]{1,64}$/;
+const EXTENSION_RE = /^[a-z0-9]{1,16}$/;
 
 function hasDotDotSegment(p) {
   return p.split('/').some((seg) => seg === '..' || seg === '.');
@@ -328,6 +331,9 @@ const RULES = {
   location: {
     location: { block: 'location', args: locationArgs },
     if: { block: 'if', args: argc(1, 5) },
+    // The content types of a plugin's web surface, named by the vhost
+    // rather than the host's mime.types (entries checked below).
+    types: { block: 'types', args: argc(0, 0) },
     internal: { args: argc(0, 0) },
     return: { args: argc(1, 2) },
     rewrite: { args: rewriteArgs },
@@ -422,6 +428,14 @@ function validateDirectives(directives, context) {
         !(d.args.length === 0 && ['hostnames', 'volatile'].includes(d.name))
       ) {
         throw new UsageError(`vhost line ${d.line}: malformed map entry`);
+      }
+      continue;
+    }
+    if (context === 'types') {
+      // types entries are "media/type ext...;" — no block, no include.
+      if (d.block !== null) throw new UsageError(`vhost line ${d.line}: block inside types`);
+      if (!MEDIA_TYPE_RE.test(d.name) || !each(EXTENSION_RE)(d.args)) {
+        throw new UsageError(`vhost line ${d.line}: malformed types entry`);
       }
       continue;
     }

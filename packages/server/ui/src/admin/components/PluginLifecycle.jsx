@@ -682,6 +682,44 @@ function WebTreeChanges({ web }) {
         {change.after && <span className="text-zinc-500">({treeSummary(change.after)})</span>}
         {change.kind === 'removed' && <span className="text-zinc-500">→ none</span>}
       </div>
+      {change.changes && <WebTreePaths changes={change.changes} />}
+    </div>
+  );
+}
+
+/**
+ * The paths an update adds, removes and changes in the web tree, with the
+ * ones worth a close look before approving (another page, an SVG, a
+ * manifest) called out.
+ */
+function WebTreePaths({ changes }) {
+  const rows = [
+    ['added', changes.added],
+    ['removed', changes.removed],
+    ['changed', changes.changed],
+  ].filter(([, list]) => list?.count > 0);
+  if (rows.length === 0 && !(changes.review?.length > 0)) return null;
+  return (
+    <div className="mt-1 space-y-0.5 text-zinc-400">
+      {changes.review?.length > 0 && (
+        <div className="text-yellow-400">
+          Look at these before approving — pages, SVGs or manifests served on the relay’s domain:{' '}
+          <span className="font-mono">{changes.review.join(', ')}</span>
+        </div>
+      )}
+      {rows.map(([label, list]) => (
+        <details key={label}>
+          <summary className="cursor-pointer text-zinc-500">
+            {label} {list.count} {list.count === 1 ? 'file' : 'files'}
+          </summary>
+          <div className="font-mono text-zinc-300">
+            {list.paths.join(', ')}
+            {list.count > list.paths.length && (
+              <span className="text-zinc-500"> … and {list.count - list.paths.length} more</span>
+            )}
+          </div>
+        </details>
+      ))}
     </div>
   );
 }

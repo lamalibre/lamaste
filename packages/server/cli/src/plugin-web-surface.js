@@ -198,6 +198,10 @@ export function webSurfaceServedText(view, name) {
       );
     case 'no_web_surface':
       return notServed('not served — its installed version declares no web surface');
+    case 'not_owner':
+      return notServed(
+        `not served — its site was created for another package under the same route: delete it (lamaste-server plugins web-surface ${plugin} delete --yes), then create one`,
+      );
     case 'not_approved':
       return notServed(
         `not served — its installed version waits for approval: lamaste-server plugins hooks ${plugin}`,
@@ -208,7 +212,7 @@ export function webSurfaceServedText(view, name) {
       );
     case 'tree_not_current':
       return notServed(
-        'not served yet — the relay does not serve its approved web tree yet; it switches once the agent half runs the approved version',
+        'not served yet — the relay does not serve its approved web tree yet; it switches when the approved version is installed',
       );
     default:
       return {

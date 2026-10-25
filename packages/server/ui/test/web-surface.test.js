@@ -214,12 +214,38 @@ test('how an update changes a plugin’s web tree', () => {
   assert.equal(webTreeChange(null), null);
   assert.equal(webTreeChange({ before: null, after: null }), null);
   const after = { sha256: SHA_B, files: 3, totalBytes: 4096 };
-  assert.deepEqual(webTreeChange({ before: null, after }), { kind: 'added', before: null, after });
+  assert.deepEqual(webTreeChange({ before: null, after }), {
+    kind: 'added',
+    before: null,
+    after,
+    changes: null,
+  });
   assert.deepEqual(webTreeChange({ before: SHA_A, after: null }), {
     kind: 'removed',
     before: SHA_A,
     after: null,
+    changes: null,
   });
   assert.equal(webTreeChange({ before: SHA_A, after }).kind, 'changed');
   assert.equal(webTreeChange({ before: SHA_B, after }).kind, 'unchanged');
+  // What changes by path passes through, for the approval to list.
+  const changes = {
+    added: { count: 1, paths: ['page-v2.html'] },
+    removed: { count: 0, paths: [] },
+    changed: { count: 1, paths: ['index.html'] },
+    review: ['page-v2.html'],
+  };
+  assert.deepEqual(webTreeChange({ before: SHA_A, after, changes }).changes, changes);
+});
+
+test('create and move say why while a disabled tunnel is still bound', () => {
+  const view = {
+    site: null,
+    declared: { defaultSubdomain: 'piyasa' },
+    boundTunnel: { id: 't1', fqdn: 'piyasa.example.com', enabled: false, routes: ['mi'] },
+    offer: null,
+  };
+  assert.match(createBlock(view), /disabled — unbind it, or enable it and move it/);
+  assert.match(moveBlock(view, 'mi'), /disabled — enable it to move it, or unbind it/);
+  assert.equal(notServedReasonText('not_owner').includes('another package'), true);
 });

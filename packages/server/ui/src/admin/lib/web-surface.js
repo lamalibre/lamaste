@@ -110,12 +110,14 @@ export function notServedReasonText(reason) {
       return 'the installed version declares no identity — a web surface serves its users, so it needs one';
     case 'no_web_surface':
       return 'the installed version declares no web surface (userSurface.web)';
+    case 'not_owner':
+      return 'its site was created for another package under the same route — delete the site, then create one for this plugin';
     case 'not_approved':
       return 'the installed version waits for approval — approve it under Lifecycle hooks';
     case 'not_hosted':
       return 'the plugin is not hosted on an agent, or its hosting is not active yet';
     case 'tree_not_current':
-      return 'the approved web tree is not the one served yet — it is switched to once the agent half runs the approved version';
+      return 'the approved web tree is not the one served yet — it is switched to when the approved version is installed';
     default:
       return reason ? String(reason) : 'not served';
   }
@@ -174,7 +176,10 @@ export function createBlock(view, { edited = false } = {}) {
   if (view.site) return 'The plugin owns a site already';
   if (!view.declared) return 'The installed version declares no web surface';
   if (view.boundTunnel) {
-    return `Tunnel ${view.boundTunnel.fqdn ?? view.boundTunnel.id} is bound as its user surface — move it instead`;
+    const tunnel = view.boundTunnel.fqdn ?? view.boundTunnel.id;
+    return view.boundTunnel.enabled === false
+      ? `Tunnel ${tunnel} is bound as its user surface but disabled — unbind it, or enable it and move it`
+      : `Tunnel ${tunnel} is bound as its user surface — move it instead`;
   }
   if (view.offer && !view.offer.available && !edited) {
     return `'${view.offer.subdomain}' is held by a tunnel or a site — pick another subdomain`;
@@ -194,6 +199,9 @@ export function moveBlock(view, route) {
   if (!view?.boundTunnel) return 'No tunnel is bound as its user surface';
   if (view.site) return 'The plugin owns a site already';
   if (!view.declared) return 'The installed version declares no web surface';
+  if (view.boundTunnel.enabled === false) {
+    return 'The bound tunnel is disabled — enable it to move it, or unbind it';
+  }
   const others = (view.boundTunnel.routes ?? []).filter((r) => r !== route);
   if (others.length > 0) {
     return `The tunnel serves other user surfaces too (${others.join(', ')}) — unbind them first`;
@@ -244,8 +252,12 @@ export function showsWebSurface(plugin, ownedRoutes) {
  * site answers 503), `changed` or `unchanged`. Null when neither declares
  * one.
  *
- * @param {{ before: string | null, after: { sha256: string, files: number, totalBytes: number } | null } | null | undefined} web
- * @returns {{ kind: 'added' | 'removed' | 'changed' | 'unchanged', before: string | null, after: { sha256: string, files: number, totalBytes: number } | null } | null}
+ * `changes` passes through what changes by path (`{ added, removed,
+ * changed }`, each `{ count, paths }`, and `review`: paths to look at
+ * closely), null when the panel could not tell.
+ *
+ * @param {{ before: string | null, after: { sha256: string, files: number, totalBytes: number } | null, changes?: object | null } | null | undefined} web
+ * @returns {{ kind: 'added' | 'removed' | 'changed' | 'unchanged', before: string | null, after: { sha256: string, files: number, totalBytes: number } | null, changes: object | null } | null}
  */
 export function webTreeChange(web) {
   if (!web || typeof web !== 'object') return null;
@@ -263,7 +275,8 @@ export function webTreeChange(web) {
         : before === after.sha256
           ? 'unchanged'
           : 'changed';
-  return { kind, before, after };
+  const changes = web.changes && typeof web.changes === 'object' ? web.changes : null;
+  return { kind, before, after, changes };
 }
 
 /** The id of a plugin's card on the Plugins page — what `#plugin-<name>` opens. */

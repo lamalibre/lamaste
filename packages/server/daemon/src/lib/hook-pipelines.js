@@ -871,8 +871,10 @@ export async function runUninstallPipeline(op, ctx, { force = false } = {}) {
 /**
  * The install pipeline around an upgrade of the relay package (the agent
  * half is already running; its stages go through the tunnel). `apply` is
- * Lamaste's step — install the new package and its hook module; `revert`
- * restores the previous ones. Agent and relay stages see `phase: "upgrade"`.
+ * Lamaste's step — install the new package and its hook module; `serve`,
+ * when given, is the last step (the new version's web tree served, once
+ * every stage passed);
+ * `revert` restores the previous ones. Agent and relay stages see `phase: "upgrade"`.
  *
  * A hosted plugin whose agent half Lamaste installs gets the new version of
  * it first (after the agent's pre stage): the agent's helper installs it
@@ -880,7 +882,7 @@ export async function runUninstallPipeline(op, ctx, { force = false } = {}) {
  * tunnel. A failure after that switch activates the version that ran
  * before (`ctx.previousAgentHalfVersion`).
  */
-export async function runUpgradePipeline(op, ctx, { apply, revert, hosted }) {
+export async function runUpgradePipeline(op, ctx, { apply, serve, revert, hosted }) {
   let applied = false;
   try {
     if (hosted) {
@@ -906,6 +908,9 @@ export async function runUpgradePipeline(op, ctx, { apply, revert, hosted }) {
       await agentStageOrSkip(op, ctx, 'install:post-tunnel', 'upgrade', 'tunnel');
       await relayStageOrSkip(op, ctx, 'install:post-tunnel', 'upgrade');
     }
+    // What the new version serves its users from the relay (its web tree):
+    // the last step, once every stage passed — a failure still reverts.
+    if (serve) await op.step('serve the new web tree', serve);
   } catch (err) {
     op.warn(`Reverting: ${String(err.message ?? err).slice(0, 300)}`);
     try {

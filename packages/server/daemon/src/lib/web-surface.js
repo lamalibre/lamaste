@@ -62,8 +62,10 @@ import {
   installVhost,
   moveAppVhostToWebSurface,
   readInstalledVhost,
+  reload as reloadNginx,
   removeStaticSiteVhost,
   renderWebSurfaceVhost,
+  unlinkMovedAppVhost,
   vhostCertDir,
 } from './nginx.js';
 import { installedVersionApproved } from './plugin-hooks.js';
@@ -87,8 +89,10 @@ const defaultDeps = Object.freeze({
   installVhost,
   moveAppVhostToWebSurface,
   readInstalledVhost,
+  reloadNginx,
   removeStaticSiteVhost,
   syncChisel,
+  unlinkMovedAppVhost,
 });
 let deps = defaultDeps;
 
@@ -107,6 +111,16 @@ export function ownedSiteOf(route, sites) {
   return sites.find((site) => siteUserSurfaceRoute(site) === route) ?? null;
 }
 
+/**
+ * Whether `site` was created for the installed plugin `plugin` — its route
+ * and its package. A site outlives its plugin's uninstall; a different
+ * package installed later under the same route does not inherit it (its
+ * hostname, its grants, the old tree) — an administrator deletes it first.
+ */
+function siteOwnedBy(site, plugin) {
+  return siteUserSurfaceRoute(site) === plugin.route && site.owner?.package === plugin.packageName;
+}
+
 function refuse(message, statusCode, code) {
   return httpError(message, statusCode, { code });
 }
@@ -116,37 +130,45 @@ function refuse(message, statusCode, code) {
 // ---------------------------------------------------------------------------
 
 /**
- * Serve the approved web tree of plugin `plugin`'s installed version: copy
- * it out of the installed package into the store when it is not there
- * (checked against the approved digest), then switch `current` to it.
- * Nothing happens while the version declares no web surface or is not
- * approved — the store keeps serving what it served. Returns whether
- * `current` moved. Throws.
+ * Serve the approved web tree of the version of plugin `route` installed
+ * now: copy it out of the installed package into the store when it is not
+ * there (checked against the approved digest), then switch `current` to
+ * it. The plugin is read inside the store's lock, so two refreshes never
+ * switch to an older version's tree. Nothing happens while the version
+ * declares no web surface or is not approved, or — unless `withoutSite`
+ * (a site being created for it) — while the plugin owns no site: the
+ * store keeps serving what it served, and a deleted store stays deleted.
+ * Returns whether `current` moved. Throws.
  *
- * @param {object} plugin the installed registry entry
- * @param {{ logger?: import('pino').Logger }} [opts]
+ * @param {string} route
+ * @param {{ logger?: import('pino').Logger, withoutSite?: boolean }} [opts]
  */
-export async function syncWebSurfaceTree(plugin, { logger } = {}) {
-  if (!plugin?.route || !plugin.userSurface?.web || !plugin.webTreeSha256) return false;
-  if (!(await installedVersionApproved(plugin).catch(() => false))) return false;
-  const dir = webTreesDir(plugin.route);
-  const source = await installedWebTreeDir(plugin.packageName, plugin);
-  const switched = await treeMutex.run(plugin.route, async () => {
+export async function syncWebSurfaceTree(route, { logger, withoutSite = false } = {}) {
+  const switched = await treeMutex.run(route, async () => {
+    const plugin = await findPluginByRoute(route);
+    if (!plugin?.userSurface?.web || !plugin.webTreeSha256) return null;
+    if (!withoutSite) {
+      const site = ownedSiteOf(route, await readSites());
+      if (!site || !siteOwnedBy(site, plugin)) return null;
+    }
+    if (!(await installedVersionApproved(plugin).catch(() => false))) return null;
+    const dir = webTreesDir(route);
+    const source = await installedWebTreeDir(plugin.packageName, plugin);
     await stageWebTree(dir, source, plugin.webTreeSha256);
-    return switchWebTree(dir, plugin.webTreeSha256);
+    return (await switchWebTree(dir, plugin.webTreeSha256)) ? plugin : null;
   });
   if (switched) {
     await recordAuditBestEffort(
       {
         actor: 'lamaste',
         action: 'plugin.web-tree.switched',
-        plugin: plugin.name,
-        details: { version: plugin.version, treeSha256: plugin.webTreeSha256 },
+        plugin: switched.name,
+        details: { version: switched.version, treeSha256: switched.webTreeSha256 },
       },
       logger,
     );
   }
-  return switched;
+  return switched !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +178,8 @@ export async function syncWebSurfaceTree(plugin, { logger } = {}) {
 /**
  * Whether plugin `route`'s web surface is served — its shell and API on the
  * site it owns — and why not: `not_installed`, `no_identity`,
- * `no_web_surface` (its installed version declares none), `not_approved`,
+ * `no_web_surface` (its installed version declares none), `not_owner` (its
+ * route's site was created for another package), `not_approved`,
  * `not_hosted`, `tree_not_current` (the approved tree is not the one the
  * store serves yet).
  *
@@ -169,6 +192,8 @@ export async function webSurfaceServing(route, tunnels) {
   if (!plugin) return { served: false, reason: 'not_installed', plugin: null };
   if (!plugin.identity) return { served: false, reason: 'no_identity', plugin };
   if (!plugin.userSurface?.web) return { served: false, reason: 'no_web_surface', plugin };
+  const site = ownedSiteOf(route, await readSites());
+  if (site && !siteOwnedBy(site, plugin)) return { served: false, reason: 'not_owner', plugin };
   if (!(await installedVersionApproved(plugin).catch(() => false))) {
     return { served: false, reason: 'not_approved', plugin };
   }
@@ -196,6 +221,7 @@ async function renderOwnedSite(site, route, certDir, tunnels) {
     served: serving.served,
     maxBodySizeMb: maxBodySizeMb ?? TUNNEL_MAX_BODY_MB.default,
     treesDir: webTreesDir(route),
+    clearSiteData: !serving.served && serving.reason === 'not_installed',
   });
 }
 
@@ -205,12 +231,19 @@ async function renderOwnedSite(site, route, certDir, tunnels) {
  * vhost names). Returns whether it wrote.
  */
 async function reconcileOwnedSiteVhost(site, route, tunnels) {
+  // A move stopped between its state writes and the handover leaves the
+  // tunnel's vhost linked beside the site's, on the same hostname.
+  const moved = tunnels.find((t) => t.fqdn === site.fqdn && t.enabled === false && t.subdomain);
+  const unlinked = moved ? await deps.unlinkMovedAppVhost(moved.subdomain) : false;
   const installed = await deps.readInstalledVhost(siteVhostName(site));
   const certDir =
     (installed && vhostCertDir(installed)) ||
     (await deps.getCertPath(site.fqdn, getConfig().domain));
   const { name, fqdn, config } = await renderOwnedSite(site, route, certDir, tunnels);
-  if (installed === config) return false;
+  if (installed === config) {
+    if (unlinked) await deps.reloadNginx();
+    return unlinked;
+  }
   await deps.installVhost(name, config, fqdn, { enabled: true });
   return true;
 }
@@ -228,8 +261,7 @@ async function reconcileOwnedSiteVhost(site, route, tunnels) {
 export async function refreshWebSurface(route, logger) {
   if (!route) return;
   try {
-    const plugin = await findPluginByRoute(route);
-    if (plugin) await syncWebSurfaceTree(plugin, { logger });
+    await syncWebSurfaceTree(route, { logger });
   } catch (err) {
     logger?.error?.(
       { route, err: err instanceof Error ? err.message : String(err) },
@@ -278,14 +310,19 @@ export async function reconcileWebSurfaces(logger) {
  */
 export async function webSurfaceStatus(route) {
   const plugin = await findPluginByRoute(route);
-  if (!plugin) throw refuse(`No installed plugin holds the route '${route}'`, 404, 'not_found');
   const [sites, tunnels] = await Promise.all([readSites(), readTunnels()]);
   const site = ownedSiteOf(route, sites);
+  // A site outlives its plugin: its status stays readable, so that it can
+  // be deleted.
+  if (!plugin && !site) {
+    throw refuse(`No installed plugin or web surface holds the route '${route}'`, 404, 'not_found');
+  }
   const serving = await webSurfaceServing(route, tunnels);
   const store = await readWebTreeStore(webTreesDir(route));
-  const declared = plugin.userSurface?.web ?? null;
-  const boundTunnel =
-    tunnels.find((t) => tunnelUserSurfaceRoutes(t).includes(route) && t.enabled !== false) ?? null;
+  const declared = plugin?.userSurface?.web ?? null;
+  // Bound, enabled or not: creating a site is refused either way (a
+  // disabled one is unbound, or enabled and moved).
+  const boundTunnel = tunnels.find((t) => tunnelUserSurfaceRoutes(t).includes(route)) ?? null;
   // While a tunnel is bound as its user surface, the way to a site is a
   // move (creating one is refused): nothing is offered.
   let offer = null;
@@ -300,12 +337,18 @@ export async function webSurfaceStatus(route) {
   return {
     declared,
     site: site
-      ? { id: site.id, name: site.name, fqdn: site.fqdn, accessMode: site.accessMode ?? null }
+      ? {
+          id: site.id,
+          name: site.name,
+          fqdn: site.fqdn,
+          accessMode: site.accessMode ?? null,
+          ownerPackage: site.owner?.package ?? null,
+        }
       : null,
     served: serving.served,
     reason: serving.served ? null : serving.reason,
     tree: {
-      approved: plugin.webTreeSha256 ?? null,
+      approved: plugin?.webTreeSha256 ?? null,
       current: store.current,
       previous: store.previous,
     },
@@ -313,6 +356,7 @@ export async function webSurfaceStatus(route) {
       ? {
           id: boundTunnel.id,
           fqdn: boundTunnel.fqdn ?? null,
+          enabled: boundTunnel.enabled !== false,
           routes: tunnelUserSurfaceRoutes(boundTunnel),
         }
       : null,
@@ -365,7 +409,8 @@ async function webSurfacePlugin(route) {
 }
 
 /** A plugin-owned site entry as sites.json stores it. */
-function ownedSiteEntry({ id, subdomain, fqdn, route, accessMode }) {
+function ownedSiteEntry({ id, subdomain, fqdn, plugin, accessMode }) {
+  const route = plugin.route;
   return {
     id,
     name: subdomain,
@@ -379,7 +424,7 @@ function ownedSiteEntry({ id, subdomain, fqdn, route, accessMode }) {
     rootPath: `${webTreesDir(route)}/current`,
     createdAt: new Date().toISOString(),
     totalSize: 0,
-    owner: { plugin: route },
+    owner: { plugin: route, package: plugin.packageName },
     accessMode,
   };
 }
@@ -387,7 +432,7 @@ function ownedSiteEntry({ id, subdomain, fqdn, route, accessMode }) {
 /** Serve the approved tree when there is one; a tree that cannot be served is a refusal. */
 async function serveApprovedTree(plugin, logger) {
   try {
-    await syncWebSurfaceTree(plugin, { logger });
+    await syncWebSurfaceTree(plugin.route, { logger, withoutSite: true });
   } catch (err) {
     if (err instanceof WebTreeError) {
       throw refuse(
@@ -440,7 +485,7 @@ export function createWebSurface(route, input, { actor, logger }) {
       await serveApprovedTree(plugin, logger);
       const fqdn = `${subdomain}.${config.domain}`;
       const cert = await deps.issueTunnelCert(fqdn, config.email);
-      const site = ownedSiteEntry({ id: crypto.randomUUID(), subdomain, fqdn, route, accessMode });
+      const site = ownedSiteEntry({ id: crypto.randomUUID(), subdomain, fqdn, plugin, accessMode });
       await writeSites([...sites, site]);
       try {
         const { name, config: vhost } = await renderOwnedSite(site, route, cert.certPath, tunnels);
@@ -478,26 +523,62 @@ export function deleteWebSurface(route, { actor, logger }) {
     await deps.removeStaticSiteVhost(site.id);
     await writeSites(sites.filter((s) => s.id !== site.id));
     await treeMutex.run(route, () => removeWebTreeStore(webTreesDir(route)));
-    const grants = await listResourceGrants('site', site.id);
-    if (grants.ok) {
-      for (const grant of grants.grants) await revokeGatekeeperGrant(grant.grantId);
-    } else {
-      logger?.warn?.(
-        { route, error: grants.error },
-        'Could not revoke the grants of a deleted web surface',
-      );
-    }
+    const revoked = await revokeSiteGrants(site.id, logger);
+    // What is left on the deleted site: grants Gatekeeper kept, or none
+    // known because it could not list them.
+    const left = revoked.unlisted
+      ? { grantsUnlisted: true }
+      : revoked.notRevoked.length > 0
+        ? { grantsNotRevoked: revoked.notRevoked }
+        : {};
     await recordAuditBestEffort(
       {
         actor,
         action: 'plugin.web-surface.deleted',
         plugin: (await findPluginByRoute(route))?.name ?? null,
-        details: { siteId: site.id, fqdn: site.fqdn },
+        details: { siteId: site.id, fqdn: site.fqdn, ...left },
       },
       logger,
     );
-    return { ok: true };
+    return { ok: true, ...left };
   });
+}
+
+/**
+ * Revoke grants `grantIds`; returns the ids Gatekeeper did not revoke
+ * (logged), for the caller to report.
+ */
+async function revokeGrants(grantIds, logger) {
+  const failed = [];
+  for (const grantId of grantIds) {
+    const result = await revokeGatekeeperGrant(grantId).catch((err) => ({
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    }));
+    if (!result.ok) failed.push(grantId);
+  }
+  if (failed.length > 0) {
+    logger?.warn?.({ grantIds: failed }, 'Gatekeeper did not revoke grants of a web surface');
+  }
+  return failed;
+}
+
+/**
+ * Revoke every grant on site `siteId`: `{ notRevoked }`, the ids
+ * Gatekeeper kept — or `{ unlisted: true }` when it could not list them.
+ */
+async function revokeSiteGrants(siteId, logger) {
+  const grants = await listResourceGrants('site', siteId);
+  if (!grants.ok) {
+    logger?.warn?.({ siteId, error: grants.error }, 'Could not list the grants of a web surface');
+    return { unlisted: true };
+  }
+  return {
+    notRevoked: await revokeGrants(
+      grants.grants.map((g) => g.grantId),
+      logger,
+    ),
+  };
 }
 
 /**
@@ -505,7 +586,7 @@ export function deleteWebSurface(route, { actor, logger }) {
  * host keeps its users). Returns the grants created; on a failure revokes
  * them and throws.
  */
-async function copyTunnelGrants(tunnelId, siteId) {
+async function copyTunnelGrants(tunnelId, siteId, logger) {
   const listed = await listResourceGrants('tunnel', tunnelId);
   if (!listed.ok) {
     throw refuse(
@@ -524,7 +605,10 @@ async function copyTunnelGrants(tunnelId, siteId) {
       context: grant.context,
     });
     if (!result.ok) {
-      for (const g of created) await revokeGatekeeperGrant(g.grantId);
+      await revokeGrants(
+        created.map((g) => g.grantId),
+        logger,
+      );
       throw refuse(`Could not copy the tunnel's grants: ${result.error}`, 503, 'gatekeeper');
     }
     created.push(result.grant);
@@ -570,7 +654,8 @@ export function moveWebSurfaceFromTunnel(route, tunnelId, { actor, logger }) {
       if (tunnel.enabled === false || typeof tunnel.fqdn !== 'string') {
         throw refuse(`Tunnel '${tunnel.id}' is disabled`, 409, 'tunnel_disabled');
       }
-      const accessMode = tunnel.accessMode === 'restricted' ? 'restricted' : 'authenticated';
+      // As everywhere else, a tunnel without a known access mode is restricted.
+      const accessMode = tunnel.accessMode === 'authenticated' ? 'authenticated' : 'restricted';
       if ((await hostingAgentOf(plugin, tunnels)) !== tunnel.agentLabel) {
         throw refuse(
           `Plugin "${plugin.name}" is not hosted by the agent carrying the tunnel`,
@@ -594,16 +679,9 @@ export function moveWebSurfaceFromTunnel(route, tunnelId, { actor, logger }) {
         id: crypto.randomUUID(),
         subdomain: tunnel.subdomain,
         fqdn: tunnel.fqdn,
-        route,
+        plugin,
         accessMode,
       });
-      const grants = accessMode === 'restricted' ? await copyTunnelGrants(tunnel.id, site.id) : [];
-
-      const config = getConfig();
-      const installed = await deps.readInstalledVhost(`lamalibre-lamaste-app-${tunnel.subdomain}`);
-      const certDir =
-        (installed && vhostCertDir(installed)) ||
-        (await deps.getCertPath(tunnel.fqdn, config.domain));
       const movedTunnels = tunnels.map((t) => {
         if (t.id !== tunnel.id) return t;
         const moved = { ...t, enabled: false };
@@ -611,12 +689,29 @@ export function moveWebSurfaceFromTunnel(route, tunnelId, { actor, logger }) {
         return moved;
       });
 
-      // The state first — Gatekeeper reads both files on a change of either,
-      // so the old vhost's API requests already resolve to the site — then
-      // one reload hands the hostname over, then the port grant goes.
-      await writeSites([...sites, site]);
-      await writeTunnels(movedTunnels);
+      // Every step from the grants to the handover undoes in reverse order
+      // whatever ran before a failure: no grant, site entry or tunnel change
+      // outlives a move that did not happen.
+      const grants =
+        accessMode === 'restricted' ? await copyTunnelGrants(tunnel.id, site.id, logger) : [];
+      let wroteSites = false;
+      let wroteTunnels = false;
       try {
+        const config = getConfig();
+        const installed = await deps.readInstalledVhost(
+          `lamalibre-lamaste-app-${tunnel.subdomain}`,
+        );
+        const certDir =
+          (installed && vhostCertDir(installed)) ||
+          (await deps.getCertPath(tunnel.fqdn, config.domain));
+        // The state first — Gatekeeper reads both files on a change of
+        // either, so the old vhost's API requests already resolve to the
+        // site — then one reload hands the hostname over, then the port
+        // grant goes.
+        await writeSites([...sites, site]);
+        wroteSites = true;
+        await writeTunnels(movedTunnels);
+        wroteTunnels = true;
         await deps.moveAppVhostToWebSurface(tunnel.subdomain, site, certDir, config.domain, {
           route,
           served: (await webSurfaceServing(route, movedTunnels)).served,
@@ -624,9 +719,22 @@ export function moveWebSurfaceFromTunnel(route, tunnelId, { actor, logger }) {
           treesDir: webTreesDir(route),
         });
       } catch (err) {
-        await writeTunnels(tunnels);
-        await writeSites(sites);
-        for (const grant of grants) await revokeGatekeeperGrant(grant.grantId);
+        const undo = async (what, step) => {
+          try {
+            await step();
+          } catch (undoErr) {
+            logger?.error?.(
+              { err: undoErr instanceof Error ? undoErr.message : String(undoErr) },
+              `Could not undo a failed move: ${what}`,
+            );
+          }
+        };
+        if (wroteTunnels) await undo('tunnels.json', () => writeTunnels(tunnels));
+        if (wroteSites) await undo('sites.json', () => writeSites(sites));
+        await revokeGrants(
+          grants.map((g) => g.grantId),
+          logger,
+        );
         throw err;
       }
       try {

@@ -7,6 +7,7 @@ import {
   USER_SURFACE_MAX_RESPONSE_SECONDS,
   isUserSurfaceRoute,
   userSurfaceApiPath,
+  WEB_TREE_CONTENT_TYPES,
 } from '@lamalibre/lamaste';
 
 const SITES_AVAILABLE = '/etc/nginx/sites-available';
@@ -675,7 +676,7 @@ ${USER_SURFACE_PROXY_HEADERS}
     # The user surface of plugin "${route}"
     location = ${apiPath} ${block}
 
-    location ${apiPath}/ ${block}
+    location ^~ ${apiPath}/ ${block}
 `;
   });
   return `
@@ -1190,7 +1191,43 @@ const WEB_SURFACE_HEADERS = `
         add_header X-Frame-Options DENY always;
         add_header Referrer-Policy same-origin always;
         add_header Cross-Origin-Opener-Policy same-origin always;
+        add_header Cross-Origin-Resource-Policy same-origin always;
         add_header Cache-Control no-cache always;`;
+
+/**
+ * The content types of a web tree's files, by extension
+ * (`WEB_TREE_CONTENT_TYPES` — the only extensions a tree may hold).
+ */
+const WEB_SURFACE_TYPES = (() => {
+  const byType = new Map();
+  for (const [ext, type] of Object.entries(WEB_TREE_CONTENT_TYPES)) {
+    byType.set(type, [...(byType.get(type) ?? []), ext.slice(1)]);
+  }
+  const entries = [...byType].map(([type, exts]) => `            ${type} ${exts.join(' ')};`);
+  return `
+        types {
+${entries.join('\n')}
+        }`;
+})();
+
+/**
+ * The files a page still running the previous shell may ask for after an
+ * update — its scripts, styles, fonts and images — and nothing else: a
+ * document, an SVG or a manifest is never served from the previous tree.
+ */
+const WEB_SURFACE_SUBRESOURCE_RE = '[.](?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|gif|webp|avif|ico)$';
+
+/**
+ * Service workers: never registered from a plugin's site. A worker outlives
+ * the tree that installed it — a revert, the site's deletion, the
+ * hostname's next owner — and answers in its place; asked for its script
+ * (`Service-Worker: script`), the site answers 404, which also
+ * unregisters a worker already installed at its next update check.
+ */
+const NO_SERVICE_WORKER = `
+        if ($http_service_worker) {
+            return 404;
+        }`;
 
 /**
  * Render the vhost of a plugin's web surface — a site the plugin owns
@@ -1201,26 +1238,30 @@ const WEB_SURFACE_HEADERS = `
  * host serves two things under one Authelia session:
  *
  * - **the shell**: every path but the API, from the plugin's current tree
- *   (`<treesDir>/current`), GET and HEAD only. Every request asks
+ *   (`<treesDir>/current`), GET and HEAD only, each file under its own
+ *   content type (`WEB_SURFACE_TYPES`), never a service worker's script. Every request asks
  *   Gatekeeper first (`/authz/user-surface-shell/<fqdn>`: a session in the
  *   plugin's audience, and the site's grant when it is restricted) — a page
  *   without a session goes to the login, a user without access gets the
- *   access-request page. A file the current tree lacks is looked for in the
- *   previous tree (a page still running the old shell loads its lazy files
- *   after an update), and an unknown path gets the shell's `index.html`.
+ *   access-request page. A script, style, font or image the current tree
+ *   lacks is looked for in the previous tree (a page still running the old
+ *   shell loads its lazy files after an update), else 404; any other
+ *   unknown path gets the current shell's `index.html`.
  * - **the API**: `/api/<route>/app/*`, exactly as on a bound tunnel
  *   ({@link userSurfaceLocations}).
  *
- * While it is not served the host answers every request with 503.
+ * While it is not served the host answers every request with 503 — and,
+ * once its plugin is no longer installed (`opts.clearSiteData`), tells
+ * browsers to clear the site's storage.
  *
  * @param {{ id: string, fqdn: string }} site
  * @param {string} certDir
  * @param {string} domain
- * @param {{ route: string, served: boolean, maxBodySizeMb: number, treesDir: string }} opts
+ * @param {{ route: string, served: boolean, maxBodySizeMb: number, treesDir: string, clearSiteData?: boolean }} opts
  * @returns {{ name: string, fqdn: string, config: string }}
  */
 export function renderWebSurfaceVhost(site, certDir, domain, opts) {
-  const { route, served, maxBodySizeMb, treesDir } = opts;
+  const { route, served, maxBodySizeMb, treesDir, clearSiteData = false } = opts;
   assertLiteralHostname(site.fqdn);
   if (!isUserSurfaceRoute(route)) throw new Error(`Invalid web surface route: ${route}`);
   if (!path.isAbsolute(treesDir) || !/^[A-Za-z0-9/._-]+$/.test(treesDir)) {
@@ -1242,14 +1283,22 @@ export function renderWebSurfaceVhost(site, certDir, domain, opts) {
 `;
 
   if (!served) {
+    // A plugin no longer installed: whatever comes next on this hostname is
+    // not its shell, so browsers drop what it left — its storage, caches
+    // and service workers. Never while the plugin is only unhosted or
+    // awaiting approval: its users' data stays.
+    const clear = clearSiteData
+      ? `
+        add_header Clear-Site-Data '"storage"' always;`
+      : '';
     return {
       name: `lamalibre-lamaste-site-${site.id}`,
       fqdn: site.fqdn,
       config: `${head}
-    # The web surface of plugin "${route}" is not served now (not approved,
-    # not hosted, or its version declares no web surface)
-    location / {
-        add_header Cache-Control no-store always;
+    # The web surface of plugin "${route}" is not served now (not installed,
+    # not approved, not hosted, or its version declares no web surface)
+    location / {${NO_SERVICE_WORKER}
+        add_header Cache-Control no-store always;${clear}
         return 503;
     }
 }
@@ -1271,19 +1320,29 @@ export function renderWebSurfaceVhost(site, certDir, domain, opts) {
         ${gatekeeperSubrequest('user-surface-shell', site.fqdn)}
     }
 ${userSurfaceLocations(site.fqdn, [{ route, maxBodySizeMb }])}
-    location / {
+    # A script, style, font or image the current tree lacks: the previous
+    # tree's (a page still running the old shell), else 404
+    location ~* ${WEB_SURFACE_SUBRESOURCE_RE} {
         if ($request_method !~ ^(GET|HEAD)$) {
             return 405;
-        }
-${WEB_SURFACE_HEADERS}
+        }${NO_SERVICE_WORKER}
+${WEB_SURFACE_HEADERS}${WEB_SURFACE_TYPES}
         try_files $uri @previous;
     }
 
-    # A file the current tree lacks: the previous tree's, else the shell
-    location @previous {
-${WEB_SURFACE_HEADERS}
-        root ${treesDir}/previous;
+    # Everything else: the current tree's file, else the shell
+    location / {
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405;
+        }${NO_SERVICE_WORKER}
+${WEB_SURFACE_HEADERS}${WEB_SURFACE_TYPES}
         try_files $uri /index.html;
+    }
+
+    location @previous {
+${WEB_SURFACE_HEADERS}${WEB_SURFACE_TYPES}
+        root ${treesDir}/previous;
+        try_files $uri =404;
     }
 }
 `;
@@ -1306,8 +1365,8 @@ export async function writeWebSurfaceVhost(site, certDir, domain, opts) {
 /**
  * Hand a hostname from one vhost to another in one nginx reload: vhost
  * `fromName` is unlinked, `name` written with `config` and linked, the
- * configuration tested and nginx reloaded once — then `fromName` is
- * deleted. Until the reload nginx serves the old vhost, after it the new
+ * configuration tested and nginx reloaded once; `fromName` stays installed,
+ * unlinked. Until the reload nginx serves the old vhost, after it the new
  * one; there is no moment in between. On any failure before the reload
  * both are put back as they were.
  *
@@ -1336,7 +1395,24 @@ async function handOverVhost(fromName, name, config, fqdn) {
     await restore();
     throw err;
   }
-  await siteAction('remove', fromName).catch(() => {});
+  // `fromName` stays installed, only unlinked: the tunnel it served can be
+  // enabled again by hand once the new vhost is gone.
+}
+
+/**
+ * Unlink tunnel vhost `subdomain` when it is still enabled although a
+ * plugin's site holds its hostname — a move the panel did not finish (it
+ * wrote the state, then stopped before the handover). Does not reload:
+ * the caller's next vhost install does, or it reloads itself. Returns
+ * whether it unlinked.
+ *
+ * @param {string} subdomain the moved tunnel's
+ */
+export async function unlinkMovedAppVhost(subdomain) {
+  const name = `lamalibre-lamaste-app-${subdomain}`;
+  if (!(await isSiteEnabled(name))) return false;
+  await disableSite(name);
+  return true;
 }
 
 /**

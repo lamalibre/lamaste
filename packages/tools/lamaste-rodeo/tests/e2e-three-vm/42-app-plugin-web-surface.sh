@@ -6,9 +6,8 @@
 # ships, served by the relay on a site the plugin owns, beside its user
 # surface's API — one host, one Authelia session. The fixture
 # (@lamalibre/e2e-websurf-server, helpers.sh: write_app_install_fixture …
-# wide <tag>) declares identity and `userSurface.web` on e2e42web; 1.0.0,
-# 1.1.0 and 1.2.0 (a bad release: its agent half refuses its post stage)
-# ship trees v1, v2 and v3. From the visitor VM:
+# wide v1) declares identity and `userSurface.web` on e2e42web and ships
+# tree v1. From the visitor VM:
 #
 # 1. Installed, not approved: the tree's digest is part of the approval and
 #    nothing is in the relay's tree store; the web surface offers e2e42web.
@@ -18,15 +17,13 @@
 #    (`current`). Without a session a page goes to the login; a user without
 #    a role in the plugin gets the access-request page; with the viewer role
 #    the shell (index.html, its files, a deep link answered with the shell),
-#    under a strict CSP, `no-cache`, `X-Frame-Options: DENY`; nothing but GET
-#    and HEAD; the API on the same host and session as on a bound tunnel.
-# 4. Update to 1.1.0: the tree change waits for approval (shown in the
-#    preview); applied, `current` is v2 and `previous` v1 — a file only v1
-#    has is still served (an open page's lazy file).
-# 5. Update to 1.2.0 rolled back: its tree is never served or stored.
-# 6. Deleted: the site, its vhost and its trees go.
+#    under a strict CSP, `no-cache`, `X-Frame-Options: DENY`,
+#    `Cross-Origin-Resource-Policy: same-origin`; nothing but GET and HEAD,
+#    never a service worker's script; the API on the same host and session
+#    as on a bound tunnel, never as a script.
+# 4. Deleted: the site, its vhost and its trees go.
 #
-# The move from a bound tunnel is spec 43.
+# The move from a bound tunnel is spec 43; updates and a rollback, 44.
 # ============================================================================
 
 set -euo pipefail
@@ -65,8 +62,6 @@ VIEWER_ID=""
 NOROLE_ID=""
 SITE_ID=""
 TREE_1=""
-TREE_2=""
-TREE_3=""
 
 # local_tree_sha <directory> — the web tree digest of a fixture's web/ (core's
 # rule, from this workspace's build)
@@ -89,17 +84,6 @@ viewer_in_audience() {
 # sites_entry — the plugin's site as GET /api/sites lists it ('null' when gone)
 sites_entry() {
   host_api_get "sites?limit=500" 2>/dev/null | jq -c --arg id "${SITE_ID}" '[.sites[]? | select(.id == $id)] | first // null' 2>/dev/null || echo "null"
-}
-
-# update_to <version> — stage the update, approve the digest it shows and
-# wait for the operation; prints "<pending update> \n <operation>"
-UPDATE=""
-OP=""
-update_to() {
-  UPDATE=$(host_api_post "plugins/${PLUGIN}/update" "{\"version\":\"$1\"}")
-  local approved
-  approved=$(host_api_post "plugins/${PLUGIN}/hooks/approve" "{\"digest\":\"$(json_get "$UPDATE" '.pendingUpdate.digest')\"}")
-  OP=$(wait_operation "${PLUGIN}" "$(json_get "$approved" '.operation.id // empty')" 300 nudge)
 }
 
 begin_test "42 — App plugin web surface (Three-VM)"
@@ -158,22 +142,17 @@ LOCAL_TMP=$(mktemp -d /tmp/e2e-42-app-plugin-XXXXXXXX)
 BUILD="r$(date +%s)-$$"
 FIXTURES="built"
 write_app_install_fixture "${LOCAL_TMP}/ship/fixtures/v100" "${PLUGIN}" 1.0.0 main "${BUILD}" '[]' none wide v1 "${SUB_W}" || FIXTURES="failed"
-write_app_install_fixture "${LOCAL_TMP}/ship/fixtures/v110" "${PLUGIN}" 1.1.0 main "${BUILD}" '[]' none wide v2 "${SUB_W}" || FIXTURES="failed"
-write_app_install_fixture "${LOCAL_TMP}/ship/fixtures/v120" "${PLUGIN}" 1.2.0 failpost "${BUILD}" '[]' none wide v3 "${SUB_W}" || FIXTURES="failed"
 if [ "$FIXTURES" != "built" ]; then
   log_fail "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
   end_test
   exit $?
 fi
 TREE_1=$(local_tree_sha "${LOCAL_TMP}/ship/fixtures/v100/server/web")
-TREE_2=$(local_tree_sha "${LOCAL_TMP}/ship/fixtures/v110/server/web")
-TREE_3=$(local_tree_sha "${LOCAL_TMP}/ship/fixtures/v120/server/web")
-assert_eq "$(printf '%s\n' "${TREE_1}" "${TREE_2}" "${TREE_3}" | grep -cE '^[a-f0-9]{64}$' || true)" "3" "Fixtures built: ${SERVER_PACKAGE} 1.0.0, 1.1.0, 1.2.0 (a bad release) with trees v1, v2, v3" || true
+assert_eq "$(printf '%s\n' "${TREE_1}" | grep -cE '^[a-f0-9]{64}$' || true)" "1" "Fixture built: ${SERVER_PACKAGE} 1.0.0 with tree v1" || true
 ship_agent_facts_probe
-start_stand_in_feria fixtures/v100/server fixtures/v100/agent fixtures/v110/server fixtures/v110/agent \
-  fixtures/v120/server fixtures/v120/agent
+start_stand_in_feria fixtures/v100/server fixtures/v100/agent
 ensure_app_host_helper
-open_push_install "${POLICY_ID}" "[\"${AGENT_PACKAGE}\"]" '["install","update","uninstall"]'
+open_push_install "${POLICY_ID}" "[\"${AGENT_PACKAGE}\"]" '["install","uninstall"]'
 
 # Every users.yml write of the spec, before anyone signs in.
 RESP=$(users_call POST "users" "{\"username\":\"${VIEWER}\",\"displayname\":\"E2E Viewer\",\"email\":\"${VIEWER}@example.test\",\"password\":\"${VIEWER_PASSWORD}\",\"groups\":[]}")
@@ -280,9 +259,12 @@ HEADERS=$(visit_headers "$(page "${JAR_VIEWER}" /)" | tr '[:upper:]' '[:lower:]'
 assert_contains "$HEADERS" "content-security-policy: default-src 'self'; script-src 'self';" "…under the web surface's CSP: nothing from another origin, no inline script" || true
 assert_contains "$HEADERS" "cache-control: no-cache" "…revalidated on every load (no-cache)" || true
 assert_contains "$HEADERS" "x-frame-options: deny" "…never framed" || true
+assert_contains "$HEADERS" "cross-origin-resource-policy: same-origin" "…no other host learns from it whether the viewer may use the plugin" || true
 assert_eq "$(page_status "${JAR_VIEWER}" /app-v1.js)" "200" "Its script app-v1.js: 200" || true
 assert_contains "$(visit_body "$(page "${JAR_VIEWER}" /reports/2026/october)")" "E2E_WEB_v1" "A deep link is answered with the shell (index.html)" || true
 assert_eq "$(page_status "${JAR_VIEWER}" / -X POST -H "Origin: https://${FQDN}")" "405" "POST / to the shell: 405 — GET and HEAD only" || true
+assert_eq "$(page_status "${JAR_VIEWER}" /app-v1.js -H 'Service-Worker: script')" "404" "A service worker's script: 404 — never registered from a plugin's site" || true
+assert_eq "$(page_status "${JAR_VIEWER}" "${APP}/echo" -H 'Sec-Fetch-Site: same-origin' -H 'Sec-Fetch-Dest: script')" "403" "The API as a script source: 403 — code comes from the approved tree only" || true
 
 RESP=$(page "${JAR_VIEWER}" "${APP}/echo")
 assert_eq "$(visit_status "$RESP")" "200" "GET ${APP}/echo on the same host, the same session: 200" || true
@@ -292,44 +274,7 @@ assert_contains "$API_HEADERS" "content-security-policy: sandbox; default-src 'n
 assert_not_contains "$API_HEADERS" "default-src 'self'" "…not the shell's" || true
 
 # ===========================================================================
-# 4. Update to 1.1.0
-# ===========================================================================
-
-log_section "Update to 1.1.0: tree v2 approved with it, v1 kept as previous"
-
-update_to 1.1.0
-assert_json_field "$UPDATE" '"\(.pendingUpdate.web.before) \(.pendingUpdate.web.after.sha256) \(.pendingUpdate.web.after.files)"' "${TREE_1} ${TREE_2} 4" "The update waited for approval, showing tree v1 → v2 (4 files)" || true
-assert_json_field "$OP" '.status' 'succeeded' "The update succeeded ($(json_get "$OP" '.error // ""'))" || true
-assert_eq "$(tree_link "${PLUGIN}" current) $(tree_link "${PLUGIN}" previous)" "${TREE_2} ${TREE_1}" "current → tree v2, previous → tree v1" || true
-if wait_for 30 shell_serves v2; then
-  log_pass "GET /: index.html of tree v2"
-else
-  log_fail "GET / after the update: $(visit_body "$(page "${JAR_VIEWER}" /)" | head -c 200)"
-fi
-assert_eq "$(page_status "${JAR_VIEWER}" /only-v2.js)" "200" "A file of tree v2: 200" || true
-assert_contains "$(visit_body "$(page "${JAR_VIEWER}" /only-v1.js)")" "only = 'v1'" "A file only tree v1 has is still served — from the previous tree" || true
-assert_json_field "$(web_surface "${PLUGIN}")" '"\(.served) \(.tree.approved)"' "true ${TREE_2}" "Served; the approved tree is v2" || true
-
-# ===========================================================================
-# 5. Update to 1.2.0, rolled back
-# ===========================================================================
-
-log_section "Update to 1.2.0 rolled back: its tree never served"
-
-update_to 1.2.0
-assert_json_field "$UPDATE" '.pendingUpdate.web.after.sha256' "${TREE_3}" "1.2.0 waited for approval with tree v3" || true
-assert_json_field "$OP" '.status' 'rolled-back' "The update was rolled back ($(json_get "$OP" '.error // ""'))" || true
-assert_json_field "$(host_api_get "plugins/${PLUGIN}")" '.plugin.version' '1.1.0' "The plugin is 1.1.0 again" || true
-KEPT_TREES=$(printf '%s\n' "${TREE_1}" "${TREE_2}" | sort | paste -sd, -)
-assert_eq "$(tree_link "${PLUGIN}" current) $(tree_dirs "${PLUGIN}")" "${TREE_2} ${KEPT_TREES}" "current is still tree v2; tree v3 never entered the store" || true
-if wait_for 30 shell_serves v2; then
-  log_pass "GET /: still tree v2"
-else
-  log_fail "GET / after the rollback: $(visit_body "$(page "${JAR_VIEWER}" /)" | head -c 200)"
-fi
-
-# ===========================================================================
-# 6. Deleted
+# 4. Deleted
 # ===========================================================================
 
 log_section "Deleted: the site, its vhost and its trees go"

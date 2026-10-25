@@ -437,6 +437,7 @@ export {
   isAgentHalfHooksPath,
   isAgentHalfReservedPath,
   isServiceWorkerRequest,
+  isCodeFetch,
   isSameOriginFetch,
   callerLabel,
   userSurfaceHalfPath,

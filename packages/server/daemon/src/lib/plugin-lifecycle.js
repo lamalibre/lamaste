@@ -39,7 +39,7 @@ import {
   settingsSchemaDiff,
   validateManifest,
 } from '@lamalibre/lamaste';
-import { pluginHostingPhase } from '@lamalibre/lamaste/server';
+import { pluginHostingPhase, webTreeManifestOfDirectory } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { setPluginCapabilities } from './mtls.js';
 import {
@@ -51,7 +51,7 @@ import {
   uninstallPlugin,
   writePluginRow,
 } from './plugins.js';
-import { pinAgentHalf, readRegistryPackage } from './plugin-packages.js';
+import { installedWebTreeDir, pinAgentHalf, readRegistryPackage } from './plugin-packages.js';
 import {
   DIGEST_UNAPPROVED,
   IDENTITY_CHANGED,
@@ -526,15 +526,16 @@ function identityPreview(plugin, manifest) {
 
 /**
  * How a staged version changes the web tree, for the update's preview: the
- * installed version's tree digest (`before`) and the staged tree
- * (`after`: its digest, file count and size) — null when neither version
- * declares a web surface.
+ * installed version's tree digest (`before`), the staged tree (`after`:
+ * its digest, file count and size) and what changes by path (`changes`,
+ * {@link webTreeChanges}) — null when neither version declares a web
+ * surface.
  *
  * @param {object} plugin the installed registry entry
  * @param {{ webTree: import('@lamalibre/lamaste').WebTreeManifest | null }} staged
  */
-function webPreview(plugin, staged) {
-  const before = plugin.userSurface?.web ? (plugin.webTreeSha256 ?? null) : null;
+async function webPreview(plugin, staged) {
+  const before = installedTreeSha256(plugin);
   const after = staged.webTree
     ? {
         sha256: staged.webTree.sha256,
@@ -542,7 +543,83 @@ function webPreview(plugin, staged) {
         totalBytes: staged.webTree.totalBytes,
       }
     : null;
-  return before === null && after === null ? null : { before, after };
+  if (before === null && after === null) return null;
+  return { before, after, changes: await webTreeChanges(plugin, staged.webTree) };
+}
+
+/** The approved web tree of the installed version, or null when it declares none. */
+function installedTreeSha256(plugin) {
+  return plugin.userSurface?.web ? (plugin.webTreeSha256 ?? null) : null;
+}
+
+/** At most this many paths per list of a tree change (the counts are exact). */
+const WEB_CHANGE_LIST_MAX = 200;
+
+/**
+ * Files of a web tree an administrator should look at before approving: a
+ * document other than the shell's `index.html` (another page served on
+ * the relay's domain), an SVG (it runs script when opened), a manifest.
+ */
+function webFileNeedsReview(file) {
+  return (file.endsWith('.html') && file !== 'index.html') || /\.(?:svg|webmanifest)$/.test(file);
+}
+
+/**
+ * What a staged version's web tree changes against the installed one's,
+ * by path: added, removed, changed (each `{ count, paths }`, the paths
+ * capped), and `review` — the added or changed paths
+ * {@link webFileNeedsReview} names. Null when the staged version declares
+ * no web tree, or when the installed tree cannot be read (the digests
+ * still tell them apart).
+ *
+ * @param {object} plugin the installed registry entry
+ * @param {import('@lamalibre/lamaste').WebTreeManifest | null} stagedTree
+ */
+async function webTreeChanges(plugin, stagedTree) {
+  if (!stagedTree) return null;
+  let installed = new Map();
+  if (installedTreeSha256(plugin) !== null) {
+    try {
+      const dir = await installedWebTreeDir(plugin.packageName, plugin);
+      const tree = await webTreeManifestOfDirectory(dir);
+      installed = new Map(tree.files.map((f) => [f.path, f.sha256]));
+    } catch {
+      return null;
+    }
+  }
+  const added = [];
+  const changed = [];
+  for (const file of stagedTree.files) {
+    const was = installed.get(file.path);
+    if (was === undefined) added.push(file.path);
+    else if (was !== file.sha256) changed.push(file.path);
+  }
+  const staged = new Set(stagedTree.files.map((f) => f.path));
+  const removed = [...installed.keys()].filter((p) => !staged.has(p));
+  const list = (paths) => ({ count: paths.length, paths: paths.slice(0, WEB_CHANGE_LIST_MAX) });
+  return {
+    added: list(added),
+    removed: list(removed),
+    changed: list(changed),
+    review: [...added, ...changed].filter(webFileNeedsReview).slice(0, WEB_CHANGE_LIST_MAX),
+  };
+}
+
+/**
+ * Why auto-approve may not stand in for an administrator on a staged
+ * version's web tree: it changes (or appears) — publisher code served to
+ * every user of the plugin on the relay's own domain is approved by a
+ * person, as an identity change is.
+ */
+function webTreeWithheld(plugin, staged) {
+  const after = staged.webTree?.sha256 ?? null;
+  if (after === null || after === installedTreeSha256(plugin)) return [];
+  return [
+    {
+      code: 'web.changed',
+      message: "the web tree changes: a shell served to the plugin's users on the relay's domain",
+    },
+  ];
 }
 
 /**
@@ -604,13 +681,14 @@ export async function updatePlugin(
     approvedBy = actor;
   } else if (approvalRequired.length > 0) {
     // Auto-approve stands in for an administrator on a digest that changed,
-    // when the agent half changes nothing that runs as root on the agent —
-    // and on nothing else: every other reason (a secret setting turned
+    // when the agent half changes nothing that runs as root on the agent and
+    // the web tree does not change — and on nothing else: every other reason (a secret setting turned
     // plain, a role added or removed, an attribute widened) withholds it.
     const digestChanged = approvalRequired.some((reason) => reason.code === DIGEST_UNAPPROVED);
     const withheldReasons = state?.autoApprove
       ? [
           ...(digestChanged ? agentHalfWithheld(installedAgentHalf(plugin), staged.agentHalf) : []),
+          ...(digestChanged ? webTreeWithheld(plugin, staged) : []),
           ...approvalRequired
             .filter((reason) => reason.code !== DIGEST_UNAPPROVED)
             .map(({ code, reason }) => ({ code, message: reason })),
@@ -622,7 +700,7 @@ export async function updatePlugin(
         staged,
         settings,
         identity,
-        web: webPreview(plugin, staged),
+        web: await webPreview(plugin, staged),
         approvalRequired,
         withheldReasons,
         actor,
@@ -845,6 +923,13 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
       } else await setPendingUpdate(name, null);
       setPluginCapabilities(await getPluginCapabilities());
       createdSecrets = await syncOidcBestEffort(logger);
+    },
+    // The new version's tree served now, as part of the update: users of
+    // its site reach the new half without a gap, and a tree that cannot be
+    // served reverts the update rather than leave the site at 503.
+    serve: async () => {
+      const { syncWebSurfaceTree } = await import('./web-surface.js');
+      await syncWebSurfaceTree(plugin.route, { logger });
     },
     revert: async ({ applied }) => {
       if (applied) {

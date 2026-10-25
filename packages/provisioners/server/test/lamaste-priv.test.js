@@ -63,6 +63,12 @@ const refused = {
   'named location with odd characters': server(' location @a.b { return 404; }'),
   'named location as a non-final try_files argument': location('  try_files @x $uri;'),
   'try_files to a named location with a path': location('  try_files $uri @x/../y;'),
+  'types at server level': server(' types { text/html html; }'),
+  'include inside types': location('  types { include /etc/nginx/mime.types; }'),
+  'block inside types': location('  types { text/html { } }'),
+  'types entry without a media type': location('  types { html htm; }'),
+  'types entry with a dotted extension': location('  types { text/html .html; }'),
+  'types entry with no extension': location('  types { text/html; }'),
 };
 
 for (const [name, text] of Object.entries(refused)) {
@@ -77,6 +83,14 @@ test('accepts a minimal TLS proxy vhost, comments with any text included', () =>
       ` ssl_certificate /etc/letsencrypt/live/a.example.com/fullchain.pem;\n` +
       ` ssl_certificate_key /etc/letsencrypt/live/a.example.com/privkey.pem;\n` +
       ` location / {\n  proxy_set_header Host $host;\n  proxy_pass http://127.0.0.1:20010;\n }\n}\n`,
+  );
+});
+
+test('accepts the content types of a web surface in a location', () => {
+  validateVhost(
+    location(
+      '  types {\n   text/javascript js mjs;\n   application/manifest+json webmanifest;\n   image/svg+xml svg;\n  }',
+    ),
   );
 });
 

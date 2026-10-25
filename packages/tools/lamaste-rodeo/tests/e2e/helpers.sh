@@ -2079,8 +2079,9 @@ FIXTURE_EOF
 # in the manifest — `userSurface.web` on subdomain <web-subdomain> (default
 # <name> without hyphens) — and a web tree in the server package under
 # `web/`: index.html carrying the marker E2E_WEB_<tag> (and loading
-# app-<tag>.js), app-<tag>.js, style.css and only-<tag>.js, a file no other
-# tag's tree has (what the previous tree serves after an update). Needs an
+# app-<tag>.js), app-<tag>.js, style.css, only-<tag>.js, a script no other
+# tag's tree has (what the previous tree serves after an update), and
+# page-<tag>.html, a page no other tree has (what it never serves). Needs an
 # identity variant.
 # <build-id> goes into the agent package, so each run's tarballs — and their
 # integrity — are new: an agent's npm cache never answers for the registry.
@@ -2157,6 +2158,7 @@ FIXTURE_EOF
     printf "document.getElementById('app').dataset.tag = '%s';\n" "${web_tag}" > "${dir}/server/web/app-${web_tag}.js"
     printf 'main { font-family: sans-serif; } /* %s */\n' "${web_tag}" > "${dir}/server/web/style.css"
     printf "export const only = '%s';\n" "${web_tag}" > "${dir}/server/web/only-${web_tag}.js"
+    printf '<p>E2E_PAGE_%s</p>\n' "${web_tag}" > "${dir}/server/web/page-${web_tag}.html"
   fi
 
   cat > "${dir}/server/package.json" <<FIXTURE_EOF

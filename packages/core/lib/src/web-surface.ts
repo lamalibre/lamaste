@@ -127,31 +127,39 @@ export const WEB_TREE_LIMITS = Object.freeze({
 export const WEB_TREE_INDEX = 'index.html';
 
 /**
- * The extensions a web tree may hold: what an app shell is made of, each
- * one nginx serves with its own content type.
+ * What a web tree may hold, by extension, and the content type the relay
+ * serves each with — an app shell's parts. The vhost names these types
+ * itself (its `types` block) rather than trust the host's `mime.types`,
+ * which differs between nginx versions (`.mjs`, `.webmanifest`, `.avif`);
+ * with `nosniff` a module script served under another type does not run.
+ * No `.wasm`: the shell's Content-Security-Policy does not let it compile.
  */
-export const WEB_TREE_EXTENSIONS: ReadonlySet<string> = new Set([
-  '.html',
-  '.css',
-  '.js',
-  '.mjs',
-  '.json',
-  '.webmanifest',
-  '.txt',
-  '.wasm',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.svg',
-  '.ico',
-  '.webp',
-  '.avif',
-  '.woff',
-  '.woff2',
-  '.ttf',
-  '.otf',
-]);
+export const WEB_TREE_CONTENT_TYPES: Readonly<Record<string, string>> = Object.freeze({
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.json': 'application/json',
+  '.webmanifest': 'application/manifest+json',
+  '.txt': 'text/plain',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+});
+
+/** The extensions a web tree may hold (the keys of {@link WEB_TREE_CONTENT_TYPES}). */
+export const WEB_TREE_EXTENSIONS: ReadonlySet<string> = new Set(
+  Object.keys(WEB_TREE_CONTENT_TYPES),
+);
 
 /**
  * A path segment of a web tree: letters, digits, `.`, `_` and `-`, not

@@ -29,6 +29,7 @@ import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -164,6 +165,18 @@ async function enroll(label) {
   await lib.saveAgentRegistry(registry);
 }
 
+/** The body of `location <matcher> { … }` in `vhost` (nested blocks balanced). */
+function locationBodyOf(vhost, matcher) {
+  const start = vhost.indexOf(`location ${matcher} {`);
+  assert.notEqual(start, -1, `location ${matcher}`);
+  let depth = 0;
+  for (let i = vhost.indexOf('{', start); i < vhost.length; i++) {
+    if (vhost[i] === '{') depth++;
+    else if (vhost[i] === '}' && --depth === 0) return vhost.slice(start, i + 1);
+  }
+  throw new Error(`unterminated location ${matcher}`);
+}
+
 function call(method, url, body) {
   return app.inject({
     method,
@@ -207,6 +220,8 @@ async function gatekeeper(method, apiPath, body) {
   }
   if (url.pathname.startsWith('/api/grants/') && method === 'DELETE') {
     const id = decodeURIComponent(url.pathname.slice('/api/grants/'.length));
+    // A grant Gatekeeper will not let go of.
+    if (id.startsWith('stuck-')) return { ok: false, error: 'stuck' };
     const at = grants.findIndex((g) => g.grantId === id);
     if (at !== -1) grants.splice(at, 1);
     return { ok: true, data: { ok: true } };
@@ -395,14 +410,23 @@ test('tree store: verified copies, current and previous switched by rename, the 
     previous: d2,
     trees: [d2, d3].sort(),
   });
-  // A revert switches back to what previous holds.
+  // A revert switches back to what previous holds — and abandons the tree
+  // it leaves: no previous, so none of its files is served any more.
   await core.switchWebTree(store, d2);
   assert.deepEqual(await core.readWebTreeStore(store), {
     current: d2,
-    previous: d3,
-    trees: [d2, d3].sort(),
+    previous: null,
+    trees: [d2],
   });
   assert.equal(await readlink(path.join(store, 'current')), d2, 'links are relative');
+  // The next update keeps the reverted-to tree as its previous, as ever.
+  await core.stageWebTree(store, src1, d1);
+  await core.switchWebTree(store, d1);
+  assert.deepEqual(await core.readWebTreeStore(store), {
+    current: d1,
+    previous: d2,
+    trees: [d1, d2].sort(),
+  });
 });
 
 test('tree store: a source that is not the approved tree, or holds a link, is refused', async () => {
@@ -448,16 +472,13 @@ test('install: the tree is read and approved with the rest; served only once app
   assert.deepEqual(ws.tree, { approved: treeSha(TREE_1), current: null, previous: null });
   assert.deepEqual(ws.offer, { subdomain: 'wf', accessMode: 'authenticated', available: true });
 
+  // Approved, but it owns no site: nothing is copied into a store (the
+  // site's creation serves the tree — the create test below).
   await approve('wf');
   ws = (await status('wf')).webSurface;
-  assert.equal(ws.tree.current, treeSha(TREE_1), 'the approval serves the tree');
   assert.equal(ws.reason, 'not_hosted');
-  assert.equal(
-    await readFile(path.join(treesRoot, 'wf', 'current', 'index.html'), 'utf8'),
-    '<p>one</p>',
-  );
-  const [switched] = await lib.listAudit({ plugin: 'wf', action: 'plugin.web-tree.switched' });
-  assert.equal(switched.details.treeSha256, treeSha(TREE_1));
+  assert.deepEqual(ws.tree, { approved: treeSha(TREE_1), current: null, previous: null });
+  assert.deepEqual(await lib.listAudit({ plugin: 'wf', action: 'plugin.web-tree.switched' }), []);
 });
 
 test('install: a tree that breaks a rule, or is missing, is refused', async () => {
@@ -481,6 +502,7 @@ test('update: another tree waits for approval, shown in the preview; applied, it
   await publish('wu', '1.0.0', webManifest('wu', '1.0.0'), webFiles(TREE_1));
   await lib.installPlugin('@lamalibre/wu-server', logger);
   await approve('wu');
+  assert.equal((await call('POST', '/api/plugins/wu/web-surface', {})).statusCode, 201);
   await publish('wu', '1.1.0', webManifest('wu', '1.1.0'), webFiles(TREE_2));
   const staged = await lib.updatePlugin('wu', '1.1.0', actor);
   assert.ok(staged.pendingUpdate);
@@ -490,6 +512,13 @@ test('update: another tree waits for approval, shown in the preview; applied, it
       sha256: treeSha(TREE_2),
       files: 2,
       totalBytes: Object.values(TREE_2).reduce((n, c) => n + Buffer.byteLength(c), 0),
+    },
+    // What changes by path, for the administrator to look at.
+    changes: {
+      added: { count: 1, paths: ['main-BBBB.js'] },
+      removed: { count: 2, paths: ['chunk-OLD.js', 'main-AAAA.js'] },
+      changed: { count: 1, paths: ['index.html'] },
+      review: [],
     },
   });
   assert.deepEqual(staged.pendingUpdate.approvalRequired, [
@@ -512,6 +541,14 @@ test('update: another tree waits for approval, shown in the preview; applied, it
     current: treeSha(TREE_2),
     previous: treeSha(TREE_1),
   });
+  // Deleted, the store goes and stays gone: a later refresh restages nothing.
+  assert.equal((await call('DELETE', '/api/plugins/wu/web-surface')).statusCode, 200);
+  await lib.refreshWebSurface('wu', logger);
+  assert.deepEqual((await status('wu')).webSurface.tree, {
+    approved: treeSha(TREE_2),
+    current: null,
+    previous: null,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -531,7 +568,7 @@ test('create: refused for a taken name, a plugin without a web surface, twice', 
     ['nw', {}, 400, 'no_web_surface'],
     ['wf', { subdomain: 'taken' }, 409, 'hostname_taken'],
     ['wf', { subdomain: 'panel' }, 409, 'hostname_taken'],
-    ['nothing', {}, 404, undefined],
+    ['nothing', {}, 404, 'not_found'],
   ]) {
     const res = await call('POST', `/api/plugins/${name}/web-surface`, body);
     assert.equal(res.statusCode, code, `${name} ${JSON.stringify(body)}: ${res.body}`);
@@ -550,8 +587,16 @@ test('create: the site on the declared subdomain, 503 until served, then the she
   assert.equal(ws.site.fqdn, 'wf.relay.test');
   assert.equal(ws.site.accessMode, 'authenticated');
   const site = (await lib.readSites()).find((s) => s.id === ws.site.id);
-  assert.deepEqual(site.owner, { plugin: 'wf' });
+  assert.deepEqual(site.owner, { plugin: 'wf', package: '@lamalibre/wf-server' });
   assert.equal(site.rootPath, `${treesRoot}/wf/current`);
+  // Creating the site served the approved tree.
+  assert.equal(ws.tree.current, treeSha(TREE_1));
+  assert.equal(
+    await readFile(path.join(treesRoot, 'wf', 'current', 'index.html'), 'utf8'),
+    '<p>one</p>',
+  );
+  const [switched] = await lib.listAudit({ plugin: 'wf', action: 'plugin.web-tree.switched' });
+  assert.equal(switched.details.treeSha256, treeSha(TREE_1));
 
   // Not hosted: every request 503.
   let vhost = await siteVhost(site);
@@ -568,13 +613,30 @@ test('create: the site on the declared subdomain, 503 until served, then the she
     vhost,
     /proxy_pass http:\/\/127\.0\.0\.1:9294\/authz\/user-surface-shell\/wf\.relay\.test;/,
   );
-  assert.match(vhost, /location \/api\/wf\/app\/ \{/);
-  assert.match(vhost, /try_files \$uri @previous;/);
+  assert.match(vhost, /location \^~ \/api\/wf\/app\/ \{/);
   assert.ok(vhost.includes(`root ${treesRoot}/wf/current;`));
   assert.ok(vhost.includes(`root ${treesRoot}/wf/previous;`));
   assert.match(vhost, /Content-Security-Policy "default-src 'self'; script-src 'self';/);
+  assert.match(vhost, /add_header Cross-Origin-Resource-Policy same-origin always;/);
+  // Only scripts, styles, fonts and images fall back to the previous tree
+  // (else 404); any other path gets the current shell.
+  const subresources = locationBodyOf(
+    vhost,
+    '~* [.](?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|gif|webp|avif|ico)$',
+  );
+  assert.match(subresources, /try_files \$uri @previous;/);
+  assert.match(locationBodyOf(vhost, '/'), /try_files \$uri \/index\.html;/);
+  assert.match(locationBodyOf(vhost, '@previous'), /try_files \$uri =404;/);
+  // No service worker, in every shell location; each file under its own type.
+  for (const matcher of ['~* [.](?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|gif|webp|avif|ico)$', '/']) {
+    const body = locationBodyOf(vhost, matcher);
+    assert.match(body, /if \(\$http_service_worker\) \{\s*return 404;/);
+    assert.match(body, /text\/javascript js mjs;/);
+    assert.match(body, /application\/manifest\+json webmanifest;/);
+  }
+  assert.doesNotMatch(vhost, /wasm/);
   // The API's answers are the panel's to head: the shell's headers stay in its locations.
-  const api = vhost.slice(vhost.indexOf('location /api/wf/app/'), vhost.indexOf('location / {'));
+  const api = vhost.slice(vhost.indexOf('location ^~ /api/wf/app/'), vhost.indexOf('location ~*'));
   assert.doesNotMatch(api, /Content-Security-Policy/);
   // The tree directory is under /var/www/lamaste on a relay; here the test's.
   assert.doesNotThrow(() => validateVhost(vhost.replaceAll(treesRoot, '/var/www/lamaste/apps')));
@@ -595,7 +657,7 @@ test('the sites API manages no plugin-owned site; no tunnel takes its route or i
   // Listed with whether it serves its plugin now.
   const listed = (await call('GET', '/api/sites')).json().sites.find((s) => s.id === site.id);
   assert.deepEqual(listed.webSurface, { served: true, reason: null });
-  assert.deepEqual(listed.owner, { plugin: 'wf' });
+  assert.deepEqual(listed.owner, { plugin: 'wf', package: '@lamalibre/wf-server' });
   for (const [method, url, body] of [
     ['GET', `/api/sites/${site.id}/files`],
     ['DELETE', `/api/sites/${site.id}/files`, { path: 'index.html' }],
@@ -692,7 +754,7 @@ test('move: refused while nginx refuses — everything as it was', async () => {
   }
   assert.deepEqual(await lib.readTunnels(), before.tunnels);
   assert.deepEqual(await lib.readSites(), before.sites);
-  assert.match(await sudo.read('lamalibre-lamaste-app-piyasa'), /location \/api\/mi\/app\//);
+  assert.match(await sudo.read('lamalibre-lamaste-app-piyasa'), /location \^~ \/api\/mi\/app\//);
 });
 
 test('move: the host handed to the web surface in one reload; the tunnel kept, off and unbound', async () => {
@@ -704,10 +766,11 @@ test('move: the host handed to the web surface in one reload; the tunnel kept, o
   const stored = (await lib.readTunnels()).find((t) => t.id === T.piyasa.id);
   assert.equal(stored.enabled, false);
   assert.equal(stored.userSurface, undefined);
-  assert.equal(await sudo.read('lamalibre-lamaste-app-piyasa'), null, 'the tunnel vhost is gone');
+  assert.notEqual(await sudo.read('lamalibre-lamaste-app-piyasa'), null, 'the tunnel vhost stays');
+  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-piyasa'), false, '…unlinked');
   const vhost = await sudo.read(`lamalibre-lamaste-site-${ws.site.id}`);
   assert.match(vhost, /server_name piyasa\.relay\.test;/);
-  assert.match(vhost, /location \/api\/mi\/app\//);
+  assert.match(vhost, /location \^~ \/api\/mi\/app\//);
   assert.equal(sudo.isEnabled(`lamalibre-lamaste-site-${ws.site.id}`), true);
 
   const hosts = shared.userSurfaceHosts(await lib.readTunnels(), await lib.readSites());
@@ -719,6 +782,13 @@ test('move: the host handed to the web surface in one reload; the tunnel kept, o
   assert.match(enable.json().details, /already served/);
   const [moved] = await lib.listAudit({ plugin: 'mi', action: 'plugin.web-surface.moved' });
   assert.equal(moved.details.tunnelId, T.piyasa.id);
+  assert.equal(moved.details.accessMode, 'authenticated');
+
+  // Rolled back by hand: the site deleted, the tunnel can be enabled again.
+  assert.equal((await call('DELETE', '/api/plugins/mi/web-surface')).statusCode, 200);
+  const back = await call('PATCH', `/api/tunnels/${T.piyasa.id}`, { enabled: true });
+  assert.equal(back.statusCode, 200, back.body);
+  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-piyasa'), true);
 });
 
 test('move: a restricted tunnel’s grants follow it to the site', async () => {
@@ -755,4 +825,255 @@ test('move: refused for a tunnel not bound to the plugin, or for a plugin with a
     const res = await call('POST', `/api/plugins/${name}/web-surface/move`, { tunnelId });
     assert.equal(res.json().code, code, `${name} ${tunnelId}: ${res.body}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Review fixes: the move's access mode and rollback, a move a crash
+// interrupted, orphaned and foreign sites, auto-approve, the update step
+// ---------------------------------------------------------------------------
+
+/** A tunnel added to the state, its vhost installed (authenticated, or restricted when so marked). */
+async function addTunnel(name, overrides = {}) {
+  const t = tunnel(name, overrides);
+  T[name] = t;
+  await lib.writeTunnels([...(await lib.readTunnels()), t]);
+  const write =
+    t.accessMode === 'authenticated' ? lib.writeAuthenticatedVhost : lib.writeRestrictedVhost;
+  await write(name, 'relay.test', t.port, undefined, { maxBodySizeMb: 10 });
+  return t;
+}
+
+/** A plugin installed, approved and given its site on its declared subdomain. */
+async function withSite(name, body = {}) {
+  await publish(name, '1.0.0', webManifest(name, '1.0.0'), webFiles(TREE_1));
+  await lib.installPlugin(`@lamalibre/${name}-server`, logger);
+  await approve(name);
+  const res = await call('POST', `/api/plugins/${name}/web-surface`, body);
+  assert.equal(res.statusCode, 201, res.body);
+  return res.json().webSurface;
+}
+
+test('move: a tunnel without an access mode is restricted, and its grants follow it', async () => {
+  const legacy = await addTunnel('oldmode', { accessMode: undefined });
+  await bound('om', legacy);
+  grants.push({
+    grantId: 'g-oldmode',
+    principalType: 'user',
+    principalId: 'ana',
+    resourceType: 'tunnel',
+    resourceId: legacy.id,
+    context: {},
+  });
+  const res = await call('POST', '/api/plugins/om/web-surface/move', { tunnelId: legacy.id });
+  assert.equal(res.statusCode, 200, res.body);
+  const ws = res.json().webSurface;
+  assert.equal(ws.site.accessMode, 'restricted', 'never widened to authenticated');
+  assert.ok(grants.some((g) => g.resourceType === 'site' && g.resourceId === ws.site.id));
+});
+
+test('move: a failure after the grants were copied revokes them and changes nothing', async () => {
+  const t = await addTunnel('vault2', { accessMode: 'restricted' });
+  await bound('vt', t);
+  grants.push({
+    grantId: 'g-vault2',
+    principalType: 'group',
+    principalId: 'ops',
+    resourceType: 'tunnel',
+    resourceId: t.id,
+    context: {},
+  });
+  const sitesBefore = JSON.stringify(await lib.readSites());
+  lib.setWebSurfaceDepsForTests({
+    readInstalledVhost: async (name) =>
+      name === 'lamalibre-lamaste-app-vault2' ? null : sudo.read(name),
+    getCertPath: async () => {
+      throw new Error('certbot unreachable');
+    },
+  });
+  try {
+    const res = await call('POST', '/api/plugins/vt/web-surface/move', { tunnelId: t.id });
+    assert.equal(res.statusCode, 500, res.body);
+  } finally {
+    lib.setWebSurfaceDepsForTests({ readInstalledVhost: sudo.read });
+  }
+  assert.equal(JSON.stringify(await lib.readSites()), sitesBefore, 'no site entry');
+  assert.equal(
+    grants.filter((g) => g.resourceType === 'site' && g.principalId === 'ops').length,
+    1,
+  );
+  const stored = (await lib.readTunnels()).find((x) => x.id === t.id);
+  assert.equal(stored.enabled, true);
+  assert.deepEqual(stored.userSurface, { routes: ['vt'] });
+  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-vault2'), true);
+});
+
+test('reconcile: a move stopped before its handover is finished by the next refresh', async () => {
+  const t = await addTunnel('crash');
+  await bound('cr', t);
+  await lib.syncWebSurfaceTree('cr', { logger, withoutSite: true });
+  // The state as the move writes it, then the panel stopped: the tunnel's
+  // vhost still linked, the site's not written.
+  const site = {
+    id: crypto.randomUUID(),
+    name: 'crash',
+    fqdn: 'crash.relay.test',
+    type: 'managed',
+    spaMode: true,
+    autheliaProtected: false,
+    allowedUsers: [],
+    dnsVerified: true,
+    certIssued: true,
+    rootPath: `${treesRoot}/cr/current`,
+    createdAt: new Date().toISOString(),
+    totalSize: 0,
+    owner: { plugin: 'cr', package: '@lamalibre/cr-server' },
+    accessMode: 'authenticated',
+  };
+  await lib.writeSites([...(await lib.readSites()), site]);
+  await lib.writeTunnels(
+    (await lib.readTunnels()).map((x) => {
+      if (x.id !== t.id) return x;
+      const moved = { ...x, enabled: false };
+      delete moved.userSurface;
+      return moved;
+    }),
+  );
+  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-crash'), true);
+
+  // nginx.js reads /etc/nginx/sites-enabled; here the stand-in's links.
+  lib.setWebSurfaceDepsForTests({
+    readInstalledVhost: sudo.read,
+    unlinkMovedAppVhost: async (subdomain) => {
+      const name = `lamalibre-lamaste-app-${subdomain}`;
+      if (!sudo.isEnabled(name)) return false;
+      await lib.disableSite(name);
+      return true;
+    },
+  });
+  try {
+    await lib.refreshWebSurface('cr', logger);
+  } finally {
+    lib.setWebSurfaceDepsForTests({ readInstalledVhost: sudo.read });
+  }
+  assert.equal(sudo.isEnabled('lamalibre-lamaste-app-crash'), false, 'the tunnel vhost unlinked');
+  assert.equal(sudo.isEnabled(`lamalibre-lamaste-site-${site.id}`), true, 'the site vhost in');
+  assert.match(await siteVhost(site), /server_name crash\.relay\.test;/);
+});
+
+test('uninstalled: the site stays readable and deletable, and clears browser storage', async () => {
+  const ws = await withSite('orph', { accessMode: 'restricted' });
+  grants.push({
+    grantId: 'stuck-orph',
+    principalType: 'user',
+    principalId: 'ana',
+    resourceType: 'site',
+    resourceId: ws.site.id,
+    context: {},
+  });
+  await lib.uninstallPlugin('orph', logger);
+
+  const view = (await status('orph')).webSurface;
+  assert.equal(view.site.fqdn, 'orph.relay.test');
+  assert.equal(view.reason, 'not_installed');
+  assert.equal(view.offer, null);
+  const vhost = await siteVhost(ws.site);
+  assert.match(vhost, /return 503;/);
+  assert.match(vhost, /add_header Clear-Site-Data '"storage"' always;/);
+  assert.match(vhost, /if \(\$http_service_worker\) \{\s*return 404;/);
+  assert.doesNotThrow(() => validateVhost(vhost));
+
+  // Creating or moving needs the plugin; deleting does not.
+  assert.equal((await call('POST', '/api/plugins/orph/web-surface', {})).statusCode, 404);
+  const deleted = await call('DELETE', '/api/plugins/orph/web-surface');
+  assert.equal(deleted.statusCode, 200, deleted.body);
+  assert.deepEqual(
+    deleted.json().grantsNotRevoked,
+    ['stuck-orph'],
+    'what Gatekeeper kept, reported',
+  );
+  assert.equal(
+    (await lib.readSites()).some((s) => s.id === ws.site.id),
+    false,
+  );
+  assert.equal(await sudo.read(`lamalibre-lamaste-site-${ws.site.id}`), null);
+  const [audit] = await lib
+    .listAudit({ action: 'plugin.web-surface.deleted' })
+    .then((rows) => rows.filter((r) => r.details.siteId === ws.site.id));
+  assert.deepEqual(audit.details.grantsNotRevoked, ['stuck-orph']);
+  assert.equal((await call('GET', '/api/plugins/orph/web-surface')).statusCode, 404);
+});
+
+test('a site created for another package is not served to the plugin that took its route', async () => {
+  const ws = await withSite('foreign');
+  await host('foreign', 'vm1');
+  assert.equal((await status('foreign')).webSurface.served, true);
+  await lib.writeSites(
+    (await lib.readSites()).map((s) =>
+      s.id === ws.site.id
+        ? { ...s, owner: { plugin: 'foreign', package: '@lamalibre/other-server' } }
+        : s,
+    ),
+  );
+  await lib.refreshWebSurface('foreign', logger);
+  const view = (await status('foreign')).webSurface;
+  assert.equal(view.served, false);
+  assert.equal(view.reason, 'not_owner');
+  assert.equal(view.site.ownerPackage, '@lamalibre/other-server');
+  assert.match(await siteVhost(ws.site), /return 503;/);
+});
+
+test('auto-approve does not stand in for a changed web tree', async () => {
+  await withSite('aa');
+  await lib.setAutoApprove('aa', true, {
+    actor: 'admin',
+    certSerial: '0A1B',
+  });
+  await publish('aa', '1.1.0', webManifest('aa', '1.1.0'), webFiles(TREE_2));
+  const staged = await lib.updatePlugin('aa', '1.1.0', actor);
+  assert.ok(staged.pendingUpdate, 'it waits for an administrator');
+  const [withheld] = await lib.listAudit({ plugin: 'aa', action: 'hooks.auto-approve.withheld' });
+  assert.deepEqual(withheld.details.codes, ['web.changed']);
+});
+
+test('update: a tree that cannot be served reverts the update', async () => {
+  await withSite('rv');
+  await publish('rv', '1.1.0', webManifest('rv', '1.1.0'), webFiles(TREE_2));
+  const staged = await lib.updatePlugin('rv', '1.1.0', actor);
+  const approved = await lib.approveHookSet(
+    await lib.findPlugin('rv'),
+    staged.pendingUpdate.digest,
+    actor,
+  );
+  // The store refuses the new tree.
+  await chmod(path.join(treesRoot, 'rv'), 0o500);
+  try {
+    await lib.updatePlugin('rv', '1.1.0', { ...actor, approvedUpdate: approved });
+    const done = await lib.waitForPluginOperation('rv');
+    assert.equal(done.status, 'rolled-back', JSON.stringify(done));
+  } finally {
+    await chmod(path.join(treesRoot, 'rv'), 0o750);
+  }
+  assert.equal((await lib.findPlugin('rv')).version, '1.0.0');
+  assert.equal((await status('rv')).webSurface.tree.current, treeSha(TREE_1));
+});
+
+test('offer: nothing while a disabled tunnel is still bound; create and move say why', async () => {
+  const t = await addTunnel('idle');
+  await bound('id', t);
+  const off = await call('PATCH', `/api/tunnels/${t.id}`, { enabled: false });
+  assert.equal(off.statusCode, 200, off.body);
+  const view = (await status('id')).webSurface;
+  assert.equal(view.offer, null);
+  assert.deepEqual(
+    { id: view.boundTunnel.id, enabled: view.boundTunnel.enabled },
+    { id: t.id, enabled: false },
+  );
+  assert.equal(
+    (await call('POST', '/api/plugins/id/web-surface', {})).json().code,
+    'bound_to_tunnel',
+  );
+  assert.equal(
+    (await call('POST', '/api/plugins/id/web-surface/move', { tunnelId: t.id })).json().code,
+    'tunnel_disabled',
+  );
 });

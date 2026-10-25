@@ -1662,6 +1662,35 @@ export function isSameOriginFetch(headers: IncomingHttpHeaders): boolean {
 }
 
 /**
+ * `Sec-Fetch-Dest` values a user surface's API never answers: a script, a
+ * style sheet, a worker or a worklet. A web surface's Content-Security-
+ * Policy allows code from its own host — `'self'` takes in the API's paths
+ * too — so an answer of the agent half's would otherwise run as the shell's
+ * code, though the approval covers only the tree. Data is fetched (`empty`)
+ * and pages are navigated to; nothing else loads from the API.
+ */
+const CODE_FETCH_DESTINATIONS: ReadonlySet<string> = new Set([
+  'script',
+  'style',
+  'worker',
+  'sharedworker',
+  'serviceworker',
+  'audioworklet',
+  'paintworklet',
+  'xslt',
+]);
+
+/**
+ * Whether a request's `Sec-Fetch-Dest` loads code (see
+ * {@link CODE_FETCH_DESTINATIONS}). Absent: a client that does not say.
+ * Pure; exported for tests.
+ */
+export function isCodeFetch(headers: IncomingHttpHeaders): boolean {
+  const dest = headers['sec-fetch-dest'];
+  return typeof dest === 'string' && CODE_FETCH_DESTINATIONS.has(dest);
+}
+
+/**
  * Fastify plugin serving plugins' user surfaces: `/:route/app` and
  * `/:route/app/*`, registered under the prefix `/api` (anything else
  * throws — the relay assertion binds the path `/api/<route>/app…`), in a
@@ -1671,7 +1700,9 @@ export function isSameOriginFetch(headers: IncomingHttpHeaders): boolean {
  *
  * 1. a request another site started (`Sec-Fetch-Site` present and neither
  *    `same-origin` nor `none`) — 403 `{ error: 'cross-site request
- *    refused' }`, whatever its method;
+ *    refused' }`, whatever its method; a request loading code (a script,
+ *    a style sheet, a worker — {@link isCodeFetch}) — 403 `{ error: 'not
+ *    a script or style source' }`;
  * 2. the relay assertion must verify and be bound to the URL's route —
  *    else 401 `{ error: 'unauthenticated' }`, JSON (no redirect for an
  *    XHR), before anything is looked up;
@@ -1732,6 +1763,9 @@ export async function userSurfacePlugin(
     const { route } = request.params;
     if (!isSameOriginFetch(request.headers)) {
       return reply.code(403).send({ error: 'cross-site request refused' });
+    }
+    if (isCodeFetch(request.headers)) {
+      return reply.code(403).send({ error: 'not a script or style source' });
     }
     const relay = await opts.verifyRelay(request);
     if (!relay.ok || relay.route !== route) {

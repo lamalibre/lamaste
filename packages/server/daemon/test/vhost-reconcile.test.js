@@ -469,7 +469,7 @@ test('a bound tunnel’s vhost carries the user surfaces served now, and loses t
   const [write] = first.writes;
   assert.equal(write.enabled, true);
   assert.equal(write.config, piyasaVhost([{ route: 'market-indicators', maxBodySizeMb: 10 }]));
-  assert.match(write.config, /location \/api\/market-indicators\/app\/ \{/);
+  assert.match(write.config, /location \^~ \/api\/market-indicators\/app\/ \{/);
   assert.doesNotMatch(write.config, /\/api\/fx\/app/, 'a route not served has no location');
 
   // Up to date: left alone.

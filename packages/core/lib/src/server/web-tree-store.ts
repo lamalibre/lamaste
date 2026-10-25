@@ -174,6 +174,11 @@ async function pointLink(dir: string, name: string, treeSha256: string): Promise
  * tree, each replaced with a rename; then every other tree and any staging
  * left behind goes. The tree is checked against its digest before it is
  * served. Returns whether `current` moved.
+ *
+ * Going back to the tree `previous` names — a reverted update, a rollback
+ * release — abandons the outgoing tree: `previous` goes rather than keep
+ * serving the files of a version that was backed out of, and the prune
+ * removes that tree.
  */
 export async function switchWebTree(dir: string, treeSha256: string): Promise<boolean> {
   if (!SHA256_RE.test(treeSha256)) throw new Error('treeSha256 must be a SHA-256 hex digest');
@@ -183,8 +188,13 @@ export async function switchWebTree(dir: string, treeSha256: string): Promise<bo
   if (tree.sha256 !== treeSha256) {
     throw new WebTreeError('a stored web tree is not the one its name says', 'DIGEST_MISMATCH');
   }
-  if (state.current !== null) await pointLink(dir, PREVIOUS, state.current);
-  await pointLink(dir, CURRENT, treeSha256);
+  if (state.previous === treeSha256) {
+    await pointLink(dir, CURRENT, treeSha256);
+    await rm(path.join(dir, PREVIOUS), { force: true });
+  } else {
+    if (state.current !== null) await pointLink(dir, PREVIOUS, state.current);
+    await pointLink(dir, CURRENT, treeSha256);
+  }
   await pruneWebTreeStore(dir);
   return true;
 }

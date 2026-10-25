@@ -41,6 +41,7 @@ import {
   buildRequestHookPlan,
   isHookEditableHeader,
   isAgentHalfReservedPath,
+  isCodeFetch,
   isSameOriginFetch,
   userSurfaceErrorText,
   userSurfaceHalfPath,
@@ -722,6 +723,51 @@ test('user surface: a request another site started is refused, whatever its meth
         },
       });
       assert.equal(res.statusCode, 200, String(site));
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test('user surface: a request loading a script, a style sheet or a worker is refused', async () => {
+  assert.equal(isCodeFetch({}), false);
+  assert.equal(isCodeFetch({ 'sec-fetch-dest': 'empty' }), false);
+  const { app } = await userSurfaceApp();
+  try {
+    const url = '/api/fx/app/me';
+    for (const dest of [
+      'script',
+      'style',
+      'worker',
+      'sharedworker',
+      'serviceworker',
+      'paintworklet',
+    ]) {
+      halfSeen = null;
+      const res = await app.inject({
+        method: 'GET',
+        url,
+        headers: {
+          'sec-fetch-site': 'same-origin',
+          'sec-fetch-dest': dest,
+          [RELAY_ASSERTION_HEADER]: vouch('GET', url),
+        },
+      });
+      assert.equal(res.statusCode, 403, dest);
+      assert.deepEqual(res.json(), { error: 'not a script or style source' }, dest);
+      assert.equal(halfSeen, null, `${dest}: nothing reached the half`);
+    }
+    for (const dest of ['empty', 'document', undefined]) {
+      const res = await app.inject({
+        method: 'GET',
+        url,
+        headers: {
+          'sec-fetch-site': 'same-origin',
+          ...(dest ? { 'sec-fetch-dest': dest } : {}),
+          [RELAY_ASSERTION_HEADER]: vouch('GET', url),
+        },
+      });
+      assert.equal(res.statusCode, 200, String(dest));
     }
   } finally {
     await app.close();

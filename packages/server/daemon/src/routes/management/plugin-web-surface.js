@@ -11,7 +11,7 @@
  */
 
 import { z } from 'zod';
-import { WEB_SURFACE_ACCESS_MODES } from '@lamalibre/lamaste';
+import { WEB_SURFACE_ACCESS_MODES, derivePluginRoute } from '@lamalibre/lamaste';
 import { actorFromRequest } from '../../lib/actor.js';
 import { findPlugin } from '../../lib/plugins.js';
 import {
@@ -56,15 +56,15 @@ function sendFailure(request, reply, err, fallback) {
     .send({ error: fallback, details: err.message });
 }
 
-/** The installed plugin's route, or null having answered 404. */
-async function routeOf(request, reply) {
+/**
+ * The route plugin `:name` holds: the installed plugin's, else the one its
+ * name derives — a site outlives its plugin, and its status and deletion
+ * stay reachable (creating or moving refuses without an installed plugin).
+ */
+async function routeOf(request) {
   const { name } = PluginNameParamSchema.parse(request.params);
   const plugin = await findPlugin(name);
-  if (!plugin?.route) {
-    reply.code(404).send({ error: `Plugin "${name}" not found` });
-    return null;
-  }
-  return plugin.route;
+  return plugin?.route ?? derivePluginRoute(name);
 }
 
 export default async function pluginWebSurfaceRoutes(fastify, _opts) {
@@ -72,8 +72,7 @@ export default async function pluginWebSurfaceRoutes(fastify, _opts) {
     '/plugins/:name/web-surface',
     { preHandler: fastify.requireRole(['admin']) },
     async (request, reply) => {
-      const route = await routeOf(request, reply);
-      if (!route) return reply;
+      const route = await routeOf(request);
       try {
         return { webSurface: await webSurfaceStatus(route) };
       } catch (err) {
@@ -90,8 +89,7 @@ export default async function pluginWebSurfaceRoutes(fastify, _opts) {
       config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
-      const route = await routeOf(request, reply);
-      if (!route) return reply;
+      const route = await routeOf(request);
       const body = CreateBodySchema.parse(request.body ?? {});
       try {
         const webSurface = await createWebSurface(route, body, {
@@ -112,8 +110,7 @@ export default async function pluginWebSurfaceRoutes(fastify, _opts) {
       config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
-      const route = await routeOf(request, reply);
-      if (!route) return reply;
+      const route = await routeOf(request);
       const { tunnelId } = MoveBodySchema.parse(request.body);
       try {
         return {
@@ -140,8 +137,7 @@ export default async function pluginWebSurfaceRoutes(fastify, _opts) {
       config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
-      const route = await routeOf(request, reply);
-      if (!route) return reply;
+      const route = await routeOf(request);
       try {
         return await deleteWebSurface(route, {
           actor: actorFromRequest(request),

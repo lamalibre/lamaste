@@ -222,6 +222,7 @@ export type WebSurfaceNotServedReason =
   | 'not_installed'
   | 'no_identity'
   | 'no_web_surface'
+  | 'not_owner'
   | 'not_approved'
   | 'not_hosted'
   | 'tree_not_current';
@@ -245,6 +246,8 @@ export interface PluginWebSurfaceView {
     readonly name: string;
     readonly fqdn: string;
     readonly accessMode: 'authenticated' | 'restricted' | null;
+    /** The server package the site was created for; a site naming none is served to no plugin. */
+    readonly ownerPackage: string | null;
   } | null;
   readonly served: boolean;
   readonly reason: WebSurfaceNotServedReason | null;
@@ -256,6 +259,8 @@ export interface PluginWebSurfaceView {
   readonly boundTunnel: {
     readonly id: string;
     readonly fqdn: string | null;
+    /** A disabled one blocks creating a site too: unbind it, or enable it and move it. */
+    readonly enabled: boolean;
     readonly routes: readonly string[];
   } | null;
   readonly offer: {

@@ -329,7 +329,7 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
     ['market-indicators', 10],
     ['fx', 25],
   ]) {
-    for (const matcher of [`= /api/${route}/app`, `/api/${route}/app/`]) {
+    for (const matcher of [`= /api/${route}/app`, `^~ /api/${route}/app/`]) {
       const body = locationBody(text, matcher);
       for (const line of [
         'auth_request /internal/lamaste/user-surface-authz;',
@@ -379,7 +379,7 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
     assert.doesNotThrow(() => validateVhost(vhost), name);
   }
   const kamera = await readFile(path.join(captured, 'lamalibre-lamaste-app-kamera'), 'utf8');
-  assert.ok(locationBody(kamera, '/api/camwatch/app/').includes('client_max_body_size 50m;'));
+  assert.ok(locationBody(kamera, '^~ /api/camwatch/app/').includes('client_max_body_size 50m;'));
   assert.ok(kamera.includes('ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;'));
 });
 
@@ -429,7 +429,7 @@ test('every location that proxies a browser to the panel clears a client’s rel
     for (const { matcher, body } of locations(text)) {
       if (!/proxy_pass http:\/\/127\.0\.0\.1:3100[/;]/.test(body)) continue;
       checked += 1;
-      const userSurface = /^(= )?\/api\/[a-z0-9-]+\/app\/?$/.test(matcher);
+      const userSurface = /^(= |\^~ )?\/api\/[a-z0-9-]+\/app\/?$/.test(matcher);
       assert.ok(
         body.includes(
           userSurface

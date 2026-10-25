@@ -20,7 +20,7 @@ import {
 import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import FileBrowser from '../components/FileBrowser.jsx';
-import { notServedReasonText, siteOwner } from '../lib/web-surface.js';
+import { notServedReasonText, siteOwner, siteOwnerRoute } from '../lib/web-surface.js';
 
 // --- Helpers ---
 
@@ -117,13 +117,25 @@ function OwnerBadge({ owner }) {
 
 /**
  * Where a plugin-owned site is managed: the plugin's page when the host can
- * open it, otherwise in words.
+ * open it, otherwise in words — and, once its plugin is uninstalled, the
+ * one thing left to do with it: delete it (its trees and grants go too).
  */
-function OwnerAction({ owner, onOpenPlugin, compact = false }) {
+function OwnerAction({ owner, site, onOpenPlugin, onDelete, compact = false }) {
   if (!owner.name) {
     return (
-      <span className="text-xs text-zinc-500" title="No installed plugin holds this route">
-        plugin not installed
+      <span className="inline-flex items-center gap-2">
+        <span className="text-xs text-zinc-500" title="No installed plugin holds this route">
+          plugin not installed
+        </span>
+        <button
+          type="button"
+          onClick={() => onDelete(site)}
+          className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-zinc-700 rounded transition-colors"
+          title="Delete the site of the uninstalled plugin"
+          aria-label={`Delete ${site.fqdn}`}
+        >
+          <Trash2 size={compact ? 14 : 16} />
+        </button>
       </span>
     );
   }
@@ -824,7 +836,12 @@ function SiteTable({ sites, ownerOf, onOpenPlugin, onDelete, onFiles, onVerifyDn
                 <td className="py-3 px-4 text-right">
                   <div className="flex items-center justify-end gap-2">
                     {owner ? (
-                      <OwnerAction owner={owner} onOpenPlugin={onOpenPlugin} />
+                      <OwnerAction
+                        owner={owner}
+                        site={site}
+                        onOpenPlugin={onOpenPlugin}
+                        onDelete={onDelete}
+                      />
                     ) : (
                       <>
                         {site.type === 'custom' && !site.dnsVerified && (
@@ -917,7 +934,13 @@ function SiteCards({ sites, ownerOf, onOpenPlugin, onDelete, onFiles, onVerifyDn
             </div>
             <div className="flex items-center gap-2 mt-3">
               {owner ? (
-                <OwnerAction owner={owner} onOpenPlugin={onOpenPlugin} compact />
+                <OwnerAction
+                  owner={owner}
+                  site={site}
+                  onOpenPlugin={onOpenPlugin}
+                  onDelete={onDelete}
+                  compact
+                />
               ) : (
                 <>
                   {site.type === 'custom' && !site.dnsVerified && (
@@ -993,8 +1016,13 @@ export default function Sites({ domain, onOpenPlugin }) {
   const plugins = pluginsQuery.data?.plugins;
   const ownerOf = useCallback((site) => siteOwner(site, plugins), [plugins]);
 
+  // A plugin's site (its plugin uninstalled) goes through the plugin's web
+  // surface: the sites API refuses it, and its trees and grants go too.
   const deleteMutation = useMutation({
-    mutationFn: (id) => client.deleteSite(id),
+    mutationFn: (site) => {
+      const route = siteOwnerRoute(site);
+      return route ? client.deletePluginWebSurface(route) : client.deleteSite(site.id);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sites'] });
       addToast(`Site ${deleteTarget.fqdn} deleted`);
@@ -1013,7 +1041,7 @@ export default function Sites({ domain, onOpenPlugin }) {
 
   const confirmDelete = useCallback(() => {
     if (deleteTarget) {
-      deleteMutation.mutate(deleteTarget.id);
+      deleteMutation.mutate(deleteTarget);
     }
   }, [deleteTarget, deleteMutation]);
 

@@ -3,7 +3,7 @@
   "meta": {
     "number": 42,
     "name": "App plugin web surface",
-    "suite": "e2e",
+    "suite": "e2e-three-vm",
     "description": "42 — App plugin web surface (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
@@ -55,14 +55,6 @@
     },
     "JAR_NOROLE": {
       "value": "/tmp/e2e-42-norole.cookies"
-    },
-    "UPDATE": {
-      "value": "$(host_api_post \"plugins/${PLUGIN}/update\" \"{\\\"version\\\":\\\"$1\\\"}\")",
-      "expression": true
-    },
-    "OP": {
-      "value": "$(wait_operation \"${PLUGIN}\" \"$(json_get \"$approved\" '.operation.id // empty')\" 300 nudge)",
-      "expression": true
     }
   },
   "cleanup": [
@@ -192,7 +184,7 @@
           ]
         },
         {
-          "id": "step-18",
+          "id": "step-16",
           "label": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
           "target": "local",
           "op": {
@@ -207,7 +199,7 @@
           }
         },
         {
-          "id": "step-19",
+          "id": "step-17",
           "label": "Set TREE_1",
           "target": "local",
           "op": {
@@ -224,42 +216,8 @@
           ]
         },
         {
-          "id": "step-20",
-          "label": "Set TREE_2",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "local_tree_sha \"${LOCAL_TMP}/ship/fixtures/v110/server/web\""
-          },
-          "capture": [
-            {
-              "variable": "TREE_2",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-21",
-          "label": "Set TREE_3",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "local_tree_sha \"${LOCAL_TMP}/ship/fixtures/v120/server/web\""
-          },
-          "capture": [
-            {
-              "variable": "TREE_3",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-22",
-          "label": "Fixtures built: ${SERVER_PACKAGE} 1.0.0, 1.1.0, 1.2.0 (a bad release) with trees v1, v2, v3",
+          "id": "step-18",
+          "label": "Fixture built: ${SERVER_PACKAGE} 1.0.0 with tree v1",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -268,18 +226,18 @@
               "kind": "eq",
               "actual": {
                 "kind": "expr",
-                "template": "$(printf '%s\\n' \"${TREE_1}\" \"${TREE_2}\" \"${TREE_3}\" | grep -cE '^[a-f0-9]{64}$' || true)"
+                "template": "$(printf '%s\\n' \"${TREE_1}\" | grep -cE '^[a-f0-9]{64}$' || true)"
               },
               "expected": {
                 "kind": "literal",
-                "value": "3"
+                "value": "1"
               },
-              "message": "Fixtures built: ${SERVER_PACKAGE} 1.0.0, 1.1.0, 1.2.0 (a bad release) with trees v1, v2, v3"
+              "message": "Fixture built: ${SERVER_PACKAGE} 1.0.0 with tree v1"
             }
           }
         },
         {
-          "id": "step-27",
+          "id": "step-23",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -296,7 +254,7 @@
           ]
         },
         {
-          "id": "step-28",
+          "id": "step-24",
           "label": "User ${VIEWER} created",
           "target": "local",
           "continueOnError": true,
@@ -317,7 +275,7 @@
           }
         },
         {
-          "id": "step-29",
+          "id": "step-25",
           "label": "Set VIEWER_ID",
           "target": "local",
           "op": {
@@ -334,7 +292,7 @@
           ]
         },
         {
-          "id": "step-30",
+          "id": "step-26",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -351,7 +309,7 @@
           ]
         },
         {
-          "id": "step-31",
+          "id": "step-27",
           "label": "User ${NOROLE} created — to hold no role in the plugin",
           "target": "local",
           "continueOnError": true,
@@ -372,7 +330,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-28",
           "label": "Set NOROLE_ID",
           "target": "local",
           "op": {
@@ -389,7 +347,7 @@
           ]
         },
         {
-          "id": "step-33",
+          "id": "step-29",
           "label": "POST /api/plugins/install",
           "target": "host",
           "op": {
@@ -408,7 +366,7 @@
           ]
         },
         {
-          "id": "step-34",
+          "id": "step-30",
           "label": "Installed ${SERVER_PACKAGE}@1.0.0",
           "target": "local",
           "continueOnError": true,
@@ -430,7 +388,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-31",
           "label": "GET /api/plugins/${PLUGIN}/hooks",
           "target": "host",
           "op": {
@@ -448,7 +406,7 @@
           ]
         },
         {
-          "id": "step-36",
+          "id": "step-32",
           "label": "Its web tree is part of what waits for approval — the digest of tree v1",
           "target": "local",
           "continueOnError": true,
@@ -470,7 +428,7 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-33",
           "label": "Set DIGEST",
           "target": "local",
           "op": {
@@ -487,7 +445,7 @@
           ]
         },
         {
-          "id": "step-38",
+          "id": "step-34",
           "label": "Set WS",
           "target": "local",
           "op": {
@@ -504,7 +462,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-35",
           "label": "Not served, owns no site: not approved",
           "target": "local",
           "continueOnError": true,
@@ -526,7 +484,7 @@
           }
         },
         {
-          "id": "step-40",
+          "id": "step-36",
           "label": "Offered: ${SUB_W}, authenticated, free",
           "target": "local",
           "continueOnError": true,
@@ -548,7 +506,7 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-37",
           "label": "Nothing of it in the relay's tree store",
           "target": "local",
           "continueOnError": true,
@@ -569,14 +527,14 @@
           }
         }
       ],
-      "bash": "log_section \"Fixtures, the stand-in Feria, the users; the plugin installed, not approved\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-42-app-plugin-XXXXXXXX)\nBUILD=\"r$(date +%s)-$$\"\nFIXTURES=\"built\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v100\" \"${PLUGIN}\" 1.0.0 main \"${BUILD}\" '[]' none wide v1 \"${SUB_W}\" || FIXTURES=\"failed\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v110\" \"${PLUGIN}\" 1.1.0 main \"${BUILD}\" '[]' none wide v2 \"${SUB_W}\" || FIXTURES=\"failed\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v120\" \"${PLUGIN}\" 1.2.0 failpost \"${BUILD}\" '[]' none wide v3 \"${SUB_W}\" || FIXTURES=\"failed\"\nif [ \"$FIXTURES\" != \"built\" ]; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nTREE_1=$(local_tree_sha \"${LOCAL_TMP}/ship/fixtures/v100/server/web\")\nTREE_2=$(local_tree_sha \"${LOCAL_TMP}/ship/fixtures/v110/server/web\")\nTREE_3=$(local_tree_sha \"${LOCAL_TMP}/ship/fixtures/v120/server/web\")\nassert_eq \"$(printf '%s\\n' \"${TREE_1}\" \"${TREE_2}\" \"${TREE_3}\" | grep -cE '^[a-f0-9]{64}$' || true)\" \"3\" \"Fixtures built: ${SERVER_PACKAGE} 1.0.0, 1.1.0, 1.2.0 (a bad release) with trees v1, v2, v3\" || true\nship_agent_facts_probe\nstart_stand_in_feria fixtures/v100/server fixtures/v100/agent fixtures/v110/server fixtures/v110/agent \\\n  fixtures/v120/server fixtures/v120/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"update\",\"uninstall\"]'\n\n# Every users.yml write of the spec, before anyone signs in.\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${VIEWER}\\\",\\\"displayname\\\":\\\"E2E Viewer\\\",\\\"email\\\":\\\"${VIEWER}@example.test\\\",\\\"password\\\":\\\"${VIEWER_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${VIEWER} created\" || true\nVIEWER_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${NOROLE}\\\",\\\"displayname\\\":\\\"E2E No Role\\\",\\\"email\\\":\\\"${NOROLE}@example.test\\\",\\\"password\\\":\\\"${NOROLE_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${NOROLE} created — to hold no role in the plugin\" || true\nNOROLE_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\n\nINSTALL=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${SERVER_PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0\" || true\nHOOKS=$(host_api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '\"\\(.hooks.web.declared) \\(.hooks.web.treeSha256) \\(.hooks.approval.state)\"' \"true ${TREE_1} pending\" \"Its web tree is part of what waits for approval — the digest of tree v1\" || true\nDIGEST=$(json_get \"$HOOKS\" '.hooks.approval.digest // empty')\nWS=$(web_surface \"${PLUGIN}\")\nassert_json_field \"$WS\" '\"\\(.served) \\(.reason) \\(.site)\"' 'false not_approved null' \"Not served, owns no site: not approved\" || true\nassert_json_field \"$WS\" '\"\\(.offer.subdomain) \\(.offer.accessMode) \\(.offer.available)\"' \"${SUB_W} authenticated true\" \"Offered: ${SUB_W}, authenticated, free\" || true\nassert_eq \"$(tree_dirs \"${PLUGIN}\")\" \"\" \"Nothing of it in the relay's tree store\" || true\n\n# ===========================================================================\n# 2. The site, before it is served\n# ==========================================================================="
+      "bash": "log_section \"Fixtures, the stand-in Feria, the users; the plugin installed, not approved\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-42-app-plugin-XXXXXXXX)\nBUILD=\"r$(date +%s)-$$\"\nFIXTURES=\"built\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v100\" \"${PLUGIN}\" 1.0.0 main \"${BUILD}\" '[]' none wide v1 \"${SUB_W}\" || FIXTURES=\"failed\"\nif [ \"$FIXTURES\" != \"built\" ]; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nTREE_1=$(local_tree_sha \"${LOCAL_TMP}/ship/fixtures/v100/server/web\")\nassert_eq \"$(printf '%s\\n' \"${TREE_1}\" | grep -cE '^[a-f0-9]{64}$' || true)\" \"1\" \"Fixture built: ${SERVER_PACKAGE} 1.0.0 with tree v1\" || true\nship_agent_facts_probe\nstart_stand_in_feria fixtures/v100/server fixtures/v100/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\n\n# Every users.yml write of the spec, before anyone signs in.\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${VIEWER}\\\",\\\"displayname\\\":\\\"E2E Viewer\\\",\\\"email\\\":\\\"${VIEWER}@example.test\\\",\\\"password\\\":\\\"${VIEWER_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${VIEWER} created\" || true\nVIEWER_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${NOROLE}\\\",\\\"displayname\\\":\\\"E2E No Role\\\",\\\"email\\\":\\\"${NOROLE}@example.test\\\",\\\"password\\\":\\\"${NOROLE_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${NOROLE} created — to hold no role in the plugin\" || true\nNOROLE_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\n\nINSTALL=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${SERVER_PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0\" || true\nHOOKS=$(host_api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '\"\\(.hooks.web.declared) \\(.hooks.web.treeSha256) \\(.hooks.approval.state)\"' \"true ${TREE_1} pending\" \"Its web tree is part of what waits for approval — the digest of tree v1\" || true\nDIGEST=$(json_get \"$HOOKS\" '.hooks.approval.digest // empty')\nWS=$(web_surface \"${PLUGIN}\")\nassert_json_field \"$WS\" '\"\\(.served) \\(.reason) \\(.site)\"' 'false not_approved null' \"Not served, owns no site: not approved\" || true\nassert_json_field \"$WS\" '\"\\(.offer.subdomain) \\(.offer.accessMode) \\(.offer.available)\"' \"${SUB_W} authenticated true\" \"Offered: ${SUB_W}, authenticated, free\" || true\nassert_eq \"$(tree_dirs \"${PLUGIN}\")\" \"\" \"Nothing of it in the relay's tree store\" || true\n\n# ===========================================================================\n# 2. The site, before it is served\n# ==========================================================================="
     },
     {
       "id": "created-503-until-served-the-sites-api-does-not-manage-it",
       "label": "Created: 503 until served; the sites API does not manage it",
       "steps": [
         {
-          "id": "step-42",
+          "id": "step-38",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -593,7 +551,7 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-39",
           "label": "POST /api/plugins/${PLUGIN}/web-surface",
           "target": "local",
           "continueOnError": true,
@@ -614,7 +572,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-40",
           "label": "Set SITE_ID",
           "target": "local",
           "op": {
@@ -631,7 +589,7 @@
           ]
         },
         {
-          "id": "step-45",
+          "id": "step-41",
           "label": "…the site ${FQDN}, authenticated",
           "target": "local",
           "continueOnError": true,
@@ -653,7 +611,7 @@
           }
         },
         {
-          "id": "step-46",
+          "id": "step-42",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -670,7 +628,7 @@
           ]
         },
         {
-          "id": "step-47",
+          "id": "step-43",
           "label": "A second one is refused (409 exists)",
           "target": "local",
           "continueOnError": true,
@@ -691,7 +649,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-45",
           "label": "Not approved yet: every request answered 503",
           "target": "local",
           "op": {
@@ -701,7 +659,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-46",
           "label": "The site before approval: $(page_status - /)",
           "target": "local",
           "op": {
@@ -711,7 +669,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-47",
           "label": "GET /api/sites lists it with its owner, not served",
           "target": "local",
           "continueOnError": true,
@@ -733,7 +691,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-48",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -750,7 +708,7 @@
           ]
         },
         {
-          "id": "step-53",
+          "id": "step-49",
           "label": "PATCH /api/sites/${SITE_ID}: refused (409)",
           "target": "local",
           "continueOnError": true,
@@ -771,7 +729,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-50",
           "label": "Its files are not listed through the sites API (409)",
           "target": "local",
           "continueOnError": true,
@@ -792,7 +750,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-51",
           "label": "…nor is it deleted there (409)",
           "target": "local",
           "continueOnError": true,
@@ -820,7 +778,7 @@
       "label": "Approved and hosted: the approved tree served",
       "steps": [
         {
-          "id": "step-56",
+          "id": "step-52",
           "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
           "target": "host",
           "op": {
@@ -839,7 +797,7 @@
           ]
         },
         {
-          "id": "step-57",
+          "id": "step-53",
           "label": "Approved: its agent half, identity block and web tree",
           "target": "local",
           "continueOnError": true,
@@ -861,7 +819,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-54",
           "label": "The approval served tree v1 from the store (current → its digest)",
           "target": "local",
           "continueOnError": true,
@@ -882,7 +840,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-55",
           "label": "POST /api/plugins/${PLUGIN}/enable",
           "target": "host",
           "op": {
@@ -893,7 +851,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-56",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -910,7 +868,7 @@
           ]
         },
         {
-          "id": "step-61",
+          "id": "step-57",
           "label": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -932,7 +890,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-58",
           "label": "Served: approved, hosted, its tree current",
           "target": "local",
           "op": {
@@ -942,7 +900,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-59",
           "label": "Not served: $(web_surface \"${PLUGIN}\" | jq -c '{served, reason, tree}')",
           "target": "local",
           "op": {
@@ -952,7 +910,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-60",
           "label": "Ready: its agent half's first complete sync ended at the head",
           "target": "local",
           "op": {
@@ -962,7 +920,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-61",
           "label": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')",
           "target": "local",
           "op": {
@@ -972,7 +930,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-62",
           "label": "Without a session: a page goes to the login",
           "target": "local",
           "op": {
@@ -982,7 +940,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-63",
           "label": "Without a session: $(page_status - /)",
           "target": "local",
           "op": {
@@ -992,7 +950,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-64",
           "label": "…the sign-in portal, back to ${FQDN}",
           "target": "local",
           "continueOnError": true,
@@ -1013,7 +971,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-65",
           "label": "Set API",
           "target": "local",
           "op": {
@@ -1030,7 +988,7 @@
           ]
         },
         {
-          "id": "step-70",
+          "id": "step-66",
           "label": "…the API on the same host: a JSON 401, never a redirect",
           "target": "local",
           "continueOnError": true,
@@ -1051,7 +1009,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-67",
           "label": "Set SECRET_V",
           "target": "local",
           "op": {
@@ -1068,7 +1026,7 @@
           ]
         },
         {
-          "id": "step-72",
+          "id": "step-68",
           "label": "Set SECRET_N",
           "target": "local",
           "op": {
@@ -1085,7 +1043,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-70",
           "label": "${VIEWER} signed in from the visitor VM",
           "target": "local",
           "continueOnError": true,
@@ -1106,7 +1064,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-71",
           "label": "${NOROLE} signed in",
           "target": "local",
           "continueOnError": true,
@@ -1127,7 +1085,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-72",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1144,7 +1102,7 @@
           ]
         },
         {
-          "id": "step-77",
+          "id": "step-73",
           "label": "${NOROLE}, without a role in the plugin: 403",
           "target": "local",
           "continueOnError": true,
@@ -1165,7 +1123,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-74",
           "label": "…the access-request page",
           "target": "local",
           "continueOnError": true,
@@ -1186,7 +1144,7 @@
           }
         },
         {
-          "id": "step-79",
+          "id": "step-75",
           "label": "…never the shell",
           "target": "local",
           "continueOnError": true,
@@ -1207,7 +1165,7 @@
           }
         },
         {
-          "id": "step-80",
+          "id": "step-76",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1224,7 +1182,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-77",
           "label": "${VIEWER} entitled as viewer",
           "target": "local",
           "continueOnError": true,
@@ -1245,7 +1203,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-78",
           "label": "…an active member of the audience",
           "target": "local",
           "op": {
@@ -1255,7 +1213,7 @@
           }
         },
         {
-          "id": "step-83",
+          "id": "step-79",
           "label": "The audience: $(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\")",
           "target": "local",
           "op": {
@@ -1272,7 +1230,7 @@
       "label": "Signed in with a role: the shell and the API, one session",
       "steps": [
         {
-          "id": "step-84",
+          "id": "step-80",
           "label": "GET / as ${VIEWER}: index.html of tree v1",
           "target": "local",
           "op": {
@@ -1282,7 +1240,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-81",
           "label": "GET / as ${VIEWER}: $(page_status \"${JAR_VIEWER}\" /)",
           "target": "local",
           "op": {
@@ -1292,7 +1250,7 @@
           }
         },
         {
-          "id": "step-86",
+          "id": "step-82",
           "label": "Set HEADERS",
           "target": "local",
           "op": {
@@ -1309,7 +1267,7 @@
           ]
         },
         {
-          "id": "step-87",
+          "id": "step-83",
           "label": "…under the web surface's CSP: nothing from another origin, no inline script",
           "target": "local",
           "continueOnError": true,
@@ -1330,7 +1288,7 @@
           }
         },
         {
-          "id": "step-88",
+          "id": "step-84",
           "label": "…revalidated on every load (no-cache)",
           "target": "local",
           "continueOnError": true,
@@ -1351,7 +1309,7 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-85",
           "label": "…never framed",
           "target": "local",
           "continueOnError": true,
@@ -1372,7 +1330,28 @@
           }
         },
         {
-          "id": "step-90",
+          "id": "step-86",
+          "label": "…no other host learns from it whether the viewer may use the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HEADERS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "cross-origin-resource-policy: same-origin"
+              },
+              "message": "…no other host learns from it whether the viewer may use the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-87",
           "label": "Its script app-v1.js: 200",
           "target": "local",
           "continueOnError": true,
@@ -1393,7 +1372,7 @@
           }
         },
         {
-          "id": "step-91",
+          "id": "step-88",
           "label": "A deep link is answered with the shell (index.html)",
           "target": "local",
           "continueOnError": true,
@@ -1414,7 +1393,7 @@
           }
         },
         {
-          "id": "step-92",
+          "id": "step-89",
           "label": "POST / to the shell: 405 — GET and HEAD only",
           "target": "local",
           "continueOnError": true,
@@ -1435,7 +1414,49 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-90",
+          "label": "A service worker's script: 404 — never registered from a plugin's site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(page_status \"${JAR_VIEWER}\" /app-v1.js -H 'Service-Worker: script')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "A service worker's script: 404 — never registered from a plugin's site"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "The API as a script source: 403 — code comes from the approved tree only",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(page_status \"${JAR_VIEWER}\" \"${APP}/echo\" -H 'Sec-Fetch-Site: same-origin' -H 'Sec-Fetch-Dest: script')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "The API as a script source: 403 — code comes from the approved tree only"
+            }
+          }
+        },
+        {
+          "id": "step-92",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1452,7 +1473,7 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-93",
           "label": "GET ${APP}/echo on the same host, the same session: 200",
           "target": "local",
           "continueOnError": true,
@@ -1473,7 +1494,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-94",
           "label": "…the agent half sees the directory's user and roles",
           "target": "local",
           "continueOnError": true,
@@ -1495,7 +1516,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-95",
           "label": "Set API_HEADERS",
           "target": "local",
           "op": {
@@ -1512,7 +1533,7 @@
           ]
         },
         {
-          "id": "step-97",
+          "id": "step-96",
           "label": "…an API answer keeps the user surface's own headers (CSP sandbox)",
           "target": "local",
           "continueOnError": true,
@@ -1533,7 +1554,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-97",
           "label": "…not the shell's",
           "target": "local",
           "continueOnError": true,
@@ -1554,301 +1575,14 @@
           }
         }
       ],
-      "bash": "log_section \"Signed in with a role: the shell and the API, one session\"\n\nif wait_for 30 shell_serves v1; then\n  log_pass \"GET / as ${VIEWER}: index.html of tree v1\"\nelse\n  log_fail \"GET / as ${VIEWER}: $(page_status \"${JAR_VIEWER}\" /)\"\nfi\nHEADERS=$(visit_headers \"$(page \"${JAR_VIEWER}\" /)\" | tr '[:upper:]' '[:lower:]')\nassert_contains \"$HEADERS\" \"content-security-policy: default-src 'self'; script-src 'self';\" \"…under the web surface's CSP: nothing from another origin, no inline script\" || true\nassert_contains \"$HEADERS\" \"cache-control: no-cache\" \"…revalidated on every load (no-cache)\" || true\nassert_contains \"$HEADERS\" \"x-frame-options: deny\" \"…never framed\" || true\nassert_eq \"$(page_status \"${JAR_VIEWER}\" /app-v1.js)\" \"200\" \"Its script app-v1.js: 200\" || true\nassert_contains \"$(visit_body \"$(page \"${JAR_VIEWER}\" /reports/2026/october)\")\" \"E2E_WEB_v1\" \"A deep link is answered with the shell (index.html)\" || true\nassert_eq \"$(page_status \"${JAR_VIEWER}\" / -X POST -H \"Origin: https://${FQDN}\")\" \"405\" \"POST / to the shell: 405 — GET and HEAD only\" || true\n\nRESP=$(page \"${JAR_VIEWER}\" \"${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"GET ${APP}/echo on the same host, the same session: 200\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.caller.type) \\(.caller.userId) \\(.caller.roles | join(\",\"))\"' \"user ${VIEWER_ID} viewer\" \"…the agent half sees the directory's user and roles\" || true\nAPI_HEADERS=$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\nassert_contains \"$API_HEADERS\" \"content-security-policy: sandbox; default-src 'none'\" \"…an API answer keeps the user surface's own headers (CSP sandbox)\" || true\nassert_not_contains \"$API_HEADERS\" \"default-src 'self'\" \"…not the shell's\" || true\n\n# ===========================================================================\n# 4. Update to 1.1.0\n# ==========================================================================="
-    },
-    {
-      "id": "update-to-1-1-0-tree-v2-approved-with-it-v1-kept-as-previous",
-      "label": "Update to 1.1.0: tree v2 approved with it, v1 kept as previous",
-      "steps": [
-        {
-          "id": "step-100",
-          "label": "The update waited for approval, showing tree v1 → v2 (4 files)",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "UPDATE"
-              },
-              "path": "\"\\(.pendingUpdate.web.before) \\(.pendingUpdate.web.after.sha256) \\(.pendingUpdate.web.after.files)\"",
-              "expected": {
-                "kind": "expr",
-                "template": "${TREE_1} ${TREE_2} 4"
-              },
-              "message": "The update waited for approval, showing tree v1 → v2 (4 files)"
-            }
-          }
-        },
-        {
-          "id": "step-101",
-          "label": "The update succeeded ($(json_get \"$OP\" '.error // \"\"'))",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "OP"
-              },
-              "path": ".status",
-              "expected": {
-                "kind": "literal",
-                "value": "succeeded"
-              },
-              "message": "The update succeeded ($(json_get \"$OP\" '.error // \"\"'))"
-            }
-          }
-        },
-        {
-          "id": "step-102",
-          "label": "current → tree v2, previous → tree v1",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "expr",
-                "template": "$(tree_link \"${PLUGIN}\" current) $(tree_link \"${PLUGIN}\" previous)"
-              },
-              "expected": {
-                "kind": "expr",
-                "template": "${TREE_2} ${TREE_1}"
-              },
-              "message": "current → tree v2, previous → tree v1"
-            }
-          }
-        },
-        {
-          "id": "step-103",
-          "label": "GET /: index.html of tree v2",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "GET /: index.html of tree v2"
-          }
-        },
-        {
-          "id": "step-104",
-          "label": "GET / after the update: $(visit_body \"$(page \"${JAR_VIEWER}\" /)\" | head -c 200)",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "GET / after the update: $(visit_body \"$(page \"${JAR_VIEWER}\" /)\" | head -c 200)"
-          }
-        },
-        {
-          "id": "step-105",
-          "label": "A file of tree v2: 200",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "expr",
-                "template": "$(page_status \"${JAR_VIEWER}\" /only-v2.js)"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "200"
-              },
-              "message": "A file of tree v2: 200"
-            }
-          }
-        },
-        {
-          "id": "step-106",
-          "label": "A file only tree v1 has is still served — from the previous tree",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "contains",
-              "actual": {
-                "kind": "expr",
-                "template": "$(visit_body \"$(page \"${JAR_VIEWER}\" /only-v1.js)\")"
-              },
-              "substring": {
-                "kind": "literal",
-                "value": "only = 'v1'"
-              },
-              "message": "A file only tree v1 has is still served — from the previous tree"
-            }
-          }
-        },
-        {
-          "id": "step-107",
-          "label": "Served; the approved tree is v2",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "expr",
-                "template": "$(web_surface \"${PLUGIN}\")"
-              },
-              "path": "\"\\(.served) \\(.tree.approved)\"",
-              "expected": {
-                "kind": "expr",
-                "template": "true ${TREE_2}"
-              },
-              "message": "Served; the approved tree is v2"
-            }
-          }
-        }
-      ],
-      "bash": "log_section \"Update to 1.1.0: tree v2 approved with it, v1 kept as previous\"\n\nupdate_to 1.1.0\nassert_json_field \"$UPDATE\" '\"\\(.pendingUpdate.web.before) \\(.pendingUpdate.web.after.sha256) \\(.pendingUpdate.web.after.files)\"' \"${TREE_1} ${TREE_2} 4\" \"The update waited for approval, showing tree v1 → v2 (4 files)\" || true\nassert_json_field \"$OP\" '.status' 'succeeded' \"The update succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_eq \"$(tree_link \"${PLUGIN}\" current) $(tree_link \"${PLUGIN}\" previous)\" \"${TREE_2} ${TREE_1}\" \"current → tree v2, previous → tree v1\" || true\nif wait_for 30 shell_serves v2; then\n  log_pass \"GET /: index.html of tree v2\"\nelse\n  log_fail \"GET / after the update: $(visit_body \"$(page \"${JAR_VIEWER}\" /)\" | head -c 200)\"\nfi\nassert_eq \"$(page_status \"${JAR_VIEWER}\" /only-v2.js)\" \"200\" \"A file of tree v2: 200\" || true\nassert_contains \"$(visit_body \"$(page \"${JAR_VIEWER}\" /only-v1.js)\")\" \"only = 'v1'\" \"A file only tree v1 has is still served — from the previous tree\" || true\nassert_json_field \"$(web_surface \"${PLUGIN}\")\" '\"\\(.served) \\(.tree.approved)\"' \"true ${TREE_2}\" \"Served; the approved tree is v2\" || true\n\n# ===========================================================================\n# 5. Update to 1.2.0, rolled back\n# ==========================================================================="
-    },
-    {
-      "id": "update-to-1-2-0-rolled-back-its-tree-never-served",
-      "label": "Update to 1.2.0 rolled back: its tree never served",
-      "steps": [
-        {
-          "id": "step-109",
-          "label": "1.2.0 waited for approval with tree v3",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "UPDATE"
-              },
-              "path": ".pendingUpdate.web.after.sha256",
-              "expected": {
-                "kind": "var",
-                "name": "TREE_3"
-              },
-              "message": "1.2.0 waited for approval with tree v3"
-            }
-          }
-        },
-        {
-          "id": "step-110",
-          "label": "The update was rolled back ($(json_get \"$OP\" '.error // \"\"'))",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "OP"
-              },
-              "path": ".status",
-              "expected": {
-                "kind": "literal",
-                "value": "rolled-back"
-              },
-              "message": "The update was rolled back ($(json_get \"$OP\" '.error // \"\"'))"
-            }
-          }
-        },
-        {
-          "id": "step-111",
-          "label": "The plugin is 1.1.0 again",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "expr",
-                "template": "$(host_api_get \"plugins/${PLUGIN}\")"
-              },
-              "path": ".plugin.version",
-              "expected": {
-                "kind": "literal",
-                "value": "1.1.0"
-              },
-              "message": "The plugin is 1.1.0 again"
-            }
-          }
-        },
-        {
-          "id": "step-112",
-          "label": "Set KEPT_TREES",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "printf '%s\\n' \"${TREE_1}\" \"${TREE_2}\" | sort | paste -sd, -"
-          },
-          "capture": [
-            {
-              "variable": "KEPT_TREES",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-113",
-          "label": "current is still tree v2; tree v3 never entered the store",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "expr",
-                "template": "$(tree_link \"${PLUGIN}\" current) $(tree_dirs \"${PLUGIN}\")"
-              },
-              "expected": {
-                "kind": "expr",
-                "template": "${TREE_2} ${KEPT_TREES}"
-              },
-              "message": "current is still tree v2; tree v3 never entered the store"
-            }
-          }
-        },
-        {
-          "id": "step-114",
-          "label": "GET /: still tree v2",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "GET /: still tree v2"
-          }
-        },
-        {
-          "id": "step-115",
-          "label": "GET / after the rollback: $(visit_body \"$(page \"${JAR_VIEWER}\" /)\" | head -c 200)",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "GET / after the rollback: $(visit_body \"$(page \"${JAR_VIEWER}\" /)\" | head -c 200)"
-          }
-        }
-      ],
-      "bash": "log_section \"Update to 1.2.0 rolled back: its tree never served\"\n\nupdate_to 1.2.0\nassert_json_field \"$UPDATE\" '.pendingUpdate.web.after.sha256' \"${TREE_3}\" \"1.2.0 waited for approval with tree v3\" || true\nassert_json_field \"$OP\" '.status' 'rolled-back' \"The update was rolled back ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '1.1.0' \"The plugin is 1.1.0 again\" || true\nKEPT_TREES=$(printf '%s\\n' \"${TREE_1}\" \"${TREE_2}\" | sort | paste -sd, -)\nassert_eq \"$(tree_link \"${PLUGIN}\" current) $(tree_dirs \"${PLUGIN}\")\" \"${TREE_2} ${KEPT_TREES}\" \"current is still tree v2; tree v3 never entered the store\" || true\nif wait_for 30 shell_serves v2; then\n  log_pass \"GET /: still tree v2\"\nelse\n  log_fail \"GET / after the rollback: $(visit_body \"$(page \"${JAR_VIEWER}\" /)\" | head -c 200)\"\nfi\n\n# ===========================================================================\n# 6. Deleted\n# ==========================================================================="
+      "bash": "log_section \"Signed in with a role: the shell and the API, one session\"\n\nif wait_for 30 shell_serves v1; then\n  log_pass \"GET / as ${VIEWER}: index.html of tree v1\"\nelse\n  log_fail \"GET / as ${VIEWER}: $(page_status \"${JAR_VIEWER}\" /)\"\nfi\nHEADERS=$(visit_headers \"$(page \"${JAR_VIEWER}\" /)\" | tr '[:upper:]' '[:lower:]')\nassert_contains \"$HEADERS\" \"content-security-policy: default-src 'self'; script-src 'self';\" \"…under the web surface's CSP: nothing from another origin, no inline script\" || true\nassert_contains \"$HEADERS\" \"cache-control: no-cache\" \"…revalidated on every load (no-cache)\" || true\nassert_contains \"$HEADERS\" \"x-frame-options: deny\" \"…never framed\" || true\nassert_contains \"$HEADERS\" \"cross-origin-resource-policy: same-origin\" \"…no other host learns from it whether the viewer may use the plugin\" || true\nassert_eq \"$(page_status \"${JAR_VIEWER}\" /app-v1.js)\" \"200\" \"Its script app-v1.js: 200\" || true\nassert_contains \"$(visit_body \"$(page \"${JAR_VIEWER}\" /reports/2026/october)\")\" \"E2E_WEB_v1\" \"A deep link is answered with the shell (index.html)\" || true\nassert_eq \"$(page_status \"${JAR_VIEWER}\" / -X POST -H \"Origin: https://${FQDN}\")\" \"405\" \"POST / to the shell: 405 — GET and HEAD only\" || true\nassert_eq \"$(page_status \"${JAR_VIEWER}\" /app-v1.js -H 'Service-Worker: script')\" \"404\" \"A service worker's script: 404 — never registered from a plugin's site\" || true\nassert_eq \"$(page_status \"${JAR_VIEWER}\" \"${APP}/echo\" -H 'Sec-Fetch-Site: same-origin' -H 'Sec-Fetch-Dest: script')\" \"403\" \"The API as a script source: 403 — code comes from the approved tree only\" || true\n\nRESP=$(page \"${JAR_VIEWER}\" \"${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"GET ${APP}/echo on the same host, the same session: 200\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.caller.type) \\(.caller.userId) \\(.caller.roles | join(\",\"))\"' \"user ${VIEWER_ID} viewer\" \"…the agent half sees the directory's user and roles\" || true\nAPI_HEADERS=$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\nassert_contains \"$API_HEADERS\" \"content-security-policy: sandbox; default-src 'none'\" \"…an API answer keeps the user surface's own headers (CSP sandbox)\" || true\nassert_not_contains \"$API_HEADERS\" \"default-src 'self'\" \"…not the shell's\" || true\n\n# ===========================================================================\n# 4. Deleted\n# ==========================================================================="
     },
     {
       "id": "deleted-the-site-its-vhost-and-its-trees-go",
       "label": "Deleted: the site, its vhost and its trees go",
       "steps": [
         {
-          "id": "step-116",
+          "id": "step-98",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1865,7 +1599,7 @@
           ]
         },
         {
-          "id": "step-117",
+          "id": "step-99",
           "label": "DELETE /api/plugins/${PLUGIN}/web-surface",
           "target": "local",
           "continueOnError": true,
@@ -1886,7 +1620,7 @@
           }
         },
         {
-          "id": "step-118",
+          "id": "step-100",
           "label": "The site is gone from GET /api/sites",
           "target": "local",
           "continueOnError": true,
@@ -1907,7 +1641,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-101",
           "label": "Its tree store is gone",
           "target": "local",
           "continueOnError": true,
@@ -1928,7 +1662,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-102",
           "label": "Its vhost is gone",
           "target": "local",
           "continueOnError": true,
@@ -1949,7 +1683,7 @@
           }
         },
         {
-          "id": "step-121",
+          "id": "step-103",
           "label": "Nothing of the shell answers on ${FQDN}",
           "target": "local",
           "continueOnError": true,
@@ -1974,8 +1708,8 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 42 — App plugin web surface (Three-VM)\n# ============================================================================\n# Slice 7: an agent-hosted plugin's users open the shell its server package\n# ships, served by the relay on a site the plugin owns, beside its user\n# surface's API — one host, one Authelia session. The fixture\n# (@lamalibre/e2e-websurf-server, helpers.sh: write_app_install_fixture …\n# wide <tag>) declares identity and `userSurface.web` on e2e42web; 1.0.0,\n# 1.1.0 and 1.2.0 (a bad release: its agent half refuses its post stage)\n# ship trees v1, v2 and v3. From the visitor VM:\n#\n# 1. Installed, not approved: the tree's digest is part of the approval and\n#    nothing is in the relay's tree store; the web surface offers e2e42web.\n# 2. Created: the site answers 503 until the surface is served; the sites\n#    API lists it with its owner and refuses to manage it.\n# 3. Approved and hosted: the approved tree is served from the store\n#    (`current`). Without a session a page goes to the login; a user without\n#    a role in the plugin gets the access-request page; with the viewer role\n#    the shell (index.html, its files, a deep link answered with the shell),\n#    under a strict CSP, `no-cache`, `X-Frame-Options: DENY`; nothing but GET\n#    and HEAD; the API on the same host and session as on a bound tunnel.\n# 4. Update to 1.1.0: the tree change waits for approval (shown in the\n#    preview); applied, `current` is v2 and `previous` v1 — a file only v1\n#    has is still served (an open page's lazy file).\n# 5. Update to 1.2.0 rolled back: its tree is never served or stored.\n# 6. Deleted: the site, its vhost and its trees go.\n#\n# The move from a bound tunnel is spec 43.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-websurf\"\nSERVER_PACKAGE=\"@lamalibre/e2e-websurf-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-websurf-agent\"\nAPP=\"/api/${PLUGIN}/app\"\nSUB_W=\"e2e42web\"\nPOLICY_ID=\"e2e-apphost-42\"\nREMOTE_DIR=\"/var/tmp/e2e-42-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nVIEWER=\"e2e42-viewer\"\nNOROLE=\"e2e42-norole\"\n# Test credentials for this run only, never printed\nVIEWER_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nNOROLE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR_VIEWER=\"/tmp/e2e-42-viewer.cookies\"\nJAR_NOROLE=\"/tmp/e2e-42-norole.cookies\"\nFQDN=\"\"\nVIEWER_ID=\"\"\nNOROLE_ID=\"\"\nSITE_ID=\"\"\nTREE_1=\"\"\nTREE_2=\"\"\nTREE_3=\"\"\n\n# local_tree_sha <directory> — the web tree digest of a fixture's web/ (core's\n# rule, from this workspace's build)\nlocal_tree_sha() {\n  node --input-type=module -e \"\n    const { webTreeManifestOfDirectory } = await import('${SCRIPT_DIR}/../../../../core/lib/dist/server/index.js');\n    process.stdout.write((await webTreeManifestOfDirectory(process.argv[1])).sha256);\n  \" \"$1\" 2>/dev/null || echo \"\"\n}\n\n# shell_serves <tag> — the viewer gets index.html with tree <tag>'s marker\nshell_serves() { [[ \"$(visit_body \"$(page \"${JAR_VIEWER}\" /)\")\" == *\"E2E_WEB_$1\"* ]]; }\nsite_answers() { [ \"$(page_status - /)\" = \"$1\" ]; }\n\n# viewer_in_audience — the audience holds the viewer as an active member\nviewer_in_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\n# sites_entry — the plugin's site as GET /api/sites lists it ('null' when gone)\nsites_entry() {\n  host_api_get \"sites?limit=500\" 2>/dev/null | jq -c --arg id \"${SITE_ID}\" '[.sites[]? | select(.id == $id)] | first // null' 2>/dev/null || echo \"null\"\n}\n\n# update_to <version> — stage the update, approve the digest it shows and\n# wait for the operation; prints \"<pending update> \\n <operation>\"\nUPDATE=\"\"\nOP=\"\"\nupdate_to() {\n  UPDATE=$(host_api_post \"plugins/${PLUGIN}/update\" \"{\\\"version\\\":\\\"$1\\\"}\")\n  local approved\n  approved=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\n  OP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$approved\" '.operation.id // empty')\" 300 nudge)\n}\n\nbegin_test \"42 — App plugin web surface (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  drop_plugin_grants \"${PLUGIN}\"\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR_VIEWER} ${JAR_NOROLE}; sed -i '/${SUB_W}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  for id in \"${VIEWER}\" \"${NOROLE}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  for id in ${VIEWER_ID} ${NOROLE_ID}; do\n    host_api_post \"identity/directory/${id}/erase\" '{}' > /dev/null 2>&1 || true\n  done\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "headerRaw": "# ============================================================================\n# 42 — App plugin web surface (Three-VM)\n# ============================================================================\n# Slice 7: an agent-hosted plugin's users open the shell its server package\n# ships, served by the relay on a site the plugin owns, beside its user\n# surface's API — one host, one Authelia session. The fixture\n# (@lamalibre/e2e-websurf-server, helpers.sh: write_app_install_fixture …\n# wide v1) declares identity and `userSurface.web` on e2e42web and ships\n# tree v1. From the visitor VM:\n#\n# 1. Installed, not approved: the tree's digest is part of the approval and\n#    nothing is in the relay's tree store; the web surface offers e2e42web.\n# 2. Created: the site answers 503 until the surface is served; the sites\n#    API lists it with its owner and refuses to manage it.\n# 3. Approved and hosted: the approved tree is served from the store\n#    (`current`). Without a session a page goes to the login; a user without\n#    a role in the plugin gets the access-request page; with the viewer role\n#    the shell (index.html, its files, a deep link answered with the shell),\n#    under a strict CSP, `no-cache`, `X-Frame-Options: DENY`,\n#    `Cross-Origin-Resource-Policy: same-origin`; nothing but GET and HEAD,\n#    never a service worker's script; the API on the same host and session\n#    as on a bound tunnel, never as a script.\n# 4. Deleted: the site, its vhost and its trees go.\n#\n# The move from a bound tunnel is spec 43; updates and a rollback, 44.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-websurf\"\nSERVER_PACKAGE=\"@lamalibre/e2e-websurf-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-websurf-agent\"\nAPP=\"/api/${PLUGIN}/app\"\nSUB_W=\"e2e42web\"\nPOLICY_ID=\"e2e-apphost-42\"\nREMOTE_DIR=\"/var/tmp/e2e-42-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nVIEWER=\"e2e42-viewer\"\nNOROLE=\"e2e42-norole\"\n# Test credentials for this run only, never printed\nVIEWER_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nNOROLE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR_VIEWER=\"/tmp/e2e-42-viewer.cookies\"\nJAR_NOROLE=\"/tmp/e2e-42-norole.cookies\"\nFQDN=\"\"\nVIEWER_ID=\"\"\nNOROLE_ID=\"\"\nSITE_ID=\"\"\nTREE_1=\"\"\n\n# local_tree_sha <directory> — the web tree digest of a fixture's web/ (core's\n# rule, from this workspace's build)\nlocal_tree_sha() {\n  node --input-type=module -e \"\n    const { webTreeManifestOfDirectory } = await import('${SCRIPT_DIR}/../../../../core/lib/dist/server/index.js');\n    process.stdout.write((await webTreeManifestOfDirectory(process.argv[1])).sha256);\n  \" \"$1\" 2>/dev/null || echo \"\"\n}\n\n# shell_serves <tag> — the viewer gets index.html with tree <tag>'s marker\nshell_serves() { [[ \"$(visit_body \"$(page \"${JAR_VIEWER}\" /)\")\" == *\"E2E_WEB_$1\"* ]]; }\nsite_answers() { [ \"$(page_status - /)\" = \"$1\" ]; }\n\n# viewer_in_audience — the audience holds the viewer as an active member\nviewer_in_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"${VIEWER_ID}\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\n# sites_entry — the plugin's site as GET /api/sites lists it ('null' when gone)\nsites_entry() {\n  host_api_get \"sites?limit=500\" 2>/dev/null | jq -c --arg id \"${SITE_ID}\" '[.sites[]? | select(.id == $id)] | first // null' 2>/dev/null || echo \"null\"\n}\n\nbegin_test \"42 — App plugin web surface (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  drop_plugin_grants \"${PLUGIN}\"\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR_VIEWER} ${JAR_NOROLE}; sed -i '/${SUB_W}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  for id in \"${VIEWER}\" \"${NOROLE}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  for id in ${VIEWER_ID} ${NOROLE_ID}; do\n    host_api_post \"identity/directory/${id}/erase\" '{}' > /dev/null 2>&1 || true\n  done\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

@@ -17,8 +17,9 @@
 #    100 ms: every answer is a 200 — the tunnel's backend, then the relay's
 #    shell, never one after the other again — no moment without an answer.
 # 3. After it: the site on the tunnel's hostname, restricted, served; the
-#    tunnel kept, disabled and unbound, its vhost gone, its port grant
-#    withdrawn, and it cannot be enabled while the site holds its name. The
+#    tunnel kept, disabled and unbound, its vhost installed but unlinked,
+#    its port grant withdrawn, and it cannot be enabled while the site
+#    holds its name. The
 #    tunnel's grant was copied to the site: its holder gets the shell and
 #    the API; the user without it still does not.
 # ============================================================================
@@ -275,7 +276,8 @@ assert_eq "$SWITCHES" "2" "…one switch, never back" || true
 log_section "After the move: the site serves; the tunnel kept, off and unbound"
 
 assert_json_field "$(tunnel_entry "${TUNNEL_T}")" '"\(.enabled) \(.userSurface // "none")"' 'false none' "The tunnel stays, disabled and unbound" || true
-assert_eq "$(host_exec "test -e /etc/nginx/sites-available/lamalibre-lamaste-app-${SUB_T} && echo kept || echo gone" 2>/dev/null | tail -n 1)" "gone" "Its vhost is gone" || true
+VHOST_STATE=$(host_exec "a=gone; e=unlinked; test -e /etc/nginx/sites-available/lamalibre-lamaste-app-${SUB_T} && a=kept; test -e /etc/nginx/sites-enabled/lamalibre-lamaste-app-${SUB_T} && e=linked; echo \$a \$e" 2>/dev/null | tail -n 1)
+assert_eq "$VHOST_STATE" "kept unlinked" "Its vhost stays installed, unlinked — for a rollback by hand" || true
 if wait_for 90 backend_withdrawn; then
   log_pass "Its port grant is withdrawn: nothing answers on the host VM's port ${PORT_T}"
 else

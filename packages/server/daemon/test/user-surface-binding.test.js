@@ -156,7 +156,7 @@ const vhostOf = (t) => sudo.read(`lamalibre-lamaste-app-${t.subdomain}`);
 function serves(vhost, route) {
   return (
     vhost.includes(`location = /api/${route}/app {`) &&
-    vhost.includes(`location /api/${route}/app/ {`)
+    vhost.includes(`location ^~ /api/${route}/app/ {`)
   );
 }
 

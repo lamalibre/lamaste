@@ -50,7 +50,14 @@ export interface SiteEntry {
 
 /** Who owns a plugin-owned site: the plugin, by route. */
 export interface SiteOwner {
+  /** The owning plugin's route. */
   readonly plugin: string;
+  /**
+   * The server package the site was created for: a site outlives its
+   * plugin, and another package installed later under the same route does
+   * not inherit it.
+   */
+  readonly package?: string | undefined;
 }
 
 export interface SiteLogger {
