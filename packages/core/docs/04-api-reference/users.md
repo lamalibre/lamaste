@@ -347,7 +347,7 @@ The `totpUri` follows the [Key Uri Format](https://github.com/google/google-auth
 
 ### Domains
 
-Every user listed by `GET /api/users` carries `domains`: the base domains they are a member of (empty until the directory has seen them). Memberships are changed through the [Domains API](domains.md) (`PUT`/`DELETE /api/domains/:name/members/:userId`). `POST /api/invitations` takes `domains` exactly as `POST /api/users` does; the invitation link is on the sign-in page of the first domain it names (`https://auth.<domain>/invite/<token>`). Disabling a user keeps their memberships (they are let in nowhere while disabled); deleting ends them.
+Every user listed by `GET /api/users` carries `domains`: the base domains they are a member of (empty until the directory has seen them). `PUT /api/users/:username` takes `domains` too — the memberships afterwards, exactly: the difference is applied in one change, each membership audited (409 `user_not_in_directory` until the directory has seen the user, 400 `unknown_domain`); one membership at a time is the [Domains API](domains.md) (`PUT`/`DELETE /api/domains/:name/members/:user`, by `userId` or username). On a relay with two domains or more, `POST /api/users` needs a non-empty `domains` (400 `domains_required`). `POST /api/invitations` takes `domains` exactly as `POST /api/users` does; the invitation link is on the sign-in page of the first domain it names (`https://auth.<domain>/invite/<token>`). Disabling a user keeps their memberships (they are let in nowhere while disabled); deleting ends them.
 
 ## The User Directory
 

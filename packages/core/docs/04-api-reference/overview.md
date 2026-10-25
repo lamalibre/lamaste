@@ -325,8 +325,8 @@ There are two exceptions:
 | POST   | `/api/domains/:name/activate`                             | Management | Activate a domain                           |
 | DELETE | `/api/domains/:name`                                      | Management | Remove a domain                             |
 | GET    | `/api/domains/:name/members`                              | Management | List a domain's members                     |
-| PUT    | `/api/domains/:name/members/:userId`                      | Management | Add a member                                |
-| DELETE | `/api/domains/:name/members/:userId`                      | Management | End a membership                            |
+| PUT    | `/api/domains/:name/members/:user`                        | Management | Add a member                                |
+| DELETE | `/api/domains/:name/members/:user`                        | Management | End a membership                            |
 | PUT    | `/api/plugins/:name/domain`                               | Management | Move a plugin to a domain                   |
 | GET    | `/api/certs`                                              | Management | List certificates                           |
 | GET    | `/api/certs/auto-renew-status`                            | Management | Auto-renew timer status                     |

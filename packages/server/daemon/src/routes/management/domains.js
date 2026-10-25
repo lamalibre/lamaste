@@ -8,8 +8,8 @@
  *   POST   /api/domains/:name/activate           issue auth.<domain>, serve its sign-in
  *   DELETE /api/domains/:name                    remove an unused, non-primary domain
  *   GET    /api/domains/:name/members            its members
- *   PUT    /api/domains/:name/members/:userId    make a user a member
- *   DELETE /api/domains/:name/members/:userId    end a membership
+ *   PUT    /api/domains/:name/members/:user      make a user (id or username) a member
+ *   DELETE /api/domains/:name/members/:user      end a membership
  *   PUT    /api/plugins/:name/domain             move a plugin to another domain
  *
  * Routes validate and answer; the work is in lib/domains.js and
@@ -27,6 +27,7 @@ import {
   domainsOverview,
   getDomain,
   listDomainMembers,
+  newUsersNeedDomains,
   removeDomain,
   removeDomainMember,
   verifyDomainDns,
@@ -34,7 +35,8 @@ import {
 import { setPluginDomain } from '../../lib/plugin-domain.js';
 
 const NameParamSchema = z.object({ name: DomainNameSchema });
-const MemberParamsSchema = z.object({ name: DomainNameSchema, userId: z.string().uuid() });
+// `user`: a directory id or a username (lib/domains.js decides which).
+const MemberParamsSchema = z.object({ name: DomainNameSchema, user: z.string().min(1).max(64) });
 const AddDomainSchema = z.object({ name: DomainNameSchema }).strict();
 const PluginParamSchema = z.object({ name: z.string().min(1).max(200) });
 const PluginDomainSchema = z.object({ domain: DomainNameSchema }).strict();
@@ -42,7 +44,11 @@ const PluginDomainSchema = z.object({ domain: DomainNameSchema }).strict();
 export default async function domainRoutes(fastify) {
   const admin = { preHandler: fastify.requireRole(['admin']) };
 
-  fastify.get('/domains', admin, async () => ({ domains: await domainsOverview() }));
+  fastify.get('/domains', admin, async () => {
+    const domains = await domainsOverview();
+    // Whether users and invitations must name their domains (`domains_required`).
+    return { domains, newUsersNeedDomains: newUsersNeedDomains(domains) };
+  });
 
   fastify.post('/domains', admin, async (request, reply) => {
     const { name } = AddDomainSchema.parse(request.body);
@@ -104,10 +110,10 @@ export default async function domainRoutes(fastify) {
     return { members: await listDomainMembers(name) };
   });
 
-  fastify.put('/domains/:name/members/:userId', admin, async (request, reply) => {
-    const { name, userId } = MemberParamsSchema.parse(request.params);
+  fastify.put('/domains/:name/members/:user', admin, async (request, reply) => {
+    const { name, user } = MemberParamsSchema.parse(request.params);
     try {
-      return await addDomainMember(name, userId, {
+      return await addDomainMember(name, user, {
         actor: actorFromRequest(request),
         logger: request.log,
       });
@@ -116,10 +122,10 @@ export default async function domainRoutes(fastify) {
     }
   });
 
-  fastify.delete('/domains/:name/members/:userId', admin, async (request, reply) => {
-    const { name, userId } = MemberParamsSchema.parse(request.params);
+  fastify.delete('/domains/:name/members/:user', admin, async (request, reply) => {
+    const { name, user } = MemberParamsSchema.parse(request.params);
     try {
-      return await removeDomainMember(name, userId, {
+      return await removeDomainMember(name, user, {
         actor: actorFromRequest(request),
         logger: request.log,
       });

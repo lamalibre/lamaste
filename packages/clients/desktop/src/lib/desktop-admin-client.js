@@ -81,9 +81,8 @@ export const desktopAdminClient = {
   activateDomain: (name) => invokeRefusable('admin_activate_domain', { name }),
   removeDomain: (name) => invokeRefusable('admin_remove_domain', { name }),
   getDomainMembers: (name) => invokeRefusable('admin_get_domain_members', { name }),
-  addDomainMember: (name, userId) => invokeRefusable('admin_add_domain_member', { name, userId }),
-  removeDomainMember: (name, userId) =>
-    invokeRefusable('admin_remove_domain_member', { name, userId }),
+  addDomainMember: (name, user) => invokeRefusable('admin_add_domain_member', { name, user }),
+  removeDomainMember: (name, user) => invokeRefusable('admin_remove_domain_member', { name, user }),
   setPluginDomain: (name, domain) => invokeRefusable('admin_set_plugin_domain', { name, domain }),
 
   // --- Invitations ---

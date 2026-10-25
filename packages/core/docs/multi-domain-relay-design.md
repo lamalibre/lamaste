@@ -348,15 +348,15 @@ it (`bustCachedSessions`, as group/grant writes do).
 
 All admin-only (mTLS), new reserved API prefix `domains`:
 
-| Route                                               | Does                                                                                                                                                                |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/domains`                                  | domains with status, member count, what uses each (tunnels, sites, plugins)                                                                                         |
-| `POST /api/domains {name}`                          | adds `pending` (validation, no nesting)                                                                                                                             |
-| `POST /api/domains/:name/verify-dns`                | `auth.<d>` resolves to the relay IP; reports whether a wildcard probe (`test-lamaste-check.<d>`) does                                                               |
-| `POST /api/domains/:name/activate`                  | issue `auth.<d>`, write its vhost, add the session cookie, render `access_control`/OIDC policies and `domains.json`, restart Authelia — one operation with rollback |
-| `DELETE /api/domains/:name`                         | refused for the primary and while any tunnel, site or plugin uses it (409 `domain_in_use`); removes memberships (reason `domain-removed`), cookie, vhost            |
-| `GET /api/domains/:name/members`                    | `[{ userId, username, status, addedAt }]`                                                                                                                           |
-| `PUT` / `DELETE /api/domains/:name/members/:userId` | add / remove one member                                                                                                                                             |
+| Route                                                                    | Does                                                                                                                                                                |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/domains`                                                       | domains with status, member count, what uses each (tunnels, sites, plugins)                                                                                         |
+| `POST /api/domains {name}`                                               | adds `pending` (validation, no nesting)                                                                                                                             |
+| `POST /api/domains/:name/verify-dns`                                     | `auth.<d>` resolves to the relay IP; reports whether a wildcard probe (`test-lamaste-check.<d>`) does                                                               |
+| `POST /api/domains/:name/activate`                                       | issue `auth.<d>`, write its vhost, add the session cookie, render `access_control`/OIDC policies and `domains.json`, restart Authelia — one operation with rollback |
+| `DELETE /api/domains/:name`                                              | refused for the primary and while any tunnel, site or plugin uses it (409 `domain_in_use`); removes memberships (reason `domain-removed`), cookie, vhost            |
+| `GET /api/domains/:name/members`                                         | `[{ userId, username, status, addedAt }]`                                                                                                                           |
+| `PUT` / `DELETE /api/domains/:name/members/:user` (`userId` or username) | add / remove one member                                                                                                                                             |
 
 Plus: `domain` on `POST /api/tunnels`, `POST /api/sites` (managed),
 `POST /api/plugins/:name/web-surface`; `PUT /api/plugins/:name/domain`;
@@ -536,6 +536,25 @@ list|add|verify-dns|activate|remove|members`, `plugins domain`,
    tunnels, sites, registry-and-oidc, gatekeeper, overview, dns-and-domains,
    authentication, authorization, security-model (the shared blast radius)
    and nginx-configuration; CHANGELOG; CLAUDE.md.
+
+   **After review (`/simplify`):** the rules are answered by the panel and
+   core, never re-derived by a client — the UI imports reserved names and
+   ports from the browser-safe `@lamalibre/lamaste/domains` subpath (a real
+   dependency; no copy, no sync test); the desktop passes names through
+   (`url_encode`) and lets the panel refuse; `GET /api/domains` answers
+   `newUsersNeedDomains`; `domainsForNewUser` refuses an explicit empty list
+   (new users on a multi-domain relay start with no domain chosen);
+   `PUT /api/users/:username` takes `domains` and `setUserDomains` applies
+   the difference in one transaction (the UI sends one request); `verify-dns`
+   returns the records with their purpose; plugin views carry the resolved
+   domain name (`withPluginDomains`; `plugins.domain` NULL stays the stored
+   form); members are named by id or username in the members path. UI: one
+   `useMembershipChoice` hook, `DomainPicker` owns '' = primary, the shared
+   `Dialog.jsx` confirm instead of `window.confirm`, narrow invalidation.
+   CLI: one `call`, a table of domain subcommands, a shared `fail`,
+   `status` asks the panel in parallel with a short timeout and only while
+   it runs. Web surfaces take their plugin's domain (wave 2's deviation), so
+   no picker is offered for them.
 
    **Deviation:** the CLI has no `users create` (users are created in the
    panel or by invitation), so there is no `users create --domains`; domains

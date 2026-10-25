@@ -71,7 +71,7 @@ The single source of truth is `packages/core/lib/src/branding.ts` (TS) and `pack
 
 ### Core Library Pattern
 
-`@lamalibre/lamaste` is a single package with subpath exports providing domain-specific entry points:
+`@lamalibre/lamaste` is a single package with subpath exports providing domain-specific entry points (plus `./hooks`, and `./domains` — browser-safe: the domain rules, reserved names and ports the panel UI imports instead of copying them):
 
 ```json
 {

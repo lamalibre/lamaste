@@ -30,7 +30,7 @@ Domains never overlap: `a.samplepark.tr` cannot be added beside `samplepark.tr` 
 
 ### `GET /api/domains`
 
-Every domain, the primary first, with its member count and what uses it.
+Every domain, the primary first, with its member count and what uses it, and `newUsersNeedDomains` — whether users and invitations must name their domains (the relay has two or more; clients ask for domains only then).
 
 ```json
 {
@@ -49,7 +49,8 @@ Every domain, the primary first, with its member count and what uses it.
         "registry": false
       }
     }
-  ]
+  ],
+  "newUsersNeedDomains": false
 }
 ```
 
@@ -64,14 +65,32 @@ Add a domain, `pending`. Body `{ "name": "codelama.com.tr" }`. **201** `{ domain
 
 ### `POST /api/domains/:name/verify-dns`
 
-Whether `auth.<name>` resolves to the relay, and whether a wildcard record (`*.<name>`) does too. Rate limited (30 a minute).
+The DNS records the domain needs at its DNS host, each with what it resolves to now — `auth.<name>` (required) and the wildcard `*.<name>` (optional: one A record per hostname does as well; checked through a probe name). `ok` once every required record points at the relay. Clients show these records as they are; they derive none. Rate limited (30 a minute).
 
 ```json
 {
   "ok": true,
   "expectedIp": "138.68.65.228",
-  "records": [{ "name": "auth.codelama.com.tr", "resolvedIps": ["138.68.65.228"], "ok": true }],
-  "wildcard": true
+  "records": [
+    {
+      "type": "A",
+      "name": "auth.codelama.com.tr",
+      "value": "138.68.65.228",
+      "required": true,
+      "purpose": "the domain’s sign-in page",
+      "resolvedIps": ["138.68.65.228"],
+      "ok": true
+    },
+    {
+      "type": "A",
+      "name": "*.codelama.com.tr",
+      "value": "138.68.65.228",
+      "required": false,
+      "purpose": "every tunnel and site hostname — or one A record per hostname instead",
+      "resolvedIps": [],
+      "ok": false
+    }
+  ]
 }
 ```
 
@@ -97,16 +116,16 @@ Remove a domain: its memberships end (audited, reason `domain-removed`), its sig
 
 `{ members: [{ userId, username, status, addedAt, addedBy }] }` — `status` is the directory's (`active`, `disabled`, `removed`).
 
-### `PUT /api/domains/:name/members/:userId`
+### `PUT /api/domains/:name/members/:user`
 
-Make a directory user a member (by `userId`). **200** `{ added }` (`false` when already one), with `warnings` when Gatekeeper or the audiences could not be brought along. A pending domain takes members too: they are let in when it is activated.
+Make a user a member — `:user` is a directory `userId` or the username of a user the directory holds. **200** `{ added }` (`false` when already one), with `warnings` when Gatekeeper or the audiences could not be brought along. A pending domain takes members too: they are let in when it is activated.
 
 | Status | `code`           | When                |
 | ------ | ---------------- | ------------------- |
 | 404    | `user_not_found` |                     |
 | 409    | `user_removed`   | The user is deleted |
 
-### `DELETE /api/domains/:name/members/:userId`
+### `DELETE /api/domains/:name/members/:user`
 
 End a membership. **200** `{ removed }`. When the domain is the registry credential's issuer domain, the user's registry tokens are revoked too.
 
@@ -117,7 +136,7 @@ Move a plugin to another active domain: `{ "domain": "codelama.com.tr" }`. A plu
 ## Memberships
 
 - **Explicit, by `userId`.** A re-created username is a new user with no membership.
-- **New users.** While the relay has one domain, every new user — created, invited, adopted from `users.yml` — becomes its member. With two or more, `POST /api/users` and `POST /api/invitations` take `domains` (required: 400 `domains_required`); a user adopted from `users.yml` gets none until an admin adds one.
+- **New users.** While the relay has one domain, every new user — created, invited, adopted from `users.yml` — becomes its member. With two or more, `POST /api/users` and `POST /api/invitations` take `domains` (required, and not empty: 400 `domains_required` — a user who is a member of nothing reaches nothing); a user adopted from `users.yml` gets none until an admin adds one. `PUT /api/users/:username` with `domains` sets a user's memberships exactly: the difference applied in one change, each membership audited.
 - **Disable** keeps memberships; a disabled user is let in nowhere, and enabling restores them. **Delete** ends them.
 - **Audit:** `domain.added`, `domain.activated`, `domain.removed`, `directory.membership.added`, `directory.membership.removed` — by `userId` and domain name, never username.
 

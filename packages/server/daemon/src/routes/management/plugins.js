@@ -42,6 +42,7 @@ import {
 } from '../../lib/plugin-settings.js';
 import { actorFromRequest, certSerialFromRequest } from '../../lib/actor.js';
 import { recordAudit } from '../../lib/audit.js';
+import { withPluginDomains } from '../../lib/domains.js';
 import {
   readPushInstallConfig,
   readPushInstallSessions,
@@ -337,7 +338,7 @@ export default async function pluginRoutes(fastify, _opts) {
       // (see GET /plugins/:name/settings).
       const plugins = await attachSettingsSummaries(await attachHostings(registry.plugins));
       return {
-        plugins: await Promise.all(plugins.map(withHooks)),
+        plugins: await withPluginDomains(await Promise.all(plugins.map(withHooks))),
         // Every agent's retained data — of uninstalled plugins too, which
         // no entry of `plugins` lists any more.
         retainedData: await listRetainedData(),
@@ -363,7 +364,8 @@ export default async function pluginRoutes(fastify, _opts) {
       }
 
       const [withHosting] = await attachSettingsSummaries(await attachHostings([plugin]));
-      return { plugin: await withHooks(withHosting) };
+      const [shown] = await withPluginDomains([await withHooks(withHosting)]);
+      return { plugin: shown };
     },
   );
 

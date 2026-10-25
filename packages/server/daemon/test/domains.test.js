@@ -324,9 +324,15 @@ test('with two domains a new user is created with theirs: required, checked, hon
     email: 'mert@codelama.com.tr',
     password: 'correct horse battery',
   };
+  assert.equal((await call('GET', '/api/domains')).json().newUsersNeedDomains, true);
   const missing = await call('POST', '/api/users', body);
   assert.equal(missing.statusCode, 400);
   assert.equal(missing.json().code, 'domains_required');
+  // A user who is a member of nothing reaches nothing: an empty list is no answer either.
+  assert.equal(
+    (await call('POST', '/api/users', { ...body, domains: [] })).json().code,
+    'domains_required',
+  );
   assert.equal(
     (await call('POST', '/api/users', { ...body, domains: ['other.example'] })).json().code,
     'unknown_domain',
@@ -357,6 +363,37 @@ test('with two domains a new user is created with theirs: required, checked, hon
     'codelama.com.tr',
     'samplepark.tr',
   ]);
+
+  // An edit sets the memberships exactly, in one change, each audited.
+  const ece = { ...body, username: 'ece', email: 'ece@codelama.com.tr' };
+  assert.equal(
+    (await call('POST', '/api/users', { ...ece, domains: ['codelama.com.tr'] })).statusCode,
+    201,
+  );
+  const eceId = await idOf('ece');
+  const edited = await call('PUT', '/api/users/ece', { domains: ['samplepark.tr'] });
+  assert.equal(edited.statusCode, 200, edited.body);
+  assert.deepEqual(edited.json().user.domains, ['samplepark.tr']);
+  assert.ok(!renderedMembers()['codelama.com.tr'].includes('ece'));
+  assert.ok(renderedMembers()['samplepark.tr'].includes('ece'));
+  const changes = (await audits('directory.membership.added'))
+    .concat(await audits('directory.membership.removed'))
+    .filter((a) => a.details.userId === eceId)
+    .map((a) => [a.action, a.details.domain]);
+  assert.deepEqual(changes.sort(), [
+    ['directory.membership.added', 'codelama.com.tr'],
+    ['directory.membership.added', 'samplepark.tr'],
+    ['directory.membership.removed', 'codelama.com.tr'],
+  ]);
+  assert.equal(
+    (await call('PUT', '/api/users/ece', { domains: ['other.example'] })).json().code,
+    'unknown_domain',
+  );
+
+  // A member is named by directory id or by username.
+  const byName = await call('DELETE', '/api/domains/samplepark.tr/members/ece');
+  assert.equal(byName.json().removed, true, byName.body);
+  assert.equal((await call('PUT', '/api/domains/samplepark.tr/members/nobody')).statusCode, 404);
 });
 
 test('disable keeps memberships and renders the user nowhere; enable brings them back; delete ends them', async () => {
@@ -440,6 +477,11 @@ test('a plugin belongs to the primary until moved to an active domain; moving it
     ],
   });
   assert.equal((await lib.findPlugin('feria')).domain, null);
+  // Shown with the name of its domain — clients never read NULL as the primary.
+  assert.equal(
+    (await lib.withPluginDomains([await lib.findPlugin('feria')]))[0].domain,
+    'samplepark.tr',
+  );
   const refused = await call('PUT', '/api/plugins/feria/domain', { domain: 'pending.example' });
   assert.equal(refused.json().code, 'unknown_domain');
   const moved = await call('PUT', '/api/plugins/feria/domain', { domain: 'codelama.com.tr' });

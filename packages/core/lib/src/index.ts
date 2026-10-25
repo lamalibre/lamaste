@@ -97,6 +97,7 @@ export type {
   DomainUsage,
   DomainMemberView,
   DomainDnsCheck,
+  DomainDnsRecord,
   IdentityReadinessReason,
   PluginIdentityView,
   PluginWebSurfaceView,

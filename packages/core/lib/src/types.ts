@@ -180,14 +180,28 @@ export interface DomainMemberView {
   readonly addedBy: string;
 }
 
-/** Whether `auth.<domain>` resolves to the relay — what activation needs. */
+/**
+ * The DNS records a domain needs, as the panel checks them: `ok` once every
+ * required one (its sign-in, `auth.<domain>`) points at the relay.
+ */
 export interface DomainDnsCheck {
   readonly ok: boolean;
   /** The relay's address every record must point at. */
   readonly expectedIp: string;
-  readonly records: ReadonlyArray<{ name: string; resolvedIps: readonly string[]; ok: boolean }>;
-  /** Whether a wildcard record (`*.<domain>`) points here too. */
-  readonly wildcard: boolean;
+  readonly records: ReadonlyArray<DomainDnsRecord>;
+}
+
+/** One record a domain needs at its DNS host, and what it resolves to now. */
+export interface DomainDnsRecord {
+  readonly type: 'A';
+  /** `auth.<domain>`, or `*.<domain>` (checked through a probe name). */
+  readonly name: string;
+  readonly value: string;
+  /** False for the wildcard: one A record per hostname does as well. */
+  readonly required: boolean;
+  readonly purpose: string;
+  readonly resolvedIps: readonly string[];
+  readonly ok: boolean;
 }
 
 /**
@@ -471,6 +485,8 @@ export interface AdminClient {
       password?: string;
       groups?: string[];
       disabled?: boolean;
+      /** The domains the user is a member of afterwards, exactly (one change, each membership audited). */
+      domains?: string[];
     },
   ): Promise<{ ok: boolean; user: AdminUser; warnings?: AdminWarning[] }>;
   /**
@@ -522,7 +538,8 @@ export interface AdminClient {
   }>;
 
   // Domains — the relay's base domains and their members (multi-domain relay)
-  getDomains(): Promise<{ domains: DomainView[] }>;
+  /** `newUsersNeedDomains`: users and invitations must name their domains (`domains_required`). */
+  getDomains(): Promise<{ domains: DomainView[]; newUsersNeedDomains: boolean }>;
   /** Add a domain, `pending` until activated. Refused when it overlaps one (`code` `domain_overlap`). */
   addDomain(name: string): Promise<{ domain: DomainView }>;
   verifyDomainDns(name: string): Promise<DomainDnsCheck>;
@@ -531,8 +548,9 @@ export interface AdminClient {
   /** Refused for the primary (`primary_domain`) and while used (409 `domain_in_use`, `usedBy`). */
   removeDomain(name: string): Promise<unknown>;
   getDomainMembers(name: string): Promise<{ members: DomainMemberView[] }>;
-  addDomainMember(name: string, userId: string): Promise<unknown>;
-  removeDomainMember(name: string, userId: string): Promise<unknown>;
+  /** `user`: a directory id or a username. */
+  addDomainMember(name: string, user: string): Promise<unknown>;
+  removeDomainMember(name: string, user: string): Promise<unknown>;
   /** Move a plugin to another active domain — refused while one of its surfaces is served. */
   setPluginDomain(
     name: string,

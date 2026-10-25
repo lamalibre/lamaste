@@ -7,6 +7,10 @@
  * with its own sign-in at `auth.<domain>` and its own member list. Pure: the
  * panel keeps the records (`state.db`), Gatekeeper reads a projection of
  * them, and both decide a hostname's domain here.
+ *
+ * Browser-safe (zod and the dependency-free constants only): the panel UI
+ * imports it as `@lamalibre/lamaste/domains`, with the reserved names and
+ * ports re-exported below, so no client keeps a copy of a rule.
  */
 
 import { z } from 'zod';
@@ -17,6 +21,12 @@ import {
   HOSTNAME_REGEX,
   RESERVED_SUBDOMAINS,
   isLamasteUsername,
+} from './constants.js';
+
+export {
+  AGENT_PANEL_SUBDOMAIN_PREFIX,
+  RESERVED_SUBDOMAINS,
+  RESERVED_TUNNEL_PORTS,
 } from './constants.js';
 
 /** Where a domain is in its lifecycle: added, or serving (`auth.` issued, cookie rendered). */

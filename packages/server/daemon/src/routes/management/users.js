@@ -26,7 +26,12 @@ import {
   getDirectoryUser,
   usersFileError,
 } from '../../lib/directory.js';
-import { domainsByUser, domainsForNewUser, domainsOfUser } from '../../lib/domains.js';
+import {
+  domainsByUser,
+  domainsForNewUser,
+  domainsOfUser,
+  setUserDomains,
+} from '../../lib/domains.js';
 
 const CreateUserSchema = z.object({
   username: z
@@ -63,6 +68,9 @@ const UpdateUserSchema = z
     // Authelia's `disabled: true`: the user cannot sign in, every plugin
     // audience shows them disabled, and the user surface refuses them.
     disabled: z.boolean().optional(),
+    // The domains the user is a member of afterwards — exactly these (the
+    // difference applied in one transaction, each membership audited).
+    domains: z.array(DomainNameSchema).max(50).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: 'At least one field must be provided',
@@ -262,43 +270,52 @@ export default async function usersRoutes(fastify, _opts) {
         (passwordHash === undefined || entry.password === passwordHash) &&
         (body.disabled === undefined || (entry.disabled === true) === body.disabled);
 
+      const { domains: memberOf, ...fields } = body;
       let outcome;
       let before = null;
       try {
-        outcome = await changeUsers(
-          async () => {
-            const usersData = await readUsersOrFail();
-            const user = usersData.users[username];
-            if (!user) throw httpError('User not found', 404);
-            // As it was before this request (a second attempt finds it changed already).
-            before ??= { groups: groupsOf(user), disabled: user.disabled === true };
-            if (body.disabled === true && isEnabledAdmin(user)) {
-              const enabledAdmins = Object.values(usersData.users).filter(isEnabledAdmin).length;
-              if (enabledAdmins <= 1) {
-                throw httpError('Cannot disable the last enabled administrator', 400, {
-                  code: 'last_admin',
-                });
+        // Only memberships change: users.yml is not written, the user is read.
+        if (Object.keys(fields).length === 0) {
+          const usersData = await readUsersOrFail();
+          const user = usersData.users[username];
+          if (!user) throw httpError('User not found', 404);
+          before = { groups: groupsOf(user), disabled: user.disabled === true };
+          outcome = { result: user, warnings: [], persisted: true };
+        } else
+          outcome = await changeUsers(
+            async () => {
+              const usersData = await readUsersOrFail();
+              const user = usersData.users[username];
+              if (!user) throw httpError('User not found', 404);
+              // As it was before this request (a second attempt finds it changed already).
+              before ??= { groups: groupsOf(user), disabled: user.disabled === true };
+              if (body.disabled === true && isEnabledAdmin(user)) {
+                const enabledAdmins = Object.values(usersData.users).filter(isEnabledAdmin).length;
+                if (enabledAdmins <= 1) {
+                  throw httpError('Cannot disable the last enabled administrator', 400, {
+                    code: 'last_admin',
+                  });
+                }
               }
-            }
 
-            if (body.displayname !== undefined) user.displayname = body.displayname;
-            if (body.email !== undefined) user.email = body.email;
-            if (body.groups !== undefined) user.groups = body.groups;
-            if (passwordHash !== undefined) user.password = passwordHash;
-            if (body.disabled === true) user.disabled = true;
-            if (body.disabled === false) delete user.disabled;
+              if (body.displayname !== undefined) user.displayname = body.displayname;
+              if (body.email !== undefined) user.email = body.email;
+              if (body.groups !== undefined) user.groups = body.groups;
+              if (passwordHash !== undefined) user.password = passwordHash;
+              if (body.disabled === true) user.disabled = true;
+              if (body.disabled === false) delete user.disabled;
 
-            await writeUsersOrFail(usersData);
-            return user;
-          },
-          {
-            actor: actorFromRequest(request),
-            logger: request.log,
-            // Authelia's own password reset may rewrite users.yml under the
-            // change: it is checked after the restart, and made once more.
-            expect: (users) => intended(users[username]),
-          },
-        );
+              await writeUsersOrFail(usersData);
+              return user;
+            },
+            {
+              actor: actorFromRequest(request),
+              logger: request.log,
+              // Authelia's own password reset may rewrite users.yml under the
+              // change: it is checked after the restart, and made once more.
+              expect: (users) => intended(users[username]),
+            },
+          );
       } catch (err) {
         return sendFailure(request, reply, err, 'Failed to update user database');
       }
@@ -308,6 +325,24 @@ export default async function usersRoutes(fastify, _opts) {
       const warnings = [...outcome.warnings];
       const known = await findDirectoryUser(username);
       const userId = known?.userId ?? null;
+
+      if (memberOf !== undefined) {
+        if (!userId) {
+          return reply.code(409).send({
+            error: 'The directory has not seen this user yet — try again within a minute',
+            code: 'user_not_in_directory',
+          });
+        }
+        try {
+          const membership = await setUserDomains(userId, memberOf, {
+            actor: actorFromRequest(request),
+            logger: request.log,
+          });
+          warnings.push(...(membership.warnings ?? []));
+        } catch (err) {
+          return sendFailure(request, reply, err, 'Failed to change the memberships');
+        }
+      }
 
       // Disabling is offboarding, which the change did as the directory saw
       // the user become disabled (`changeUsers`): sessions ended, registry
@@ -356,6 +391,7 @@ export default async function usersRoutes(fastify, _opts) {
           disabled,
           userId,
           status: disabled ? 'disabled' : 'active',
+          domains: userId ? await domainsOfUser(userId) : [],
         },
         ...(outcome.persisted ? {} : { persisted: false }),
         ...(warnings.length > 0 ? { warnings } : {}),

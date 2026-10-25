@@ -32,7 +32,7 @@ Then either one wildcard for every later hostname, or one record per hostname:
 
 Explicit records keep precedence over a wildcard, so an apex, `www` or mail (MX, SPF, DKIM) record elsewhere stays as it is. Some DNS hosts (Turhost among them) take a wildcard as a plain record named `*`; if yours refuses one, create an A record per hostname as you add tunnels and sites. Certificates are Let's Encrypt HTTP-01 per hostname, issued by the relay — the DNS host does not matter.
 
-**Check DNS** on the domain's card (or `lamaste-server domains verify-dns codelama.com.tr`) shows whether `auth.` and the wildcard resolve here.
+**Check DNS** on the domain's card (or `lamaste-server domains verify-dns codelama.com.tr`) lists the records the panel expects and whether each resolves here.
 
 ## 3. Choose the members
 

@@ -35,6 +35,7 @@ import {
   assertDomainAddable,
   atomicWriteJSONIfChanged,
   domainOfHost,
+  isIdentityUuid,
   isLamasteUsername,
 } from '@lamalibre/lamaste';
 import { registryIssuerDomain, resolveHostA } from '@lamalibre/lamaste/server';
@@ -155,6 +156,19 @@ export async function domainOfHostname(fqdn) {
 /** The domain a plugin belongs to: its own (`plugins.domain`), else `primary`. Pure. */
 export function pluginDomainOr(plugin, primary) {
   return plugin?.domain ?? primary;
+}
+
+/**
+ * Plugins as the API shows them: `domain` the name of the domain each
+ * belongs to (stored NULL means the primary — clients never interpret it).
+ *
+ * @template {{ domain?: string | null }} T
+ * @param {T[]} plugins
+ * @returns {Promise<T[]>}
+ */
+export async function withPluginDomains(plugins) {
+  const primary = await primaryDomainName();
+  return plugins.map((p) => ({ ...p, domain: pluginDomainOr(p, primary) }));
 }
 
 /**
@@ -302,6 +316,16 @@ export async function domainsOverview() {
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether new users must be given their domains: the relay has two or more
+ * (pending ones count). With one, every new user becomes its member.
+ *
+ * @param {ReadonlyArray<unknown>} domains
+ */
+export function newUsersNeedDomains(domains) {
+  return domains.length > 1;
+}
+
+/**
  * The domains a user created now is given: `requested` (each an existing
  * domain; pending ones too, so an activation goes live with its members),
  * or — when none are requested and the relay has exactly one domain — that
@@ -316,16 +340,20 @@ export async function domainsOverview() {
  */
 export async function domainsForNewUser(requested, { required = false } = {}) {
   const domains = await listDomains();
-  if (requested === undefined) {
-    if (domains.length === 1) return [domains[0].name];
-    if (required && domains.length > 1) {
-      throw httpError(
-        'Name the domains the user is a member of: this relay has more than one',
-        400,
-        { code: 'domains_required' },
-      );
-    }
-    return [];
+  if (requested === undefined && !newUsersNeedDomains(domains)) {
+    return domains.length === 1 ? [domains[0].name] : [];
+  }
+  // A user who is a member of nothing reaches nothing: when domains are
+  // asked for, none — or an empty list — is refused.
+  if (requested === undefined || requested.length === 0) {
+    if (!required) return [];
+    throw httpError(
+      domains.length > 1
+        ? 'Name the domains the user is a member of: this relay has more than one'
+        : 'A new user is a member of at least one domain',
+      400,
+      { code: 'domains_required' },
+    );
   }
   const names = new Set(domains.map((d) => d.name));
   const wanted = [...new Set(requested.map((d) => String(d).toLowerCase()))];
@@ -570,6 +598,24 @@ const withWarnings = (warnings) => (warnings.length > 0 ? { warnings } : {});
 // Membership
 // ---------------------------------------------------------------------------
 
+/**
+ * The directory id `ref` names — an id itself, or the username of a user
+ * the directory holds (not a deleted one) — or a 404.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} ref
+ */
+function memberUserId(db, ref) {
+  if (isIdentityUuid(ref)) return ref;
+  const row = isLamasteUsername(ref)
+    ? db
+        .prepare("SELECT user_id FROM directory_users WHERE username = ? AND status <> 'removed'")
+        .get(ref)
+    : undefined;
+  if (!row) throw httpError('User not found', 404, { code: 'user_not_found' });
+  return row.user_id;
+}
+
 /** The directory row of `userId`, or a 404 / 409 the route answers with. */
 function memberCandidate(db, userId) {
   const row = db
@@ -589,19 +635,20 @@ function domainOr404(db, name) {
 }
 
 /**
- * Make user `userId` a member of domain `name`. Idempotent (`added: false`
- * when they were one). Then renders, busts Gatekeeper's sessions and
- * recomputes the audiences.
+ * Make user `user` (a directory id or a username) a member of domain
+ * `name`. Idempotent (`added: false` when they were one). Then renders,
+ * busts Gatekeeper's sessions and recomputes the audiences.
  *
  * @param {string} name
- * @param {string} userId
+ * @param {string} user
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
  */
-export async function addDomainMember(name, userId, { actor, logger }) {
+export async function addDomainMember(name, user, { actor, logger }) {
   const change = await domainsMutex.run(async () => {
     const db = await getStateDb();
     const domain = domainOr404(db, name);
-    const user = memberCandidate(db, userId);
+    const userId = memberUserId(db, user);
+    const candidate = memberCandidate(db, userId);
     const events = insertMembershipsSync(db, userId, [name], {
       actor,
       now: new Date().toISOString(),
@@ -609,7 +656,7 @@ export async function addDomainMember(name, userId, { actor, logger }) {
     for (const event of events) await recordAuditBestEffort({ actor, ...event }, logger);
     return {
       added: events.length > 0,
-      effective: domain.status === 'active' && user.status === 'active',
+      effective: domain.status === 'active' && candidate.status === 'active',
     };
   });
   if (!change.added) return { added: false };
@@ -620,19 +667,21 @@ export async function addDomainMember(name, userId, { actor, logger }) {
 }
 
 /**
- * End user `userId`'s membership of domain `name` (`removed: false` when
- * there was none). Then renders, busts Gatekeeper's sessions, recomputes the
- * audiences, and — when `name` is the registry's domain — revokes the
- * user's registry tokens.
+ * End the membership of user `user` (a directory id or a username) of
+ * domain `name` (`removed: false` when there was none). Then renders, busts
+ * Gatekeeper's sessions, recomputes the audiences, and — when `name` is the
+ * registry's domain — revokes the user's registry tokens.
  *
  * @param {string} name
- * @param {string} userId
+ * @param {string} user
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
  */
-export async function removeDomainMember(name, userId, { actor, logger }) {
+export async function removeDomainMember(name, user, { actor, logger }) {
+  let userId;
   const removed = await domainsMutex.run(async () => {
     const db = await getStateDb();
     const domain = domainOr404(db, name);
+    userId = memberUserId(db, user);
     const row = db
       .prepare(
         `SELECT u.username, u.status FROM domain_members dm JOIN directory_users u USING (user_id)
@@ -660,6 +709,66 @@ export async function removeDomainMember(name, userId, { actor, logger }) {
     warnings.push(...(await revokeRegistryTokensFor(name, removed.username, userId, logger)));
   }
   return { removed: true, ...withWarnings(warnings) };
+}
+
+/**
+ * Make user `userId`'s memberships exactly `domains` — the users API's edit:
+ * the difference applied in one transaction, each membership audited as
+ * `addDomainMember` / `removeDomainMember` audit them. Then one rendering,
+ * and registry tokens revoked for a membership of the registry's domain
+ * that ended. Throws a 400 `unknown_domain` for a domain the relay does not
+ * have, a 404 / 409 for a user it cannot be.
+ *
+ * @param {string} userId
+ * @param {readonly string[]} domains
+ * @param {{ actor: string, logger?: import('pino').Logger }} opts
+ * @returns {Promise<{ domains: string[], changed: boolean, warnings?: Array<object> }>}
+ */
+export async function setUserDomains(userId, domains, { actor, logger }) {
+  const wanted = [...new Set(domains.map((d) => String(d).toLowerCase()))].sort();
+  const change = await domainsMutex.run(async () => {
+    const db = await getStateDb();
+    const known = new Map((await listDomains()).map((d) => [d.name, d]));
+    const unknown = wanted.find((d) => !known.has(d));
+    if (unknown !== undefined) {
+      throw httpError(`'${unknown}' is not a domain of this relay`, 400, {
+        code: 'unknown_domain',
+      });
+    }
+    const user = memberCandidate(db, userId);
+    const current = db
+      .prepare('SELECT domain FROM domain_members WHERE user_id = ?')
+      .all(userId)
+      .map((r) => r.domain);
+    const ended = current.filter((d) => !wanted.includes(d));
+    const events = inTransaction(db, () => {
+      const remove = db.prepare('DELETE FROM domain_members WHERE domain = ? AND user_id = ?');
+      for (const domain of ended) remove.run(domain, userId);
+      return [
+        ...insertMembershipsSync(db, userId, wanted, { actor, now: new Date().toISOString() }),
+        ...ended.map((domain) => ({
+          action: 'directory.membership.removed',
+          details: { domain, userId, reason: 'removed' },
+        })),
+      ];
+    });
+    for (const event of events) await recordAuditBestEffort({ actor, ...event }, logger);
+    const touched = events.map((e) => known.get(e.details.domain));
+    return {
+      username: user.username,
+      ended,
+      changed: events.length > 0,
+      effective: user.status === 'active' && touched.some((d) => d?.status === 'active'),
+    };
+  });
+  if (!change.changed) return { domains: wanted, changed: false };
+  const warnings = await settleMembership(logger, { effective: change.effective });
+  if (change.username) {
+    for (const domain of change.ended) {
+      warnings.push(...(await revokeRegistryTokensFor(domain, change.username, userId, logger)));
+    }
+  }
+  return { domains: wanted, changed: true, ...withWarnings(warnings) };
 }
 
 /**
@@ -730,13 +839,26 @@ export async function verifyDomainDns(name) {
     resolveHostA(authName),
     resolveHostA(`${DNS_WILDCARD_PROBE_LABEL}.${name}`),
   ]);
-  const ok = auth.includes(expectedIp);
-  return {
-    ok,
-    expectedIp,
-    records: [{ name: authName, resolvedIps: auth, ok }],
-    wildcard: wildcard.includes(expectedIp),
-  };
+  const record = (name, resolvedIps, required, purpose) => ({
+    type: 'A',
+    name,
+    value: expectedIp,
+    required,
+    purpose,
+    resolvedIps,
+    ok: resolvedIps.includes(expectedIp),
+  });
+  const records = [
+    record(authName, auth, true, 'the domain’s sign-in page'),
+    // Probed through a name nothing else uses.
+    record(
+      `*.${name}`,
+      wildcard,
+      false,
+      'every tunnel and site hostname — or one A record per hostname instead',
+    ),
+  ];
+  return { ok: records.every((r) => !r.required || r.ok), expectedIp, records };
 }
 
 /** What activation needs from nginx and certbot (the real ones unless a test gives others). */
