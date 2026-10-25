@@ -622,5 +622,14 @@ export type { PluginHostAuthStrategy, PluginHostOptions } from './plugin-host.js
 export { logRequestMetadata, UNMATCHED_ROUTE } from './request-log.js';
 export type { RequestMetadataLogOptions } from './request-log.js';
 
+// Static site upload limits and batching (the panel, its vhosts, every uploader)
+export {
+  SITE_UPLOAD_MAX_FILE_BYTES,
+  SITE_UPLOAD_MAX_REQUEST_MIB,
+  SITE_UPLOAD_MAX_REQUEST_BYTES,
+  planSiteUploadBatches,
+  oversizedSiteUploads,
+} from './site-upload.js';
+
 // Branding primitives
 export * from './branding.js';

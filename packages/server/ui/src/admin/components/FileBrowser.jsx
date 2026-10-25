@@ -3,6 +3,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ChevronRight, File, Folder, Trash2, Upload, Loader2, Home } from 'lucide-react';
 import { useToast } from './Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
+import {
+  SITE_UPLOAD_MAX_FILE_BYTES,
+  oversizedSiteUploads,
+  uploadSiteFilesInBatches,
+} from '../lib/siteUpload.js';
 
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -106,7 +111,10 @@ export default function FileBrowser({ site, onBack }) {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: ({ files }) => client.uploadSiteFiles(site.id, currentPath, files),
+    mutationFn: ({ files }) =>
+      uploadSiteFilesInBatches(files, (batch) =>
+        client.uploadSiteFiles(site.id, currentPath, batch),
+      ),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['site-files', site.id] });
       queryClient.invalidateQueries({ queryKey: ['sites'] });
@@ -152,12 +160,20 @@ export default function FileBrowser({ site, onBack }) {
   const handleFileChange = useCallback(
     (e) => {
       const files = Array.from(e.target.files || []);
-      if (files.length > 0) {
-        uploadMutation.mutate({ files });
-      }
       e.target.value = '';
+      if (files.length === 0) return;
+      const oversized = oversizedSiteUploads(files);
+      if (oversized.length > 0) {
+        const names = oversized.map((f) => f.name).join(', ');
+        addToast(
+          `Over the ${formatBytes(SITE_UPLOAD_MAX_FILE_BYTES)} file limit, nothing uploaded: ${names}`,
+          'error',
+        );
+        return;
+      }
+      uploadMutation.mutate({ files });
     },
-    [uploadMutation],
+    [uploadMutation, addToast],
   );
 
   const files = filesQuery.data?.files || [];

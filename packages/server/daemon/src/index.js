@@ -8,7 +8,7 @@ import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logRequestMetadata } from '@lamalibre/lamaste';
+import { SITE_UPLOAD_MAX_FILE_BYTES, logRequestMetadata } from '@lamalibre/lamaste';
 import { loadConfig } from './lib/config.js';
 import { panelRequestLogOptions } from './lib/request-logging.js';
 import mtlsMiddleware from './middleware/mtls.js';
@@ -118,10 +118,9 @@ async function start() {
   await server.register(cors, {
     origin: config.domain ? [ipOrigin, `https://panel.${config.domain}`] : ipOrigin,
   });
+  // A request's size is the panel vhosts' to limit (SITE_UPLOAD_MAX_REQUEST_MIB).
   await server.register(multipart, {
-    limits: {
-      fileSize: 50 * 1024 * 1024, // 50MB per file
-    },
+    limits: { fileSize: SITE_UPLOAD_MAX_FILE_BYTES },
   });
   await server.register(cookie);
   await server.register(websocket);

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **The panel vhosts gain a site upload location.** The panel rewrites `panel.<domain>` at start as usual; the IP panel vhost on 9292 changes only through `create-lamaste`'s redeploy (`Refreshing the IP panel vhost`), so upgrade the relay with the panel's Update action or a `create-lamaste --yes` redeploy, not by restarting the panel alone.
+
+### Fixed
+
+- **Static site uploads over 1 MiB failed with 413.** The panel vhosts (`lamalibre-lamaste-panel-ip` on 9292, `lamalibre-lamaste-panel-domain`) set no `client_max_body_size`, so nginx's built-in 1 MiB refused every larger `POST /api/sites/:id/files`, while the documentation and the panel's multipart parser allowed 50 MB a file. Both vhosts now have a location for the upload route alone, `~ ^/api/sites/[^/]+/files$`, with the `/api` location's certificate check and headers and a request limit of 64 MiB; every other `/api` request keeps nginx's 1 MiB. The limits are in `@lamalibre/lamaste`: `SITE_UPLOAD_MAX_FILE_BYTES` (50 MiB, the multipart parser's) and `SITE_UPLOAD_MAX_REQUEST_MIB` (64, the vhosts'), with `planSiteUploadBatches(files)` splitting files in order into requests within the request limit and `oversizedSiteUploads(files)`.
+- **Uploaders send at most one request's worth at a time.** `lamaste-agent deploy` sent a directory's files ten to a request, whatever their size; it now batches by size, and refuses a file over 50 MiB before it clears the site's files — a deploy that cannot finish no longer leaves the site empty. The panel's file browser (web and desktop) sent a whole selection in one request; it now sends it in as many as the limit needs, one after another, answers them as one upload, and refuses a file over 50 MiB before sending anything.
+- **A file over 50 MiB was saved cut off.** The multipart parser stops a file at its size limit and ends the stream normally; the upload route saved the first 50 MiB as the file and answered `400` only at the next part. `saveUploadedFile` now refuses a truncated stream (`UploadTooLargeError` from `@lamalibre/lamaste/server`) and keeps nothing of it, and the route answers `413` with the files of the request saved before it.
+
 ## [4.7.0] - 2026-10-26
 
 All lockstep packages, the desktop crate and its Tauri config move to 4.7.0; internal `@lamalibre/*` ranges become `^4.7.0`. Multi-domain relay: one relay serves several base domains — one user directory, a sign-in page (`auth.<domain>`) and an explicit member list per domain. A person has one account and reaches a domain's protected hosts only as its member — or, as an **external member**, only what names them. The entries for it are the "— multi-domain relay" sections below; slice 7's follow them. Design: `packages/core/docs/multi-domain-relay-design.md`, `packages/core/docs/external-members-design.md`.

@@ -10,6 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { SITE_UPLOAD_MAX_REQUEST_MIB } from '@lamalibre/lamaste';
 import { IP_PANEL_SITE, generateIpPanelVhost } from '../src/lib/ip-panel-vhost.js';
 
 const PKI = '/etc/lamalibre/lamaste/pki';
@@ -44,7 +45,7 @@ test('every location proxying to the panel clears a client’s relay assertion',
   );
   assert.deepEqual(
     proxied.map((l) => l.matcher),
-    ['/', '/api/enroll', '/api/invite', '/api'],
+    ['/', '/api/enroll', '/api/invite', '~ ^/api/sites/[^/]+/files$', '/api'],
   );
   for (const { matcher, body } of proxied) {
     assert.ok(body.includes('proxy_set_header X-Lamalibre-Relay-Assertion "";'), matcher);
@@ -61,4 +62,22 @@ test('every location proxying to the panel clears a client’s relay assertion',
       assert.match(body, line, `${matcher}: ${header}`);
     }
   }
+});
+
+test('only the site upload location admits a body over nginx’s 1 MiB default', () => {
+  const text = generateIpPanelVhost(PKI);
+  const sized = locations(text).filter(({ body }) => body.includes('client_max_body_size'));
+  assert.deepEqual(
+    sized.map((l) => l.matcher),
+    ['~ ^/api/sites/[^/]+/files$'],
+  );
+  const [upload] = sized;
+  assert.ok(upload.body.includes(`client_max_body_size ${SITE_UPLOAD_MAX_REQUEST_MIB}m;`));
+  assert.ok(upload.body.includes('if ($ssl_client_verify != SUCCESS)'), 'mTLS required');
+  assert.equal(text.match(/client_max_body_size/g).length, 1, 'none at server level');
+
+  const re = new RegExp(upload.matcher.slice(2));
+  assert.ok(re.test('/api/sites/3f1d2c3a-1b2c-4d5e-8f90-123456789abc/files'));
+  assert.ok(!re.test('/api/sites/3f1d2c3a-1b2c-4d5e-8f90-123456789abc/files/x'));
+  assert.ok(!re.test('/api/enroll'));
 });

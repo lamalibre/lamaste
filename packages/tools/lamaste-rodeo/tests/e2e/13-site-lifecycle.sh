@@ -14,6 +14,10 @@
 # - Verify settings persisted
 # - Delete site via DELETE /api/sites/:id
 # - Verify site removed from listing
+# - Upload size limits, on the IP vhost and on panel.<domain>: a 24 MiB file
+#   uploads whole; a file over 50 MiB is refused 413 by the panel and nothing
+#   of it is kept (no cut-off file, no temp file); a request over 64 MiB is
+#   refused 413 by nginx; every other /api route keeps nginx's 1 MiB
 # - Validation: duplicate name, reserved name, invalid UUID
 # - Custom-domain site aliases:
 #   - validation 400s: aliases on a managed site, alias equal to the site's
@@ -226,6 +230,77 @@ _curl_mtls \
   -H "Content-Type: application/json" \
   -d "{\"path\":\"${CSS_BASENAME}\"}" \
   "${BASE_URL}/api/sites/${SITE_ID}/files" > /dev/null 2>&1 || true
+
+# ---------------------------------------------------------------------------
+log_section "Upload size limits"
+# ---------------------------------------------------------------------------
+
+# The panel vhosts' upload location takes 64 MiB a request; the panel's
+# multipart parser 50 MiB a file. Everything else under /api keeps nginx's
+# 1 MiB.
+LIMITS_DIR=$(mktemp -d /tmp/e2e-site-limits-XXXXXX)
+head -c $((24 * 1024 * 1024)) /dev/zero > "${LIMITS_DIR}/big.js"
+head -c $((51 * 1024 * 1024)) /dev/zero > "${LIMITS_DIR}/over.js"
+head -c $((40 * 1024 * 1024)) /dev/zero > "${LIMITS_DIR}/half-a.js"
+head -c $((40 * 1024 * 1024)) /dev/zero > "${LIMITS_DIR}/half-b.js"
+
+# site_file_size <name> — the size the listing gives a root file ("" when absent)
+site_file_size() {
+  api_get "sites/${SITE_ID}/files?path=." \
+    | jq -r --arg n "$1" '.files[] | select(.name == $n) | .size' 2>/dev/null || echo ""
+}
+
+BIG_RESPONSE=$(api_upload_file "sites/${SITE_ID}/files?path=." "${LIMITS_DIR}/big.js")
+assert_json_field "$BIG_RESPONSE" '.ok' 'true' "A 24 MiB file uploads through the IP vhost" || true
+BIG_SIZE=$(site_file_size big.js)
+assert_eq "$BIG_SIZE" "25165824" "The 24 MiB file is saved whole" || true
+
+PANEL_HOST="panel.$(api_get "onboarding/status" | jq -r '.domain' 2>/dev/null || echo "")"
+DOMAIN_BIG_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \
+  --resolve "${PANEL_HOST}:443:127.0.0.1" \
+  -X POST -F "file=@${LIMITS_DIR}/big.js;filename=big-domain.js" \
+  "https://${PANEL_HOST}/api/sites/${SITE_ID}/files?path=." 2>/dev/null || echo "000")
+assert_eq "$DOMAIN_BIG_STATUS" "200" "A 24 MiB file uploads through ${PANEL_HOST}" || true
+DOMAIN_BIG_SIZE=$(site_file_size big-domain.js)
+assert_eq "$DOMAIN_BIG_SIZE" "25165824" "The file uploaded through ${PANEL_HOST} is saved whole" || true
+
+# A file over 50 MiB in a request under 64 MiB: the panel refuses it.
+OVER_BODY=$(_curl_mtls -w '\n%{http_code}' \
+  -X POST -F "file=@${LIMITS_DIR}/over.js" \
+  "${BASE_URL}/api/sites/${SITE_ID}/files?path=." 2>/dev/null || echo "000")
+OVER_STATUS=$(echo "$OVER_BODY" | tail -n 1)
+OVER_RESPONSE=$(echo "$OVER_BODY" | sed '$d')
+assert_eq "$OVER_STATUS" "413" "A 51 MiB file is refused with 413" || true
+assert_contains "$OVER_RESPONSE" "exceeds the 50.0 MB limit" "The refusal names the file limit" || true
+OVER_SIZE=$(site_file_size over.js)
+assert_eq "$OVER_SIZE" "" "Nothing of the 51 MiB file is kept" || true
+LEFTOVER_TEMP=$(sudo find "/var/www/lamaste/${SITE_ID}" -maxdepth 1 -name '.upload-*' 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "$LEFTOVER_TEMP" "0" "No upload temp file is left behind" || true
+
+# Two 40 MiB files in one request: over 64 MiB, refused by nginx.
+TOO_BIG_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \
+  -X POST -F "file=@${LIMITS_DIR}/half-a.js" -F "file=@${LIMITS_DIR}/half-b.js" \
+  "${BASE_URL}/api/sites/${SITE_ID}/files?path=." 2>/dev/null || echo "000")
+assert_eq "$TOO_BIG_STATUS" "413" "An 80 MiB request is refused with 413" || true
+REFUSED_SIZE=$(site_file_size half-a.js)
+assert_eq "$REFUSED_SIZE" "" "Nothing of the refused request is kept" || true
+
+# Each file in a request of its own goes through.
+HALF_A_RESPONSE=$(api_upload_file "sites/${SITE_ID}/files?path=." "${LIMITS_DIR}/half-a.js")
+assert_json_field "$HALF_A_RESPONSE" '.ok' 'true' "A 40 MiB file in a request of its own uploads" || true
+
+# Any other /api route keeps nginx's 1 MiB.
+head -c $((2 * 1024 * 1024)) /dev/zero | tr '\0' 'a' | sed 's/^/{"name":"/; s/$/"}/' > "${LIMITS_DIR}/big.json"
+JSON_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \
+  -X POST -H "Content-Type: application/json" --data-binary "@${LIMITS_DIR}/big.json" \
+  "${BASE_URL}/api/sites" 2>/dev/null || echo "000")
+assert_eq "$JSON_STATUS" "413" "A 2 MiB body to another /api route is refused with 413" || true
+
+rm -rf "$LIMITS_DIR"
+for f in big.js big-domain.js half-a.js; do
+  _curl_mtls -X DELETE -H "Content-Type: application/json" -d "{\"path\":\"${f}\"}" \
+    "${BASE_URL}/api/sites/${SITE_ID}/files" > /dev/null 2>&1 || true
+done
 
 # ---------------------------------------------------------------------------
 log_section "Input validation"
