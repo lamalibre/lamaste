@@ -7,11 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Plugins' web surfaces (slice 7): an agent-hosted plugin's users open the application its server package ships, served by the relay on a site the plugin owns, beside its user surface's API — one host, one Authelia session, no tunnel or web server of the plugin's own.
+## [4.6.0] - 2026-10-25
+
+All lockstep packages, the desktop crate and its Tauri config move to 4.6.0; internal `@lamalibre/*` ranges become `^4.6.0`. Plugins' web surfaces (slice 7): an agent-hosted plugin's users open the application its server package ships, served by the relay on a site the plugin owns, beside its user surface's API — one host, one Authelia session, no tunnel or web server of the plugin's own.
 
 ### Upgrade notes
 
-**Only the relay is upgraded**: the panel's Update action or a `create-lamaste --yes` redeploy.
+**Only the relay is upgraded**: the panel's Update action (`create-lamaste@4.6.0 --yes`) or a `create-lamaste@4.6.0 --yes` redeploy. No agent upgrade and no agent half rebuild is needed; a plugin gets a web surface by shipping a version whose server package declares `userSurface.web`.
 
 1. `state.db` migration `0015` adds `plugins.user_surface` and `plugins.web_tree_sha256`. No plugin installed today declares a web surface, so every approval digest stays as it is.
 2. **`lamaste-priv` must be this release's** before a web surface's vhost can be written: it now accepts a server-level `auth_request`, named locations (`location @name`), a named location as `try_files`' last argument and a `types` block in a location (`media/type ext…` entries only). The Update action and the redeploy install it.
