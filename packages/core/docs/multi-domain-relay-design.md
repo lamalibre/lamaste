@@ -714,10 +714,10 @@ from the worktree; the core library came from the dev Feria (this branch's
 `@lamalibre/lamaste` published there as 4.6.0 for the run, removed
 afterwards).
 
-| Suite     | Specs                                                 | Result                                                                                                                   |
-| --------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| single-VM | 01, 03 (dependencies), 04, 19, 34, 35                 | all pass (no skip)                                                                                                       |
-| three-VM  | 01, 03, 15, 22, 32, 43, 45, 46, 47, 48; regression 40 | all pass after the fixes below (no skip); 46 and 48 re-run after the user-surface fix, 43 and 46 after the readiness fix |
+| Suite     | Specs                                                 | Result                                                                                                                                                                            |
+| --------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| single-VM | 01, 03 (dependencies), 04, 19, 34, 35                 | all pass (no skip)                                                                                                                                                                |
+| three-VM  | 01, 03, 15, 22, 32, 43, 45, 46, 47, 48; regression 40 | all pass after the fixes below (no skip); after the /simplify rework a second campaign on fresh VMs ran 01, 40, 43, 45, 46, 47, 48 (40 re-run after the credential-candidate fix) |
 
 Fixed on the way:
 
@@ -747,6 +747,16 @@ Fixed on the way:
   page's start/restart/reload (serverd `services.js`), a redeploy
   (`create-lamaste`), and the rodeo reset between tests (`rodeo.hooks.js`,
   `run-all.sh`, polling the health endpoint). Test: serverd authelia-ready.
+- **Product — the minute's OIDC sync undid a registry credential being
+  set.** Setting the credential to OIDC syncs the panel's client into
+  Authelia, verifies the chain and only then stores the credential; the
+  identity tick's every-minute OIDC sync (security review, S13) read the
+  stored credential in between, removed the candidate's client and restarted
+  Authelia under the token request ("context canceled"; spec 40 on fresh
+  VMs). The PUT now holds its candidate (`withRegistryCandidate` in
+  `plugin-oidc.js`, one at a time) across sync, verification and store, and
+  every sync that names no override serves it. Test: serverd
+  agent-hosted-plugins.
 - **Spec harness — a TOTP code reused across a step boundary** (spec 46).
   `md_sign_in` recorded the step before signing in; a sign-in begun at a
   step's last second took the next step's code, so a second sign-in in that
