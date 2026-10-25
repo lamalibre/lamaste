@@ -443,7 +443,7 @@ computed with async `crypto.pbkdf2`; an unreadable Authelia configuration
 fails the sync (logged once) instead of looking "changed" every tick. Test:
 multi-domain-core (a steady reconcile computes no digest).
 
-**Deviation for the user (S7):** stricter than "domains never nest" —
+**S7, agreed by the user 2026-10-25:** stricter than "domains never nest" —
 domains must also have different registrable domains, and a public suffix
 is never a domain. `codelama.com.tr` and `samplepark.tr` are unaffected; two
 customers given `a.example.net` and `b.example.net` by the same owner cannot
