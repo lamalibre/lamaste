@@ -230,6 +230,10 @@ export {
   isOidcIssuerKeyProvisioned as isAutheliaOidcIssuerKeyProvisioned,
   renderOidcClient,
   renderOidcClaimsPolicies,
+  renderOidcAuthorizationPolicies,
+  oidcAuthorizationPolicyName,
+  renderSessionCookies,
+  renderAccessControl,
   buildOidcProviderSection,
   oidcIssuerKeyTemplateLine,
   sentinelizeAutheliaConfig,
@@ -256,6 +260,8 @@ export type {
   OidcClientSecretDigests,
   OidcScopeDefinitions,
   OidcProviderOptions,
+  AutheliaDomain,
+  AutheliaSessionCookie,
 } from './authelia.js';
 
 // --- Authelia's per-user storage (second factors, OIDC opaque identifiers) ---
@@ -540,6 +546,7 @@ export {
   summariseRegistryCredential,
   registryAudience,
   autheliaIssuer,
+  registryIssuer,
   lamasteServerOidcClient,
   requestClientCredentialsToken,
   loginToRegistry,

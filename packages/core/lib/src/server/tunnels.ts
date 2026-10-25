@@ -27,11 +27,11 @@ import {
   AGENT_LABEL_REGEX,
   AGENT_PANEL_SUBDOMAIN_PREFIX,
   INTERNAL_PLUGIN_PORT_RANGE,
-  RESERVED_SUBDOMAINS,
   RESERVED_TUNNEL_PORTS,
   derivePluginRoute as coreDerivePluginRoute,
   isInternalPluginPort,
 } from '../constants.js';
+import { isReservedLabel } from '../domains.js';
 import { PromiseChainMutex } from '../file-helpers.js';
 import {
   USER_SURFACE_MAX_ROUTES_PER_HOST,
@@ -736,15 +736,15 @@ async function createTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntr
   assertMaxBodySize(maxBodySizeMb);
   await assertAssignableAgent(agentLabel, agents);
 
-  if ((RESERVED_SUBDOMAINS as readonly string[]).includes(subdomain)) {
-    throw new TunnelError(`Subdomain '${subdomain}' is reserved`, 'RESERVED_SUBDOMAIN');
-  }
-
-  if (subdomain.startsWith(AGENT_PANEL_SUBDOMAIN_PREFIX) && type !== 'panel') {
-    throw new TunnelError(
-      "Subdomain prefix 'agent-' is reserved for agent panel tunnels",
-      'RESERVED_AGENT_PREFIX',
-    );
+  // An agent panel's own tunnel is the one taker of the agent- prefix.
+  const agentPanelName = subdomain.startsWith(AGENT_PANEL_SUBDOMAIN_PREFIX);
+  if (isReservedLabel(subdomain) && !(agentPanelName && type === 'panel')) {
+    throw agentPanelName
+      ? new TunnelError(
+          "Subdomain prefix 'agent-' is reserved for agent panel tunnels",
+          'RESERVED_AGENT_PREFIX',
+        )
+      : new TunnelError(`Subdomain '${subdomain}' is reserved`, 'RESERVED_SUBDOMAIN');
   }
 
   let pluginRoute: string | undefined;
@@ -759,16 +759,17 @@ async function createTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntr
   }
 
   const existing = await state.readTunnels();
+  const fqdn = `${subdomain}.${domain}`;
 
-  if (existing.find((t) => t.subdomain === subdomain)) {
-    throw new TunnelError(`Subdomain '${subdomain}' is already in use`, 'SUBDOMAIN_IN_USE');
+  // One tunnel per hostname: the same subdomain may serve on two domains.
+  if (existing.find((t) => t.fqdn === fqdn)) {
+    throw new TunnelError(`Domain '${fqdn}' is already in use`, 'SUBDOMAIN_IN_USE');
   }
 
   if (existing.find((t) => t.port === port)) {
     throw new TunnelError(`Port ${port} is already in use by another tunnel`, 'PORT_IN_USE');
   }
 
-  const fqdn = `${subdomain}.${domain}`;
   const taken = opts.hostTaken ? await opts.hostTaken(fqdn) : null;
   if (taken !== null) {
     throw new TunnelError(`Domain '${fqdn}' is already served ${taken}`, 'SUBDOMAIN_IN_USE');

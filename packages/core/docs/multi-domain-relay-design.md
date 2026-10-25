@@ -1,6 +1,6 @@
 # Multi-Domain Relay — Design Document
 
-> **Status:** proposed, 2026-10-25. Not implemented. Target: Lamaste 4.7 (after 4.6, slice 7).
+> **Status:** agreed 2026-10-25 (all nine decisions as recommended); implementation in progress. Target: Lamaste 4.7 (after 4.6, slice 7).
 > **Pilot:** `codelama.com.tr` next to `samplepark.tr` on the relay `138.68.65.228`.
 > **Companions:** `identity-directory-design.md` (the slice 6 directory this builds on),
 > `gatekeeper-design.md`, `herd/docs/r730-workload-plan.md` §14 (why, and the live steps).
@@ -130,8 +130,12 @@ Changes in core and serverd:
 On **every** domain: `RESERVED_SUBDOMAINS` (`panel`, `auth`, `tunnel`, `www`,
 `mail`, `ftp`, `api`) and the `agent-` prefix. `panel.` and `tunnel.` are not
 served on added domains, but reserving them keeps every domain's namespace the
-same and leaves room. The apex of an added domain may be a custom site (the
-company page may later move to the relay). The UI's copy of the list
+same and leaves room. A domain's apex is no relay host: it may be a custom
+site (the company page may later move to the relay) or a site's alias, as
+may `www.<domain>`; `isRelayHost` (`panel.`, `auth.`, `tunnel.`, `agent-*`)
+is what custom sites and aliases may never take. Site **names** stay unique
+relay-wide (agents' `allowedSites` and the CLI name sites by them), so a
+second `blog.` on another domain is a custom site there. The UI's copy of the list
 (`server/ui/src/admin/lib/web-surface.js`) is replaced by the core export.
 
 ### Vhost files named by full hostname
@@ -435,9 +439,17 @@ name. Specs (written after slice 7's campaign, run only with the user's go):
 
 ## Waves
 
-1. **Core**: `domains.ts`, reserved names, renderers (`renderSessionCookies`,
-   `renderAccessControl`, OIDC policies), `NginxDeps` by `fqdn`, tunnel/site
-   uniqueness by `fqdn`, `issuerDomain`; tests.
+1. **Core** — done: `domains.ts` (`assertDomainName`, `domainsOverlap`,
+   `assertDomainAddable`, `domainOfHost`, `isReservedLabel`, `isRelayHost`),
+   `domains` reserved API prefix, the pure renderers `renderSessionCookies`,
+   `renderAccessControl`, `renderOidcAuthorizationPolicies`
+   (`OIDC_USER_FACTORS` shared with the manifest schema), tunnel and site
+   uniqueness by stored `fqdn`, one reserved-label rule for tunnels, sites
+   and web surfaces, `issuerDomain` on the registry credential
+   (`registryIssuer`); tests in serverd `multi-domain-core.test.js`. The
+   renderers are wired, and `updateAccessControl`'s own site loop removed,
+   in wave 2 together with membership — wiring them alone would deny every
+   user. `NginxDeps` by `fqdn` moves to wave 2 with `nginx.js`.
 2. **serverd + Gatekeeper + lamaste-priv**: migration 0016, domain routes,
    membership + offboarding + audience, Authelia/projection rendering, vhost
    renames, registry credential, Gatekeeper forbidden path + projection +
@@ -445,7 +457,9 @@ name. Specs (written after slice 7's campaign, run only with the user's go):
 3. **UI, desktop, CLI, docs**.
 4. **Rodeo specs** (45–47, single-VM 34).
 
-## Decisions to agree
+## Decisions (agreed 2026-10-25)
+
+The user agreed to every recommendation below; the alternatives are kept for the record.
 
 1. **New users on a one-domain relay** are made members of that domain
    automatically; with two or more domains they must be given domains.

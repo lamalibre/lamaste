@@ -8,7 +8,8 @@
 
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
-import { CORE_SUBDOMAINS, HOSTNAME_REGEX, RESERVED_SUBDOMAINS } from '../constants.js';
+import { HOSTNAME_REGEX } from '../constants.js';
+import { isRelayHost, isReservedLabel } from '../domains.js';
 import type { WebSurfaceAccessMode } from '../web-surface.js';
 
 // ---------------------------------------------------------------------------
@@ -105,7 +106,8 @@ export interface SiteStateDeps {
 }
 
 export interface TunnelReadDeps {
-  readTunnels(): Promise<Array<{ subdomain: string | null }>>;
+  /** Tunnel hostnames as stored; an internal plugin tunnel has none (`null`). */
+  readTunnels(): Promise<Array<{ fqdn: string | null }>>;
 }
 
 export interface AutheliaDeps {
@@ -131,7 +133,6 @@ export class SiteError extends Error {
       | 'CUSTOM_DOMAIN_REQUIRED'
       | 'NAME_IN_USE'
       | 'RESERVED_NAME'
-      | 'NAME_TUNNEL_COLLISION'
       | 'FQDN_IN_USE'
       | 'FQDN_TUNNEL_COLLISION'
       | 'CERT_FAILED'
@@ -201,6 +202,11 @@ async function resolveA(hostname: string): Promise<string[]> {
   }
 }
 
+/** The hostnames tunnels serve; internal plugin tunnels have none and cannot collide. */
+function tunnelHostnames(tunnels: ReadonlyArray<{ fqdn: string | null }>): Set<string> {
+  return new Set(tunnels.flatMap((t) => (t.fqdn ? [t.fqdn.toLowerCase()] : [])));
+}
+
 /**
  * Validate a site's alias list against every hostname already served.
  * Returns the normalised (lower-cased, de-duplicated) list.
@@ -210,18 +216,14 @@ function validateAliases(
   aliases: readonly string[],
   selfId: string | null,
   sites: readonly SiteEntry[],
-  tunnels: ReadonlyArray<{ subdomain: string | null }>,
+  tunnels: ReadonlyArray<{ fqdn: string | null }>,
   domain: string,
 ): string[] {
   const normalised = [...new Set(aliases.map((a) => a.trim().toLowerCase()))];
   if (normalised.length > MAX_SITE_ALIASES) {
     throw new SiteError(`At most ${MAX_SITE_ALIASES} aliases per site`, 'INVALID_ALIAS');
   }
-  const core = new Set(CORE_SUBDOMAINS.map((s) => `${s}.${domain}`));
-  // Internal plugin tunnels have no hostname and cannot collide.
-  const tunnelHosts = new Set(
-    tunnels.filter((t) => t.subdomain !== null).map((t) => `${t.subdomain}.${domain}`),
-  );
+  const tunnelHosts = tunnelHostnames(tunnels);
   for (const alias of normalised) {
     if (!HOSTNAME_REGEX.test(alias)) {
       throw new SiteError(`Invalid alias hostname '${alias}'`, 'INVALID_ALIAS');
@@ -229,7 +231,7 @@ function validateAliases(
     if (alias === fqdn) {
       throw new SiteError(`Alias '${alias}' is the site's own domain`, 'INVALID_ALIAS');
     }
-    if (core.has(alias) || alias === domain) {
+    if (isRelayHost(alias, [domain])) {
       throw new SiteError(`'${alias}' is reserved for Lamaste itself`, 'INVALID_ALIAS');
     }
     if (tunnelHosts.has(alias)) {
@@ -322,22 +324,22 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
     throw new SiteError(`Site name '${name}' is already in use`, 'NAME_IN_USE');
   }
 
-  if (type === 'managed' && (RESERVED_SUBDOMAINS as readonly string[]).includes(name)) {
+  if (type === 'managed' && isReservedLabel(name)) {
     throw new SiteError(`Name '${name}' is reserved`, 'RESERVED_NAME');
   }
 
-  const tunnels = await tunnelState.readTunnels();
-  if (type === 'managed' && tunnels.find((t) => t.subdomain === name)) {
-    throw new SiteError(`Name '${name}' is already in use by a tunnel`, 'NAME_TUNNEL_COLLISION');
+  const fqdn = type === 'managed' ? `${name}.${domain}` : customDomain!;
+  if (type === 'custom' && isRelayHost(fqdn, [domain])) {
+    throw new SiteError(`'${fqdn}' is reserved for Lamaste itself`, 'RESERVED_NAME');
   }
 
-  const fqdn = type === 'managed' ? `${name}.${domain}` : customDomain!;
+  const tunnels = await tunnelState.readTunnels();
 
   if (existingSites.find((s) => s.fqdn === fqdn)) {
     throw new SiteError(`Domain '${fqdn}' is already in use by another site`, 'FQDN_IN_USE');
   }
 
-  if (tunnels.find((t) => t.subdomain !== null && `${t.subdomain}.${domain}` === fqdn)) {
+  if (tunnelHostnames(tunnels).has(fqdn)) {
     throw new SiteError(`Domain '${fqdn}' is already in use by a tunnel`, 'FQDN_TUNNEL_COLLISION');
   }
 

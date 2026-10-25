@@ -405,7 +405,7 @@ test('verifyRegistryCredential (oidc) runs the whole chain and explains what Fer
     assert.equal(err.statusCode, 400);
     assert.match(err.message, /missing: admin —/);
     assert.match(err.message, /"workloads" rule/);
-    assert.match(err.message, /https:\/\/auth\.<domain>/);
+    assert.match(err.message, /issuer https:\/\/auth\.samplepark\.tr,/);
     assert.match(err.message, new RegExp(`audience ${registryUrl}`));
     assert.match(err.message, /client_id — or sub/);
     return true;
@@ -424,6 +424,23 @@ test('verifyRegistryCredential (oidc) runs the whole chain and explains what Fer
       return true;
     },
   );
+
+  // A credential naming another domain's issuer asks Authelia for that
+  // issuer, whatever the primary domain is, and the hint names it.
+  const asked = requests.length;
+  await assert.rejects(
+    verifyRegistryCredential(
+      { ...oidcConfig(), auth: { ...oidcConfig().auth, issuerDomain: 'codelama.com.tr' } },
+      oidcDeps(),
+    ),
+    (err) => {
+      assert.equal(err.statusCode, 502);
+      assert.match(err.message, /issuer https:\/\/auth\.codelama\.com\.tr,/);
+      return true;
+    },
+  );
+  assert.equal(requests[asked].headers['x-forwarded-host'], 'auth.codelama.com.tr');
+  assert.equal(requests[asked].headers['x-forwarded-proto'], 'https');
 
   // Authelia down → 502 naming Authelia.
   autheliaMode = 'down';

@@ -22,7 +22,9 @@ import { access, chmod, constants, copyFile, open, readFile, rename, rm } from '
 import path from 'node:path';
 import yaml from 'js-yaml';
 import { AUTHELIA_SESSION_COOKIE } from '../authelia-session.js';
-
+import { OIDC_USER_FACTORS, isLamasteUsername } from '../constants.js';
+import type { OidcUserFactor } from '../constants.js';
+import { assertDomainName, domainOfHost } from '../domains.js';
 import type { OidcClientDeclaration } from '../schemas.js';
 
 // ---------------------------------------------------------------------------
@@ -216,13 +218,7 @@ export async function writeAutheliaConfig(
       // (`authelia-session.ts`). The e2e cookie-jar fixtures write it too.
       name: AUTHELIA_SESSION_COOKIE,
       secret: sessionSecret,
-      cookies: [
-        {
-          domain,
-          authelia_url: `https://auth.${domain}`,
-          default_redirection_url: `https://${domain}`,
-        },
-      ],
+      cookies: renderSessionCookies([domain]),
       expiration: '12h',
       inactivity: '2h',
     },
@@ -519,13 +515,7 @@ async function rewriteAutheliaConfig(
 
   if (session && session.domain && !session.cookies) {
     const oldDomain = session.domain;
-    session.cookies = [
-      {
-        domain: oldDomain,
-        authelia_url: `https://auth.${oldDomain}`,
-        default_redirection_url: `https://${oldDomain}`,
-      },
-    ];
+    session.cookies = renderSessionCookies([oldDomain]);
     delete session.domain;
   }
 
@@ -688,6 +678,138 @@ export async function updateAccessControl(
 
     currentConfig.access_control = accessControl;
   }, exec);
+}
+
+// ---------------------------------------------------------------------------
+// Domains: session cookies and membership
+// ---------------------------------------------------------------------------
+
+/**
+ * A domain as the Authelia configuration renders it: its name and the
+ * usernames of its active members (a disabled or removed user is never one).
+ */
+export interface AutheliaDomain {
+  readonly name: string;
+  readonly members: readonly string[];
+}
+
+/** One `session.cookies` entry. */
+export interface AutheliaSessionCookie {
+  readonly domain: string;
+  readonly authelia_url: string;
+  readonly default_redirection_url: string;
+}
+
+/**
+ * One `session.cookies` entry per domain, each with its own sign-in at
+ * `auth.<domain>`. Authelia picks the entry whose domain the target host is
+ * under, and redirects only to a target under one — so a domain's sign-in
+ * sets and reads its own cookie. Pure.
+ */
+export function renderSessionCookies(domains: readonly string[]): AutheliaSessionCookie[] {
+  return domains.map((domain) => {
+    assertDomainName(domain);
+    return {
+      domain,
+      authelia_url: `https://auth.${domain}`,
+      // Authelia 4.38+ refuses a default redirection equal to authelia_url.
+      default_redirection_url: `https://${domain}`,
+    };
+  });
+}
+
+/** `user:<name>` for a member, refusing anything but a Lamaste username. */
+function userSubject(username: string): string {
+  if (!isLamasteUsername(username)) {
+    throw new Error(`Not a Lamaste username: ${JSON.stringify(username)}`);
+  }
+  return `user:${username}`;
+}
+
+/** A domain checked once for rendering: its members in a fixed order, each once, as subjects. */
+interface RenderedDomain {
+  readonly name: string;
+  readonly members: readonly string[];
+  readonly subjects: readonly string[];
+}
+
+/**
+ * Check every domain name and member up front and put members in a fixed
+ * order: the same set always renders the same rules.
+ */
+function renderedDomains(domains: readonly AutheliaDomain[]): RenderedDomain[] {
+  return domains.map(({ name, members }) => {
+    assertDomainName(name);
+    const sorted = [...new Set(members)].sort();
+    return { name, members: sorted, subjects: sorted.map(userSubject) };
+  });
+}
+
+/** An access_control rule or an OIDC authorization policy rule, as Authelia reads it. */
+type AutheliaRule = Record<string, unknown>;
+
+/**
+ * The whole `access_control` section: who may reach which host, with
+ * membership of a host's domain inside every rule.
+ *
+ * Authelia applies the first rule that matches, so the member gate cannot
+ * be a rule of its own ahead of the sites' rules — each site rule's subjects
+ * are narrowed to members of the site's domain instead:
+ *
+ * 1. per protected site, as before, narrowed: the allowed users who are
+ *    members, admins who are members (`group:admins` AND `user:<member>`),
+ *    then deny;
+ * 2. per domain: its members (`two_factor`) on the domain and every host
+ *    under it, then deny;
+ * 3. `default_policy: deny` — every host the relay gates is under a domain.
+ *
+ * A site under no domain holds no session cookie anyway; it gets its deny
+ * alone. Pure; throws on a member that is not a Lamaste username.
+ */
+export function renderAccessControl(
+  domains: readonly AutheliaDomain[],
+  sites: readonly ProtectedSiteRule[],
+): { default_policy: 'deny'; rules: AutheliaRule[] } {
+  const rendered = renderedDomains(domains);
+  const byName = new Map(rendered.map((d) => [d.name, d]));
+  const names = rendered.map((d) => d.name);
+  const rules: AutheliaRule[] = [];
+
+  for (const site of sites) {
+    if (!site.autheliaProtected) continue;
+    const allowedUsers = site.allowedUsers ?? [];
+    const hasUserList = allowedUsers.length > 0;
+    if (!hasUserList && !site.restrictAccess) continue;
+
+    const name = domainOfHost(site.fqdn, names);
+    const domain = name === null ? undefined : byName.get(name);
+    const subjects = domain?.subjects ?? [];
+    if (hasUserList && domain) {
+      const allowed = new Set(allowedUsers);
+      const allowedSubjects = domain.members.filter((m) => allowed.has(m)).map(userSubject);
+      if (allowedSubjects.length > 0) {
+        rules.push({ domain: site.fqdn, policy: 'two_factor', subject: allowedSubjects });
+      }
+    }
+    if (subjects.length > 0) {
+      rules.push({
+        domain: site.fqdn,
+        policy: 'two_factor',
+        subject: subjects.map((subject) => ['group:admins', subject]),
+      });
+    }
+    rules.push({ domain: site.fqdn, policy: 'deny' });
+  }
+
+  for (const { name, subjects } of rendered) {
+    const hosts = [name, `*.${name}`];
+    if (subjects.length > 0) {
+      rules.push({ domain: hosts, policy: 'two_factor', subject: [...subjects] });
+    }
+    rules.push({ domain: hosts, policy: 'deny' });
+  }
+
+  return { default_policy: 'deny', rules };
 }
 
 // ---------------------------------------------------------------------------
@@ -878,6 +1000,52 @@ export function renderOidcClaimsPolicies(
   for (const client of clients) {
     if (client.accessTokenClaims.length === 0) continue;
     policies[client.id] = { access_token: [...client.accessTokenClaims] };
+  }
+  return policies;
+}
+
+/**
+ * Every address: the network of the rule that refuses everyone (Authelia
+ * refuses a policy without rules, and a rule without subjects or networks).
+ */
+const EVERY_NETWORK: readonly string[] = ['0.0.0.0/0', '::/0'];
+
+/**
+ * The name of the authorization policy that admits members of `domain`
+ * with `factor` — what a user-facing client of that domain names as its
+ * `authorization_policy`. Domain labels hold no `:`, so names never clash.
+ */
+export function oidcAuthorizationPolicyName(domain: string, factor: OidcUserFactor): string {
+  assertDomainName(domain);
+  return policyName(domain, factor);
+}
+
+function policyName(domain: string, factor: OidcUserFactor): string {
+  return `lamaste:${domain}:${factor}`;
+}
+
+/**
+ * `identity_providers.oidc.authorization_policies`: per domain and factor,
+ * its members admitted with that factor and everyone else refused.
+ * Authelia's `access_control` does not apply to OIDC authorization — a
+ * client's `authorization_policy` does — so this is how a sign-in such as
+ * `feria login` admits only members of the client's domain. A domain without
+ * members refuses everyone. Pure.
+ */
+export function renderOidcAuthorizationPolicies(
+  domains: readonly AutheliaDomain[],
+): Record<string, { default_policy: 'deny'; rules: AutheliaRule[] }> {
+  const policies: Record<string, { default_policy: 'deny'; rules: AutheliaRule[] }> = {};
+  for (const { name, subjects } of renderedDomains(domains)) {
+    for (const factor of OIDC_USER_FACTORS) {
+      policies[policyName(name, factor)] = {
+        default_policy: 'deny',
+        rules:
+          subjects.length > 0
+            ? [{ policy: factor, subject: [...subjects] }]
+            : [{ policy: 'deny', networks: [...EVERY_NETWORK] }],
+      };
+    }
   }
   return policies;
 }

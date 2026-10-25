@@ -34,6 +34,7 @@ export const RESERVED_API_PREFIXES = [
   'gatekeeper',
   'audit',
   'notifications',
+  'domains',
 ] as const;
 
 export type ReservedApiPrefix = (typeof RESERVED_API_PREFIXES)[number];
@@ -177,6 +178,15 @@ export const AGENT_LABEL_REGEX = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
  */
 export const HOSTNAME_REGEX =
   /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/**
+ * The factors a user-facing OIDC client may ask for — a manifest's
+ * `authorizationPolicy`, and the factors of the per-domain authorization
+ * policies the relay renders for them.
+ */
+export const OIDC_USER_FACTORS = ['one_factor', 'two_factor'] as const;
+
+export type OidcUserFactor = (typeof OIDC_USER_FACTORS)[number];
 
 /**
  * Lamaste username format — the rule of the users and invitations APIs: a

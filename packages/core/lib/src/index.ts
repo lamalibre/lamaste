@@ -49,6 +49,7 @@ export {
   MAX_PLUGINS_PER_REGISTRY,
   DISABLED_PLUGIN_CACHE_TTL_MS,
   PANEL_BUNDLE_CACHE_SECONDS,
+  OIDC_USER_FACTORS,
 } from './constants.js';
 
 export type {
@@ -60,6 +61,7 @@ export type {
   CuratedPlugin,
   ChiselArch,
   AutheliaArch,
+  OidcUserFactor,
 } from './constants.js';
 
 // Verified downloads of the pinned chisel / Authelia releases
@@ -311,6 +313,20 @@ export type {
   WebTreeFile,
   WebTreeManifest,
 } from './web-surface.js';
+
+// The relay's base domains: names, overlap, the domain of a hostname, reserved
+// labels (the multi-domain relay)
+export {
+  DOMAIN_STATUSES,
+  DomainError,
+  assertDomainAddable,
+  assertDomainName,
+  domainOfHost,
+  domainsOverlap,
+  isRelayHost,
+  isReservedLabel,
+} from './domains.js';
+export type { DomainRecord, DomainStatus } from './domains.js';
 
 // Authelia's session cookie: its name, how Gatekeeper reads it, and the
 // nginx map that keeps it from every tunnel and agent backend

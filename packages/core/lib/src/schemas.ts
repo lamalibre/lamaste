@@ -19,6 +19,7 @@ import {
 import {
   CORE_CAPABILITY_NAMESPACES,
   DEFAULT_PLUGIN_HOSTING,
+  OIDC_USER_FACTORS,
   PLUGIN_CAPABILITY_NAMESPACE,
   PLUGIN_HOSTINGS,
   PLUGIN_CAPABILITY_REGEX,
@@ -187,7 +188,7 @@ export const OidcClientSchema = z
      * the `client_credentials` grant has no end user: Authelia requires
      * `one_factor` there, which is the default for such a client.
      */
-    authorizationPolicy: z.enum(['one_factor', 'two_factor']).optional(),
+    authorizationPolicy: z.enum(OIDC_USER_FACTORS).optional(),
     requirePkce: z.boolean().default(false),
     /** A confidential client authenticates to the token endpoint with a Lamaste-generated secret. */
     confidential: z.boolean().default(false),

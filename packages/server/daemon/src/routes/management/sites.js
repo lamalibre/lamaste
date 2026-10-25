@@ -119,7 +119,6 @@ function siteErrorStatus(code) {
     case 'CUSTOM_DOMAIN_REQUIRED':
     case 'NAME_IN_USE':
     case 'RESERVED_NAME':
-    case 'NAME_TUNNEL_COLLISION':
     case 'FQDN_IN_USE':
     case 'FQDN_TUNNEL_COLLISION':
     case 'NOT_CUSTOM':

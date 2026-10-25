@@ -21,11 +21,8 @@
 
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import {
-  AGENT_LABEL_REGEX,
-  AGENT_PANEL_SUBDOMAIN_PREFIX,
-  RESERVED_SUBDOMAINS,
-} from './constants.js';
+import { AGENT_LABEL_REGEX } from './constants.js';
+import { isReservedLabel } from './domains.js';
 
 // ---------------------------------------------------------------------------
 // Manifest
@@ -47,15 +44,14 @@ export const DEFAULT_WEB_SURFACE_ROOT = 'web';
 const WEB_SURFACE_ROOT_MAX_LENGTH = 128;
 
 /**
- * Whether `subdomain` may be a web surface's subdomain: a DNS label, none
- * of {@link RESERVED_SUBDOMAINS}, not an agent panel's (`agent-…`).
+ * Whether `subdomain` may be a web surface's subdomain: a DNS label that is
+ * not reserved on every domain ({@link isReservedLabel}).
  */
 export function isWebSurfaceSubdomain(subdomain: unknown): subdomain is string {
   return (
     typeof subdomain === 'string' &&
     AGENT_LABEL_REGEX.test(subdomain) &&
-    !(RESERVED_SUBDOMAINS as readonly string[]).includes(subdomain) &&
-    !subdomain.startsWith(AGENT_PANEL_SUBDOMAIN_PREFIX)
+    !isReservedLabel(subdomain)
   );
 }
 

@@ -37,6 +37,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 
+import { HOSTNAME_REGEX } from '../constants.js';
 import { atomicWriteJSON } from '../file-helpers.js';
 import { NPM_USERCONFIG_ENV, npmRegistryStatus, renderInstallNpmrc } from '../npm-userconfig.js';
 import type { AutheliaOidcClient, OidcScopeDefinitions } from './authelia.js';
@@ -85,6 +86,12 @@ export const RegistryAuthSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('oidc'),
     clientId: z.literal(LAMASTE_SERVER_OIDC_CLIENT_ID),
+    /**
+     * The domain whose issuer (`https://auth.<domain>`) the panel's tokens
+     * carry — the one the registry trusts. Absent: the primary domain (every
+     * credential stored before the multi-domain relay).
+     */
+    issuerDomain: z.string().regex(HOSTNAME_REGEX).optional(),
   }),
 ]);
 
@@ -254,9 +261,20 @@ export function registryAudience(registryUrl: string): string {
   return registryBase(registryUrl).href.replace(/\/$/, '');
 }
 
-/** Authelia issuer of the relay: `https://auth.<domain>`. */
+/** Authelia issuer of one of the relay's domains: `https://auth.<domain>`. */
 export function autheliaIssuer(domain: string): string {
   return `https://auth.${domain}`;
+}
+
+/**
+ * The issuer an OIDC registry credential's tokens carry: its
+ * `issuerDomain`'s, else the primary domain's.
+ */
+export function registryIssuer(
+  auth: Extract<RegistryAuth, { kind: 'oidc' }>,
+  primaryDomain: string,
+): string {
+  return autheliaIssuer(auth.issuerDomain ?? primaryDomain);
 }
 
 /**
@@ -361,7 +379,10 @@ export interface RegistryServiceToken {
 
 /** What `auth.kind: 'oidc'` needs from the daemon to reach Authelia. */
 export interface OidcBrokerDeps {
-  /** Relay domain: the issuer is `https://auth.<domain>`. */
+  /**
+   * The relay's primary domain: the issuer is `https://auth.<domain>` when
+   * the credential names no `issuerDomain`.
+   */
   domain: string;
   /** Plaintext secret of the `lamaste-server` client (from `oidc-clients.json`). */
   clientSecret: string;
@@ -462,10 +483,14 @@ export async function requestClientCredentialsToken(
   return { accessToken: parsed.data.access_token, expiresAt: now() + lifetimeMs };
 }
 
-/** `POST /-/feria/login` with a JWT from a trusted issuer → a Feria token. */
+/**
+ * `POST /-/feria/login` with a JWT from a trusted issuer (`issuer`, named
+ * in a refusal's hint) → a Feria token.
+ */
 export async function loginToRegistry(
   registryUrl: string,
   assertion: string,
+  issuer: string,
   fetchImpl: FetchLike = globalThis.fetch,
 ): Promise<RegistryServiceToken & { scopes: string[]; tokenId: string }> {
   let issued: z.infer<typeof IssuedTokenSchema>;
@@ -483,7 +508,7 @@ export async function loginToRegistry(
   } catch (err: unknown) {
     if (err instanceof RegistryCredentialError) {
       throw new RegistryCredentialError(
-        `${err.message}${feriaRulesHint(registryUrl)}`,
+        `${err.message}${feriaRulesHint(registryUrl, issuer)}`,
         err.statusCode,
       );
     }
@@ -506,10 +531,10 @@ export async function loginToRegistry(
 const REQUIRED_SERVICE_SCOPES = ['read', 'admin'] as const;
 
 /** Appended to every failure of the OIDC login: what the operator must configure on Feria. */
-function feriaRulesHint(registryUrl: string): string {
+function feriaRulesHint(registryUrl: string, issuer: string): string {
   return (
     ' — Feria (0.3.2 or later) accepts the panel only through a "workloads" rule on the relay Authelia\'s ' +
-    `"groups" issuer in its auth.json (issuer https://auth.<domain>, audience ${registryAudience(registryUrl)}) ` +
+    `"groups" issuer in its auth.json (issuer ${issuer}, audience ${registryAudience(registryUrl)}) ` +
     `that grants the scopes ${REQUIRED_SERVICE_SCOPES.join(' and ')} when the claim client_id — or sub, which carries the same value — is "${LAMASTE_SERVER_OIDC_CLIENT_ID}"`
   );
 }
@@ -533,10 +558,11 @@ export async function obtainRegistryServiceToken(
       500,
     );
   }
+  const issuer = registryIssuer(config.auth, deps.oidc.domain);
   const { accessToken } = await requestClientCredentialsToken(
     {
       tokenEndpoint: deps.oidc.tokenEndpoint ?? AUTHELIA_LOCAL_TOKEN_ENDPOINT,
-      issuer: autheliaIssuer(deps.oidc.domain),
+      issuer,
       clientId: config.auth.clientId,
       clientSecret: deps.oidc.clientSecret,
       scope: LAMASTE_REGISTRY_OIDC_SCOPE,
@@ -545,7 +571,7 @@ export async function obtainRegistryServiceToken(
     fetchImpl,
     deps.now ?? Date.now,
   );
-  const login = await loginToRegistry(config.registryUrl, accessToken, fetchImpl);
+  const login = await loginToRegistry(config.registryUrl, accessToken, issuer, fetchImpl);
   return { token: login.token, expiresAt: login.expiresAt, owner: login.owner };
 }
 
@@ -625,7 +651,9 @@ export async function verifyRegistryCredential(
     throw new RegistryCredentialError(
       `the credential identifies ${who.owner} with scopes [${who.scopes.join(', ')}] — the panel needs ` +
         `read (its own installs) and admin (brokering agent tokens); missing: ${missing.join(', ')}` +
-        (config.auth.kind === 'oidc' ? feriaRulesHint(config.registryUrl) : ''),
+        (config.auth.kind === 'oidc' && deps.oidc
+          ? feriaRulesHint(config.registryUrl, registryIssuer(config.auth, deps.oidc.domain))
+          : ''),
       400,
     );
   }
