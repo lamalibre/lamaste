@@ -10,7 +10,7 @@ import {
 } from '../lib/authelia.js';
 import { httpError } from '../lib/app-error.js';
 import { changeUsers, usersFileError } from '../lib/directory.js';
-import { invitationSignInDomain } from '../lib/domains.js';
+import { invitationDomainsNow, invitationSignInDomain } from '../lib/domains.js';
 
 /**
  * Find an invitation by token using a constant-time comparison.
@@ -119,6 +119,8 @@ export default async function inviteRoutes(fastify, _opts) {
       return reply.code(500).send({ error: 'Failed to process password' });
     }
 
+    const grantedDomains = await invitationDomainsNow(invitation);
+
     // Through the users lock: the directory gives the user their id before
     // Authelia restarts and lets them sign in.
     try {
@@ -149,10 +151,11 @@ export default async function inviteRoutes(fastify, _opts) {
           // A removed user's grants, groups and second factors under the
           // username go first; a username with an OIDC identity is refused.
           creates: [invitation.username],
-          // The domains the invitation names (an invitation from before the
-          // multi-domain relay names none: the relay's one domain).
+          // The domains the invitation names that still are the ones it
+          // named (an invitation from before the multi-domain relay names
+          // none: the relay's one domain).
           ...(Array.isArray(invitation.domains)
-            ? { domains: { [invitation.username]: invitation.domains } }
+            ? { domains: { [invitation.username]: grantedDomains } }
             : {}),
           expect: (users) => users[invitation.username]?.password === hashedPassword,
         },

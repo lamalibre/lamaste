@@ -18,6 +18,7 @@
 import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { z } from 'zod';
 
 import { PromiseChainMutex, atomicWriteJSON } from '../file-helpers.js';
@@ -117,8 +118,41 @@ function generateSalt(): string {
   return adaptedBase64Encode(crypto.randomBytes(OIDC_SECRET_PBKDF2_SALT_BYTES));
 }
 
-function digestOf(record: OidcClientSecretRecord): string {
-  return encodePbkdf2Sha512Digest(record.secret, adaptedBase64Decode(record.salt));
+/**
+ * Digests already computed, keyed by a SHA-256 of salt and secret (never the
+ * secret itself): a client's digest is fixed by its salt and secret, and
+ * every render — the identity tick's included, once a minute — asks for it
+ * again. PBKDF2 at Authelia's cost (310 000 rounds of SHA-512) runs only for
+ * a secret not seen yet, and off the event loop.
+ */
+const digestMemo = new Map<string, string>();
+const DIGEST_MEMO_MAX = 256;
+let digestsComputed = 0;
+
+/** How many digests this process computed (tests, diagnostics). */
+export function oidcSecretDigestsComputed(): number {
+  return digestsComputed;
+}
+
+const pbkdf2Async = promisify(crypto.pbkdf2);
+
+async function digestOf(record: OidcClientSecretRecord): Promise<string> {
+  const key = crypto.createHash('sha256').update(`${record.salt}\n${record.secret}`).digest('hex');
+  const known = digestMemo.get(key);
+  if (known !== undefined) return known;
+  const salt = adaptedBase64Decode(record.salt);
+  const derived = await pbkdf2Async(
+    record.secret,
+    salt,
+    OIDC_SECRET_PBKDF2_ITERATIONS,
+    OIDC_SECRET_PBKDF2_KEY_BYTES,
+    'sha512',
+  );
+  digestsComputed += 1;
+  const digest = `$pbkdf2-sha512$${OIDC_SECRET_PBKDF2_ITERATIONS}$${adaptedBase64Encode(salt)}$${adaptedBase64Encode(derived)}`;
+  if (digestMemo.size >= DIGEST_MEMO_MAX) digestMemo.clear();
+  digestMemo.set(key, digest);
+  return digest;
 }
 
 /** Check a secret against a digest produced by {@link encodePbkdf2Sha512Digest}. */
@@ -214,7 +248,7 @@ export function reconcileOidcClientSecrets(
       const existing = store.clients[id];
       if (existing && existing.plugin === want.plugin) {
         next.clients[id] = existing;
-        result.digests[id] = digestOf(existing);
+        result.digests[id] = await digestOf(existing);
         continue;
       }
       const secret = generateClientSecret();
@@ -226,7 +260,7 @@ export function reconcileOidcClientSecrets(
         rotatedAt: null,
       };
       next.clients[id] = record;
-      result.digests[id] = digestOf(record);
+      result.digests[id] = await digestOf(record);
       result.created.push({ id, plugin: want.plugin, secret });
     }
     for (const id of Object.keys(store.clients)) {
@@ -279,7 +313,7 @@ export async function readOidcClientSecretDigests(
   stateDir: string,
 ): Promise<Record<string, string>> {
   const store = await readStore(stateDir);
-  return Object.fromEntries(
-    Object.entries(store.clients).map(([id, record]) => [id, digestOf(record)]),
-  );
+  const digests: Record<string, string> = {};
+  for (const [id, record] of Object.entries(store.clients)) digests[id] = await digestOf(record);
+  return digests;
 }

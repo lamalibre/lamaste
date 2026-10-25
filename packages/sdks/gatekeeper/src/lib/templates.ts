@@ -162,19 +162,20 @@ ${escapeHtml(templates.email.body)}<button class="copy-btn" onclick="copyTemplat
  * @param domain - The base domain the requested host is under; null when it
  *   is under none (the page then links to no sign-in: there is none to trust)
  * @param options - Optional admin contact info
- * @param site - The static site's hostname, when the refusal is a site's
+ * @param host - The requested hostname; `site` when the refusal is a static
+ *   site's (for its domain or its own user list)
  * @returns Full HTML page string
  */
 export function buildDomainRefusalPage(
   domain: string | null,
-  options?: TemplateOptions,
-  site?: string,
+  options: TemplateOptions | undefined,
+  { host, site = false }: { host: string; site?: boolean },
 ): string {
   const adminContact = options?.adminContact ?? '';
   const adminName = options?.adminName ?? 'your administrator';
   const heading =
-    site || domain === null
-      ? `Not allowed on <span class="fqdn">${escapeHtml(site ?? '')}</span>`
+    domain === null || site
+      ? `Not allowed on <span class="fqdn">${escapeHtml(host)}</span>`
       : `Not a member of <span class="fqdn">${escapeHtml(domain)}</span>`;
   const explanation =
     domain === null
@@ -198,7 +199,7 @@ export function buildDomainRefusalPage(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Not allowed — ${escapeHtml(domain ?? site ?? '')}</title>
+  <title>Not allowed — ${escapeHtml(domain ?? host)}</title>
   <style>
 ${BASE_CSS}
     .subtitle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1rem; }

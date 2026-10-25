@@ -588,23 +588,27 @@ test('the relay hostnames of a domain must be free before it is added or activat
   assert.equal((await call('DELETE', '/api/domains/later.example')).statusCode, 200);
 });
 
-test('a removed domain is forgotten by invitations; an invitation signs in at its first active domain', async () => {
+test('an invitation grants only domains that existed when it was made; it signs in at its first active one', async () => {
   await call('POST', '/api/domains', { name: 'gone.example' });
-  await lib.writeInvitations([
-    { id: 'i1', token: 'x'.repeat(64), domains: ['gone.example', 'samplepark.tr'] },
-  ]);
+  const invitation = {
+    domains: ['gone.example', 'samplepark.tr'],
+    createdAt: new Date().toISOString(),
+  };
   assert.equal(
-    await lib.invitationSignInDomain({ domains: ['gone.example', 'samplepark.tr'] }),
+    await lib.invitationSignInDomain(invitation),
     'samplepark.tr',
     'a pending domain has no sign-in page yet',
   );
+  assert.deepEqual(await lib.invitationDomainsNow(invitation), ['gone.example', 'samplepark.tr']);
+  // Removed, then added again (for someone else): another domain — the
+  // invitation grants it nothing.
   assert.equal((await call('DELETE', '/api/domains/gone.example')).statusCode, 200);
-  assert.deepEqual((await lib.readInvitations())[0].domains, ['samplepark.tr']);
-  assert.deepEqual((await audits('invitation.domain.removed')).at(0).details, {
-    domain: 'gone.example',
-    invitations: 1,
-  });
-  await lib.writeInvitations([]);
+  assert.deepEqual(await lib.invitationDomainsNow(invitation), ['samplepark.tr']);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await call('POST', '/api/domains', { name: 'gone.example' });
+  assert.deepEqual(await lib.invitationDomainsNow(invitation), ['samplepark.tr']);
+  assert.deepEqual(await lib.invitationDomainsNow({ domains: ['samplepark.tr'] }), []);
+  assert.equal((await call('DELETE', '/api/domains/gone.example')).statusCode, 200);
 });
 
 test('a domain is removed under the tunnel lock: a tunnel or site being put on it finishes first', async () => {
@@ -627,9 +631,65 @@ test('a domain is removed under the tunnel lock: a tunnel or site being put on i
   // A write that names it afterwards is refused, not stored.
   await assert.rejects(
     lib.withActiveDomain('racing.example', async () => assert.fail('ran on a removed domain')),
-    (err) => err.code === 'domain_gone',
+    (err) => err.code === 'unknown_domain',
   );
-  assert.equal(await lib.isActiveDomain('samplepark.tr'), true);
+  await lib.withActiveDomain('samplepark.tr', async () => {});
+});
+
+test('adding or activating a domain holds the hostname locks: a site taking a relay hostname is either before or after', async () => {
+  const { withTunnelLock } = await import('@lamalibre/lamaste/server');
+  let release;
+  const held = withTunnelLock(() => new Promise((resolve) => (release = resolve)));
+  let added = false;
+  const adding = call('POST', '/api/domains', { name: 'held.example' }).then((res) => {
+    added = res.statusCode === 201;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(added, false, 'the add waits for the tunnel lock');
+  release();
+  await held;
+  await adding;
+  assert.equal(added, true);
+
+  // Activation re-checks under the locks after the certificate: a relay
+  // hostname taken while it was issued refuses it.
+  activation.length = 0;
+  const original = lib.writeSites;
+  const site = {
+    id: '33333333-4444-4555-8666-777777777777',
+    name: 'sneaky',
+    fqdn: 'auth.held.example',
+    type: 'custom',
+    spaMode: false,
+    autheliaProtected: false,
+    allowedUsers: [],
+    dnsVerified: false,
+    certIssued: false,
+    rootPath: '/var/www/lamaste/33333333-4444-4555-8666-777777777777/',
+    createdAt: new Date().toISOString(),
+    totalSize: 0,
+  };
+  lib.setDomainActivationForTests({
+    issueCert: async () => {
+      await original([site]);
+    },
+    writeAuthVhost: async (domain) => activation.push(['vhost', domain]),
+    removeAuthVhost: async (domain) => activation.push(['remove-vhost', domain]),
+  });
+  const refused = await call('POST', '/api/domains/held.example/activate');
+  assert.equal(refused.statusCode, 409);
+  assert.equal(refused.json().code, 'relay_host_taken');
+  assert.deepEqual(activation, [], 'no vhost written');
+  await lib.writeSites([]);
+  lib.setDomainActivationForTests({
+    issueCert: async (fqdn, email) => activation.push(['cert', fqdn, email]),
+    writeAuthVhost: async (domain, opts) => {
+      if (failVhost) throw new Error('nginx -t failed');
+      activation.push(['vhost', domain, opts]);
+    },
+    removeAuthVhost: async (domain) => activation.push(['remove-vhost', domain]),
+  });
+  assert.equal((await call('DELETE', '/api/domains/held.example')).statusCode, 200);
 });
 
 test('rendering: both steps are always tried; a failure streak is audited and notified once, its end once', async () => {
@@ -666,7 +726,7 @@ test('rendering: both steps are always tried; a failure streak is audited and no
   assert.equal((await audits('domain.render.recovered')).length, 1);
 });
 
-test('any membership that ends takes the user’s registry tokens; an issuer change takes those of non-members', async () => {
+test('registry tokens follow the registry’s domains: revoked when a user is a member of none of them', async () => {
   const revoked = [];
   const feria = createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
@@ -677,32 +737,66 @@ test('any membership that ends takes the user’s registry tokens; an issuer cha
     res.end(JSON.stringify({ revoked: [] }));
   });
   await new Promise((resolve) => feria.listen(0, '127.0.0.1', resolve));
-  const { writeRegistryCredentialConfig, clearRegistryCredentialConfig } =
-    await import('../src/lib/registry-credential.js');
+  const registry = await import('../src/lib/registry-credential.js');
+  const credential = (auth) => ({
+    provider: 'feria',
+    registryUrl: `http://127.0.0.1:${feria.address().port}/`,
+    scope: '@lamalibre',
+    auth,
+    configuredAt: new Date().toISOString(),
+  });
   try {
-    // A pasted token: the registry's issuer domain is the primary.
-    await writeRegistryCredentialConfig({
-      provider: 'feria',
-      registryUrl: `http://127.0.0.1:${feria.address().port}/`,
-      scope: '@lamalibre',
-      auth: { kind: 'token', token: 'feria_test_service_token_000000' },
-      configuredAt: new Date().toISOString(),
-    });
+    // A pasted token: the registry's domain is the primary.
+    await registry.writeRegistryCredentialConfig(
+      credential({ kind: 'token', token: 'feria_test_service_token_000000' }),
+    );
+    assert.deepEqual(await lib.registryDomains(), ['samplepark.tr']);
     const onur = await idOf('onur');
+    const cust = await idOf('cust');
+    await call('PUT', `/api/domains/codelama.com.tr/members/${onur}`);
+    await call('PUT', `/api/domains/samplepark.tr/members/${onur}`);
+    revoked.length = 0;
+    // Still a member of the registry's domain: nothing to revoke.
+    await call('DELETE', `/api/domains/codelama.com.tr/members/${onur}`);
+    assert.deepEqual(revoked, []);
+    // A member of none of them any more: revoked.
+    const ended = await call('DELETE', `/api/domains/samplepark.tr/members/${cust}`);
+    assert.equal(ended.statusCode, 200, ended.body);
+    assert.deepEqual(revoked, ['user:cust']);
+    await call('PUT', `/api/domains/samplepark.tr/members/${cust}`);
+
+    // Who is revoked when the registry's domains become codelama.com.tr:
+    // everyone who is a member of none of them; onur keeps theirs.
     await call('PUT', `/api/domains/codelama.com.tr/members/${onur}`);
     revoked.length = 0;
-    // Feria may well sit on codelama.com.tr while the credential names the
-    // primary: the end of that membership takes the tokens too.
-    const ended = await call('DELETE', `/api/domains/codelama.com.tr/members/${onur}`);
-    assert.equal(ended.statusCode, 200, ended.body);
-    assert.deepEqual(revoked, ['user:onur']);
+    const tokenCredential = await registry.readRegistryCredentialConfig();
+    await lib.revokeRegistryTokensOutside(['codelama.com.tr'], tokenCredential, quietLog);
+    assert.ok(revoked.includes('user:cust'));
+    assert.ok(!revoked.includes('user:onur'));
 
-    revoked.length = 0;
-    await lib.revokeRegistryTokensOutside('codelama.com.tr', quietLog);
-    assert.ok(revoked.includes('user:onur'), 'not a member of the new issuer domain');
-    assert.ok(revoked.every((owner) => owner.startsWith('user:')));
+    // Storing a credential whose domains differ revokes them (here each
+    // attempt reports a warning: the stand-in Authelia is absent, so the
+    // panel's OIDC token cannot be had); unchanged domains revoke nothing.
+    const changed = await registry.setRegistryCredential(
+      credential({ kind: 'oidc', clientId: 'lamaste-server', issuerDomain: 'codelama.com.tr' }),
+      { logger: quietLog },
+    );
+    assert.ok(changed.length > 0 && changed.every((w) => w.step === 'registry'));
+    assert.deepEqual(await lib.registryDomains(), ['codelama.com.tr']);
+    const unchanged = await registry.setRegistryCredential(
+      credential({ kind: 'oidc', clientId: 'lamaste-server', issuerDomain: 'codelama.com.tr' }),
+      { logger: quietLog },
+    );
+    assert.deepEqual(unchanged, []);
+    // A domain that is no longer active is refused, nothing stored.
+    await assert.rejects(
+      registry.setRegistryCredential(
+        credential({ kind: 'oidc', clientId: 'lamaste-server', issuerDomain: 'nowhere.example' }),
+      ),
+      (err) => err.code === 'unknown_domain',
+    );
   } finally {
-    await clearRegistryCredentialConfig();
+    await registry.clearRegistryCredentialConfig();
     await new Promise((resolve) => feria.close(resolve));
   }
 });

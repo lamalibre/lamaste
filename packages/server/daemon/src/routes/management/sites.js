@@ -14,7 +14,7 @@ import {
   withTunnelLock,
 } from '@lamalibre/lamaste/server';
 import { DomainNameSchema } from '@lamalibre/lamaste';
-import { AppError, sendFailure } from '../../lib/app-error.js';
+import { AppError } from '../../lib/app-error.js';
 import { webSurfaceServing } from '../../lib/web-surface.js';
 import { getConfig } from '../../lib/config.js';
 import { readSites, writeSites, readTunnels, withSitesLock } from '../../lib/state.js';
@@ -125,6 +125,21 @@ function buildAutheliaDeps(logger) {
       await syncDomainAccess({ logger, sites });
     },
   };
+}
+
+/**
+ * The active domain a managed site is put on (the primary unless named), as
+ * a SiteError the create route answers like its other refusals.
+ *
+ * @param {string | undefined} requested
+ */
+async function siteDomain(requested) {
+  try {
+    return await resolveActiveDomain(requested);
+  } catch (err) {
+    if (Number.isInteger(err.statusCode)) throw new SiteError(err.message, 'DOMAIN_NOT_CONFIGURED');
+    throw err;
+  }
 }
 
 /**
@@ -319,7 +334,7 @@ export default async function sitesRoutes(fastify, _opts) {
             aliases: body.aliases,
             spaMode: body.spaMode,
             autheliaProtected: body.autheliaProtected,
-            domain: await resolveActiveDomain(body.domain),
+            domain: await siteDomain(body.domain),
             domains: await activeDomainNames(),
             relayDomains: await domainNames(),
             email: config.email,
@@ -342,9 +357,6 @@ export default async function sitesRoutes(fastify, _opts) {
             error: 'Failed to create site',
             details: err.message,
           });
-        }
-        if (Number.isInteger(err.statusCode)) {
-          return sendFailure(request, reply, err, 'Failed to read the domains');
         }
         request.log.error(err, 'Failed to create site');
         return reply.code(500).send({

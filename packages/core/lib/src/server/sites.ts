@@ -322,9 +322,8 @@ export interface CreateSiteOptions {
    * Every domain record, pending ones too — what the relay's own hostnames
    * (`auth.`, `panel.`, `tunnel.`, `agent-*` of each) are kept free on, so a
    * custom site or an alias never takes one before its domain goes live.
-   * Default: `domains`.
    */
-  relayDomains?: readonly string[] | undefined;
+  relayDomains: readonly string[];
   email: string;
   nginx: SiteNginxDeps;
   certbot: SiteCertbotDeps;
@@ -383,7 +382,7 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
   }
 
   const fqdn = type === 'managed' ? `${name}.${domain}` : customDomain!;
-  if (type === 'custom' && isRelayHost(fqdn, opts.relayDomains ?? domains)) {
+  if (type === 'custom' && isRelayHost(fqdn, opts.relayDomains)) {
     throw new SiteError(`'${fqdn}' is reserved for Lamaste itself`, 'RESERVED_NAME');
   }
   if (autheliaProtected) assertSignInDomain(fqdn, domains);
@@ -412,7 +411,7 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
     null,
     existingSites,
     tunnels,
-    opts.relayDomains ?? domains,
+    opts.relayDomains,
   );
 
   const id = crypto.randomUUID();
@@ -637,9 +636,8 @@ export interface UpdateSiteOptions {
    * Every domain record, pending ones too — what the relay's own hostnames
    * (`auth.`, `panel.`, `tunnel.`, `agent-*` of each) are kept free on, so a
    * custom site or an alias never takes one before its domain goes live.
-   * Default: `domains`.
    */
-  relayDomains?: readonly string[] | undefined;
+  relayDomains: readonly string[];
   /** Needed only when aliases change on a live site. */
   email?: string | undefined;
   serverIp?: string | undefined;
@@ -715,7 +713,7 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
       site.id,
       sites,
       tunnels,
-      opts.relayDomains ?? domains,
+      opts.relayDomains,
     );
   }
 

@@ -57,6 +57,33 @@ export async function writeRegistryCredentialConfig(config) {
   resetRegistryTokenState();
 }
 
+/**
+ * Store `config` as the registry credential: written while its issuer
+ * domain is still an active domain (a domain's removal checks the
+ * credential under the same lock — 400 `unknown_domain` otherwise). When the
+ * registry's domains change (its issuer domain, the domain its host is
+ * under), the tokens of every user who is a member of none of the new ones
+ * are revoked: who may hold a token follows them. Returns the warnings.
+ *
+ * @param {object} config
+ * @param {{ logger?: import('pino').Logger }} [opts]
+ * @returns {Promise<Array<{ step: string, message: string }>>}
+ */
+export async function setRegistryCredential(config, { logger } = {}) {
+  const { registryDomainsOf, revokeRegistryTokensOutside, withActiveDomain } =
+    await import('./domains.js');
+  const issuerDomain = config.auth?.kind === 'oidc' ? config.auth.issuerDomain : undefined;
+  const change = await withActiveDomain(issuerDomain, async () => {
+    const before = await registryDomainsOf(await readRegistryCredentialConfig().catch(() => null));
+    await writeRegistryCredentialConfig(config);
+    const after = await registryDomainsOf(config);
+    const same = after.length === before.length && after.every((d) => before.includes(d));
+    return { changed: !same, after };
+  });
+  if (!change.changed) return [];
+  return revokeRegistryTokensOutside(change.after, config, logger);
+}
+
 export async function clearRegistryCredentialConfig() {
   const removed = await clearCore(STATE_DIR);
   resetRegistryTokenState();
@@ -166,10 +193,16 @@ export async function acquireAgentToken(agentLabel) {
  * @param {string} username
  * @param {{ before: string[], after: string[] } | { deleted: true }} change
  * @param {import('pino').Logger | undefined} log
- * @param {{ userId?: string | null }} [who]
+ * @param {{ userId?: string | null, config?: object }} [who] `config`: the credential
+ *   already read (a batch of revocations reads it once)
  */
-export async function revokeUserRegistryTokens(username, change, log, { userId = null } = {}) {
-  const config = await readRegistryCredentialConfig();
+export async function revokeUserRegistryTokens(
+  username,
+  change,
+  log,
+  { userId = null, config: given } = {},
+) {
+  const config = given ?? (await readRegistryCredentialConfig());
   if (!config) return null;
 
   const lost =

@@ -340,7 +340,7 @@ export async function authzRoutes(
       return sendRefusalPage(fastify, request, reply, fqdn, {
         reason: 'site_refused',
         domain: domainShownFor(fastify, fqdn),
-        site: fqdn.toLowerCase(),
+        site: true,
       });
     },
   );
@@ -479,7 +479,7 @@ function sendRefusalPage(
   request: FastifyRequest,
   reply: FastifyReply,
   hostname: string,
-  { reason, domain, site }: { reason: string; domain: string | null; site?: string },
+  { reason, domain, site = false }: { reason: string; domain: string | null; site?: boolean },
 ): FastifyReply {
   request.log.info({ requestId: request.id, reason, fqdn: hostname }, 'authz denied');
   const settings = fastify.getSettings();
@@ -491,8 +491,7 @@ function sendRefusalPage(
       buildDomainRefusalPage(
         domain,
         { adminContact: settings.adminEmail, adminName: settings.adminName },
-        // A host under no domain is named itself: there is no domain to name.
-        site ?? (domain === null ? hostname.toLowerCase() : undefined),
+        { host: hostname.toLowerCase(), site },
       ),
     );
 }

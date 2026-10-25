@@ -50,14 +50,7 @@ import { recordAuditBestEffort } from './audit.js';
 import { updateDomainAccess } from './authelia.js';
 import { getConfig } from './config.js';
 import { getStateDb } from './state-db.js';
-import {
-  readInvitations,
-  readSites,
-  readTunnels,
-  withInvitationsLock,
-  withSitesLock,
-  writeInvitations,
-} from './state.js';
+import { readSites, readTunnels, withSitesLock } from './state.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
@@ -240,15 +233,49 @@ export async function invitationSignInDomain(invitation) {
 }
 
 /**
- * The registry's domain: the one whose members `feria login` admits and
- * whose issuer the panel's tokens carry — an OIDC credential's
- * `issuerDomain`, else the primary (also without a credential).
+ * The domains an invitation still grants when it is accepted: those it names
+ * that exist now **and existed when it was created** — a domain removed
+ * since and added again (possibly for someone else) is another domain, and
+ * the invitation grants it nothing. Decided at acceptance, so no removal has
+ * to chase invitations.
+ *
+ * @param {{ domains?: string[], createdAt?: string }} invitation
+ * @returns {Promise<string[]>}
  */
-export async function registryDomain() {
-  const { readRegistryCredentialConfig } = await import('./registry-credential.js');
-  const config = await readRegistryCredentialConfig().catch(() => null);
+export async function invitationDomainsNow(invitation) {
+  const named = Array.isArray(invitation?.domains) ? invitation.domains : [];
+  if (named.length === 0 || typeof invitation.createdAt !== 'string') return [];
+  const db = await getStateDb();
+  const stmt = db.prepare('SELECT 1 FROM domains WHERE name = ? AND created_at <= ?');
+  return named.filter((d) => stmt.get(d, invitation.createdAt) !== undefined);
+}
+
+/**
+ * The registry's domains for `config` (a stored registry credential, or
+ * null): the issuer domain its tokens carry (`issuerDomain`, else the
+ * primary) and the domain its own host is under — Feria's, whose members
+ * `feria login` admits. Pure apart from the domain lists.
+ *
+ * @param {object | null} config
+ * @returns {Promise<string[]>}
+ */
+export async function registryDomainsOf(config) {
   const primary = await primaryDomainName();
-  return config ? registryIssuerDomain(config.auth, primary) : primary;
+  if (!config) return primary ? [primary] : [];
+  const names = await activeDomainNames();
+  let host = null;
+  try {
+    host = domainOfHost(new URL(config.registryUrl).hostname, names);
+  } catch {
+    // An unparseable URL names no domain.
+  }
+  return [...new Set([registryIssuerDomain(config.auth, primary), host].filter(Boolean))];
+}
+
+/** The stored registry credential's domains ({@link registryDomainsOf}). */
+export async function registryDomains() {
+  const { readRegistryCredentialConfig } = await import('./registry-credential.js');
+  return registryDomainsOf(await readRegistryCredentialConfig().catch(() => null));
 }
 
 /**
@@ -275,23 +302,12 @@ export async function resolveActiveDomain(requested) {
 }
 
 /**
- * Whether `name` is an active domain now. A workflow that puts a tunnel, a
- * site or a plugin on a domain asks it again under the tunnel or sites
- * lock — the locks `removeDomain` holds — so nothing lands on a domain
- * removed after the caller resolved it.
- *
- * @param {string} name
- */
-export async function isActiveDomain(name) {
-  return (await activeDomainNames()).includes(name);
-}
-
-/**
  * Run `fn` while `name` (when given) is an active domain and cannot be
- * removed: under the domains lock, which `removeDomain` holds for its usage
- * check. A 409 `domain_gone` when it is no longer active — for writes that
- * name a domain outside the tunnel and sites locks (the registry
- * credential).
+ * removed: under the domains lock, which a domain's removal holds for its
+ * usage check. The same 400 `unknown_domain` as {@link resolveActiveDomain}
+ * when it is no longer active — for writes that name a domain outside the
+ * tunnel and sites locks (the registry credential). Workflows under those
+ * locks call {@link resolveActiveDomain} there instead.
  *
  * @template T
  * @param {string | undefined | null} name
@@ -300,11 +316,7 @@ export async function isActiveDomain(name) {
  */
 export function withActiveDomain(name, fn) {
   return domainsMutex.run(async () => {
-    if (name && !(await isActiveDomain(name))) {
-      throw httpError(`'${name}' is no longer an active domain of this relay`, 409, {
-        code: 'domain_gone',
-      });
-    }
+    if (name) await resolveActiveDomain(name);
     return fn();
   });
 }
@@ -902,11 +914,10 @@ export async function setUserDomains(userId, domains, { actor, logger }) {
 }
 
 /**
- * Revoke a user's registry tokens because one of their memberships ended —
- * any of them: which domain's members `feria login` admits (the Feria
- * plugin's domain) and which issuer the credential trusts (`issuerDomain`)
- * are set apart, so a single "registry domain" would miss one. Best effort
- * (they sign in again); returns warnings.
+ * After one of a user's memberships ended: revoke their registry tokens when
+ * they are a member of none of the registry's domains any more (its issuer
+ * domain, Feria's own domain) — the sign-in that minted the tokens would
+ * refuse them now. Best effort; returns warnings.
  *
  * @param {string} username
  * @param {string} userId
@@ -914,38 +925,69 @@ export async function setUserDomains(userId, domains, { actor, logger }) {
  */
 async function revokeRegistryTokensFor(username, userId, logger) {
   try {
-    const { revokeUserRegistryTokens } = await import('./registry-credential.js');
-    await revokeUserRegistryTokens(username, { deleted: true }, logger, { userId });
-    return [];
+    const { readRegistryCredentialConfig } = await import('./registry-credential.js');
+    const config = await readRegistryCredentialConfig();
+    if (!config) return [];
+    const domains = await registryDomainsOf(config);
+    const db = await getStateDb();
+    const member = db.prepare('SELECT 1 FROM domain_members WHERE user_id = ? AND domain = ?');
+    if (domains.some((d) => member.get(userId, d) !== undefined)) return [];
+    return await revokeTokensOf([{ username, userId }], config, logger);
   } catch (err) {
     logger?.warn({ userId, err: err.message }, 'Registry tokens were not revoked');
     return [{ step: 'registry', message: `Registry tokens were not revoked: ${err.message}` }];
   }
 }
 
+/** At most this many registry revocations in flight. */
+const REVOCATION_CONCURRENCY = 4;
+
+/** Revoke the registry tokens of `users` against `config`, a few at a time; returns warnings. */
+async function revokeTokensOf(users, config, logger) {
+  const { revokeUserRegistryTokens } = await import('./registry-credential.js');
+  const warnings = [];
+  const queue = [...users];
+  const worker = async () => {
+    for (let user = queue.shift(); user; user = queue.shift()) {
+      try {
+        await revokeUserRegistryTokens(user.username, { deleted: true }, logger, {
+          userId: user.userId,
+          config,
+        });
+      } catch (err) {
+        logger?.warn({ userId: user.userId, err: err.message }, 'Registry tokens were not revoked');
+        warnings.push({
+          step: 'registry',
+          message: `Registry tokens were not revoked: ${err.message}`,
+        });
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(REVOCATION_CONCURRENCY, users.length) }, worker));
+  return warnings;
+}
+
 /**
- * Revoke the registry tokens of every user who is not a member of `domain`
- * — after the registry credential's issuer domain became `domain`: who may
- * hold a token follows the new domain. Best effort; returns warnings.
+ * Revoke the registry tokens of every user who is a member of none of
+ * `domains` — after the registry credential changed its domains: who may
+ * hold a token follows them. Best effort; returns warnings.
  *
- * @param {string} domain
+ * @param {readonly string[]} domains
+ * @param {object} config the stored credential
  * @param {import('pino').Logger} [logger]
  */
-export async function revokeRegistryTokensOutside(domain, logger) {
+export async function revokeRegistryTokensOutside(domains, config, logger) {
   const db = await getStateDb();
+  const placeholders = domains.map(() => '?').join(', ') || "''";
   const outside = db
     .prepare(
-      `SELECT u.user_id, u.username FROM directory_users u
+      `SELECT u.user_id AS userId, u.username FROM directory_users u
         WHERE u.status != 'removed' AND u.username IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM domain_members m
-                           WHERE m.user_id = u.user_id AND m.domain = ?)`,
+                           WHERE m.user_id = u.user_id AND m.domain IN (${placeholders}))`,
     )
-    .all(domain);
-  const warnings = [];
-  for (const row of outside) {
-    warnings.push(...(await revokeRegistryTokensFor(row.username, row.user_id, logger)));
-  }
-  return warnings;
+    .all(...domains);
+  return revokeTokensOf(outside, config, logger);
 }
 
 // ---------------------------------------------------------------------------
@@ -953,15 +995,35 @@ export async function revokeRegistryTokensOutside(domain, logger) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Change the set of domains — add one, activate one, remove one — holding
+ * the tunnel lock, then the sites lock, then the domains lock: the locks
+ * under which tunnels, sites and plugin moves resolve their domain, and
+ * under which a site or an alias takes a hostname. So no hostname is taken
+ * on a domain between the check of its relay hostnames and its insertion,
+ * and nothing lands on a domain between its usage check and its removal.
+ * Keep slow work (certificates, nginx reloads) outside.
+ *
+ * @template T
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+function changeDomains(fn) {
+  return withTunnelLock(() => withSitesLock(() => domainsMutex.run(fn)));
+}
+
+/**
  * Add domain `name` (`pending`): validated, refused when it overlaps
- * another (400 `invalid_domain` / 409 `domain_overlap`).
+ * another, shares a registrable domain with one or is a public suffix
+ * (400 `invalid_domain` / `public_suffix`, 409 `domain_overlap` /
+ * `same_registrable_domain`), or while a tunnel, site or alias holds one of
+ * its relay hostnames (409 `relay_host_taken`).
  *
  * @param {string} name
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
  * @returns {Promise<Domain>}
  */
 export async function addDomain(name, { actor, logger }) {
-  return domainsMutex.run(async () => {
+  return changeDomains(async () => {
     const db = await getStateDb();
     const existing = db
       .prepare('SELECT name FROM domains')
@@ -1057,22 +1119,31 @@ export function setDomainActivationForTests(deps) {
  * @returns {Promise<Domain>}
  */
 export async function activateDomain(name, { actor, logger }) {
-  const activated = await domainsMutex.run(async () => {
+  const pending = await domainsMutex.run(async () => {
+    const domain = domainOr404(await getStateDb(), name);
+    return domain.status === 'active' ? null : domain;
+  });
+  if (pending === null) return getDomain(name);
+  const { email } = getConfig();
+  if (!email) throw httpError('The panel has no email for certificates', 400);
+  const deps = await activationDeps();
+  const fqdn = `auth.${name}`;
+  // Outside the locks: certbot takes its time, and an extra certificate of
+  // a domain removed meanwhile is harmless.
+  try {
+    await deps.issueCert(fqdn, email);
+  } catch (err) {
+    throw httpError(`The certificate of ${fqdn} could not be issued: ${err.message}`, 502, {
+      code: 'cert_failed',
+    });
+  }
+  const activated = await changeDomains(async () => {
     const db = await getStateDb();
+    // Checked again under the locks: removed, activated or its relay
+    // hostnames taken while the certificate was issued.
     const domain = domainOr404(db, name);
     if (domain.status === 'active') return null;
     await assertRelayHostsFree(name);
-    const { email } = getConfig();
-    if (!email) throw httpError('The panel has no email for certificates', 400);
-    const deps = await activationDeps();
-    const fqdn = `auth.${name}`;
-    try {
-      await deps.issueCert(fqdn, email);
-    } catch (err) {
-      throw httpError(`The certificate of ${fqdn} could not be issued: ${err.message}`, 502, {
-        code: 'cert_failed',
-      });
-    }
     try {
       await deps.writeAuthVhost(name, { primary: false });
     } catch (err) {
@@ -1095,13 +1166,13 @@ export async function activateDomain(name, { actor, logger }) {
       await syncDomainAccess({ logger }).catch(() => {});
       throw httpError(`Authelia was not updated: ${err.message}`, 502, { code: 'authelia_failed' });
     }
-    await recordAuditBestEffort(
-      { actor, action: 'domain.activated', details: { domain: name } },
-      logger,
-    );
     return domainRow(db, name);
   });
   if (activated === null) return getDomain(name);
+  await recordAuditBestEffort(
+    { actor, action: 'domain.activated', details: { domain: name } },
+    logger,
+  );
   const { bustGatekeeperSessions } = await import('./gatekeeper-client.js');
   await bustGatekeeperSessions();
   return activated;
@@ -1131,8 +1202,9 @@ async function usageByDomain(names) {
   for (const row of db.prepare('SELECT name, domain FROM plugins ORDER BY name').all()) {
     if (row.domain) usage.get(row.domain)?.plugins.push(row.name);
   }
-  const registry = await registryDomain().catch(() => null);
-  if (registry && usage.has(registry)) usage.get(registry).registry = true;
+  for (const domain of await registryDomains().catch(() => [])) {
+    if (usage.has(domain)) usage.get(domain).registry = true;
+  }
   return usage;
 }
 
@@ -1156,77 +1228,30 @@ export async function domainUsage(name) {
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
  */
 export async function removeDomain(name, { actor, logger }) {
-  // Under the tunnel and sites locks, as every workflow that puts a tunnel,
-  // a site or a plugin on a domain re-checks the domain under them: nothing
-  // lands on a domain between this usage check and its removal.
-  const removed = await withTunnelLock(() =>
-    withSitesLock(() => domainsMutex.run(() => removeDomainHeld(name, { actor, logger }))),
-  );
-  const warnings = await settleMembership(logger, { effective: removed.active });
-  // An invitation still naming the domain would grant it again if the name
-  // were ever added back (to someone else): it forgets it.
-  try {
-    const stripped = await withInvitationsLock(async () => {
-      const invitations = await readInvitations();
-      let count = 0;
-      const kept = invitations.map((inv) => {
-        if (!Array.isArray(inv.domains) || !inv.domains.includes(name)) return inv;
-        count += 1;
-        return { ...inv, domains: inv.domains.filter((d) => d !== name) };
-      });
-      if (count > 0) await writeInvitations(kept);
-      return count;
-    });
-    if (stripped > 0) {
-      await recordAuditBestEffort(
-        {
-          actor,
-          action: 'invitation.domain.removed',
-          details: { domain: name, invitations: stripped },
-        },
-        logger,
-      );
+  // The usage check and the deletion alone hold the locks (see
+  // changeDomains); audits and nginx come after.
+  const removed = await changeDomains(async () => {
+    const db = await getStateDb();
+    const domain = domainOr404(db, name);
+    if (domain.primary) {
+      throw httpError('The primary domain cannot be removed', 400, { code: 'primary_domain' });
     }
-  } catch (err) {
-    logger?.warn({ domain: name, err: err.message }, 'Invitations still name a removed domain');
-    warnings.push({
-      step: 'invitations',
-      message: `Invitations still name ${name} (${err.message})`,
-    });
-  }
-  // Any membership that ends takes its user's registry tokens.
-  for (const member of removed.members) {
-    if (member.username) {
-      warnings.push(...(await revokeRegistryTokensFor(member.username, member.userId, logger)));
+    const usedBy = await domainUsage(name);
+    const { tunnels, sites, plugins, registry } = usedBy;
+    if (tunnels.length + sites.length + plugins.length > 0 || registry) {
+      throw httpError(`Domain '${name}' is in use`, 409, { code: 'domain_in_use', usedBy });
     }
-  }
-  return { removed: true, ...withWarnings(warnings) };
-}
-
-async function removeDomainHeld(name, { actor, logger }) {
-  const db = await getStateDb();
-  const domain = domainOr404(db, name);
-  if (domain.primary) {
-    throw httpError('The primary domain cannot be removed', 400, { code: 'primary_domain' });
-  }
-  const usedBy = await domainUsage(name);
-  const { tunnels, sites, plugins, registry } = usedBy;
-  if (tunnels.length + sites.length + plugins.length > 0 || registry) {
-    throw httpError(`Domain '${name}' is in use`, 409, { code: 'domain_in_use', usedBy });
-  }
-  const members = inTransaction(db, () => {
-    const ended = db
-      .prepare(
-        `DELETE FROM domain_members WHERE domain = ?
-          RETURNING user_id AS userId,
-                    (SELECT username FROM directory_users u
-                      WHERE u.user_id = domain_members.user_id) AS username`,
-      )
-      .all(name);
-    db.prepare('DELETE FROM domains WHERE name = ?').run(name);
-    return ended;
+    const members = inTransaction(db, () => {
+      const ended = db
+        .prepare('DELETE FROM domain_members WHERE domain = ? RETURNING user_id')
+        .all(name)
+        .map((r) => r.user_id);
+      db.prepare('DELETE FROM domains WHERE name = ?').run(name);
+      return ended;
+    });
+    return { active: domain.status === 'active', members };
   });
-  for (const { userId } of members) {
+  for (const userId of removed.members) {
     await recordAuditBestEffort(
       {
         actor,
@@ -1236,15 +1261,27 @@ async function removeDomainHeld(name, { actor, logger }) {
       logger,
     );
   }
-  if (domain.status === 'active') {
-    const deps = await activationDeps();
-    await deps.removeAuthVhost(name).catch((err) => {
-      logger?.warn({ domain: name, err: err.message }, 'The auth vhost of a removed domain stayed');
-    });
-  }
   await recordAuditBestEffort(
-    { actor, action: 'domain.removed', details: { domain: name, members: members.length } },
+    { actor, action: 'domain.removed', details: { domain: name, members: removed.members.length } },
     logger,
   );
-  return { active: domain.status === 'active', members };
+  if (removed.active) {
+    // Unless the name was added again meanwhile — its new vhost is its own.
+    await domainsMutex.run(async () => {
+      if (domainRow(await getStateDb(), name)) return;
+      const deps = await activationDeps();
+      await deps.removeAuthVhost(name).catch((err) => {
+        logger?.warn(
+          { domain: name, err: err.message },
+          'The auth vhost of a removed domain stayed',
+        );
+      });
+    });
+  }
+  // No registry token can depend on a removed domain: the registry's
+  // domains cannot be removed (`domain_in_use`).
+  return {
+    removed: true,
+    ...withWarnings(await settleMembership(logger, { effective: removed.active })),
+  };
 }

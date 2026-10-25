@@ -282,6 +282,7 @@ export {
   listOidcClientSecrets,
   readOidcClientSecret,
   readOidcClientSecretDigests,
+  oidcSecretDigestsComputed,
   reconcileOidcClientSecrets,
   rotateOidcClientSecret,
   clearOidcClientSecrets,

@@ -376,26 +376,23 @@ export async function reconcileSiteVhosts(log, domains, deps = defaultSiteDeps) 
     // A plugin's web surface is its plugin's to render (lib/web-surface.js
     // `reconcileWebSurfaces`, once plugins and hostings can be read).
     if (site.owner) continue;
-    // Protected, but under none of the relay's domains (possible since 4.6):
-    // no sign-in can admit anyone, and its vhost renders closed.
-    if (
-      site.autheliaProtected &&
-      typeof site.fqdn === 'string' &&
-      domainOfHost(site.fqdn, names) === null
-    ) {
-      closed.push(site.fqdn);
-    }
+
     const name = `lamalibre-lamaste-site-${site.id}`;
     await reconcileOne(
       {
         name,
         label: site.fqdn ?? site.id,
-        render: (certDir) =>
-          renderStaticSiteVhost(
+        render: (certDir) => {
+          const rendered = renderStaticSiteVhost(
             site,
             certDir,
             typeof site.fqdn === 'string' ? domainOfHost(site.fqdn, names) : null,
-          ),
+          );
+          // Protected, but under none of the relay's domains (possible since
+          // 4.6): it renders closed — said once, at the end.
+          if (rendered.closed) closed.push(site.fqdn);
+          return rendered;
+        },
         enabled: () => deps.isSiteEnabled(name),
         // A site still waiting for its DNS or certificate has no vhost yet.
         reportMissing: site.certIssued === true,

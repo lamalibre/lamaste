@@ -14,7 +14,6 @@ import {
   explainDomainRefusal,
   memberCandidates,
   needsDomainChoice,
-  pathSegment,
   sameDomains,
 } from '../src/admin/lib/domains.js';
 
@@ -90,9 +89,11 @@ test('two domain lists are the same whatever their order', () => {
   assert.equal(sameDomains([], undefined), true);
 });
 
-test('a path segment of dots is encoded, never resolved by fetch', () => {
-  assert.equal(pathSegment('..'), '%2E%2E');
-  assert.equal(pathSegment('.'), '%2E');
-  assert.equal(pathSegment('codelama.com.tr'), 'codelama.com.tr');
-  assert.equal(pathSegment('a/b'), 'a%2Fb');
+test('a request path with a dot segment is refused before fetch could resolve it', async () => {
+  const { assertApiPath } = await import('../src/lib/api.js');
+  assertApiPath('/api/domains/codelama.com.tr/members/onur');
+  assertApiPath('/api/sites/x/files?path=../etc'); // a query value is no path segment
+  for (const url of ['/api/domains/../activate', '/api/domains/./x', '/api/users/..']) {
+    assert.throws(() => assertApiPath(url), /may not have a "\." or "\.\." segment/, url);
+  }
 });

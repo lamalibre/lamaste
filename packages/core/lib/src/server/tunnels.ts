@@ -577,11 +577,12 @@ export interface CreateTunnelOptions {
    */
   hostTaken?: ((fqdn: string) => Promise<string | null>) | undefined;
   /**
-   * Whether `domain` is still an active domain of the relay — asked under
-   * the tunnel lock, which a domain's removal takes too, so a tunnel never
-   * lands on a domain removed after the caller resolved it.
+   * Throws when `domain` is no longer an active domain of the relay — asked
+   * under the tunnel lock, which a domain's removal takes too, so a tunnel
+   * never lands on a domain removed after the caller resolved it. The error
+   * is the caller's (the same one its own resolution throws).
    */
-  domainActive?: ((domain: string) => Promise<boolean>) | undefined;
+  assertDomainActive?: ((domain: string) => Promise<void>) | undefined;
   logger: TunnelLogger;
 }
 
@@ -758,12 +759,7 @@ async function createTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntr
   assertTunnelPort(port);
   assertMaxBodySize(maxBodySizeMb);
   await assertAssignableAgent(agentLabel, agents);
-  if (opts.domainActive && !(await opts.domainActive(domain))) {
-    throw new TunnelError(
-      `'${domain}' is not an active domain of this relay`,
-      'DOMAIN_NOT_CONFIGURED',
-    );
-  }
+  await opts.assertDomainActive?.(domain);
 
   // An agent panel's own tunnel is the one taker of the agent- prefix.
   const agentPanelName = subdomain.startsWith(AGENT_PANEL_SUBDOMAIN_PREFIX);

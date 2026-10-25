@@ -129,6 +129,20 @@ export async function withCurlConfig(content, fn) {
  * @param {{ identity: { certPath: string, address: string, port: number }, method: string, path: string, body?: Record<string, unknown> | null, p12Path: string, configPath: string }} request
  * @returns {{ args: string[], input: string | undefined }}
  */
+/**
+ * Refuse a request path with a `.` or `..` segment: curl and `fetch`
+ * resolve them (`/api/domains/../activate` → `/api/activate`), so a value
+ * put into a path — a domain, a user, a plugin — could name another route.
+ * Every path the client sends passes here; values are percent-encoded as
+ * usual where the path is built.
+ */
+export function assertPanelPath(path) {
+  const route = String(path).split(/[?#]/, 1)[0];
+  if (route.split('/').some((segment) => segment === '.' || segment === '..')) {
+    throw new Error('A panel request path may not have a "." or ".." segment');
+  }
+}
+
 export function buildPanelCurlRequest({
   identity,
   method,
@@ -137,6 +151,7 @@ export function buildPanelCurlRequest({
   p12Path,
   configPath,
 }) {
+  assertPanelPath(path);
   const { certPath, address, port } = identity;
   const args = [
     '-q', // No .curlrc — it must be the first argument

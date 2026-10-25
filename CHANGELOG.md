@@ -43,11 +43,11 @@ From the review of the feature (design doc, Security review):
 - Domains may not share a registrable domain (Public Suffix List; `same_registrable_domain`) and a public suffix is never a domain (`public_suffix`): sibling domains could set each other's cookies. Adds the dependency `tldts` 7.4.18 to `@lamalibre/lamaste` (server path only). The rodeo test domains are now `lamaste-second.local`, `lamaste-third.local`.
 - `auth.<domain>` passes Authelia its own name as `X-Forwarded-Host` / `-Proto`, never the client's.
 - Rendering always tries both Gatekeeper's projection and Authelia; a failing rendering is audited (`domain.render.failed` / `domain.render.recovered`) and raised to the administrators. Gatekeeper re-reads `domains.json` on every cache bust and every minute.
-- A domain's removal holds the tunnel and sites locks; tunnels, sites, plugin moves and the registry credential re-check their domain under them. The relay hostnames of a pending domain stay free, and adding or activating a domain is refused while something holds one (`relay_host_taken`). Removed domains are stripped from invitations; invitation links use the first active domain.
-- The end of any membership revokes the user's registry tokens; an issuer-domain change revokes those of non-members of the new domain.
+- Adding, activating and removing a domain hold the tunnel and sites locks under which tunnels, sites, plugin moves and the registry credential resolve their domain (one refusal, `unknown_domain`). The relay hostnames of a pending domain stay free, and adding or activating a domain is refused while something holds one (`relay_host_taken`). An invitation grants only the domains it names that existed when it was made; its link uses the first active one.
+- Registry tokens follow the registry's domains (its issuer domain, the domain its host is under): a user who is a member of none of them loses theirs, and a credential change revokes those of everyone outside the new ones.
 - An interrupted vhost rename is finished on the next start; only the primary's tunnels take legacy files, and only files serving their hostname.
 - The identity tick re-syncs the OIDC provider (a plugin move whose sync failed heals within a minute).
-- Dot-only path segments are percent-encoded by the desktop, the CLI and the web client; the refusal page of a host under no domain links to no sign-in; render errors never carry a username.
+- A request path with a `.`/`..` segment is refused by the CLI and the web client and encoded by the desktop; the refusal page of a host under no domain links to no sign-in; render errors never carry a username. The identity tick computes no client-secret PBKDF2 on a steady relay (digests memoized, computed off the event loop).
 
 ## [4.6.0] - 2026-10-25
 

@@ -1140,15 +1140,20 @@ async function ensureOidcHmacSecret(): Promise<string> {
   return fresh;
 }
 
-/** Current `identity_providers.oidc` section, or `null`. */
+/**
+ * Current `identity_providers.oidc` section, or `null` when there is none.
+ * A configuration that cannot be read or parsed throws: taking it for an
+ * absent section would rewrite Authelia (and restart it) on every render.
+ */
 async function readCurrentOidcSection(): Promise<Record<string, unknown> | null> {
+  let loaded: Record<string, unknown> | null;
   try {
-    const loaded = await loadAutheliaConfigFile();
-    const ip = loaded?.identity_providers as { oidc?: Record<string, unknown> } | undefined;
-    return ip?.oidc ?? null;
-  } catch {
-    return null;
+    loaded = await loadAutheliaConfigFile();
+  } catch (err: unknown) {
+    throw new Error(`Authelia's configuration cannot be read: ${errText(err)}`);
   }
+  const ip = loaded?.identity_providers as { oidc?: Record<string, unknown> } | undefined;
+  return ip?.oidc ?? null;
 }
 
 /**

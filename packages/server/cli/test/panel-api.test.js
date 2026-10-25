@@ -66,6 +66,18 @@ test('a request without a body carries no content type and reads nothing on stdi
   assert.ok(!args.join(' ').includes('--pass'), 'the P12 password never enters argv');
 });
 
+test('a path with a dot segment is refused before curl could resolve it to another route', () => {
+  for (const path of ['/api/domains/../activate', '/api/domains/./x', '/api/users/..']) {
+    assert.throws(
+      () => buildPanelCurlRequest({ ...base, method: 'DELETE', path }),
+      /may not have a "\." or "\.\." segment/,
+      path,
+    );
+  }
+  // A query value is no path segment.
+  buildPanelCurlRequest({ ...base, method: 'GET', path: '/api/sites/x/files?path=../etc' });
+});
+
 test('the panel is verified against its own certificate on loopback, never with -k', () => {
   const { args } = buildPanelCurlRequest({ ...base, method: 'GET', path: '/api/tunnels' });
   // A .curlrc could switch verification off; -q only works as the first argument.

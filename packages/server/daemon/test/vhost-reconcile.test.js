@@ -808,8 +808,10 @@ test('a protected static site under none of the relay domains renders closed, an
   const notices = [];
   const result = await reconcileSiteVhosts(log, [{ name: 'example.com', primary: true }], {
     readSites: async () => [site],
-    readInstalledVhost: async () => null,
-    installVhost: async () => {},
+    // As 4.6 left it: asking Authelia, which no cookie of the relay reaches.
+    readInstalledVhost: async () =>
+      'server {\n    ssl_certificate /etc/letsencrypt/live/docs.customer.example/fullchain.pem;\n    auth_request /internal/authelia/authz;\n}\n',
+    installVhost: async () => assert.fail('a vhost that authenticates is never rewritten open'),
     isSiteEnabled: async () => true,
     notify: async (n) => notices.push(n),
   });

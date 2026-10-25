@@ -34,7 +34,7 @@ import {
   isInternalPluginPort,
 } from '@lamalibre/lamaste';
 import { getConfig } from '../../lib/config.js';
-import { isActiveDomain, primaryDomainName, resolveActiveDomain } from '../../lib/domains.js';
+import { primaryDomainName, resolveActiveDomain } from '../../lib/domains.js';
 import { sendFailure } from '../../lib/app-error.js';
 import { readTunnels, readSites } from '../../lib/state.js';
 import { getAgentHostFactsHash, loadAgentRegistry } from '../../lib/mtls.js';
@@ -531,7 +531,10 @@ export default async function tunnelRoutes(fastify, _opts) {
           agentLabel,
           maxBodySizeMb,
           domain,
-          domainActive: isActiveDomain,
+          // Under the tunnel lock: the domain may have been removed since.
+          assertDomainActive: async (d) => {
+            await resolveActiveDomain(d);
+          },
           email: config.email,
           nginx: nginxDeps,
           certbot: certbotDeps,
@@ -543,6 +546,9 @@ export default async function tunnelRoutes(fastify, _opts) {
         });
         return reply.code(201).send({ ok: true, tunnel });
       } catch (err) {
+        if (Number.isInteger(err.statusCode)) {
+          return sendFailure(request, reply, err, 'Failed to create tunnel');
+        }
         if (err instanceof TunnelError) {
           const status = tunnelErrorStatus(err.code);
           return reply.code(status).send({

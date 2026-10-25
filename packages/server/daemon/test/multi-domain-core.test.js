@@ -8,6 +8,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import {
   DomainError,
@@ -24,6 +27,8 @@ import {
 } from '@lamalibre/lamaste';
 import {
   assertDomainRegistrable,
+  oidcSecretDigestsComputed,
+  reconcileOidcClientSecrets,
   createSite,
   createTunnel,
   registrableDomain,
@@ -299,6 +304,7 @@ function siteDeps(sites, tunnels, domain, domains = ['samplepark.tr', 'codelama.
   return {
     domain,
     domains,
+    relayDomains: domains,
     email: 'ops@relay.test',
     nginx: { writeStaticSiteVhost: async () => {}, removeStaticSiteVhost: async () => {} },
     certbot: {
@@ -520,12 +526,16 @@ test('tunnels: a domain removed after the caller resolved it is refused under th
   await assert.rejects(
     createTunnel({
       ...tunnelDeps(tunnels, 'codelama.com.tr'),
-      domainActive: async () => false,
+      assertDomainActive: async (domain) => {
+        throw Object.assign(new Error(`'${domain}' is not an active domain`), {
+          code: 'unknown_domain',
+        });
+      },
       subdomain: 'late',
       port: 20090,
       agentLabel: 'vm1',
     }),
-    (err) => err.code === 'DOMAIN_NOT_CONFIGURED' && /codelama\.com\.tr/.test(err.message),
+    (err) => err.code === 'unknown_domain' && /codelama\.com\.tr/.test(err.message),
   );
   assert.deepEqual(tunnels, []);
 });
@@ -590,4 +600,22 @@ test('sites: the relay hostnames of a pending domain are kept free too', async (
     }),
     (err) => err.code === 'INVALID_ALIAS',
   );
+});
+
+test('a steady relay computes no client-secret digest: PBKDF2 runs once per secret, off the event loop', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'lamaste-oidc-digests-'));
+  try {
+    const desired = [{ id: 'feria-service', plugin: 'feria' }];
+    const first = await reconcileOidcClientSecrets(dir, desired);
+    const computed = oidcSecretDigestsComputed();
+    // The identity tick renders every minute: the same secret, the same digest, no PBKDF2.
+    for (let i = 0; i < 3; i += 1) {
+      const again = await reconcileOidcClientSecrets(dir, desired);
+      assert.deepEqual(again.digests, first.digests);
+    }
+    assert.equal(oidcSecretDigestsComputed(), computed);
+    assert.match(first.digests['feria-service'], /^\$pbkdf2-sha512\$310000\$/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

@@ -41,7 +41,22 @@ function errorText(data, status) {
  * @param {RequestInit} [opts] - Fetch options
  * @returns {Promise<any>} Parsed JSON response
  */
+/**
+ * Refuse a request path with a `.` or `..` segment: curl and `fetch`
+ * resolve them (`/api/domains/../activate` → `/api/activate`), so a value
+ * put into a path — a domain, a user, a plugin — could name another route.
+ * Every path the client sends passes here; values are percent-encoded as
+ * usual where the path is built.
+ */
+export function assertApiPath(url) {
+  const route = String(url).split(/[?#]/, 1)[0];
+  if (route.split('/').some((segment) => segment === '.' || segment === '..')) {
+    throw new Error('A panel request path may not have a "." or ".." segment');
+  }
+}
+
 export async function apiFetch(url, opts) {
+  assertApiPath(url);
   const res = await fetch(url, opts);
 
   if (res.status === 401) {

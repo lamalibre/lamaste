@@ -860,6 +860,9 @@ async function syncDuePlugins(logger) {
 let tickTimer = null;
 let ticking = false;
 
+/** The OIDC sync failure the tick last logged — logged again only when it changes. */
+let lastOidcSyncError = null;
+
 /**
  * One tick: reconcile the directory with users.yml (once onboarding is
  * done), clear the Gatekeeper principals of removed users still pending,
@@ -890,8 +893,13 @@ export async function identityTick(logger) {
       try {
         const { syncOidcClients } = await import('./plugin-oidc.js');
         await syncOidcClients(logger);
+        lastOidcSyncError = null;
       } catch (err) {
-        logger?.warn({ err: err.message }, 'Could not sync the OIDC clients');
+        // Once per distinct failure, not every minute.
+        if (err.message !== lastOidcSyncError) {
+          logger?.warn({ err: err.message }, 'Could not sync the OIDC clients');
+        }
+        lastOidcSyncError = err.message;
       }
     }
     await clearPendingPrincipals({ logger });

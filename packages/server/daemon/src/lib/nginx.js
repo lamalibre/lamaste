@@ -1148,7 +1148,8 @@ export async function writeStaticSiteVhost(site, certDir, domain) {
  * @param {object} site - as for writeStaticSiteVhost
  * @param {string} certDir
  * @param {string} [domain]
- * @returns {{ name: string, fqdn: string, config: string }}
+ * @returns {{ name: string, fqdn: string, config: string, closed: boolean }} `closed`: a
+ *   protected site under no domain, answering 403 to everyone
  */
 export function renderStaticSiteVhost(site, certDir, domain) {
   let certDirClean = certDir;
@@ -1158,11 +1159,13 @@ export function renderStaticSiteVhost(site, certDir, domain) {
 
   let autheliaBlock = '';
   let locationAuthDirectives = '';
-  // A protected site under none of the relay's domains has no sign-in that
-  // could admit anyone: it is closed, never served without authentication.
+  // A protected site asks its domain's sign-in; one under none of the
+  // relay's domains has no sign-in that could admit anyone: it is closed,
+  // never served without authentication.
+  const gated = site.autheliaProtected && Boolean(domain);
   const closed = site.autheliaProtected && !domain;
 
-  if (site.autheliaProtected && domain) {
+  if (gated) {
     autheliaBlock = `
     # Authelia forward authentication (AuthRequest implementation for nginx)
     location /internal/authelia/authz {
@@ -1238,7 +1241,7 @@ ${autheliaBlock}
         ${closed ? 'return 403' : tryFiles};
     }
 ${
-  site.autheliaProtected && domain
+  gated
     ? `
     # Redirect unauthenticated requests to Authelia login portal
     error_page 401 =302 $redirection_url;
@@ -1249,7 +1252,7 @@ ${
 }
 ${aliasBlock}`;
 
-  return { name: `lamalibre-lamaste-site-${site.id}`, fqdn: site.fqdn, config };
+  return { name: `lamalibre-lamaste-site-${site.id}`, fqdn: site.fqdn, config, closed };
 }
 
 /**
@@ -1922,15 +1925,15 @@ export async function disableAgentPanelVhost(fqdn) {
 
 /** The file operations {@link renameVhosts} uses (tests pass stand-ins). */
 const renameFileOps = {
-  readInstalledVhost: (name) => readInstalledVhost(name),
-  siteExists: (name) => siteExists(name),
-  isSiteEnabled: (name) => isSiteEnabled(name),
-  writeVhostFile: (name, text) => writeVhostFile(name, text),
-  enableSite: (name) => enableSite(name),
-  disableSite: (name) => disableSite(name),
+  readInstalledVhost,
+  siteExists,
+  isSiteEnabled,
+  writeVhostFile,
+  enableSite,
+  disableSite,
   removeSite: (name) => siteAction('remove', name),
-  testConfig: () => testConfig(),
-  reload: () => reload(),
+  testConfig,
+  reload,
 };
 
 /**
@@ -1961,9 +1964,9 @@ export async function renameVhosts(renames, ops = renameFileOps) {
       if (serverName !== undefined && !servesHost(text, serverName)) continue;
       const linked = await ops.isSiteEnabled(from);
       if (await ops.siteExists(to)) {
-        const toLinked = await ops.isSiteEnabled(to);
-        done.push({ from, to, linked, existed: true, linkedTo: linked && !toLinked });
-        if (linked && !toLinked) await ops.enableSite(to);
+        const linkTo = linked && !(await ops.isSiteEnabled(to));
+        done.push({ from, to, linked, existed: true, linkedTo: linkTo });
+        if (linkTo) await ops.enableSite(to);
         if (linked) await ops.disableSite(from);
         continue;
       }
