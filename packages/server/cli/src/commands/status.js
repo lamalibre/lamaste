@@ -10,6 +10,8 @@ import { readConfigSafe, PANEL_SERVICE, GATEKEEPER_SERVICE, PKI_DIR } from '../c
 import { getMtlsCerts } from '@lamalibre/lamaste/server';
 import { exec } from '../exec.js';
 import { emit } from '../ndjson.js';
+import { panelRequest } from '../panel-api.js';
+import { domainRows } from '../domains.js';
 
 /**
  * @param {{ json: boolean }} options
@@ -17,6 +19,13 @@ import { emit } from '../ndjson.js';
 export async function runStatus({ json }) {
   const config = await readConfigSafe();
   const domain = config?.domain ?? null;
+  // The relay's domains, from the running panel (none while it is down or not onboarded).
+  const domains = domain
+    ? await panelRequest('GET', '/api/domains').then(
+        (r) => r.domains ?? [],
+        () => null,
+      )
+    : null;
 
   // Collect service statuses
   const panelStatus = await getServiceStatus(PANEL_SERVICE);
@@ -39,6 +48,7 @@ export async function runStatus({ json }) {
   if (json) {
     emit({
       domain,
+      domains,
       services: {
         panel: panelStatus,
         gatekeeper: gatekeeperStatus,
@@ -65,6 +75,12 @@ export async function runStatus({ json }) {
 
   if (domain) {
     console.log(`  ${b('Domain:')}     ${c(String(domain))}`);
+  }
+  if (domains && domains.length > 1) {
+    console.log(`  ${b('Domains:')}`);
+    for (const row of domainRows(domains)) {
+      console.log(`    ${c(row.name)} ${d(`${row.state}, ${row.members} member(s)`)}`);
+    }
   }
 
   if (uptime) {

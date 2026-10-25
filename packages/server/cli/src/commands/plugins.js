@@ -59,6 +59,7 @@
  *                        Who holds which of its roles; give or take them away
  *   identity-sync <name> [--reconcile]
  *                        Sync its audience to its agent half now
+ *   domain <name> [<domain>]   The domain a plugin belongs to; move it to another active one
  *   web-surface <name> [create [--subdomain <s>] [--access-mode <m>] | move --tunnel <t> | delete [--yes]]
  *                        The site an agent-hosted plugin owns for its web surface: what it
  *                        declares, whether it is served, its trees; create, move a bound
@@ -82,6 +83,7 @@ import { emit, emitStep, emitError, emitComplete, emitLog } from '../ndjson.js';
 import { configureCmd, settingsCmd } from './plugin-settings.js';
 import { audienceCmd, entitlementsCmd, identityCmd, identitySyncCmd } from './plugin-identity.js';
 import { webSurfaceCmd } from './plugin-web-surface.js';
+import { pluginDomainCmd } from './domains.js';
 import { settingsDiffLines, terminalText } from '../plugin-settings.js';
 import {
   APPROVE_HOOKS_USAGE,
@@ -161,6 +163,8 @@ export async function runPlugins(args, { json }) {
       return identitySyncCmd(args.slice(1), { json });
     case 'web-surface':
       return webSurfaceCmd(args.slice(1), { json });
+    case 'domain':
+      return pluginDomainCmd(args.slice(1), { json });
     default:
       printPluginUsage();
       process.exit(sub ? 1 : 0);
@@ -228,6 +232,8 @@ ${b('Subcommands:')}
                        Take every role away
   ${c('identity-sync <name> [--reconcile]')}
                        Sync its audience to its agent half now; --reconcile replays all of it
+  ${c('domain <name> [<d>]')}  The domain a plugin belongs to (its OIDC sign-in, surfaces, audience);
+                       with <d>, move it to that active domain (refused while a surface is served)
   ${c('web-surface <name>')}   The site a plugin owns for its web surface: what it declares, its site,
                        whether it is served (and why not), its trees, the bound tunnel, the offer
   ${c('web-surface <name> create [--subdomain <label>] [--access-mode authenticated|restricted]')}

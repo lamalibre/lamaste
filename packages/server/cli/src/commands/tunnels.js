@@ -89,6 +89,7 @@ ${b('Create options:')}
   --description <text>  Optional description
   --access-mode <mode>  Access mode: public, authenticated, restricted (default: restricted)
   --max-body-mb <n>     Largest request body in MiB, 1-10240 (default: 10)
+  --domain <domain>     Base domain of the hostname, an active one (default: the primary)
 `);
 }
 
@@ -125,7 +126,7 @@ async function listTunnels({ json }) {
     const carrier = t.agentLabel ? d(`via ${t.agentLabel}`) : r('no agent');
     const bodyLimit = t.type !== 'panel' ? d(`${t.maxBodySizeMb ?? 1} MiB`) : '';
     console.log(
-      `  ${c(t.subdomain)} \u2192 :${t.port}  ${enabled} ${carrier} ${accessMode} ${bodyLimit} ${type}`.trimEnd(),
+      `  ${c(t.fqdn ?? t.subdomain)} \u2192 :${t.port}  ${enabled} ${carrier} ${accessMode} ${bodyLimit} ${type}`.trimEnd(),
     );
     if (t.description) {
       console.log(`    ${d(t.description)}`);
@@ -150,6 +151,7 @@ async function createTunnel(args, { json }) {
   const accessMode = getArg(args, 'access-mode') || undefined;
   const agentLabel = getArg(args, 'agent');
   const maxBodyStr = getArg(args, 'max-body-mb');
+  const domain = getArg(args, 'domain');
 
   if (!subdomain || !portStr || !agentLabel) {
     const msg = 'Error: --subdomain, --port and --agent are required';
@@ -180,6 +182,7 @@ async function createTunnel(args, { json }) {
   if (description) body.description = description;
   if (accessMode) body.accessMode = accessMode;
   if (maxBodySizeMb !== undefined) body.maxBodySizeMb = maxBodySizeMb;
+  if (domain) body.domain = domain.toLowerCase();
 
   if (!json) process.stderr.write(`  Creating tunnel ${chalk.cyan(subdomain)} \u2192 :${port}...`);
 

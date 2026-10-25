@@ -61,6 +61,7 @@ ${b('Create options:')}
   --type <type>         Site type: managed (default) or custom
   --custom-domain <d>   Custom domain (required if type is custom)
   --aliases <a,b>       Hostnames that redirect to the custom domain (e.g. www.<domain>)
+  --domain <domain>     A managed site's base domain, an active one (default: the primary)
   --spa                 Enable SPA mode (single-page application routing)
   --authelia            Enable Authelia protection
 `);
@@ -124,6 +125,7 @@ async function createSite(args, { json }) {
   const type = getArg(args, 'type') || 'managed';
   const customDomain = getArg(args, 'custom-domain') || undefined;
   const aliasArg = getArg(args, 'aliases');
+  const domain = getArg(args, 'domain');
   const spaMode = args.includes('--spa');
   const autheliaProtected = args.includes('--authelia');
 
@@ -152,6 +154,7 @@ async function createSite(args, { json }) {
   const body = { name, type, spaMode, autheliaProtected };
   if (customDomain) body.customDomain = customDomain;
   if (aliasArg) body.aliases = splitAliases(aliasArg);
+  if (domain) body.domain = domain.toLowerCase();
 
   if (!json) process.stderr.write(`  Creating site ${chalk.cyan(name)}...`);
 

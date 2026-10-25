@@ -4,7 +4,7 @@
  * for agents.
  *
  *   registry-credential show
- *   registry-credential set --url <registry> --oidc
+ *   registry-credential set --url <registry> --oidc [--issuer-domain <domain>]
  *       The panel authenticates as its own `lamaste-server` OIDC client on
  *       the relay's Authelia (client-credentials grant, Feria login). Nothing
  *       to paste; Feria's auth.json must grant the relay's lamaste-server client
@@ -35,7 +35,7 @@ export async function runRegistryCredential(args, { json }) {
       return clear({ json });
     default:
       process.stderr.write(
-        `Usage: lamaste-server registry-credential <show | set --url <registry> (--oidc | --token-stdin) | clear>\n`,
+        `Usage: lamaste-server registry-credential <show | set --url <registry> (--oidc [--issuer-domain <domain>] | --token-stdin) | clear>\n`,
       );
       process.exit(1);
   }
@@ -68,6 +68,7 @@ async function set(args, { json }) {
   let url;
   let tokenFromStdin = false;
   let oidc = false;
+  let issuerDomain;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === '--url') {
@@ -78,6 +79,8 @@ async function set(args, { json }) {
       tokenFromStdin = true;
     } else if (arg === '--oidc') {
       oidc = true;
+    } else if (arg === '--issuer-domain') {
+      issuerDomain = args[++i]?.toLowerCase();
     } else if (arg === '--token' || arg.startsWith('--token=')) {
       throw new Error(
         'The token is never accepted on the command line — set LAMASTE_REGISTRY_TOKEN or use --token-stdin',
@@ -87,13 +90,17 @@ async function set(args, { json }) {
     }
   }
   if (!url) throw new Error('registry-credential set: --url <registry> is required');
+  if (issuerDomain !== undefined && !oidc) {
+    throw new Error('registry-credential set: --issuer-domain goes with --oidc');
+  }
   if (oidc && tokenFromStdin) {
     throw new Error('registry-credential set: choose --oidc or --token-stdin, not both');
   }
 
   let auth;
   if (oidc) {
-    auth = { kind: 'oidc' };
+    // The domain whose issuer (https://auth.<domain>) the registry trusts; the primary when absent.
+    auth = { kind: 'oidc', ...(issuerDomain ? { issuerDomain } : {}) };
   } else {
     let token = tokenFromStdin ? (await readStdin()).trim() : process.env.LAMASTE_REGISTRY_TOKEN;
     if (!token) {
