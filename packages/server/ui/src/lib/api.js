@@ -67,6 +67,7 @@ export async function apiFetch(url, opts) {
       status: res.status,
       ...(typeof data.code === 'string' ? { code: data.code } : {}),
       ...(Array.isArray(data.reasons) ? { reasons: data.reasons } : {}),
+      ...(data.usedBy && typeof data.usedBy === 'object' ? { usedBy: data.usedBy } : {}),
       ...(typeof data.operationId === 'string' ? { operationId: data.operationId } : {}),
       ...(errors ? { errors } : {}),
     });

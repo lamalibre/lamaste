@@ -17,6 +17,7 @@ import {
   TicketsPage,
   StoragePage,
   AuditPage,
+  DomainsPage,
 } from './admin/index.js';
 import { webAdminClient } from './lib/web-admin-client.js';
 import { pluginAnchorId } from './admin/lib/web-surface.js';
@@ -61,6 +62,7 @@ function AppRoutes() {
         <Route path="/tunnels" element={<TunnelsPage />} />
         <Route path="/sites" element={<SitesPage domain={domain} onOpenPlugin={openPlugin} />} />
         <Route path="/users" element={<UsersPage />} />
+        <Route path="/domains" element={<DomainsPage />} />
         <Route path="/certificates" element={<CertificatesPage />} />
         <Route path="/services" element={<ServicesPage />} />
         <Route path="/tickets" element={<TicketsPage />} />

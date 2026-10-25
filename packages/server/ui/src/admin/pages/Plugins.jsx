@@ -24,6 +24,7 @@ import PluginHostDialog from '../components/PluginHostDialog.jsx';
 import PluginIdentity from '../components/PluginIdentity.jsx';
 import PluginSettings, { NeedsConfigurationBadge } from '../components/PluginSettings.jsx';
 import PluginWebSurface from '../components/PluginWebSurface.jsx';
+import PluginDomain from '../components/PluginDomain.jsx';
 import PushInstallSection from '../components/PushInstallSection.jsx';
 import { PluginRetainedData, UninstalledRetainedData } from '../components/RetainedData.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
@@ -387,6 +388,7 @@ function PluginCard({
 
       {plugin.settings && <PluginSettings plugin={plugin} />}
 
+      <PluginDomain plugin={plugin} />
       {plugin.identity && <PluginIdentity plugin={plugin} />}
 
       {showsWebSurface(plugin, ownedRoutes) && <PluginWebSurface plugin={plugin} />}

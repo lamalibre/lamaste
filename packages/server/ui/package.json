@@ -33,6 +33,7 @@
     "tailwind-merge": "^2.3.0"
   },
   "devDependencies": {
+    "@lamalibre/lamaste": "^4.6.0",
     "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.4.0",
     "postcss": "^8.4.0",

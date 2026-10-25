@@ -15,6 +15,7 @@ import {
 import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { siteOwnerRoute } from '../lib/web-surface.js';
+import { DomainPicker } from '../components/DomainChoice.jsx';
 import {
   boundRoutes,
   userSurfaceCandidateBlock,
@@ -126,6 +127,8 @@ function AddTunnelForm({ domain, onClose }) {
   const [accessMode, setAccessMode] = useState('restricted');
   const [agentLabel, setAgentLabel] = useState('');
   const [maxBody, setMaxBody] = useState(String(MAX_BODY_MB.default));
+  // Empty: the primary (the agent config's domain); a picker once there are two.
+  const [baseDomain, setBaseDomain] = useState('');
   const { agents, isLoading: agentsLoading } = useCarrierAgents();
   const [errors, setErrors] = useState({});
   const [apiError, setApiError] = useState(null);
@@ -169,9 +172,10 @@ function AddTunnelForm({ domain, onClose }) {
         accessMode,
         agentLabel,
         maxBodySizeMb: Number(maxBody),
+        ...(baseDomain && baseDomain !== domain ? { domain: baseDomain } : {}),
       });
     },
-    [subdomain, port, description, accessMode, agentLabel, maxBody, mutation],
+    [subdomain, port, description, accessMode, agentLabel, maxBody, baseDomain, domain, mutation],
   );
 
   return (
@@ -198,11 +202,12 @@ function AddTunnelForm({ domain, onClose }) {
               className="flex-1 rounded-l bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 font-mono placeholder:text-zinc-600 focus:outline-none focus:border-cyan-400 disabled:opacity-50"
             />
             <span className="rounded-r bg-zinc-800/60 border border-l-0 border-zinc-700 px-3 py-2 text-sm text-zinc-500 font-mono">
-              .{domain}
+              .{baseDomain || domain}
             </span>
           </div>
           {errors.subdomain && <p className="text-red-400 text-xs mt-1">{errors.subdomain}</p>}
         </div>
+        <DomainPicker value={baseDomain || domain} onChange={setBaseDomain} />
 
         {/* Port */}
         <div>
@@ -808,7 +813,7 @@ function TunnelTable({ tunnels, onDelete, onToggle, onEdit, onUserSurface }) {
                   </span>
                 </td>
                 <td className="py-3 px-4 text-sm text-zinc-200 font-mono">
-                  {internal ? <InternalBadge tunnel={tunnel} /> : tunnel.subdomain}
+                  {internal ? <InternalBadge tunnel={tunnel} /> : (tunnel.fqdn ?? tunnel.subdomain)}
                 </td>
                 <td className="py-3 px-4 text-sm">
                   {internal ? (
@@ -953,7 +958,7 @@ function TunnelCards({ tunnels, onDelete, onToggle, onEdit, onUserSurface }) {
                   {enabled ? 'active' : 'disabled'}
                 </span>
                 <span className="text-sm font-semibold text-zinc-200 font-mono">
-                  {internal ? <InternalBadge tunnel={tunnel} /> : tunnel.subdomain}
+                  {internal ? <InternalBadge tunnel={tunnel} /> : (tunnel.fqdn ?? tunnel.subdomain)}
                 </span>
               </div>
               <div className="flex items-center gap-2">

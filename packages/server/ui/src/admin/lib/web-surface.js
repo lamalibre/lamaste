@@ -11,12 +11,22 @@ import { errorMessage, refusalOf } from './errorMessage.js';
 export const WEB_SURFACE_ACCESS_MODES = Object.freeze(['authenticated', 'restricted']);
 
 /**
- * Subdomains no web surface may take — mirrors `RESERVED_SUBDOMAINS` and
- * `AGENT_PANEL_SUBDOMAIN_PREFIX` in @lamalibre/lamaste (the panel decides;
- * this only spares the administrator a round trip).
+ * Subdomains no tunnel, site or web surface may take on any domain —
+ * mirrors `RESERVED_SUBDOMAINS` and `AGENT_PANEL_SUBDOMAIN_PREFIX` in
+ * @lamalibre/lamaste (the panel decides; this only spares the administrator
+ * a round trip). The browser bundle does not carry the core library; a test
+ * keeps the copy equal to it.
  */
-const RESERVED_SUBDOMAINS = Object.freeze(['panel', 'auth', 'tunnel', 'www', 'mail', 'ftp', 'api']);
-const AGENT_PANEL_SUBDOMAIN_PREFIX = 'agent-';
+export const RESERVED_SUBDOMAINS = Object.freeze([
+  'panel',
+  'auth',
+  'tunnel',
+  'www',
+  'mail',
+  'ftp',
+  'api',
+]);
+export const AGENT_PANEL_SUBDOMAIN_PREFIX = 'agent-';
 
 /** A DNS label: what the panel accepts as a subdomain. */
 const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;

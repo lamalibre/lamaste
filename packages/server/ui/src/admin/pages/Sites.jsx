@@ -21,6 +21,7 @@ import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import FileBrowser from '../components/FileBrowser.jsx';
 import { notServedReasonText, siteOwner, siteOwnerRoute } from '../lib/web-surface.js';
+import { DomainPicker } from '../components/DomainChoice.jsx';
 
 // --- Helpers ---
 
@@ -190,6 +191,8 @@ function AddSiteForm({ domain, onClose }) {
   const [aliasText, setAliasText] = useState('');
   const [spaMode, setSpaMode] = useState(false);
   const [autheliaProtected, setAutheliaProtected] = useState(false);
+  // A managed site's domain; empty: the primary.
+  const [baseDomain, setBaseDomain] = useState('');
   const [errors, setErrors] = useState({});
   const [apiError, setApiError] = useState(null);
 
@@ -233,6 +236,7 @@ function AddSiteForm({ domain, onClose }) {
         spaMode,
         autheliaProtected,
       };
+      if (type === 'managed' && baseDomain && baseDomain !== domain) body.domain = baseDomain;
       if (type === 'custom') {
         body.customDomain = customDomain.toLowerCase();
         const aliases = parseAliases(aliasText);
@@ -240,7 +244,7 @@ function AddSiteForm({ domain, onClose }) {
       }
       mutation.mutate(body);
     },
-    [name, type, customDomain, aliasText, spaMode, autheliaProtected, mutation],
+    [name, type, customDomain, aliasText, spaMode, autheliaProtected, baseDomain, domain, mutation],
   );
 
   return (
@@ -297,12 +301,15 @@ function AddSiteForm({ domain, onClose }) {
             />
             {type === 'managed' && (
               <span className="rounded-r bg-zinc-800/60 border border-l-0 border-zinc-700 px-3 py-2 text-sm text-zinc-500 font-mono">
-                .{domain}
+                .{baseDomain || domain}
               </span>
             )}
           </div>
           {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
         </div>
+        {type === 'managed' && (
+          <DomainPicker value={baseDomain || domain} onChange={setBaseDomain} />
+        )}
 
         {/* Custom Domain */}
         {type === 'custom' && (

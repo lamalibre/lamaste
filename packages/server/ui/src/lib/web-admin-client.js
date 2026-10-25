@@ -87,6 +87,19 @@ export const webAdminClient = {
   eraseDirectoryUser: (userId) =>
     jsonPost(`/api/identity/directory/${encodeURIComponent(userId)}/erase`),
 
+  // --- Domains (the relay's base domains and their members) ---
+  getDomains: () => apiFetch('/api/domains'),
+  addDomain: (name) => jsonPost('/api/domains', { name }),
+  verifyDomainDns: (name) => jsonPost(`/api/domains/${encodeURIComponent(name)}/verify-dns`),
+  activateDomain: (name) => jsonPost(`/api/domains/${encodeURIComponent(name)}/activate`),
+  removeDomain: (name) => jsonDelete(`/api/domains/${encodeURIComponent(name)}`),
+  getDomainMembers: (name) => apiFetch(`/api/domains/${encodeURIComponent(name)}/members`),
+  addDomainMember: (name, userId) =>
+    jsonPut(`/api/domains/${encodeURIComponent(name)}/members/${encodeURIComponent(userId)}`),
+  removeDomainMember: (name, userId) =>
+    jsonDelete(`/api/domains/${encodeURIComponent(name)}/members/${encodeURIComponent(userId)}`),
+  setPluginDomain: (name, domain) => jsonPut(pluginPath(name, 'domain'), { domain }),
+
   // --- Invitations ---
   getInvitations: () => apiFetch('/api/invitations'),
   createInvitation: (data) => jsonPost('/api/invitations', data),

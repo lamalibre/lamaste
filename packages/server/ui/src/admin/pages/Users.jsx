@@ -28,6 +28,8 @@ import CopyableId from '../components/CopyableId.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { relativeTime } from '../lib/formatters.js';
 import { isLastEnabledAdmin, warningText } from '../lib/identity.js';
+import { DomainChips, DomainMembershipChoice, useDomains } from '../components/DomainChoice.jsx';
+import { membershipChanges, primaryDomainName } from '../lib/domains.js';
 
 /**
  * Refetch what a users change touches: the users, the directory (ids,
@@ -38,6 +40,18 @@ function invalidateUsers(queryClient) {
   queryClient.invalidateQueries({ queryKey: ['user-directory'] });
   queryClient.invalidateQueries({ queryKey: ['plugin-identity'] });
   queryClient.invalidateQueries({ queryKey: ['plugin-audience'] });
+  queryClient.invalidateQueries({ queryKey: ['domains'] });
+  queryClient.invalidateQueries({ queryKey: ['domain-members'] });
+}
+
+/**
+ * The domains a form starts with: the user's own, or — for a new user —
+ * the primary (the panel asks for domains only once there are two).
+ */
+function initialDomains(user, domains) {
+  if (user) return [...(user.domains ?? [])];
+  const primary = primaryDomainName(domains);
+  return primary ? [primary] : [];
 }
 
 /** Toast each warning a users change came back with: what the panel could not complete beside it. */
@@ -140,6 +154,11 @@ function UserFormModal({ user, onClose, onSuccess }) {
     password: '',
     groups: user?.groups?.join(', ') || '',
   });
+  const { data: domains = [] } = useDomains();
+  // null until the administrator changes it: the user's domains, or the primary.
+  const [memberOf, setMemberOf] = useState(null);
+  const chosenDomains = memberOf ?? initialDomains(user, domains);
+  const asksDomains = domains.length > 1;
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
 
@@ -201,6 +220,11 @@ function UserFormModal({ user, onClose, onSuccess }) {
       .map((g) => g.trim())
       .filter(Boolean);
 
+    if (asksDomains && !isEdit && chosenDomains.length === 0) {
+      setError('Choose the domains the user is a member of');
+      return;
+    }
+
     try {
       if (isEdit) {
         const body = { username: user.username };
@@ -209,14 +233,21 @@ function UserFormModal({ user, onClose, onSuccess }) {
         if (form.password) body.password = form.password;
         const currentGroups = (user.groups || []).join(', ');
         if (form.groups !== currentGroups) body.groups = groups;
+        const changes =
+          asksDomains && user.userId
+            ? membershipChanges(user.domains, chosenDomains)
+            : { add: [], remove: [] };
 
         // Check if anything changed
-        if (Object.keys(body).length <= 1) {
+        if (Object.keys(body).length <= 1 && changes.add.length + changes.remove.length === 0) {
           setError('No changes detected');
           return;
         }
 
-        await mutation.mutateAsync(body);
+        if (Object.keys(body).length > 1) await mutation.mutateAsync(body);
+        for (const name of changes.add) await client.addDomainMember(name, user.userId);
+        for (const name of changes.remove) await client.removeDomainMember(name, user.userId);
+        if (changes.add.length + changes.remove.length > 0) invalidateUsers(queryClient);
         toast('User updated successfully');
         onClose();
       } else {
@@ -226,6 +257,7 @@ function UserFormModal({ user, onClose, onSuccess }) {
           email: form.email,
           password: form.password,
           groups,
+          ...(asksDomains ? { domains: chosenDomains } : {}),
         });
         toast('User created successfully');
         onSuccess(result.user.username);
@@ -303,6 +335,9 @@ function UserFormModal({ user, onClose, onSuccess }) {
             className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-cyan-500 focus:outline-none"
           />
         </div>
+        {(!isEdit || user.userId) && (
+          <DomainMembershipChoice value={chosenDomains} onChange={setMemberOf} domains={domains} />
+        )}
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -339,6 +374,10 @@ function InviteUserModal({ onClose, onSuccess }) {
     email: '',
     groups: '',
   });
+  const { data: domains = [] } = useDomains();
+  const [memberOf, setMemberOf] = useState(null);
+  const chosenDomains = memberOf ?? initialDomains(null, domains);
+  const asksDomains = domains.length > 1;
   const [error, setError] = useState('');
 
   const mutation = useMutation({
@@ -375,11 +414,17 @@ function InviteUserModal({ onClose, onSuccess }) {
       .map((g) => g.trim())
       .filter(Boolean);
 
+    if (asksDomains && chosenDomains.length === 0) {
+      setError('Choose the domains the user will be a member of');
+      return;
+    }
+
     try {
       const result = await mutation.mutateAsync({
         username: form.username,
         email: form.email,
         groups,
+        ...(asksDomains ? { domains: chosenDomains } : {}),
       });
       toast('Invitation created');
       onSuccess(result);
@@ -427,6 +472,7 @@ function InviteUserModal({ onClose, onSuccess }) {
             className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-cyan-500 focus:outline-none"
           />
         </div>
+        <DomainMembershipChoice value={chosenDomains} onChange={setMemberOf} domains={domains} />
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -912,6 +958,8 @@ export default function Users() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteResult, setInviteResult] = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
+  const { data: domains = [] } = useDomains();
+  const showDomains = domains.length > 1;
 
   const usersQuery = useQuery({
     queryKey: ['users'],
@@ -1082,6 +1130,11 @@ export default function Users() {
                 <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400 hidden md:table-cell">
                   Groups
                 </th>
+                {showDomains && (
+                  <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400 hidden md:table-cell">
+                    Domains
+                  </th>
+                )}
                 <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400">Status</th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400 hidden lg:table-cell">
                   User ID
@@ -1118,6 +1171,11 @@ export default function Users() {
                         ))}
                       </div>
                     </td>
+                    {showDomains && (
+                      <td className="px-4 py-3 hidden md:table-cell">
+                        <DomainChips domains={u.domains} />
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <StatusBadge status={u.status} />
                     </td>
