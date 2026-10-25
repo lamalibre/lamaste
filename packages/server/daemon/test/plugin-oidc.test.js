@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import yaml from 'js-yaml';
 
-import { validateManifest } from '@lamalibre/lamaste';
+import { validateInstalledManifest, validateManifest } from '@lamalibre/lamaste';
 import {
   AUTHELIA_OIDC_KEY,
   OIDC_KEY_TEMPLATE_SENTINEL,
@@ -162,11 +162,7 @@ test('manifest: access-token claims need their scope; client_credentials needs a
   // A service grant beside a user grant would skip the domain's member
   // policy (Authelia gives client_credentials one_factor): refused, whatever
   // the scopes.
-  for (const userGrant of [
-    'urn:ietf:params:oauth:grant-type:device_code',
-    'authorization_code',
-    'refresh_token',
-  ]) {
+  for (const userGrant of ['urn:ietf:params:oauth:grant-type:device_code', 'authorization_code']) {
     assert.throws(
       () =>
         validateManifest(
@@ -218,7 +214,7 @@ test('renderOidcClient: public device-code client with the domain expanded and i
     name: undefined,
     requirePkce: true,
     accessTokenClaims: [],
-    grantTypes: ['authorization_code', 'refresh_token'],
+    grantTypes: ['authorization_code'],
     redirectUris: ['https://feria.{domain}/callback'],
     audience: [],
   });
@@ -439,4 +435,61 @@ test('the writer refuses "{{" or "}}" anywhere else — the file is a Go templat
   );
   // Only a well-formed template line is sentinelized on read.
   assert.equal(sentinelizeAutheliaConfig('key: {{ nope }}\n'), 'key: {{ nope }}\n');
+});
+
+test('manifest: plugin clients get no refresh tokens; one installed before keeps its clients without them', () => {
+  const [cli] = feriaManifest.oidcClients;
+  const withClient = (client) => ({ ...feriaManifest, oidcClients: [client] });
+  const refused = /get no refresh tokens: membership of the client's domain is checked only when/;
+  // A new install or update is refused: the grant and the scopes that ask for one.
+  assert.throws(
+    () =>
+      validateManifest(withClient({ ...cli, grantTypes: [...cli.grantTypes, 'refresh_token'] })),
+    refused,
+  );
+  for (const scope of ['offline_access', 'offline']) {
+    assert.throws(
+      () => validateManifest(withClient({ ...cli, scopes: [...cli.scopes, scope] })),
+      refused,
+      scope,
+    );
+  }
+
+  // An installed plugin's manifest: its clients, without them; a client left
+  // with no grant goes.
+  const installed = validateInstalledManifest({
+    ...feriaManifest,
+    oidcClients: [
+      {
+        ...cli,
+        grantTypes: [...cli.grantTypes, 'refresh_token'],
+        scopes: [...cli.scopes, 'offline_access'],
+      },
+      { ...cli, id: 'feria-refresh', grantTypes: ['refresh_token'] },
+    ],
+  });
+  assert.deepEqual(
+    installed.oidcClients.map((c) => [c.id, c.grantTypes, c.scopes]),
+    [
+      [
+        'feria-cli',
+        ['urn:ietf:params:oauth:grant-type:device_code'],
+        ['openid', 'profile', 'groups'],
+      ],
+    ],
+  );
+  // Nothing to set aside: read exactly as a new manifest.
+  assert.deepEqual(validateInstalledManifest(feriaManifest), validateManifest(feriaManifest));
+
+  // The renderer refuses one that got through anyway.
+  assert.throws(
+    () =>
+      renderOidcClient({
+        ...installed.oidcClients[0],
+        grantTypes: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
+        plugin: 'feria',
+        domain: 'samplepark.tr',
+      }),
+    /asks for refresh tokens/,
+  );
 });

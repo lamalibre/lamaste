@@ -612,3 +612,31 @@ test('an update that adds a confidential OIDC client shows its secret once, on t
     lib.setOidcSyncForTests(null);
   }
 });
+
+test('an update’s revert puts back an installed version declared before refresh tokens were refused', async () => {
+  const pkg = '@lamalibre/rx-server';
+  const legacy = {
+    name: 'rx',
+    version: '1.0.0',
+    oidcClients: [
+      {
+        id: 'rx-cli',
+        grantTypes: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
+        scopes: ['openid', 'offline_access'],
+      },
+    ],
+  };
+  await npm.publish(pkg, '1.0.0', { 'lamaste-plugin.json': JSON.stringify(legacy) });
+
+  // Installing it now is refused …
+  await assert.rejects(
+    lib.replacePluginPackage('rx', pkg, '1.0.0', logger),
+    /get no refresh tokens/,
+  );
+  // … putting it back as the installed version keeps its client, without them.
+  const restored = await lib.replacePluginPackage('rx', pkg, '1.0.0', logger, { restoring: true });
+  assert.deepEqual(restored.manifest.oidcClients[0].grantTypes, [
+    'urn:ietf:params:oauth:grant-type:device_code',
+  ]);
+  assert.deepEqual(restored.manifest.oidcClients[0].scopes, ['openid']);
+});

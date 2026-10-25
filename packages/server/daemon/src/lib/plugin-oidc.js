@@ -34,7 +34,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { validateManifest } from '@lamalibre/lamaste';
+import { validateInstalledManifest } from '@lamalibre/lamaste';
 import {
   LAMASTE_REGISTRY_OIDC_SCOPES,
   LAMASTE_SERVER_OIDC_CLIENT_ID,
@@ -67,7 +67,7 @@ export async function collectPluginOidcClients() {
     let manifest;
     try {
       const manifestPath = require.resolve(`${plugin.packageName}/lamaste-plugin.json`);
-      manifest = validateManifest(JSON.parse(await readFile(manifestPath, 'utf-8')));
+      manifest = validateInstalledManifest(JSON.parse(await readFile(manifestPath, 'utf-8')));
     } catch {
       continue; // an unreadable manifest contributes no clients
     }

@@ -954,12 +954,6 @@ function expandDomain(value: string, domain: string): string {
   return value.replaceAll('{domain}', domain);
 }
 
-const USER_FACING_GRANTS: readonly string[] = [
-  'urn:ietf:params:oauth:grant-type:device_code',
-  'authorization_code',
-  'refresh_token',
-];
-
 /**
  * The `clients[]` entry Authelia expects for one client. A confidential
  * client needs the pbkdf2 digest of its secret. Pure.
@@ -975,6 +969,15 @@ export function renderOidcClient(
   }
   if (!client.confidential && secretDigest) {
     throw new Error(`OIDC client "${client.id}" is public and must not carry a secret`);
+  }
+  // The manifest refuses refresh tokens (schemas.ts); one reaching here is a bug.
+  if (
+    (client.grantTypes as readonly string[]).includes('refresh_token') ||
+    client.scopes.some((s) => s === 'offline' || s === 'offline_access')
+  ) {
+    throw new Error(
+      `OIDC client "${client.id}" asks for refresh tokens, which plugin clients never get`,
+    );
   }
   const entry: Record<string, unknown> = {
     client_id: client.id,
@@ -994,7 +997,7 @@ export function renderOidcClient(
   // Every consent is asked for explicitly — a device-flow approval screen
   // must say what is being granted. A pure service client has no user to
   // ask.
-  if (client.grantTypes.some((g) => USER_FACING_GRANTS.includes(g))) {
+  if (client.grantTypes.some((g) => g !== 'client_credentials')) {
     entry.consent_mode = 'explicit';
   }
   entry.scopes = [...client.scopes];

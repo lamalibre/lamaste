@@ -121,6 +121,7 @@ export {
   LamaPackageNameSchema,
   ManifestValidationError,
   validateManifest,
+  validateInstalledManifest,
   AgentRequiresSchema,
   AgentBlockSchema,
   AgentServiceSchema,

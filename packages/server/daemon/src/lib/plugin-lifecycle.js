@@ -938,6 +938,7 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
           plugin.packageName,
           plugin.version,
           logger,
+          { restoring: true },
         );
         await writePluginRow(
           name,

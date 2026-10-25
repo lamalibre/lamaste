@@ -13,7 +13,7 @@
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -283,6 +283,41 @@ test('OIDC: an enabled agent-hosted plugin has its clients served, without being
     ],
   );
   assert.equal(globalThis.__agentHostedImported, undefined);
+});
+
+test('OIDC: a plugin installed before refresh tokens were refused is served without them', async () => {
+  const { writePlugins } = await import('../src/lib/plugins.js');
+  const { planOidcClients } = await import('../src/lib/plugin-oidc.js');
+  const manifestPath = path.join(
+    stateDir,
+    'node_modules',
+    ...AGENT_PACKAGE.split('/'),
+    'lamaste-plugin.json',
+  );
+  const current = await readFile(manifestPath, 'utf-8');
+  const [cli, service] = agentManifest.oidcClients;
+  const legacy = {
+    ...JSON.parse(current),
+    oidcClients: [
+      {
+        ...cli,
+        grantTypes: [...cli.grantTypes, 'refresh_token'],
+        scopes: [...cli.scopes, 'offline_access'],
+      },
+      service,
+    ],
+  };
+  try {
+    await writeFile(manifestPath, JSON.stringify(legacy));
+    await writePlugins({ plugins: [registryEntry(AGENT_PACKAGE, agentManifest, 'enabled')] });
+    const plan = await planOidcClients({ registryAuth: null });
+    const served = plan.served.find((c) => c.id === 'e2e-agent-hosted-cli');
+    assert.ok(served, 'the client is still served');
+    assert.deepEqual(served.grantTypes, ['urn:ietf:params:oauth:grant-type:device_code']);
+    assert.ok(!served.scopes.includes('offline_access'));
+  } finally {
+    await writeFile(manifestPath, current);
+  }
 });
 
 test('OIDC: disabling serves none of its clients but keeps the confidential secret planned', async () => {

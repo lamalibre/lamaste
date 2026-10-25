@@ -112,11 +112,59 @@ export const PanelPageSchema = z.object({
 export const OIDC_GRANT_TYPES = [
   'urn:ietf:params:oauth:grant-type:device_code',
   'authorization_code',
-  'refresh_token',
   'client_credentials',
 ] as const;
 
 export type OidcGrantType = (typeof OIDC_GRANT_TYPES)[number];
+
+/**
+ * Plugin clients get no refresh tokens. Authelia checks a client's
+ * authorization policy — membership of the client's domain — when a user
+ * authorizes it, not when a refresh token is redeemed, so a user removed from
+ * the domain would keep minting access tokens until the refresh token expired.
+ * Without refresh tokens an access token is the most a removed member keeps,
+ * until it expires.
+ */
+const REFRESH_GRANT = 'refresh_token';
+
+/** The scopes that ask Authelia for a refresh token. */
+const REFRESH_SCOPES: readonly string[] = ['offline', 'offline_access'];
+
+const REFRESH_REFUSED =
+  "Plugin OIDC clients get no refresh tokens: membership of the client's domain is checked only when a user " +
+  'authorizes it, so a removed member could keep refreshing — sign in again when the access token expires';
+
+const isRefreshGrant = (g: unknown): boolean => g === REFRESH_GRANT;
+const isRefreshScope = (s: unknown): boolean => REFRESH_SCOPES.includes(s as string);
+
+/**
+ * An installed plugin's manifest the way the relay serves it now: the refresh
+ * grant and scopes a plugin installed before they were refused taken out of
+ * its OIDC clients (a client left with no grant goes). Returns the input when
+ * there is nothing to take out.
+ */
+function withoutRefreshTokens(raw: unknown): unknown {
+  const clients = (raw as { oidcClients?: unknown } | null)?.oidcClients;
+  if (!Array.isArray(clients)) return raw;
+  type RawClient = { grantTypes?: unknown[]; scopes?: unknown[] } | null;
+  const holdsRefresh = (c: RawClient): boolean =>
+    Boolean(c?.grantTypes?.some?.(isRefreshGrant) || c?.scopes?.some?.(isRefreshScope));
+  if (!clients.some(holdsRefresh)) return raw;
+  return {
+    ...(raw as Record<string, unknown>),
+    oidcClients: clients
+      .map((c: RawClient) =>
+        holdsRefresh(c)
+          ? {
+              ...c,
+              grantTypes: c?.grantTypes?.filter((g) => !isRefreshGrant(g)),
+              scopes: c?.scopes?.filter((s) => !isRefreshScope(s)),
+            }
+          : c,
+      )
+      .filter((c) => !Array.isArray(c?.grantTypes) || c.grantTypes.length > 0),
+  };
+}
 
 /**
  * Claims a client may ask to have copied into its JWT access tokens, and the
@@ -142,7 +190,7 @@ export const OIDC_ACCESS_TOKEN_CLAIMS = Object.keys(OIDC_ACCESS_TOKEN_CLAIM_SCOP
 export type OidcAccessTokenClaim = keyof typeof OIDC_ACCESS_TOKEN_CLAIM_SCOPES;
 
 /** Scopes a client whose only grant is `client_credentials` may not carry (Authelia refuses them). */
-const OIDC_USER_ONLY_SCOPES: readonly string[] = ['openid', 'offline', 'offline_access'];
+const OIDC_USER_ONLY_SCOPES: readonly string[] = ['openid'];
 
 /**
  * An OIDC client declared by a plugin manifest — e.g. a CLI that logs in
@@ -167,9 +215,22 @@ export const OidcClientSchema = z
       .max(100)
       .regex(/^[a-z0-9][a-z0-9-]*$/, 'Client id must be lowercase letters, numbers and hyphens'),
     name: z.string().min(1).max(100).optional(),
-    grantTypes: z.array(z.enum(OIDC_GRANT_TYPES)).min(1).max(OIDC_GRANT_TYPES.length),
+    grantTypes: z
+      .array(
+        z
+          .string()
+          .refine((g) => !isRefreshGrant(g), REFRESH_REFUSED)
+          .pipe(z.enum(OIDC_GRANT_TYPES)),
+      )
+      .min(1)
+      .max(OIDC_GRANT_TYPES.length),
     scopes: z
-      .array(z.string().regex(/^[a-z_]+$/, 'Scope names are lowercase letters and underscores'))
+      .array(
+        z
+          .string()
+          .regex(/^[a-z_]+$/, 'Scope names are lowercase letters and underscores')
+          .refine((scope) => !isRefreshScope(scope), REFRESH_REFUSED),
+      )
       .min(1)
       .max(20)
       .default(['openid']),
@@ -928,4 +989,16 @@ export function validateManifest(raw: unknown): ParsedManifest {
     );
   }
   return result.data;
+}
+
+/**
+ * Validate the manifest of a plugin that is already installed — what the
+ * relay serves for it, and what an update's revert puts back: as
+ * {@link validateManifest}, except that what a plugin installed before a rule
+ * was tightened declared under the old rule is set aside rather than refused
+ * (the refresh grant and scopes of its OIDC clients). A new install or update
+ * is checked by {@link validateManifest} and refused.
+ */
+export function validateInstalledManifest(raw: unknown): ParsedManifest {
+  return validateManifest(withoutRefreshTokens(raw));
 }

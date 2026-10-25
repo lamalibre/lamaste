@@ -22,6 +22,7 @@ import {
   normalizeIdentityBlock,
   pluginHostCapability,
   validateManifest as coreValidateManifest,
+  validateInstalledManifest,
 } from '@lamalibre/lamaste';
 import { listRegisteredSubScopeNames } from './tickets.js';
 import { getStateDb } from './state-db.js';
@@ -790,9 +791,17 @@ export async function writePluginRow(
  * web tree's digest. The
  * row is not touched — the caller compares the result with what was
  * reviewed and then writes it. Refuses a package whose manifest names
- * another plugin.
+ * another plugin. `restoring` puts back the version that was installed (an
+ * update's revert): its manifest is read as an installed one, so a rule
+ * tightened since it was installed does not leave the revert half done.
  */
-export function replacePluginPackage(name, packageName, version, logger) {
+export function replacePluginPackage(
+  name,
+  packageName,
+  version,
+  logger,
+  { restoring = false } = {},
+) {
   return withPluginLock(async () => {
     const bare = bareLamalibrePackageName(packageName);
     const spec = `${bare}@${version}`;
@@ -814,7 +823,8 @@ export function replacePluginPackage(name, packageName, version, logger) {
     }
     const require = createRequire(`${STATE_DIR}/`);
     const manifestPath = require.resolve(`${bare}/lamaste-plugin.json`);
-    const manifest = validateManifest(JSON.parse(await readFile(manifestPath, 'utf-8')));
+    const raw = JSON.parse(await readFile(manifestPath, 'utf-8'));
+    const manifest = restoring ? validateInstalledManifest(raw) : validateManifest(raw);
     if (manifest.name !== name) {
       throw Object.assign(new Error(`${spec} is plugin "${manifest.name}", not "${name}"`), {
         statusCode: 400,

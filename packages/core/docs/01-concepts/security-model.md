@@ -680,7 +680,7 @@ A relay may serve several base domains with one user directory and an explicit m
 
 **What remains.**
 
-- **OIDC tokens already issued.** Authelia checks a client's authorization policy when a user authorizes it; as far as is known it does not check it again on a `refresh_token` grant. A user removed from a domain may keep the refresh and access tokens they already hold for that domain's user-facing clients until those expire. Feria's own tokens are revoked (above). Forbidding `refresh_token` for user-facing clients, or revoking Authelia's consents on membership loss, is a decision still open.
+- **OIDC access tokens already issued.** Authelia checks a client's authorization policy — membership of its domain — when a user authorizes it, not afterwards. Plugin clients therefore get no refresh tokens (the manifest refuses the `refresh_token` grant and the `offline` / `offline_access` scopes; a plugin installed before is served without them), so a user removed from a domain keeps at most the access tokens they already hold for its clients, until those expire. Feria's own tokens are revoked (above).
 - **One session store.** Authelia keeps every domain's sessions in one store; the separation between domains is the browser's cookie scoping plus membership by username — a session value moved to another domain's cookie would be accepted there for a member. The backend cookie map keeps session values away from every backend.
 - **Every membership change restarts Authelia** (its configuration changed), which ends every session on every domain — an availability cost, not an access one.
 

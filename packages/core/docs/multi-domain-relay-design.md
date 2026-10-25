@@ -455,11 +455,17 @@ both be on one relay. The check uses `tldts` 7.4.18 (MIT; its one dependency
 
 **Residual, documented in `01-concepts/security-model.md`:**
 
-- **R1.** Authelia does not (as far as known) re-check `authorization_policy`
-  on `refresh_token` grants: a user removed from a domain may keep refresh and
-  access tokens of its user-facing clients until they expire. Feria's own
-  tokens are revoked (S3). Open decision: forbid `refresh_token` on
-  user-facing clients, or revoke Authelia consents on membership loss.
+- **R1 — resolved, the user's decision of 2026-10-25.** Authelia does not (as
+  far as known) re-check `authorization_policy` on `refresh_token` grants, so
+  plugin clients get no refresh tokens: `OidcClientSchema` refuses the
+  `refresh_token` grant and the `offline` / `offline_access` scopes at install
+  and update; an installed plugin's manifest is read with core
+  `validateInstalledManifest` (its clients without them; a client left with no
+  grant goes) by the OIDC sync and by an update's revert
+  (`replacePluginPackage … { restoring: true }`), so a plugin installed before
+  keeps working. `renderOidcClient` throws on a refresh grant that got through.
+  A removed member keeps at most the access tokens already issued, until they
+  expire. Tests: plugin-oidc, agent-hosted-plugins, agent-half-staging.
 - **R2.** Authelia's session store is shared across cookie domains; isolation
   is browser cookie scoping plus membership by username.
 - **R3.** Every membership change restarts Authelia and ends every session on
