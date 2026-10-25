@@ -62,6 +62,11 @@ function removalQuery({ force = false, purge = false } = {}) {
   return toQuery({ force: force ? 'true' : undefined, purge: purge ? 'true' : undefined });
 }
 
+/** `/api/domains/<name><rest>`. */
+function domainPath(name, rest = '') {
+  return `/api/domains/${encodeURIComponent(name)}${rest}`;
+}
+
 /** `/api/plugins/<name>/<rest>`. */
 function pluginPath(name, rest) {
   return `/api/plugins/${encodeURIComponent(name)}/${rest}`;
@@ -90,14 +95,14 @@ export const webAdminClient = {
   // --- Domains (the relay's base domains and their members) ---
   getDomains: () => apiFetch('/api/domains'),
   addDomain: (name) => jsonPost('/api/domains', { name }),
-  verifyDomainDns: (name) => jsonPost(`/api/domains/${encodeURIComponent(name)}/verify-dns`),
-  activateDomain: (name) => jsonPost(`/api/domains/${encodeURIComponent(name)}/activate`),
-  removeDomain: (name) => jsonDelete(`/api/domains/${encodeURIComponent(name)}`),
-  getDomainMembers: (name) => apiFetch(`/api/domains/${encodeURIComponent(name)}/members`),
-  addDomainMember: (name, userId) =>
-    jsonPut(`/api/domains/${encodeURIComponent(name)}/members/${encodeURIComponent(userId)}`),
-  removeDomainMember: (name, userId) =>
-    jsonDelete(`/api/domains/${encodeURIComponent(name)}/members/${encodeURIComponent(userId)}`),
+  verifyDomainDns: (name) => jsonPost(domainPath(name, '/verify-dns')),
+  activateDomain: (name) => jsonPost(domainPath(name, '/activate')),
+  removeDomain: (name) => jsonDelete(domainPath(name)),
+  getDomainMembers: (name) => apiFetch(domainPath(name, '/members')),
+  addDomainMember: (name, user) =>
+    jsonPut(domainPath(name, `/members/${encodeURIComponent(user)}`)),
+  removeDomainMember: (name, user) =>
+    jsonDelete(domainPath(name, `/members/${encodeURIComponent(user)}`)),
   setPluginDomain: (name, domain) => jsonPut(pluginPath(name, 'domain'), { domain }),
 
   // --- Invitations ---

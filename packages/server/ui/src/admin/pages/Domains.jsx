@@ -17,8 +17,8 @@ import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { useDomains } from '../components/DomainChoice.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
+import { ConfirmDialog } from '../components/Dialog.jsx';
 import {
-  dnsRecordsFor,
   domainStatusText,
   domainUsageLines,
   explainDomainRefusal,
@@ -28,9 +28,16 @@ import {
 const BUTTON =
   'inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:border-cyan-600 hover:text-white disabled:opacity-50';
 
-/** Refetch what a domain change touches: the domains, the users' memberships, the plugins. */
+/** Refetch what a domain's lifecycle touches: the domains, memberships, users, plugins. */
 function invalidateDomains(queryClient) {
   for (const key of [['domains'], ['users'], ['plugins'], ['domain-members']]) {
+    queryClient.invalidateQueries({ queryKey: key });
+  }
+}
+
+/** Refetch what one membership change touches: the domains' counts, the users, that domain's members. */
+function invalidateMembership(queryClient, name) {
+  for (const key of [['domains'], ['users'], ['domain-members', name]]) {
     queryClient.invalidateQueries({ queryKey: key });
   }
 }
@@ -54,32 +61,31 @@ function DnsCheck({ domain }) {
         <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3 text-xs">
           <p className={result.ok ? 'text-green-400' : 'text-yellow-400'}>
             {result.ok
-              ? `auth.${domain.name} points at this relay (${result.expectedIp})`
-              : `auth.${domain.name} does not point at this relay (${result.expectedIp}) yet`}
-            {result.wildcard ? ' — a wildcard record is in place.' : ''}
+              ? `auth.${domain.name} points at this relay (${result.expectedIp}) — it can be activated`
+              : `Create these records at the domain’s DNS host, pointing at ${result.expectedIp}:`}
           </p>
-          {!result.ok && (
-            <>
-              <p className="mt-2 text-zinc-400">Create these records at the domain’s DNS host:</p>
-              <table className="mt-1 w-full text-left font-mono">
-                <tbody>
-                  {dnsRecordsFor(domain.name, result.expectedIp).map((r) => (
-                    <tr key={r.name} className="align-top">
-                      <td className="pr-3 text-zinc-500">{r.type}</td>
-                      <td className="pr-3 text-cyan-300">{r.name}</td>
-                      <td className="pr-3 text-zinc-300">{r.value}</td>
-                      <td className="font-sans text-zinc-500">{r.purpose}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-          {result.records.map((r) => (
-            <p key={r.name} className="mt-1 text-zinc-500">
-              {r.name}: {r.resolvedIps.length > 0 ? r.resolvedIps.join(', ') : 'no A record'}
-            </p>
-          ))}
+          <table className="mt-2 w-full text-left">
+            <tbody>
+              {result.records.map((r) => (
+                <tr key={r.name} className="align-top">
+                  <td className="pr-3 font-mono text-zinc-500">{r.type}</td>
+                  <td className="pr-3 font-mono text-cyan-300">{r.name}</td>
+                  <td className="pr-3 font-mono text-zinc-300">{r.value}</td>
+                  <td className="pr-3 text-zinc-500">
+                    {r.purpose}
+                    {r.required ? '' : ' (optional)'}
+                  </td>
+                  <td className={r.ok ? 'text-green-400' : 'text-zinc-500'}>
+                    {r.ok
+                      ? 'in place'
+                      : r.resolvedIps.length > 0
+                        ? r.resolvedIps.join(', ')
+                        : 'missing'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -103,7 +109,7 @@ function Members({ domain }) {
         : client.removeDomainMember(domain.name, userId),
     onSuccess: () => {
       setCandidate('');
-      invalidateDomains(queryClient);
+      invalidateMembership(queryClient, domain.name);
     },
     onError: (err) => addToast(explainDomainRefusal(err), 'error'),
   });
@@ -173,6 +179,7 @@ function DomainCard({ domain }) {
   const queryClient = useQueryClient();
   const addToast = useToast();
   const [open, setOpen] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const onError = (err) => addToast(explainDomainRefusal(err), 'error');
   const activate = useMutation({
     mutationFn: () => client.activateDomain(domain.name),
@@ -189,6 +196,7 @@ function DomainCard({ domain }) {
       invalidateDomains(queryClient);
     },
     onError,
+    onSettled: () => setConfirmRemove(false),
   });
   const usage = domainUsageLines(domain.usedBy);
   const active = domain.status === 'active';
@@ -219,11 +227,7 @@ function DomainCard({ domain }) {
               className={BUTTON}
               disabled={remove.isPending || usage.length > 0}
               title={usage.length > 0 ? 'Still in use' : undefined}
-              onClick={() => {
-                if (window.confirm(`Remove ${domain.name} and end its memberships?`)) {
-                  remove.mutate();
-                }
-              }}
+              onClick={() => setConfirmRemove(true)}
             >
               <Trash2 size={14} /> Remove
             </button>
@@ -249,6 +253,17 @@ function DomainCard({ domain }) {
         <div className="mt-3">
           <Members domain={domain} />
         </div>
+      )}
+      {confirmRemove && (
+        <ConfirmDialog
+          title={`Remove ${domain.name}?`}
+          message={`Its sign-in stops and its ${domain.members} membership(s) end. The users stay.`}
+          confirmLabel="Remove domain"
+          destructive
+          isPending={remove.isPending}
+          onConfirm={() => remove.mutate()}
+          onCancel={() => setConfirmRemove(false)}
+        />
       )}
     </div>
   );
@@ -299,7 +314,7 @@ function AddDomain() {
  * member list; a user reaches a domain's protected hosts only as a member.
  */
 export default function Domains() {
-  const domains = useDomains();
+  const { domains, isLoading, isError, error } = useDomains();
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -313,18 +328,18 @@ export default function Domains() {
         </div>
       </div>
       <AddDomain />
-      {domains.isLoading && <p className="text-sm text-zinc-500">Loading domains…</p>}
-      {domains.isError && (
+      {isLoading && <p className="text-sm text-zinc-500">Loading domains…</p>}
+      {isError && (
         <p className="flex items-center gap-2 text-sm text-red-400">
-          <AlertCircle size={16} /> {errorMessage(domains.error)}
+          <AlertCircle size={16} /> {errorMessage(error)}
         </p>
       )}
       <div className="space-y-4">
-        {(domains.data ?? []).map((d) => (
+        {domains.map((d) => (
           <DomainCard key={d.name} domain={d} />
         ))}
       </div>
-      {domains.data?.length === 1 && (
+      {domains.length === 1 && (
         <p className="flex items-center gap-2 text-xs text-zinc-500">
           <CheckCircle2 size={14} /> One domain: every user is its member, as before.
         </p>

@@ -5,25 +5,31 @@
  * Subcommands:
  *   list                              Domains with their state, member count and what uses them
  *   add <domain>                      Add a domain (pending until activated)
- *   verify-dns <domain>               Does auth.<domain> resolve to this relay?
+ *   verify-dns <domain>               The records it needs, and whether they point here
  *   activate <domain>                 Issue auth.<domain>, serve its sign-in, admit its members
  *   remove <domain>                   Remove an unused, non-primary domain (its memberships end)
  *   members <domain>                  Its members
- *   members <domain> add <user>       Make a user (id or username) a member
+ *   members <domain> add <user>       Make a user (directory id or username) a member
  *   members <domain> remove <user>    End a membership
  *
  * Also `plugins domain <name> [<domain>]` ({@link pluginDomainCmd}).
  *
  * Every subcommand goes through the running panel (`/api/domains`, admin
- * certificate). What the panel says is printed only as `terminalText`;
- * `--json` emits it as it came.
+ * certificate), which decides every rule. What the panel says is printed
+ * only as `terminalText`; `--json` emits it as it came.
  */
 
 import chalk from 'chalk';
 import { panelRequest } from '../panel-api.js';
-import { emit, emitComplete, emitError } from '../ndjson.js';
+import { emit, emitComplete } from '../ndjson.js';
+import { fail } from '../fail.js';
 import { terminalText } from '../plugin-settings.js';
-import { domainRows, resolveUserId } from '../domains.js';
+import { domainRows } from '../domains.js';
+
+/** A panel request, or exit with its refusal. */
+const call = (json, ...args) => panelRequest(...args).catch((err) => fail(err.message, json, err));
+
+const domainPath = (name, rest = '') => `/api/domains/${encodeURIComponent(name)}${rest}`;
 
 /**
  * @param {string[]} args
@@ -31,21 +37,14 @@ import { domainRows, resolveUserId } from '../domains.js';
  */
 export async function runDomains(args, { json }) {
   const [sub, name, ...rest] = args;
-  switch (sub) {
-    case 'list':
-      return listDomains({ json });
-    case 'add':
-    case 'verify-dns':
-    case 'activate':
-    case 'remove':
-      if (!name) return usage(1);
-      return domainCmd(sub, name.toLowerCase(), { json });
-    case 'members':
-      if (!name) return usage(1);
-      return membersCmd(name.toLowerCase(), rest, { json });
-    default:
-      return usage(sub ? 1 : 0);
-  }
+  if (sub === 'list') return listDomains({ json });
+  if (sub === 'members' && name) return membersCmd(name.toLowerCase(), rest, { json });
+  const command = DOMAIN_COMMANDS[sub];
+  if (!command || !name) return usage(sub ? 1 : 0);
+  const domain = name.toLowerCase();
+  const result = await call(json, ...command.request(domain), { timeoutMs: command.timeoutMs });
+  if (json) emitComplete(result);
+  else command.print(terminalText(domain), result);
 }
 
 function usage(code) {
@@ -57,7 +56,7 @@ ${b('Usage:')} lamaste-server domains <subcommand>
 ${b('Subcommands:')}
   ${c('list')}                              Domains: state, members, what uses each
   ${c('add <domain>')}                      Add a domain (pending until activated)
-  ${c('verify-dns <domain>')}               Does auth.<domain> point at this relay?
+  ${c('verify-dns <domain>')}               The DNS records it needs, and whether they point here
   ${c('activate <domain>')}                 Issue auth.<domain> and serve its sign-in
   ${c('remove <domain>')}                   Remove an unused, non-primary domain
   ${c('members <domain>')}                  Its members
@@ -70,27 +69,8 @@ ${b('Subcommands:')}
   process.exit(code);
 }
 
-/**
- * Exit with a refused request, as text or NDJSON (with the refusal's `code`).
- *
- * @param {string} message
- * @param {boolean} json
- * @param {{ code?: string }} [err]
- * @returns {never}
- */
-function fail(message, json, err = {}) {
-  if (json) emitError(message, false, typeof err.code === 'string' ? { code: err.code } : {});
-  else console.error(`\n  ${chalk.red(terminalText(message))}\n`);
-  process.exit(1);
-}
-
 async function listDomains({ json }) {
-  let domains;
-  try {
-    ({ domains } = await panelRequest('GET', '/api/domains'));
-  } catch (err) {
-    fail(err.message, json, err);
-  }
+  const { domains } = await call(json, 'GET', '/api/domains');
   if (json) {
     emit({ domains });
     return;
@@ -107,73 +87,58 @@ async function listDomains({ json }) {
   console.log('');
 }
 
-const DOMAIN_CALLS = {
-  add: (name) => ['POST', '/api/domains', { name }],
-  'verify-dns': (name) => ['POST', `/api/domains/${encodeURIComponent(name)}/verify-dns`, null],
-  activate: (name) => ['POST', `/api/domains/${encodeURIComponent(name)}/activate`, null],
-  remove: (name) => ['DELETE', `/api/domains/${encodeURIComponent(name)}`, null],
-};
-
-async function domainCmd(sub, name, { json }) {
-  const [method, path, body] = DOMAIN_CALLS[sub](name);
-  let result;
-  try {
-    // Activation issues a certificate: give it time.
-    result = await panelRequest(method, path, body, {
-      timeoutMs: sub === 'activate' ? 180000 : 30000,
-    });
-  } catch (err) {
-    fail(err.message, json, err);
-  }
-  if (json) {
-    emitComplete(result);
-    return;
-  }
-  const domain = terminalText(name);
-  switch (sub) {
-    case 'add':
+/** One entry per domain subcommand: its request, its time budget, how it is printed. */
+const DOMAIN_COMMANDS = {
+  add: {
+    request: (name) => ['POST', '/api/domains', { name }],
+    timeoutMs: 30000,
+    print: (domain) => {
       console.log(`\n  ${chalk.green('✓')} ${domain} added (pending).`);
-      console.log(`  Point ${chalk.cyan(`auth.${domain}`)} at this relay, then run`);
-      console.log(`  ${chalk.cyan(`lamaste-server domains activate ${domain}`)}\n`);
-      break;
-    case 'verify-dns':
       console.log(
-        `\n  ${result.ok ? chalk.green('✓') : chalk.yellow('!')} auth.${domain} ${
-          result.ok ? 'points at' : 'does not point at'
-        } this relay (${terminalText(result.expectedIp ?? '')})`,
+        `  Create its DNS records (${chalk.cyan(`lamaste-server domains verify-dns ${domain}`)}),`,
+      );
+      console.log(`  then ${chalk.cyan(`lamaste-server domains activate ${domain}`)}\n`);
+    },
+  },
+  'verify-dns': {
+    request: (name) => ['POST', domainPath(name, '/verify-dns'), null],
+    timeoutMs: 30000,
+    print: (domain, result) => {
+      const mark = result.ok ? chalk.green('✓') : chalk.yellow('!');
+      console.log(
+        `\n  ${mark} ${domain}: ${result.ok ? 'its sign-in points at this relay' : 'records still missing'}`,
       );
       for (const r of result.records ?? []) {
+        const state = r.ok
+          ? chalk.green('in place')
+          : chalk.yellow(r.required ? 'missing' : 'optional, absent');
         console.log(
-          chalk.dim(
-            `    ${terminalText(r.name)}: ${terminalText(r.resolvedIps.join(', ') || 'no A record')}`,
-          ),
+          `    ${terminalText(r.type)} ${chalk.cyan(terminalText(r.name))} → ${terminalText(r.value)}  ${state}`,
         );
+        console.log(chalk.dim(`      ${terminalText(r.purpose)}`));
       }
-      console.log(
-        chalk.dim(
-          `    wildcard *.${domain}: ${result.wildcard ? 'points here' : 'not in place'}\n`,
-        ),
-      );
-      break;
-    case 'activate':
-      console.log(`\n  ${chalk.green('✓')} ${domain} is active — its sign-in is auth.${domain}\n`);
-      break;
-    case 'remove':
-      console.log(`\n  ${chalk.green('✓')} ${domain} removed; its memberships ended.\n`);
-      break;
-  }
-}
+      console.log('');
+    },
+  },
+  activate: {
+    request: (name) => ['POST', domainPath(name, '/activate'), null],
+    // Activation issues a certificate: give it time.
+    timeoutMs: 180000,
+    print: (domain) =>
+      console.log(`\n  ${chalk.green('✓')} ${domain} is active — its sign-in is auth.${domain}\n`),
+  },
+  remove: {
+    request: (name) => ['DELETE', domainPath(name), null],
+    timeoutMs: 30000,
+    print: (domain) =>
+      console.log(`\n  ${chalk.green('✓')} ${domain} removed; its memberships ended.\n`),
+  },
+};
 
 async function membersCmd(name, rest, { json }) {
-  const [action, ref] = rest;
-  const base = `/api/domains/${encodeURIComponent(name)}/members`;
+  const [action, user] = rest;
   if (action === undefined) {
-    let members;
-    try {
-      ({ members } = await panelRequest('GET', base));
-    } catch (err) {
-      fail(err.message, json, err);
-    }
+    const { members } = await call(json, 'GET', domainPath(name, '/members'));
     if (json) {
       emit({ members });
       return;
@@ -189,27 +154,19 @@ async function membersCmd(name, rest, { json }) {
     console.log('');
     return;
   }
-  if ((action !== 'add' && action !== 'remove') || !ref) return usage(1);
-  let users;
-  try {
-    ({ users } = await panelRequest('GET', '/api/users'));
-  } catch (err) {
-    fail(err.message, json, err);
-  }
-  const userId = resolveUserId(ref, users ?? []);
-  if (!userId) fail(`No user '${ref}' the directory knows`, json, { code: 'user_not_found' });
-  let result;
-  try {
-    result = await panelRequest(action === 'add' ? 'PUT' : 'DELETE', `${base}/${userId}`);
-  } catch (err) {
-    fail(err.message, json, err);
-  }
+  if ((action !== 'add' && action !== 'remove') || !user) return usage(1);
+  // The panel takes a directory id or a username.
+  const result = await call(
+    json,
+    action === 'add' ? 'PUT' : 'DELETE',
+    domainPath(name, `/members/${encodeURIComponent(user)}`),
+  );
   if (json) {
     emitComplete(result);
     return;
   }
   console.log(
-    `\n  ${chalk.green('✓')} ${terminalText(ref)} ${action === 'add' ? 'is now a member of' : 'is no longer a member of'} ${terminalText(name)}\n`,
+    `\n  ${chalk.green('✓')} ${terminalText(user)} ${action === 'add' ? 'is now a member of' : 'is no longer a member of'} ${terminalText(name)}\n`,
   );
 }
 
@@ -227,32 +184,17 @@ export async function pluginDomainCmd(args, { json }) {
     process.exit(1);
   }
   if (domain === undefined) {
-    let plugins;
-    try {
-      ({ plugins } = await panelRequest('GET', '/api/plugins'));
-    } catch (err) {
-      fail(err.message, json, err);
-    }
-    const plugin = (plugins ?? []).find((p) => p.name === name);
-    if (!plugin) fail(`Plugin "${name}" is not installed`, json, { code: 'not_found' });
-    // null: the primary.
+    const { plugin } = await call(json, 'GET', `/api/plugins/${encodeURIComponent(name)}`);
     if (json) {
-      emit({ name, domain: plugin.domain ?? null });
+      emit({ name, domain: plugin.domain });
       return;
     }
-    console.log(
-      `\n  ${terminalText(name)}: ${terminalText(plugin.domain ?? 'the primary domain')}\n`,
-    );
+    console.log(`\n  ${terminalText(name)}: ${terminalText(plugin.domain)}\n`);
     return;
   }
-  let result;
-  try {
-    result = await panelRequest('PUT', `/api/plugins/${encodeURIComponent(name)}/domain`, {
-      domain: domain.toLowerCase(),
-    });
-  } catch (err) {
-    fail(err.message, json, err);
-  }
+  const result = await call(json, 'PUT', `/api/plugins/${encodeURIComponent(name)}/domain`, {
+    domain: domain.toLowerCase(),
+  });
   if (json) {
     emitComplete(result);
     return;

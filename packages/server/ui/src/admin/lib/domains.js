@@ -20,26 +20,12 @@ export function activeDomainNames(domains) {
     .map((d) => d.name);
 }
 
-/** The primary domain's name, or null before the list has loaded. */
-export function primaryDomainName(domains) {
-  return (domains ?? []).find((d) => d.primary)?.name ?? null;
-}
-
 /**
  * Whether a form asks which domain: only once the relay has two active
  * domains — a single-domain relay looks as it did.
  */
 export function needsDomainChoice(domains) {
   return activeDomainNames(domains).length > 1;
-}
-
-/**
- * Whether new users must be given their domains: the relay has two
- * domains or more (pending ones count — the panel refuses without them,
- * `domains_required`).
- */
-export function newUsersNeedDomains(domains) {
-  return (domains ?? []).length > 1;
 }
 
 /** A domain's state in words. */
@@ -67,26 +53,6 @@ export function domainUsageLines(usedBy) {
   return lines;
 }
 
-/**
- * The DNS records a domain needs at its DNS host before activation: its
- * sign-in, and either one wildcard or one record per hostname.
- *
- * @param {string} name
- * @param {string | null | undefined} ip the relay's address
- */
-export function dnsRecordsFor(name, ip) {
-  const value = ip || '<relay IP>';
-  return [
-    { type: 'A', name: `auth.${name}`, value, purpose: 'the domain’s sign-in page (required)' },
-    {
-      type: 'A',
-      name: `*.${name}`,
-      value,
-      purpose: 'every tunnel and site hostname — or one A record per hostname instead',
-    },
-  ];
-}
-
 /** A refused domain change in words, with what still uses the domain. */
 export function explainDomainRefusal(err) {
   const { code } = refusalOf(err);
@@ -112,17 +78,9 @@ export function memberCandidates(users, members) {
     .sort((a, b) => a.username.localeCompare(b.username));
 }
 
-/**
- * The membership changes that turn `before` into `after`.
- *
- * @param {readonly string[]} before
- * @param {readonly string[]} after
- */
-export function membershipChanges(before, after) {
-  const was = new Set(before ?? []);
-  const will = new Set(after ?? []);
-  return {
-    add: [...will].filter((d) => !was.has(d)).sort(),
-    remove: [...was].filter((d) => !will.has(d)).sort(),
-  };
+/** Whether two domain lists hold the same domains, in any order. */
+export function sameDomains(a, b) {
+  const left = new Set(a ?? []);
+  const right = new Set(b ?? []);
+  return left.size === right.size && [...left].every((d) => right.has(d));
 }

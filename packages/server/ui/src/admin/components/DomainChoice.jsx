@@ -1,16 +1,24 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
-import { activeDomainNames, needsDomainChoice } from '../lib/domains.js';
+import { activeDomainNames, needsDomainChoice, sameDomains } from '../lib/domains.js';
 
-/** The relay's domains, shared by every page that asks for one. */
+/**
+ * The relay's domains, shared by every page that asks for one, and the
+ * panel's answer to whether users must be given theirs.
+ */
 export function useDomains() {
   const client = useAdminClient();
-  return useQuery({
+  const query = useQuery({
     queryKey: ['domains'],
     queryFn: () => client.getDomains(),
-    select: (data) => data?.domains ?? [],
     staleTime: 30_000,
   });
+  return {
+    ...query,
+    domains: query.data?.domains ?? [],
+    newUsersNeedDomains: query.data?.newUsersNeedDomains === true,
+  };
 }
 
 const SELECT_CLASS =
@@ -18,23 +26,25 @@ const SELECT_CLASS =
 
 /**
  * Which domain a new hostname goes under — shown only once the relay has
- * two active domains (an empty value means the primary).
+ * two active domains. `value` '' is the primary, and choosing the primary
+ * answers ''; callers send `domain` only when it is not ''.
  */
 export function DomainPicker({ value, onChange, label = 'Domain' }) {
-  const { data: domains = [] } = useDomains();
+  const { domains } = useDomains();
   if (!needsDomainChoice(domains)) return null;
-  const names = activeDomainNames(domains);
+  const [primary, ...others] = activeDomainNames(domains);
   return (
     <div>
       <label className="mb-1 block text-sm text-zinc-400">{label}</label>
       <select
-        value={value || names[0]}
-        onChange={(e) => onChange(e.target.value)}
+        value={value || primary}
+        onChange={(e) => onChange(e.target.value === primary ? '' : e.target.value)}
         className={SELECT_CLASS}
       >
-        {names.map((name, i) => (
+        <option value={primary}>{primary} (primary)</option>
+        {others.map((name) => (
           <option key={name} value={name}>
-            {i === 0 ? `${name} (primary)` : name}
+            {name}
           </option>
         ))}
       </select>
@@ -43,24 +53,47 @@ export function DomainPicker({ value, onChange, label = 'Domain' }) {
 }
 
 /**
- * Which domains a user is a member of — checkboxes, every domain (a pending
- * one too: its members are let in when it goes live). Hidden while the
- * relay has one domain, whose member every new user becomes.
+ * A user form's memberships: what the user is a member of (`user` null for
+ * a new user, who starts with none), whether the form asks at all — the
+ * panel's `newUsersNeedDomains` — and what a create or an edit request
+ * carries.
  */
-export function DomainMembershipChoice({ value, onChange, domains }) {
-  if ((domains ?? []).length < 2) return null;
-  const chosen = new Set(value);
+export function useMembershipChoice(user) {
+  const { domains, newUsersNeedDomains } = useDomains();
+  const [chosen, setChosen] = useState(null);
+  const before = user?.domains ?? [];
+  const value = chosen ?? [...before].sort();
+  // An existing user's memberships are set by directory id: not before it has one.
+  const asks = newUsersNeedDomains && (!user || Boolean(user.userId));
+  return {
+    domains,
+    asks,
+    value,
+    setValue: setChosen,
+    createFields: asks ? { domains: value } : {},
+    editFields: asks && chosen !== null && !sameDomains(chosen, before) ? { domains: chosen } : {},
+  };
+}
+
+/**
+ * Which domains a user is a member of — checkboxes, every domain (a pending
+ * one too: its members are let in when it goes live). Rendered only while
+ * the form asks ({@link useMembershipChoice}).
+ */
+export function DomainMembershipChoice({ choice }) {
+  if (!choice.asks) return null;
+  const chosen = new Set(choice.value);
   const toggle = (name) => {
     const next = new Set(chosen);
     if (next.has(name)) next.delete(name);
     else next.add(name);
-    onChange([...next].sort());
+    choice.setValue([...next].sort());
   };
   return (
     <fieldset>
       <legend className="mb-1 block text-sm text-zinc-400">Domains (member of)</legend>
       <div className="flex flex-wrap gap-3">
-        {domains.map((d) => (
+        {choice.domains.map((d) => (
           <label key={d.name} className="flex items-center gap-2 text-sm text-zinc-300">
             <input
               type="checkbox"

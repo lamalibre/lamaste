@@ -19,16 +19,18 @@ import { domainRows } from '../domains.js';
 export async function runStatus({ json }) {
   const config = await readConfigSafe();
   const domain = config?.domain ?? null;
-  // The relay's domains, from the running panel (none while it is down or not onboarded).
-  const domains = domain
-    ? await panelRequest('GET', '/api/domains').then(
-        (r) => r.domains ?? [],
-        () => null,
-      )
-    : null;
 
   // Collect service statuses
   const panelStatus = await getServiceStatus(PANEL_SERVICE);
+  // The relay's domains, from the running panel — asked while the other
+  // checks run, briefly; none while it is down or not onboarded.
+  const domainsRequest =
+    domain && panelStatus.active
+      ? panelRequest('GET', '/api/domains', null, { timeoutMs: 4000 }).then(
+          (r) => r.domains ?? [],
+          () => null,
+        )
+      : Promise.resolve(null);
   const gatekeeperStatus = await getServiceStatus(GATEKEEPER_SERVICE);
   const nginxStatus = await getServiceStatus('nginx');
   const autheliaStatus = await getServiceStatus('authelia');
@@ -44,6 +46,7 @@ export async function runStatus({ json }) {
   // Collect system info
   const uptime = await getUptime();
   const memory = await getMemoryUsage();
+  const domains = await domainsRequest;
 
   if (json) {
     emit({

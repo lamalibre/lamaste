@@ -5,28 +5,11 @@
  * calls the panel.
  */
 
+import { AGENT_PANEL_SUBDOMAIN_PREFIX, isReservedLabel } from '@lamalibre/lamaste/domains';
 import { errorMessage, refusalOf } from './errorMessage.js';
 
 /** The access modes a web surface's site may have. */
 export const WEB_SURFACE_ACCESS_MODES = Object.freeze(['authenticated', 'restricted']);
-
-/**
- * Subdomains no tunnel, site or web surface may take on any domain —
- * mirrors `RESERVED_SUBDOMAINS` and `AGENT_PANEL_SUBDOMAIN_PREFIX` in
- * @lamalibre/lamaste (the panel decides; this only spares the administrator
- * a round trip). The browser bundle does not carry the core library; a test
- * keeps the copy equal to it.
- */
-export const RESERVED_SUBDOMAINS = Object.freeze([
-  'panel',
-  'auth',
-  'tunnel',
-  'www',
-  'mail',
-  'ftp',
-  'api',
-]);
-export const AGENT_PANEL_SUBDOMAIN_PREFIX = 'agent-';
 
 /** A DNS label: what the panel accepts as a subdomain. */
 const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -56,10 +39,10 @@ export function subdomainProblem(subdomain) {
   if (!DNS_LABEL.test(subdomain)) {
     return 'A subdomain is a DNS label: lowercase letters, digits and hyphens, not starting or ending with a hyphen, at most 63 characters';
   }
-  if (RESERVED_SUBDOMAINS.includes(subdomain)) return `'${subdomain}' is reserved for the relay`;
   if (subdomain.startsWith(AGENT_PANEL_SUBDOMAIN_PREFIX)) {
     return `'${AGENT_PANEL_SUBDOMAIN_PREFIX}*' is kept for agent panels`;
   }
+  if (isReservedLabel(subdomain)) return `'${subdomain}' is reserved for the relay`;
   return null;
 }
 

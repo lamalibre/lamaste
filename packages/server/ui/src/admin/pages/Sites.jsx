@@ -236,7 +236,7 @@ function AddSiteForm({ domain, onClose }) {
         spaMode,
         autheliaProtected,
       };
-      if (type === 'managed' && baseDomain && baseDomain !== domain) body.domain = baseDomain;
+      if (type === 'managed' && baseDomain) body.domain = baseDomain;
       if (type === 'custom') {
         body.customDomain = customDomain.toLowerCase();
         const aliases = parseAliases(aliasText);
@@ -244,7 +244,7 @@ function AddSiteForm({ domain, onClose }) {
       }
       mutation.mutate(body);
     },
-    [name, type, customDomain, aliasText, spaMode, autheliaProtected, baseDomain, domain, mutation],
+    [name, type, customDomain, aliasText, spaMode, autheliaProtected, baseDomain, mutation],
   );
 
   return (
@@ -307,9 +307,7 @@ function AddSiteForm({ domain, onClose }) {
           </div>
           {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
         </div>
-        {type === 'managed' && (
-          <DomainPicker value={baseDomain || domain} onChange={setBaseDomain} />
-        )}
+        {type === 'managed' && <DomainPicker value={baseDomain} onChange={setBaseDomain} />}
 
         {/* Custom Domain */}
         {type === 'custom' && (

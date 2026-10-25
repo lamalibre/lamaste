@@ -28,7 +28,8 @@
 
 import chalk from 'chalk';
 import { panelRequest } from '../panel-api.js';
-import { emit, emitComplete, emitError } from '../ndjson.js';
+import { emit, emitComplete } from '../ndjson.js';
+import { fail } from '../fail.js';
 import { identityBlockLines } from '../plugin-approval.js';
 import {
   audienceRowText,
@@ -43,21 +44,6 @@ import { terminalText } from '../plugin-settings.js';
 /** `/api/plugins/<name>/<rest>`. */
 function pluginPath(name, rest) {
   return `/api/plugins/${encodeURIComponent(name)}/${rest}`;
-}
-
-/**
- * Exit with a usage error or a refused request, as text or NDJSON (with
- * the refusal's `code`).
- *
- * @param {string} message
- * @param {boolean} json
- * @param {{ code?: string }} [err]
- * @returns {never}
- */
-function fail(message, json, err = {}) {
-  if (json) emitError(message, false, typeof err.code === 'string' ? { code: err.code } : {});
-  else console.error(`\n  ${chalk.red(terminalText(message))}\n`);
-  process.exit(1);
 }
 
 /** Print a change's warnings: what the panel could not complete beside it. */

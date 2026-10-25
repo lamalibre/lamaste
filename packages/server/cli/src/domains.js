@@ -32,18 +32,3 @@ export function usageText(usedBy) {
   if (usedBy.registry) parts.push('the registry credential');
   return parts.join(', ');
 }
-
-/** Directory user ids (UUID v4 as the panel issues them). */
-const USER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-
-/**
- * The directory id `ref` names: an id itself, or the username of a user
- * the directory knows. Null when none does.
- *
- * @param {string} ref
- * @param {Array<{ username: string, userId: string | null }>} users  `GET /api/users`
- */
-export function resolveUserId(ref, users) {
-  if (USER_ID_RE.test(ref)) return ref;
-  return users.find((u) => u.username === ref)?.userId ?? null;
-}

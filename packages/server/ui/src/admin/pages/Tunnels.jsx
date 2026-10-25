@@ -16,6 +16,9 @@ import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { siteOwnerRoute } from '../lib/web-surface.js';
 import { DomainPicker } from '../components/DomainChoice.jsx';
+// The relay's own services' ports (panel, chisel, Authelia, IP panel,
+// Gatekeeper): the panel refuses them too; this explains why before sending.
+import { RESERVED_TUNNEL_PORTS } from '@lamalibre/lamaste/domains';
 import {
   boundRoutes,
   userSurfaceCandidateBlock,
@@ -82,11 +85,6 @@ const ACCESS_OPTIONS = [
   { value: 'public', label: 'Public', desc: 'No authentication required' },
 ];
 
-// Mirrors RESERVED_TUNNEL_PORTS in @lamalibre/lamaste — the relay's own
-// services (panel, chisel, Authelia, IP panel, Gatekeeper). The panel rejects
-// them too; this only explains why before the request is sent.
-const RESERVED_TUNNEL_PORTS = [3100, 9090, 9091, 9292, 9294];
-
 function validatePort(value) {
   const num = Number(value);
   if (!value && value !== 0) return 'Port is required';
@@ -127,7 +125,7 @@ function AddTunnelForm({ domain, onClose }) {
   const [accessMode, setAccessMode] = useState('restricted');
   const [agentLabel, setAgentLabel] = useState('');
   const [maxBody, setMaxBody] = useState(String(MAX_BODY_MB.default));
-  // Empty: the primary (the agent config's domain); a picker once there are two.
+  // '' is the primary (the agent config's domain); a picker once there are two.
   const [baseDomain, setBaseDomain] = useState('');
   const { agents, isLoading: agentsLoading } = useCarrierAgents();
   const [errors, setErrors] = useState({});
@@ -172,10 +170,10 @@ function AddTunnelForm({ domain, onClose }) {
         accessMode,
         agentLabel,
         maxBodySizeMb: Number(maxBody),
-        ...(baseDomain && baseDomain !== domain ? { domain: baseDomain } : {}),
+        ...(baseDomain ? { domain: baseDomain } : {}),
       });
     },
-    [subdomain, port, description, accessMode, agentLabel, maxBody, baseDomain, domain, mutation],
+    [subdomain, port, description, accessMode, agentLabel, maxBody, baseDomain, mutation],
   );
 
   return (
@@ -207,7 +205,7 @@ function AddTunnelForm({ domain, onClose }) {
           </div>
           {errors.subdomain && <p className="text-red-400 text-xs mt-1">{errors.subdomain}</p>}
         </div>
-        <DomainPicker value={baseDomain || domain} onChange={setBaseDomain} />
+        <DomainPicker value={baseDomain} onChange={setBaseDomain} />
 
         {/* Port */}
         <div>

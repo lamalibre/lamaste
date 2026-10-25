@@ -7,7 +7,6 @@ import {
   Pencil,
   KeyRound,
   Trash2,
-  X,
   Eye,
   EyeOff,
   Copy,
@@ -28,8 +27,13 @@ import CopyableId from '../components/CopyableId.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { relativeTime } from '../lib/formatters.js';
 import { isLastEnabledAdmin, warningText } from '../lib/identity.js';
-import { DomainChips, DomainMembershipChoice, useDomains } from '../components/DomainChoice.jsx';
-import { membershipChanges, primaryDomainName } from '../lib/domains.js';
+import { ConfirmDialog, DialogButtons, Modal } from '../components/Dialog.jsx';
+import {
+  DomainChips,
+  DomainMembershipChoice,
+  useDomains,
+  useMembershipChoice,
+} from '../components/DomainChoice.jsx';
 
 /**
  * Refetch what a users change touches: the users, the directory (ids,
@@ -44,41 +48,9 @@ function invalidateUsers(queryClient) {
   queryClient.invalidateQueries({ queryKey: ['domain-members'] });
 }
 
-/**
- * The domains a form starts with: the user's own, or — for a new user —
- * the primary (the panel asks for domains only once there are two).
- */
-function initialDomains(user, domains) {
-  if (user) return [...(user.domains ?? [])];
-  const primary = primaryDomainName(domains);
-  return primary ? [primary] : [];
-}
-
 /** Toast each warning a users change came back with: what the panel could not complete beside it. */
 function toastWarnings(toast, result) {
   for (const warning of result?.warnings ?? []) toast(warningText(warning), 'error');
-}
-
-// --- Modal backdrop ---
-
-function Modal({ children, onClose }) {
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div
-        className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg bg-zinc-800 p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-4 top-4 text-zinc-500 hover:text-zinc-300"
-        >
-          <X size={18} />
-        </button>
-        {children}
-      </div>
-    </div>
-  );
 }
 
 // --- TOTP Enrollment Modal ---
@@ -154,11 +126,7 @@ function UserFormModal({ user, onClose, onSuccess }) {
     password: '',
     groups: user?.groups?.join(', ') || '',
   });
-  const { data: domains = [] } = useDomains();
-  // null until the administrator changes it: the user's domains, or the primary.
-  const [memberOf, setMemberOf] = useState(null);
-  const chosenDomains = memberOf ?? initialDomains(user, domains);
-  const asksDomains = domains.length > 1;
+  const membership = useMembershipChoice(user);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
 
@@ -220,11 +188,6 @@ function UserFormModal({ user, onClose, onSuccess }) {
       .map((g) => g.trim())
       .filter(Boolean);
 
-    if (asksDomains && !isEdit && chosenDomains.length === 0) {
-      setError('Choose the domains the user is a member of');
-      return;
-    }
-
     try {
       if (isEdit) {
         const body = { username: user.username };
@@ -233,21 +196,15 @@ function UserFormModal({ user, onClose, onSuccess }) {
         if (form.password) body.password = form.password;
         const currentGroups = (user.groups || []).join(', ');
         if (form.groups !== currentGroups) body.groups = groups;
-        const changes =
-          asksDomains && user.userId
-            ? membershipChanges(user.domains, chosenDomains)
-            : { add: [], remove: [] };
+        Object.assign(body, membership.editFields);
 
         // Check if anything changed
-        if (Object.keys(body).length <= 1 && changes.add.length + changes.remove.length === 0) {
+        if (Object.keys(body).length <= 1) {
           setError('No changes detected');
           return;
         }
 
-        if (Object.keys(body).length > 1) await mutation.mutateAsync(body);
-        for (const name of changes.add) await client.addDomainMember(name, user.userId);
-        for (const name of changes.remove) await client.removeDomainMember(name, user.userId);
-        if (changes.add.length + changes.remove.length > 0) invalidateUsers(queryClient);
+        await mutation.mutateAsync(body);
         toast('User updated successfully');
         onClose();
       } else {
@@ -257,7 +214,7 @@ function UserFormModal({ user, onClose, onSuccess }) {
           email: form.email,
           password: form.password,
           groups,
-          ...(asksDomains ? { domains: chosenDomains } : {}),
+          ...membership.createFields,
         });
         toast('User created successfully');
         onSuccess(result.user.username);
@@ -335,9 +292,7 @@ function UserFormModal({ user, onClose, onSuccess }) {
             className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-cyan-500 focus:outline-none"
           />
         </div>
-        {(!isEdit || user.userId) && (
-          <DomainMembershipChoice value={chosenDomains} onChange={setMemberOf} domains={domains} />
-        )}
+        <DomainMembershipChoice choice={membership} />
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -374,10 +329,7 @@ function InviteUserModal({ onClose, onSuccess }) {
     email: '',
     groups: '',
   });
-  const { data: domains = [] } = useDomains();
-  const [memberOf, setMemberOf] = useState(null);
-  const chosenDomains = memberOf ?? initialDomains(null, domains);
-  const asksDomains = domains.length > 1;
+  const membership = useMembershipChoice(null);
   const [error, setError] = useState('');
 
   const mutation = useMutation({
@@ -414,17 +366,12 @@ function InviteUserModal({ onClose, onSuccess }) {
       .map((g) => g.trim())
       .filter(Boolean);
 
-    if (asksDomains && chosenDomains.length === 0) {
-      setError('Choose the domains the user will be a member of');
-      return;
-    }
-
     try {
       const result = await mutation.mutateAsync({
         username: form.username,
         email: form.email,
         groups,
-        ...(asksDomains ? { domains: chosenDomains } : {}),
+        ...membership.createFields,
       });
       toast('Invitation created');
       onSuccess(result);
@@ -472,7 +419,7 @@ function InviteUserModal({ onClose, onSuccess }) {
             className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-cyan-500 focus:outline-none"
           />
         </div>
-        <DomainMembershipChoice value={chosenDomains} onChange={setMemberOf} domains={domains} />
+        <DomainMembershipChoice choice={membership} />
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -552,61 +499,6 @@ function InviteLinkModal({ inviteUrl, token, onClose }) {
 // --- Confirm Dialog ---
 
 /** A dialog's Cancel and confirm buttons; the confirm button waits while `isPending`. */
-function DialogButtons({
-  confirmLabel,
-  destructive,
-  disabled = false,
-  isPending,
-  onConfirm,
-  onCancel,
-}) {
-  return (
-    <div className="flex gap-3">
-      <button
-        type="button"
-        onClick={onCancel}
-        className="flex-1 rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:text-white"
-      >
-        Cancel
-      </button>
-      <button
-        type="button"
-        onClick={onConfirm}
-        disabled={isPending || disabled}
-        className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${
-          destructive ? 'bg-red-600 hover:bg-red-500' : 'bg-cyan-600 hover:bg-cyan-500'
-        }`}
-      >
-        {isPending ? 'Please wait...' : confirmLabel}
-      </button>
-    </div>
-  );
-}
-
-function ConfirmDialog({
-  title,
-  message,
-  confirmLabel,
-  destructive,
-  onConfirm,
-  onCancel,
-  isPending,
-}) {
-  return (
-    <Modal onClose={onCancel}>
-      <h2 className="mb-2 text-lg font-bold text-white">{title}</h2>
-      <p className="mb-6 text-sm text-zinc-400">{message}</p>
-      <DialogButtons
-        confirmLabel={confirmLabel}
-        destructive={destructive}
-        isPending={isPending}
-        onConfirm={onConfirm}
-        onCancel={onCancel}
-      />
-    </Modal>
-  );
-}
-
 // --- Erasure confirmation (typed) ---
 
 /**
@@ -958,8 +850,7 @@ export default function Users() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteResult, setInviteResult] = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
-  const { data: domains = [] } = useDomains();
-  const showDomains = domains.length > 1;
+  const { newUsersNeedDomains: showDomains } = useDomains();
 
   const usersQuery = useQuery({
     queryKey: ['users'],
