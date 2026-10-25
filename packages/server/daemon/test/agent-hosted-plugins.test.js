@@ -336,13 +336,8 @@ test('OIDC: a registry credential being set is served by every sync until it is 
   assert.equal(during, true);
   assert.equal(await panelClient(), false, 'dropped once the candidate is done');
 
-  // An explicit override still wins over the candidate (the route's own rollback).
-  const overridden = await withRegistryCandidate(
-    { registryUrl: 'https://feria.relay.test' },
-    async () =>
-      (await planOidcClients({ registryAuth: null })).served.some((c) => c.id === 'lamaste-server'),
-  );
-  assert.equal(overridden, false);
+  // Without a candidate (a pasted token) the function just runs.
+  assert.equal(await withRegistryCandidate(undefined, () => panelClient()), false);
 });
 
 test('OIDC: disabling serves none of its clients but keeps the confidential secret planned', async () => {

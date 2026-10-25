@@ -43,6 +43,8 @@ let renders = 0;
 let policies = null;
 /** Holds the OIDC provider's write until released (a test of the two writers). */
 let oidcGate = null;
+/** The client ids the OIDC provider was last written with. */
+let oidcClientIds = [];
 /** What activation and removal asked of certbot and nginx. */
 const activation = [];
 let failVhost = false;
@@ -143,6 +145,7 @@ before(async () => {
         await oidcGate.released;
       }
       policies = renderOidcAuthorizationPolicies(domains);
+      oidcClientIds = clients.map((c) => c.id);
       return { changed: true, clients: clients.length };
     },
   });
@@ -536,6 +539,29 @@ test('one writer of the members’ OIDC policies: a membership ended while the O
 
   assert.deepEqual(policy(), { policy: 'deny', networks: ['0.0.0.0/0', '::/0'] });
   assert.deepEqual(renderedMembers()['codelama.com.tr'], []);
+});
+
+test('a sync that waited for the writer plans from what is true then: a registry credential being set is served', async () => {
+  const { syncOidcClients, withRegistryCandidate } = await import('../src/lib/plugin-oidc.js');
+  const logger = { info() {}, warn() {}, error() {}, debug() {} };
+  // One sync holds the writer (a plugin change) …
+  let entered;
+  let release;
+  const insideWrite = new Promise((resolve) => (entered = resolve));
+  oidcGate = { entered: () => entered(), released: new Promise((resolve) => (release = resolve)) };
+  const first = syncOidcClients(logger);
+  await insideWrite;
+  oidcGate = null;
+  // … the identity tick's sync queues behind it, and then a registry
+  // credential starts being set. The tick must not write a plan made before.
+  const tick = syncOidcClients(logger);
+  // Time enough for a sync that planned outside the writer to have planned.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await withRegistryCandidate({ registryUrl: 'https://feria.relay.test' }, async () => {
+    release();
+    await Promise.all([first, tick]);
+    assert.ok(oidcClientIds.includes('lamaste-server'), 'the candidate’s client is still served');
+  });
 });
 
 // ---------------------------------------------------------------------------

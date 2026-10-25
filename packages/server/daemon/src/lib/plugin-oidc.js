@@ -103,21 +103,25 @@ async function lamasteOwnClient(registryAuth) {
  * the credential stored. Every sync that names no override serves it — the
  * identity tick's every-minute sync included, which otherwise reads the
  * stored credential, removes the client the candidate needs and restarts
- * Authelia under the verification's token request.
- * @type {{ registryUrl: string, issuerDomain?: string } | null | undefined}
+ * Authelia under the verification's token request. Every sync reads it under
+ * the one writer ({@link syncOidcClients}), so none can write a plan made
+ * before it was set.
+ * @type {{ registryUrl: string, issuerDomain?: string } | undefined}
  */
 let registryCandidate;
 const registryCandidateMutex = new PromiseChainMutex();
 
 /**
  * Run `fn` with `registryAuth` as the candidate registry credential
- * (see {@link registryCandidate}); one candidate at a time.
+ * (see {@link registryCandidate}); one candidate at a time. Without one
+ * (a pasted token), `fn` just runs.
  * @template T
- * @param {{ registryUrl: string, issuerDomain?: string } | null} registryAuth
+ * @param {{ registryUrl: string, issuerDomain?: string } | undefined} registryAuth
  * @param {() => Promise<T>} fn
  * @returns {Promise<T>}
  */
 export function withRegistryCandidate(registryAuth, fn) {
+  if (registryAuth === undefined) return fn();
   return registryCandidateMutex.run(async () => {
     registryCandidate = registryAuth;
     try {
@@ -181,31 +185,41 @@ export async function planOidcClients(overrides = {}) {
 /**
  * Sync Authelia's OIDC clients and the secret store with the plugins and
  * the registry credential. Returns what was done, or `null` when the panel
- * has no domain yet (onboarding).
+ * has no domain yet (onboarding). Plan, secrets and write all happen under
+ * the one writer: a sync that waited for it plans from what is true then,
+ * never from before another sync's change (a registry credential being
+ * set, a plugin moved).
  *
  * @param {import('pino').Logger} logger
- * @param {{ registryAuth?: { registryUrl: string, issuerDomain?: string } | null }} [overrides] see collectAllClients
  * @returns {Promise<{ changed: boolean, clients: string[], createdSecrets: Array<{ id: string, plugin: string, secret: string }> } | null>}
  */
-export async function syncOidcClients(logger, overrides = {}) {
+export async function syncOidcClients(logger) {
   if (!(await primaryDomainName())) {
     logger.debug('OIDC client sync skipped — no domain configured yet');
     return null;
   }
 
-  const { confidential, served, scopes } = await planOidcClients(overrides);
-  const reconciled = await reconcileOidcClientSecrets(STATE_DIR, confidential);
+  const { served, reconciled, result } = await withDomainRendering(
+    async (domains) => {
+      const plan = await planOidcClients();
+      const secrets = await reconcileOidcClientSecrets(STATE_DIR, plan.confidential);
+      return {
+        served: plan.served,
+        reconciled: secrets,
+        result: await updateOidcProvider(domains, plan.served, {
+          secretDigests: secrets.digests,
+          scopes: plan.scopes,
+        }),
+      };
+    },
+    { logger },
+  );
   if (reconciled.created.length > 0 || reconciled.removed.length > 0) {
     logger.info(
       { created: reconciled.created.map((c) => c.id), removed: reconciled.removed },
       'OIDC client secrets reconciled',
     );
   }
-
-  const result = await withDomainRendering(
-    (domains) => updateOidcProvider(domains, served, { secretDigests: reconciled.digests, scopes }),
-    { logger },
-  );
   if (result.changed) {
     logger.info({ clients: served.map((c) => c.id) }, 'Authelia OIDC provider updated');
   }
@@ -268,15 +282,21 @@ export async function rotatePluginOidcClientSecret(pluginName, clientId, logger)
   // The store is reconciled first so a client that was never synced (an
   // earlier Authelia failure) gets its record now.
   await syncOidcClients(logger);
-  const rotated = await rotateOidcClientSecret(STATE_DIR, clientId);
-  const digests = await readOidcClientSecretDigests(STATE_DIR);
-  if (client.enabled) {
-    const { served, scopes } = await planOidcClients();
-    await withDomainRendering(
-      (domains) => updateOidcProvider(domains, served, { secretDigests: digests, scopes }),
-      { logger },
-    );
-  }
+  // Rotate, plan and write under the one writer (see syncOidcClients).
+  const rotated = await withDomainRendering(
+    async (domains) => {
+      const secret = await rotateOidcClientSecret(STATE_DIR, clientId);
+      if (client.enabled) {
+        const { served, scopes } = await planOidcClients();
+        await updateOidcProvider(domains, served, {
+          secretDigests: await readOidcClientSecretDigests(STATE_DIR),
+          scopes,
+        });
+      }
+      return secret;
+    },
+    { logger },
+  );
   logger.info({ plugin: pluginName, clientId }, 'OIDC client secret rotated');
   return {
     id: rotated.id,

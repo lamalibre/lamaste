@@ -755,8 +755,12 @@ Fixed on the way:
   Authelia under the token request ("context canceled"; spec 40 on fresh
   VMs). The PUT now holds its candidate (`withRegistryCandidate` in
   `plugin-oidc.js`, one at a time) across sync, verification and store, and
-  every sync that names no override serves it. Test: serverd
-  agent-hosted-plugins.
+  every sync serves it. After review: a sync plans, reconciles secrets and
+  writes all under the one writer (`withDomainRendering`), as secret
+  rotation does — a sync queued behind another could otherwise write a plan
+  made before the candidate was set; the route sends its answers directly
+  and one trailing sync leaves Authelia as the stored credential says.
+  Tests: serverd agent-hosted-plugins, domains (the queued sync).
 - **Spec harness — a TOTP code reused across a step boundary** (spec 46).
   `md_sign_in` recorded the step before signing in; a sign-in begun at a
   step's last second took the next step's code, so a second sign-in in that

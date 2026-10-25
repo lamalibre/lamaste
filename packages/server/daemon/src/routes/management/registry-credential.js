@@ -116,86 +116,65 @@ export default async function registryCredentialRoutes(fastify) {
               ...(auth.issuerDomain ? { issuerDomain: auth.issuerDomain } : {}),
             }
           : undefined;
-      const asCandidate = (fn) => (registryAuth ? withRegistryCandidate(registryAuth, fn) : fn());
-      const outcome = await asCandidate(async () => {
-        // The panel's own client must exist in Authelia (with a secret in the
-        // store) before the chain can be exercised.
-        if (registryAuth) {
-          try {
-            if (!(await syncOidcClients(request.log))) {
-              return { status: 503, body: { error: 'Complete onboarding (set a domain) first' } };
-            }
-          } catch (err) {
-            return {
-              status: 500,
-              body: {
+      try {
+        return await withRegistryCandidate(registryAuth, async () => {
+          // The panel's own client must exist in Authelia (with a secret in
+          // the store) before the chain can be exercised.
+          if (registryAuth) {
+            try {
+              if (!(await syncOidcClients(request.log))) {
+                return reply.code(503).send({ error: 'Complete onboarding (set a domain) first' });
+              }
+            } catch (err) {
+              return reply.code(500).send({
                 error: `Could not register the ${LAMASTE_SERVER_OIDC_CLIENT_ID} client in Authelia: ${err.message}`,
-              },
-            };
+              });
+            }
           }
-        }
 
-        let verified;
-        try {
-          verified = await verifyRegistryCredential(candidate);
-        } catch (err) {
-          const status = err instanceof RegistryCredentialError ? err.statusCode : 502;
-          return { status, body: { error: err.message }, rollBack: Boolean(registryAuth) };
-        }
+          let verified;
+          try {
+            verified = await verifyRegistryCredential(candidate);
+          } catch (err) {
+            const status = err instanceof RegistryCredentialError ? err.statusCode : 502;
+            return reply.code(status).send({ error: err.message });
+          }
 
-        const config = {
-          provider: 'feria',
-          registryUrl: body.registryUrl,
-          scope: body.scope ?? '@lamalibre',
-          auth,
-          owner: verified.owner,
-          configuredAt: new Date().toISOString(),
-        };
-        try {
-          return {
-            verified,
-            config,
-            warnings: await setRegistryCredential(config, { logger: request.log }),
+          const config = {
+            provider: 'feria',
+            registryUrl: body.registryUrl,
+            scope: body.scope ?? '@lamalibre',
+            auth,
+            owner: verified.owner,
+            configuredAt: new Date().toISOString(),
           };
-        } catch (err) {
-          return { failure: err };
-        }
-      });
-      if (outcome.failure) {
-        return sendFailure(
-          request,
-          reply,
-          outcome.failure,
-          'Failed to store the registry credential',
+          let warnings;
+          try {
+            warnings = await setRegistryCredential(config, { logger: request.log });
+          } catch (err) {
+            return sendFailure(request, reply, err, 'Failed to store the registry credential');
+          }
+          request.log.info(
+            { registryUrl: body.registryUrl, owner: verified.owner, auth: auth.kind },
+            'Registry credential configured',
+          );
+          return {
+            configured: true,
+            ...summariseRegistryCredential(config),
+            ...(warnings.length > 0 ? { warnings } : {}),
+          };
+        });
+      } finally {
+        // With the candidate dropped, the stored credential decides whether
+        // Authelia carries the panel's client: the new one once stored, the
+        // previous one after a refusal (the candidate is not kept).
+        await syncOidcClients(request.log).catch((err) =>
+          request.log.warn(
+            { err: err.message },
+            'Failed to sync OIDC clients after the registry credential request',
+          ),
         );
       }
-      if (outcome.status) {
-        if (outcome.rollBack) {
-          // Leave Authelia as the stored credential says — the candidate is
-          // not kept.
-          await syncOidcClients(request.log).catch((syncErr) =>
-            request.log.warn({ err: syncErr.message }, 'Failed to roll back the OIDC client'),
-          );
-        }
-        return reply.code(outcome.status).send(outcome.body);
-      }
-      const { verified, config, warnings } = outcome;
-      // The stored credential now decides whether Authelia carries the client.
-      await syncOidcClients(request.log).catch((err) =>
-        request.log.warn(
-          { err: err.message },
-          'Failed to sync OIDC clients after credential change',
-        ),
-      );
-      request.log.info(
-        { registryUrl: body.registryUrl, owner: verified.owner, auth: auth.kind },
-        'Registry credential configured',
-      );
-      return {
-        configured: true,
-        ...summariseRegistryCredential(config),
-        ...(warnings.length > 0 ? { warnings } : {}),
-      };
     },
   );
 
