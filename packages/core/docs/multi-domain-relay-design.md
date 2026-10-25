@@ -714,10 +714,10 @@ from the worktree; the core library came from the dev Feria (this branch's
 `@lamalibre/lamaste` published there as 4.6.0 for the run, removed
 afterwards).
 
-| Suite     | Specs                                                     | Result                                   |
-| --------- | --------------------------------------------------------- | ---------------------------------------- |
-| single-VM | 01, 03 (dependencies), 04, 19, 34, 35                     | all pass (no skip)                       |
-| three-VM  | 01, 03, 15, 22, 32, 43, 45, 46, 47, 48; regression 40, 43 | all pass after the fixes below (no skip) |
+| Suite     | Specs                                                 | Result                                                                                                                   |
+| --------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| single-VM | 01, 03 (dependencies), 04, 19, 34, 35                 | all pass (no skip)                                                                                                       |
+| three-VM  | 01, 03, 15, 22, 32, 43, 45, 46, 47, 48; regression 40 | all pass after the fixes below (no skip); 46 and 48 re-run after the user-surface fix, 43 and 46 after the readiness fix |
 
 Fixed on the way:
 
@@ -730,6 +730,14 @@ Fixed on the way:
   refusal as JSON (`not_a_member`, else `forbidden`), never an assertion (a
   request allowed by now was still refused). Tests: Gatekeeper
   authz-user-surface, serverd nginx-vhosts.
+- **Product — Authelia was talked to before it listened.** `reloadAuthelia`
+  and `startAuthelia` slept 2 s and asked systemd whether Authelia was active
+  (it is as soon as the process is spawned). Setting the registry credential
+  to OIDC restarts Authelia to add the panel's client and then asks its
+  token endpoint: "fetch failed" (spec 43, on its second run — a race the
+  relay's frequent restarts made common). Both now wait until systemd says
+  active and `GET http://127.0.0.1:9091/api/health` answers 200 (30 s at
+  most). Test: serverd authelia-ready.
 - **Spec harness — a TOTP code reused across a step boundary** (spec 46).
   `md_sign_in` recorded the step before signing in; a sign-in begun at a
   step's last second took the next step's code, so a second sign-in in that
