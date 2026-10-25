@@ -31,6 +31,7 @@ import {
   Shield,
   Key,
   MessageSquare,
+  Globe2,
 } from 'lucide-react';
 import {
   AdminClientProvider,
@@ -47,6 +48,7 @@ import {
   SettingsPage as AdminSettingsPage,
   StoragePage,
   AuditPage,
+  DomainsPage,
   UserPluginAccessPage,
   GatekeeperDashboardPage,
   GatekeeperGroupsPage,
@@ -93,6 +95,7 @@ const SERVER_ADMIN_TABS = [
   { id: 'server-services', label: 'Services', icon: Server },
   { id: 'server-sites', label: 'Static Sites', icon: FileText },
   { id: 'server-users', label: 'Users', icon: Users },
+  { id: 'server-domains', label: 'Domains', icon: Globe2 },
   { id: 'server-certificates', label: 'Certificates', icon: ShieldCheck },
   { id: 'server-tickets', label: 'Tickets', icon: Ticket },
   { id: 'server-plugins', label: 'Plugins', icon: Package },
@@ -356,6 +359,8 @@ export default function App() {
         );
       case 'server-users':
         return <UsersPage />;
+      case 'server-domains':
+        return <DomainsPage />;
       case 'server-certificates':
         return <CertificatesPage />;
       case 'server-tickets':

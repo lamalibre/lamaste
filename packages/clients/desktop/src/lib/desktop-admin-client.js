@@ -36,6 +36,9 @@ async function invokeRefusable(command, args) {
         ...(Number.isInteger(rejection.status) ? { status: rejection.status } : {}),
         ...(typeof rejection.code === 'string' ? { code: rejection.code } : {}),
         ...(Array.isArray(rejection.reasons) ? { reasons: rejection.reasons } : {}),
+        ...(rejection.usedBy && typeof rejection.usedBy === 'object'
+          ? { usedBy: rejection.usedBy }
+          : {}),
         ...(typeof rejection.operationId === 'string'
           ? { operationId: rejection.operationId }
           : {}),
@@ -58,7 +61,8 @@ function removalArgs(name, options) {
 export const desktopAdminClient = {
   // --- Users ---
   getUsers: () => invoke('admin_get_users'),
-  createUser: (data) => invoke('admin_create_user', { data }),
+  // Refusable: a relay with two domains answers `domains_required` when none are named.
+  createUser: (data) => invokeRefusable('admin_create_user', { data }),
   updateUser: (username, data) => invoke('admin_update_user', { username, data }),
   disableUser: (username) => invokeRefusable('admin_disable_user', { username }),
   enableUser: (username) => invokeRefusable('admin_enable_user', { username }),
@@ -70,9 +74,21 @@ export const desktopAdminClient = {
   getUserDirectory: () => invoke('admin_get_user_directory'),
   eraseDirectoryUser: (userId) => invokeRefusable('admin_erase_directory_user', { userId }),
 
+  // --- Domains (the relay's base domains and their members) ---
+  getDomains: () => invokeRefusable('admin_get_domains'),
+  addDomain: (name) => invokeRefusable('admin_add_domain', { name }),
+  verifyDomainDns: (name) => invokeRefusable('admin_verify_domain_dns', { name }),
+  activateDomain: (name) => invokeRefusable('admin_activate_domain', { name }),
+  removeDomain: (name) => invokeRefusable('admin_remove_domain', { name }),
+  getDomainMembers: (name) => invokeRefusable('admin_get_domain_members', { name }),
+  addDomainMember: (name, userId) => invokeRefusable('admin_add_domain_member', { name, userId }),
+  removeDomainMember: (name, userId) =>
+    invokeRefusable('admin_remove_domain_member', { name, userId }),
+  setPluginDomain: (name, domain) => invokeRefusable('admin_set_plugin_domain', { name, domain }),
+
   // --- Invitations ---
   getInvitations: () => invoke('admin_get_invitations'),
-  createInvitation: (data) => invoke('admin_create_invitation', { data }),
+  createInvitation: (data) => invokeRefusable('admin_create_invitation', { data }),
   revokeInvitation: (id) => invoke('admin_revoke_invitation', { id }),
 
   // --- Sites ---

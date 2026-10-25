@@ -211,10 +211,11 @@ pub async fn admin_get_users() -> Result<serde_json::Value, String> {
         .await.map_err(|e| format!("Task failed: {}", e))?
 }
 
+/// Create a user. Rejects with the panel's refusal (`code`
+/// `domains_required` on a relay with two domains and none named).
 #[tauri::command]
-pub async fn admin_create_user(data: serde_json::Value) -> Result<serde_json::Value, String> {
-    tokio::task::spawn_blocking(move || admin_post("/api/users", Some(&data.to_string())))
-        .await.map_err(|e| format!("Task failed: {}", e))?
+pub async fn admin_create_user(data: serde_json::Value) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("POST", "/api/users".to_string(), Some(data.to_string())).await
 }
 
 #[tauri::command]
@@ -332,10 +333,102 @@ pub async fn admin_get_invitations() -> Result<serde_json::Value, String> {
         .await.map_err(|e| format!("Task failed: {}", e))?
 }
 
+/// Invite a user. Rejects with the panel's refusal, as `admin_create_user`.
 #[tauri::command]
-pub async fn admin_create_invitation(data: serde_json::Value) -> Result<serde_json::Value, String> {
-    tokio::task::spawn_blocking(move || admin_post("/api/invitations", Some(&data.to_string())))
-        .await.map_err(|e| format!("Task failed: {}", e))?
+pub async fn admin_create_invitation(data: serde_json::Value) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("POST", "/api/invitations".to_string(), Some(data.to_string())).await
+}
+
+// ===========================================================================
+// Domains (the multi-domain relay)
+// ===========================================================================
+
+/// `name`, when it is a base domain as the panel stores one: two or more
+/// DNS labels, at most 253 characters.
+fn domain_name(name: &str) -> Result<&str, serde_json::Value> {
+    let valid = name.len() <= 253
+        && name.split('.').count() >= 2
+        && name.split('.').all(|label| dns_label(label).is_ok());
+    if !valid {
+        return Err(refusal(format!("\"{}\" is not a domain name", name)));
+    }
+    Ok(name)
+}
+
+/// `/api/domains/<name><rest>`.
+fn domain_path(name: &str, rest: &str) -> Result<String, serde_json::Value> {
+    Ok(format!("/api/domains/{}{}", domain_name(name)?, rest))
+}
+
+/// `/api/domains/<name>/members/<user id>`.
+fn domain_member_path(name: &str, user_id: &str) -> Result<String, serde_json::Value> {
+    if !is_canonical_uuid(user_id) {
+        return Err(refusal(format!("\"{}\" is not a directory user id", user_id)));
+    }
+    domain_path(name, &format!("/members/{}", user_id))
+}
+
+#[tauri::command]
+pub async fn admin_get_domains() -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("GET", "/api/domains".to_string(), None).await
+}
+
+/// Add a domain, pending until activated. Rejects with the panel's refusal
+/// (`code` `domain_overlap`, `invalid_domain`).
+#[tauri::command]
+pub async fn admin_add_domain(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    let body = serde_json::json!({ "name": domain_name(&name)? }).to_string();
+    admin_refusable_task("POST", "/api/domains".to_string(), Some(body)).await
+}
+
+#[tauri::command]
+pub async fn admin_verify_domain_dns(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("POST", domain_path(&name, "/verify-dns")?, None).await
+}
+
+#[tauri::command]
+pub async fn admin_activate_domain(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("POST", domain_path(&name, "/activate")?, None).await
+}
+
+/// Remove a domain. Rejects with the panel's refusal (`code`
+/// `primary_domain`, or `domain_in_use` with `usedBy`).
+#[tauri::command]
+pub async fn admin_remove_domain(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("DELETE", domain_path(&name, "")?, None).await
+}
+
+#[tauri::command]
+pub async fn admin_get_domain_members(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("GET", domain_path(&name, "/members")?, None).await
+}
+
+#[tauri::command]
+pub async fn admin_add_domain_member(
+    name: String,
+    user_id: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("PUT", domain_member_path(&name, &user_id)?, None).await
+}
+
+#[tauri::command]
+pub async fn admin_remove_domain_member(
+    name: String,
+    user_id: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("DELETE", domain_member_path(&name, &user_id)?, None).await
+}
+
+/// Move a plugin to another active domain. Rejects with the panel's refusal
+/// (409 while one of its surfaces is served).
+#[tauri::command]
+pub async fn admin_set_plugin_domain(
+    name: String,
+    domain: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = web_surface_path(&name, "domain")?;
+    let body = serde_json::json!({ "domain": domain_name(&domain)? }).to_string();
+    admin_refusable_task("PUT", path, Some(body)).await
 }
 
 #[tauri::command]
@@ -2003,6 +2096,23 @@ mod tests {
         }
         assert!(user_surface_path("not-a-uuid", None).is_err());
         assert!(user_surface_path("../tunnels", Some("fx")).is_err());
+    }
+
+    #[test]
+    fn a_domain_path_takes_a_base_domain_and_a_directory_user_id_only() {
+        assert_eq!(
+            domain_path("codelama.com.tr", "/activate").unwrap(),
+            "/api/domains/codelama.com.tr/activate"
+        );
+        for bad in ["tr", "Codelama.com.tr", "*.codelama.com.tr", "a..b", "-a.example", "a.example/../x"] {
+            assert!(domain_path(bad, "").is_err(), "{} refused", bad);
+        }
+        let id = "3f1c2b9e-8a4d-4c1e-9b2a-1d2e3f4a5b6c";
+        assert_eq!(
+            domain_member_path("samplepark.tr", id).unwrap(),
+            format!("/api/domains/samplepark.tr/members/{}", id)
+        );
+        assert!(domain_member_path("samplepark.tr", "onur").is_err());
     }
 
     #[test]
