@@ -415,7 +415,8 @@ A single-domain relay on 4.6 upgrades with no change in behaviour:
 `setup-host.sh`'s dnsmasq gains `address=/<domain>/<host ip>` for
 `TEST_DOMAIN_2` and `TEST_DOMAIN_3`; `setup-visitor.sh` adds `auth.` and the
 test hostnames of each to `/etc/hosts`; the certbot shim already signs any
-name. Specs (written after slice 7's campaign, run only with the user's go):
+name. Specs (written after slice 7's campaign, run only with the user's go;
+what wave 4 wrote, with two splits — 48 and single-VM 35 — is under Waves):
 
 - **three-VM 45 — developer on two domains**: domain B added and activated;
   user `dev` member of A and B: signs in at `auth.A`, reaches an
@@ -561,7 +562,68 @@ list|add|verify-dns|activate|remove|members`, `plugins domain`,
    of a new user are set in the panel or with `domains members … add` after
    it is created.
 
-4. **Rodeo specs** (45–47, single-VM 34).
+4. **Rodeo specs** — written, not run (they wait for the user's go). In
+   `packages/tools/lamaste-rodeo`:
+   - **Infrastructure.** B and C are the primary's first label replaced by
+     `second` / `third` (`test.lamaste.local` → `second.lamaste.local`,
+     `third.lamaste.local`), derived in one rule by `setup-host.sh` (both
+     suites: dnsmasq answers all three), `setup-visitor.sh` (`auth.` of each
+     in `/etc/hosts` and the cloud-init template) and `rodeo.hooks.js`
+     `buildTestEnv` (`TEST_DOMAIN_2`, `TEST_DOMAIN_3`). No tier variable: the
+     tier runner injects only `HOST_IP` and `TEST_DOMAIN`. The specs make
+     sure of the DNS again (`md_dns`) — a VM restored from an older snapshot
+     predates it. Shared helpers: `tests/e2e-three-vm/multi-domain-harness.sh`
+     (on top of `app-plugin-harness.sh`, whose `sign_in` takes the domain of
+     the sign-in page as an optional sixth argument).
+   - **three-VM 45 — a developer on two domains**: B added, DNS checked
+     (`auth.B` the one required record), activated, two session cookies; the
+     developer in both domains' rules and projections; signed in at `auth.A`,
+     A's tunnel; B's tunnel sends them to `auth.B` (with A's session too);
+     signed in there with the same password and TOTP secret, B's tunnel; a
+     restricted tunnel on B: the access-request page, then through with a
+     grant.
+   - **three-VM 46 — a customer on one domain**: members of B only reach B;
+     signed in at `auth.A`, A's authenticated tunnel and A's
+     Authelia-protected static site answer the domain refusal page (403, no
+     `Location`); Gatekeeper's own check — the projection rewritten without
+     the customer refuses them while Authelia still admits them, a missing
+     projection refuses everyone, restored lets them in; removed from B,
+     refused at the next request and gone from the directory and projection
+     (audited by id); deleted, every membership ends, audited
+     `directory.membership.removed` reason `deleted`, by directory id only.
+   - **three-VM 47 — a third domain**: snapshot of A's and B's rendered
+     rules, their projection members and a reachability matrix; C added
+     and activated with a member and a tunnel; A's and B's rules byte-equal,
+     the projection unchanged, every request of the matrix answers as before
+     (signed in again — C's activation restarted Authelia); C's member
+     reaches C only.
+   - **three-VM 48 — a plugin's user surface** (split from 46: installing and
+     hosting an app plugin alone takes minutes, and rodeo ends a spec at ten):
+     a member of A with a role reaches the agent half; a customer of B,
+     signed in at `auth.A`, gets 403 JSON `{error: "not_a_member"}`, no
+     redirect; the plugin cannot move to B while served on A (409
+     `surface_bound`).
+   - **single-VM 34 — upgrade and renames**: an enabled and a disabled
+     tunnel and the auth portal put back under their 4.6 names; the panel
+     restarted renames them with link state kept, no legacy name left,
+     `nginx -t` passes, every host answers as before; one domain, the
+     primary, every user its member, `newUsersNeedDomains` false;
+     `lamaste-priv` refuses `write` for a 4.6 name and for an unknown dotted
+     name. This is the nginx side of the rename that has no unit test.
+   - **single-VM 35 — OIDC sign-in by membership** (moved from 46: the
+     stand-in registry and fixture-plugin setup of spec 26 is single-VM; an
+     authorization-code client, not device code, because Authelia's
+     authorization endpoint answers a refused subject at once with
+     `error=access_denied` to the redirect URI, where a device-code flow
+     needs a browser to approve): the client belongs to A and points at A's
+     two-factor policy; signed in at `auth.A`, the developer's authorization
+     request goes on, the customer's is refused; the plugin moved to B, the
+     client points at B's policy and the customer's request at `auth.B` goes
+     on; `auth.A` and `auth.B` are issuers of their own.
+   - **Existing specs updated** for the vhost names of wave 2 (by full
+     hostname): single-VM 04 and 19, three-VM 01 (lamaste-priv's content
+     check now under a valid name — a 4.6 name is refused before the
+     content is read), 03, 15, 22, 32 and 43.
 
 ## Decisions (agreed 2026-10-25)
 
