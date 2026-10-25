@@ -397,10 +397,62 @@ export function hashPassword(password: string, bcryptHash: BcryptHashFn): Promis
 // systemd service
 // ---------------------------------------------------------------------------
 
+/** Authelia's health endpoint on loopback: 200 once it serves requests. */
+export const AUTHELIA_HEALTH_URL = 'http://127.0.0.1:9091/api/health';
+
+/** How the readiness wait after a start or restart is made (tests shorten it). */
+export interface AutheliaReadyOptions {
+  /** Give up after this long (default 30 s). */
+  readonly timeoutMs?: number;
+  /** Between two checks (default 250 ms). */
+  readonly intervalMs?: number;
+  /** The health request (default the global fetch). */
+  readonly fetchImpl?: (
+    url: string,
+    init?: { signal?: AbortSignal },
+  ) => Promise<{ status: number }>;
+}
+
 /**
- * Enable and start the Authelia systemd service.
+ * Wait until Authelia serves requests: systemd reports it active and its
+ * health endpoint answers 200. `systemctl start|restart` returns as soon as
+ * the process is spawned — the listener comes a moment later — so a caller
+ * that talks to Authelia right after a restart (the registry credential's
+ * token request, a sign-in) would otherwise race it. True when ready within
+ * the deadline.
  */
-export async function startAuthelia(exec: ExecFn): Promise<{ active: true }> {
+async function autheliaReady(exec: ExecFn, options: AutheliaReadyOptions = {}): Promise<boolean> {
+  const { timeoutMs = 30_000, intervalMs = 250, fetchImpl = globalThis.fetch } = options;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let active = false;
+    try {
+      const { stdout } = await exec('systemctl', ['is-active', AUTHELIA_SERVICE]);
+      active = stdout.trim() === 'active';
+    } catch {
+      // non-zero while inactive or activating
+    }
+    if (active) {
+      try {
+        const res = await fetchImpl(AUTHELIA_HEALTH_URL, { signal: AbortSignal.timeout(2_000) });
+        if (res.status === 200) return true;
+      } catch {
+        // not listening yet
+      }
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+/**
+ * Enable and start the Authelia systemd service, and wait until it serves
+ * requests.
+ */
+export async function startAuthelia(
+  exec: ExecFn,
+  options: AutheliaReadyOptions = {},
+): Promise<{ active: true }> {
   try {
     await exec('sudo', ['systemctl', 'enable', AUTHELIA_SERVICE]);
     await exec('sudo', ['systemctl', 'start', AUTHELIA_SERVICE]);
@@ -408,16 +460,7 @@ export async function startAuthelia(exec: ExecFn): Promise<{ active: true }> {
     throw new Error(`Failed to start Authelia service: ${errText(err)}`);
   }
 
-  await new Promise((resolve) => setTimeout(resolve, 2000));
-
-  try {
-    const { stdout } = await exec('systemctl', ['is-active', AUTHELIA_SERVICE]);
-    if (stdout.trim() === 'active') {
-      return { active: true };
-    }
-  } catch {
-    // non-zero for inactive
-  }
+  if (await autheliaReady(exec, options)) return { active: true };
 
   let journalOutput = '';
   try {
@@ -428,32 +471,25 @@ export async function startAuthelia(exec: ExecFn): Promise<{ active: true }> {
   }
 
   throw new Error(
-    `Authelia service is not active after starting. Journal output:\n${journalOutput}`,
+    `Authelia service is not serving requests after starting. Journal output:\n${journalOutput}`,
   );
 }
 
 /**
- * Restart the Authelia service.
+ * Restart the Authelia service, and wait until it serves requests again.
  */
-export async function reloadAuthelia(exec: ExecFn): Promise<{ active: true }> {
+export async function reloadAuthelia(
+  exec: ExecFn,
+  options: AutheliaReadyOptions = {},
+): Promise<{ active: true }> {
   try {
     await exec('sudo', ['systemctl', 'restart', AUTHELIA_SERVICE]);
   } catch (err: unknown) {
     throw new Error(`Failed to restart Authelia service: ${errText(err)}`);
   }
 
-  await new Promise((resolve) => setTimeout(resolve, 2000));
-
-  try {
-    const { stdout } = await exec('systemctl', ['is-active', AUTHELIA_SERVICE]);
-    if (stdout.trim() === 'active') {
-      return { active: true };
-    }
-  } catch {
-    // non-zero for inactive
-  }
-
-  throw new Error('Authelia service is not active after restart.');
+  if (await autheliaReady(exec, options)) return { active: true };
+  throw new Error('Authelia service is not serving requests after restart.');
 }
 
 /**
