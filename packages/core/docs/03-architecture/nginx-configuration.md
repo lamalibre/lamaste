@@ -204,7 +204,7 @@ Identical to the IP vhost except:
 - `server_name` is `panel.<domain>`
 - Requires the `map $http_upgrade $connection_upgrade` block from the IP vhost (or a shared config) to be present
 
-### 3. Auth Vhost (`lamalibre-lamaste-auth`)
+### 3. Auth Vhost (`lamalibre-lamaste-auth-<domain>`)
 
 Created during onboarding provisioning. Serves the Authelia authentication portal.
 
@@ -282,7 +282,7 @@ Key characteristics:
 - 24-hour read/send timeouts to keep tunnel connections alive without nginx closing them
 - No mTLS and no Authelia — Chisel handles its own authentication
 
-### 5. App Vhost (`lamalibre-lamaste-app-<name>`)
+### 5. App Vhost (`lamalibre-lamaste-app-<fqdn>`)
 
 Created when a tunnel is added via the management UI or `POST /api/tunnels`. Each tunnel gets its own vhost, rendered by one of three writers according to the tunnel's `accessMode`:
 
@@ -468,7 +468,7 @@ server {
 
 Moving a bound tunnel's host to a web surface hands the hostname over in **one reload**: the tunnel's vhost is unlinked, the site's written and linked, `nginx -t` run, nginx reloaded once; the tunnel's file stays installed, unlinked, so the tunnel can be enabled again once the site is deleted. On a failed test both are put back.
 
-### 7. Public Tunnel Vhost (`lamalibre-lamaste-app-<name>`, access mode: public)
+### 7. Public Tunnel Vhost (`lamalibre-lamaste-app-<fqdn>`, access mode: public)
 
 Created when a tunnel is configured with public access. Direct proxy with no authentication.
 
@@ -505,7 +505,7 @@ server {
 
 No `auth_request`, no Authelia, no Gatekeeper. Traffic is proxied directly to the tunneled app. Use only for services that handle their own authentication or are intentionally public.
 
-### 8. Authenticated Tunnel Vhost (`lamalibre-lamaste-app-<name>`, access mode: authenticated)
+### 8. Authenticated Tunnel Vhost (`lamalibre-lamaste-app-<fqdn>`, access mode: authenticated)
 
 Created when a tunnel requires Authelia login but no per-user grant checking. Any authenticated Authelia user can access the tunnel.
 
@@ -582,7 +582,7 @@ Key characteristics:
 
 > **Note:** The `lamalibre-lamaste-authz-cache.conf` nginx snippet is installed by the Gatekeeper installer task, but the generated vhosts do not currently include `proxy_cache` directives. Authorization caching relies on the Gatekeeper's in-memory session cache (30-second TTL) rather than nginx-level proxy caching.
 
-### 9. Restricted Tunnel Vhost (`lamalibre-lamaste-app-<name>`, access mode: restricted)
+### 9. Restricted Tunnel Vhost (`lamalibre-lamaste-app-<fqdn>`, access mode: restricted)
 
 Created when a tunnel requires both Authelia login and an explicit access grant. Only users with a matching grant in Gatekeeper (`gatekeeper.db`) can access the tunnel.
 
@@ -756,6 +756,16 @@ nginx selects the vhost from the request line when a request is in absolute form
 Gatekeeper authorizes the tunnel named in the path, and refuses a check whose `X-Original-URL` or `Host` names another hostname, or has no `Host` (401). It refuses `/authz/check` — what vhosts written before 4.3 call, with the client's `Host` in both headers — outright (403, logged as `vhost_predates_host_binding`): a tunnel vhost the panel has not rewritten is closed, not open to the users of other tunnels. The panel rewrites them at startup (see [Rewritten at Startup](#rewritten-at-startup)).
 
 Authelia evaluates the raw `$request_uri`, while nginx serves the normalized `$uri` (`/a/../b` is `/b`, `%2e` is `.`). Lamaste writes no path (`resources`) rules into Authelia's `access_control`, only hostname rules; a path rule added by hand would see a different path than nginx serves.
+
+## Vhosts on several domains
+
+A relay may serve several base domains ([Domains API](../04-api-reference/domains.md)). Vhost files are therefore named by full hostname — `lamalibre-lamaste-app-<fqdn>`, `lamalibre-lamaste-agent-panel-<fqdn>`, `lamalibre-lamaste-auth-<domain>` — so the same subdomain on two domains never shares a file. At start the panel renames vhosts written under the earlier names (`lamalibre-lamaste-app-<subdomain>`, `lamalibre-lamaste-agent-panel-<subdomain>`, `lamalibre-lamaste-auth`): the new file is written with the old one's link state, the old file and link removed, then one `nginx -t` and reload, with the old files restored if the test fails. `lamaste-priv` accepts the hostname names for every action and the legacy names for everything but `write`.
+
+- **One auth vhost per active domain** (`auth.<domain>`, its own certificate). Only the primary's carries `/api/user-access/authorize` and the `user_access_auth` rate-limit zone (desktop user access is primary-only); every domain's serves `/`, `/invite/` and `/api/invite/`.
+- **The 401 redirect** of tunnel and web-surface vhosts goes to `https://auth.<the host's domain>/?rd=…`; static sites follow Authelia's `$redirection_url`, which Authelia builds for the host's cookie domain.
+- **A 403** from Gatekeeper (a signed-in non-member, or a missing grant) is served inline; Authelia-protected static sites route `error_page 403` to Gatekeeper's `/authz/refusal/<fqdn>`.
+- **Authenticated and restricted tunnels share one vhost** (`writeGatekeeperVhost`): Gatekeeper decides by the access mode in `tunnels.json`.
+- **Certificates** stay HTTP-01 per hostname; a wildcard is used when one for the host's domain is already present.
 
 ## The backend cookie map
 

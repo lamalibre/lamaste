@@ -653,6 +653,18 @@ The `auth_request` target of every path of a plugin-owned site but its user surf
 
 Every answer is `Cache-Control: no-store`. A refusal for want of an entitlement or a grant is logged with the resource and the reason only, and recorded in the access-request log when it is on.
 
+### Domain membership
+
+Every authorization route (tunnel, user surface, shell) checks the user's membership of the host's domain after Authelia, from `/etc/lamalibre/lamaste/domains.json` (written by the panel, watched like `tunnels.json`): `{ "v": 1, "domains": [{ "name", "members": [username…] }] }`, active domains and active members only. A missing or unreadable projection, or a host under no domain, refuses (fail closed). Authelia's own 403 — it renders the same membership — is no longer taken for "not signed in": a signed-in non-member gets **403** with the domain refusal page (the domain, the admin contact, a sign-out link to `https://auth.<domain>/logout`; no username), or JSON `{ "error": "not_a_member" }` on a user surface, instead of a 401 that sent the browser back to the sign-in page in a loop. Refusals are never cached; a membership change busts the session cache.
+
+### Refusal Page (nginx `error_page 403`)
+
+```
+GET /authz/refusal/:fqdn
+```
+
+What an Authelia-protected static site answers a signed-in user Authelia refused with (the site asks Authelia directly, not Gatekeeper). Always 403 with the refusal page; reads no session and decides nothing.
+
 ### Principals (Gatekeeper's own API)
 
 ```

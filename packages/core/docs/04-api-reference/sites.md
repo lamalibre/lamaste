@@ -150,6 +150,7 @@ For a custom domain:
 | `aliases`           | `string[]` | Custom sites only, optional, at most 10 hostnames                                  | Hostnames that 301 to the site, e.g. `["www.myblog.net"]`. Each needs its own A record; one certificate covers them all |
 | `spaMode`           | `boolean`  | Optional, defaults to `false`                                                      | Serve `index.html` for all routes                                                                                       |
 | `autheliaProtected` | `boolean`  | Optional, defaults to `false`                                                      | Require Authelia login                                                                                                  |
+| `domain`            | `string`   | Optional, managed sites only; an active domain (defaults to the primary)           | A managed site's base domain: `<name>.<domain>` ([Domains](domains.md))                                                 |
 
 **Name regex:**
 
@@ -619,6 +620,10 @@ curl -s --cert client.p12:password \
 | 400    | `{"error":"Validation failed","details":{"issues":[...]}}` | Missing or empty path                    |
 | 400    | `{"error":"..."}`                                          | Path traversal attempt or file not found |
 | 404    | `{"error":"Site not found"}`                               | No site with the given UUID              |
+
+## Sites and domains
+
+A managed site is `<name>.<domain>`; site **names** stay unique across the relay (agents' `allowedSites` and the CLI name sites by them), so a second `blog.` on another domain is a custom site there. A custom site's hostname names its own domain. An Authelia-protected site admits members of its domain only (its `allowedUsers` narrowed to them); a site whose hostname is under none of the relay's domains cannot be protected (400 `NOT_UNDER_DOMAIN` — no session cookie reaches it). A signed-in user Authelia refuses gets Gatekeeper's refusal page (`error_page 403` → `/authz/refusal/<fqdn>`), which names both possible reasons: not a member of the domain, or not one of the site's users. The relay's own hosts (`panel.`, `auth.`, `tunnel.`, `agent-*` under any domain) are never a custom site or an alias; a domain's apex and `www.` may be.
 
 ## Quick Reference
 

@@ -106,13 +106,14 @@ Creates a new Authelia user. The password is hashed with bcrypt before being sto
 }
 ```
 
-| Field         | Type       | Validation                                                                                  | Description                                 |
-| ------------- | ---------- | ------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `username`    | `string`   | 2-32 chars, lowercase alphanumeric + underscores + hyphens, starting with a letter or digit | Login identifier                            |
-| `displayname` | `string`   | 1-100 chars                                                                                 | Display name                                |
-| `email`       | `string`   | Valid email format                                                                          | Email address                               |
-| `password`    | `string`   | 8-128 chars                                                                                 | Plain-text password (hashed before storage) |
-| `groups`      | `string[]` | Optional, defaults to `[]`                                                                  | Authelia group memberships                  |
+| Field         | Type       | Validation                                                                                  | Description                                                                        |
+| ------------- | ---------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `username`    | `string`   | 2-32 chars, lowercase alphanumeric + underscores + hyphens, starting with a letter or digit | Login identifier                                                                   |
+| `displayname` | `string`   | 1-100 chars                                                                                 | Display name                                                                       |
+| `email`       | `string`   | Valid email format                                                                          | Email address                                                                      |
+| `password`    | `string`   | 8-128 chars                                                                                 | Plain-text password (hashed before storage)                                        |
+| `groups`      | `string[]` | Optional, defaults to `[]`                                                                  | Authelia group memberships                                                         |
+| `domains`     | `string[]` | The relay's domains, at most 50; required once it has two (400 `domains_required`)          | Domains the user is a member of ([Domains](domains.md)); with one domain, that one |
 
 **Username regex** (the same rule applies to invitations — a leading `-` would read as a flag to Authelia's CLI, which the panel runs per username for TOTP secrets, second factors and OpenID Connect identities):
 
@@ -343,6 +344,10 @@ The `totpUri` follows the [Key Uri Format](https://github.com/google/google-auth
 | 404    | `{"error":"User not found"}`                     | No user with this username                             |
 | 500    | `{"error":"Failed to read user database"}`       | Cannot read `users.yml`                                |
 | 500    | `{"error":"Failed to write TOTP configuration"}` | Cannot write TOTP secret to Authelia's SQLite database |
+
+### Domains
+
+Every user listed by `GET /api/users` carries `domains`: the base domains they are a member of (empty until the directory has seen them). Memberships are changed through the [Domains API](domains.md) (`PUT`/`DELETE /api/domains/:name/members/:userId`). `POST /api/invitations` takes `domains` exactly as `POST /api/users` does; the invitation link is on the sign-in page of the first domain it names (`https://auth.<domain>/invite/<token>`). Disabling a user keeps their memberships (they are let in nowhere while disabled); deleting ends them.
 
 ## The User Directory
 

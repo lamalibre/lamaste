@@ -664,6 +664,16 @@ Configuration files that are read live by services (like Authelia's `users.yml`)
 | `packages/core/lib/src/agent/plugin-settings-store.ts`              | The agent half's settings files and `/admin/settings`  |
 | `packages/server/daemon/src/lib/plugin-settings.js`                 | Settings through the tunnel; the cache without secrets |
 
+## Several domains on one relay
+
+A relay may serve several base domains with one user directory and an explicit member list per domain ([Domains API](../04-api-reference/domains.md)).
+
+- **Membership is enforced twice, from one source** (the panel's `state.db`): Authelia (`access_control` allow-lists with deny last and `default_policy: deny`, per-domain OIDC authorization policies) and Gatekeeper (the `domains.json` projection, fail closed). Either alone keeps a non-member out of tunnels and plugin surfaces; static sites rely on Authelia, OIDC sign-ins on the clients' authorization policies. One lock (`withDomainRendering`) serializes everything that writes what members may do.
+- **Cookies never cross domains:** domains may not overlap, so one domain's session cookie never reaches another's hosts; the backend cookie map strips `authelia_session` on every domain.
+- **One issuer per domain:** a token carries the issuer it was obtained at; a relying party trusting one issuer refuses the others.
+- **The accepted shared blast radius:** one droplet, nginx, panel, Gatekeeper and Authelia serve every domain, and the admin certificate manages all of them. A compromise of the relay reaches every domain it serves — the normal hosting trade-off, documented rather than engineered around. A customer who must keep its users off the relay needs a relay of its own (or, later, an external identity provider for its domain).
+- **Same-site:** applications on one domain share its registrable domain as before; a customer's applications on their own domain are now a separate site from Code Lama's.
+
 ## Quick Reference
 
 ### Security layers

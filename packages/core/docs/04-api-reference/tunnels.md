@@ -98,15 +98,16 @@ The carrying agent's sync timer picks the tunnel up within about 30 seconds and 
 }
 ```
 
-| Field           | Type      | Validation                                                                   | Description                                                                                                               |
-| --------------- | --------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `subdomain`     | `string`  | Lowercase alphanumeric + hyphens, max 63 chars, cannot start/end with hyphen | The subdomain to create                                                                                                   |
-| `port`          | `integer` | 1024 - 65535, not a [reserved port](#port)                                   | Port the agent forwards                                                                                                   |
-| `agentLabel`    | `string`  | An enrolled, non-revoked agent's label                                       | **Required for admin certificates.** An agent certificate may omit it (defaults to itself) but may not name another agent |
-| `description`   | `string`  | Max 200 chars, optional (defaults to `""`)                                   | Human-readable description                                                                                                |
-| `type`          | `string`  | `'app'` (default), `'panel'`, or `'plugin'`                                  | `panel` requires the `panel:expose` capability; `plugin` is admin-only                                                    |
-| `accessMode`    | `string`  | `'restricted'` (default), `'authenticated'`, `'public'`                      | `authenticated` and `public` are admin-only                                                                               |
-| `maxBodySizeMb` | `integer` | 1 - 10240 for admins, 1 - 100 for agents; optional (defaults to 10)          | Written into the vhost as `client_max_body_size`; larger requests get HTTP 413. Raise it for apps that take big uploads   |
+| Field           | Type      | Validation                                                                                           | Description                                                                                                               |
+| --------------- | --------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `subdomain`     | `string`  | Lowercase alphanumeric + hyphens, max 63 chars, cannot start/end with hyphen                         | The subdomain to create                                                                                                   |
+| `port`          | `integer` | 1024 - 65535, not a [reserved port](#port)                                                           | Port the agent forwards                                                                                                   |
+| `agentLabel`    | `string`  | An enrolled, non-revoked agent's label                                                               | **Required for admin certificates.** An agent certificate may omit it (defaults to itself) but may not name another agent |
+| `description`   | `string`  | Max 200 chars, optional (defaults to `""`)                                                           | Human-readable description                                                                                                |
+| `type`          | `string`  | `'app'` (default), `'panel'`, or `'plugin'`                                                          | `panel` requires the `panel:expose` capability; `plugin` is admin-only                                                    |
+| `accessMode`    | `string`  | `'restricted'` (default), `'authenticated'`, `'public'`                                              | `authenticated` and `public` are admin-only                                                                               |
+| `maxBodySizeMb` | `integer` | 1 - 10240 for admins, 1 - 100 for agents; optional (defaults to 10)                                  | Written into the vhost as `client_max_body_size`; larger requests get HTTP 413. Raise it for apps that take big uploads   |
+| `domain`        | `string`  | An active domain of the relay; optional (defaults to the primary); panel tunnels only on the primary | The base domain of the hostname: `<subdomain>.<domain>` ([Domains](domains.md))                                           |
 
 **Subdomain regex:**
 
@@ -406,6 +407,10 @@ Revoking an agent's certificate releases its tunnels: its app and plugin tunnels
 - Must not start with `agent-` (reserved for agent panel tunnels, unless `type` is `'panel'`)
 - Must be unique across all tunnels
 - Must not be a hostname a static site or site alias already serves (checked on tunnel creation; site creation and alias changes check the reverse)
+
+### Hostname
+
+A tunnel's hostname is `<subdomain>.<domain>` and is unique as a whole: `feria.samplepark.tr` and `feria.codelama.com.tr` may both exist. Reserved labels (`panel`, `auth`, `tunnel`, `www`, `mail`, `ftp`, `api`, and `agent-*` except an agent's own panel tunnel) are reserved on every domain. `agent-config` lists each carried tunnel with its `fqdn`; agents' chisel needs only the port and the primary's `tunnel.` endpoint, so a tunnel on another domain changes nothing on the agent. The vhost is `lamalibre-lamaste-app-<fqdn>` (`lamalibre-lamaste-agent-panel-<fqdn>` for a panel tunnel).
 
 ### Port
 

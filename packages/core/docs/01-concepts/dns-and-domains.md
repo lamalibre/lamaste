@@ -260,6 +260,15 @@ Once set during onboarding, the domain is used throughout the system for constru
 | `packages/lamaste-serverd/src/lib/nginx.js`                | Vhost creation with domain-based server_name |
 | `packages/lamaste-serverd/src/lib/state.js`                | Domain storage in panel.json                 |
 
+## Multiple domains
+
+One relay can serve several base domains: the **primary** (set at onboarding — `panel.`, `tunnel.` and agent panels live there) and **added** domains, each with its own sign-in at `auth.<domain>` and its own member list. People have one account across all of them; a person reaches a domain's protected hosts only as a member, and signs in once per domain (browsers never share cookies between domains).
+
+- **DNS for an added domain:** an A record for `auth.<domain>`, and either a wildcard `*.<domain>` or one A record per hostname, all to the relay. Explicit records (apex, `www`, mail) keep precedence over a wildcard. Steps: [Adding a Second Domain](../02-guides/second-domain.md).
+- **Domains never overlap:** `a.samplepark.tr` cannot be added beside `samplepark.tr` — a domain's cookies reach every host under it.
+- **Hostnames:** a tunnel or managed site is `<label>.<domain>`, unique as a whole; the reserved labels hold on every domain; the domain of a hostname is the one it is under (never stored separately). A domain's apex and `www.` may be a custom site or an alias.
+- **Records** live in the panel's `state.db` (`domains`, `domain_members`); `panel.json` `domain` stays the primary.
+
 ## Quick Reference
 
 ### Required DNS records (onboarding)

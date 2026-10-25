@@ -825,6 +825,10 @@ POST /admin/identity/changes  { protocol: 1, directoryId, from, to, reset, recon
 | `not_hosted`    | The plugin is not hosted, or its hosting is not active                                        |
 | `not_answered`  | Its agent half has not applied the feed up to the head (protocol 1) for the installed version |
 
+### The plugin's domain
+
+On a relay with several domains a plugin belongs to one ([`PUT /api/plugins/:name/domain`](domains.md#put-apipluginsnamedomain); the primary until moved). Its audience is the entitled users who are members of that domain — a member leaving becomes `remove/unentitled`, so agent halves see no new reason; a tunnel bound as its user surface and its web surface must be on that domain; its OIDC clients' `{domain}` and sign-in policy are that domain's. Moving it is refused while a surface is served (409 `surface_bound`).
+
 ### The user surface
 
 A plugin's users reach it at `/api/<route>/app` and everything under it, on the host of an app tunnel **bound** as the plugin's user surface ([Tunnels API](tunnels.md#user-surface-binding)) — a tunnel its hosting agent carries — or on the site the plugin owns for its [web surface](#web-surface), which serves the same paths the same way (where the steps below say tunnel, read site; a site's grant is a `site` grant). The bound host serves those paths only while the plugin's installed, approved version declares `identity` and the tunnel's agent hosts the plugin; before that, its requests go down the tunnel as every other path does — which is how a plugin moves its users' API to the relay with a plain update. Each request:

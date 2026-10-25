@@ -102,6 +102,10 @@ From the Gatekeeper dashboard in the admin panel:
 
 Gatekeeper reads groups and grants from its SQLite database (`gatekeeper.db`) on every check, so a group, member or grant created through the admin panel takes effect on the next request — no service restart required. The tunnel list (the panel's `tunnels.json`) and Gatekeeper's settings (`gatekeeper.json`) are watched and reloaded when they change. Changes through the panel also recompute the audiences of agent-hosted plugins at once; edits made with Gatekeeper's own CLI are picked up by the panel within a minute.
 
+### Domains and membership
+
+On a relay with several domains, membership of a host's domain comes before every access mode: `authenticated` means "any signed-in member of this domain", and `restricted` still needs a grant on top. Membership is rendered into Authelia and checked again by Gatekeeper from the panel's `domains.json`; a signed-in non-member gets a "not a member of this domain" page — with the admin contact and a sign-out link — rather than the sign-in page. Members are managed per domain ([Domains API](../04-api-reference/domains.md)); the admin certificate manages every domain, and Authelia's `admins` group needs membership like everyone else (inside a domain it still passes `restricted` sites).
+
 ## For Developers
 
 ### Architecture

@@ -512,7 +512,36 @@ name. Specs (written after slice 7's campaign, run only with the user's go):
    `syncAllAccessControl` is gone; sites' `AutheliaDeps.updateAccessControl`
    is `renderAccess`.
 
-3. **UI, desktop, CLI, docs**.
+3. **UI, desktop, CLI, docs** — done. `AdminClient` gains `getDomains`,
+   `addDomain`, `verifyDomainDns`, `activateDomain`, `removeDomain`,
+   `getDomainMembers`, `addDomainMember`, `removeDomainMember`,
+   `setPluginDomain`, `domain` on tunnel/site creation, `domains` on users
+   and invitations (`AdminUser.domains`); web client, desktop client and
+   nine `admin_*` Tauri commands (domain names and user ids checked before
+   curl; `admin_create_user`/`admin_create_invitation` now pass the panel's
+   refusal through so `domains_required` reaches the form). Panel: a Domains
+   page (web `/domains`, desktop server section) with DNS records to create,
+   activation, members and removal showing `usedBy`; `DomainPicker` on
+   tunnel and managed-site creation and `DomainMembershipChoice` on user
+   creation, editing and invitations — both hidden on a one-domain relay;
+   domain chips on Users; `PluginDomain` on the plugin card; tunnels listed
+   by `fqdn`. UI helpers `admin/lib/domains.js` with tests; the UI's
+   reserved-label copy is kept equal to core's by a test (the browser bundle
+   does not carry the core library; `@lamalibre/lamaste` is a dev dependency
+   of the UI for that test). CLI `lamaste-server domains
+list|add|verify-dns|activate|remove|members`, `plugins domain`,
+   `--domain` on `tunnels create`/`sites create`, `registry-credential set
+--issuer-domain`, domains in `status`. Docs: `04-api-reference/domains.md`,
+   `02-guides/second-domain.md`, and the multi-domain sections of users,
+   tunnels, sites, registry-and-oidc, gatekeeper, overview, dns-and-domains,
+   authentication, authorization, security-model (the shared blast radius)
+   and nginx-configuration; CHANGELOG; CLAUDE.md.
+
+   **Deviation:** the CLI has no `users create` (users are created in the
+   panel or by invitation), so there is no `users create --domains`; domains
+   of a new user are set in the panel or with `domains members … add` after
+   it is created.
+
 4. **Rodeo specs** (45–47, single-VM 34).
 
 ## Decisions (agreed 2026-10-25)

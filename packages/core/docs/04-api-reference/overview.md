@@ -319,6 +319,15 @@ There are two exceptions:
 | PUT    | `/api/users/:username`                                    | Management | Update user                                 |
 | DELETE | `/api/users/:username`                                    | Management | Delete user                                 |
 | POST   | `/api/users/:username/reset-totp`                         | Management | Reset TOTP secret                           |
+| GET    | `/api/domains`                                            | Management | List domains                                |
+| POST   | `/api/domains`                                            | Management | Add a domain                                |
+| POST   | `/api/domains/:name/verify-dns`                           | Management | Check a domain's DNS                        |
+| POST   | `/api/domains/:name/activate`                             | Management | Activate a domain                           |
+| DELETE | `/api/domains/:name`                                      | Management | Remove a domain                             |
+| GET    | `/api/domains/:name/members`                              | Management | List a domain's members                     |
+| PUT    | `/api/domains/:name/members/:userId`                      | Management | Add a member                                |
+| DELETE | `/api/domains/:name/members/:userId`                      | Management | End a membership                            |
+| PUT    | `/api/plugins/:name/domain`                               | Management | Move a plugin to a domain                   |
 | GET    | `/api/certs`                                              | Management | List certificates                           |
 | GET    | `/api/certs/auto-renew-status`                            | Management | Auto-renew timer status                     |
 | POST   | `/api/certs/:domain/renew`                                | Management | Force-renew certificate                     |

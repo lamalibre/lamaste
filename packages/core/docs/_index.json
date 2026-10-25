@@ -13,14 +13,26 @@
           "slug": "how-it-works",
           "file": "00-introduction/how-it-works.md"
         },
-        { "title": "Quick Start", "slug": "quickstart", "file": "00-introduction/quickstart.md" }
+        {
+          "title": "Quick Start",
+          "slug": "quickstart",
+          "file": "00-introduction/quickstart.md"
+        }
       ]
     },
     {
       "title": "Concepts",
       "pages": [
-        { "title": "Tunneling", "slug": "tunneling", "file": "01-concepts/tunneling.md" },
-        { "title": "mTLS & Client Certificates", "slug": "mtls", "file": "01-concepts/mtls.md" },
+        {
+          "title": "Tunneling",
+          "slug": "tunneling",
+          "file": "01-concepts/tunneling.md"
+        },
+        {
+          "title": "mTLS & Client Certificates",
+          "slug": "mtls",
+          "file": "01-concepts/mtls.md"
+        },
         {
           "title": "Authentication (Authelia)",
           "slug": "authentication",
@@ -61,12 +73,25 @@
     {
       "title": "Guides",
       "pages": [
-        { "title": "Installation", "slug": "installation", "file": "02-guides/installation.md" },
-        { "title": "Onboarding Wizard", "slug": "onboarding", "file": "02-guides/onboarding.md" },
+        {
+          "title": "Installation",
+          "slug": "installation",
+          "file": "02-guides/installation.md"
+        },
+        {
+          "title": "Onboarding Wizard",
+          "slug": "onboarding",
+          "file": "02-guides/onboarding.md"
+        },
         {
           "title": "Your First Tunnel",
           "slug": "first-tunnel",
           "file": "02-guides/first-tunnel.md"
+        },
+        {
+          "title": "Adding a Second Domain",
+          "slug": "second-domain",
+          "file": "02-guides/second-domain.md"
         },
         {
           "title": "Desktop App Setup",
@@ -88,7 +113,11 @@
           "slug": "certificate-management",
           "file": "02-guides/certificate-management.md"
         },
-        { "title": "Static Sites", "slug": "static-sites", "file": "02-guides/static-sites.md" },
+        {
+          "title": "Static Sites",
+          "slug": "static-sites",
+          "file": "02-guides/static-sites.md"
+        },
         {
           "title": "Cloud Provisioning",
           "slug": "cloud-provisioning",
@@ -169,24 +198,61 @@
     {
       "title": "API Reference",
       "pages": [
-        { "title": "API Overview", "slug": "api-overview", "file": "04-api-reference/overview.md" },
+        {
+          "title": "API Overview",
+          "slug": "api-overview",
+          "file": "04-api-reference/overview.md"
+        },
         {
           "title": "Onboarding API",
           "slug": "api-onboarding",
           "file": "04-api-reference/onboarding.md"
         },
-        { "title": "Tunnels API", "slug": "api-tunnels", "file": "04-api-reference/tunnels.md" },
-        { "title": "Users API", "slug": "api-users", "file": "04-api-reference/users.md" },
+        {
+          "title": "Tunnels API",
+          "slug": "api-tunnels",
+          "file": "04-api-reference/tunnels.md"
+        },
+        {
+          "title": "Users API",
+          "slug": "api-users",
+          "file": "04-api-reference/users.md"
+        },
+        {
+          "title": "Domains API",
+          "slug": "api-domains",
+          "file": "04-api-reference/domains.md"
+        },
         {
           "title": "Certificates API",
           "slug": "api-certificates",
           "file": "04-api-reference/certificates.md"
         },
-        { "title": "Settings API", "slug": "api-settings", "file": "04-api-reference/settings.md" },
-        { "title": "Services API", "slug": "api-services", "file": "04-api-reference/services.md" },
-        { "title": "Sites API", "slug": "api-sites", "file": "04-api-reference/sites.md" },
-        { "title": "System API", "slug": "api-system", "file": "04-api-reference/system.md" },
-        { "title": "Tickets API", "slug": "api-tickets", "file": "04-api-reference/tickets.md" },
+        {
+          "title": "Settings API",
+          "slug": "api-settings",
+          "file": "04-api-reference/settings.md"
+        },
+        {
+          "title": "Services API",
+          "slug": "api-services",
+          "file": "04-api-reference/services.md"
+        },
+        {
+          "title": "Sites API",
+          "slug": "api-sites",
+          "file": "04-api-reference/sites.md"
+        },
+        {
+          "title": "System API",
+          "slug": "api-system",
+          "file": "04-api-reference/system.md"
+        },
+        {
+          "title": "Tickets API",
+          "slug": "api-tickets",
+          "file": "04-api-reference/tickets.md"
+        },
         {
           "title": "Gatekeeper API",
           "slug": "api-gatekeeper",
@@ -222,14 +288,26 @@
     {
       "title": "Operations",
       "pages": [
-        { "title": "Monitoring", "slug": "monitoring", "file": "05-operations/monitoring.md" },
-        { "title": "Upgrades", "slug": "upgrades", "file": "05-operations/upgrades.md" },
+        {
+          "title": "Monitoring",
+          "slug": "monitoring",
+          "file": "05-operations/monitoring.md"
+        },
+        {
+          "title": "Upgrades",
+          "slug": "upgrades",
+          "file": "05-operations/upgrades.md"
+        },
         {
           "title": "Backup & Restore",
           "slug": "backup-and-restore",
           "file": "05-operations/backup-and-restore.md"
         },
-        { "title": "Uninstalling", "slug": "uninstalling", "file": "05-operations/uninstalling.md" }
+        {
+          "title": "Uninstalling",
+          "slug": "uninstalling",
+          "file": "05-operations/uninstalling.md"
+        }
       ]
     },
     {
@@ -240,7 +318,11 @@
           "slug": "installer-flags",
           "file": "06-reference/installer-flags.md"
         },
-        { "title": "Config Files", "slug": "config-files", "file": "06-reference/config-files.md" },
+        {
+          "title": "Config Files",
+          "slug": "config-files",
+          "file": "06-reference/config-files.md"
+        },
         {
           "title": "Ports & Services",
           "slug": "ports-and-services",
@@ -251,7 +333,11 @@
           "slug": "troubleshooting",
           "file": "06-reference/troubleshooting.md"
         },
-        { "title": "Glossary", "slug": "glossary", "file": "06-reference/glossary.md" }
+        {
+          "title": "Glossary",
+          "slug": "glossary",
+          "file": "06-reference/glossary.md"
+        }
       ]
     }
   ]

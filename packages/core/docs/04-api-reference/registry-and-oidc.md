@@ -162,6 +162,7 @@ Admin only, 10 per minute. Verifies the whole chain against the registry, then s
 
 ```json
 { "registryUrl": "https://feria.example.com", "auth": { "kind": "oidc" } }
+{ "registryUrl": "https://feria.codelama.com.tr", "auth": { "kind": "oidc", "issuerDomain": "codelama.com.tr" } }
 { "registryUrl": "https://feria.example.com", "auth": { "kind": "token", "token": "feria_…" }, "scope": "@lamalibre" }
 ```
 
@@ -205,6 +206,14 @@ CLI: `lamaste-server registry-credential show | set --url <registry> (--oidc | -
 ### Group changes
 
 When a user loses a `feria-*` group, or is deleted, the panel asks the registry to revoke that user's tokens (`DELETE /-/feria/tokens?owner=user:<name>`) with the same credential. This is best effort — the user operation reports `warnings` rather than failing. The identity change feed planned for the identity directory (see [Identity directory design](../identity-directory-design.md)) will supersede this hook: plugins will subscribe to membership changes instead of the panel calling each registry.
+
+## Several domains: one issuer each
+
+Authelia takes the issuer from the request's host, so every active domain is an issuer of its own: `https://auth.<domain>`. Every client is known to every issuer — Authelia has no per-host client list — but a token carries the issuer it was obtained at, and a relying party that trusts one issuer (Feria) refuses the others.
+
+- **A plugin's clients belong to its domain** ([`PUT /api/plugins/:name/domain`](domains.md#put-apipluginsnamedomain); the primary until moved): `{domain}` in `audience` and `redirectUris` expands to it, and each user-facing client's `authorization_policy` is that domain's policy of its factor — `lamaste_<domain with . as _>_one_factor` / `_two_factor` under `identity_providers.oidc.authorization_policies`, admitting the domain's active members and refusing everyone else. Authelia's `access_control` does not apply to OIDC authorization; these policies are how `feria login` admits only members. A pure `client_credentials` client (no user) stays `one_factor`.
+- **The registry credential names its issuer**: `auth.issuerDomain` (an active domain; absent = the primary) is the domain whose issuer the panel's tokens carry (`X-Forwarded-Host: auth.<issuerDomain>`); the owner Feria records is then `ci:auth.<issuerDomain>/lamaste-server`. CLI: `lamaste-server registry-credential set --url <registry> --oidc --issuer-domain <domain>`. Losing membership of that domain revokes a user's registry tokens.
+- **Moving Feria to another domain**: move its plugin's domain, re-create its tunnel there, point Feria's `auth.json` at the new issuer and audience, and set the credential again with the new `issuerDomain`.
 
 ## Related
 

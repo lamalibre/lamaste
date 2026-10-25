@@ -420,6 +420,10 @@ Key choices:
 
 See [Registry Credential and OIDC Clients](../04-api-reference/registry-and-oidc.md) for the manifest fields and the API.
 
+### Several domains
+
+On a relay with several domains Authelia carries one `session.cookies` entry per active domain (each `authelia_url: https://auth.<domain>`), so each domain's sign-in sets and reads its own `authelia_session` cookie — same name, scoped by the browser. `access_control` admits each domain's active members on the domain and every host under it (protected sites' rules narrowed to members), then denies; `default_policy` is `deny`. OIDC sign-ins are gated by per-domain `authorization_policies`, since `access_control` does not apply to them, and each domain is an issuer of its own (`https://auth.<domain>`). The panel renders all of it from the directory's memberships ([Domains API](../04-api-reference/domains.md)); on a one-domain relay every user is the domain's member, which admits whom it did before. TOTP is per person, not per domain.
+
 ### Safety rule: never delete the last user
 
 The panel server API prevents deleting the last Authelia user. If only one user exists and you try to delete them, the API returns an error. This prevents a lockout scenario where no one can authenticate to reach the tunneled apps.
