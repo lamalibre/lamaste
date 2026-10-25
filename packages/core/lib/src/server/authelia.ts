@@ -398,50 +398,72 @@ export function hashPassword(password: string, bcryptHash: BcryptHashFn): Promis
 // ---------------------------------------------------------------------------
 
 /** Authelia's health endpoint on loopback: 200 once it serves requests. */
-export const AUTHELIA_HEALTH_URL = 'http://127.0.0.1:9091/api/health';
+const AUTHELIA_HEALTH_URL = 'http://127.0.0.1:9091/api/health';
 
-/** How the readiness wait after a start or restart is made (tests shorten it). */
-export interface AutheliaReadyOptions {
-  /** Give up after this long (default 30 s). */
-  readonly timeoutMs?: number;
-  /** Between two checks (default 250 ms). */
-  readonly intervalMs?: number;
-  /** The health request (default the global fetch). */
-  readonly fetchImpl?: (
-    url: string,
-    init?: { signal?: AbortSignal },
-  ) => Promise<{ status: number }>;
+/** How long a start or restart may take to serve requests. */
+const AUTHELIA_READY_TIMEOUT_MS = 30_000;
+
+/**
+ * How long a rollback's restart may take: a configuration that stays broken
+ * must not hold the caller (the domains' rendering lock) for a second full
+ * wait.
+ */
+const AUTHELIA_ROLLBACK_READY_TIMEOUT_MS = 10_000;
+
+/** True when systemd reports Authelia's unit failed (it gave up starting). */
+async function autheliaFailed(exec: ExecFn): Promise<boolean> {
+  try {
+    const { stdout } = await exec('systemctl', ['is-failed', AUTHELIA_SERVICE]);
+    return stdout.trim() === 'failed';
+  } catch {
+    // non-zero when the unit is not failed
+    return false;
+  }
 }
 
 /**
- * Wait until Authelia serves requests: systemd reports it active and its
- * health endpoint answers 200. `systemctl start|restart` returns as soon as
- * the process is spawned — the listener comes a moment later — so a caller
- * that talks to Authelia right after a restart (the registry credential's
- * token request, a sign-in) would otherwise race it. True when ready within
- * the deadline.
+ * Wait until Authelia serves requests: its health endpoint answers 200.
+ * `systemctl start|restart` returns as soon as the process is spawned — the
+ * listener comes a moment later — so a caller that talks to Authelia right
+ * after a restart (the registry credential's token request, a sign-in) would
+ * otherwise race it. Stops early when systemd reports the unit failed.
+ * Exported for tests; `startAuthelia` and `reloadAuthelia` wait with it.
  */
-async function autheliaReady(exec: ExecFn, options: AutheliaReadyOptions = {}): Promise<boolean> {
-  const { timeoutMs = 30_000, intervalMs = 250, fetchImpl = globalThis.fetch } = options;
+export async function autheliaReady(
+  exec: ExecFn,
+  {
+    timeoutMs = AUTHELIA_READY_TIMEOUT_MS,
+    intervalMs = 250,
+    fetchImpl = globalThis.fetch,
+  }: {
+    readonly timeoutMs?: number;
+    readonly intervalMs?: number;
+    readonly fetchImpl?: (
+      url: string,
+      init?: { signal?: AbortSignal },
+    ) => Promise<{ status: number }>;
+  } = {},
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    let active = false;
     try {
-      const { stdout } = await exec('systemctl', ['is-active', AUTHELIA_SERVICE]);
-      active = stdout.trim() === 'active';
+      const res = await fetchImpl(AUTHELIA_HEALTH_URL, { signal: AbortSignal.timeout(2_000) });
+      if (res.status === 200) return true;
     } catch {
-      // non-zero while inactive or activating
+      // not listening yet
     }
-    if (active) {
-      try {
-        const res = await fetchImpl(AUTHELIA_HEALTH_URL, { signal: AbortSignal.timeout(2_000) });
-        if (res.status === 200) return true;
-      } catch {
-        // not listening yet
-      }
-    }
-    if (Date.now() >= deadline) return false;
+    if (Date.now() >= deadline || (await autheliaFailed(exec))) return false;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+/** The last lines of Authelia's journal, for an error that says why it did not come up. */
+async function autheliaJournal(exec: ExecFn): Promise<string> {
+  try {
+    const { stdout } = await exec('journalctl', ['-u', AUTHELIA_SERVICE, '--no-pager', '-n', '10']);
+    return stdout;
+  } catch {
+    return 'Could not read journal logs';
   }
 }
 
@@ -449,10 +471,7 @@ async function autheliaReady(exec: ExecFn, options: AutheliaReadyOptions = {}): 
  * Enable and start the Authelia systemd service, and wait until it serves
  * requests.
  */
-export async function startAuthelia(
-  exec: ExecFn,
-  options: AutheliaReadyOptions = {},
-): Promise<{ active: true }> {
+export async function startAuthelia(exec: ExecFn): Promise<{ active: true }> {
   try {
     await exec('sudo', ['systemctl', 'enable', AUTHELIA_SERVICE]);
     await exec('sudo', ['systemctl', 'start', AUTHELIA_SERVICE]);
@@ -460,36 +479,32 @@ export async function startAuthelia(
     throw new Error(`Failed to start Authelia service: ${errText(err)}`);
   }
 
-  if (await autheliaReady(exec, options)) return { active: true };
-
-  let journalOutput = '';
-  try {
-    const { stdout } = await exec('journalctl', ['-u', AUTHELIA_SERVICE, '--no-pager', '-n', '10']);
-    journalOutput = stdout;
-  } catch {
-    journalOutput = 'Could not read journal logs';
-  }
-
+  if (await autheliaReady(exec)) return { active: true };
   throw new Error(
-    `Authelia service is not serving requests after starting. Journal output:\n${journalOutput}`,
+    `Authelia is not serving requests after starting (${(await isAutheliaRunning(exec)) ? 'running' : 'not running'}). ` +
+      `Journal output:\n${await autheliaJournal(exec)}`,
   );
 }
 
-/**
- * Restart the Authelia service, and wait until it serves requests again.
- */
-export async function reloadAuthelia(
-  exec: ExecFn,
-  options: AutheliaReadyOptions = {},
-): Promise<{ active: true }> {
+/** Restart Authelia and wait up to `timeoutMs` for it to serve requests. */
+async function restartAuthelia(exec: ExecFn, timeoutMs: number): Promise<{ active: true }> {
   try {
     await exec('sudo', ['systemctl', 'restart', AUTHELIA_SERVICE]);
   } catch (err: unknown) {
     throw new Error(`Failed to restart Authelia service: ${errText(err)}`);
   }
 
-  if (await autheliaReady(exec, options)) return { active: true };
-  throw new Error('Authelia service is not serving requests after restart.');
+  if (await autheliaReady(exec, { timeoutMs })) return { active: true };
+  throw new Error(
+    `Authelia is not serving requests after restart (${(await isAutheliaRunning(exec)) ? 'running' : 'not running'})`,
+  );
+}
+
+/**
+ * Restart the Authelia service, and wait until it serves requests again.
+ */
+export function reloadAuthelia(exec: ExecFn): Promise<{ active: true }> {
+  return restartAuthelia(exec, AUTHELIA_READY_TIMEOUT_MS);
 }
 
 /**
@@ -658,7 +673,7 @@ async function rewriteAutheliaConfig(
     try {
       if (!backedUp) throw restartErr;
       await rename(bakPath, AUTHELIA_CONFIG);
-      await reloadAuthelia(exec);
+      await restartAuthelia(exec, AUTHELIA_ROLLBACK_READY_TIMEOUT_MS);
     } catch {
       // both configs may be broken — surface original error
     }

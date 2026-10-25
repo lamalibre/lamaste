@@ -68,8 +68,13 @@ export default {
       'runuser -u lamaste-authelia -- sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;"',
       { sudo: true, allowFailure: true },
     );
-    await mp.exec(host, 'systemctl start authelia', { sudo: true, allowFailure: true });
-    await new Promise((r) => setTimeout(r, 3000));
+    // Until Authelia serves requests again, not a fixed pause: systemctl
+    // returns as soon as the process is spawned.
+    await mp.exec(
+      host,
+      'systemctl start authelia; for _ in $(seq 1 120); do curl -sf -o /dev/null http://127.0.0.1:9091/api/health && exit 0; sleep 0.25; done; exit 1',
+      { sudo: true, allowFailure: true },
+    );
   },
 
   /**

@@ -77,7 +77,7 @@ echo ""
 # Failed attempts from previous test runs accumulate in the SQLite database and
 # can cause spurious "Authentication failed, please retry later" errors.
 log_step "Clearing Authelia regulation state..."
-multipass exec lamaste-host -- sudo bash -c 'systemctl stop authelia; sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;" 2>/dev/null; systemctl start authelia' 2>/dev/null || true
+multipass exec lamaste-host -- sudo bash -c 'systemctl stop authelia; sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;" 2>/dev/null; systemctl start authelia; for _ in $(seq 1 120); do curl -sf -o /dev/null http://127.0.0.1:9091/api/health && exit 0; sleep 0.25; done' 2>/dev/null || true
 sleep 3
 log_ok "Authelia regulation state cleared"
 
@@ -137,7 +137,7 @@ for script in "${TEST_SCRIPTS[@]}"; do
   # to avoid lock conflicts, and Authelia must be restarted to clear its
   # in-memory regulation cache.
   # Combined into a single multipass exec to avoid race conditions between steps.
-  multipass exec lamaste-host -- sudo bash -c 'systemctl stop authelia; sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;" 2>/dev/null; systemctl start authelia' 2>/dev/null || true
+  multipass exec lamaste-host -- sudo bash -c 'systemctl stop authelia; sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;" 2>/dev/null; systemctl start authelia; for _ in $(seq 1 120); do curl -sf -o /dev/null http://127.0.0.1:9091/api/health && exit 0; sleep 0.25; done' 2>/dev/null || true
   sleep 3
 
   export _LOG_FILE="${LOG_DIR}/test-${script%.sh}.md"

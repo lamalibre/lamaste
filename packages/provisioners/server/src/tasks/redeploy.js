@@ -24,6 +24,7 @@ import {
   nodeVersionTooNew,
 } from '../lib/node-version.js';
 import { deployGatekeeperPackage } from './gatekeeper.js';
+import { autheliaReady } from '@lamalibre/lamaste/server';
 
 const GATEKEEPER_SERVICE = 'lamalibre-lamaste-gatekeeper';
 
@@ -447,6 +448,13 @@ export function redeployTasks(ctx, task) {
         if (ctx.autheliaWasActive) {
           subtask.output = 'Starting Authelia...';
           await execa('systemctl', ['start', 'authelia']);
+          // systemctl returns when the process is spawned; the panel, which
+          // starts next, talks to Authelia at once.
+          if (!(await autheliaReady(execa))) {
+            throw new Error(
+              'Authelia is not serving requests after the redeploy — see journalctl -u authelia',
+            );
+          }
         }
         if (ctx.gatekeeperWasActive) {
           subtask.output = 'Starting gatekeeper...';

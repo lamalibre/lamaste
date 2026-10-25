@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { autheliaReady } from '@lamalibre/lamaste/server';
 
 export const ALLOWED_SERVICES = ['nginx', 'chisel', 'authelia', 'lamalibre-lamaste-serverd'];
 
@@ -120,7 +121,6 @@ export async function executeServiceAction(name, action) {
 
   try {
     await execa('sudo', ['systemctl', action, name], { timeout: 30_000 });
-    return { ok: true, name, action };
   } catch (err) {
     const details = err.stderr || err.message;
     const error = new Error(`Failed to ${action} ${name}`);
@@ -128,4 +128,12 @@ export async function executeServiceAction(name, action) {
     error.details = details;
     throw error;
   }
+  // systemctl returns when Authelia's process is spawned, before it serves
+  // requests: the action is done once it does.
+  if (name === 'authelia' && action !== 'stop' && !(await autheliaReady(execa))) {
+    const error = new Error(`Authelia is not serving requests after ${action}`);
+    error.statusCode = 500;
+    throw error;
+  }
+  return { ok: true, name, action };
 }
