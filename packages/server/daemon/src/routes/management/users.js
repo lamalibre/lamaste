@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import {
-  DomainNameSchema,
   USERNAME_MAX_LENGTH,
   USERNAME_MIN_LENGTH,
   USERNAME_REGEX,
+  isLamasteOwnedGroup,
 } from '@lamalibre/lamaste';
 import {
   readUsers,
@@ -27,9 +27,16 @@ import {
   usersFileError,
 } from '../../lib/directory.js';
 import {
+  MembershipInputSchema,
+  adminGroups,
+  adminGroupsOf,
+  assertAssignableGroups,
+  domainNames,
   domainsByUser,
   domainsForNewUser,
   domainsOfUser,
+  externalMemberGroupsError,
+  normalizeMemberships,
   setUserDomains,
 } from '../../lib/domains.js';
 
@@ -45,10 +52,11 @@ const CreateUserSchema = z.object({
   displayname: z.string().min(1).max(100),
   email: z.string().email(),
   password: z.string().min(8).max(128),
-  groups: z.array(z.string()).optional().default([]),
-  // The domains the user is a member of — required while the relay has two
-  // or more; with one, the user becomes its member.
-  domains: z.array(DomainNameSchema).max(50).optional(),
+  groups: z.array(z.string()).max(100).optional().default([]),
+  // The domains the user is a member of — a name (a member) or
+  // `{ name, kind }` — required while the relay has two or more; with one,
+  // the user becomes its member.
+  domains: z.array(MembershipInputSchema).max(50).optional(),
 });
 
 const UsernameParamSchema = z.object({
@@ -64,13 +72,14 @@ const UpdateUserSchema = z
     displayname: z.string().min(1).max(100).optional(),
     email: z.string().email().optional(),
     password: z.string().min(8).max(128).optional(),
-    groups: z.array(z.string()).optional(),
+    groups: z.array(z.string()).max(100).optional(),
     // Authelia's `disabled: true`: the user cannot sign in, every plugin
     // audience shows them disabled, and the user surface refuses them.
     disabled: z.boolean().optional(),
     // The domains the user is a member of afterwards — exactly these (the
-    // difference applied in one transaction, each membership audited).
-    domains: z.array(DomainNameSchema).max(50).optional(),
+    // difference applied in one transaction, each membership audited): a
+    // name (a member) or `{ name, kind }`.
+    domains: z.array(MembershipInputSchema).max(50).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: 'At least one field must be provided',
@@ -101,9 +110,20 @@ async function writeUsersOrFail(usersData) {
   }
 }
 
-/** The user's groups as a sorted list (users.yml may hold none). */
-function groupsOf(entry) {
-  return Array.isArray(entry?.groups) ? [...entry.groups].sort() : [];
+/**
+ * The groups an administrator gave a user as a sorted list — the groups
+ * Lamaste owns left out (users.yml may hold none). `domains`: every domain
+ * record.
+ */
+function groupsOf(entry, domains) {
+  return adminGroups(entry?.groups, domains).sort();
+}
+
+/** The groups Lamaste owns that a users.yml entry holds — kept by every edit. */
+function ownedGroupsOf(entry, domains) {
+  return Array.isArray(entry?.groups)
+    ? entry.groups.filter((g) => isLamasteOwnedGroup(g, domains))
+    : [];
 }
 
 /** Whether two lists hold the same strings. */
@@ -132,11 +152,13 @@ export default async function usersRoutes(fastify, _opts) {
         const users = await readUsers();
         const directory = await directoryUsersByUsername();
         const memberships = await domainsByUser();
+        const domains = await domainNames();
         const listed = users
           .map((user) => {
             const known = directory.get(user.username);
             return {
               ...user,
+              groups: groupsOf(user, domains),
               userId: known?.userId ?? null,
               status: known?.status ?? (user.disabled ? 'disabled' : 'active'),
               domains: (known && memberships.get(known.userId)) ?? [],
@@ -165,7 +187,11 @@ export default async function usersRoutes(fastify, _opts) {
 
       let domains;
       try {
+        assertAssignableGroups(body.groups);
         domains = await domainsForNewUser(body.domains, { required: true });
+        if (body.groups.length > 0 && domains.some((m) => m.kind === 'external')) {
+          throw externalMemberGroupsError(400);
+        }
       } catch (err) {
         return sendFailure(request, reply, err, 'Failed to read the domains');
       }
@@ -260,17 +286,70 @@ export default async function usersRoutes(fastify, _opts) {
         }
       }
 
+      const domains = await domainNames();
+
       /** Whether users.yml's entry holds every field this request set. */
       const intended = (entry) =>
         entry !== undefined &&
         entry !== null &&
         (body.displayname === undefined || entry.displayname === body.displayname) &&
         (body.email === undefined || entry.email === body.email) &&
-        (body.groups === undefined || sameList(groupsOf(entry), [...body.groups].sort())) &&
+        (body.groups === undefined ||
+          sameList(groupsOf(entry, domains), [...body.groups].sort())) &&
         (passwordHash === undefined || entry.password === passwordHash) &&
         (body.disabled === undefined || (entry.disabled === true) === body.disabled);
 
       const { domains: memberOf, ...fields } = body;
+      const memberships = memberOf === undefined ? undefined : normalizeMemberships(memberOf);
+      const known = await findDirectoryUser(username);
+      const userId = known?.userId ?? null;
+      if (memberships !== undefined && !userId) {
+        return reply.code(409).send({
+          error: 'The directory has not seen this user yet — try again within a minute',
+          code: 'user_not_in_directory',
+        });
+      }
+      const current = userId ? await domainsOfUser(userId) : [];
+      const external = (memberships ?? current).some((m) => m.kind === 'external');
+      // Refused before anything is written: groups kept or given to a user
+      // who is (or becomes) an external member. Checked again under the
+      // users lock, by each step.
+      if (external) {
+        let groups = body.groups;
+        if (groups === undefined) {
+          try {
+            groups = await adminGroupsOf(username);
+          } catch (err) {
+            return sendFailure(request, reply, err, 'Failed to read user database');
+          }
+        }
+        if (groups.length > 0) {
+          return sendFailure(request, reply, externalMemberGroupsError(409), 'Refused');
+        }
+      }
+      // A user leaving every external membership with groups given in the
+      // same request: the memberships first, then the groups (each step is
+      // checked against the other under the users lock).
+      const membershipsFirst =
+        memberships !== undefined && !external && current.some((m) => m.kind === 'external');
+
+      const warnings = [];
+      const changeMemberships = async () => {
+        if (memberships === undefined) return;
+        const membership = await setUserDomains(userId, memberships, {
+          actor: actorFromRequest(request),
+          logger: request.log,
+        });
+        warnings.push(...(membership.warnings ?? []));
+      };
+      if (membershipsFirst) {
+        try {
+          await changeMemberships();
+        } catch (err) {
+          return sendFailure(request, reply, err, 'Failed to change the memberships');
+        }
+      }
+
       let outcome;
       let before = null;
       try {
@@ -279,7 +358,7 @@ export default async function usersRoutes(fastify, _opts) {
           const usersData = await readUsersOrFail();
           const user = usersData.users[username];
           if (!user) throw httpError('User not found', 404);
-          before = { groups: groupsOf(user), disabled: user.disabled === true };
+          before = { groups: groupsOf(user, domains), disabled: user.disabled === true };
           outcome = { result: user, warnings: [], persisted: true };
         } else
           outcome = await changeUsers(
@@ -288,7 +367,18 @@ export default async function usersRoutes(fastify, _opts) {
               const user = usersData.users[username];
               if (!user) throw httpError('User not found', 404);
               // As it was before this request (a second attempt finds it changed already).
-              before ??= { groups: groupsOf(user), disabled: user.disabled === true };
+              before ??= { groups: groupsOf(user, domains), disabled: user.disabled === true };
+              if (body.groups !== undefined) {
+                assertAssignableGroups(body.groups, before.groups);
+                // Checked under the users lock, which a change of kind takes too.
+                if (
+                  body.groups.length > 0 &&
+                  userId &&
+                  (await domainsOfUser(userId)).some((m) => m.kind === 'external')
+                ) {
+                  throw externalMemberGroupsError(409);
+                }
+              }
               if (body.disabled === true && isEnabledAdmin(user)) {
                 const enabledAdmins = Object.values(usersData.users).filter(isEnabledAdmin).length;
                 if (enabledAdmins <= 1) {
@@ -300,7 +390,9 @@ export default async function usersRoutes(fastify, _opts) {
 
               if (body.displayname !== undefined) user.displayname = body.displayname;
               if (body.email !== undefined) user.email = body.email;
-              if (body.groups !== undefined) user.groups = body.groups;
+              if (body.groups !== undefined) {
+                user.groups = [...body.groups, ...ownedGroupsOf(user, domains)];
+              }
               if (passwordHash !== undefined) user.password = passwordHash;
               if (body.disabled === true) user.disabled = true;
               if (body.disabled === false) delete user.disabled;
@@ -312,7 +404,7 @@ export default async function usersRoutes(fastify, _opts) {
               actor: actorFromRequest(request),
               logger: request.log,
               // Authelia's own password reset may rewrite users.yml under the
-              // change: it is checked after the restart, and made once more.
+              // change: it is checked after the rendering, and made once more.
               expect: (users) => intended(users[username]),
             },
           );
@@ -322,23 +414,11 @@ export default async function usersRoutes(fastify, _opts) {
 
       const user = outcome.result;
       const disabled = user.disabled === true;
-      const warnings = [...outcome.warnings];
-      const known = await findDirectoryUser(username);
-      const userId = known?.userId ?? null;
+      warnings.push(...outcome.warnings);
 
-      if (memberOf !== undefined) {
-        if (!userId) {
-          return reply.code(409).send({
-            error: 'The directory has not seen this user yet — try again within a minute',
-            code: 'user_not_in_directory',
-          });
-        }
+      if (!membershipsFirst) {
         try {
-          const membership = await setUserDomains(userId, memberOf, {
-            actor: actorFromRequest(request),
-            logger: request.log,
-          });
-          warnings.push(...(membership.warnings ?? []));
+          await changeMemberships();
         } catch (err) {
           return sendFailure(request, reply, err, 'Failed to change the memberships');
         }
@@ -348,7 +428,7 @@ export default async function usersRoutes(fastify, _opts) {
       // the user become disabled (`changeUsers`): sessions ended, registry
       // tokens revoked. Registry scopes are granted at login from feria-*
       // groups too: losing one must not leave a valid token behind either.
-      const groupsAfter = groupsOf(user);
+      const groupsAfter = groupsOf(user, domains);
       const groupsChanged = body.groups !== undefined && !sameList(before.groups, groupsAfter);
       if (groupsChanged && !(disabled && !before.disabled)) {
         try {
@@ -387,7 +467,7 @@ export default async function usersRoutes(fastify, _opts) {
           username,
           displayname: user.displayname,
           email: user.email,
-          groups: user.groups || [],
+          groups: groupsAfter,
           disabled,
           userId,
           status: disabled ? 'disabled' : 'active',

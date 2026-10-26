@@ -124,7 +124,7 @@ test('renderOwnedGroups: domain groups by kind; host and client groups name exte
   });
 });
 
-test('renderOwnedGroups refuses a user both member and external of one domain, and a non-username', () => {
+test('renderOwnedGroups refuses a user both member and external of one domain, and a non-username member', () => {
   const base = { sites: [], hostGrants: [], clientGrants: [] };
   assert.throws(
     () =>
@@ -136,16 +136,7 @@ test('renderOwnedGroups refuses a user both member and external of one domain, a
   );
   for (const input of [
     { ...base, domains: [{ name: B, members: ['user:x'], externals: [] }] },
-    {
-      ...base,
-      domains: [{ name: B, members: [], externals: [] }],
-      sites: [{ fqdn: `a.${B}`, users: ['a b'] }],
-    },
-    {
-      ...base,
-      domains: [{ name: B, members: [], externals: [] }],
-      clientGrants: [{ clientId: 'c', domain: B, users: ['x,y'] }],
-    },
+    { ...base, domains: [{ name: B, members: [], externals: ['x,y'] }] },
   ]) {
     assert.throws(
       () => renderOwnedGroups(input),
@@ -155,6 +146,20 @@ test('renderOwnedGroups refuses a user both member and external of one domain, a
       },
     );
   }
+  // A listed name or a grant's principal that is none of the domain's
+  // people names nobody: it never fails the whole rendering.
+  assert.deepEqual(
+    renderOwnedGroups({
+      domains: [{ name: B, members: ['onur'], externals: ['ext'] }],
+      sites: [{ fqdn: `a.${B}`, users: ['a b', 'onur'] }],
+      hostGrants: [{ fqdn: `c.${B}`, users: ['x,y', 'ext'] }],
+      clientGrants: [{ clientId: 'c', domain: B, users: ['user:x', 'ext'] }],
+    }),
+    new Map([
+      ['onur', [`a.${B}`, `lamaste:member@${B}`]],
+      ['ext', [`c.${B}`, `lamaste:external@${B}`, 'lamaste:oidc@c']],
+    ]),
+  );
 });
 
 test('mergeOwnedGroups: replaces exactly the owned groups, keeps the administrator’s in order', () => {
@@ -336,7 +341,7 @@ test('OIDC: user-facing clients name a 15-minute lifespan; a service client does
   assert.equal(renderOidcClient(client({})).lifespan, OIDC_USER_LIFESPAN);
   assert.equal('lifespan' in renderOidcClient(SERVICE, '$pbkdf2-sha512$310000$x$y'), false);
 
-  const domains = [{ name: B, members: ['onur'] }];
+  const domains = [B];
   const withUser = buildOidcProviderSection(domains, 'h'.repeat(64), [client({})]);
   assert.deepEqual(withUser.lifespans, {
     device_code: '10 minutes',

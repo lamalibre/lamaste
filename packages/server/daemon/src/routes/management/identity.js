@@ -1,5 +1,16 @@
 import { z } from 'zod';
 import { readUsers } from '../../lib/authelia.js';
+import { adminGroups, domainNames } from '../../lib/domains.js';
+
+/**
+ * Authelia's users with their groups as anything outside Authelia sees
+ * them: the groups Lamaste owns (domain memberships, host groups, OIDC
+ * client grants) left out.
+ */
+async function shownUsers() {
+  const [users, domains] = await Promise.all([readUsers(), domainNames()]);
+  return users.map((u) => ({ ...u, groups: adminGroups(u.groups, domains) }));
+}
 
 const UsernameParamSchema = z.object({
   username: z
@@ -37,10 +48,13 @@ export default async function identityRoutes(fastify, _opts) {
       }
 
       const groupsRaw = headerValue(request.headers['remote-groups']) || '';
-      const groups = groupsRaw
-        .split(',')
-        .map((g) => g.trim())
-        .filter(Boolean);
+      const groups = adminGroups(
+        groupsRaw
+          .split(',')
+          .map((g) => g.trim())
+          .filter(Boolean),
+        await domainNames(),
+      );
       const name = headerValue(request.headers['remote-name']) || '';
       const email = headerValue(request.headers['remote-email']) || '';
 
@@ -54,7 +68,7 @@ export default async function identityRoutes(fastify, _opts) {
     { preHandler: fastify.requireRole(['admin', 'agent'], { capability: 'identity:query' }) },
     async (request, reply) => {
       try {
-        const users = await readUsers();
+        const users = await shownUsers();
         return { users };
       } catch (err) {
         request.log.error({ err }, 'Failed to read Authelia users');
@@ -70,7 +84,7 @@ export default async function identityRoutes(fastify, _opts) {
     async (request, reply) => {
       const { username } = UsernameParamSchema.parse(request.params);
       try {
-        const users = await readUsers();
+        const users = await shownUsers();
         const user = users.find((u) => u.username === username);
         if (!user) {
           return reply.code(404).send({ error: 'User not found' });
@@ -89,7 +103,7 @@ export default async function identityRoutes(fastify, _opts) {
     { preHandler: fastify.requireRole(['admin', 'agent'], { capability: 'identity:query' }) },
     async (request, reply) => {
       try {
-        const users = await readUsers();
+        const users = await shownUsers();
         /** @type {Set<string>} */
         const groupSet = new Set();
         for (const u of users) {

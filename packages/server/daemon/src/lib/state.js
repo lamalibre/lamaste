@@ -48,6 +48,16 @@ export async function writeTunnels(tunnels) {
   await fd.close();
 
   await rename(tmpPath, filePath);
+  await hostsChanged();
+}
+
+/**
+ * A tunnel or a site changed: the hosts that name external members are
+ * rendered again shortly (lib/domains.js `scheduleHostRender`).
+ */
+async function hostsChanged() {
+  const { scheduleHostRender } = await import('./domains.js');
+  scheduleHostRender();
 }
 
 function sitesPath() {
@@ -93,6 +103,7 @@ export async function writeSites(sites) {
   await fd.close();
 
   await rename(tmpPath, filePath);
+  await hostsChanged();
 }
 
 /** Serializes every read-modify-write of sites.json in this process. */

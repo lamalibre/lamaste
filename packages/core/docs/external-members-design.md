@@ -463,11 +463,89 @@ New three-VM specs on top of `multi-domain-harness.sh`:
    - The user-facing lifespan applies from this wave on (harmless before
      the switch: shorter tokens only).
 
-2. **serverd + Gatekeeper** — migration 0017, kinds in membership, users,
-   invitations, `changeUsers` without restarts (owned-group write, cooldown
-   re-write, `expect` kept), rendering order, host-group and client-grant
-   computation from Gatekeeper, `oidc-client` grants, Authelia-group refusal,
-   registry-token revocation, Gatekeeper kind checks, group stripping; tests.
+2. **serverd + Gatekeeper** — done. state.db `0017_membership_kind.sql`
+   (`kind`, a trigger stamping `seq` on a kind change). `lib/domains.js`:
+   `MembershipInputSchema` (a name, or `{ name, kind }`),
+   `normalizeMemberships` (400 `conflicting_membership`), kinds through
+   `listDomainMembers`, `domainsByUser` / `domainsOfUser` (`{ name, kind }`),
+   `domainsOverview` (`externalMembers`), `domainsForNewUser`,
+   `insertMembershipsSync`, `addDomainMember(…, { kind })` (a kind change
+   audited `directory.membership.changed` `{ domain, userId, from, to }`),
+   `setUserDomains` (kinds), invitations (`invitationMemberships`; stored
+   4.7 strings read as members); `adminGroups` / `adminGroupsOf`,
+   `assertAssignableGroups` (400 `reserved_group`; a group the user already
+   holds is kept), `externalMemberGroupsError` / `assertNoGroupsForExternal`
+   (409 `external_member_groups` — 400 when an invitation or a new user asks
+   for both). `syncDomainAccess` renders, under the one writer: users.yml's
+   owned groups (`lib/owned-groups.js` `desiredOwnedGroups` → core
+   `renderOwnedGroups` → `lib/authelia.js` `writeOwnedGroups`), the
+   projection v2, then `updateDomainAccess` (cookies + `renderGroupAccessControl`
+   only — compare-first, so a restart only on a structural change or a
+   configuration not yet watching users.yml). The OIDC section renders one
+   policy per user-facing client (`renderOidcClientPolicies`; clients name
+   `lamaste_client_<id>`); 4.7's `renderAccessControl`,
+   `renderOidcAuthorizationPolicies`, `oidcAuthorizationPolicyName`,
+   `AutheliaDomain` are gone (`public-api.json` edited). `writeAutheliaConfig`
+   takes no members; onboarding renders before Authelia first starts.
+   `changeUsers` renders and busts Gatekeeper's sessions — it restarts
+   nothing (`renderDomains: false` replaces `restartAuthelia: false` for
+   onboarding). Every write of users.yml goes through one file lock in
+   `lib/authelia.js` (`writeUsers`, `writeOwnedGroups`; `createUser` and
+   `createUserFromInvitation` moved there from core's helpers), keeps the
+   owned groups the last rendering decided, and is written again
+   `USERS_FILE_TOUCH_DELAY_MS` (600 ms) after the last write unless the file
+   changed meanwhile. Users and identity APIs show no owned group; the users
+   API keeps them across an edit. Gatekeeper proxy: `oidc-client` grants
+   checked (`checkOidcClientGrant`: 400 `unknown_oidc_client` /
+   `service_oidc_client`), every change re-renders, and the users a revoked
+   client grant or a group change reached are checked for registry
+   revocation. `revokeRegistryTokensFor` asks `reachesRegistry`: a member of
+   a registry domain, or an external member of one granted a user-facing
+   client of it (Gatekeeper unreachable: no). `listPluginOidcClients` adds
+   `userFacing` and `grants`. Gatekeeper: `checkDomain` returns the kind,
+   `externalRefused` on every route (tunnel → access-request page,
+   `external_not_granted`; user surface → 403 `forbidden`; shell →
+   access-request page), `shownGroups` strips owned groups from
+   `Remote-Groups` and the assertion. Tests: serverd
+   `external-members.test.js` (kinds, refusals, hidden and kept groups,
+   host groups direct and through Lamaste groups, Gatekeeper unreachable,
+   tunnel changes, static sites, OIDC grants, registry revocations, the
+   touch), Gatekeeper `authz-external-members.test.js` (kind matrix,
+   stripping); `domains`, `identity-directory`, `plugin-oidc`,
+   `multi-domain-core`, `agent-hosted-plugins` updated (no restart per
+   change; groups instead of user subjects).
+
+   **Deviations, for review:**
+   - **The owned groups are always written first**, a site's removal too
+     (the design said configuration first there). A host group never
+     outlives the rule that narrows its host: a static site whose rule went
+     while its listed external member kept the host group would be opened to
+     them by their domain's external rule. Writing the groups first only
+     ever narrows in between.
+   - **Tunnel and site changes render on their own**: `lib/state.js`
+     `writeTunnels` / `writeSites` call `scheduleHostRender` (100 ms,
+     coalesced, only while some domain has external members) — every path
+     that changes a restricted host (creation, mode, release on revocation,
+     web surfaces) is covered without each route asking.
+   - **Gatekeeper unreachable**: the hosts and clients each external member
+     holds now are kept (a warning), rather than failing the step — a
+     revocation is a Gatekeeper write, so it cannot have happened; a
+     membership's own group still comes from state.db.
+   - Core `renderOwnedGroups` ignores a listed user or a grant's principal
+     who is none of the domain's people (it threw): a typo in a site's list
+     or a stale grant must not stop the whole rendering.
+   - The users lock moved to `lib/users-lock.js`; a kind change takes it
+     before the domains lock (never the other way round), so it and a
+     groups edit are serialized. The rendering takes neither: the file lock
+     and the owned-group cache keep a concurrent read-modify-write from
+     writing an older set back.
+   - **Left for wave 3**: every client of the changed shapes — the panel UI
+     and desktop show `domains` as objects now (`{ name, kind }`), the CLI
+     (`domains members`, `users list`), `AdminClient`'s types
+     (`AdminUser.domains`, members' `kind`, `externalMembers`, OIDC client
+     `grants`), the API reference (users, domains, invitations, Gatekeeper
+     grants with `oidc-client`, registry-and-oidc), CHANGELOG, CLAUDE.md.
+
 3. **UI, desktop, CLI, docs** — as above; CHANGELOG; CLAUDE.md.
 4. **Security review** — independent reviewers; every confirmed finding
    fixed with a test.

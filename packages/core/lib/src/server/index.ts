@@ -229,10 +229,7 @@ export {
   isOidcIssuerKeyProvisioned as isAutheliaOidcIssuerKeyProvisioned,
   renderOidcClient,
   renderOidcClaimsPolicies,
-  renderOidcAuthorizationPolicies,
-  oidcAuthorizationPolicyName,
   renderSessionCookies,
-  renderAccessControl,
   renderGroupAccessControl,
   externalHostRegex,
   renderOidcClientPolicies,
@@ -265,7 +262,6 @@ export type {
   OidcClientSecretDigests,
   OidcScopeDefinitions,
   OidcProviderOptions,
-  AutheliaDomain,
   DomainAccess,
   AutheliaSessionCookie,
 } from './authelia.js';

@@ -6,8 +6,8 @@
  * API's ids, status, disable / enable, delete with its tombstone and erase;
  * erasure of a tombstone with the invitations and Gatekeeper's
  * access-request log of the username; invitation acceptance through the
- * lock. Authelia is a users file in a temporary directory (its restart
- * counted), Gatekeeper a fake (`fake-gatekeeper.js`). Audit entries never
+ * lock. Authelia is a users file in a temporary directory (its restarts
+ * counted: a users change makes none), Gatekeeper a fake (`fake-gatekeeper.js`). Audit entries never
  * name a user but by id.
  */
 
@@ -43,8 +43,13 @@ let app;
 let gatekeeper;
 let autheliaStorage;
 let restarts = 0;
-/** What "Authelia" does when it restarts (a test's stand-in for its own rewrite of users.yml). */
-let onRestart = null;
+/** How many times the domains were rendered (after every users change). */
+let renders = 0;
+/**
+ * What "Authelia" does while the domains are rendered after a change (a
+ * test's stand-in for its own rewrite of users.yml from what it last read).
+ */
+let onRender = null;
 /** Every log line the routes wrote. */
 const logLines = [];
 
@@ -126,11 +131,14 @@ before(async () => {
   autheliaStorage = createFakeAutheliaStorage();
   lib.setAutheliaForTests({
     // No Authelia configuration to render the domains into.
-    domainAccess: async () => ({ changed: false }),
+    domainAccess: async () => {
+      renders += 1;
+      if (onRender) await onRender();
+      return { changed: false };
+    },
     usersFile,
     restart: async () => {
       restarts += 1;
-      if (onRestart) await onRestart();
     },
     writeTotp: async () => {},
     userStorage: autheliaStorage.storage,
@@ -392,7 +400,7 @@ test('users API: ids and status; disable and enable; the last enabled administra
   assert.equal(disabled.json().user.userId, ayse.userId);
   assert.equal((await readUsersFile()).ayse.disabled, true);
   assert.equal((await directoryRow('ayse')).status, 'disabled');
-  assert.equal(restarts, restartsBefore + 1, 'Authelia restarted once, after the directory');
+  assert.equal(restarts, restartsBefore, 'Authelia is not restarted: it watches users.yml');
   // Disabling ends the user's desktop sessions: an epoch keyed by the user's id.
   assert.ok(lib.getConfig().userEpochs?.[ayse.userId] > 0);
   assert.equal('ayse' in lib.getConfig().userEpochs, false, 'panel.json names nobody');
@@ -613,7 +621,7 @@ test('an accepted invitation creates the user through the lock: an id at once, t
     payload: JSON.stringify({ password: 'correct-horse-battery' }),
   });
   assert.equal(res.statusCode, 200, res.body);
-  assert.equal(restarts, restartsBefore + 1);
+  assert.equal(restarts, restartsBefore, 'Authelia is not restarted: it watches users.yml');
   const can = await directoryRow('can');
   assert.ok(isIdentityUuid(can.user_id));
   assert.equal(can.email, 'can@relay.test');
@@ -749,34 +757,34 @@ test('offboarding is one function: a disable or deletion made outside Lamaste is
 });
 
 test('a change Authelia rewrites away is made again; one that never sticks is not reported as done', async () => {
-  // Authelia's password reset rewrites users.yml from what it read at
-  // start — here once, just before its restart.
+  // Authelia's password reset rewrites users.yml from what it last read —
+  // here once, while the domains are rendered after the change.
   let rewrites = 1;
-  onRestart = async () => {
+  onRender = async () => {
     if (rewrites <= 0) return;
     rewrites -= 1;
     const current = await readUsersFile();
     delete current.ayse.disabled;
     await writeUsersFile(current);
   };
-  const before = restarts;
+  const before = renders;
   const made = await call('PUT', '/api/users/ayse', { disabled: true });
   assert.equal(made.statusCode, 200, made.body);
   assert.equal(made.json().ok, true);
   assert.equal(made.json().warnings, undefined);
   assert.equal((await readUsersFile()).ayse.disabled, true);
-  assert.equal(restarts, before + 2, 'made again, and Authelia restarted again');
-  onRestart = null;
+  assert.equal(renders, before + 2, 'made again, and rendered again');
+  onRender = null;
   await call('PUT', '/api/users/ayse', { disabled: false });
 
   // Rewritten every time: not done, and the answer says so.
-  onRestart = async () => {
+  onRender = async () => {
     const current = await readUsersFile();
     delete current.ayse.disabled;
     await writeUsersFile(current);
   };
   const lost = await call('PUT', '/api/users/ayse', { disabled: true });
-  onRestart = null;
+  onRender = null;
   assert.equal(lost.statusCode, 200);
   assert.equal(lost.json().ok, false);
   assert.equal(lost.json().persisted, false);

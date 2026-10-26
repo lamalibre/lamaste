@@ -10,15 +10,25 @@
  * `assertDomainRegistrable`).
  *
  * **Membership** (`domain_members`, state.db 0016) is explicit, by user id:
- * a person reaches a domain only as its member. It is rendered — active
- * users of active domains only — into Authelia's session cookies,
- * `access_control` and OIDC authorization policies (core
- * `updateDomainAccess`) and into Gatekeeper's projection
- * (`domains.json`), both by {@link syncDomainAccess}: after every
- * membership, user, domain and site change, and every minute (the identity
- * tick). Everything that writes what members may do — that rendering and
- * the OIDC provider (lib/plugin-oidc.js, whose clients name the domains'
- * policies) — reads the members inside one lock ({@link withDomainRendering}),
+ * a person reaches a domain only as its member. A membership has a kind
+ * (state.db 0017, packages/core/docs/external-members-design.md): a
+ * `member` reaches what the domain gives its members, an `external` member
+ * only what names them — a grant on a restricted host or an OIDC client, a
+ * static site's listed users — and holds no Authelia group
+ * ({@link assertNoGroupsForExternal}).
+ *
+ * Who is a member of what is rendered — active users of active domains
+ * only — by {@link syncDomainAccess}: as groups Lamaste owns into
+ * users.yml (lib/owned-groups.js; Authelia watches the file and applies
+ * them at each user's next request, without a restart), into Gatekeeper's
+ * projection (`domains.json`, with the kinds), and as the rules naming
+ * those groups into Authelia's configuration (session cookies,
+ * `access_control` — core `updateDomainAccess`), which change, and restart
+ * Authelia, only with the set of domains and protected sites. It renders
+ * after every membership, user, domain, site, tunnel and grant change, and
+ * every minute (the identity tick). Everything that writes what members may
+ * do — that rendering and the OIDC provider (lib/plugin-oidc.js) — runs
+ * inside one lock ({@link withDomainRendering}) and reads the members there,
  * so a membership that ended is never written back from an older read. A
  * disabled user keeps their memberships and is rendered nowhere; a deleted
  * user loses them (lib/directory.js). While the relay has one domain every
@@ -29,12 +39,17 @@
  */
 
 import path from 'node:path';
+import { z } from 'zod';
 import {
   DNS_WILDCARD_PROBE_LABEL,
   DOMAINS_PROJECTION_FILE,
+  DomainNameSchema,
+  MEMBERSHIP_KINDS,
   PromiseChainMutex,
   atomicWriteJSONIfChanged,
   domainOfHost,
+  isAssignableGroupName,
+  isLamasteOwnedGroup,
   isRelayHost,
   isIdentityUuid,
   isLamasteUsername,
@@ -47,10 +62,12 @@ import {
 } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
-import { updateDomainAccess } from './authelia.js';
+import { readUsersRaw, updateDomainAccess, writeOwnedGroups } from './authelia.js';
 import { getConfig } from './config.js';
+import { desiredOwnedGroups } from './owned-groups.js';
 import { getStateDb } from './state-db.js';
 import { readSites, readTunnels, withSitesLock } from './state.js';
+import { withUsersLock } from './users-lock.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
@@ -229,25 +246,47 @@ export async function pluginDomainName(plugin) {
 export async function invitationSignInDomain(invitation) {
   // The first that serves: a pending domain has no sign-in page yet.
   const active = await activeDomainNames();
-  return (invitation?.domains ?? []).find((d) => active.includes(d)) ?? (await primaryDomainName());
+  return (
+    invitationMemberships(invitation).find((m) => active.includes(m.name))?.name ??
+    (await primaryDomainName())
+  );
 }
 
 /**
- * The domains an invitation still grants when it is accepted: those it names
- * that exist now **and existed when it was created** — a domain removed
- * since and added again (possibly for someone else) is another domain, and
- * the invitation grants it nothing. Decided at acceptance, so no removal has
- * to chase invitations.
+ * The memberships an invitation names, `{ name, kind }` (an invitation
+ * made before kinds names bare domains: members).
  *
- * @param {{ domains?: string[], createdAt?: string }} invitation
- * @returns {Promise<string[]>}
+ * @param {{ domains?: unknown } | null | undefined} invitation
+ * @returns {Array<{ name: string, kind: 'member' | 'external' }>}
+ */
+export function invitationMemberships(invitation) {
+  const named = Array.isArray(invitation?.domains) ? invitation.domains : [];
+  return named.flatMap((d) => {
+    if (typeof d === 'string') return [{ name: d, kind: 'member' }];
+    if (d && typeof d.name === 'string' && (d.kind === 'member' || d.kind === 'external')) {
+      return [{ name: d.name, kind: d.kind }];
+    }
+    return [];
+  });
+}
+
+/**
+ * The memberships an invitation still grants when it is accepted: those it
+ * names on domains that exist now **and existed when it was created** — a
+ * domain removed since and added again (possibly for someone else) is
+ * another domain, and the invitation grants it nothing. Decided at
+ * acceptance, so no removal has to chase invitations. Each keeps the kind
+ * the invitation named.
+ *
+ * @param {{ domains?: unknown, createdAt?: string }} invitation
+ * @returns {Promise<Array<{ name: string, kind: 'member' | 'external' }>>}
  */
 export async function invitationDomainsNow(invitation) {
-  const named = Array.isArray(invitation?.domains) ? invitation.domains : [];
+  const named = invitationMemberships(invitation);
   if (named.length === 0 || typeof invitation.createdAt !== 'string') return [];
   const db = await getStateDb();
   const stmt = db.prepare('SELECT 1 FROM domains WHERE name = ? AND created_at <= ?');
-  return named.filter((d) => stmt.get(d, invitation.createdAt) !== undefined);
+  return named.filter((m) => stmt.get(m.name, invitation.createdAt) !== undefined);
 }
 
 /**
@@ -323,7 +362,8 @@ export function withActiveDomain(name, fn) {
 
 /**
  * Every member of `name` the directory still holds (removed users have no
- * membership): id, username, status and when they were added.
+ * membership): id, username, status, the membership's kind and when it was
+ * added.
  *
  * @param {string} name
  */
@@ -331,7 +371,7 @@ export async function listDomainMembers(name) {
   const db = await getStateDb();
   return db
     .prepare(
-      `SELECT dm.user_id, u.username, u.status, dm.added_at, dm.added_by
+      `SELECT dm.user_id, u.username, u.status, dm.kind, dm.added_at, dm.added_by
        FROM domain_members dm JOIN directory_users u ON u.user_id = dm.user_id
        WHERE dm.domain = ? ORDER BY u.username`,
     )
@@ -340,23 +380,24 @@ export async function listDomainMembers(name) {
       userId: row.user_id,
       username: row.username,
       status: row.status,
+      kind: row.kind,
       addedAt: row.added_at,
       addedBy: row.added_by,
     }));
 }
 
 /**
- * Each user's domains, by user id.
+ * Each user's memberships, by user id: `{ name, kind }`, by domain name.
  *
- * @returns {Promise<Map<string, string[]>>}
+ * @returns {Promise<Map<string, Array<{ name: string, kind: 'member' | 'external' }>>>}
  */
 export async function domainsByUser() {
   const db = await getStateDb();
   const map = new Map();
-  for (const { user_id: userId, domain } of db
-    .prepare('SELECT user_id, domain FROM domain_members ORDER BY domain')
+  for (const { user_id: userId, domain, kind } of db
+    .prepare('SELECT user_id, domain, kind FROM domain_members ORDER BY domain')
     .all()) {
-    map.set(userId, [...(map.get(userId) ?? []), domain]);
+    map.set(userId, [...(map.get(userId) ?? []), { name: domain, kind }]);
   }
   return map;
 }
@@ -378,32 +419,41 @@ export async function membersByDomain() {
   return map;
 }
 
-/** The domains `userId` is a member of, by name. */
+/**
+ * The memberships of `userId`: `{ name, kind }`, by domain name.
+ *
+ * @returns {Promise<Array<{ name: string, kind: 'member' | 'external' }>>}
+ */
 export async function domainsOfUser(userId) {
   const db = await getStateDb();
   return db
-    .prepare('SELECT domain FROM domain_members WHERE user_id = ? ORDER BY domain')
+    .prepare('SELECT domain, kind FROM domain_members WHERE user_id = ? ORDER BY domain')
     .all(userId)
-    .map((row) => row.domain);
+    .map((row) => ({ name: row.domain, kind: row.kind }));
 }
 
 /**
- * The domains, the primary first, with how many members each has and what
- * uses it (as {@link domainUsage}) — read once for all of them.
+ * The domains, the primary first, with how many members and external
+ * members each has and what uses it (as {@link domainUsage}) — read once
+ * for all of them.
  */
 export async function domainsOverview() {
   const db = await getStateDb();
   const domains = await listDomains();
   const counts = new Map(
     db
-      .prepare('SELECT domain, COUNT(*) AS n FROM domain_members GROUP BY domain')
+      .prepare(
+        `SELECT domain, SUM(kind = 'member') AS members, SUM(kind = 'external') AS externals
+         FROM domain_members GROUP BY domain`,
+      )
       .all()
-      .map((row) => [row.domain, row.n]),
+      .map((row) => [row.domain, row]),
   );
   const usage = await usageByDomain(domains.map((d) => d.name));
   return domains.map((d) => ({
     ...d,
-    members: counts.get(d.name) ?? 0,
+    members: counts.get(d.name)?.members ?? 0,
+    externalMembers: counts.get(d.name)?.externals ?? 0,
     usedBy: usage.get(d.name),
   }));
 }
@@ -423,22 +473,135 @@ export function newUsersNeedDomains(domains) {
 }
 
 /**
- * The domains a user created now is given: `requested` (each an existing
- * domain; pending ones too, so an activation goes live with its members),
- * or — when none are requested and the relay has exactly one domain — that
- * one. With two or more domains and none requested: none (a user adopted
- * from users.yml waits for an administrator), or with `required` a 400
- * `domains_required` (the users API and invitations). Throws a 400
- * `unknown_domain` on a domain the relay does not have.
+ * One membership as the API takes it: a domain name — a `member` — or
+ * `{ name, kind }`.
+ */
+export const MembershipInputSchema = z.union([
+  DomainNameSchema,
+  z.object({ name: DomainNameSchema, kind: z.enum(MEMBERSHIP_KINDS) }).strict(),
+]);
+
+/**
+ * Memberships as the API took them, each domain once, names in lower case:
+ * a bare name is a `member`. Throws a 400 `conflicting_membership` when one
+ * domain is named with two kinds.
  *
- * @param {readonly string[] | undefined} requested
- * @param {{ required?: boolean }} [opts]
+ * @param {ReadonlyArray<string | { name: string, kind: 'member' | 'external' }>} input
+ * @returns {Array<{ name: string, kind: 'member' | 'external' }>}
+ */
+export function normalizeMemberships(input) {
+  const byName = new Map();
+  for (const entry of input) {
+    const { name, kind } =
+      typeof entry === 'string' ? { name: entry, kind: 'member' } : { kind: 'member', ...entry };
+    const lower = String(name).toLowerCase();
+    const seen = byName.get(lower);
+    if (seen && seen !== kind) {
+      throw httpError(`'${lower}' is named both as a member and as an external member`, 400, {
+        code: 'conflicting_membership',
+      });
+    }
+    byName.set(lower, kind);
+  }
+  return [...byName].map(([name, kind]) => ({ name, kind }));
+}
+
+/**
+ * `groups` without the ones Lamaste owns (`domains`: every domain record) —
+ * what anything outside Authelia is shown of a user's groups: the
+ * rendering's are nobody's choice, and who is a member of which domain is
+ * shown as memberships.
+ *
+ * @param {unknown} groups
+ * @param {readonly string[]} domains
+ * @returns {string[]}
+ */
+export function adminGroups(groups, domains) {
+  return Array.isArray(groups)
+    ? groups.filter((g) => typeof g === 'string' && !isLamasteOwnedGroup(g, domains))
+    : [];
+}
+
+/**
+ * The groups an administrator gave `username` in users.yml
+ * ({@link adminGroups}).
+ *
+ * @param {string} username
  * @returns {Promise<string[]>}
+ */
+export async function adminGroupsOf(username) {
+  const [users, names] = await Promise.all([
+    readUsersRaw().then((data) => data.users ?? {}),
+    domainNames(),
+  ]);
+  return adminGroups(users[username]?.groups, names);
+}
+
+/**
+ * The refusal (`external_member_groups`) of Authelia groups for an external
+ * member: groups grant by membership, relay-wide (`admins`, `feria-*`), and
+ * an external member reaches only what names them. 409 when the user's
+ * state is in the way, 400 when the request itself asks for both.
+ *
+ * @param {400 | 409} statusCode
+ */
+export function externalMemberGroupsError(statusCode) {
+  return httpError(
+    "An external member holds no Authelia group: remove the user's groups or the external memberships first",
+    statusCode,
+    { code: 'external_member_groups' },
+  );
+}
+
+/**
+ * Refuse (400 `reserved_group`) a group an administrator may not assign —
+ * one that could be a hostname or one of Lamaste's own groups (core
+ * `isAssignableGroupName`) — unless the user holds it already (a group from
+ * before the rule).
+ *
+ * @param {readonly string[]} groups
+ * @param {readonly string[]} [held]
+ */
+export function assertAssignableGroups(groups, held = []) {
+  if (groups.every((g) => isAssignableGroupName(g) || held.includes(g))) return;
+  throw httpError(
+    'A group name is letters, digits, "-" and "_" (1–64): names with ".", ":" or "@" are reserved',
+    400,
+    { code: 'reserved_group' },
+  );
+}
+
+/**
+ * Refuse (409 `external_member_groups`) memberships that make a user who
+ * holds Authelia groups an external member anywhere. Call it holding the
+ * users lock (the users API changes groups under it).
+ *
+ * @param {string | null} username
+ * @param {ReadonlyArray<{ kind: 'member' | 'external' }>} memberships
+ */
+export async function assertNoGroupsForExternal(username, memberships) {
+  if (!username || !memberships.some((m) => m.kind === 'external')) return;
+  if ((await adminGroupsOf(username)).length > 0) throw externalMemberGroupsError(409);
+}
+
+/**
+ * The memberships a user created now is given: `requested` (each an
+ * existing domain, pending ones too, so an activation goes live with its
+ * members; a bare name is a `member`), or — when none are requested and the
+ * relay has exactly one domain — a membership of that one. With two or more
+ * domains and none requested: none (a user adopted from users.yml waits for
+ * an administrator), or with `required` a 400 `domains_required` (the users
+ * API and invitations). Throws a 400 `unknown_domain` on a domain the relay
+ * does not have.
+ *
+ * @param {ReadonlyArray<string | { name: string, kind: 'member' | 'external' }> | undefined} requested
+ * @param {{ required?: boolean }} [opts]
+ * @returns {Promise<Array<{ name: string, kind: 'member' | 'external' }>>}
  */
 export async function domainsForNewUser(requested, { required = false } = {}) {
   const domains = await listDomains();
   if (requested === undefined && !newUsersNeedDomains(domains)) {
-    return domains.length === 1 ? [domains[0].name] : [];
+    return domains.length === 1 ? [{ name: domains[0].name, kind: 'member' }] : [];
   }
   // A user who is a member of nothing reaches nothing: when domains are
   // asked for, none — or an empty list — is refused.
@@ -453,10 +616,10 @@ export async function domainsForNewUser(requested, { required = false } = {}) {
     );
   }
   const names = new Set(domains.map((d) => d.name));
-  const wanted = [...new Set(requested.map((d) => String(d).toLowerCase()))];
-  const unknown = wanted.find((d) => !names.has(d));
+  const wanted = normalizeMemberships(requested);
+  const unknown = wanted.find((m) => !names.has(m.name));
   if (unknown !== undefined) {
-    throw httpError(`'${unknown}' is not a domain of this relay`, 400, {
+    throw httpError(`'${unknown.name}' is not a domain of this relay`, 400, {
       code: 'unknown_domain',
     });
   }
@@ -464,25 +627,26 @@ export async function domainsForNewUser(requested, { required = false } = {}) {
 }
 
 /**
- * Make `userId` a member of `domains`, inside the caller's transaction:
- * the rows that are new, and the audit entries for them (to record once the
- * transaction committed).
+ * Give `userId` `memberships`, inside the caller's transaction: the rows
+ * that are new — a membership the user holds already keeps its kind — and
+ * the audit entries for them (to record once the transaction committed).
  *
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {string} userId
- * @param {readonly string[]} domains
+ * @param {ReadonlyArray<string | { name: string, kind: 'member' | 'external' }>} memberships
+ *   a bare domain name is a `member`
  * @param {{ actor: string, now: string }} opts
  * @returns {Array<{ action: string, details: object }>}
  */
-export function insertMembershipsSync(db, userId, domains, { actor, now }) {
+export function insertMembershipsSync(db, userId, memberships, { actor, now }) {
   const insert = db.prepare(
-    `INSERT OR IGNORE INTO domain_members (domain, user_id, added_at, added_by)
-     SELECT name, ?, ?, ? FROM domains WHERE name = ?`,
+    `INSERT OR IGNORE INTO domain_members (domain, user_id, kind, added_at, added_by)
+     SELECT name, ?, ?, ?, ? FROM domains WHERE name = ?`,
   );
   const events = [];
-  for (const domain of domains) {
-    if (insert.run(userId, now, actor, domain).changes > 0) {
-      events.push({ action: 'directory.membership.added', details: { domain, userId } });
+  for (const { name: domain, kind } of normalizeMemberships(memberships)) {
+    if (insert.run(userId, kind, now, actor, domain).changes > 0) {
+      events.push({ action: 'directory.membership.added', details: { domain, userId, kind } });
     }
   }
   return events;
@@ -570,20 +734,21 @@ function protectedSiteRules(sites) {
 let loggedIneligible = 0;
 
 /**
- * The active domains with the usernames of their active members — what
- * Authelia and Gatekeeper are told. A username users.yml holds that is not
- * a Lamaste username is never rendered (counted, never named). Read it
- * under {@link withDomainRendering} to write anything from it.
+ * The active domains with the usernames of their active members and of
+ * their active external members — what Authelia and Gatekeeper are told. A
+ * username users.yml holds that is not a Lamaste username is never rendered
+ * (counted, never named). Read it under {@link withDomainRendering} to write
+ * anything from it.
  *
  * @param {import('pino').Logger} [logger]
- * @returns {Promise<Array<{ name: string, members: string[] }>>}
+ * @returns {Promise<Array<{ name: string, members: string[], externals: string[] }>>}
  */
 async function domainsWithMembers(logger) {
   const db = await getStateDb();
   const domains = await activeDomains();
   const rows = db
     .prepare(
-      `SELECT dm.domain, u.username FROM domain_members dm
+      `SELECT dm.domain, dm.kind, u.username FROM domain_members dm
        JOIN directory_users u ON u.user_id = dm.user_id
        JOIN domains d ON d.name = dm.domain
        WHERE d.status = 'active' AND u.status = 'active' AND u.username IS NOT NULL
@@ -591,13 +756,15 @@ async function domainsWithMembers(logger) {
     )
     .all();
   let ineligible = 0;
-  const byDomain = new Map(domains.map((d) => [d.name, []]));
+  const byDomain = new Map(domains.map((d) => [d.name, { members: [], externals: [] }]));
   for (const row of rows) {
     if (!isLamasteUsername(row.username)) {
       ineligible += 1;
       continue;
     }
-    byDomain.get(row.domain)?.push(row.username);
+    byDomain
+      .get(row.domain)
+      ?.[row.kind === 'external' ? 'externals' : 'members'].push(row.username);
   }
   if (ineligible !== loggedIneligible) {
     loggedIneligible = ineligible;
@@ -605,7 +772,7 @@ async function domainsWithMembers(logger) {
       logger?.warn({ ineligible }, 'Members whose username Authelia cannot be told are left out');
     }
   }
-  return domains.map((d) => ({ name: d.name, members: byDomain.get(d.name) ?? [] }));
+  return domains.map((d) => ({ name: d.name, ...byDomain.get(d.name) }));
 }
 
 /**
@@ -616,7 +783,7 @@ async function domainsWithMembers(logger) {
  * access, the projection and the OIDC provider goes through here.
  *
  * @template T
- * @param {(domains: Array<{ name: string, members: string[] }>) => Promise<T>} fn
+ * @param {(domains: Array<{ name: string, members: string[], externals: string[] }>) => Promise<T>} fn
  * @param {{ logger?: import('pino').Logger }} [opts]
  * @returns {Promise<T>}
  */
@@ -631,30 +798,58 @@ export function withDomainRendering(fn, { logger } = {}) {
 let renderFailing = false;
 
 /**
- * Render the domains and their members: Gatekeeper's projection, then
- * Authelia's session cookies, `access_control` and OIDC authorization
- * policies (`sites`: the protected sites, `sites.json` unless given — a
- * site change passes the sites it is saving). Both are always attempted —
- * one failing never keeps the other at older, more permissive members.
- * Authelia restarts only when its configuration changed. Nothing before
- * onboarding made a domain. Throws when either failed (callers report a
- * warning; the identity tick renders again within a minute); the first
- * failure of a streak is audited (`domain.render.failed`) and notified to
- * the administrators, its end audited (`domain.render.recovered`).
+ * Render the domains and their people, in this order:
+ *
+ * 1. the groups Lamaste owns into users.yml (lib/owned-groups.js) — who is
+ *    a member or an external member of which domain, the hosts and OIDC
+ *    clients that name each external member, the static sites' listed
+ *    users. Authelia applies them at each user's next request;
+ * 2. Gatekeeper's projection (`domains.json`, v2: members and external
+ *    members of each active domain);
+ * 3. Authelia's session cookies and `access_control` (`sites`: the
+ *    protected sites, `sites.json` unless given — a site change passes the
+ *    sites it is saving), whose rules name the groups of step 1 and change
+ *    only with the domains and protected sites: Authelia restarts only then.
+ *
+ * The groups come first: a rule never names a group that is not yet filled,
+ * and a host group never outlives the rule that narrows its host (an
+ * external member holding a host group is admitted there by their domain's
+ * rule). Each step is always attempted — one failing never keeps another
+ * at older, more permissive members. Nothing before onboarding made a
+ * domain. Throws when any failed (callers report a warning; the identity
+ * tick renders again within a minute); the first failure of a streak is
+ * audited (`domain.render.failed`) and notified to the administrators, its
+ * end audited (`domain.render.recovered`). Gatekeeper's grants that could
+ * not be read are a warning (`warnings`), not a failure: the grants
+ * external members hold are kept as they are.
  *
  * @param {{ logger?: import('pino').Logger, sites?: readonly object[] }} [opts]
- * @returns {Promise<{ changed: boolean, domains: number }>}
+ * @returns {Promise<{ changed: boolean, groupsChanged: boolean, domains: number, warnings?: string[] }>}
  */
 export function syncDomainAccess({ logger, sites } = {}) {
   return withDomainRendering(
     async (domains) => {
-      if (domains.length === 0) return { changed: false, domains: 0 };
+      if (domains.length === 0) return { changed: false, groupsChanged: false, domains: 0 };
+      const siteList = sites ?? (await readSites());
       const failures = [];
+      const warnings = [];
+      let groupsChanged = false;
+      try {
+        const allDomains = await domainNames();
+        const owned = await desiredOwnedGroups({ domains, allDomains, sites: siteList });
+        if (owned.warning) {
+          logger?.warn(owned.warning);
+          warnings.push(owned.warning);
+        }
+        ({ changed: groupsChanged } = await writeOwnedGroups(owned.desired, allDomains));
+        if (groupsChanged) logger?.info('Authelia users file groups updated');
+      } catch (err) {
+        failures.push({ step: 'groups', message: err.message });
+      }
       try {
         await atomicWriteJSONIfChanged(
           path.join(STATE_DIR, DOMAINS_PROJECTION_FILE),
-          // Kinds are not recorded yet: everyone is a member.
-          { v: 2, domains: domains.map((d) => ({ ...d, externals: [] })) },
+          { v: 2, domains },
           { mode: 0o600 },
         );
       } catch (err) {
@@ -663,8 +858,8 @@ export function syncDomainAccess({ logger, sites } = {}) {
       let changed = false;
       try {
         ({ changed } = await updateDomainAccess({
-          domains,
-          sites: protectedSiteRules(sites ?? (await readSites())),
+          domains: domains.map((d) => d.name),
+          sites: protectedSiteRules(siteList),
         }));
         if (changed) logger?.info({ domains: domains.length }, 'Authelia domain access updated');
       } catch (err) {
@@ -674,10 +869,42 @@ export function syncDomainAccess({ logger, sites } = {}) {
       if (failures.length > 0) {
         throw new Error(failures.map((f) => `${f.step}: ${f.message}`).join('; '));
       }
-      return { changed, domains: domains.length };
+      return {
+        changed,
+        groupsChanged,
+        domains: domains.length,
+        ...(warnings.length > 0 ? { warnings } : {}),
+      };
     },
     { logger },
   );
+}
+
+/** How long a change of tunnels or sites waits before the hosts it names are rendered. */
+const HOST_RENDER_DELAY_MS = 100;
+let hostRenderTimer = null;
+
+/**
+ * After tunnels.json or sites.json changed (lib/state.js): render the
+ * domains once more, shortly — a restricted host's group names the external
+ * members granted it, and a tunnel or web surface that became restricted,
+ * stopped being one or went changes who holds which. Only while some
+ * domain has external members (the host groups name no one else);
+ * coalesced, best effort (the identity tick renders every minute anyway).
+ */
+export function scheduleHostRender() {
+  if (hostRenderTimer) return;
+  hostRenderTimer = setTimeout(() => {
+    hostRenderTimer = null;
+    void (async () => {
+      const db = await getStateDb();
+      if (!db.prepare("SELECT 1 FROM domain_members WHERE kind = 'external' LIMIT 1").get()) return;
+      await syncDomainAccess();
+    })().catch(() => {
+      // Audited by the rendering itself; the identity tick renders again.
+    });
+  }, HOST_RENDER_DELAY_MS);
+  hostRenderTimer.unref();
 }
 
 /** Audit and notify the start and the end of a failure streak (steps only, never members). */
@@ -782,34 +1009,67 @@ function domainOr404(db, name) {
 
 /**
  * Make user `user` (a directory id or a username) a member of domain
- * `name`. Idempotent (`added: false` when they were one). Then renders,
- * busts Gatekeeper's sessions and recomputes the audiences.
+ * `name` of `kind` (`member` unless named): added, or — when they are one
+ * of the other kind — changed (audited `directory.membership.changed`).
+ * Idempotent (`added: false, changed: false` when they were one of that
+ * kind). Refused (409 `external_member_groups`) when an external
+ * membership would go to a user who holds Authelia groups. Then renders,
+ * busts Gatekeeper's sessions and recomputes the audiences; a member made
+ * external whose access to the registry ends loses their registry tokens.
  *
  * @param {string} name
  * @param {string} user
- * @param {{ actor: string, logger?: import('pino').Logger }} opts
+ * @param {{ kind?: 'member' | 'external', actor: string, logger?: import('pino').Logger }} opts
  */
-export async function addDomainMember(name, user, { actor, logger }) {
-  const change = await domainsMutex.run(async () => {
-    const db = await getStateDb();
-    const domain = domainOr404(db, name);
-    const userId = memberUserId(db, user);
-    const candidate = memberCandidate(db, userId);
-    const events = insertMembershipsSync(db, userId, [name], {
-      actor,
-      now: new Date().toISOString(),
-    });
-    for (const event of events) await recordAuditBestEffort({ actor, ...event }, logger);
-    return {
-      added: events.length > 0,
-      effective: domain.status === 'active' && candidate.status === 'active',
-    };
-  });
-  if (!change.added) return { added: false };
-  return {
-    added: true,
-    ...withWarnings(await settleMembership(logger, { effective: change.effective })),
-  };
+export async function addDomainMember(name, user, { kind = 'member', actor, logger }) {
+  const change = await withUsersLock(() =>
+    domainsMutex.run(async () => {
+      const db = await getStateDb();
+      const domain = domainOr404(db, name);
+      const userId = memberUserId(db, user);
+      const candidate = memberCandidate(db, userId);
+      const current = db
+        .prepare('SELECT kind FROM domain_members WHERE domain = ? AND user_id = ?')
+        .get(name, userId)?.kind;
+      if (current === kind) return { userId, added: false, changed: false };
+      await assertNoGroupsForExternal(candidate.username, [{ kind }]);
+      const now = new Date().toISOString();
+      const events =
+        current === undefined
+          ? insertMembershipsSync(db, userId, [{ name, kind }], { actor, now })
+          : changeKindSync(db, userId, name, current, kind);
+      for (const event of events) await recordAuditBestEffort({ actor, ...event }, logger);
+      return {
+        userId,
+        username: candidate.username,
+        added: current === undefined,
+        changed: current !== undefined,
+        external: kind === 'external',
+        effective: domain.status === 'active' && candidate.status === 'active',
+      };
+    }),
+  );
+  if (!change.added && !change.changed) return { added: false, changed: false };
+  const warnings = await settleMembership(logger, { effective: change.effective });
+  if (change.changed && change.external && change.username) {
+    warnings.push(...(await revokeRegistryTokensFor(change.username, change.userId, logger)));
+  }
+  return { added: change.added, changed: change.changed, ...withWarnings(warnings) };
+}
+
+/**
+ * Change the kind of `userId`'s membership of `domain` from `from` to `to`,
+ * inside the caller's transaction (or alone); returns the audit entry.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ */
+function changeKindSync(db, userId, domain, from, to) {
+  db.prepare('UPDATE domain_members SET kind = ? WHERE domain = ? AND user_id = ?').run(
+    to,
+    domain,
+    userId,
+  );
+  return [{ action: 'directory.membership.changed', details: { domain, userId, from, to } }];
 }
 
 /**
@@ -858,81 +1118,126 @@ export async function removeDomainMember(name, user, { actor, logger }) {
 }
 
 /**
- * Make user `userId`'s memberships exactly `domains` — the users API's edit:
- * the difference applied in one transaction, each membership audited as
- * `addDomainMember` / `removeDomainMember` audit them. Then one rendering,
- * and the user's registry tokens revoked when a membership ended. Throws a 400 `unknown_domain` for a domain the relay does not
- * have, a 404 / 409 for a user it cannot be.
+ * Make user `userId`'s memberships exactly `memberships` (a bare domain
+ * name is a `member`) — the users API's edit: the difference applied in one
+ * transaction — memberships added, ended, and changed in kind — each
+ * audited as {@link addDomainMember} / {@link removeDomainMember} audit
+ * them. Refused (409 `external_member_groups`) when it would make a user
+ * who holds Authelia groups an external member. Then one rendering, and the
+ * user's registry tokens revoked when a membership ended or became
+ * external and their access to the registry with it. Throws a 400
+ * `unknown_domain` for a domain the relay does not have, a 404 / 409 for a
+ * user it cannot be.
  *
  * @param {string} userId
- * @param {readonly string[]} domains
+ * @param {ReadonlyArray<string | { name: string, kind: 'member' | 'external' }>} memberships
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
- * @returns {Promise<{ domains: string[], changed: boolean, warnings?: Array<object> }>}
+ * @returns {Promise<{ domains: Array<{ name: string, kind: 'member' | 'external' }>, changed: boolean, warnings?: Array<object> }>}
  */
-export async function setUserDomains(userId, domains, { actor, logger }) {
-  const wanted = [...new Set(domains.map((d) => String(d).toLowerCase()))].sort();
-  const change = await domainsMutex.run(async () => {
-    const db = await getStateDb();
-    const known = new Map((await listDomains()).map((d) => [d.name, d]));
-    const unknown = wanted.find((d) => !known.has(d));
-    if (unknown !== undefined) {
-      throw httpError(`'${unknown}' is not a domain of this relay`, 400, {
-        code: 'unknown_domain',
+export async function setUserDomains(userId, memberships, { actor, logger }) {
+  const wanted = normalizeMemberships(memberships).sort((a, b) => a.name.localeCompare(b.name));
+  const change = await withUsersLock(() =>
+    domainsMutex.run(async () => {
+      const db = await getStateDb();
+      const known = new Map((await listDomains()).map((d) => [d.name, d]));
+      const unknown = wanted.find((m) => !known.has(m.name));
+      if (unknown !== undefined) {
+        throw httpError(`'${unknown.name}' is not a domain of this relay`, 400, {
+          code: 'unknown_domain',
+        });
+      }
+      const user = memberCandidate(db, userId);
+      const current = new Map(
+        db
+          .prepare('SELECT domain, kind FROM domain_members WHERE user_id = ?')
+          .all(userId)
+          .map((r) => [r.domain, r.kind]),
+      );
+      const wantedKinds = new Map(wanted.map((m) => [m.name, m.kind]));
+      const ended = [...current.keys()].filter((d) => !wantedKinds.has(d));
+      const rekinded = wanted.filter((m) => current.has(m.name) && current.get(m.name) !== m.kind);
+      const added = wanted.filter((m) => !current.has(m.name));
+      if (rekinded.length > 0 || added.length > 0) {
+        await assertNoGroupsForExternal(user.username, [...rekinded, ...added]);
+      }
+      const events = inTransaction(db, () => {
+        const remove = db.prepare('DELETE FROM domain_members WHERE domain = ? AND user_id = ?');
+        for (const domain of ended) remove.run(domain, userId);
+        return [
+          ...insertMembershipsSync(db, userId, added, { actor, now: new Date().toISOString() }),
+          ...rekinded.flatMap((m) =>
+            changeKindSync(db, userId, m.name, current.get(m.name), m.kind),
+          ),
+          ...ended.map((domain) => ({
+            action: 'directory.membership.removed',
+            details: { domain, userId, reason: 'removed' },
+          })),
+        ];
       });
-    }
-    const user = memberCandidate(db, userId);
-    const current = db
-      .prepare('SELECT domain FROM domain_members WHERE user_id = ?')
-      .all(userId)
-      .map((r) => r.domain);
-    const ended = current.filter((d) => !wanted.includes(d));
-    const events = inTransaction(db, () => {
-      const remove = db.prepare('DELETE FROM domain_members WHERE domain = ? AND user_id = ?');
-      for (const domain of ended) remove.run(domain, userId);
-      return [
-        ...insertMembershipsSync(db, userId, wanted, { actor, now: new Date().toISOString() }),
-        ...ended.map((domain) => ({
-          action: 'directory.membership.removed',
-          details: { domain, userId, reason: 'removed' },
-        })),
-      ];
-    });
-    for (const event of events) await recordAuditBestEffort({ actor, ...event }, logger);
-    const touched = events.map((e) => known.get(e.details.domain));
-    return {
-      username: user.username,
-      ended,
-      changed: events.length > 0,
-      effective: user.status === 'active' && touched.some((d) => d?.status === 'active'),
-    };
-  });
+      for (const event of events) await recordAuditBestEffort({ actor, ...event }, logger);
+      const touched = events.map((e) => known.get(e.details.domain));
+      return {
+        username: user.username,
+        narrowed: ended.length > 0 || rekinded.some((m) => m.kind === 'external'),
+        changed: events.length > 0,
+        effective: user.status === 'active' && touched.some((d) => d?.status === 'active'),
+      };
+    }),
+  );
   if (!change.changed) return { domains: wanted, changed: false };
   const warnings = await settleMembership(logger, { effective: change.effective });
-  if (change.username && change.ended.length > 0) {
+  if (change.username && change.narrowed) {
     warnings.push(...(await revokeRegistryTokensFor(change.username, userId, logger)));
   }
   return { domains: wanted, changed: true, ...withWarnings(warnings) };
 }
 
 /**
- * After one of a user's memberships ended: revoke their registry tokens when
- * they are a member of none of the registry's domains any more (its issuer
- * domain, Feria's own domain) — the sign-in that minted the tokens would
- * refuse them now. Best effort; returns warnings.
+ * Whether user `userId` (`username`) still reaches the registry's sign-in
+ * on one of `domains` (its issuer domain, Feria's own domain): as a member
+ * of one, or as an external member of one granted a user-facing OIDC client
+ * of it (a grant directly or through a Lamaste group). Gatekeeper not
+ * answering is "no" — fail closed.
+ *
+ * @param {string} username
+ * @param {string} userId
+ * @param {readonly string[]} domains
+ */
+async function reachesRegistry(username, userId, domains) {
+  const db = await getStateDb();
+  const kinds = db
+    .prepare('SELECT domain, kind FROM domain_members WHERE user_id = ?')
+    .all(userId)
+    .filter((r) => domains.includes(r.domain));
+  if (kinds.some((r) => r.kind === 'member')) return true;
+  if (kinds.length === 0) return false;
+  const { readGrantedResources, userFacingOidcClients, OIDC_CLIENT_RESOURCE } =
+    await import('./owned-groups.js');
+  const read = await readGrantedResources();
+  if (!read.ok) return false;
+  const externalOf = new Set(kinds.map((r) => r.domain));
+  return (await userFacingOidcClients()).some(
+    (c) => externalOf.has(c.domain) && read.granted[OIDC_CLIENT_RESOURCE].get(c.id)?.has(username),
+  );
+}
+
+/**
+ * After a user's access narrowed — a membership ended or became external, a
+ * grant on an OIDC client went: revoke their registry tokens when they no
+ * longer reach the registry's sign-in ({@link reachesRegistry}) — the
+ * sign-in that minted the tokens would refuse them now. Best effort;
+ * returns warnings.
  *
  * @param {string} username
  * @param {string} userId
  * @param {import('pino').Logger} [logger]
  */
-async function revokeRegistryTokensFor(username, userId, logger) {
+export async function revokeRegistryTokensFor(username, userId, logger) {
   try {
     const { readRegistryCredentialConfig } = await import('./registry-credential.js');
     const config = await readRegistryCredentialConfig();
     if (!config) return [];
-    const domains = await registryDomainsOf(config);
-    const db = await getStateDb();
-    const member = db.prepare('SELECT 1 FROM domain_members WHERE user_id = ? AND domain = ?');
-    if (domains.some((d) => member.get(userId, d) !== undefined)) return [];
+    if (await reachesRegistry(username, userId, await registryDomainsOf(config))) return [];
     return await revokeTokensOf([{ username, userId }], config, logger);
   } catch (err) {
     logger?.warn({ userId, err: err.message }, 'Registry tokens were not revoked');
@@ -969,9 +1274,11 @@ async function revokeTokensOf(users, config, logger) {
 }
 
 /**
- * Revoke the registry tokens of every user who is a member of none of
- * `domains` — after the registry credential changed its domains: who may
- * hold a token follows them. Best effort; returns warnings.
+ * Revoke the registry tokens of every user who is a member or an external
+ * member of none of `domains` — after the registry credential changed its
+ * domains: who may hold a token follows them (an external member of one
+ * whose client grant does not reach the registry is revoked when the grant
+ * goes, {@link revokeRegistryTokensFor}). Best effort; returns warnings.
  *
  * @param {readonly string[]} domains
  * @param {object} config the stored credential

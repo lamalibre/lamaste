@@ -190,7 +190,7 @@ test('renderOidcClient: public device-code client with the domain expanded and i
     client_name: 'Feria CLI',
     public: true,
     // Members of the client's domain alone, with its factor.
-    authorization_policy: 'lamaste_samplepark_tr_two_factor',
+    authorization_policy: 'lamaste_client_feria-cli',
     consent_mode: 'explicit',
     // Its access and ID tokens live 15 minutes.
     lifespan: 'lamaste_user',
@@ -287,7 +287,7 @@ test('a client of a domain the relay does not serve is refused, not rendered', (
   const [cli] = validateManifest(feriaManifest).oidcClients;
   assert.throws(
     () =>
-      buildOidcProviderSection([{ name: 'samplepark.tr', members: [] }], 'h', [
+      buildOidcProviderSection(['samplepark.tr'], 'h', [
         { ...cli, plugin: 'feria', domain: 'codelama.com.tr' },
       ]),
     /belongs to 'codelama.com.tr', no domain of this relay/,
@@ -297,7 +297,7 @@ test('a client of a domain the relay does not serve is refused, not rendered', (
 test('buildOidcProviderSection: hmac secret, the key as a sentinel, claims policies, scopes, clients', () => {
   const [cli] = validateManifest(feriaManifest).oidcClients;
   const section = buildOidcProviderSection(
-    [{ name: 'samplepark.tr', members: ['onur'] }],
+    ['samplepark.tr'],
     'hmac-secret',
     [
       { ...cli, plugin: 'feria', domain: 'samplepark.tr' },
@@ -324,7 +324,7 @@ test('buildOidcProviderSection: hmac secret, the key as a sentinel, claims polic
   assert.ok(!JSON.stringify(section).includes('PRIVATE KEY'));
 
   // Without claims or custom scopes the keys are absent, not empty.
-  const bare = buildOidcProviderSection([{ name: 'd.test', members: [] }], 'h', [
+  const bare = buildOidcProviderSection(['d.test'], 'h', [
     { ...cli, plugin: 'feria', domain: 'd.test', accessTokenClaims: [] },
   ]);
   assert.ok(!('claims_policies' in bare));
@@ -333,11 +333,9 @@ test('buildOidcProviderSection: hmac secret, the key as a sentinel, claims polic
 
 test('the rendered YAML reads the issuer key with a template expression at the right indent', () => {
   const [cli] = validateManifest(feriaManifest).oidcClients;
-  const section = buildOidcProviderSection(
-    [{ name: 'samplepark.tr', members: ['onur'] }],
-    'hmac-secret',
-    [{ ...cli, plugin: 'feria', domain: 'samplepark.tr' }],
-  );
+  const section = buildOidcProviderSection(['samplepark.tr'], 'hmac-secret', [
+    { ...cli, plugin: 'feria', domain: 'samplepark.tr' },
+  ]);
   const text = render({ identity_providers: { oidc: section } });
   const expectedLine = oidcIssuerKeyTemplateLine(8);
   assert.equal(
@@ -373,23 +371,21 @@ ${expectedLine}
           - groups
           - preferred_username
     authorization_policies:
-      lamaste_samplepark_tr_one_factor:
-        default_policy: deny
-        rules:
-          - policy: one_factor
-            subject:
-              - user:onur
-      lamaste_samplepark_tr_two_factor:
+      lamaste_client_feria-cli:
         default_policy: deny
         rules:
           - policy: two_factor
             subject:
-              - user:onur
+              - group:lamaste:member@samplepark.tr
+          - policy: two_factor
+            subject:
+              - - group:lamaste:external@samplepark.tr
+                - group:lamaste:oidc@feria-cli
     clients:
       - client_id: feria-cli
         client_name: Feria CLI
         public: true
-        authorization_policy: lamaste_samplepark_tr_two_factor
+        authorization_policy: lamaste_client_feria-cli
         consent_mode: explicit
         lifespan: lamaste_user
         scopes:
@@ -416,7 +412,7 @@ ${expectedLine}
 
 test('the writer refuses "{{" or "}}" anywhere else — the file is a Go template', () => {
   const [cli] = validateManifest(feriaManifest).oidcClients;
-  const evil = buildOidcProviderSection([{ name: 'samplepark.tr', members: [] }], 'hmac', [
+  const evil = buildOidcProviderSection(['samplepark.tr'], 'hmac', [
     {
       ...cli,
       plugin: 'feria',

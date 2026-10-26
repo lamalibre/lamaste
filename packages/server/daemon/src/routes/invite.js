@@ -121,8 +121,9 @@ export default async function inviteRoutes(fastify, _opts) {
 
     const grantedDomains = await invitationDomainsNow(invitation);
 
-    // Through the users lock: the directory gives the user their id before
-    // Authelia restarts and lets them sign in.
+    // Through the users lock: the directory gives the user their id, and
+    // the domains are rendered (their memberships, with the kinds the
+    // invitation named), before they can sign in.
     try {
       await changeUsers(
         async () => {

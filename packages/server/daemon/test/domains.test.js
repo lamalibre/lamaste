@@ -6,10 +6,10 @@
  * when nothing uses it; membership is explicit, by user id, audited by id,
  * kept while a user is disabled (who is rendered nowhere) and gone when
  * they are deleted; with one domain new users become its members, with two
- * they are created with theirs; every change renders Authelia's domain
- * access and Gatekeeper's projection. Authelia is a users file and a
- * recorder of what would be rendered, Gatekeeper a fake, nginx and certbot
- * recorders.
+ * they are created with theirs; every change renders the groups Lamaste
+ * owns into users.yml, Gatekeeper's projection and Authelia's domain access
+ * — without restarting Authelia. Authelia is a users file and a recorder of
+ * what would be rendered, Gatekeeper a fake, nginx and certbot recorders.
  */
 
 import { test, before, after } from 'node:test';
@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 
-import { renderAccessControl, renderOidcAuthorizationPolicies } from '@lamalibre/lamaste/server';
+import { externalHostRegex, renderGroupAccessControl } from '@lamalibre/lamaste/server';
 
 import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
@@ -33,14 +33,11 @@ let usersFile;
 let lib;
 let app;
 let gatekeeper;
-/** What Authelia was last told: `{ domains, sites }`. */
+/** What Authelia's configuration was last told: `{ domains, sites }`. */
 let rendered = null;
 let renders = 0;
-/**
- * Authelia's OIDC authorization policies as its two writers leave them:
- * the domain rendering and the OIDC provider (each writes them whole).
- */
-let policies = null;
+/** How many times Authelia was restarted. */
+let restarts = 0;
 /** Holds the OIDC provider's write until released (a test of the two writers). */
 let oidcGate = null;
 /** The client ids the OIDC provider was last written with. */
@@ -81,8 +78,24 @@ async function projection() {
   return JSON.parse(await readFile(path.join(stateDir, 'domains.json'), 'utf-8'));
 }
 
-/** The members Authelia was last told of, by domain. */
-const renderedMembers = () => Object.fromEntries(rendered.domains.map((d) => [d.name, d.members]));
+/** users.yml's users. */
+const usersNow = async () => yaml.load(await readFile(usersFile, 'utf-8')).users;
+
+/**
+ * The members Authelia's users file names, by rendered domain: the users
+ * holding `lamaste:member@<d>` (or `lamaste:external@<d>`, with `kind`).
+ */
+async function renderedMembers(kind = 'member') {
+  const users = await usersNow();
+  return Object.fromEntries(
+    rendered.domains.map((name) => [
+      name,
+      Object.keys(users)
+        .filter((u) => users[u].groups?.includes(`lamaste:${kind}@${name}`))
+        .sort(),
+    ]),
+  );
+}
 
 /** Audit entries of `action`, newest first. */
 function audits(action) {
@@ -128,14 +141,15 @@ before(async () => {
   await lib.loadConfig();
   lib.setAutheliaForTests({
     usersFile,
-    restart: async () => {},
+    restart: async () => {
+      restarts += 1;
+    },
     writeTotp: async () => {},
     userStorage: createFakeAutheliaStorage().storage,
     domainAccess: async (access) => {
       if (failAccess) throw new Error('Authelia did not restart');
       const changed = JSON.stringify(access) !== JSON.stringify(rendered);
       rendered = structuredClone(access);
-      policies = renderOidcAuthorizationPolicies(access.domains);
       if (changed) renders += 1;
       return { changed };
     },
@@ -144,7 +158,6 @@ before(async () => {
         oidcGate.entered();
         await oidcGate.released;
       }
-      policies = renderOidcAuthorizationPolicies(domains);
       oidcClientIds = clients.map((c) => c.id);
       return { changed: true, clients: clients.length };
     },
@@ -204,22 +217,31 @@ test('an upgraded single-domain relay: the primary recorded with everyone its me
   assert.deepEqual(added.at(-1).details, { domain: 'samplepark.tr', primary: true, members: 3 });
 
   await lib.syncDomainAccess();
-  assert.deepEqual(renderedMembers(), { 'samplepark.tr': ['admin', 'cust', 'onur'] });
+  assert.deepEqual(await renderedMembers(), { 'samplepark.tr': ['admin', 'cust', 'onur'] });
+  // Membership is a group Lamaste owns, beside the administrator's own.
+  assert.deepEqual((await usersNow()).admin.groups, ['admins', 'lamaste:member@samplepark.tr']);
   assert.deepEqual(await projection(), {
     v: 2,
     domains: [{ name: 'samplepark.tr', members: ['admin', 'cust', 'onur'], externals: [] }],
   });
   assert.equal((await stat(path.join(stateDir, 'domains.json'))).mode & 0o777, 0o600);
-  // Every host under the domain admits every user, as before: one allow
-  // rule for all of them, then the deny the rest falls to.
-  assert.deepEqual(renderAccessControl(rendered.domains, []).rules, [
+  // Every host under the domain admits every member, as before: one allow
+  // rule naming the domain's member group, the external members' rule,
+  // then the deny the rest falls to.
+  assert.deepEqual(renderGroupAccessControl(rendered.domains, []).rules, [
     {
       domain: ['samplepark.tr', '*.samplepark.tr'],
       policy: 'two_factor',
-      subject: ['user:admin', 'user:cust', 'user:onur'],
+      subject: ['group:lamaste:member@samplepark.tr'],
+    },
+    {
+      domain_regex: [externalHostRegex('samplepark.tr')],
+      policy: 'two_factor',
+      subject: ['group:lamaste:external@samplepark.tr'],
     },
     { domain: ['samplepark.tr', '*.samplepark.tr'], policy: 'deny' },
   ]);
+  assert.equal(restarts, 0, 'nothing restarts Authelia for its members');
   const before = renders;
   await lib.syncDomainAccess();
   assert.equal(renders, before, 'nothing changed: Authelia is not touched');
@@ -233,8 +255,8 @@ test('with one domain a new user becomes its member, whoever creates them', asyn
     password: 'correct horse battery',
   });
   assert.equal(res.statusCode, 201, res.body);
-  assert.deepEqual(res.json().user.domains, ['samplepark.tr']);
-  assert.ok(renderedMembers()['samplepark.tr'].includes('ayse'));
+  assert.deepEqual(res.json().user.domains, [{ name: 'samplepark.tr', kind: 'member' }]);
+  assert.ok((await renderedMembers())['samplepark.tr'].includes('ayse'));
 });
 
 test('a domain: added pending, refused when it overlaps or is no domain, activated with rollback', async () => {
@@ -252,7 +274,7 @@ test('a domain: added pending, refused when it overlaps or is no domain, activat
     { name: 'codelama.com.tr', status: 'pending' },
   );
   // Pending: not rendered, nothing can be put on it.
-  assert.deepEqual(Object.keys(renderedMembers()), ['samplepark.tr']);
+  assert.deepEqual(Object.keys(await renderedMembers()), ['samplepark.tr']);
   await assert.rejects(
     lib.resolveActiveDomain('codelama.com.tr'),
     (err) => err.code === 'unknown_domain',
@@ -273,7 +295,7 @@ test('a domain: added pending, refused when it overlaps or is no domain, activat
     ['cert', 'auth.codelama.com.tr', 'ops@samplepark.tr'],
     ['vhost', 'codelama.com.tr', { primary: false }],
   ]);
-  assert.deepEqual(renderedMembers(), {
+  assert.deepEqual(await renderedMembers(), {
     'samplepark.tr': ['admin', 'ayse', 'cust', 'onur'],
     'codelama.com.tr': [],
   });
@@ -293,14 +315,14 @@ test('membership: explicit, by id, audited by id; a developer on both domains, a
     (await call('PUT', `/api/domains/codelama.com.tr/members/${onur}`)).json().added,
     false,
   );
-  assert.deepEqual(renderedMembers()['codelama.com.tr'], ['onur']);
+  assert.deepEqual((await renderedMembers())['codelama.com.tr'], ['onur']);
   assert.deepEqual((await projection()).domains[1], {
     name: 'codelama.com.tr',
     members: ['onur'],
     externals: [],
   });
   const audited = (await audits('directory.membership.added')).at(0);
-  assert.deepEqual(audited.details, { domain: 'codelama.com.tr', userId: onur });
+  assert.deepEqual(audited.details, { domain: 'codelama.com.tr', userId: onur, kind: 'member' });
   assert.ok(!JSON.stringify(await audits('directory.membership.added')).includes('onur"'));
   assert.ok(gatekeeper.state.sessionBusts > 0, 'Gatekeeper’s cached sessions dropped');
 
@@ -308,7 +330,7 @@ test('membership: explicit, by id, audited by id; a developer on both domains, a
   const cust = await idOf('cust');
   const removed = await call('DELETE', `/api/domains/samplepark.tr/members/${cust}`);
   assert.equal(removed.json().removed, true);
-  assert.ok(!renderedMembers()['samplepark.tr'].includes('cust'));
+  assert.ok(!(await renderedMembers())['samplepark.tr'].includes('cust'));
   assert.equal(
     (await call('DELETE', `/api/domains/samplepark.tr/members/${cust}`)).json().removed,
     false,
@@ -350,9 +372,9 @@ test('with two domains a new user is created with theirs: required, checked, hon
   );
   const made = await call('POST', '/api/users', { ...body, domains: ['codelama.com.tr'] });
   assert.equal(made.statusCode, 201, made.body);
-  assert.deepEqual(made.json().user.domains, ['codelama.com.tr']);
-  assert.deepEqual(renderedMembers()['codelama.com.tr'], ['mert', 'onur']);
-  assert.ok(!renderedMembers()['samplepark.tr'].includes('mert'));
+  assert.deepEqual(made.json().user.domains, [{ name: 'codelama.com.tr', kind: 'member' }]);
+  assert.deepEqual((await renderedMembers())['codelama.com.tr'], ['mert', 'onur']);
+  assert.ok(!(await renderedMembers())['samplepark.tr'].includes('mert'));
 
   const invitation = { username: 'deniz', email: 'deniz@codelama.com.tr' };
   assert.equal(
@@ -366,13 +388,16 @@ test('with two domains a new user is created with theirs: required, checked, hon
   assert.equal(invited.statusCode, 201, invited.body);
   assert.match(invited.json().inviteUrl, /^https:\/\/auth\.codelama\.com\.tr\/invite\//);
   const stored = (await lib.readInvitations()).find((i) => i.username === 'deniz');
-  assert.deepEqual(stored.domains, ['codelama.com.tr', 'samplepark.tr']);
+  assert.deepEqual(stored.domains, [
+    { name: 'codelama.com.tr', kind: 'member' },
+    { name: 'samplepark.tr', kind: 'member' },
+  ]);
 
   // Listed with each user's domains.
   const users = (await call('GET', '/api/users')).json().users;
   assert.deepEqual(users.find((u) => u.username === 'onur').domains, [
-    'codelama.com.tr',
-    'samplepark.tr',
+    { name: 'codelama.com.tr', kind: 'member' },
+    { name: 'samplepark.tr', kind: 'member' },
   ]);
 
   // An edit sets the memberships exactly, in one change, each audited.
@@ -384,9 +409,9 @@ test('with two domains a new user is created with theirs: required, checked, hon
   const eceId = await idOf('ece');
   const edited = await call('PUT', '/api/users/ece', { domains: ['samplepark.tr'] });
   assert.equal(edited.statusCode, 200, edited.body);
-  assert.deepEqual(edited.json().user.domains, ['samplepark.tr']);
-  assert.ok(!renderedMembers()['codelama.com.tr'].includes('ece'));
-  assert.ok(renderedMembers()['samplepark.tr'].includes('ece'));
+  assert.deepEqual(edited.json().user.domains, [{ name: 'samplepark.tr', kind: 'member' }]);
+  assert.ok(!(await renderedMembers())['codelama.com.tr'].includes('ece'));
+  assert.ok((await renderedMembers())['samplepark.tr'].includes('ece'));
   const changes = (await audits('directory.membership.added'))
     .concat(await audits('directory.membership.removed'))
     .filter((a) => a.details.userId === eceId)
@@ -410,17 +435,17 @@ test('with two domains a new user is created with theirs: required, checked, hon
 test('disable keeps memberships and renders the user nowhere; enable brings them back; delete ends them', async () => {
   const onur = await idOf('onur');
   assert.equal((await call('PUT', '/api/users/onur', { disabled: true })).statusCode, 200);
-  assert.ok(!renderedMembers()['codelama.com.tr'].includes('onur'));
-  assert.ok(!renderedMembers()['samplepark.tr'].includes('onur'));
+  assert.ok(!(await renderedMembers())['codelama.com.tr'].includes('onur'));
+  assert.ok(!(await renderedMembers())['samplepark.tr'].includes('onur'));
   assert.equal((await lib.domainsByUser()).get(onur).length, 2, 'kept');
 
   assert.equal((await call('PUT', '/api/users/onur', { disabled: false })).statusCode, 200);
-  assert.ok(renderedMembers()['codelama.com.tr'].includes('onur'));
+  assert.ok((await renderedMembers())['codelama.com.tr'].includes('onur'));
 
   const mert = await idOf('mert');
   assert.equal((await call('DELETE', '/api/users/mert')).statusCode, 200);
   assert.equal((await lib.domainsByUser()).get(mert), undefined);
-  assert.ok(!renderedMembers()['codelama.com.tr'].includes('mert'));
+  assert.ok(!(await renderedMembers())['codelama.com.tr'].includes('mert'));
   const ended = (await audits('directory.membership.removed')).filter(
     (e) => e.details.userId === mert,
   );
@@ -462,7 +487,7 @@ test('a domain is removed only when nothing uses it, never the primary', async (
   assert.equal(removed.statusCode, 200, removed.body);
   assert.deepEqual(activation, [['remove-vhost', 'codelama.com.tr']]);
   assert.equal(await lib.getDomain('codelama.com.tr'), null);
-  assert.deepEqual(Object.keys(renderedMembers()), ['samplepark.tr']);
+  assert.deepEqual(Object.keys(await renderedMembers()), ['samplepark.tr']);
   const ended = (await audits('directory.membership.removed')).filter(
     (e) => e.details.reason === 'domain-removed',
   );
@@ -516,14 +541,13 @@ test('a plugin belongs to the primary until moved to an active domain; moving it
   );
 });
 
-test('one writer of the members’ OIDC policies: a membership ended while the OIDC provider is written stays ended', async () => {
+test('one writer of what members may do: a membership ended while the OIDC provider is written is rendered after it', async () => {
   const onur = await idOf('onur');
   await call('PUT', `/api/domains/codelama.com.tr/members/${onur}`);
-  const policy = () => policies.lamaste_codelama_com_tr_two_factor.rules[0];
-  assert.deepEqual(policy().subject, ['user:onur']);
+  assert.deepEqual((await renderedMembers())['codelama.com.tr'], ['onur']);
 
   // The OIDC provider is being written (a plugin change) when the
-  // membership ends: it read the members before, and writes after.
+  // membership ends: the removal's rendering waits for it, then runs.
   let entered;
   let release;
   oidcGate = {
@@ -537,12 +561,14 @@ test('one writer of the members’ OIDC policies: a membership ended while the O
   await insideWrite;
   const removal = call('DELETE', `/api/domains/codelama.com.tr/members/${onur}`);
   await new Promise((resolve) => setTimeout(resolve, 50));
+  // Still the writer's: the users file has not been rendered yet.
+  assert.deepEqual((await renderedMembers())['codelama.com.tr'], ['onur']);
   release();
   oidcGate = null;
   await Promise.all([oidc, removal]);
 
-  assert.deepEqual(policy(), { policy: 'deny', networks: ['0.0.0.0/0', '::/0'] });
-  assert.deepEqual(renderedMembers()['codelama.com.tr'], []);
+  assert.deepEqual((await renderedMembers())['codelama.com.tr'], []);
+  assert.equal(restarts, 0, 'no membership change restarts Authelia');
 });
 
 test('a sync that waited for the writer plans from what is true then: a registry credential being set is served', async () => {
@@ -629,14 +655,21 @@ test('an invitation grants only domains that existed when it was made; it signs 
     'samplepark.tr',
     'a pending domain has no sign-in page yet',
   );
-  assert.deepEqual(await lib.invitationDomainsNow(invitation), ['gone.example', 'samplepark.tr']);
+  assert.deepEqual(await lib.invitationDomainsNow(invitation), [
+    { name: 'gone.example', kind: 'member' },
+    { name: 'samplepark.tr', kind: 'member' },
+  ]);
   // Removed, then added again (for someone else): another domain — the
   // invitation grants it nothing.
   assert.equal((await call('DELETE', '/api/domains/gone.example')).statusCode, 200);
-  assert.deepEqual(await lib.invitationDomainsNow(invitation), ['samplepark.tr']);
+  assert.deepEqual(await lib.invitationDomainsNow(invitation), [
+    { name: 'samplepark.tr', kind: 'member' },
+  ]);
   await new Promise((resolve) => setTimeout(resolve, 5));
   await call('POST', '/api/domains', { name: 'gone.example' });
-  assert.deepEqual(await lib.invitationDomainsNow(invitation), ['samplepark.tr']);
+  assert.deepEqual(await lib.invitationDomainsNow(invitation), [
+    { name: 'samplepark.tr', kind: 'member' },
+  ]);
   assert.deepEqual(await lib.invitationDomainsNow({ domains: ['samplepark.tr'] }), []);
   assert.equal((await call('DELETE', '/api/domains/gone.example')).statusCode, 200);
 });

@@ -87,6 +87,10 @@ function createFakeGatekeeper({ maxGrants = 1000 } = {}) {
         grants.push(grant);
         return ok(201, { ok: true, grant });
       }
+      if (method === 'GET' && parts.length === 3) {
+        const grant = grants.find((g) => g.grantId === parts[2]);
+        return grant ? ok(200, { grant: structuredClone(grant) }) : refuse(404, 'Grant not found');
+      }
       if (method === 'DELETE' && parts.length === 3) {
         const index = grants.findIndex((g) => g.grantId === parts[2]);
         if (index === -1) return refuse(404, 'Grant not found');
@@ -119,6 +123,16 @@ function createFakeGatekeeper({ maxGrants = 1000 } = {}) {
       if (method === 'POST' && parts.length === 2) {
         groups.set(body.name, { name: body.name, description: '', members: [] });
         return ok(201, { ok: true, group: groups.get(body.name) });
+      }
+      if (method === 'DELETE' && parts.length === 3) {
+        if (!group) return refuse(404, 'Group not found');
+        groups.delete(parts[2]);
+        for (let i = grants.length - 1; i >= 0; i -= 1) {
+          if (grants[i].principalType === 'group' && grants[i].principalId === parts[2]) {
+            grants.splice(i, 1);
+          }
+        }
+        return ok(200, { ok: true });
       }
       if (method === 'POST' && parts[3] === 'members') {
         if (!group) return refuse(404, 'Group not found');

@@ -2,7 +2,7 @@
  * The multi-domain relay's core rules (packages/core/docs/multi-domain-relay-design.md):
  * domain names that never overlap, the domain of a hostname, the names the
  * relay keeps for itself on every domain, the Authelia rendering of
- * session cookies, membership and OIDC authorization policies, and
+ * session cookies, and
  * hostnames unique as a whole rather than by subdomain.
  */
 
@@ -36,9 +36,6 @@ import {
   verifyDns,
   hostnameHolder,
   tunnelHost,
-  oidcAuthorizationPolicyName,
-  renderAccessControl,
-  renderOidcAuthorizationPolicies,
   renderSessionCookies,
 } from '@lamalibre/lamaste/server';
 
@@ -132,127 +129,8 @@ test('one session cookie per domain, each signing in at its own auth.<domain>', 
   assert.throws(() => renderSessionCookies(['*.samplepark.tr']), DomainError);
 });
 
-const DOMAINS = [
-  { name: 'samplepark.tr', members: ['onur', 'ayse', 'cust'] },
-  { name: 'codelama.com.tr', members: ['onur', 'ayse'] },
-];
-
-test('access_control: members of each domain on the domain and every host under it, then deny, default deny', () => {
-  const ac = renderAccessControl(DOMAINS, []);
-  assert.equal(ac.default_policy, 'deny');
-  assert.deepEqual(ac.rules, [
-    {
-      domain: ['samplepark.tr', '*.samplepark.tr'],
-      policy: 'two_factor',
-      subject: ['user:ayse', 'user:cust', 'user:onur'],
-    },
-    { domain: ['samplepark.tr', '*.samplepark.tr'], policy: 'deny' },
-    {
-      domain: ['codelama.com.tr', '*.codelama.com.tr'],
-      policy: 'two_factor',
-      subject: ['user:ayse', 'user:onur'],
-    },
-    { domain: ['codelama.com.tr', '*.codelama.com.tr'], policy: 'deny' },
-  ]);
-});
-
-test('access_control: a site rule names only members of its domain — allowed users and admins alike', () => {
-  const ac = renderAccessControl(DOMAINS, [
-    {
-      fqdn: 'docs.codelama.com.tr',
-      autheliaProtected: true,
-      // cust is allowed on the site but is no member of codelama.com.tr.
-      allowedUsers: ['onur', 'cust'],
-    },
-    { fqdn: 'wiki.samplepark.tr', autheliaProtected: true, restrictAccess: true },
-    { fqdn: 'open.samplepark.tr', autheliaProtected: true }, // the domain rule decides
-    { fqdn: 'plain.samplepark.tr', autheliaProtected: false, allowedUsers: ['onur'] },
-  ]);
-  assert.deepEqual(ac.rules.slice(0, 5), [
-    { domain: 'docs.codelama.com.tr', policy: 'two_factor', subject: ['user:onur'] },
-    {
-      domain: 'docs.codelama.com.tr',
-      policy: 'two_factor',
-      subject: [
-        ['group:admins', 'user:ayse'],
-        ['group:admins', 'user:onur'],
-      ],
-    },
-    { domain: 'docs.codelama.com.tr', policy: 'deny' },
-    {
-      domain: 'wiki.samplepark.tr',
-      policy: 'two_factor',
-      subject: [
-        ['group:admins', 'user:ayse'],
-        ['group:admins', 'user:cust'],
-        ['group:admins', 'user:onur'],
-      ],
-    },
-    { domain: 'wiki.samplepark.tr', policy: 'deny' },
-  ]);
-  assert.equal(ac.rules.length, 9, 'four domain rules follow; unprotected sites render none');
-});
-
-test('access_control: a domain without members and a site under no domain refuse everyone', () => {
-  const ac = renderAccessControl(
-    [{ name: 'new.example', members: [] }],
-    [{ fqdn: 'blog.example.org', autheliaProtected: true, allowedUsers: ['onur'] }],
-  );
-  assert.deepEqual(ac.rules, [
-    { domain: 'blog.example.org', policy: 'deny' },
-    { domain: ['new.example', '*.new.example'], policy: 'deny' },
-  ]);
-});
-
-test('access_control: the same members render the same rules, whatever their order or repeats', () => {
-  const a = renderAccessControl([{ name: 'samplepark.tr', members: ['onur', 'ayse'] }], []);
-  const b = renderAccessControl([{ name: 'samplepark.tr', members: ['ayse', 'onur', 'ayse'] }], []);
-  assert.deepEqual(a, b);
-});
-
-test('access_control and OIDC policies refuse a member that is not a Lamaste username', () => {
-  const bad = [{ name: 'samplepark.tr', members: ['onur', 'group:admins'] }];
-  // The refusal never repeats the value (it reaches logs and warnings).
-  for (const render of [
-    () => renderAccessControl(bad, []),
-    () => renderOidcAuthorizationPolicies(bad),
-  ]) {
-    assert.throws(
-      render,
-      (err) => /not a Lamaste username/.test(err.message) && !err.message.includes('group:admins'),
-    );
-  }
-});
-
-test('OIDC authorization policies: per domain and factor, its members admitted and everyone else refused', () => {
-  assert.equal(
-    oidcAuthorizationPolicyName('codelama.com.tr', 'two_factor'),
-    'lamaste_codelama_com_tr_two_factor',
-  );
-  const policies = renderOidcAuthorizationPolicies([
-    { name: 'codelama.com.tr', members: ['onur', 'ayse'] },
-    { name: 'new.example', members: [] },
-  ]);
-  assert.deepEqual(policies, {
-    lamaste_codelama_com_tr_one_factor: {
-      default_policy: 'deny',
-      rules: [{ policy: 'one_factor', subject: ['user:ayse', 'user:onur'] }],
-    },
-    lamaste_codelama_com_tr_two_factor: {
-      default_policy: 'deny',
-      rules: [{ policy: 'two_factor', subject: ['user:ayse', 'user:onur'] }],
-    },
-    // Authelia refuses a policy without rules, and a rule without subjects or networks.
-    lamaste_new_example_one_factor: {
-      default_policy: 'deny',
-      rules: [{ policy: 'deny', networks: ['0.0.0.0/0', '::/0'] }],
-    },
-    lamaste_new_example_two_factor: {
-      default_policy: 'deny',
-      rules: [{ policy: 'deny', networks: ['0.0.0.0/0', '::/0'] }],
-    },
-  });
-});
+// access_control and the OIDC authorization policies name the groups
+// Lamaste owns rather than members: external-members-core.test.js.
 
 // --- hostnames unique as a whole ----------------------------------------------
 

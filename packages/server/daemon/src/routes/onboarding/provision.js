@@ -12,7 +12,7 @@ import { migrateChiselCredentialsIfNeeded } from '../../lib/chisel-users.js';
 import { loadAgentRegistry } from '../../lib/mtls.js';
 import { setChiselRunningPinnedRelease } from '../../lib/chisel-runtime.js';
 import { changeUsers } from '../../lib/directory.js';
-import { ensurePrimaryDomain, listDomainMembers, syncDomainAccess } from '../../lib/domains.js';
+import { ensurePrimaryDomain, syncDomainAccess } from '../../lib/domains.js';
 
 // Module-level state for provisioning
 const emitter = new EventEmitter();
@@ -119,12 +119,13 @@ async function runProvisioning(log) {
     emitProgress('install-authelia', 'running', 'Creating admin user...');
     adminPassword = crypto.randomBytes(16).toString('base64url');
     // Through the users lock, and into the user directory — which reconciles
-    // with users.yml from here on. Authelia starts next, so no restart.
+    // with users.yml from here on. The domain is rendered below, once it
+    // exists.
     const created = await changeUsers(() => authelia.createUser('admin', adminPassword), {
       actor: 'lamaste',
       logger: log,
       creates: ['admin'],
-      restartAuthelia: false,
+      renderDomains: false,
       // Authelia's storage does not exist before its first start.
       autheliaStorage: false,
     });
@@ -132,20 +133,20 @@ async function runProvisioning(log) {
       log.warn({ step: warning.step }, warning.message);
     }
 
-    // The primary domain with the administrator as its member, so that the
-    // configuration Authelia first starts with already admits them (the
-    // panel renders every later change).
+    // The primary domain with the administrator as its member — rendered
+    // into users.yml's groups and Gatekeeper's projection before Authelia
+    // first starts, so its first configuration already admits them (the
+    // configuration it is rendered from is the one written here: nothing to
+    // restart). The panel renders every later change.
     emitProgress('install-authelia', 'running', 'Writing configuration...');
     await ensurePrimaryDomain({ logger: log });
-    const members = (await listDomainMembers(domain))
-      .filter((m) => m.status === 'active')
-      .map((m) => m.username);
     const secrets = {
       jwtSecret: crypto.randomBytes(32).toString('hex'),
       sessionSecret: crypto.randomBytes(32).toString('hex'),
       storageEncryptionKey: crypto.randomBytes(32).toString('hex'),
     };
-    await authelia.writeAutheliaConfig(domain, secrets, members);
+    await authelia.writeAutheliaConfig(domain, secrets);
+    await syncDomainAccess({ logger: log });
 
     emitProgress('install-authelia', 'running', 'Starting Authelia service...');
     await authelia.startAuthelia();

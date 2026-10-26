@@ -21,11 +21,13 @@
  *
  * Every client belongs to a domain — its plugin's (the panel's own: the
  * registry credential's issuer domain): `{domain}` in its audience and
- * redirect URIs is that domain, and a user-facing client admits that
- * domain's members alone (core `renderOidcAuthorizationPolicies`). The
- * provider is written under lib/domains.js `withDomainRendering` — the
- * lock every write of the members' policies takes — with the members read
- * under it: a membership change rendered meanwhile is never undone here.
+ * redirect URIs is that domain, and a user-facing client has its own
+ * authorization policy (core `renderOidcClientPolicies`): that domain's
+ * members, and its external members granted the client (a Gatekeeper grant
+ * `resourceType: 'oidc-client'`, rendered by lib/domains.js into users.yml's
+ * owned groups). The provider is written under lib/domains.js
+ * `withDomainRendering` — the one writer of what members may do — with the
+ * domains read under it.
  *
  * Best effort by design where a plugin lifecycle calls it: a failure here
  * must not fail the plugin operation — the caller logs it and the next
@@ -47,11 +49,16 @@ import {
 } from '@lamalibre/lamaste/server';
 
 import { updateOidcProvider } from './authelia.js';
+import { listGrantsOfType } from './gatekeeper-client.js';
+import { OIDC_CLIENT_RESOURCE, isUserFacingOidcClient } from './owned-groups.js';
 import { pluginDomainOr, primaryDomainName, withDomainRendering } from './domains.js';
 import { readPlugins } from './plugins.js';
 import { readRegistryCredentialConfig } from './registry-credential.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
+
+/** The names of the domains a rendering read. */
+const names = (domains) => domains.map((d) => d.name);
 
 /**
  * The OIDC clients every installed plugin declares, tagged with the plugin
@@ -206,7 +213,7 @@ export async function syncOidcClients(logger) {
       return {
         served: plan.served,
         reconciled: secrets,
-        result: await updateOidcProvider(domains, plan.served, {
+        result: await updateOidcProvider(names(domains), plan.served, {
           secretDigests: secrets.digests,
           scopes: plan.scopes,
         }),
@@ -232,16 +239,37 @@ export async function syncOidcClients(logger) {
 
 /**
  * Metadata of a plugin's OIDC clients: what the manifest declares, whether
- * it is served, and — for confidential clients — when the secret was
- * created and last rotated. Never the secret.
+ * it is served, whether it signs users in (`userFacing`) and — for those —
+ * the Gatekeeper grants on it (`grants`: who among the external members of
+ * its domain may sign in with it; members of the domain always may; null
+ * when Gatekeeper cannot be read), and — for confidential clients — when
+ * the secret was created and last rotated. Never the secret.
  * @param {string} pluginName
  */
 export async function listPluginOidcClients(pluginName) {
   const declared = (await collectPluginOidcClients()).filter((c) => c.plugin === pluginName);
   const secrets = new Map((await listOidcClientSecrets(STATE_DIR)).map((m) => [m.id, m]));
+  const grants = declared.some(isUserFacingOidcClient)
+    ? await listGrantsOfType(OIDC_CLIENT_RESOURCE)
+    : null;
   return declared.map((client) => {
     const secret = client.confidential ? (secrets.get(client.id) ?? null) : null;
     return {
+      userFacing: isUserFacingOidcClient(client),
+      ...(isUserFacingOidcClient(client)
+        ? {
+            grants: grants?.ok
+              ? grants.grants
+                  .filter((g) => g.resourceId === client.id)
+                  .map((g) => ({
+                    grantId: g.grantId,
+                    principalType: g.principalType,
+                    principalId: g.principalId,
+                    createdAt: g.createdAt,
+                  }))
+              : null,
+          }
+        : {}),
       id: client.id,
       name: client.name ?? null,
       confidential: client.confidential,
@@ -288,7 +316,7 @@ export async function rotatePluginOidcClientSecret(pluginName, clientId, logger)
       const secret = await rotateOidcClientSecret(STATE_DIR, clientId);
       if (client.enabled) {
         const { served, scopes } = await planOidcClients();
-        await updateOidcProvider(domains, served, {
+        await updateOidcProvider(names(domains), served, {
           secretDigests: await readOidcClientSecretDigests(STATE_DIR),
           scopes,
         });

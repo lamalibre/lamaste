@@ -2,13 +2,15 @@
  * The relay's base domains and their members (the multi-domain relay,
  * lib/domains.js). Admin only (mTLS).
  *
- *   GET    /api/domains                          domains, member counts, what uses each
+ *   GET    /api/domains                          domains, member counts (members, external), what uses each
  *   POST   /api/domains                          add one (`pending`)
  *   POST   /api/domains/:name/verify-dns         does auth.<domain> resolve here?
  *   POST   /api/domains/:name/activate           issue auth.<domain>, serve its sign-in
  *   DELETE /api/domains/:name                    remove an unused, non-primary domain
- *   GET    /api/domains/:name/members            its members
- *   PUT    /api/domains/:name/members/:user      make a user (id or username) a member
+ *   GET    /api/domains/:name/members            its members, each with the membership's kind
+ *   PUT    /api/domains/:name/members/:user      make a user (id or username) a member —
+ *                                                `{ kind: 'member' | 'external' }`, member
+ *                                                unless named; another kind changes it
  *   DELETE /api/domains/:name/members/:user      end a membership
  *   PUT    /api/plugins/:name/domain             move a plugin to another domain
  *
@@ -17,7 +19,7 @@
  */
 
 import { z } from 'zod';
-import { DomainNameSchema } from '@lamalibre/lamaste';
+import { DomainNameSchema, MEMBERSHIP_KINDS } from '@lamalibre/lamaste';
 import { actorFromRequest } from '../../lib/actor.js';
 import { sendFailure } from '../../lib/app-error.js';
 import {
@@ -38,6 +40,7 @@ const NameParamSchema = z.object({ name: DomainNameSchema });
 // `user`: a directory id or a username (lib/domains.js decides which).
 const MemberParamsSchema = z.object({ name: DomainNameSchema, user: z.string().min(1).max(64) });
 const AddDomainSchema = z.object({ name: DomainNameSchema }).strict();
+const MemberBodySchema = z.object({ kind: z.enum(MEMBERSHIP_KINDS).optional() }).strict();
 const PluginParamSchema = z.object({ name: z.string().min(1).max(200) });
 const PluginDomainSchema = z.object({ domain: DomainNameSchema }).strict();
 
@@ -112,8 +115,10 @@ export default async function domainRoutes(fastify) {
 
   fastify.put('/domains/:name/members/:user', admin, async (request, reply) => {
     const { name, user } = MemberParamsSchema.parse(request.params);
+    const { kind } = MemberBodySchema.parse(request.body ?? {});
     try {
       return await addDomainMember(name, user, {
+        ...(kind ? { kind } : {}),
         actor: actorFromRequest(request),
         logger: request.log,
       });

@@ -1,14 +1,16 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import {
-  DomainNameSchema,
-  USERNAME_MAX_LENGTH,
-  USERNAME_MIN_LENGTH,
-  USERNAME_REGEX,
-} from '@lamalibre/lamaste';
+import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamalibre/lamaste';
 import { readInvitations, withInvitationsLock, writeInvitations } from '../../lib/state.js';
 import { readUsersRaw } from '../../lib/authelia.js';
-import { domainsForNewUser, invitationSignInDomain } from '../../lib/domains.js';
+import {
+  MembershipInputSchema,
+  assertAssignableGroups,
+  domainsForNewUser,
+  externalMemberGroupsError,
+  invitationMemberships,
+  invitationSignInDomain,
+} from '../../lib/domains.js';
 import { sendFailure } from '../../lib/app-error.js';
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
@@ -25,11 +27,15 @@ const CreateInvitationSchema = z.object({
       'Username must start with a lowercase letter or digit and may contain underscores or hyphens',
     ),
   email: z.string().email(),
-  groups: z.array(z.string()).optional().default([]),
+  // Authelia groups (`admins`, `feria-*`): letters, digits, "-" and "_" —
+  // never for an external member.
+  groups: z.array(z.string()).max(100).optional().default([]),
   expiresInDays: z.number().int().min(1).max(30).optional().default(7),
-  // The domains the user becomes a member of on accepting. Required while
-  // the relay has two or more; with one, the user becomes its member.
-  domains: z.array(DomainNameSchema).max(50).optional(),
+  // The domains the user becomes a member of on accepting — a name (a
+  // member) or `{ name, kind }` (an external member reaches only what names
+  // them). Required while the relay has two or more; with one, the user
+  // becomes its member.
+  domains: z.array(MembershipInputSchema).max(50).optional(),
 });
 
 export default async function invitationRoutes(fastify, _opts) {
@@ -46,6 +52,7 @@ export default async function invitationRoutes(fastify, _opts) {
         const enriched = invitations.map((inv) => ({
           ...inv,
           token: undefined,
+          domains: invitationMemberships(inv),
           status: inv.used ? 'accepted' : new Date(inv.expiresAt) < now ? 'expired' : 'pending',
         }));
         return { invitations: enriched };
@@ -66,7 +73,11 @@ export default async function invitationRoutes(fastify, _opts) {
       const body = CreateInvitationSchema.parse(request.body);
       let domains;
       try {
+        assertAssignableGroups(body.groups);
         domains = await domainsForNewUser(body.domains, { required: true });
+        if (body.groups.length > 0 && domains.some((m) => m.kind === 'external')) {
+          throw externalMemberGroupsError(400);
+        }
       } catch (err) {
         return sendFailure(request, reply, err, 'Failed to read the domains');
       }

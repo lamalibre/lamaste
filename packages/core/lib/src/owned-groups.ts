@@ -118,8 +118,9 @@ function assertUsername(username: string): void {
  *   who are **external** members of its domain — members reach those through
  *   their domain's group already.
  *
- * Throws on a username that is not a Lamaste username and on a user who is
- * both a member and an external member of one domain. Pure.
+ * A listed user or a grant's principal who is none of the domain's people
+ * is ignored. Throws on a member or external member who is not a Lamaste
+ * username and on a user who is both on one domain. Pure.
  */
 export function renderOwnedGroups(input: OwnedGroupsInput): Map<string, string[]> {
   const names = input.domains.map((d) => d.name);
@@ -151,11 +152,10 @@ export function renderOwnedGroups(input: OwnedGroupsInput): Map<string, string[]
   ): string[] => {
     const domain = domainOfHost(host, names);
     const p = domain === null ? undefined : people.get(domain);
-    if (!p) return [];
-    return users.filter((u) => {
-      assertUsername(u);
-      return admit(p, u);
-    });
+    // Only the domain's people are kept — every one a checked username — so
+    // a listed name or a grant's principal that is none of them (a typo, a
+    // user of another domain) names nobody rather than failing the render.
+    return p ? users.filter((u) => admit(p, u)) : [];
   };
 
   for (const site of input.sites) {
@@ -171,10 +171,7 @@ export function renderOwnedGroups(input: OwnedGroupsInput): Map<string, string[]
   for (const client of input.clientGrants) {
     const group = oidcClientGroup(client.clientId);
     const p = people.get(client.domain);
-    for (const u of client.users) {
-      assertUsername(u);
-      if (p?.externals.has(u)) give(u, group);
-    }
+    for (const u of client.users) if (p?.externals.has(u)) give(u, group);
   }
 
   return new Map([...out].map(([u, groups]) => [u, [...groups].sort()]));

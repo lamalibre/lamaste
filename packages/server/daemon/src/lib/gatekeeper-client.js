@@ -231,17 +231,33 @@ function groupOf(raw) {
  * @param {string} resourceId
  * @returns {Promise<{ ok: true, grants: GatekeeperGrant[] } | Extract<GatekeeperResult, { ok: false }>>}
  */
-export async function listResourceGrants(resourceType, resourceId) {
-  const qs = new URLSearchParams({ resourceType, resourceId }).toString();
+export function listResourceGrants(resourceType, resourceId) {
+  return listGrantsMatching({ resourceType, resourceId });
+}
+
+/**
+ * Every grant on resources of `resourceType` (`tunnel`, `site`,
+ * `oidc-client`, …).
+ *
+ * @param {string} resourceType
+ * @returns {Promise<{ ok: true, grants: GatekeeperGrant[] } | Extract<GatekeeperResult, { ok: false }>>}
+ */
+export function listGrantsOfType(resourceType) {
+  return listGrantsMatching({ resourceType });
+}
+
+/** The grants matching `filter` (its fields are Gatekeeper's query filters). */
+async function listGrantsMatching(filter) {
+  const qs = new URLSearchParams(filter).toString();
   const result = await gatekeeperRequest('GET', `/api/grants?${qs}`);
   if (!result.ok) return result;
   if (!isRecord(result.data) || !Array.isArray(result.data.grants)) return malformed('its grants');
   const grants = result.data.grants.map(grantOf);
   if (grants.some((g) => g === null)) return malformed('its grants');
-  // Gatekeeper filters by the query; a grant on anything else is not this resource's.
+  // Gatekeeper filters by the query; a grant on anything else is not one asked for.
   return {
     ok: true,
-    grants: grants.filter((g) => g.resourceType === resourceType && g.resourceId === resourceId),
+    grants: grants.filter((g) => Object.entries(filter).every(([key, value]) => g[key] === value)),
   };
 }
 

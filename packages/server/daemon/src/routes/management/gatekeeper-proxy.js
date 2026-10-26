@@ -21,13 +21,23 @@
  * cannot be) — a reused username inherits nothing. The access log is purged
  * for one username by POST, its name in the body (never in a URL, which
  * logs keep).
+ *
+ * Grants and groups also decide what external members of a domain reach
+ * (packages/core/docs/external-members-design.md): after every change that
+ * went through, the domains are rendered (users.yml's owned groups — the
+ * restricted hosts and OIDC clients that name each external member), and a
+ * user whose OIDC client grant ended loses the registry tokens it no longer
+ * reaches. A grant on an OIDC client (`resourceType: 'oidc-client'`) must
+ * name a user-facing client an installed plugin declares.
  */
 
 import { recomputeAudiences } from '../../lib/audience.js';
-import { withUsernamesForGrants } from '../../lib/directory.js';
+import { findDirectoryUser, withUsernamesForGrants } from '../../lib/directory.js';
+import { revokeRegistryTokensFor, syncDomainAccess } from '../../lib/domains.js';
 import { checkProxiedGrant } from '../../lib/entitlements.js';
 import { actorFromRequest } from '../../lib/actor.js';
 import { gatekeeperRequest } from '../../lib/gatekeeper-client.js';
+import { OIDC_CLIENT_RESOURCE, checkOidcClientGrant } from '../../lib/owned-groups.js';
 
 /** Gatekeeper's `path`, with the request's query string when it has one. */
 function withQuery(path, request) {
@@ -55,18 +65,51 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
     };
   };
 
-  /** When Gatekeeper took a grant or group change, the plugin audiences follow it. */
-  const followAudiences = async (request, answer) => {
-    if (answer.statusCode < 400) await recomputeAudiences({ logger: request.log });
+  /**
+   * When Gatekeeper took a grant or group change: the plugin audiences and
+   * the domains' rendering follow it, and each of `narrowed` (usernames
+   * whose grants may have shrunk) that no longer reaches the registry's
+   * sign-in loses its registry tokens — all before the answer goes back.
+   */
+  const followChange = async (request, answer, narrowed = []) => {
+    if (answer.statusCode >= 400) return answer;
+    await recomputeAudiences({ logger: request.log });
+    await syncDomainAccess({ logger: request.log }).catch((err) => {
+      request.log.warn({ err: err.message }, 'Rendering domain access after a grant change failed');
+    });
+    for (const username of new Set(narrowed)) {
+      const known = await findDirectoryUser(username);
+      if (known) await revokeRegistryTokensFor(username, known.userId, request.log);
+    }
     return answer;
   };
 
   /**
    * A grant or group change: forwarded, and when Gatekeeper took it, the
-   * plugin audiences follow it before the answer goes back.
+   * plugin audiences and the domains follow it before the answer goes back.
    */
-  const proxyChange = async (request, method, gatekeeperPath, body) =>
-    followAudiences(request, await proxy(method, gatekeeperPath, body));
+  const proxyChange = async (request, method, gatekeeperPath, body, narrowed = []) =>
+    followChange(request, await proxy(method, gatekeeperPath, body), narrowed);
+
+  /** The usernames a grant reaches now: its user, or its Lamaste group's members. */
+  const grantReach = async (grant) => {
+    if (!grant) return [];
+    if (grant.principalType === 'user') return [grant.principalId];
+    return groupMembers(grant.principalId);
+  };
+
+  /** The members of Lamaste group `name` now ([] when Gatekeeper cannot say). */
+  const groupMembers = async (name) => {
+    const { statusCode, data } = await proxy('GET', `/api/groups/${encodeURIComponent(name)}`);
+    const members = statusCode < 400 ? data?.group?.members : null;
+    return Array.isArray(members) ? members.filter((m) => typeof m === 'string') : [];
+  };
+
+  /** The grant `grantId` names, or null. */
+  const grantOf = async (grantId) => {
+    const { statusCode, data } = await proxy('GET', `/api/grants/${encodeURIComponent(grantId)}`);
+    return statusCode < 400 ? (data?.grant ?? null) : null;
+  };
 
   /**
    * Give something to `usernames` in Gatekeeper: forwarded holding the
@@ -85,7 +128,7 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
       if (!Number.isInteger(err.statusCode)) throw err;
       return { statusCode: err.statusCode, data: { error: err.message, code: err.code } };
     }
-    return followAudiences(request, answer);
+    return followChange(request, answer);
   };
 
   // --- Groups ---
@@ -123,6 +166,8 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
       request,
       'DELETE',
       `/api/groups/${encodeURIComponent(name)}`,
+      undefined,
+      await groupMembers(name),
     );
     return reply.code(statusCode).send(data);
   });
@@ -148,6 +193,8 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
       request,
       'DELETE',
       `/api/groups/${encodeURIComponent(name)}/members/${encodeURIComponent(username)}`,
+      undefined,
+      [username],
     );
     return reply.code(statusCode).send(data);
   });
@@ -164,7 +211,7 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
   fastify.post('/gatekeeper/grants', async (request, reply) => {
     let body;
     try {
-      body = await checkProxiedGrant(request.body);
+      body = await checkOidcClientGrant(await checkProxiedGrant(request.body));
     } catch (err) {
       if (!Number.isInteger(err.statusCode)) throw err;
       return reply.code(err.statusCode).send({
@@ -189,10 +236,13 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
 
   fastify.delete('/gatekeeper/grants/:grantId', async (request, reply) => {
     const { grantId } = request.params;
+    const grant = await grantOf(grantId);
     const { statusCode, data } = await proxyChange(
       request,
       'DELETE',
       `/api/grants/${encodeURIComponent(grantId)}`,
+      undefined,
+      grant?.resourceType === OIDC_CLIENT_RESOURCE ? await grantReach(grant) : [],
     );
     return reply.code(statusCode).send(data);
   });
@@ -200,10 +250,19 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
   // Bulk-revoke every grant for a principal. Forwarded to gatekeeper as
   // DELETE /api/grants?principalType=...&principalId=...
   fastify.delete('/gatekeeper/grants', async (request, reply) => {
+    const { principalType, principalId } = request.query ?? {};
+    const narrowed =
+      typeof principalId !== 'string'
+        ? []
+        : principalType === 'group'
+          ? await groupMembers(principalId)
+          : [principalId];
     const { statusCode, data } = await proxyChange(
       request,
       'DELETE',
       withQuery('/api/grants', request),
+      undefined,
+      narrowed,
     );
     return reply.code(statusCode).send(data);
   });

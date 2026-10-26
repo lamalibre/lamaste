@@ -14,15 +14,16 @@
  *
  * users.yml is never written from here. Every write of it goes through
  * {@link changeUsers}: one in-process lock around the read-modify-write,
- * then the directory is reconciled against the file, then Authelia
- * restarts, then the plugins' audiences are recomputed. The reconcile
- * ({@link reconcileDirectory}) also runs at start, every minute and after
- * onboarding — read only: writing users.yml restarts Authelia and ends
- * every session. It adopts what changed outside Lamaste (Authelia's own
- * password reset rewrites the file; an operator may edit it), and only
- * after reading the file twice does it take a user for deleted outside —
- * Authelia rewrites the file in place, and a read that met a half-written
- * file must not tombstone anyone.
+ * then the directory is reconciled against the file, then the domains are
+ * rendered (the groups Lamaste owns in users.yml among them — Authelia
+ * watches the file and applies a change at each user's next request, with
+ * no restart: no session ends), then the plugins' audiences are
+ * recomputed. The reconcile ({@link reconcileDirectory}) also runs at
+ * start, every minute and after onboarding — read only. It adopts what
+ * changed outside Lamaste (Authelia's own password reset rewrites the file;
+ * an operator may edit it), and only after reading the file twice does it
+ * take a user for deleted outside — Authelia rewrites the file in place,
+ * and a read that met a half-written file must not tombstone anyone.
  *
  * Gatekeeper keys users by username too: the grants naming a user and
  * their memberships of Lamaste groups would pass to anyone who later holds
@@ -60,22 +61,20 @@
  * the domains they are created with (`changeUsers`' `domains`) — or, while
  * the relay has one domain, of that one, whoever created them; a removed
  * user's memberships end in the same transaction. Every `changeUsers`
- * renders the domains' members into Authelia and Gatekeeper's projection
- * before Authelia restarts.
+ * renders the domains' members into users.yml's owned groups, Gatekeeper's
+ * projection and Authelia's configuration.
  *
  * Audit entries name users by their id alone: never a username, a name or
  * an address.
  */
 
 import crypto from 'node:crypto';
-import { PromiseChainMutex } from '@lamalibre/lamaste';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
 import {
   autheliaHoldsOidcIdentity,
   purgeAutheliaUserSecondFactors,
   readUsersRaw,
-  reloadAuthelia,
 } from './authelia.js';
 import { bumpUserEpoch } from './config.js';
 import {
@@ -93,6 +92,7 @@ import { revokeUserRegistryTokens } from './registry-credential.js';
 import { getStateDb } from './state-db.js';
 import { readInvitations, withInvitationsLock, writeInvitations } from './state.js';
 import { removeGrantsForUser } from './user-access.js';
+import { withUsersLock } from './users-lock.js';
 
 /** How long the reconcile waits before reading users.yml again to confirm a user is gone. */
 const DIRECTORY_CONFIRM_DELAY_MS = 500;
@@ -130,25 +130,6 @@ export const ADMIN_GROUP = 'admins';
  *   in memory only — never logged or audited with the username
  * @property {string[]} disabled the ids of users this reconcile saw become disabled
  */
-
-// ---------------------------------------------------------------------------
-// The users lock
-// ---------------------------------------------------------------------------
-
-const usersMutex = new PromiseChainMutex();
-
-/**
- * Run `fn` holding the users lock — the one lock around every
- * read-modify-write of users.yml and every change of the directory in this
- * process (core's users functions take none).
- *
- * @template T
- * @param {() => Promise<T>} fn
- * @returns {Promise<T>}
- */
-function withUsersLock(fn) {
-  return usersMutex.run(fn);
-}
 
 // ---------------------------------------------------------------------------
 // Reading
@@ -679,7 +660,7 @@ async function reconcileUnlocked({
  * before the username is given to anyone). Each step is best effort; what
  * failed comes back as `warnings` (`{ step, message }`, never naming the
  * user). Gatekeeper's cached session verdicts are not dropped here: the
- * caller does that once, after Authelia restarted where it restarts it.
+ * caller does that once, after the domains were rendered.
  *
  * @param {string} userId
  * @param {{ kind: 'disabled' | 'deleted', actor: string, logger?: import('pino').Logger }} opts
@@ -826,15 +807,18 @@ export function reconcileDirectory({ actor = 'lamaste', logger, confirmDelayMs }
  *    `mutate` deletes: removed as `deleted`; `domains` the domains of the
  *    users it creates — lib/domains.js), offboarding every user that
  *    reconcile saw removed or newly disabled ({@link offboardUserUnlocked});
- * 4. render the domains' members (lib/domains.js `syncDomainAccess`), then
- *    restart Authelia (unless `restartAuthelia` is false: onboarding starts
- *    it next; or the rendering restarted it already) — which ends every
- *    session — and drop Gatekeeper's cached session verdicts with them;
+ * 4. render the domains' members (lib/domains.js `syncDomainAccess`: the
+ *    owned groups in users.yml, the projection, Authelia's configuration)
+ *    and drop Gatekeeper's cached session verdicts. Authelia is not
+ *    restarted: it watches users.yml, and every user's next request sees
+ *    the change — a disabled or deleted user's session ends there. With
+ *    `renderDomains: false` (onboarding, before any domain or Gatekeeper
+ *    exists) neither happens: the caller renders;
  * 5. with `expect` (`(users) => boolean` over users.yml's `users` map: does
  *    the file hold the intended change?), read users.yml again: Authelia's
- *    own password reset rewrites the file from what it read at start, so a
- *    write made just before its restart can be lost. When the change is not
- *    there it is made once more (steps 3 and 4); when it is still not
+ *    own password reset rewrites the file from what it last read, so a
+ *    write made within its reload cooldown can be lost. When the change is
+ *    not there it is made once more (steps 3 and 4); when it is still not
  *    there, `persisted` is false and a `persist` warning says so.
  *
  * Then the plugins' audiences are recomputed. A refusal `mutate` (or step
@@ -845,7 +829,7 @@ export function reconcileDirectory({ actor = 'lamaste', logger, confirmDelayMs }
  *
  * @template T
  * @param {() => Promise<T>} mutate
- * @param {{ actor: string, logger?: import('pino').Logger, creates?: string[], deleted?: string[], domains?: Readonly<Record<string, readonly string[]>>, restartAuthelia?: boolean, autheliaStorage?: boolean, confirmDelayMs?: number, expect?: (users: Record<string, unknown>) => boolean }} opts
+ * @param {{ actor: string, logger?: import('pino').Logger, creates?: string[], deleted?: string[], domains?: Readonly<Record<string, ReadonlyArray<string | { name: string, kind: 'member' | 'external' }>>>, renderDomains?: boolean, autheliaStorage?: boolean, confirmDelayMs?: number, expect?: (users: Record<string, unknown>) => boolean }} opts
  * @returns {Promise<{ result: T, directory: DirectoryReconcileResult | null, warnings: Array<{ step: string, message: string }>, persisted: boolean }>}
  */
 export async function changeUsers(
@@ -856,7 +840,7 @@ export async function changeUsers(
     creates = [],
     deleted = [],
     domains = {},
-    restartAuthelia = true,
+    renderDomains = true,
     autheliaStorage = true,
     confirmDelayMs,
     expect,
@@ -896,27 +880,16 @@ export async function changeUsers(
     return reconciled;
   };
 
-  const restart = async () => {
-    let restarted = false;
+  const render = async () => {
+    if (!renderDomains) return;
     try {
-      restarted = (await syncDomainAccess({ logger })).changed;
+      await syncDomainAccess({ logger });
     } catch (err) {
       logger?.error({ err: err.message }, 'Rendering domain access after a users change failed');
       warnings.push({
         step: 'domains',
         message: `Who may reach each domain was not rendered (${err.message}); the panel renders it again within a minute`,
       });
-    }
-    if (!restartAuthelia) return;
-    if (restarted) {
-      warnings.push(...(await bustCachedSessions(logger)));
-      return;
-    }
-    try {
-      await reloadAuthelia();
-    } catch (err) {
-      logger?.warn({ err: err.message }, 'Failed to restart Authelia after a users change');
-      warnings.push({ step: 'authelia', message: `Authelia was not restarted: ${err.message}` });
     }
     warnings.push(...(await bustCachedSessions(logger)));
   };
@@ -949,13 +922,13 @@ export async function changeUsers(
     }
     let value = await mutate();
     let reconciled = await settle();
-    await restart();
+    await render();
 
     let persisted = true;
     if (expect && !(await holds())) {
       // Authelia rewrote users.yml over the change (its own password reset
-      // writes the file from what it read at start): make it once more.
-      logger?.warn('users.yml lost a change while Authelia restarted — making it again');
+      // writes the file from what it last read): make it once more.
+      logger?.warn('users.yml lost a change to a write of Authelia — making it again');
       try {
         value = await mutate();
         const again = await settle();
@@ -969,7 +942,7 @@ export async function changeUsers(
               }
             : again;
         }
-        await restart();
+        await render();
         persisted = await holds();
       } catch (err) {
         logger?.warn({ err: err.message }, 'Making a lost users change again failed');
