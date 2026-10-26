@@ -1722,8 +1722,9 @@ export async function domainUsage(name) {
 /**
  * Remove domain `name`: refused for the primary (400 `primary_domain`) and
  * while anything uses it (409 `domain_in_use` with `usedBy`). Its
- * memberships end (audited, reason `domain-removed`), its auth vhost goes,
- * and the rest is rendered without it.
+ * memberships end (audited, reason `domain-removed`), its brand and the
+ * brand's rendered directory go (lib/auth-branding.js), its auth vhost
+ * goes, and the rest is rendered without it.
  *
  * @param {string} name
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
@@ -1742,20 +1743,35 @@ export async function removeDomain(name, { actor, logger }) {
     if (tunnels.length + sites.length + plugins.length > 0 || registry) {
       throw httpError(`Domain '${name}' is in use`, 409, { code: 'domain_in_use', usedBy });
     }
-    const members = inTransaction(db, () => {
+    const { members, branded } = inTransaction(db, () => {
       const ended = db
         .prepare('DELETE FROM domain_members WHERE domain = ? RETURNING user_id')
         .all(name)
         .map((r) => r.user_id);
+      // Its brand goes with it (the table cascades too; explicit so no
+      // pragma decides): the rendered directory is removed below.
+      const brand = db.prepare('DELETE FROM domain_branding WHERE domain = ?').run(name);
       db.prepare('DELETE FROM domains WHERE name = ?').run(name);
       db.prepare(
         `INSERT INTO retired_domains (name, removed_at) VALUES (?, ?)
          ON CONFLICT (name) DO UPDATE SET removed_at = excluded.removed_at`,
       ).run(name, new Date().toISOString());
-      return ended;
+      return { members: ended, branded: brand.changes > 0 };
     });
-    return { active: domain.status === 'active', members };
+    return { active: domain.status === 'active', members, branded };
   });
+  if (removed.branded) {
+    await recordAuditBestEffort(
+      {
+        actor,
+        action: 'domain.branding.removed',
+        details: { domain: name, reason: 'domain-removed' },
+      },
+      logger,
+    );
+    const { removeRenderedBranding } = await import('./auth-branding.js');
+    await removeRenderedBranding(name, { actor, logger });
+  }
   for (const userId of removed.members) {
     await recordAuditBestEffort(
       {

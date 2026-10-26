@@ -50,6 +50,7 @@ import {
   renameLegacyVhosts,
 } from './lib/vhost-reconcile.js';
 import { activeDomains, ensurePrimaryDomain, syncDomainAccess } from './lib/domains.js';
+import { ensureBrandingBase, reconcileAuthBranding } from './lib/auth-branding.js';
 import { touchUsersFile } from './lib/authelia.js';
 import { reconcileWebSurfaces } from './lib/web-surface.js';
 import {
@@ -238,6 +239,13 @@ async function start() {
   // written Authelia's configuration.
   if (config.onboarding.status === 'COMPLETED') {
     void (async () => {
+      // First what the branded sign-in needs from Authelia — its asset
+      // path, the placeholder logo and an explicit theme: the one
+      // structural change the upgrade makes, one restart — so the
+      // renderings below find it in place.
+      await ensureBrandingBase({ logger: server.log }).catch((err) => {
+        server.log.warn({ err: err.message }, 'Startup Authelia branding base failed');
+      });
       await syncDomainAccess({ logger: server.log }).catch((err) => {
         server.log.warn({ err: err.message }, 'Startup domain access rendering failed');
       });
@@ -247,6 +255,9 @@ async function start() {
       await syncOidcClients(server.log).catch((err) => {
         server.log.warn({ err: err.message }, 'Startup OIDC client sync failed');
       });
+      // The brands' rendered directories in line with their records (a
+      // restored backup, a pin bump, a change a crash cut short).
+      await reconcileAuthBranding({ logger: server.log });
     })();
   }
 
