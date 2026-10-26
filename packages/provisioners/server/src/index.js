@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs';
 import { Listr } from 'listr2';
 import chalk from 'chalk';
 import { execa } from 'execa';
-import { detectOS, detectIP, checkRoot } from './lib/env.js';
+import { detectOS, detectIP, checkRoot, installedPanelIp } from './lib/env.js';
 import { printSummary } from './lib/summary.js';
 import { readPanelKeyPin } from './lib/panel-pin.js';
 import { hardenTasks } from './tasks/harden.js';
@@ -485,6 +485,13 @@ export async function main() {
             {
               title: 'Detecting IP address',
               task: async (_ctx, subtask) => {
+                // A redeploy keeps the installed relay's IP (installedPanelIp).
+                const installedIp = flags.forceFull ? null : await installedPanelIp();
+                if (installedIp) {
+                  ctx.ip = installedIp;
+                  subtask.output = `${installedIp} (the installed relay's, from panel.json)`;
+                  return;
+                }
                 ctx.ip = await detectIP({ allowPrivate: flags.dev });
                 if (flags.dev) {
                   subtask.output = `${ctx.ip} (dev mode — private IP accepted)`;

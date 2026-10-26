@@ -123,6 +123,25 @@ function isPublicIP(ip) {
  * Verify the process is running as root.
  * @throws {Error} if not root
  */
+/**
+ * The IP an installed relay was set up with (`panel.json` `ip`), or null —
+ * no install, no readable file, or no valid IPv4 in it. A redeploy keeps
+ * it: the panel's IP certificate, agents and admins know the relay by it,
+ * and detecting again could change it (or fail, where the installer's
+ * public-IP check does not hold — a dev install on a private address).
+ *
+ * @param {string} [panelJsonPath]
+ * @returns {Promise<string | null>}
+ */
+export async function installedPanelIp(panelJsonPath = '/etc/lamalibre/lamaste/panel.json') {
+  try {
+    const { ip } = JSON.parse(await readFile(panelJsonPath, 'utf8'));
+    return typeof ip === 'string' && isValidIPv4(ip) ? ip : null;
+  } catch {
+    return null;
+  }
+}
+
 export function checkRoot() {
   if (process.getuid() !== 0) {
     throw new Error(
