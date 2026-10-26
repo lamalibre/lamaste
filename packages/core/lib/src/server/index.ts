@@ -159,6 +159,20 @@ export type {
   VerifyDnsResult,
 } from './sites.js';
 
+// --- Access Control (deprecated since 4.7.0; removed in 5.0) ---
+export { syncAllAccessControl } from './access-control.js';
+export type {
+  SiteEntry as AccessControlSiteEntry,
+  PluginTunnelGrant,
+  TunnelEntry as AccessControlTunnelEntry,
+  AccessControlLogger,
+  AutheliaDeps as AccessControlAutheliaDeps,
+  GrantStateDeps,
+  TunnelStateDeps as AccessControlTunnelStateDeps,
+  SiteStateDeps as AccessControlSiteStateDeps,
+  SyncAccessControlOptions,
+} from './access-control.js';
+
 // --- Files (static site filesystem helpers) ---
 export {
   SITES_ROOT,
@@ -225,6 +239,8 @@ export {
   autheliaReady,
   isAutheliaRunning,
   updateDomainAccess as updateAutheliaDomainAccess,
+  /** @deprecated Since 4.7.0 (a 4.6 serverd's call); removed in 5.0. */
+  updateAccessControl as updateAutheliaAccessControl,
   updateOidcProvider as updateAutheliaOidcProvider,
   isOidcIssuerKeyProvisioned as isAutheliaOidcIssuerKeyProvisioned,
   renderOidcClient,

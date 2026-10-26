@@ -693,6 +693,63 @@ function sameConfig(a: unknown, b: unknown): boolean {
   }
 }
 
+/**
+ * Update the Authelia access_control configuration based on protected sites.
+ *
+ * Replaces the access_control section with per-site rules and restarts
+ * Authelia (see {@link rewriteAutheliaConfig}).
+ *
+ * @deprecated Since 4.7.0: the 4.6 rendering (no domains, `default_policy:
+ * two_factor`), kept so a 4.6 serverd that resolves this core keeps
+ * working; a 4.7 relay uses {@link updateDomainAccess}, and nothing in 4.7
+ * calls this. Removed in 5.0.
+ */
+export async function updateAccessControl(
+  sites: readonly ProtectedSiteRule[],
+  exec: ExecFn,
+): Promise<void> {
+  await rewriteAutheliaConfig((currentConfig) => {
+    // Build access_control rules from protected sites.
+    const rules: Array<Record<string, unknown>> = [];
+
+    for (const site of sites) {
+      if (!site.autheliaProtected) continue;
+      const allowedUsers = site.allowedUsers ?? [];
+      const hasUserList = allowedUsers.length > 0;
+      if (!hasUserList && !site.restrictAccess) continue;
+
+      if (hasUserList) {
+        rules.push({
+          domain: site.fqdn,
+          policy: 'two_factor',
+          subject: allowedUsers.map((u) => ['user:' + u]),
+        });
+      }
+
+      rules.push({
+        domain: site.fqdn,
+        policy: 'two_factor',
+        subject: [['group:admins']],
+      });
+
+      rules.push({
+        domain: site.fqdn,
+        policy: 'deny',
+      });
+    }
+
+    const accessControl: { default_policy: string; rules?: Array<Record<string, unknown>> } = {
+      default_policy: 'two_factor',
+    };
+
+    if (rules.length > 0) {
+      accessControl.rules = rules;
+    }
+
+    currentConfig.access_control = accessControl;
+  }, exec);
+}
+
 /** What the relay's domains need from Authelia: one entry per active domain. */
 export interface DomainAccess {
   /** The active domains with their active members (usernames). */

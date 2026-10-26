@@ -32,7 +32,8 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node --test test/*.test.js"
   },
   "repository": {
     "type": "git",
