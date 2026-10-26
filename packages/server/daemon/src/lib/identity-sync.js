@@ -910,6 +910,10 @@ export async function identityTick(logger) {
         }
         lastOidcSyncError = err.message;
       }
+      // The brands' renderings, as their records now say: a rendering a
+      // failure left behind is tried again (compare-first; never throws).
+      const { reconcileAuthBranding } = await import('./auth-branding.js');
+      await reconcileAuthBranding({ logger });
     }
     await clearPendingPrincipals({ logger });
     await recomputeAudiences({ logger });
