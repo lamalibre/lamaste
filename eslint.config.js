@@ -47,6 +47,7 @@ export default [
       'packages/sdks/cloud/bin/**/*.js',
       'packages/sdks/gatekeeper/test/**/*.js',
       'packages/core/docs/scripts/**/*.js',
+      'packages/core/lib/test/**/*.js',
       'packages/*/*/vite.config.js',
       'scripts/**/*.js',
       'packages/tools/lamaste-rodeo/**/*.js',

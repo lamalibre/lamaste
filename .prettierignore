@@ -12,3 +12,6 @@ website/src/
 website/.vitepress/dist/
 website/.vitepress/cache/
 packages/clients/desktop/src-tauri/gen/schemas/
+
+# Verbatim upstream fixtures (Authelia theme CSS), never reformatted
+packages/core/lib/test/fixtures/*.css

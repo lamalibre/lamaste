@@ -1,0 +1,8 @@
+{
+  "_fixture": "Authelia v4.39.28 internal/server/locales/en/portal.json — an excerpt, values verbatim (https://raw.githubusercontent.com/authelia/authelia/v4.39.28/internal/server/locales/en/portal.json). Refresh when AUTHELIA_RELEASE.version is bumped.",
+  "Login - {{authelia}}": "Login - {{authelia}}",
+  "Powered by {{authelia}}": "Powered by {{authelia}}",
+  "Password": "Password",
+  "Sign in": "Sign in",
+  "You must view and accept the Privacy Policy before using {{authelia}}.": "You must view and accept the <policy>Privacy Policy</policy> before using {{authelia}}"
+}

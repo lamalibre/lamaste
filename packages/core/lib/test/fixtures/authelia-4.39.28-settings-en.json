@@ -1,0 +1,4 @@
+{
+  "_fixture": "Authelia v4.39.28 internal/server/locales/en/settings.json — an excerpt, values verbatim (https://raw.githubusercontent.com/authelia/authelia/v4.39.28/internal/server/locales/en/settings.json). Refresh when AUTHELIA_RELEASE.version is bumped.",
+  "Settings - {{authelia}}": "Settings - {{authelia}}"
+}
