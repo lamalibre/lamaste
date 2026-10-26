@@ -396,7 +396,7 @@
         },
         {
           "id": "step-23",
-          "label": "Agent-side grant auto-consumed (used=true)",
+          "label": "Agent-side grant created unconsumed (used=false): access, never swept",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -409,9 +409,9 @@
               },
               "expected": {
                 "kind": "literal",
-                "value": "true"
+                "value": "false"
               },
-              "message": "Agent-side grant auto-consumed (used=true)"
+              "message": "Agent-side grant created unconsumed (used=false): access, never swept"
             }
           },
           "when": {
@@ -441,7 +441,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"1. Grant creation with target field\"\n# ---------------------------------------------------------------------------\n\n# Check if user-access routes are available (requires serverd >= 0.1.28)\nUA_CHECK=$(api_get_status \"user-access/grants\")\nif [ \"$UA_CHECK\" = \"404\" ]; then\n  log_skip \"User-access routes not available (serverd too old) — skipping grant tests\"\n  HAS_USER_ACCESS=false\nelse\n  HAS_USER_ACCESS=true\nfi\n\nif [ \"$HAS_USER_ACCESS\" = \"true\" ]; then\n\n# Create a local grant (default target)\nLOCAL_STATUS=$(api_post_status \"user-access/grants\" '{\"username\":\"e2e-local\",\"pluginName\":\"@lamalibre/herd-server\"}')\nassert_eq \"$LOCAL_STATUS\" \"200\" \"Create local grant (default target)\" || true\n\n# Create an agent-side grant\nAGENT_RESULT=$(api_post \"user-access/grants\" \"{\\\"username\\\":\\\"e2e-agent\\\",\\\"pluginName\\\":\\\"@lamalibre/herd-server\\\",\\\"target\\\":\\\"agent:${AGENT_LABEL}\\\"}\" 2>/dev/null || echo '{\"error\":\"sync failed\"}')\nAGENT_GRANT_ID=$(echo \"$AGENT_RESULT\" | jq -r '.grant.grantId // empty' 2>/dev/null || echo \"\")\n\nif [ -n \"$AGENT_GRANT_ID\" ]; then\n  log_pass \"Create agent-side grant (target: agent:${AGENT_LABEL})\"\nelse\n  # May return 500 if Authelia sync fails in single-VM (expected without Authelia)\n  SYNC_ERR=$(echo \"$AGENT_RESULT\" | jq -r '.error // empty' 2>/dev/null || echo \"\")\n  if echo \"$SYNC_ERR\" | grep -qi \"authelia\\|sync\"; then\n    log_pass \"Agent-side grant created but Authelia sync failed (expected in single-VM without Authelia)\"\n    # Re-create without Authelia — the grant was saved despite sync error\n  else\n    log_fail \"Failed to create agent-side grant: ${AGENT_RESULT}\"\n  fi\nfi\n\n# List grants and verify target field\nGRANTS=$(api_get \"user-access/grants\" 2>/dev/null || echo '{\"grants\":[]}')\nHAS_TARGET=$(echo \"$GRANTS\" | jq '[.grants[] | select(.target != null)] | length' 2>/dev/null || echo \"0\")\nassert_not_eq \"$HAS_TARGET\" \"0\" \"Grants include target field\" || true\n\n# Verify agent-side grant is auto-consumed\nAGENT_GRANT=$(echo \"$GRANTS\" | jq \".grants[] | select(.target == \\\"agent:${AGENT_LABEL}\\\")\" 2>/dev/null || echo \"\")\nif [ -n \"$AGENT_GRANT\" ]; then\n  IS_USED=$(echo \"$AGENT_GRANT\" | jq -r '.used' 2>/dev/null || echo \"\")\n  assert_eq \"$IS_USED\" \"true\" \"Agent-side grant auto-consumed (used=true)\" || true\n  AGENT_GRANT_ID=$(echo \"$AGENT_GRANT\" | jq -r '.grantId' 2>/dev/null || echo \"\")\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"1. Grant creation with target field\"\n# ---------------------------------------------------------------------------\n\n# Check if user-access routes are available (requires serverd >= 0.1.28)\nUA_CHECK=$(api_get_status \"user-access/grants\")\nif [ \"$UA_CHECK\" = \"404\" ]; then\n  log_skip \"User-access routes not available (serverd too old) — skipping grant tests\"\n  HAS_USER_ACCESS=false\nelse\n  HAS_USER_ACCESS=true\nfi\n\nif [ \"$HAS_USER_ACCESS\" = \"true\" ]; then\n\n# Create a local grant (default target)\nLOCAL_STATUS=$(api_post_status \"user-access/grants\" '{\"username\":\"e2e-local\",\"pluginName\":\"@lamalibre/herd-server\"}')\nassert_eq \"$LOCAL_STATUS\" \"200\" \"Create local grant (default target)\" || true\n\n# Create an agent-side grant\nAGENT_RESULT=$(api_post \"user-access/grants\" \"{\\\"username\\\":\\\"e2e-agent\\\",\\\"pluginName\\\":\\\"@lamalibre/herd-server\\\",\\\"target\\\":\\\"agent:${AGENT_LABEL}\\\"}\" 2>/dev/null || echo '{\"error\":\"sync failed\"}')\nAGENT_GRANT_ID=$(echo \"$AGENT_RESULT\" | jq -r '.grant.grantId // empty' 2>/dev/null || echo \"\")\n\nif [ -n \"$AGENT_GRANT_ID\" ]; then\n  log_pass \"Create agent-side grant (target: agent:${AGENT_LABEL})\"\nelse\n  # May return 500 if Authelia sync fails in single-VM (expected without Authelia)\n  SYNC_ERR=$(echo \"$AGENT_RESULT\" | jq -r '.error // empty' 2>/dev/null || echo \"\")\n  if echo \"$SYNC_ERR\" | grep -qi \"authelia\\|sync\"; then\n    log_pass \"Agent-side grant created but Authelia sync failed (expected in single-VM without Authelia)\"\n    # Re-create without Authelia — the grant was saved despite sync error\n  else\n    log_fail \"Failed to create agent-side grant: ${AGENT_RESULT}\"\n  fi\nfi\n\n# List grants and verify target field\nGRANTS=$(api_get \"user-access/grants\" 2>/dev/null || echo '{\"grants\":[]}')\nHAS_TARGET=$(echo \"$GRANTS\" | jq '[.grants[] | select(.target != null)] | length' 2>/dev/null || echo \"0\")\nassert_not_eq \"$HAS_TARGET\" \"0\" \"Grants include target field\" || true\n\n# An agent-side grant is browser access, kept until revoked: created\n# unconsumed (4.7; before, it was created consumed and swept 90 days later)\nAGENT_GRANT=$(echo \"$GRANTS\" | jq \".grants[] | select(.target == \\\"agent:${AGENT_LABEL}\\\")\" 2>/dev/null || echo \"\")\nif [ -n \"$AGENT_GRANT\" ]; then\n  IS_USED=$(echo \"$AGENT_GRANT\" | jq -r '.used' 2>/dev/null || echo \"\")\n  assert_eq \"$IS_USED\" \"false\" \"Agent-side grant created unconsumed (used=false): access, never swept\" || true\n  AGENT_GRANT_ID=$(echo \"$AGENT_GRANT\" | jq -r '.grantId' 2>/dev/null || echo \"\")\nfi"
     },
     {
       "id": "2-grant-validation",
@@ -569,12 +569,12 @@
         },
         {
           "id": "step-30",
-          "label": "Agent-side grant revoked (despite used=true) — status ${REV_STATUS}",
+          "label": "Agent-side grant revoked — status ${REV_STATUS}",
           "target": "local",
           "op": {
             "type": "log",
             "level": "pass",
-            "message": "Agent-side grant revoked (despite used=true) — status ${REV_STATUS}"
+            "message": "Agent-side grant revoked — status ${REV_STATUS}"
           },
           "when": {
             "kind": "or",
@@ -628,7 +628,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"3. Agent-side grant revocation\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$AGENT_GRANT_ID\" ]; then\n  REV_STATUS=$(api_delete_status \"user-access/grants/${AGENT_GRANT_ID}\")\n  # May return 200 (success) or 500 (Authelia sync failed) — both mean grant was revoked\n  if [ \"$REV_STATUS\" = \"200\" ] || [ \"$REV_STATUS\" = \"500\" ]; then\n    log_pass \"Agent-side grant revoked (despite used=true) — status ${REV_STATUS}\"\n  else\n    log_fail \"Agent-side grant revocation unexpected status: ${REV_STATUS}\"\n  fi\nelse\n  log_skip \"No agent grant to revoke\"\nfi\n\nfi # end HAS_USER_ACCESS"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"3. Agent-side grant revocation\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$AGENT_GRANT_ID\" ]; then\n  REV_STATUS=$(api_delete_status \"user-access/grants/${AGENT_GRANT_ID}\")\n  # May return 200 (success) or 500 (Authelia sync failed) — both mean grant was revoked\n  if [ \"$REV_STATUS\" = \"200\" ] || [ \"$REV_STATUS\" = \"500\" ]; then\n    log_pass \"Agent-side grant revoked — status ${REV_STATUS}\"\n  else\n    log_fail \"Agent-side grant revocation unexpected status: ${REV_STATUS}\"\n  fi\nelse\n  log_skip \"No agent grant to revoke\"\nfi\n\nfi # end HAS_USER_ACCESS"
     },
     {
       "id": "4-plugin-tunnel-validation",

@@ -85,11 +85,12 @@ GRANTS=$(api_get "user-access/grants" 2>/dev/null || echo '{"grants":[]}')
 HAS_TARGET=$(echo "$GRANTS" | jq '[.grants[] | select(.target != null)] | length' 2>/dev/null || echo "0")
 assert_not_eq "$HAS_TARGET" "0" "Grants include target field" || true
 
-# Verify agent-side grant is auto-consumed
+# An agent-side grant is browser access, kept until revoked: created
+# unconsumed (4.7; before, it was created consumed and swept 90 days later)
 AGENT_GRANT=$(echo "$GRANTS" | jq ".grants[] | select(.target == \"agent:${AGENT_LABEL}\")" 2>/dev/null || echo "")
 if [ -n "$AGENT_GRANT" ]; then
   IS_USED=$(echo "$AGENT_GRANT" | jq -r '.used' 2>/dev/null || echo "")
-  assert_eq "$IS_USED" "true" "Agent-side grant auto-consumed (used=true)" || true
+  assert_eq "$IS_USED" "false" "Agent-side grant created unconsumed (used=false): access, never swept" || true
   AGENT_GRANT_ID=$(echo "$AGENT_GRANT" | jq -r '.grantId' 2>/dev/null || echo "")
 fi
 
@@ -113,7 +114,7 @@ if [ -n "$AGENT_GRANT_ID" ]; then
   REV_STATUS=$(api_delete_status "user-access/grants/${AGENT_GRANT_ID}")
   # May return 200 (success) or 500 (Authelia sync failed) — both mean grant was revoked
   if [ "$REV_STATUS" = "200" ] || [ "$REV_STATUS" = "500" ]; then
-    log_pass "Agent-side grant revoked (despite used=true) — status ${REV_STATUS}"
+    log_pass "Agent-side grant revoked — status ${REV_STATUS}"
   else
     log_fail "Agent-side grant revocation unexpected status: ${REV_STATUS}"
   fi

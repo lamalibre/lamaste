@@ -4,7 +4,8 @@
 # ============================================================================
 # Tests the full agent-side user plugin access flow across VMs:
 #
-# 1. Grant model: create agent-side grant, verify auto-consumed
+# 1. Grant model: create agent-side grant, verify it is created unconsumed
+#    (access kept until revoked; before 4.7 it was consumed and swept)
 # 2. Plugin tunnel: create type=plugin tunnel, verify nginx vhost
 # 3. Access control: verify Authelia rules include granted user
 # 4. Revocation: revoke grant, verify access control updated
@@ -80,12 +81,12 @@ GRANT_ID=$(echo "$RESULT" | jq -r '.grant.grantId // empty' 2>/dev/null || echo 
 if [ -n "$GRANT_ID" ]; then
   log_pass "Agent-side grant created: ${GRANT_ID}"
 
-  # Verify auto-consumed
+  # An agent-side grant is access: created unconsumed, never swept
   IS_USED=$(echo "$RESULT" | jq -r '.grant.used' 2>/dev/null || echo "")
-  if [ "$IS_USED" = "true" ]; then
-    log_pass "Grant is auto-consumed (used=true)"
+  if [ "$IS_USED" = "false" ]; then
+    log_pass "Grant is created unconsumed (used=false): access, kept until revoked"
   else
-    log_fail "Grant should be auto-consumed for agent target"
+    log_fail "An agent-side grant must not be consumed (used=${IS_USED})"
   fi
 
   # Verify target field

@@ -3,7 +3,7 @@
   "meta": {
     "number": 20,
     "name": "Agent-Side User Plugin Access",
-    "suite": "e2e",
+    "suite": "e2e-three-vm",
     "description": "20 — Agent-Side User Plugin Access (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq"]
@@ -158,32 +158,32 @@
         },
         {
           "id": "step-8",
-          "label": "Grant is auto-consumed (used=true)",
+          "label": "Grant is created unconsumed (used=false): access, kept until revoked",
           "target": "local",
           "op": {
             "type": "log",
             "level": "pass",
-            "message": "Grant is auto-consumed (used=true)"
+            "message": "Grant is created unconsumed (used=false): access, kept until revoked"
           },
           "when": {
             "kind": "var_eq",
             "variable": "IS_USED",
-            "value": "true"
+            "value": "false"
           }
         },
         {
           "id": "step-9",
-          "label": "Grant should be auto-consumed for agent target",
+          "label": "An agent-side grant must not be consumed (used=${IS_USED})",
           "target": "local",
           "op": {
             "type": "log",
             "level": "fail",
-            "message": "Grant should be auto-consumed for agent target"
+            "message": "An agent-side grant must not be consumed (used=${IS_USED})"
           },
           "when": {
             "kind": "var_not_eq",
             "variable": "IS_USED",
-            "value": "true"
+            "value": "false"
           }
         },
         {
@@ -244,7 +244,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"1. Create agent-side grant\"\n# ---------------------------------------------------------------------------\n\nRESULT=$(host_api_post \"user-access/grants\" \"{\\\"username\\\":\\\"testuser\\\",\\\"pluginName\\\":\\\"@lamalibre/herd-server\\\",\\\"target\\\":\\\"agent:${AGENT_LABEL}\\\"}\" 2>/dev/null || echo \"\")\nGRANT_ID=$(echo \"$RESULT\" | jq -r '.grant.grantId // empty' 2>/dev/null || echo \"\")\n\nif [ -n \"$GRANT_ID\" ]; then\n  log_pass \"Agent-side grant created: ${GRANT_ID}\"\n\n  # Verify auto-consumed\n  IS_USED=$(echo \"$RESULT\" | jq -r '.grant.used' 2>/dev/null || echo \"\")\n  if [ \"$IS_USED\" = \"true\" ]; then\n    log_pass \"Grant is auto-consumed (used=true)\"\n  else\n    log_fail \"Grant should be auto-consumed for agent target\"\n  fi\n\n  # Verify target field\n  TARGET=$(echo \"$RESULT\" | jq -r '.grant.target' 2>/dev/null || echo \"\")\n  if [ \"$TARGET\" = \"agent:${AGENT_LABEL}\" ]; then\n    log_pass \"Grant target matches: ${TARGET}\"\n  else\n    log_fail \"Grant target mismatch: expected agent:${AGENT_LABEL}, got ${TARGET}\"\n  fi\nelse\n  log_fail \"Failed to create agent-side grant\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"1. Create agent-side grant\"\n# ---------------------------------------------------------------------------\n\nRESULT=$(host_api_post \"user-access/grants\" \"{\\\"username\\\":\\\"testuser\\\",\\\"pluginName\\\":\\\"@lamalibre/herd-server\\\",\\\"target\\\":\\\"agent:${AGENT_LABEL}\\\"}\" 2>/dev/null || echo \"\")\nGRANT_ID=$(echo \"$RESULT\" | jq -r '.grant.grantId // empty' 2>/dev/null || echo \"\")\n\nif [ -n \"$GRANT_ID\" ]; then\n  log_pass \"Agent-side grant created: ${GRANT_ID}\"\n\n  # An agent-side grant is access: created unconsumed, never swept\n  IS_USED=$(echo \"$RESULT\" | jq -r '.grant.used' 2>/dev/null || echo \"\")\n  if [ \"$IS_USED\" = \"false\" ]; then\n    log_pass \"Grant is created unconsumed (used=false): access, kept until revoked\"\n  else\n    log_fail \"An agent-side grant must not be consumed (used=${IS_USED})\"\n  fi\n\n  # Verify target field\n  TARGET=$(echo \"$RESULT\" | jq -r '.grant.target' 2>/dev/null || echo \"\")\n  if [ \"$TARGET\" = \"agent:${AGENT_LABEL}\" ]; then\n    log_pass \"Grant target matches: ${TARGET}\"\n  else\n    log_fail \"Grant target mismatch: expected agent:${AGENT_LABEL}, got ${TARGET}\"\n  fi\nelse\n  log_fail \"Failed to create agent-side grant\"\nfi"
     },
     {
       "id": "2-verify-authelia-access-control-updated",
@@ -653,7 +653,7 @@
     "host_api_delete",
     "host_api_delete_status"
   ],
-  "headerRaw": "# ============================================================================\n# 20 — Agent-Side User Plugin Access (Three-VM)\n# ============================================================================\n# Tests the full agent-side user plugin access flow across VMs:\n#\n# 1. Grant model: create agent-side grant, verify auto-consumed\n# 2. Plugin tunnel: create type=plugin tunnel, verify nginx vhost\n# 3. Access control: verify Authelia rules include granted user\n# 4. Revocation: revoke grant, verify access control updated\n# 5. Validation: reserved route prefixes, admin-only enforcement\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 20 — Agent-Side User Plugin Access (Three-VM)\n# ============================================================================\n# Tests the full agent-side user plugin access flow across VMs:\n#\n# 1. Grant model: create agent-side grant, verify it is created unconsumed\n#    (access kept until revoked; before 4.7 it was consumed and swept)\n# 2. Plugin tunnel: create type=plugin tunnel, verify nginx vhost\n# 3. Access control: verify Authelia rules include granted user\n# 4. Revocation: revoke grant, verify access control updated\n# 5. Validation: reserved route prefixes, admin-only enforcement\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post_status() {\n  host_exec \"curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete_status() {\n  host_exec \"curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1\"\n}\n\nbegin_test \"20 — Agent-Side User Plugin Access (Three-VM)\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\nexit $?\n"
