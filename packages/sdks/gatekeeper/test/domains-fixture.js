@@ -7,10 +7,13 @@
 import { indexDomainsProjection } from '@lamalibre/lamaste';
 
 /**
- * @param {Array<{ name: string, members: string[] }>} [domains]
+ * @param {Array<{ name: string, members: string[], externals?: string[] }>} [domains]
  */
 export function domainsIndex(
   domains = [{ name: 'example.com', members: ['alice', 'bob', 'carol'] }],
 ) {
-  return indexDomainsProjection({ v: 1, domains });
+  return indexDomainsProjection({
+    v: 2,
+    domains: domains.map((d) => ({ externals: [], ...d })),
+  });
 }

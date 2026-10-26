@@ -163,56 +163,93 @@ export function isRelayHost(host: string, domains: readonly string[]): boolean {
  */
 export const DOMAINS_PROJECTION_FILE = 'domains.json';
 
-/** What {@link DOMAINS_PROJECTION_FILE} holds: the active domains and their active members. */
+/** The kind of a domain membership: a member, or an external member who reaches only what names them. */
+export type MembershipKind = 'member' | 'external';
+
+/** Every membership kind, in the order the panel lists them. */
+export const MEMBERSHIP_KINDS: readonly MembershipKind[] = ['member', 'external'];
+
+/** One domain of the projection: its active members and active external members (usernames). */
+export interface DomainsProjectionDomain {
+  readonly name: string;
+  readonly members: readonly string[];
+  readonly externals: readonly string[];
+}
+
+/**
+ * What {@link DOMAINS_PROJECTION_FILE} holds: the active domains with their
+ * active members and external members. Version 2 — Gatekeeper reads no
+ * other (a version-1 file, which says nothing of kinds, is no projection).
+ */
 export interface DomainsProjection {
-  readonly v: 1;
-  readonly domains: ReadonlyArray<{ readonly name: string; readonly members: readonly string[] }>;
+  readonly v: 2;
+  readonly domains: readonly DomainsProjectionDomain[];
+}
+
+/** A list of Lamaste usernames, else null. */
+function usernameList(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((m) => isLamasteUsername(m))
+    ? [...(value as string[])]
+    : null;
 }
 
 /**
  * The projection in `parsed` (a parsed `domains.json`), or null when it is
  * not one — Gatekeeper then admits nobody. Domains must be valid and must
- * not overlap; members are Lamaste usernames.
+ * not overlap; members and external members are Lamaste usernames, and no
+ * one is both on one domain.
  */
 export function parseDomainsProjection(parsed: unknown): DomainsProjection | null {
   if (!parsed || typeof parsed !== 'object') return null;
   const { v, domains } = parsed as { v?: unknown; domains?: unknown };
-  if (v !== 1 || !Array.isArray(domains)) return null;
-  const out: Array<{ name: string; members: string[] }> = [];
+  if (v !== 2 || !Array.isArray(domains)) return null;
+  const out: DomainsProjectionDomain[] = [];
   for (const entry of domains as unknown[]) {
     if (!entry || typeof entry !== 'object') return null;
-    const { name, members } = entry as { name?: unknown; members?: unknown };
+    const { name, members, externals } = entry as Record<string, unknown>;
     if (typeof name !== 'string' || !HOSTNAME_REGEX.test(name)) return null;
     if (out.some((d) => domainsOverlap(d.name, name))) return null;
-    if (!Array.isArray(members) || !members.every((m) => isLamasteUsername(m))) return null;
-    out.push({ name, members: [...(members as string[])] });
+    const memberList = usernameList(members);
+    const externalList = usernameList(externals);
+    if (!memberList || !externalList) return null;
+    const memberSet = new Set(memberList);
+    if (externalList.some((x) => memberSet.has(x))) return null;
+    out.push({ name, members: memberList, externals: externalList });
   }
-  return { v: 1, domains: out };
+  return { v: 2, domains: out };
 }
 
-/** A projection indexed for lookups: its domain names, each one's members as a set. */
+/** A projection indexed for lookups: its domain names, each one's people with their kind. */
 export interface DomainsIndex {
   readonly names: readonly string[];
-  readonly members: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly kinds: ReadonlyMap<string, ReadonlyMap<string, MembershipKind>>;
 }
 
 /** Index a projection once (Gatekeeper does when it reads `domains.json`). */
 export function indexDomainsProjection(projection: DomainsProjection): DomainsIndex {
   return {
     names: projection.domains.map((d) => d.name),
-    members: new Map(projection.domains.map((d) => [d.name, new Set(d.members)])),
+    kinds: new Map(
+      projection.domains.map((d) => [
+        d.name,
+        new Map<string, MembershipKind>([
+          ...d.members.map((m) => [m, 'member'] as const),
+          ...d.externals.map((x) => [x, 'external'] as const),
+        ]),
+      ]),
+    ),
   };
 }
 
 /**
- * The domain `host` is under (null: none) and whether `username` is a
- * member of it.
+ * The domain `host` is under (null: none) and the kind of `username`'s
+ * membership of it (null: not one).
  */
 export function domainMembership(
   index: DomainsIndex,
   host: string,
   username: string,
-): { readonly domain: string | null; readonly member: boolean } {
+): { readonly domain: string | null; readonly kind: MembershipKind | null } {
   const domain = domainOfHost(host, index.names);
-  return { domain, member: domain !== null && index.members.get(domain)?.has(username) === true };
+  return { domain, kind: (domain !== null && index.kinds.get(domain)?.get(username)) || null };
 }

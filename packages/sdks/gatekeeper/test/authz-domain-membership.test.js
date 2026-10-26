@@ -35,10 +35,10 @@ const TUNNELS = [
 /** The panel's projection the test changes; null: no `domains.json`. */
 let projection;
 const BOTH = () => ({
-  v: 1,
+  v: 2,
   domains: [
-    { name: 'samplepark.tr', members: ['onur', 'cust'] },
-    { name: 'codelama.com.tr', members: ['onur'] },
+    { name: 'samplepark.tr', members: ['onur', 'cust'], externals: [] },
+    { name: 'codelama.com.tr', members: ['onur'], externals: [] },
   ],
 });
 
@@ -141,10 +141,10 @@ test('Gatekeeper checks the membership itself, after Authelia — cached session
   // the projection no longer lists them.
   assert.equal((await check('workspace.codelama.com.tr', 'onur')).statusCode, 200);
   projection = {
-    v: 1,
+    v: 2,
     domains: [
-      { name: 'samplepark.tr', members: ['onur', 'cust'] },
-      { name: 'codelama.com.tr', members: [] },
+      { name: 'samplepark.tr', members: ['onur', 'cust'], externals: [] },
+      { name: 'codelama.com.tr', members: [], externals: [] },
     ],
   };
   const refused = await check('workspace.codelama.com.tr', 'onur');

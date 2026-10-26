@@ -206,8 +206,8 @@ test('an upgraded single-domain relay: the primary recorded with everyone its me
   await lib.syncDomainAccess();
   assert.deepEqual(renderedMembers(), { 'samplepark.tr': ['admin', 'cust', 'onur'] });
   assert.deepEqual(await projection(), {
-    v: 1,
-    domains: [{ name: 'samplepark.tr', members: ['admin', 'cust', 'onur'] }],
+    v: 2,
+    domains: [{ name: 'samplepark.tr', members: ['admin', 'cust', 'onur'], externals: [] }],
   });
   assert.equal((await stat(path.join(stateDir, 'domains.json'))).mode & 0o777, 0o600);
   // Every host under the domain admits every user, as before: one allow
@@ -294,7 +294,11 @@ test('membership: explicit, by id, audited by id; a developer on both domains, a
     false,
   );
   assert.deepEqual(renderedMembers()['codelama.com.tr'], ['onur']);
-  assert.deepEqual((await projection()).domains[1], { name: 'codelama.com.tr', members: ['onur'] });
+  assert.deepEqual((await projection()).domains[1], {
+    name: 'codelama.com.tr',
+    members: ['onur'],
+    externals: [],
+  });
   const audited = (await audits('directory.membership.added')).at(0);
   assert.deepEqual(audited.details, { domain: 'codelama.com.tr', userId: onur });
   assert.ok(!JSON.stringify(await audits('directory.membership.added')).includes('onur"'));

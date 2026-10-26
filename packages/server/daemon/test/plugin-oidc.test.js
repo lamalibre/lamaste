@@ -192,6 +192,8 @@ test('renderOidcClient: public device-code client with the domain expanded and i
     // Members of the client's domain alone, with its factor.
     authorization_policy: 'lamaste_samplepark_tr_two_factor',
     consent_mode: 'explicit',
+    // Its access and ID tokens live 15 minutes.
+    lifespan: 'lamaste_user',
     scopes: ['openid', 'profile', 'groups'],
     grant_types: ['urn:ietf:params:oauth:grant-type:device_code'],
     token_endpoint_auth_method: 'none',
@@ -307,7 +309,10 @@ test('buildOidcProviderSection: hmac secret, the key as a sentinel, claims polic
   assert.deepEqual(section.jwks, [
     { key_id: 'lamaste-oidc', algorithm: 'RS256', use: 'sig', key: OIDC_KEY_TEMPLATE_SENTINEL },
   ]);
-  assert.deepEqual(section.lifespans, { device_code: '10 minutes' });
+  assert.deepEqual(section.lifespans, {
+    device_code: '10 minutes',
+    custom: { lamaste_user: { access_token: '15 minutes', id_token: '15 minutes' } },
+  });
   assert.deepEqual(section.claims_policies, {
     'feria-cli': { access_token: ['groups', 'preferred_username'] },
   });
@@ -358,6 +363,10 @@ test('the rendered YAML reads the issuer key with a template expression at the r
 ${expectedLine}
     lifespans:
       device_code: 10 minutes
+      custom:
+        lamaste_user:
+          access_token: 15 minutes
+          id_token: 15 minutes
     claims_policies:
       feria-cli:
         access_token:
@@ -382,6 +391,7 @@ ${expectedLine}
         public: true
         authorization_policy: lamaste_samplepark_tr_two_factor
         consent_mode: explicit
+        lifespan: lamaste_user
         scopes:
           - openid
           - profile

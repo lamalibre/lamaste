@@ -472,7 +472,9 @@ function checkDomain(
   }
   const index = fastify.getDomains();
   const verdict = index ? domainMembership(index, hostname, answer.username) : null;
-  if (verdict?.member) return { session: answer };
+  // Members only for now: an external member reaches nothing here until
+  // their kind is checked against each route's access mode.
+  if (verdict?.kind === 'member') return { session: answer };
   return {
     refused: { reason: 'not_a_member', domain: verdict?.domain ?? null },
   };

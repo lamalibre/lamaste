@@ -425,44 +425,57 @@ test('a tunnel’s host: its hostname and the domain under its subdomain; none f
   assert.equal(tunnelHost({ subdomain: 'feria', fqdn: 'other.codelama.com.tr' }), null);
 });
 
-test('Gatekeeper’s projection: only a well-formed one is read; membership by the host’s domain', () => {
+test('Gatekeeper’s projection: only a well-formed version 2 is read; membership and kind by the host’s domain', () => {
   const projection = parseDomainsProjection({
-    v: 1,
+    v: 2,
     domains: [
-      { name: 'samplepark.tr', members: ['onur', 'cust'] },
-      { name: 'codelama.com.tr', members: ['onur'] },
+      { name: 'samplepark.tr', members: ['onur', 'cust'], externals: [] },
+      { name: 'codelama.com.tr', members: ['onur'], externals: ['client'] },
     ],
   });
   assert.ok(projection);
   const index = indexDomainsProjection(projection);
   assert.deepEqual(domainMembership(index, 'workspace.codelama.com.tr', 'onur'), {
     domain: 'codelama.com.tr',
-    member: true,
+    kind: 'member',
+  });
+  assert.deepEqual(domainMembership(index, 'corral.codelama.com.tr', 'client'), {
+    domain: 'codelama.com.tr',
+    kind: 'external',
   });
   assert.deepEqual(domainMembership(index, 'workspace.codelama.com.tr', 'cust'), {
     domain: 'codelama.com.tr',
-    member: false,
+    kind: null,
   });
   assert.deepEqual(domainMembership(index, 'SHOP.samplepark.tr', 'cust'), {
     domain: 'samplepark.tr',
-    member: true,
+    kind: 'member',
+  });
+  assert.deepEqual(domainMembership(index, 'shop.samplepark.tr', 'client'), {
+    domain: 'samplepark.tr',
+    kind: null,
   });
   assert.deepEqual(domainMembership(index, 'blog.example.org', 'onur'), {
     domain: null,
-    member: false,
+    kind: null,
   });
 
   for (const bad of [
     null,
-    { v: 2, domains: [] },
-    { v: 1 },
-    { v: 1, domains: [{ name: 'Bad Domain', members: [] }] },
-    { v: 1, domains: [{ name: 'a.tr', members: ['user:onur'] }] },
+    // Version 1 says nothing of kinds: no projection, everyone refused.
+    { v: 1, domains: [{ name: 'a.tr', members: ['onur'] }] },
+    { v: 3, domains: [] },
+    { v: 2 },
+    { v: 2, domains: [{ name: 'a.tr', members: ['onur'] }] },
+    { v: 2, domains: [{ name: 'Bad Domain', members: [], externals: [] }] },
+    { v: 2, domains: [{ name: 'a.tr', members: ['user:onur'], externals: [] }] },
+    { v: 2, domains: [{ name: 'a.tr', members: [], externals: ['group:x'] }] },
+    { v: 2, domains: [{ name: 'a.tr', members: ['onur'], externals: ['onur'] }] },
     {
-      v: 1,
+      v: 2,
       domains: [
-        { name: 'samplepark.tr', members: [] },
-        { name: 'x.samplepark.tr', members: [] },
+        { name: 'samplepark.tr', members: [], externals: [] },
+        { name: 'x.samplepark.tr', members: [], externals: [] },
       ],
     },
   ]) {

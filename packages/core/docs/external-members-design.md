@@ -424,12 +424,45 @@ New three-VM specs on top of `multi-domain-harness.sh`:
 
 ## Waves
 
-1. **Core** — `renderAccessControl` / `renderOidcAuthorizationPolicies` on
-   groups, `renderOwnedGroups` (pure: desired Lamaste-owned groups per user
-   from domains, kinds, host grants, client grants), `isLamasteOwnedGroup`,
-   `ADMIN_GROUP_NAME_RE`, projection v2 types and `domainMembership` with kind,
-   `watch: true` in `writeAutheliaConfig` and the migration in
-   `rewriteAutheliaConfig`, OIDC lifespans; tests.
+1. **Core** — done. Root `owned-groups.ts` (browser-safe): `memberGroup`,
+   `externalGroup`, `oidcClientGroup`, `isLamasteOwnedGroup`,
+   `ADMIN_GROUP_NAME_RE` / `isAssignableGroupName`, `renderOwnedGroups`
+   (throws on a user both member and external of one domain, or a
+   non-username — never naming it) and `mergeOwnedGroups` (replaces exactly
+   the owned groups, keeps the administrator's in order, unchanged entries
+   stay the same objects). Root `domains.ts`: `MembershipKind`,
+   `MEMBERSHIP_KINDS`, projection v2 (`parseDomainsProjection` refuses v1,
+   unknown versions and a user of both kinds), `DomainsIndex.kinds`,
+   `domainMembership` → `{ domain, kind }`. Root `constants.ts`:
+   `OIDC_CLIENT_ID_RE`, `OIDC_CLIENT_ID_MAX_LENGTH`, `isOidcClientId` (the
+   manifest schema uses them). Server `authelia.ts`:
+   `renderGroupAccessControl`, `externalHostRegex`,
+   `renderOidcClientPolicies`, `oidcClientPolicyName`,
+   `ensureUsersFileWatched` (run by every `rewriteAutheliaConfig`),
+   `watch: true` in `writeAutheliaConfig`, and the 15-minute
+   `OIDC_USER_LIFESPAN` named by every user-facing client (rendered into
+   `lifespans.custom` only when such a client exists). Tests: serverd
+   `external-members-core.test.js`; `multi-domain-core` (projection v2),
+   `plugin-oidc` (lifespan), `domains` and Gatekeeper fixtures (v2).
+
+   **Deviations, for wave 2:**
+   - The new renderers sit **beside** 4.7's `renderAccessControl`,
+     `renderOidcAuthorizationPolicies` and `oidcAuthorizationPolicyName`,
+     which stay wired: switching before users.yml holds the owned groups
+     would deny everyone. Wave 2 switches `updateDomainAccess`,
+     `buildOidcProviderSection` and `renderOidcClient`'s
+     `authorization_policy` to them and removes the old three (4.7-only
+     names: edit `public-api.json` by hand). `renderGroupAccessControl` takes
+     the domain names only — the rules name groups, so who is in them does
+     not matter (the design's `{ name, hasMembers, hasExternals }` was not
+     needed).
+   - The projection is already v2 on both sides: the panel writes every
+     member as `member` and `externals: []` (lib/domains.js, until kinds
+     exist), and Gatekeeper admits only `kind === 'member'` (external
+     members are refused everywhere until wave 2 checks the kind per route).
+   - The user-facing lifespan applies from this wave on (harmless before
+     the switch: shorter tokens only).
+
 2. **serverd + Gatekeeper** — migration 0017, kinds in membership, users,
    invitations, `changeUsers` without restarts (owned-group write, cooldown
    re-write, `expect` kept), rendering order, host-group and client-grant

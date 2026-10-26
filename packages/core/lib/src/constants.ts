@@ -200,6 +200,21 @@ export const USERNAME_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
 export const USERNAME_MIN_LENGTH = 2;
 export const USERNAME_MAX_LENGTH = 32;
 
+/** A plugin OIDC client id: lower-case letters, digits and hyphens (manifest `oidcClients[].id`). */
+export const OIDC_CLIENT_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+/** The longest OIDC client id a manifest may declare. */
+export const OIDC_CLIENT_ID_MAX_LENGTH = 100;
+
+/** Whether `value` is an OIDC client id a manifest may declare. */
+export function isOidcClientId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= OIDC_CLIENT_ID_MAX_LENGTH &&
+    OIDC_CLIENT_ID_RE.test(value)
+  );
+}
+
 /** Whether `value` is a Lamaste username: {@link USERNAME_REGEX}, within its lengths. */
 export function isLamasteUsername(value: unknown): value is string {
   return (

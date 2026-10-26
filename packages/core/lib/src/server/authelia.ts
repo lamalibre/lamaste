@@ -23,9 +23,10 @@ import path from 'node:path';
 import yaml from 'js-yaml';
 import { canonicalJson } from '../app-job-signature.js';
 import { AUTHELIA_SESSION_COOKIE } from '../authelia-session.js';
-import { OIDC_USER_FACTORS, isLamasteUsername } from '../constants.js';
+import { OIDC_USER_FACTORS, isLamasteUsername, isOidcClientId } from '../constants.js';
 import type { OidcUserFactor } from '../constants.js';
 import { assertDomainName, domainOfHost } from '../domains.js';
+import { externalGroup, memberGroup, oidcClientGroup } from '../owned-groups.js';
 import type { OidcClientDeclaration } from '../schemas.js';
 
 // ---------------------------------------------------------------------------
@@ -201,6 +202,10 @@ export async function writeAutheliaConfig(
     authentication_backend: {
       file: {
         path: AUTHELIA_USERS,
+        // Authelia reloads users.yml when it changes and re-reads a user's
+        // groups at every request: the groups Lamaste owns there
+        // (owned-groups.ts) apply without a restart.
+        watch: true,
         password: {
           algorithm: 'bcrypt',
           bcrypt: {
@@ -524,12 +529,16 @@ export async function isAutheliaRunning(exec: ExecFn): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 /**
- * Update the Authelia access_control configuration based on protected sites.
- *
- * Reads the existing configuration, replaces the access_control section with
- * per-site rules, writes the config atomically, and restarts Authelia.
- * Rolls back to the previous config on restart failure.
+ * Turn on Authelia's watch of the users file in a configuration written
+ * before 4.7 (`authentication_backend.file.watch: true`): who may reach what
+ * lives in users.yml's groups, which Authelia must read as they change.
+ * Mutates `config`; every rewrite of the configuration applies it.
  */
+export function ensureUsersFileWatched(config: Record<string, unknown>): void {
+  const backend = config.authentication_backend as { file?: Record<string, unknown> } | undefined;
+  if (backend?.file && backend.file.watch !== true) backend.file.watch = true;
+}
+
 /**
  * Read `configuration.yml`, apply `mutate`, restore the secrets the panel
  * owns, write the result atomically with a backup, and restart Authelia —
@@ -609,6 +618,8 @@ async function rewriteAutheliaConfig(
     }
     delete currentConfig.jwt_secret;
   }
+
+  ensureUsersFileWatched(currentConfig);
 
   await mutate(currentConfig);
 
@@ -880,6 +891,81 @@ export function renderAccessControl(
   return { default_policy: 'deny', rules };
 }
 
+/** `name` with every regular-expression metacharacter escaped (RE2, as Authelia compiles). */
+function quoteRegex(name: string): string {
+  return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The `domain_regex` that admits an external member of `domain` on a host
+ * under it whose name is one of their groups (Authelia's `(?P<Group>…)`
+ * capture — a host group, owned-groups.ts). The apex is not matched: no
+ * Gatekeeper-gated host is the apex itself.
+ */
+export function externalHostRegex(domain: string): string {
+  assertDomainName(domain);
+  return `^(?P<Group>(?:[a-z0-9-]+\\.)+${quoteRegex(domain)})$`;
+}
+
+/**
+ * The whole `access_control` section on groups Lamaste owns
+ * (owned-groups.ts): the rules name groups, never people, so they change
+ * only with the set of domains and protected sites — a membership, a kind,
+ * a grant or a site's listed users is a users.yml change, which Authelia
+ * applies without a restart.
+ *
+ * 1. per protected static site: its host group (the listed users, members
+ *    and external members alike) when it lists users; admins who are
+ *    members (`group:admins` AND `group:lamaste:member@<d>`); then deny;
+ * 2. per domain: its members on the domain and every host under it; its
+ *    external members only on a host whose name is one of their groups
+ *    ({@link externalHostRegex}, AND `group:lamaste:external@<d>`); deny;
+ * 3. `default_policy: deny`.
+ *
+ * A site under no domain gets its deny alone. A protected site neither
+ * listing users nor restricted has no rule of its own: the members of its
+ * domain reach it, external members do not (no host group names it). Pure.
+ */
+export function renderGroupAccessControl(
+  domains: readonly string[],
+  sites: readonly ProtectedSiteRule[],
+): { default_policy: 'deny'; rules: AutheliaRule[] } {
+  for (const name of domains) assertDomainName(name);
+  const rules: AutheliaRule[] = [];
+
+  for (const site of sites) {
+    if (!site.autheliaProtected) continue;
+    const hasUserList = (site.allowedUsers ?? []).length > 0;
+    if (!hasUserList && !site.restrictAccess) continue;
+    const fqdn = site.fqdn.toLowerCase();
+    const domain = domainOfHost(fqdn, domains);
+    if (domain !== null) {
+      if (hasUserList) {
+        rules.push({ domain: fqdn, policy: 'two_factor', subject: [`group:${fqdn}`] });
+      }
+      rules.push({
+        domain: fqdn,
+        policy: 'two_factor',
+        subject: [['group:admins', `group:${memberGroup(domain)}`]],
+      });
+    }
+    rules.push({ domain: fqdn, policy: 'deny' });
+  }
+
+  for (const name of domains) {
+    const hosts = [name, `*.${name}`];
+    rules.push({ domain: hosts, policy: 'two_factor', subject: [`group:${memberGroup(name)}`] });
+    rules.push({
+      domain_regex: [externalHostRegex(name)],
+      policy: 'two_factor',
+      subject: [`group:${externalGroup(name)}`],
+    });
+    rules.push({ domain: hosts, policy: 'deny' });
+  }
+
+  return { default_policy: 'deny', rules };
+}
+
 // ---------------------------------------------------------------------------
 // OpenID Connect provider
 // ---------------------------------------------------------------------------
@@ -1000,6 +1086,24 @@ export interface OidcProviderOptions {
   scopes?: OidcScopeDefinitions;
 }
 
+/**
+ * Whether a client signs users in (device code, authorization code) rather
+ * than a service (`client_credentials` — never mixed with a user grant,
+ * schemas.ts).
+ */
+function isUserFacingClient(client: AutheliaOidcClient): boolean {
+  return !client.grantTypes.includes('client_credentials');
+}
+
+/**
+ * The custom lifespan every user-facing plugin client names: its access and
+ * ID tokens live 15 minutes, which bounds what outlives a revoked
+ * membership or grant (plugin clients get no refresh tokens). Unset token
+ * types fall back to Authelia's defaults.
+ */
+export const OIDC_USER_LIFESPAN = 'lamaste_user';
+const OIDC_USER_LIFESPAN_TOKENS = { access_token: '15 minutes', id_token: '15 minutes' } as const;
+
 /** `{domain}` in an audience or redirect URI becomes the client's domain. */
 function expandDomain(value: string, domain: string): string {
   return value.replaceAll('{domain}', domain);
@@ -1048,8 +1152,9 @@ export function renderOidcClient(
   // Every consent is asked for explicitly — a device-flow approval screen
   // must say what is being granted. A pure service client has no user to
   // ask.
-  if (client.grantTypes.some((g) => g !== 'client_credentials')) {
+  if (isUserFacingClient(client)) {
     entry.consent_mode = 'explicit';
+    entry.lifespan = OIDC_USER_LIFESPAN;
   }
   entry.scopes = [...client.scopes];
   entry.grant_types = [...client.grantTypes];
@@ -1133,6 +1238,49 @@ export function renderOidcAuthorizationPolicies(
 }
 
 /**
+ * The name of the authorization policy of one user-facing client:
+ * `lamaste_client_<client id>` (ids are `[a-z0-9-]` — no dot for Authelia's
+ * configuration loader to split a key at).
+ */
+export function oidcClientPolicyName(clientId: string): string {
+  if (!isOidcClientId(clientId)) throw new Error('Not an OIDC client id');
+  return `lamaste_client_${clientId}`;
+}
+
+/**
+ * One authorization policy per user-facing client, on groups Lamaste owns
+ * (owned-groups.ts): the members of the client's domain, with its factor;
+ * its external members only when granted the client
+ * (`group:lamaste:external@<d>` AND `group:lamaste:oidc@<id>`); everyone
+ * else refused. Authelia's `access_control` does not apply to OIDC
+ * authorization, a client's policy does — and Authelia re-reads the user's
+ * groups before it applies one, so a grant needs no restart. Service
+ * (`client_credentials`) clients get none. Pure.
+ */
+export function renderOidcClientPolicies(
+  clients: readonly AutheliaOidcClient[],
+): Record<string, { default_policy: 'deny'; rules: AutheliaRule[] }> {
+  const policies: Record<string, { default_policy: 'deny'; rules: AutheliaRule[] }> = {};
+  for (const client of clients) {
+    if (!isUserFacingClient(client)) continue;
+    const factor = client.authorizationPolicy;
+    policies[oidcClientPolicyName(client.id)] = {
+      default_policy: 'deny',
+      rules: [
+        { policy: factor, subject: [`group:${memberGroup(client.domain)}`] },
+        {
+          policy: factor,
+          subject: [
+            [`group:${externalGroup(client.domain)}`, `group:${oidcClientGroup(client.id)}`],
+          ],
+        },
+      ],
+    };
+  }
+  return policies;
+}
+
+/**
  * The whole `identity_providers.oidc` section, with the sentinel for the
  * key, and the authorization policies of `domains` (every client's domain
  * must be one of them). Pure.
@@ -1161,7 +1309,12 @@ export function buildOidcProviderSection(
         key: OIDC_KEY_TEMPLATE_SENTINEL,
       },
     ],
-    lifespans: { device_code: '10 minutes' },
+    lifespans: {
+      device_code: '10 minutes',
+      ...(clients.some(isUserFacingClient)
+        ? { custom: { [OIDC_USER_LIFESPAN]: { ...OIDC_USER_LIFESPAN_TOKENS } } }
+        : {}),
+    },
   };
   const policies = renderOidcClaimsPolicies(clients);
   if (Object.keys(policies).length > 0) section.claims_policies = policies;

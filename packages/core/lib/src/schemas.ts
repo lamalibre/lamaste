@@ -19,6 +19,8 @@ import {
 import {
   CORE_CAPABILITY_NAMESPACES,
   DEFAULT_PLUGIN_HOSTING,
+  OIDC_CLIENT_ID_MAX_LENGTH,
+  OIDC_CLIENT_ID_RE,
   OIDC_USER_FACTORS,
   PLUGIN_CAPABILITY_NAMESPACE,
   PLUGIN_HOSTINGS,
@@ -212,8 +214,8 @@ export const OidcClientSchema = z
     id: z
       .string()
       .min(1)
-      .max(100)
-      .regex(/^[a-z0-9][a-z0-9-]*$/, 'Client id must be lowercase letters, numbers and hyphens'),
+      .max(OIDC_CLIENT_ID_MAX_LENGTH)
+      .regex(OIDC_CLIENT_ID_RE, 'Client id must be lowercase letters, numbers and hyphens'),
     name: z.string().min(1).max(100).optional(),
     grantTypes: z
       .array(

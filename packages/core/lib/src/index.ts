@@ -23,6 +23,9 @@ export {
   USERNAME_MIN_LENGTH,
   USERNAME_MAX_LENGTH,
   isLamasteUsername,
+  OIDC_CLIENT_ID_RE,
+  OIDC_CLIENT_ID_MAX_LENGTH,
+  isOidcClientId,
   RESERVED_TUNNEL_PORTS,
   isTunnelPortAllowed,
   INTERNAL_PLUGIN_PORT_RANGE,
@@ -329,6 +332,7 @@ export {
   DOMAIN_STATUSES,
   DomainError,
   DomainNameSchema,
+  MEMBERSHIP_KINDS,
   domainMembership,
   indexDomainsProjection,
   labelUnder,
@@ -340,7 +344,35 @@ export {
   isRelayHost,
   isReservedLabel,
 } from './domains.js';
-export type { DomainRecord, DomainStatus, DomainsIndex, DomainsProjection } from './domains.js';
+export type {
+  DomainRecord,
+  DomainStatus,
+  DomainsIndex,
+  DomainsProjection,
+  DomainsProjectionDomain,
+  MembershipKind,
+} from './domains.js';
+
+// The Authelia groups Lamaste owns: who is named where, written into
+// users.yml so a change needs no Authelia restart (external members)
+export {
+  ADMIN_GROUP_NAME_RE,
+  OWNED_GROUP_PREFIX,
+  externalGroup,
+  isAssignableGroupName,
+  isLamasteOwnedGroup,
+  memberGroup,
+  mergeOwnedGroups,
+  oidcClientGroup,
+  renderOwnedGroups,
+} from './owned-groups.js';
+export type {
+  GroupsHolder,
+  OwnedGroupsClient,
+  OwnedGroupsDomain,
+  OwnedGroupsHost,
+  OwnedGroupsInput,
+} from './owned-groups.js';
 
 // Authelia's session cookie: its name, how Gatekeeper reads it, and the
 // nginx map that keeps it from every tunnel and agent backend

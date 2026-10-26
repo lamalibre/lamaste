@@ -653,7 +653,8 @@ export function syncDomainAccess({ logger, sites } = {}) {
       try {
         await atomicWriteJSONIfChanged(
           path.join(STATE_DIR, DOMAINS_PROJECTION_FILE),
-          { v: 1, domains },
+          // Kinds are not recorded yet: everyone is a member.
+          { v: 2, domains: domains.map((d) => ({ ...d, externals: [] })) },
           { mode: 0o600 },
         );
       } catch (err) {
