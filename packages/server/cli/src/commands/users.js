@@ -35,6 +35,7 @@ import { emit, emitComplete } from '../ndjson.js';
 import { fail } from '../fail.js';
 import { parseUserArgs, warningLine } from '../plugin-identity.js';
 import { formatMoment, terminalText } from '../plugin-settings.js';
+import { membershipsText } from '../domains.js';
 
 /**
  * @param {string[]} args  Subcommand args: ['list'] | ['disable', '<u>'] | ...
@@ -93,7 +94,8 @@ function statusCell(status) {
 
 /**
  * The rows `users list` prints: each user's username, status, directory id
- * (a dash until the directory has seen them) and groups, as terminal text.
+ * (a dash until the directory has seen them), groups and domain memberships
+ * (external ones marked), as terminal text.
  * Pure, exported for tests.
  *
  * @param {Array<Record<string, any>>} users  as `GET /api/users` lists them
@@ -104,6 +106,7 @@ export function userRows(users) {
     status: u.status === 'disabled' ? 'disabled' : 'active',
     userId: u.userId ? terminalText(u.userId) : '—',
     groups: terminalText((u.groups ?? []).join(', ')),
+    domains: membershipsText(u.domains),
   }));
 }
 
@@ -128,11 +131,11 @@ async function listUsers({ json }) {
   console.log('');
   console.log(chalk.bold('  Users'));
   console.log(
-    chalk.dim(`  ${'USERNAME'.padEnd(width)}  STATUS    ${'USER ID'.padEnd(36)}  GROUPS`),
+    chalk.dim(`  ${'USERNAME'.padEnd(width)}  STATUS    ${'USER ID'.padEnd(36)}  DOMAINS  GROUPS`),
   );
   for (const r of rows) {
     console.log(
-      `  ${chalk.cyan(r.username.padEnd(width))}  ${statusCell(r.status)}  ${r.userId.padEnd(36)}  ${chalk.dim(r.groups)}`,
+      `  ${chalk.cyan(r.username.padEnd(width))}  ${statusCell(r.status)}  ${r.userId.padEnd(36)}  ${r.domains}  ${chalk.dim(r.groups)}`,
     );
   }
   if (rows.some((r) => r.userId === '—')) {

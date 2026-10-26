@@ -8,8 +8,12 @@
  *   verify-dns <domain>               The records it needs, and whether they point here
  *   activate <domain>                 Issue auth.<domain>, serve its sign-in, admit its members
  *   remove <domain>                   Remove an unused, non-primary domain (its memberships end)
- *   members <domain>                  Its members
- *   members <domain> add <user>       Make a user (directory id or username) a member
+ *   members <domain>                  Its members, each with the kind of the membership
+ *   members <domain> add <user> [--external]
+ *                                     Make a user (directory id or username) a member —
+ *                                     an external one with --external
+ *   members <domain> kind <user> member|external
+ *                                     Change the kind of a membership
  *   members <domain> remove <user>    End a membership
  *
  * Also `plugins domain <name> [<domain>]` ({@link pluginDomainCmd}).
@@ -24,7 +28,7 @@ import { panelRequest } from '../panel-api.js';
 import { emit, emitComplete } from '../ndjson.js';
 import { fail } from '../fail.js';
 import { terminalText } from '../plugin-settings.js';
-import { domainPath, domainRows } from '../domains.js';
+import { domainPath, domainRows, memberRequest } from '../domains.js';
 
 /** A panel request, or exit with its refusal. */
 const call = (json, ...args) => panelRequest(...args).catch((err) => fail(err.message, json, err));
@@ -57,12 +61,17 @@ ${b('Subcommands:')}
   ${c('verify-dns <domain>')}               The DNS records it needs, and whether they point here
   ${c('activate <domain>')}                 Issue auth.<domain> and serve its sign-in
   ${c('remove <domain>')}                   Remove an unused, non-primary domain
-  ${c('members <domain>')}                  Its members
-  ${c('members <domain> add <user>')}       Make a user (directory id or username) a member
+  ${c('members <domain>')}                  Its members and external members
+  ${c('members <domain> add <user> [--external]')}
+                                    Make a user (directory id or username) a member
+  ${c('members <domain> kind <user> member|external')}
+                                    Change the kind of a membership
   ${c('members <domain> remove <user>')}    End a membership
 
   Every domain has its own sign-in (auth.<domain>) and member list; a user reaches a
-  domain's protected hosts only as its member. The panel and tunnel. stay on the primary.
+  domain's protected hosts only as its member. An external member reaches only what
+  names them — restricted hosts that grant them, sites that list them, OIDC clients
+  granted to them — and holds no Authelia groups. The panel and tunnel. stay on the primary.
 `);
   process.exit(code);
 }
@@ -80,7 +89,8 @@ async function listDomains({ json }) {
   for (const row of domainRows(domains)) {
     const state = row.state === 'pending' ? chalk.yellow(row.state) : chalk.green(row.state);
     const used = row.usedBy ? d(`  used by ${row.usedBy}`) : '';
-    console.log(`  ${chalk.cyan(row.name)}  ${state}  ${row.members} member(s)${used}`);
+    const external = row.externalMembers > 0 ? `, ${row.externalMembers} external` : '';
+    console.log(`  ${chalk.cyan(row.name)}  ${state}  ${row.members} member(s)${external}${used}`);
   }
   console.log('');
 }
@@ -134,8 +144,7 @@ const DOMAIN_COMMANDS = {
 };
 
 async function membersCmd(name, rest, { json }) {
-  const [action, user] = rest;
-  if (action === undefined) {
+  if (rest.length === 0) {
     const { members } = await call(json, 'GET', domainPath(name, '/members'));
     if (json) {
       emit({ members });
@@ -144,27 +153,29 @@ async function membersCmd(name, rest, { json }) {
     console.log('');
     for (const m of members) {
       const status = m.status === 'active' ? '' : chalk.yellow(` (${m.status})`);
+      const kind = m.kind === 'external' ? chalk.magenta(' external') : '';
       console.log(
-        `  ${chalk.cyan(terminalText(m.username ?? m.userId))}${status}  ${chalk.dim(m.userId)}`,
+        `  ${chalk.cyan(terminalText(m.username ?? m.userId))}${kind}${status}  ${chalk.dim(m.userId)}`,
       );
     }
     if (members.length === 0) console.log(chalk.dim('  No members.'));
     console.log('');
     return;
   }
-  if ((action !== 'add' && action !== 'remove') || !user) return usage(1);
+  const request = memberRequest(name, rest);
+  if (!request) return usage(1);
   // The panel takes a directory id or a username.
-  const result = await call(
-    json,
-    action === 'add' ? 'PUT' : 'DELETE',
-    domainPath(name, `/members/${encodeURIComponent(user)}`),
-  );
+  const result = await call(json, request.method, request.path, request.body);
   if (json) {
     emitComplete(result);
     return;
   }
+  const who = terminalText(request.user);
+  const where = terminalText(name);
   console.log(
-    `\n  ${chalk.green('✓')} ${terminalText(user)} ${action === 'add' ? 'is now a member of' : 'is no longer a member of'} ${terminalText(name)}\n`,
+    request.kind === null
+      ? `\n  ${chalk.green('✓')} ${who} is no longer a member of ${where}\n`
+      : `\n  ${chalk.green('✓')} ${who} is now ${request.kind === 'external' ? 'an external member' : 'a member'} of ${where}\n`,
   );
 }
 

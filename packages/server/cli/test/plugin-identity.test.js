@@ -268,15 +268,44 @@ test('warnings read as one line each', () => {
   );
 });
 
-test('users list: status and directory id, a dash until the directory has seen a user', () => {
+test('users list: status, directory id (a dash until the directory has seen a user), memberships', () => {
   assert.deepEqual(
     userRows([
-      { username: 'alice', status: 'active', userId: USER_ID, groups: ['admins'] },
-      { username: 'bob', status: 'disabled', userId: null, groups: [] },
+      {
+        username: 'alice',
+        status: 'active',
+        userId: USER_ID,
+        groups: ['admins'],
+        domains: [{ name: 'samplepark.tr', kind: 'member' }],
+      },
+      {
+        username: 'bob',
+        status: 'disabled',
+        userId: null,
+        groups: [],
+        domains: [
+          { name: 'codelama.com.tr', kind: 'external' },
+          { name: 'samplepark.tr', kind: 'member' },
+        ],
+      },
+      { username: 'carol', status: 'active', userId: null, groups: [] },
     ]),
     [
-      { username: 'alice', status: 'active', userId: USER_ID, groups: 'admins' },
-      { username: 'bob', status: 'disabled', userId: '—', groups: '' },
+      {
+        username: 'alice',
+        status: 'active',
+        userId: USER_ID,
+        groups: 'admins',
+        domains: 'samplepark.tr',
+      },
+      {
+        username: 'bob',
+        status: 'disabled',
+        userId: '—',
+        groups: '',
+        domains: 'codelama.com.tr (external), samplepark.tr',
+      },
+      { username: 'carol', status: 'active', userId: '—', groups: '', domains: '—' },
     ],
   );
 });

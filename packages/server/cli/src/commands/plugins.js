@@ -10,7 +10,12 @@
  *                        Remove a plugin (must be disabled first); a hosted one
  *                        through its uninstall pipeline (an operation); --purge also
  *                        deletes the data of the agent half Lamaste installed
- *   oidc-clients <name>  The OIDC clients a plugin declares on Authelia
+ *   oidc-clients <name> [grants]
+ *                        The OIDC clients a plugin declares on Authelia, and who is
+ *                        granted each user-facing one
+ *   oidc-clients <name> grant|revoke <clientId> --user <u>|--group <g>
+ *                        Grant (or revoke) a user-facing client to a user or a Lamaste
+ *                        group: what admits an external member to its sign-in
  *   rotate-secret <name> <clientId>
  *                        New secret for a confidential OIDC client (shown once)
  *   hosting <name>       Which agent hosts an agent-hosted plugin's agent half
@@ -84,6 +89,13 @@ import { configureCmd, settingsCmd } from './plugin-settings.js';
 import { audienceCmd, entitlementsCmd, identityCmd, identitySyncCmd } from './plugin-identity.js';
 import { webSurfaceCmd } from './plugin-web-surface.js';
 import { pluginDomainCmd } from './domains.js';
+import { fail as failPanel } from '../fail.js';
+import {
+  OIDC_CLIENT_RESOURCE,
+  findClientGrant,
+  parsePrincipal,
+  principalText,
+} from '../oidc-client-grants.js';
 import { settingsDiffLines, terminalText } from '../plugin-settings.js';
 import {
   APPROVE_HOOKS_USAGE,
@@ -118,7 +130,7 @@ export async function runPlugins(args, { json }) {
     case 'uninstall':
       return uninstallPluginCmd(args[1], args.slice(2), { json });
     case 'oidc-clients':
-      return oidcClientsCmd(args[1], { json });
+      return oidcClientsCmd(args[1], args.slice(2), { json });
     case 'rotate-secret':
       return rotateSecretCmd(args[1], args[2], { json });
     case 'hosting':
@@ -185,7 +197,11 @@ ${b('Subcommands:')}
   ${c('uninstall <name> [--force] [--purge]')}
                        Remove a disabled plugin (a hosted one through its uninstall pipeline;
                        --purge deletes the data of the agent half Lamaste installed)
-  ${c('oidc-clients <name>')}  OIDC clients the plugin declares on Authelia (no secrets)
+  ${c('oidc-clients <name> [grants]')}
+                       OIDC clients the plugin declares on Authelia (no secrets), with grants
+  ${c('oidc-clients <name> grant|revoke <clientId> --user <u>|--group <g>')}
+                       Admit (or no longer) an external member to a client's sign-in —
+                       members of the plugin's domain need no grant
   ${c('rotate-secret <name> <clientId>')}
                        Replace a confidential client's secret — printed once
   ${c('hosting <name>')}       Which agent hosts the plugin's agent half, port, health
@@ -1439,13 +1455,25 @@ async function uninstallPluginCmd(name, rest, { json }) {
  * @param {string | undefined} name
  * @param {{ json: boolean }} options
  */
-async function oidcClientsCmd(name, { json }) {
-  if (!name) {
-    const msg = 'Usage: lamaste-server plugins oidc-clients <name>';
+async function oidcClientsCmd(name, rest, { json }) {
+  const usage = () => {
+    const msg =
+      'Usage: lamaste-server plugins oidc-clients <name> [grants | grant|revoke <clientId> --user <u>|--group <g>]';
     if (json) emitError(msg);
     else console.error(`\n  ${msg}\n`);
     process.exit(1);
+  };
+  if (!name) return usage();
+  const [action, clientId, ...principalArgs] = rest;
+  if (action === 'grant' || action === 'revoke') {
+    const principal = parsePrincipal(principalArgs);
+    if (!clientId || !principal) return usage();
+    return action === 'grant'
+      ? grantOidcClientCmd(clientId, principal, { json })
+      : revokeOidcClientCmd(name, clientId, principal, { json });
   }
+  if (action !== undefined && (action !== 'grants' || clientId !== undefined)) return usage();
+
   const result = await panelRequest('GET', `/api/plugins/${encodeURIComponent(name)}/oidc-clients`);
   if (json) {
     emit(result);
@@ -1465,7 +1493,7 @@ async function oidcClientsCmd(name, { json }) {
     const kind = c.confidential ? chalk.yellow('confidential') : chalk.green('public');
     const served = c.enabled ? '' : d(' (plugin disabled — not served)');
     console.log(`  ${chalk.cyan(c.id)}  ${kind}${served}`);
-    console.log(`    grants:   ${c.grantTypes.join(', ')}`);
+    console.log(`    flows:    ${c.grantTypes.join(', ')}`);
     console.log(`    scopes:   ${c.scopes.join(', ')}`);
     if (c.audience.length > 0) console.log(`    audience: ${c.audience.join(', ')}`);
     if (c.accessTokenClaims.length > 0) {
@@ -1478,8 +1506,75 @@ async function oidcClientsCmd(name, { json }) {
         }`,
       );
     }
+    if (c.userFacing) {
+      const granted = Array.isArray(c.grants)
+        ? c.grants.length > 0
+          ? c.grants.map(principalText).join(', ')
+          : d('none — external members do not sign in')
+        : chalk.yellow('unknown (Gatekeeper could not be read)');
+      console.log(`    granted:  ${granted}`);
+    }
   }
   console.log('');
+}
+
+/** Grant a user-facing client to a user or a Lamaste group (a Gatekeeper grant the panel checks). */
+async function grantOidcClientCmd(clientId, principal, { json }) {
+  let result;
+  try {
+    result = await panelRequest('POST', '/api/gatekeeper/grants', {
+      ...principal,
+      resourceType: OIDC_CLIENT_RESOURCE,
+      resourceId: clientId,
+    });
+  } catch (err) {
+    failPanel(err.message, json, err);
+  }
+  if (json) {
+    emitComplete(result);
+    return;
+  }
+  console.log(
+    `\n  ${chalk.green('✓')} ${principalText(principal)} may sign in with ${terminalText(clientId)}\n`,
+  );
+}
+
+/** Revoke the grant of a user-facing client to a user or a Lamaste group. */
+async function revokeOidcClientCmd(name, clientId, principal, { json }) {
+  let found;
+  try {
+    const { clients } = await panelRequest(
+      'GET',
+      `/api/plugins/${encodeURIComponent(name)}/oidc-clients`,
+    );
+    found = findClientGrant(clients ?? [], clientId, principal);
+  } catch (err) {
+    failPanel(err.message, json, err);
+  }
+  if ('error' in found) {
+    const reason = {
+      no_client: `Plugin ${name} declares no user-facing OIDC client ${clientId}`,
+      unreadable: "Gatekeeper's grants could not be read — try again",
+      no_grant: `${clientId} is not granted to ${principalText(principal)}`,
+    }[found.error];
+    failPanel(reason, json);
+  }
+  let result;
+  try {
+    result = await panelRequest(
+      'DELETE',
+      `/api/gatekeeper/grants/${encodeURIComponent(found.grantId)}`,
+    );
+  } catch (err) {
+    failPanel(err.message, json, err);
+  }
+  if (json) {
+    emitComplete(result);
+    return;
+  }
+  console.log(
+    `\n  ${chalk.green('✓')} ${principalText(principal)} no longer signs in with ${terminalText(clientId)}\n`,
+  );
 }
 
 /**
