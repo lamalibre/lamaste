@@ -37,6 +37,12 @@ All lockstep packages, the desktop crate and its Tauri config move to 4.7.0; int
 - A user surface answers a refused request with its refusal as JSON — `{ "error": "not_a_member" }` for a user who is not a member of the host's domain, `{ "error": "forbidden" }` otherwise — instead of nginx's 403 page: Gatekeeper names the refusal in `X-Lamalibre-Refusal`, nginx answers with one of those two bodies.
 - Starting or restarting Authelia waits until it serves requests (its health endpoint answers), not a fixed 2 s: everywhere the relay starts or restarts it — the panel's rendering, the Services page, a redeploy.
 
+### Fixed
+
+- **A release installs its own libraries.** create-lamaste vendored serverd, the server CLI and Gatekeeper with caret ranges on `@lamalibre/*`, so installing or redeploying release X after X+1 shipped resolved X+1's core library. Each vendored manifest now pins this monorepo's packages to the exact versions of the release (create-lamaste `scripts/pin-release.js`).
+- **No export removed within 4.x.** `./server`'s `updateAutheliaAccessControl` and `syncAllAccessControl` (and their types) are back, deprecated: a 4.6 serverd resolving this core (`^4.6.0`, unpinned) imports them. They render 4.6's single-domain access control and nothing in 4.7 calls them; removed in 5.0. `packages/core/lib/public-api.json` now holds every exported name, types included, and a test fails when a build lacks one.
+- **The root build follows the workspaces' dependencies** (`scripts/build-workspaces.mjs`): a clean checkout built the desktop app before the core library it now needs.
+
 ### Security
 
 From the review of the feature (design doc, Security review):
