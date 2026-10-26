@@ -265,12 +265,19 @@ WantedBy=multi-user.target
  * Installed by create-lamaste only; onboarding writes the configuration,
  * then enables and starts it.
  *
+ * No start rate limit (`StartLimitIntervalSec=0`): the panel restarts
+ * Authelia for every change of membership, domains or OIDC clients, and
+ * systemd's default (5 starts in 10 s) refused the sixth of a quick series
+ * of admin changes — Authelia then stayed down on every domain until
+ * something started it again. A crash loop stays bounded by `RestartSec=5`.
+ *
  * @returns {string}
  */
 export function generateAutheliaUnit() {
   return `[Unit]
 Description=Authelia Authentication Server
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

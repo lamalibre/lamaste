@@ -45,6 +45,11 @@ test('the Authelia unit and the Authelia CLI run with the template configuration
   assert.ok(unit.includes('User=lamaste-authelia'));
   assert.ok(unit.includes('ReadWritePaths=/etc/authelia /var/log/authelia'));
   assert.equal(AUTHELIA_CLI_ENV.X_AUTHELIA_CONFIG_FILTERS, 'template');
+  // The panel restarts Authelia on every membership change: no start rate
+  // limit in [Unit], crash loops bounded by RestartSec in [Service].
+  const [unitSection, serviceSection] = unit.split('[Service]');
+  assert.match(unitSection, /\nStartLimitIntervalSec=0\n/);
+  assert.match(serviceSection, /\nRestartSec=5\n/);
   assert.equal(AUTHELIA_OIDC_KEY_PATH, '/etc/authelia/oidc-issuer.pem');
 });
 
