@@ -105,7 +105,7 @@ export interface CreateGrantOptions {
 
 export class UserAccessError extends Error {
   readonly statusCode: number;
-  readonly code: 'NOT_FOUND' | 'INVALID' | 'CONSUMED' | 'CAP_EXCEEDED';
+  readonly code: 'NOT_FOUND' | 'INVALID' | 'CONSUMED' | 'CAP_EXCEEDED' | 'NOT_CONSUMABLE';
   constructor(message: string, code: UserAccessError['code'], statusCode: number) {
     super(message);
     this.name = 'UserAccessError';
@@ -169,7 +169,7 @@ async function loadState(dataDir: string): Promise<UserAccessState> {
       otpTokens = parsed.otpTokens as Record<string, OtpToken>;
     }
     return {
-      grants: Array.isArray(parsed.grants) ? parsed.grants : [],
+      grants: Array.isArray(parsed.grants) ? parsed.grants.map(unconsumedIfAccess) : [],
       otpTokens,
     };
   } catch (err: unknown) {
@@ -206,9 +206,28 @@ function countActiveOTPs(tokens: Record<string, OtpToken>): number {
   return n;
 }
 
+/**
+ * An agent-side grant (`target` `agent:<label>`) is browser access to the
+ * plugin on that agent, kept until it is revoked; only a local grant is
+ * consumed (by its desktop enrolment). Before 4.7 agent-side grants were
+ * created consumed, and the retention sweep deleted them 90 days later —
+ * access ended silently.
+ */
+function isAgentGrant(grant: Pick<UserAccessGrant, 'target'>): boolean {
+  return (grant.target ?? 'local').startsWith('agent:');
+}
+
+/** A stored agent-side grant marked consumed (before 4.7) read as unconsumed. */
+function unconsumedIfAccess(grant: UserAccessGrant): UserAccessGrant {
+  return isAgentGrant(grant) && grant.used ? { ...grant, used: false, usedAt: null } : grant;
+}
+
+/** Drop consumed local grants past the retention period; access grants stay. */
 function cleanOldGrants(grants: UserAccessGrant[]): UserAccessGrant[] {
   const cutoff = Date.now() - GRANT_RETENTION_MS;
-  return grants.filter((g) => !g.used || new Date(g.usedAt || g.createdAt).getTime() > cutoff);
+  return grants.filter(
+    (g) => isAgentGrant(g) || !g.used || new Date(g.usedAt || g.createdAt).getTime() > cutoff,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -228,10 +247,10 @@ export interface CreatedGrant {
 /**
  * Create a user-plugin access grant.
  *
- * Local grants (`target = 'local'`) start as `used: false` — they are consumed
- * when the user enrolls a desktop session. Agent-side grants (`target` starts
- * with `'agent:'`) are auto-consumed on creation because they grant browser
- * access, not an enrollment ceremony.
+ * Every grant starts as `used: false`. A local grant (`target = 'local'`)
+ * is consumed when the user enrolls a desktop session; an agent-side grant
+ * (`target` starts with `'agent:'`) is browser access and is never consumed
+ * (see {@link isAgentGrant}).
  */
 export function createGrant(
   dataDir: string,
@@ -253,16 +272,14 @@ export function createGrant(
     const grantId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
 
-    const isAgentTarget = target.startsWith('agent:');
-
     const grant: UserAccessGrant = {
       grantId,
       username,
       pluginName,
       target,
-      used: isAgentTarget,
+      used: false,
       createdAt,
-      usedAt: isAgentTarget ? createdAt : null,
+      usedAt: null,
     };
 
     state.grants.push(grant);
@@ -373,6 +390,10 @@ export function consumeGrant(
 
     if (grant.username !== username) {
       throw new UserAccessError('Invalid grant', 'INVALID', 401);
+    }
+
+    if (isAgentGrant(grant)) {
+      throw new UserAccessError('Only a local grant can be consumed', 'NOT_CONSUMABLE', 409);
     }
 
     if (grant.used) {
