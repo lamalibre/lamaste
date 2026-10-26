@@ -251,8 +251,18 @@ export {
   base32Decode,
   generateTotpSecret,
   writeTotpToDatabase,
+  AUTHELIA_ASSET_PATH,
+  AUTHELIA_ASSET_LOGO,
+  AUTHELIA_THEME_DEFAULT,
+  ensureAutheliaBrandingConfig,
+  autheliaBrandingConfigured,
+  ensureAutheliaAssets,
+  ensureAutheliaBrandingBase,
 } from './authelia.js';
 export type {
+  AutheliaRewriteOptions,
+  AutheliaAssetsOptions,
+  AutheliaBrandingBaseOptions,
   AutheliaSecrets,
   AutheliaUser,
   UsersYamlEntry,
@@ -632,3 +642,25 @@ export type {
 
 // --- Base domains side by side: the Public Suffix List (multi-domain relay) ---
 export { assertDomainRegistrable, registrableDomain } from './domain-registrable.js';
+
+// --- Per-domain branding of the auth pages: the rendered directories ---
+export {
+  AUTHELIA_LOCAL_URL,
+  AUTHELIA_LOCALES_MAX_LANGUAGES,
+  AUTHELIA_LOCALES_MAX_NAMESPACES,
+  AUTHELIA_LOCALE_FILE_MAX_BYTES,
+  authBrandingDir,
+  parseAutheliaLocalesList,
+  fetchAutheliaLocales,
+  renderAuthBranding,
+  readRenderedBrand,
+  removeAuthBranding,
+  listRenderedBrands,
+  sha256Hex,
+} from './auth-branding-store.js';
+export type {
+  AutheliaLocaleFile,
+  AutheliaLocales,
+  FetchAutheliaLocalesOptions,
+  AuthBrandingRenderInput,
+} from './auth-branding-store.js';

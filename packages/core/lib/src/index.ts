@@ -105,6 +105,12 @@ export type {
   PluginOidcClientView,
   DomainDnsCheck,
   DomainDnsRecord,
+  DomainBrandingAssetView,
+  DomainBrandingView,
+  DomainBrandingInput,
+  DomainBrandingChange,
+  DomainBrandingFieldError,
+  DomainBrandingPreview,
   IdentityReadinessReason,
   PluginIdentityView,
   PluginWebSurfaceView,
@@ -633,3 +639,48 @@ export {
 
 // Branding primitives
 export * from './branding.js';
+
+// Per-domain branding of the auth pages: the brand record's rules, the
+// image checks and the rendering (browser-safe; the relay's side is in /server)
+export {
+  AUTH_BRANDING_THEMES,
+  AUTH_BRANDING_NAME_MAX_LENGTH,
+  AUTH_BRANDING_TAGLINE_MAX_LENGTH,
+  AUTH_BRANDING_SUPPORT_URL_MAX_LENGTH,
+  AUTH_BRANDING_LOGO_MAX_BYTES,
+  AUTH_BRANDING_LOGO_MAX_DIMENSION,
+  AUTH_BRANDING_FAVICON_MAX_BYTES,
+  AUTH_BRANDING_FAVICON_MAX_DIMENSION,
+  AUTH_BRANDING_ACCENT_RE,
+  AUTH_BRANDING_WEB_ROOT,
+  AUTH_BRANDING_FILES,
+  AUTH_BRANDING_LOCALES_DIR,
+  AUTHELIA_LOCALE_RE,
+  AUTHELIA_LOCALE_NAMESPACE_RE,
+  AUTHELIA_NAME_PLACEHOLDER,
+  BRAND_FIELD_NAMES,
+  BRAND_CSS_ACCENT_PROPERTIES,
+  BRAND_CSS_FOOTER_SELECTOR,
+  brandTextProblem,
+  brandSupportUrlProblem,
+  validateBrandFields,
+  inspectBrandLogo,
+  inspectBrandFavicon,
+  authBrandingLocaleFile,
+  renderBrandLocale,
+  accentForeground,
+  renderBrandCss,
+  renderBrandJson,
+} from './auth-branding.js';
+
+export type {
+  BrandTheme,
+  BrandFields,
+  BrandFieldName,
+  BrandFieldError,
+  BrandFieldsValidation,
+  BrandImageInspection,
+  BrandImageRefusal,
+  RenderedBrand,
+  BrandJson,
+} from './auth-branding.js';

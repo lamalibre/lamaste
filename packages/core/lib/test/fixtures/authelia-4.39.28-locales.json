@@ -1,0 +1,45 @@
+{
+  "_fixture": "Authelia v4.39.28 GET /locales — the shape of internal/utils/types.go Languages/Language as internal/server/asset.go newLocalesListHandler marshals it (middlewares.OKResponse), trimmed to four languages (en, srp, tr, tr-TR). Refresh when AUTHELIA_RELEASE.version is bumped.",
+  "status": "OK",
+  "data": {
+    "defaults": {
+      "language": {
+        "display": "English",
+        "locale": "en",
+        "parent": ""
+      },
+      "namespace": "portal"
+    },
+    "namespaces": ["consent", "portal", "settings"],
+    "languages": [
+      {
+        "display": "English",
+        "locale": "en",
+        "namespaces": ["consent", "portal", "settings"],
+        "fallbacks": ["en"],
+        "parent": ""
+      },
+      {
+        "display": "Srpski",
+        "locale": "srp",
+        "namespaces": ["consent", "portal", "settings"],
+        "fallbacks": ["en"],
+        "parent": ""
+      },
+      {
+        "display": "Türkçe",
+        "locale": "tr",
+        "namespaces": ["consent", "portal", "settings"],
+        "fallbacks": ["en"],
+        "parent": ""
+      },
+      {
+        "display": "Türkçe",
+        "locale": "tr-TR",
+        "namespaces": ["consent", "portal", "settings"],
+        "fallbacks": ["tr", "en"],
+        "parent": "tr"
+      }
+    ]
+  }
+}

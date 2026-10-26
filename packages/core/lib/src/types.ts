@@ -5,6 +5,7 @@
  * desktop, and backend packages alike.
  */
 
+import type { BrandFieldError, BrandFields, RenderedBrand } from './auth-branding.js';
 import type { PluginHosting, PluginMode } from './constants.js';
 import type { MembershipKind } from './domains.js';
 import type { HostEligibility } from './host-eligibility.js';
@@ -250,6 +251,69 @@ export interface DomainDnsRecord {
   readonly purpose: string;
   readonly resolvedIps: readonly string[];
   readonly ok: boolean;
+}
+
+/** A brand's logo or favicon as the API shows it: its digest and what its header says, never the bytes. */
+export interface DomainBrandingAssetView {
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly format?: 'png' | 'ico';
+  readonly width?: number;
+  readonly height?: number;
+}
+
+/**
+ * A domain's brand on its auth pages, as `GET /api/domains/:name/branding`
+ * shows it (`packages/core/docs/auth-branding-design.md`): the fields,
+ * the assets without their bytes, the revision, and what is rendered for
+ * nginx (`rendered`, null while nothing is; `renderedCurrent` when the
+ * rendering is this revision from the pinned Authelia release).
+ */
+export interface DomainBrandingView extends BrandFields {
+  readonly domain: string;
+  readonly logo: DomainBrandingAssetView | null;
+  readonly favicon: DomainBrandingAssetView | null;
+  readonly revision: number;
+  readonly updatedAt: string;
+  readonly rendered: RenderedBrand | null;
+  readonly renderedCurrent: boolean;
+}
+
+/**
+ * The fields `PUT /api/domains/:name/branding` takes: `name` required, the
+ * rest optional (absent or null clears; `theme` defaults to `light`), and
+ * `ifRevision` to refuse a change over one not seen (409 `revision_mismatch`).
+ */
+export interface DomainBrandingInput {
+  name: string;
+  tagline?: string | null;
+  theme?: BrandFields['theme'];
+  accent?: string | null;
+  supportEmail?: string | null;
+  supportUrl?: string | null;
+  ifRevision?: number;
+}
+
+/** What a brand change answers: the brand, and a warning when it was saved but not rendered. */
+export interface DomainBrandingChange {
+  readonly branding: DomainBrandingView;
+  readonly created?: boolean;
+  readonly changed: boolean;
+  readonly warnings?: readonly AdminWarning[];
+}
+
+/** A refused brand: `errors` by field name, never a value (400 `invalid_branding`). */
+export type DomainBrandingFieldError = BrandFieldError;
+
+/** `GET /api/domains/:name/branding/preview`: the stylesheet and the English title and footer the sign-in shows. */
+export interface DomainBrandingPreview {
+  readonly locale: 'en';
+  readonly css: string;
+  readonly title: string;
+  readonly footer: string;
+  readonly theme: BrandFields['theme'];
+  readonly logo: boolean;
+  readonly favicon: boolean;
 }
 
 /**
@@ -622,6 +686,34 @@ export interface AdminClient {
     name: string,
     domain: string,
   ): Promise<{ name: string; domain: string; changed: boolean }>;
+
+  // A domain's brand on its auth pages (per-domain branding)
+  /** The brand without its blobs, or null when the domain has none (404 `unknown_domain`). */
+  getDomainBranding(name: string): Promise<{ branding: DomainBrandingView | null }>;
+  /** Set the fields (created when there is none). 400 `invalid_branding` with `errors`; 409 `revision_mismatch`. */
+  updateDomainBranding(name: string, fields: DomainBrandingInput): Promise<DomainBrandingChange>;
+  /** Back to the stock page. */
+  removeDomainBranding(name: string): Promise<{ removed: boolean; warnings?: AdminWarning[] }>;
+  /** The logo as base64 PNG (≤ 512 KiB, ≤ 1024 a side). 400 `invalid_image` (`reason`), 413 `asset_too_large`, 404 `no_branding`. */
+  setDomainBrandingLogo(
+    name: string,
+    data: string,
+    options?: { ifRevision?: number },
+  ): Promise<DomainBrandingChange>;
+  removeDomainBrandingLogo(
+    name: string,
+  ): Promise<{ removed: boolean; branding: DomainBrandingView; warnings?: AdminWarning[] }>;
+  /** The favicon as base64 ICO or PNG (≤ 64 KiB). Refusals as the logo's. */
+  setDomainBrandingFavicon(
+    name: string,
+    data: string,
+    options?: { ifRevision?: number },
+  ): Promise<DomainBrandingChange>;
+  removeDomainBrandingFavicon(
+    name: string,
+  ): Promise<{ removed: boolean; branding: DomainBrandingView; warnings?: AdminWarning[] }>;
+  /** The rendered stylesheet and the English title and footer (404 `no_branding`, 503 `authelia_unavailable`). */
+  getDomainBrandingPreview(name: string): Promise<DomainBrandingPreview>;
 
   // Invitations
   getInvitations(): Promise<{ invitations: unknown[] }>;

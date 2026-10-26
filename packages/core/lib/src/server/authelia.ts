@@ -18,8 +18,19 @@
  */
 
 import crypto from 'node:crypto';
-import { access, chmod, constants, copyFile, open, readFile, rename, rm } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  constants,
+  copyFile,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+} from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 import { canonicalJson } from '../app-job-signature.js';
 import { AUTHELIA_SESSION_COOKIE } from '../authelia-session.js';
@@ -39,6 +50,20 @@ export const AUTHELIA_CONFIG = path.join(AUTHELIA_CONFIG_DIR, 'configuration.yml
 export const AUTHELIA_USERS = path.join(AUTHELIA_CONFIG_DIR, 'users.yml');
 export const AUTHELIA_SECRETS = path.join(AUTHELIA_CONFIG_DIR, '.secrets.json');
 export const AUTHELIA_LOG_DIR = '/var/log/authelia';
+/**
+ * `server.asset_path`: the one directory Authelia serves overridable assets
+ * from (`/favicon.ico`, `/static/media/logo.png`, `/locales/...` — see
+ * `auth-branding.ts`). Per-domain overrides happen in nginx; this holds
+ * only the placeholder logo, whose existence when Authelia starts switches
+ * the portal's logo slot on (`data-logooverride="true"`).
+ */
+export const AUTHELIA_ASSET_PATH = path.join(AUTHELIA_CONFIG_DIR, 'assets');
+/** The placeholder logo (Lamaste's own) in {@link AUTHELIA_ASSET_PATH}. */
+export const AUTHELIA_ASSET_LOGO = path.join(AUTHELIA_ASSET_PATH, 'logo.png');
+/** The theme written explicitly, so the index HTML carries a known `data-theme` nginx can replace per domain. */
+export const AUTHELIA_THEME_DEFAULT = 'light';
+/** Lamaste's logo, shipped with this package, written as the placeholder. */
+const LAMASTE_LOGO_ASSET = fileURLToPath(new URL('../../assets/lamaste-logo.png', import.meta.url));
 
 /** The root helper that runs Authelia's CLI as its own account (see lamaste-priv). */
 const PRIV = '/usr/local/sbin/lamaste-priv';
@@ -142,7 +167,11 @@ export interface ProtectedSiteRule {
  * group; `mode` decides whether Authelia can read (0640) or also rewrite
  * (0660) it, or not see it at all (0600).
  */
-async function writeAutheliaFile(destPath: string, content: string, mode: number): Promise<void> {
+async function writeAutheliaFile(
+  destPath: string,
+  content: string | Uint8Array,
+  mode: number,
+): Promise<void> {
   const tmpFile = path.join(
     path.dirname(destPath),
     `.${path.basename(destPath)}.${crypto.randomBytes(8).toString('hex')}`,
@@ -150,7 +179,7 @@ async function writeAutheliaFile(destPath: string, content: string, mode: number
   try {
     const fh = await open(tmpFile, 'wx', 0o600);
     try {
-      await fh.writeFile(content, 'utf-8');
+      await fh.writeFile(content);
       await fh.chmod(mode);
       await fh.sync();
     } finally {
@@ -186,13 +215,31 @@ export async function isAutheliaInstalled(): Promise<boolean> {
 export async function writeAutheliaConfig(
   domain: string,
   secrets: AutheliaSecrets,
-  options: { readonly groupKey?: string } = {},
+  options: {
+    readonly groupKey?: string;
+    /** Where to write (Authelia's files unless a test names others). */
+    readonly configPath?: string;
+    readonly secretsPath?: string;
+  } & AutheliaAssetsOptions = {},
 ): Promise<string> {
   const { jwtSecret, sessionSecret, storageEncryptionKey } = secrets;
+  const configPath = options.configPath ?? AUTHELIA_CONFIG;
+  const secretsPath = options.secretsPath ?? AUTHELIA_SECRETS;
+
+  // The placeholder logo exists before Authelia first starts: the logo
+  // slot is switched on at its start (auth-branding.ts).
+  await ensureAutheliaAssets({
+    ...(options.assetDir !== undefined ? { assetDir: options.assetDir } : {}),
+    ...(options.logoSource !== undefined ? { logoSource: options.logoSource } : {}),
+  });
 
   const configContent = dumpAutheliaConfig({
+    // `theme` and `server.asset_path` as the branded sign-in needs them
+    // (ensureAutheliaBrandingConfig; every rewrite keeps them).
+    theme: AUTHELIA_THEME_DEFAULT,
     server: {
       address: 'tcp://127.0.0.1:9091/',
+      asset_path: AUTHELIA_ASSET_PATH,
     },
     log: {
       level: 'info',
@@ -258,7 +305,7 @@ export async function writeAutheliaConfig(
   });
 
   try {
-    await writeAutheliaFile(AUTHELIA_CONFIG, configContent, 0o640);
+    await writeAutheliaFile(configPath, configContent, 0o640);
   } catch (err: unknown) {
     throw new Error(`Failed to write Authelia configuration: ${errText(err)}`);
   }
@@ -268,12 +315,12 @@ export async function writeAutheliaConfig(
   const secretsContent =
     JSON.stringify({ jwtSecret, sessionSecret, storageEncryptionKey }, null, 2) + '\n';
   try {
-    await writeAutheliaFile(AUTHELIA_SECRETS, secretsContent, 0o600);
+    await writeAutheliaFile(secretsPath, secretsContent, 0o600);
   } catch (err: unknown) {
     throw new Error(`Failed to write Authelia secrets file: ${errText(err)}`);
   }
 
-  return AUTHELIA_CONFIG;
+  return configPath;
 }
 
 // ---------------------------------------------------------------------------
@@ -610,14 +657,30 @@ export async function autheliaWatchesUsersFile(): Promise<boolean> {
  * (access control, OIDC provider) goes through here so the migration and
  * safety logic exists once.
  */
+/**
+ * Where a rewrite reads and writes (Authelia's files unless a test names
+ * others) and how it restarts Authelia.
+ */
+export interface AutheliaRewriteOptions {
+  readonly configPath?: string;
+  readonly secretsPath?: string;
+  /** Restart Authelia after the write (default: `reloadAuthelia(exec)`). */
+  readonly restart?: (exec: ExecFn) => Promise<unknown>;
+}
+
 async function rewriteAutheliaConfig(
   mutate: (config: Record<string, unknown>) => void | Promise<void>,
   exec: ExecFn,
+  {
+    configPath = AUTHELIA_CONFIG,
+    secretsPath = AUTHELIA_SECRETS,
+    restart = reloadAuthelia,
+  }: AutheliaRewriteOptions = {},
 ): Promise<void> {
   // Read current config
   let currentConfig: Record<string, unknown>;
   try {
-    const loaded = await loadAutheliaConfigFile();
+    const loaded = await loadAutheliaConfigFile(configPath);
     if (!loaded) {
       throw new Error('Authelia configuration is empty or invalid');
     }
@@ -684,12 +747,13 @@ async function rewriteAutheliaConfig(
   }
 
   ensureUsersFileWatched(currentConfig);
+  ensureAutheliaBrandingConfig(currentConfig);
 
   await mutate(currentConfig);
 
   // Restore secrets from the authoritative .secrets.json file.
   try {
-    const secretsJson = await readFile(AUTHELIA_SECRETS, 'utf-8');
+    const secretsJson = await readFile(secretsPath, 'utf-8');
     const secrets = JSON.parse(secretsJson) as Partial<AutheliaSecrets> & {
       oidcHmacSecret?: string;
     };
@@ -724,11 +788,11 @@ async function rewriteAutheliaConfig(
   const configContent = dumpAutheliaConfig(currentConfig);
 
   // Backup current config before writing
-  const bakPath = `${AUTHELIA_CONFIG}.bak`;
+  const bakPath = `${configPath}.bak`;
   let backedUp = false;
   try {
     await rm(bakPath, { force: true });
-    await copyFile(AUTHELIA_CONFIG, bakPath, constants.COPYFILE_EXCL);
+    await copyFile(configPath, bakPath, constants.COPYFILE_EXCL);
     await chmod(bakPath, 0o640);
     backedUp = true;
   } catch {
@@ -736,18 +800,18 @@ async function rewriteAutheliaConfig(
   }
 
   try {
-    await writeAutheliaFile(AUTHELIA_CONFIG, configContent, 0o640);
+    await writeAutheliaFile(configPath, configContent, 0o640);
   } catch (err: unknown) {
     throw new Error(`Failed to write Authelia configuration: ${errText(err)}`);
   }
 
   try {
-    await reloadAuthelia(exec);
+    await restart(exec);
     await rm(bakPath, { force: true }).catch(() => undefined);
   } catch (restartErr: unknown) {
     try {
       if (!backedUp) throw restartErr;
-      await rename(bakPath, AUTHELIA_CONFIG);
+      await rename(bakPath, configPath);
       await restartAuthelia(exec, AUTHELIA_ROLLBACK_READY_TIMEOUT_MS);
     } catch {
       // both configs may be broken — surface original error
@@ -820,6 +884,116 @@ export async function updateDomainAccess(
     config.access_control = accessControl;
   }, exec);
   return { changed: true };
+}
+
+// ---------------------------------------------------------------------------
+// Branding: the asset path, the placeholder logo and the theme
+// ---------------------------------------------------------------------------
+
+/**
+ * Hold the configuration as the branded sign-in needs it
+ * (`packages/core/docs/auth-branding-design.md`): `server.asset_path`
+ * naming {@link AUTHELIA_ASSET_PATH} and an explicit `theme`
+ * ({@link AUTHELIA_THEME_DEFAULT} unless one is set already). Mutates
+ * `config`; every rewrite applies it.
+ */
+export function ensureAutheliaBrandingConfig(config: Record<string, unknown>): void {
+  const server = (config.server as Record<string, unknown> | undefined) ?? {};
+  server.asset_path = AUTHELIA_ASSET_PATH;
+  config.server = server;
+  if (typeof config.theme !== 'string' || config.theme === '') {
+    config.theme = AUTHELIA_THEME_DEFAULT;
+  }
+}
+
+/** Whether a configuration holds what {@link ensureAutheliaBrandingConfig} sets. */
+export function autheliaBrandingConfigured(config: Record<string, unknown>): boolean {
+  const server = config.server as Record<string, unknown> | undefined;
+  return (
+    server?.asset_path === AUTHELIA_ASSET_PATH &&
+    typeof config.theme === 'string' &&
+    config.theme !== ''
+  );
+}
+
+export interface AutheliaAssetsOptions {
+  /** The asset directory (default {@link AUTHELIA_ASSET_PATH}). */
+  readonly assetDir?: string;
+  /** The placeholder logo's source (default: Lamaste's logo shipped with this package). */
+  readonly logoSource?: string;
+}
+
+/**
+ * Make sure the asset directory holds the placeholder logo: the directory
+ * 0750 (group `lamaste-authelia`, inherited from `/etc/authelia`), the
+ * logo 0640 — written when missing or different, never through a link.
+ * Returns whether the logo was written.
+ */
+export async function ensureAutheliaAssets({
+  assetDir = AUTHELIA_ASSET_PATH,
+  logoSource = LAMASTE_LOGO_ASSET,
+}: AutheliaAssetsOptions = {}): Promise<{ logoWritten: boolean }> {
+  const logoPath = path.join(assetDir, 'logo.png');
+  const wanted = await readFile(logoSource);
+  try {
+    await mkdir(assetDir, { recursive: true, mode: 0o750 });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'EACCES') {
+      throw new Error(
+        `${AUTHELIA_CONFIG_DIR} is not writable by the panel — run create-lamaste to repair the installation`,
+      );
+    }
+    throw err;
+  }
+  try {
+    const fh = await open(logoPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      if ((await fh.stat()).isFile() && (await fh.readFile()).equals(wanted)) {
+        return { logoWritten: false };
+      }
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    // Missing, a link, unreadable: written below (a link is renamed over).
+  }
+  await writeAutheliaFile(logoPath, wanted, 0o640);
+  return { logoWritten: true };
+}
+
+export interface AutheliaBrandingBaseOptions
+  extends AutheliaRewriteOptions, AutheliaAssetsOptions {}
+
+/**
+ * What every branded relay needs from Authelia, whether any domain has a
+ * brand: the placeholder logo in the asset directory
+ * ({@link ensureAutheliaAssets}) and, in its configuration,
+ * `server.asset_path` and an explicit `theme`
+ * ({@link ensureAutheliaBrandingConfig}). The configuration is rewritten
+ * — and Authelia restarted, once — only when one of the keys is missing:
+ * the structural change the upgrade to the branded sign-in makes. Returns
+ * what was done, so the caller audits the restart.
+ */
+export async function ensureAutheliaBrandingBase(
+  exec: ExecFn,
+  options: AutheliaBrandingBaseOptions = {},
+): Promise<{ logoWritten: boolean; restarted: boolean }> {
+  const assets: AutheliaAssetsOptions = {
+    ...(options.assetDir !== undefined ? { assetDir: options.assetDir } : {}),
+    ...(options.logoSource !== undefined ? { logoSource: options.logoSource } : {}),
+  };
+  const { logoWritten } = await ensureAutheliaAssets(assets);
+  const configPath = options.configPath ?? AUTHELIA_CONFIG;
+  let current: Record<string, unknown> | null;
+  try {
+    current = await loadAutheliaConfigFile(configPath);
+  } catch (err: unknown) {
+    throw new Error(`Failed to read Authelia configuration: ${errText(err)}`);
+  }
+  if (current && autheliaBrandingConfigured(current)) return { logoWritten, restarted: false };
+  // The rewrite applies ensureAutheliaBrandingConfig itself.
+  await rewriteAutheliaConfig(() => undefined, exec, options);
+  return { logoWritten, restarted: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -1039,8 +1213,10 @@ function dumpAutheliaConfig(config: Record<string, unknown>): string {
 }
 
 /** Read and parse `configuration.yml` (template line sentinelized). */
-async function loadAutheliaConfigFile(): Promise<Record<string, unknown> | null> {
-  const text = await readFile(AUTHELIA_CONFIG, 'utf-8');
+async function loadAutheliaConfigFile(
+  configPath: string = AUTHELIA_CONFIG,
+): Promise<Record<string, unknown> | null> {
+  const text = await readFile(configPath, 'utf-8');
   return yaml.load(sentinelizeAutheliaConfig(text)) as Record<string, unknown> | null;
 }
 
