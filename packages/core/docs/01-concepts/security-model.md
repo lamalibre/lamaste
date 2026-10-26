@@ -689,6 +689,16 @@ A relay may serve several base domains with one user directory and an explicit m
 - **Authelia's device-code flow reads a session's groups as they were** (R5): unlike the authorization-code flow, it checks a client's policy against the groups the session last refreshed. So a change that takes a device-code client (`feria login`) away from someone — a membership ended or made external on a domain serving one, a grant on one revoked — restarts Authelia, ending every session on every domain. External members without such a grant (corral's) never cause it. To be reported upstream.
 - **Lamaste's groups reach an OIDC client that asks for `groups`** (R4): Authelia's standard `groups` claim cannot be filtered, so such a client — one the administrator installed, Feria's `feria login` — sees the user's groups. They are opaque — a random key per domain (`lamaste:m:<key>`, `lamaste:x:<key>`), a site's id — so no domain or site is named; what remains is that two users sharing a key share a domain, the client ids granted to an external member, and an external member's granted hostnames on their own domain. Gatekeeper keeps them from every tunnel backend.
 
+### Per-domain branding of the auth pages
+
+A domain's brand ([Domains API — Branding](../04-api-reference/domains.md#branding)) reaches the sign-in origin `auth.<domain>` only as files the panel rendered from validated fields:
+
+- **No operator bytes on the sign-in origin.** The name is 1–64 printable characters without control, bidirectional or invisible characters and without `<` `>` `{` `}` — it is spliced into Authelia's translation strings, some of which carry `<policy>` tags and `{{…}}` interpolations; the colour matches `#[0-9a-f]{6}`; the logo is parsed as a PNG (signature, IHDR, IEND; ≤ 512 KiB, ≤ 1024 a side) and the favicon as an ICO with a valid directory or a PNG — **never SVG**, a script carrier on that origin. The stylesheet is generated from the colour alone; the locale files are Authelia's own with one value substituted. No CSS, HTML or SVG of the operator's exists anywhere in the model.
+- **Content type by extension, never by bytes** (the vhost of the later wave adds `nosniff`); Authelia's CSP stays untouched — a same-origin stylesheet and image are what `style-src 'self'` / `img-src 'self'` allow, nothing inline is added.
+- **The record is the truth, the files a rendering**: written into a fresh directory (0640 files, 0750 directories, fsynced), moved into place as a whole, never written through an existing path; `rendered.json` is read without following links; the reconcile re-renders what is stale and removes what has no record. A rendering that fails leaves the previous one in place and is audited once per streak.
+- **The placeholder logo in Authelia's asset directory** (`/etc/authelia/assets/logo.png`, Lamaste's own, 0640 for the `lamaste-authelia` group) exists only to switch the portal's logo slot on at Authelia's start; it is never a visitor's — the per-domain vhost of the later wave decides what each domain shows.
+- **Logs and the audit log name the domain, the field names and the asset digests** — never the image bytes, never the name.
+
 ## Quick Reference
 
 ### Security layers
