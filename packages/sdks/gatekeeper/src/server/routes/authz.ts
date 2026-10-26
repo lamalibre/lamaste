@@ -9,11 +9,12 @@ import {
   autheliaSessionCookies,
   domainMembership,
   domainOfHost,
+  isLamasteOwnedGroup,
   isUserSurfaceUrl,
   signRelayAssertion,
   userSurfaceHostByFqdn,
 } from '@lamalibre/lamaste';
-import type { RelaySigningKey, UserSurfaceHost } from '@lamalibre/lamaste';
+import type { MembershipKind, RelaySigningKey, UserSurfaceHost } from '@lamalibre/lamaste';
 import { AUTHELIA_VERIFY_URL, SESSION_CACHE_TTL_MS } from '../../lib/constants.js';
 import { checkAccess, isPluginAudienceMember } from '../../lib/authz.js';
 import { buildAccessRequestPage, buildDomainRefusalPage } from '../../lib/templates.js';
@@ -455,29 +456,40 @@ interface DomainRefusal {
 }
 
 /**
- * The session's user admitted to `hostname`'s domain — or why not:
- * Authelia refused them for the host (its rendered membership), or the
- * panel's projection (`domains.json`) does not list them as a member of the
- * domain the host is under. Checked after Authelia on every request,
- * cached sessions too; a missing or unreadable projection, or a host under
- * no domain, is a refusal (fail closed).
+ * The session's user admitted to `hostname`'s domain, with the kind of
+ * their membership — or why not: Authelia refused them for the host (its
+ * rendered membership), or the panel's projection (`domains.json`) lists
+ * them neither as a member nor as an external member of the domain the host
+ * is under. Checked after Authelia on every request, cached sessions too; a
+ * missing or unreadable projection, or a host under no domain, is a refusal
+ * (fail closed). An external member reaches only what names them: each
+ * route checks the kind against its access mode ({@link externalRefused}).
  */
 function checkDomain(
   fastify: FastifyInstance,
   answer: AutheliaSession | typeof FORBIDDEN,
   hostname: string,
-): { readonly session: AutheliaSession } | { readonly refused: DomainRefusal } {
+):
+  | { readonly session: AutheliaSession; readonly kind: MembershipKind }
+  | { readonly refused: DomainRefusal } {
   if (answer === FORBIDDEN) {
     return { refused: { reason: 'authelia_forbidden', domain: domainShownFor(fastify, hostname) } };
   }
   const index = fastify.getDomains();
   const verdict = index ? domainMembership(index, hostname, answer.username) : null;
-  // Members only for now: an external member reaches nothing here until
-  // their kind is checked against each route's access mode.
-  if (verdict?.kind === 'member') return { session: answer };
+  if (verdict?.kind) return { session: answer, kind: verdict.kind };
   return {
     refused: { reason: 'not_a_member', domain: verdict?.domain ?? null },
   };
+}
+
+/**
+ * Whether a host's access mode refuses a user of this membership kind on
+ * its own: `authenticated` admits every member of the domain and no
+ * external member — they reach only `restricted` hosts that grant them.
+ */
+function externalRefused(kind: MembershipKind, accessMode: string): boolean {
+  return kind === 'external' && accessMode === 'authenticated';
 }
 
 /**
@@ -561,6 +573,12 @@ async function authorizeTunnelRequest(
   const { session } = checked;
 
   // Check access mode
+  if (externalRefused(checked.kind, tunnel.accessMode)) {
+    return refuseUngranted(fastify, request, reply, session, parsed.hostname, {
+      reason: 'external_not_granted',
+      resourceId: tunnel.id,
+    });
+  }
   if (tunnel.accessMode === 'public' || tunnel.accessMode === 'authenticated') {
     return allow(fastify, request, reply, tunnel, session);
   }
@@ -575,36 +593,47 @@ async function authorizeTunnelRequest(
     return allow(fastify, request, reply, tunnel, session);
   }
 
-  // The tunnel and the reason only — never who was refused.
+  return refuseUngranted(fastify, request, reply, session, parsed.hostname, {
+    reason: 'no_matching_grant',
+    resourceId: tunnel.id,
+  });
+}
+
+/**
+ * Answer a tunnel request its user is not granted with the access-request
+ * page (403): no grant on a `restricted` tunnel, or an external member on an
+ * `authenticated` one (they are on the domain, only not granted). Logged
+ * with the tunnel and the reason — never who was refused.
+ */
+function refuseUngranted(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  session: AutheliaSession,
+  hostname: string,
+  { reason, resourceId }: { reason: string; resourceId: string },
+): FastifyReply {
   request.log.info(
-    {
-      requestId,
-      reason: 'no_matching_grant',
-      tunnel: fqdn,
-      resourceType: 'tunnel',
-      resourceId: tunnel.id,
-    },
+    { requestId: request.id, reason, tunnel: hostname, resourceType: 'tunnel', resourceId },
     'authz denied',
   );
-
-  if (fastify.getSettings().accessLoggingEnabled) {
+  const settings = fastify.getSettings();
+  if (settings.accessLoggingEnabled) {
     logAccessRequest({
       timestamp: new Date().toISOString(),
       username: session.username,
       resourceType: 'tunnel',
-      resourceId: tunnel.id,
-      resourceFqdn: parsed.hostname,
+      resourceId,
+      resourceFqdn: hostname,
     });
   }
-
-  // Access denied — return inline HTML page as 403 body.
-  // Cache-Control: no-store so nginx never caches the denial; the matching
-  // proxy_cache_valid 403 0 in the snippet is the authoritative setting.
-  const html = buildAccessRequestPage(session.username, parsed.hostname, {
-    adminContact: fastify.getSettings().adminEmail,
-    adminName: fastify.getSettings().adminName,
+  // Inline HTML as the 403 body. Cache-Control: no-store so nginx never
+  // caches the denial; the matching proxy_cache_valid 403 0 in the snippet
+  // is the authoritative setting.
+  const html = buildAccessRequestPage(session.username, hostname, {
+    adminContact: settings.adminEmail,
+    adminName: settings.adminName,
   });
-
   return reply
     .code(403)
     .header('Cache-Control', 'no-store')
@@ -683,6 +712,9 @@ async function authorizeUserSurfaceRequest(
   }
   const { session } = checked;
 
+  if (externalRefused(checked.kind, host.accessMode)) {
+    return refuse('external_not_granted', { resourceType: host.kind, resourceId: host.id });
+  }
   if (host.accessMode !== 'authenticated') {
     // restricted — the user's grant for the host (the tunnel, or the site),
     // as on its other paths
@@ -796,6 +828,7 @@ async function authorizeUserSurfaceShellRequest(
   };
 
   if (!(await isPluginAudienceMember(session.username, route))) return deny('plugin', route);
+  if (externalRefused(checked.kind, host.accessMode)) return deny('site', host.id);
   if (host.accessMode !== 'authenticated') {
     const result = await checkAccess(session.username, 'site', host.id, templateOptions);
     if (!result.allowed) return deny('site', host.id);
@@ -840,7 +873,7 @@ async function allow(
 ): Promise<FastifyReply> {
   reply.header('X-Gatekeeper-Cache-Version', String(fastify.getCacheVersion()));
   if (!tunnel.plugin) {
-    setAutheliaHeaders(reply, session);
+    setAutheliaHeaders(fastify, reply, session);
     reply.header('Cache-Control', `public, max-age=${AUTHZ_SUCCESS_MAX_AGE_SECONDS}`);
     return reply.code(200).send();
   }
@@ -865,10 +898,7 @@ async function allow(
         caller: {
           type: 'user',
           username: session.username,
-          groups: session.groups
-            .split(',')
-            .map((g) => g.trim())
-            .filter((g) => g.length > 0),
+          groups: shownGroups(fastify, session),
           name: session.displayName,
           email: session.email,
         },
@@ -892,18 +922,36 @@ async function allow(
     return reply.code(403).send();
   }
 
-  setAutheliaHeaders(reply, session);
+  setAutheliaHeaders(fastify, reply, session);
   reply.header(RELAY_ASSERTION_HEADER, assertion);
   return reply.code(200).send();
+}
+
+/**
+ * The user's Authelia groups a backend may see: every group but the ones
+ * Lamaste owns (`lamaste:…` and host groups — who is a member of which
+ * domain and named on which host is Authelia's business, not an
+ * application's).
+ */
+function shownGroups(fastify: FastifyInstance, session: AutheliaSession): string[] {
+  const names = fastify.getDomains()?.names ?? [];
+  return session.groups
+    .split(',')
+    .map((g) => g.trim())
+    .filter((g) => g.length > 0 && !isLamasteOwnedGroup(g, names));
 }
 
 /**
  * Set Authelia identity headers on the response so nginx can
  * forward them to the tunnel backend.
  */
-function setAutheliaHeaders(reply: FastifyReply, session: AutheliaSession): void {
+function setAutheliaHeaders(
+  fastify: FastifyInstance,
+  reply: FastifyReply,
+  session: AutheliaSession,
+): void {
   reply.header('remote-user', session.username);
-  reply.header('remote-groups', session.groups);
+  reply.header('remote-groups', shownGroups(fastify, session).join(','));
   reply.header('remote-name', session.displayName);
   reply.header('remote-email', session.email);
 }
