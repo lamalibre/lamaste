@@ -3,11 +3,14 @@
  * each subpath export (`.`, `./agent`, `./server`, ...) declares in its built
  * `.d.ts`, read with the TypeScript checker.
  *
- * Plugins and a relay's own panel depend on this package with a caret range,
- * so a minor release must never take a name away: a 4.6 serverd that
- * resolves core 4.7 imports what 4.6 exported. `public-api.json` holds the
- * names of the latest release; test/public-api.test.js fails when the build
- * lacks one of them. A release adds its new names with
+ * Plugins depend on this package with a caret range, so a minor release
+ * must not take a name away from them. `public-api.json` holds the names of
+ * the latest release; test/public-api.test.js fails when the build lacks
+ * one of them, so a removal is a decision (a major, or a documented
+ * relay-internal change in the CHANGELOG with the snapshot edited by hand),
+ * never an accident. It checks names, not signatures. The relay's own
+ * packages need neither: create-lamaste pins them to one release. A release
+ * adds its new names with
  *
  *   node scripts/public-api.mjs --write
  *
