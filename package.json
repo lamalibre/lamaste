@@ -6,7 +6,7 @@
     "packages/*/*"
   ],
   "scripts": {
-    "build": "npm run --workspaces --if-present build",
+    "build": "node scripts/build-workspaces.mjs",
     "dev:server": "npm run dev -w packages/server/daemon",
     "dev:client": "npm run dev -w packages/server/ui",
     "docs:dev": "npm --prefix website run dev",
