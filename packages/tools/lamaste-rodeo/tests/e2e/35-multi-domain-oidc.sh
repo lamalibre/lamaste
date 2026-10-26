@@ -4,9 +4,10 @@
 # ============================================================================
 # Authelia's access_control does not apply to OpenID Connect authorization:
 # a client's authorization_policy does. The relay renders one policy per
-# domain and factor naming the domain's members, and points each user-facing
-# client at its plugin's domain's policy (design: packages/core/docs/
-# multi-domain-relay-design.md, "OIDC: one issuer per domain"). A is the
+# user-facing client, `lamaste_client_<id>`, admitting the members of its
+# plugin's domain by the domain's member group (`lamaste:m:<key>` in
+# users.yml — packages/core/docs/external-members-design.md) and external
+# members only with a grant (single-VM spec 36). A is the
 # relay's primary domain, B a second one (the primary's first label
 # replaced by `second`).
 #
@@ -14,13 +15,13 @@
 # write_oidc_domain_fixture_plugin) is served by a stand-in registry, as in
 # spec 26. A developer is a member of A and B, a customer of B only.
 #
-# 1. The client belongs to A: its authorization_policy is A's two-factor
-#    policy, which names the developer and not the customer.
+# 1. The client belongs to A: its policy admits A's member group, which
+#    users.yml gives the developer and not the customer.
 # 2. Signed in at auth.A, the developer's authorization request goes on
 #    (Authelia's consent, no error); the customer's — valid credentials, not
 #    a member of A — is refused (error=access_denied to the redirect URI).
-# 3. The plugin moved to B: the client's policy is B's; signed in at
-#    auth.B, the customer's request goes on too.
+# 3. The plugin moved to B: the client's policy admits B's member group;
+#    signed in at auth.B, the customer's request goes on too.
 # 4. B is an issuer of its own: auth.B's discovery says
 #    https://auth.<B>, auth.A's https://auth.<A>.
 # ============================================================================
@@ -99,10 +100,17 @@ client_policy() {
   sudo bash -c "${AUTHELIA_CONFIG_JSON}" | jq -r --arg c "$1" '[.identity_providers.oidc.clients[]? | select(.client_id == $c) | .authorization_policy] | first // ""' 2>/dev/null || echo ""
 }
 
-# policy_subjects <name> — the subjects of an authorization policy's rules, sorted, comma-separated
+# policy_subjects <name> — the subjects of an authorization policy's rules
+# (a rule's ANDed subjects joined by "+"), sorted, comma-separated
 policy_subjects() {
-  sudo bash -c "${AUTHELIA_CONFIG_JSON}" | jq -r --arg p "$1" '[.identity_providers.oidc.authorization_policies[$p].rules[]?.subject[]?] | sort | join(",")' 2>/dev/null || echo ""
+  sudo bash -c "${AUTHELIA_CONFIG_JSON}" | jq -r --arg p "$1" '[.identity_providers.oidc.authorization_policies[$p].rules[]?.subject[]? | if type == "array" then join("+") else . end] | sort | join(",")' 2>/dev/null || echo ""
 }
+
+# member_key <domain> — the domain's group key, as Authelia's rules name it
+member_key() { sudo bash -c "${AUTHELIA_CONFIG_JSON}" | jq -r --arg d "$1" "${AUTHELIA_MEMBER_KEY}" 2>/dev/null || echo ""; }
+
+# user_groups <username> — the user's groups in users.yml, sorted, comma-separated
+user_groups() { sudo bash -c "${AUTHELIA_USERS_GROUPS_JSON}" | jq -r --arg u "$1" '(.[$u] // []) | sort | join(",")' 2>/dev/null || echo ""; }
 
 # ===========================================================================
 # 1. Domain B, the users, the plugin
@@ -122,9 +130,9 @@ local_wait_authelia "${DOMAIN_2}"
 
 for u in "${DEV}" "${CUST}"; do api_delete "users/${u}?erase=true" > /dev/null 2>&1 || true; done
 RESP=$(api_post "users" "{\"username\":\"${DEV}\",\"displayname\":\"E2E Dev\",\"email\":\"${DEV}@example.test\",\"password\":\"${DEV_PASSWORD}\",\"groups\":[],\"domains\":[\"${DOMAIN}\",\"${DOMAIN_2}\"]}")
-assert_json_field "$RESP" '.user.domains | sort | join(",")' "$(printf '%s\n%s\n' "${DOMAIN}" "${DOMAIN_2}" | sort | paste -sd, -)" "${DEV}: a member of A and B" || true
+assert_json_field "$RESP" '[.user.domains[].name] | sort | join(",")' "$(printf '%s\n%s\n' "${DOMAIN}" "${DOMAIN_2}" | sort | paste -sd, -)" "${DEV}: a member of A and B" || true
 RESP=$(api_post "users" "{\"username\":\"${CUST}\",\"displayname\":\"E2E Cust\",\"email\":\"${CUST}@example.test\",\"password\":\"${CUST_PASSWORD}\",\"groups\":[],\"domains\":[\"${DOMAIN_2}\"]}")
-assert_json_field "$RESP" '.user.domains | join(",")' "${DOMAIN_2}" "${CUST}: a member of B only" || true
+assert_json_field "$RESP" '[.user.domains[].name] | join(",")' "${DOMAIN_2}" "${CUST}: a member of B only" || true
 
 log_section "The plugin with an authorization-code client, served by a stand-in registry"
 
@@ -153,12 +161,16 @@ local_wait_authelia "${DOMAIN}"
 
 log_section "The client belongs to A: A's members sign in, a customer of B does not"
 
-POLICY_A="lamaste_${DOMAIN//./_}_two_factor"
-POLICY_B="lamaste_${DOMAIN_2//./_}_two_factor"
-assert_eq "$(client_policy "${CLIENT_ID}")" "${POLICY_A}" "The client's authorization_policy is A's two-factor policy" || true
-SUBJECTS_A=$(policy_subjects "${POLICY_A}")
-assert_contains ",${SUBJECTS_A}," ",user:${DEV}," "A's policy names ${DEV}" || true
-assert_not_contains ",${SUBJECTS_A}," ",user:${CUST}," "…not ${CUST}" || true
+POLICY="lamaste_client_${CLIENT_ID}"
+KEY_A=$(member_key "${DOMAIN}")
+KEY_B=$(member_key "${DOMAIN_2}")
+assert_eq "$(client_policy "${CLIENT_ID}")" "${POLICY}" "The client's authorization_policy is its own, ${POLICY}" || true
+SUBJECTS=$(policy_subjects "${POLICY}")
+assert_contains ",${SUBJECTS}," ",group:lamaste:m:${KEY_A}," "…admitting A's member group" || true
+assert_not_contains ",${SUBJECTS}," ",group:lamaste:m:${KEY_B}," "…not B's" || true
+assert_not_contains "${SUBJECTS}" "user:" "…naming no user" || true
+assert_contains ",$(user_groups "${DEV}")," ",lamaste:m:${KEY_A}," "users.yml gives ${DEV} A's member group" || true
+assert_not_contains ",$(user_groups "${CUST}")," ",lamaste:m:${KEY_A}," "…not ${CUST}" || true
 
 SECRET_DEV=$(local_reset_totp "${DEV}")
 SECRET_CUST=$(local_reset_totp "${CUST}")
@@ -184,10 +196,11 @@ log_section "The plugin moved to B: B's members sign in"
 RESP=$(api_put "plugins/${PLUGIN_NAME}/domain" "{\"domain\":\"${DOMAIN_2}\"}")
 assert_json_field "$RESP" '"\(.domain) \(.changed)"' "${DOMAIN_2} true" "PUT /api/plugins/${PLUGIN_NAME}/domain {domain: B}" || true
 local_wait_authelia "${DOMAIN_2}"
-assert_eq "$(client_policy "${CLIENT_ID}")" "${POLICY_B}" "The client's authorization_policy is B's two-factor policy" || true
-SUBJECTS_B=$(policy_subjects "${POLICY_B}")
-assert_contains ",${SUBJECTS_B}," ",user:${CUST}," "B's policy names ${CUST}" || true
-assert_contains ",${SUBJECTS_B}," ",user:${DEV}," "…and ${DEV}" || true
+assert_eq "$(client_policy "${CLIENT_ID}")" "${POLICY}" "The client keeps its own policy" || true
+SUBJECTS=$(policy_subjects "${POLICY}")
+assert_contains ",${SUBJECTS}," ",group:lamaste:m:${KEY_B}," "…which now admits B's member group" || true
+assert_not_contains ",${SUBJECTS}," ",group:lamaste:m:${KEY_A}," "…no longer A's" || true
+assert_contains ",$(user_groups "${CUST}")," ",lamaste:m:${KEY_B}," "users.yml gives ${CUST} B's member group" || true
 
 local_sign_in "${CUST}" "${CUST_PASSWORD}" "${SECRET_CUST}" "${WORK_DIR}/cust-b.jar" "${DOMAIN_2}"
 assert_eq "${SIGN_IN_RESULT}" "OK OK" "${CUST} signed in at auth.B" || true

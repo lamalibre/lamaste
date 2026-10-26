@@ -48,9 +48,10 @@
 # 7. A user disabled while an assertion Gatekeeper gave for them is still
 #    valid: the panel refuses it at once (403, disabled).
 #
-# Every write of users.yml restarts Authelia and ends every session: both
-# users are created before anyone signs in, and disabling one is the last
-# step. The identity feed itself is spec 39.
+# Both users are created before anyone signs in, and disabling one is the
+# last step (Authelia reads users.yml as it changes and ends a disabled
+# user's session at their next request; a structural change — the plugin's
+# OIDC clients, say — still restarts it). The identity feed itself is spec 39.
 # ============================================================================
 
 set -euo pipefail
@@ -384,7 +385,7 @@ RESP=$(visit - "https://${FQDN}${APP}/echo")
 assert_json_field "$(visit_body "$RESP")" '.error' 'unauthenticated' "…JSON (unauthenticated) for the application to act on" || true
 assert_not_contains "$(visit_headers "$RESP" | tr '[:upper:]' '[:lower:]')" "location:" "…never a redirect" || true
 if [ "$(viewer_echo_status)" = "401" ]; then
-  # Something restarted Authelia since (a users.yml write would): sign in again.
+  # Something restarted Authelia since (a structural change would): sign in again.
   log_info "The sessions ended while the plugin was hosted — signing in again"
   sign_in_both
 fi
@@ -563,7 +564,7 @@ assert_eq "$(status_of "$RESP")" "403" "That assertion, still valid, sent to the
 assert_json_field "$(body_of "$RESP")" '.error' 'This user is disabled' "…This user is disabled" || true
 STATUS=$(viewer_echo_status)
 if [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
-  log_pass "From the visitor VM: ${STATUS} — the session ended with Authelia's restart, or the panel refuses it"
+  log_pass "From the visitor VM: ${STATUS} — Authelia ended the disabled user's session, or the panel refuses it"
 else
   log_fail "From the visitor VM, disabled: ${STATUS}"
 fi

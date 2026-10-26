@@ -16,16 +16,20 @@
 # 3. After: the unit succeeded; lamaste-priv is the candidate's (it refuses
 #    what only the old one allowed); the panel's migrations ran on the old
 #    state; the vhosts carry the candidate's names with their link state;
-#    every host answers as before; one domain, every user its member;
-#    Authelia denies by default and Gatekeeper has its member file; the
-#    panel logged no error since the update.
+#    every host answers as before; one domain, every user its member (kind
+#    member); Authelia denies by default, watches its users file (refresh
+#    always, its own password change and reset off — external-members-
+#    design.md) and every user holds the domain's member group there;
+#    Gatekeeper has its member file (v2); the user signed in before the
+#    update, signed in again after it, reaches what they reached; the panel
+#    logged no error since the update.
 # ============================================================================
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/helpers.sh"
 
-require_commands curl jq nginx npm sha256sum
+require_commands curl jq nginx npm sha256sum oathtool python3
 
 begin_test "01 — Panel Update from the previous release to the candidate"
 
@@ -36,6 +40,9 @@ SUB_OFF="e2eup1off"
 PORT_ON=19941
 PORT_OFF=19942
 USERNAME="e2eupgrade"
+# Test credentials for this run only, never printed
+USER_PASSWORD="Upgrade-${RUN_ID}-pass"
+WORK_DIR="/tmp/lamalibre-lamaste-e2e-upgrade-01"
 TUNNEL_ON=""
 TUNNEL_OFF=""
 AVAILABLE="/etc/nginx/sites-available"
@@ -50,6 +57,7 @@ cleanup() {
   done
   api_delete "users/${USERNAME}" > /dev/null 2>&1 || true
   api_delete "certs/agent/${AGENT_LABEL}" > /dev/null 2>&1 || true
+  rm -rf "${WORK_DIR}"
 }
 trap cleanup EXIT
 
@@ -64,6 +72,11 @@ link_state() {
   if sudo test -e "${AVAILABLE}/$1"; then a=available; fi
   if sudo test -L "${ENABLED}/$1"; then e=linked; fi
   echo "$a $e"
+}
+
+# signed_status <jar> <hostname> — how nginx answers https://<hostname>/ to the session in <jar>
+signed_status() {
+  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 -b "$1" --resolve "$2:443:127.0.0.1" "https://$2/" 2>/dev/null || echo "000"
 }
 
 # panel_version — the version the panel reports, or "down"
@@ -102,7 +115,7 @@ log_pass "The relay runs ${BEFORE_VERSION}, before the candidate ${CANDIDATE}"
 
 log_section "State written by ${BEFORE_VERSION}"
 
-RESP=$(api_post "users" "{\"username\":\"${USERNAME}\",\"displayname\":\"E2E Upgrade\",\"email\":\"${USERNAME}@example.test\",\"password\":\"Upgrade-${RUN_ID}-pass\"}")
+RESP=$(api_post "users" "{\"username\":\"${USERNAME}\",\"displayname\":\"E2E Upgrade\",\"email\":\"${USERNAME}@example.test\",\"password\":\"${USER_PASSWORD}\"}")
 assert_json_field "$RESP" '.ok' 'true' "User ${USERNAME} created beside the admin" || true
 
 AGENT=$(api_post "certs/agent" "{\"label\":\"${AGENT_LABEL}\",\"capabilities\":[\"tunnels:read\"]}")
@@ -122,6 +135,21 @@ LEGACY_AUTH="lamalibre-lamaste-auth"
 assert_eq "$(link_state "${LEGACY_ON}") $(link_state "${LEGACY_OFF}") $(link_state "${LEGACY_AUTH}")" \
   "available linked available unlinked available linked" \
   "${BEFORE_VERSION} names the vhosts by subdomain (the enabled tunnel linked, the disabled one not, the auth portal linked)" || true
+
+# Signed in on the previous release: what the user reaches (an
+# authenticated tunnel — admitted, so nginx answers for its backend, which
+# does not run here: 502).
+rm -rf "${WORK_DIR}"
+mkdir -p "${WORK_DIR}"
+SECRET=$(local_reset_totp "${USERNAME}")
+local_wait_authelia "${DOMAIN}"
+local_sign_in "${USERNAME}" "${USER_PASSWORD}" "${SECRET}" "${WORK_DIR}/user-before.jar" "${DOMAIN}"
+assert_eq "${SIGN_IN_RESULT}" "OK OK" "${USERNAME} signed in at auth.${DOMAIN} on ${BEFORE_VERSION}" || true
+REACH_BEFORE=$(signed_status "${WORK_DIR}/user-before.jar" "${ON_FQDN}")
+case "${REACH_BEFORE}" in
+  302 | 401 | 403 | 000) log_fail "${USERNAME} is not admitted to ${ON_FQDN} on ${BEFORE_VERSION} (${REACH_BEFORE})" ;;
+  *) log_pass "${USERNAME} is admitted to ${ON_FQDN} on ${BEFORE_VERSION} (${REACH_BEFORE})" ;;
+esac
 
 USERS_BEFORE=$(api_get "users" 2>/dev/null | jq '[.users[]? | .username] | sort' 2>/dev/null || echo '[]')
 BEFORE="$(host_status "${ON_FQDN}") $(host_status "${OFF_FQDN}") $(host_status "${AUTH_FQDN}")"
@@ -214,7 +242,7 @@ assert_json_field "$DOMAINS" '.domains | length' '1' "One domain" || true
 assert_json_field "$DOMAINS" '.domains[0] | "\(.name) \(.primary) \(.status)"' "${DOMAIN} true active" "…the primary, ${DOMAIN}, active" || true
 USERS=$(api_get "users" 2>/dev/null || echo '{}')
 assert_eq "$(echo "$USERS" | jq -c '[.users[]? | .username] | sort')" "$(echo "${USERS_BEFORE}" | jq -c .)" "The same users as before the update" || true
-assert_eq "$(echo "$USERS" | jq --arg d "${DOMAIN}" '[.users[]? | select((.domains // []) != [$d])] | length')" "0" "…each a member of ${DOMAIN}, and of nothing else" || true
+assert_eq "$(echo "$USERS" | jq --arg d "${DOMAIN}" '[.users[]? | select([(.domains // [])[] | "\(.name):\(.kind)"] != ["\($d):member"])] | length')" "0" "…each a member of ${DOMAIN} (kind member, never external), and of nothing else" || true
 
 log_section "Authelia and Gatekeeper enforce membership"
 
@@ -226,6 +254,26 @@ else
   log_fail "domains.json is missing or does not name ${DOMAIN}"
 fi
 assert_eq "$(systemctl is-active authelia) $(systemctl is-active lamalibre-lamaste-gatekeeper)" "active active" "Authelia and Gatekeeper are running" || true
+PROJECTION=$(sudo cat /etc/lamalibre/lamaste/domains.json 2>/dev/null || echo '{}')
+assert_json_field "$PROJECTION" '"\(.v) \([.domains[].externals | length] | add)"' '2 0' "…the projection is version 2, no external member" || true
+
+log_section "Authelia reads who may pass from its users file"
+
+CONFIG=$(sudo bash -c "${AUTHELIA_CONFIG_JSON}" 2>/dev/null || echo '{}')
+assert_json_field "$CONFIG" '"\(.authentication_backend.file.watch) \(.authentication_backend.refresh_interval)"' 'true always' "Authelia watches users.yml and reads a session's groups at every request" || true
+assert_json_field "$CONFIG" '"\(.authentication_backend.password_change.disable) \(.authentication_backend.password_reset.disable)"' 'true true' "…its own password change and reset are off (the panel is the file's one writer)" || true
+KEY=$(echo "$CONFIG" | jq -r --arg d "${DOMAIN}" "${AUTHELIA_MEMBER_KEY}" 2>/dev/null || echo "")
+assert_eq "$(printf '%s\n' "${KEY}" | grep -cE '^[0-9a-f]{16}$' || true)" "1" "The primary domain's rules name its member group (lamaste:m:<key>)" || true
+assert_not_contains "$(echo "$CONFIG" | jq -c '.access_control.rules')" '"user:' "…and name no user" || true
+USERS_GROUPS=$(sudo bash -c "${AUTHELIA_USERS_GROUPS_JSON}" 2>/dev/null || echo '{}')
+assert_eq "$(echo "$USERS_GROUPS" | jq --arg g "lamaste:m:${KEY}" '[to_entries[] | select(.value | index($g) | not)] | length')" "0" "Every user of users.yml holds the member group" || true
+
+log_section "Signed in again: the user reaches what they reached"
+
+# The update restarted Authelia, which keeps its sessions in memory.
+local_sign_in "${USERNAME}" "${USER_PASSWORD}" "${SECRET}" "${WORK_DIR}/user-after.jar" "${DOMAIN}"
+assert_eq "${SIGN_IN_RESULT}" "OK OK" "${USERNAME} signed in at auth.${DOMAIN} on ${CANDIDATE}" || true
+assert_eq "$(signed_status "${WORK_DIR}/user-after.jar" "${ON_FQDN}")" "${REACH_BEFORE}" "…and is answered on ${ON_FQDN} as before (${REACH_BEFORE})" || true
 
 log_section "The panel logged no error since the update"
 

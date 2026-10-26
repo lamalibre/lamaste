@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034 # variables are read by the specs that source this file
 # ============================================================================
-# The multi-domain relay's three-VM specs (45–48): shared helpers
+# The multi-domain relay's three-VM specs (45–51): shared helpers
 # ============================================================================
 # Sourced after ../e2e/helpers.sh and app-plugin-harness.sh (host_api_*,
 # visit, sign_in, reset_totp, users_call, wait_for). A spec sets MD_SPEC (its
@@ -13,10 +13,14 @@
 # on a fresh provisioning. Specs make sure of them again (md_dns), because a
 # VM restored from an older snapshot predates them.
 #
-# Every rendering of the relay's members changes Authelia's configuration
-# and restarts it, and Authelia keeps its sessions in memory: adding or
-# activating a domain, creating or deleting a user, adding or removing a
-# member — each ends every session. The specs make all such changes before
+# Who may reach what is written into Authelia's users.yml as groups Lamaste
+# owns (packages/core/docs/external-members-design.md): Authelia watches the
+# file and applies a membership, a kind, a grant or a site's listed users at
+# each user's next request — no restart, no session ends. Its configuration
+# changes, and Authelia restarts (ending every session, which it keeps in
+# memory), only with the structure: a domain added, activated or removed, a
+# static site protected or unprotected, the OIDC clients — and a narrowing
+# that reaches a device-code OIDC client. The specs make those changes before
 # anyone signs in, or sign in again after one (md_wait_authelia).
 # ============================================================================
 
@@ -123,20 +127,27 @@ md_wait_authelia() {
 }
 
 # md_user <variable> <username> <password> <domains, a JSON array> — a
-# user, member of those domains (a leftover of an earlier run erased first);
+# user, member of those domains (a name, or {name, kind} for an external
+# membership) (a leftover of an earlier run erased first);
 # its directory id into <variable>. Not in a command substitution: it asserts.
 md_user() {
   local resp id
   host_api_delete "users/$2?erase=true" > /dev/null 2>&1 || true
   resp=$(users_call POST "users" "{\"username\":\"$2\",\"displayname\":\"E2E $2\",\"email\":\"$2@example.test\",\"password\":\"$3\",\"groups\":[],\"domains\":$4}")
-  assert_eq "$(status_of "$resp")" "201" "User $2 created, member of $(echo "$4" | jq -r 'join(" and ")')" || true
+  assert_eq "$(status_of "$resp")" "201" "User $2 created, member of $(echo "$4" | jq -r 'map(if type == "object" then "\(.name) (\(.kind))" else . end) | join(" and ")')" || true
   id=$(json_get "$(body_of "$resp")" '.user.userId // empty')
   printf -v "$1" '%s' "$id"
 }
 
 # user_domains <username> — the user's domains as GET /api/users lists them, sorted, comma-separated
 user_domains() {
-  host_api_get "users" 2>/dev/null | jq -r --arg u "$1" '[.users[]? | select(.username == $u) | .domains[]?] | sort | join(",")' 2>/dev/null || echo ""
+  host_api_get "users" 2>/dev/null | jq -r --arg u "$1" '[.users[]? | select(.username == $u) | .domains[]? | .name] | sort | join(",")' 2>/dev/null || echo ""
+}
+
+# user_kinds <username> — the user's memberships as GET /api/users lists
+# them, "<domain>:<kind>", sorted, comma-separated
+user_kinds() {
+  host_api_get "users" 2>/dev/null | jq -r --arg u "$1" '[.users[]? | select(.username == $u) | .domains[]? | "\(.name):\(.kind)"] | sort | join(",")' 2>/dev/null || echo ""
 }
 
 # md_backends <port:marker>... — a static server on the agent VM for each,
@@ -242,6 +253,74 @@ access_rules_of() { authelia_config | jq -S -c --arg d "$1" "${AUTHELIA_RULES_UN
 
 # session_cookie_domains — the domains of Authelia's session cookies, sorted, comma-separated
 session_cookie_domains() { authelia_config | jq -r '[.session.cookies[]?.domain] | sort | join(",")' 2>/dev/null || echo ""; }
+
+# domain_group_key <domain> — the domain's group key, as Authelia's rules
+# name it (members `group:lamaste:m:<key>`, external members
+# `group:lamaste:x:<key>`); empty when none
+domain_group_key() { authelia_config | jq -r --arg d "$1" "${AUTHELIA_MEMBER_KEY}" 2>/dev/null || echo ""; }
+
+# user_groups <username> — the user's groups in Authelia's users.yml (the
+# administrator's and Lamaste's own), sorted, comma-separated
+user_groups() {
+  host_exec "${AUTHELIA_USERS_GROUPS_JSON}" 2>/dev/null | tail -n 1 | jq -r --arg u "$1" '(.[$u] // []) | sort | join(",")' 2>/dev/null || echo ""
+}
+
+# holds_group <username> <group> — users.yml gives the user that group
+holds_group() { [[ ",$(user_groups "$1")," == *",$2,"* ]]; }
+lacks_group() { ! holds_group "$@"; }
+
+# wait_group <holds|lacks> <username> <group> <message> — until users.yml says so
+wait_group() {
+  if wait_for "${AUTHZ_SETTLE_SECONDS}" "${1}_group" "$2" "$3"; then
+    log_pass "$4"
+  else
+    log_fail "$4 (groups: $(user_groups "$2"))"
+  fi
+}
+
+# authelia_pid — Authelia's MainPID on the host VM (0 when it is not running)
+authelia_pid() { host_exec "systemctl show -p MainPID --value authelia" 2>/dev/null | tail -n 1 | tr -d '\r' || echo "0"; }
+
+# md_kind <domain> <user> <member|external> — PUT the membership's kind; the response
+md_kind() { md_api PUT "domains/$1/members/$2" "{\"kind\":\"$3\"}"; }
+
+# md_grant <variable> <user|group> <principal> <resource type> <resource id>
+# — a Gatekeeper grant through the panel's proxy, asserted; its id into <variable>
+md_grant() {
+  local resp id
+  resp=$(host_api_call POST "gatekeeper/grants" "{\"principalType\":\"$2\",\"principalId\":\"$3\",\"resourceType\":\"$4\",\"resourceId\":\"$5\"}")
+  id=$(json_get "$(body_of "$resp")" '.grant.grantId // empty')
+  assert_eq "$(status_of "$resp") $([ -n "$id" ] && echo granted)" "201 granted" "Granted $4 $5 to $2 $3" || true
+  printf -v "$1" '%s' "$id"
+}
+
+# status_is <jar> <url> <status> — one request from the visitor answers <status>
+status_is() { [ "$(visit_status "$(visit "$1" "$2")")" = "$3" ]; }
+
+# wait_status <jar> <url> <status> <message> — until the request answers <status>
+wait_status() {
+  if wait_for "${AUTHZ_SETTLE_SECONDS}" status_is "$1" "$2" "$3"; then
+    log_pass "$4"
+  else
+    log_fail "$4 (got $(visit_status "$(visit "$1" "$2")"))"
+  fi
+}
+
+# assert_access_request <response of visit> <what> — Gatekeeper's
+# access-request page: 403, "Access Required", never the domain refusal
+# ("Not a member"), never a redirect
+assert_access_request() {
+  assert_eq "$(visit_status "$1")" "403" "$2: 403" || true
+  assert_contains "$(visit_body "$1")" "Access Required" "…the access-request page" || true
+  assert_not_contains "$(visit_body "$1")" "Not a member" "…not the domain refusal" || true
+  assert_not_contains "$(visit_headers "$1" | tr '[:upper:]' '[:lower:]')" "location:" "…never a redirect to a sign-in page" || true
+}
+
+# signed_in <jar> <domain> — the session in <jar> is still signed in at
+# auth.<domain> (Authelia's /api/state names a user)
+signed_in() {
+  [ -n "$(visit_body "$(visit "$1" "https://auth.$2/api/state")" | jq -r '.data.username // empty' 2>/dev/null)" ]
+}
 
 # membership_removed <userId> — the directory.membership.removed audit entries
 # of a user since the spec began, as a JSON array

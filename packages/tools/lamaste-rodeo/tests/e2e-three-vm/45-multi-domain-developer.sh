@@ -10,7 +10,8 @@
 # 1. B is added, its DNS checked (auth.B is the one required record) and
 #    activated: Authelia carries a session cookie per domain (A and B).
 # 2. The developer, created a member of A and B, is in both domains' member
-#    lists and both domains' rendered rules.
+#    lists, and holds both domains' member groups in Authelia's users.yml
+#    (the rules name groups, never people).
 # 3. Signed in at auth.A, the developer reaches an authenticated tunnel on
 #    A. A's session opens nothing on B: B's tunnel sends them to auth.B —
 #    B's own sign-in page, not A's. Signed in there with the same password
@@ -104,7 +105,13 @@ assert_eq "$(is_uuid "${DEV_ID}")" "true" "…one directory id for both domains"
 assert_eq "$(user_domains "${DEV}")" "$(printf '%s\n%s\n' "${DOMAIN}" "${DOMAIN_2}" | sort | paste -sd, -)" "GET /api/users lists ${DEV}'s domains: A and B" || true
 assert_contains ",$(domain_members "${DOMAIN}")," ",${DEV}," "A's member list holds ${DEV}" || true
 assert_contains ",$(domain_members "${DOMAIN_2}")," ",${DEV}," "…and B's" || true
-assert_contains "$(access_rules_of "${DOMAIN_2}")" "\"user:${DEV}\"" "B's rendered access rules admit ${DEV}" || true
+KEY_A=$(domain_group_key "${DOMAIN}")
+KEY_B=$(domain_group_key "${DOMAIN_2}")
+assert_eq "$(printf '%s\n%s\n' "${KEY_A}" "${KEY_B}" | grep -cE '^[0-9a-f]{16}$' || true)" "2" "A and B each have a group key of their own" || true
+assert_contains "$(access_rules_of "${DOMAIN_2}")" "\"group:lamaste:m:${KEY_B}\"" "B's rendered access rules admit B's member group" || true
+assert_not_contains "$(access_rules_of "${DOMAIN_2}")" "\"user:" "…and name no user" || true
+wait_group holds "${DEV}" "lamaste:m:${KEY_A}" "users.yml gives ${DEV} A's member group"
+wait_group holds "${DEV}" "lamaste:m:${KEY_B}" "…and B's"
 assert_eq "$(access_rules_of "${DOMAIN_2}" | jq -r '.[-1].policy')" "deny" "…and end refusing everyone else" || true
 
 # ===========================================================================

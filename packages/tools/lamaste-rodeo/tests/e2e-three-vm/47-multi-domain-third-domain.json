@@ -193,7 +193,117 @@
           ]
         },
         {
-          "id": "step-19",
+          "id": "step-15",
+          "label": "Set KEY_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "domain_group_key \"${DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "KEY_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "Set KEY_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "domain_group_key \"${DOMAIN_2}\""
+          },
+          "capture": [
+            {
+              "variable": "KEY_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "…not B's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(user_groups \"${USER_A}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",lamaste:m:${KEY_B},"
+              },
+              "message": "…not B's"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "…not A's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(user_groups \"${USER_B}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",lamaste:m:${KEY_A},"
+              },
+              "message": "…not A's"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Set GROUPS_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_groups \"${USER_A}\""
+          },
+          "capture": [
+            {
+              "variable": "GROUPS_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Set GROUPS_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_groups \"${USER_B}\""
+          },
+          "capture": [
+            {
+              "variable": "GROUPS_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
           "label": "Set SECRET_A",
           "target": "local",
           "op": {
@@ -210,7 +320,7 @@
           ]
         },
         {
-          "id": "step-20",
+          "id": "step-27",
           "label": "Set SECRET_B",
           "target": "local",
           "op": {
@@ -227,7 +337,7 @@
           ]
         },
         {
-          "id": "step-22",
+          "id": "step-29",
           "label": "Set BEFORE",
           "target": "local",
           "op": {
@@ -244,7 +354,7 @@
           ]
         },
         {
-          "id": "step-23",
+          "id": "step-30",
           "label": "Each reaches its own domain's tunnel and is refused on the other's",
           "target": "local",
           "continueOnError": true,
@@ -265,14 +375,14 @@
           }
         }
       ],
-      "bash": "log_section \"The snapshot: rules, members, reachability\"\n\nmd_wait_authelia \"${DOMAIN}\"\nRULES_A=$(access_rules_of \"${DOMAIN}\")\nRULES_B=$(access_rules_of \"${DOMAIN_2}\")\nMEMBERS_A=$(domain_members \"${DOMAIN}\")\nMEMBERS_B=$(domain_members \"${DOMAIN_2}\")\nassert_contains \"${RULES_A}\" \"\\\"user:${USER_A}\\\"\" \"A's rules admit ${USER_A}\" || true\nassert_not_contains \"${RULES_A}\" \"\\\"user:${USER_B}\\\"\" \"…not ${USER_B}\" || true\nassert_contains \"${RULES_B}\" \"\\\"user:${USER_B}\\\"\" \"B's rules admit ${USER_B}\" || true\nassert_not_contains \"${RULES_B}\" \"\\\"user:${USER_A}\\\"\" \"…not ${USER_A}\" || true\n\nSECRET_A=$(reset_totp \"${USER_A}\")\nSECRET_B=$(reset_totp \"${USER_B}\")\nsign_in_everywhere\nBEFORE=$(matrix)\nassert_eq \"${BEFORE}\" \"a@${SUB_A}=200 a@${SUB_B}=403 b@${SUB_A}=403 b@${SUB_B}=200\" \"Each reaches its own domain's tunnel and is refused on the other's\" || true\n\n# ===========================================================================\n# 2. A third domain\n# ==========================================================================="
+      "bash": "log_section \"The snapshot: rules, members, reachability\"\n\nmd_wait_authelia \"${DOMAIN}\"\nRULES_A=$(access_rules_of \"${DOMAIN}\")\nRULES_B=$(access_rules_of \"${DOMAIN_2}\")\nMEMBERS_A=$(domain_members \"${DOMAIN}\")\nMEMBERS_B=$(domain_members \"${DOMAIN_2}\")\nKEY_A=$(domain_group_key \"${DOMAIN}\")\nKEY_B=$(domain_group_key \"${DOMAIN_2}\")\nassert_contains \"${RULES_A}\" \"\\\"group:lamaste:m:${KEY_A}\\\"\" \"A's rules admit A's member group\" || true\nassert_contains \"${RULES_B}\" \"\\\"group:lamaste:m:${KEY_B}\\\"\" \"B's rules admit B's member group\" || true\nassert_not_contains \"${RULES_A}${RULES_B}\" \"\\\"user:\" \"…neither names a user\" || true\nwait_group holds \"${USER_A}\" \"lamaste:m:${KEY_A}\" \"users.yml gives ${USER_A} A's member group\"\nassert_not_contains \",$(user_groups \"${USER_A}\"),\" \",lamaste:m:${KEY_B},\" \"…not B's\" || true\nwait_group holds \"${USER_B}\" \"lamaste:m:${KEY_B}\" \"users.yml gives ${USER_B} B's member group\"\nassert_not_contains \",$(user_groups \"${USER_B}\"),\" \",lamaste:m:${KEY_A},\" \"…not A's\" || true\nGROUPS_A=$(user_groups \"${USER_A}\")\nGROUPS_B=$(user_groups \"${USER_B}\")\n\nSECRET_A=$(reset_totp \"${USER_A}\")\nSECRET_B=$(reset_totp \"${USER_B}\")\nsign_in_everywhere\nBEFORE=$(matrix)\nassert_eq \"${BEFORE}\" \"a@${SUB_A}=200 a@${SUB_B}=403 b@${SUB_A}=403 b@${SUB_B}=200\" \"Each reaches its own domain's tunnel and is refused on the other's\" || true\n\n# ===========================================================================\n# 2. A third domain\n# ==========================================================================="
     },
     {
       "id": "domain-c-added-and-activated-with-a-member-of-its-own-and-a-tunnel",
       "label": "Domain C added and activated, with a member of its own and a tunnel",
       "steps": [
         {
-          "id": "step-26",
+          "id": "step-33",
           "label": "${USER_C} has a directory id",
           "target": "local",
           "continueOnError": true,
@@ -293,7 +403,7 @@
           }
         },
         {
-          "id": "step-29",
+          "id": "step-36",
           "label": "Authelia holds a session cookie for C",
           "target": "local",
           "continueOnError": true,
@@ -321,7 +431,7 @@
       "label": "A and B: the same rules, the same members, the same answers",
       "steps": [
         {
-          "id": "step-30",
+          "id": "step-37",
           "label": "A's rendered rules are byte-equal to the snapshot",
           "target": "local",
           "continueOnError": true,
@@ -342,7 +452,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-38",
           "label": "B's rendered rules are byte-equal to the snapshot",
           "target": "local",
           "continueOnError": true,
@@ -363,7 +473,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-39",
           "label": "A's member list is unchanged",
           "target": "local",
           "continueOnError": true,
@@ -384,7 +494,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-40",
           "label": "…and B's",
           "target": "local",
           "continueOnError": true,
@@ -405,7 +515,7 @@
           }
         },
         {
-          "id": "step-34",
+          "id": "step-41",
           "label": "C has its one member",
           "target": "local",
           "continueOnError": true,
@@ -426,7 +536,28 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-42",
+          "label": "${USER_A}'s and ${USER_B}'s groups in users.yml are unchanged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_groups \"${USER_A}\") | $(user_groups \"${USER_B}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "${GROUPS_A} | ${GROUPS_B}"
+              },
+              "message": "${USER_A}'s and ${USER_B}'s groups in users.yml are unchanged"
+            }
+          }
+        },
+        {
+          "id": "step-45",
           "label": "Signed in again: every request answers as before (${BEFORE})",
           "target": "local",
           "continueOnError": true,
@@ -447,14 +578,14 @@
           }
         }
       ],
-      "bash": "log_section \"A and B: the same rules, the same members, the same answers\"\n\nassert_eq \"$(access_rules_of \"${DOMAIN}\")\" \"${RULES_A}\" \"A's rendered rules are byte-equal to the snapshot\" || true\nassert_eq \"$(access_rules_of \"${DOMAIN_2}\")\" \"${RULES_B}\" \"B's rendered rules are byte-equal to the snapshot\" || true\nassert_eq \"$(domain_members \"${DOMAIN}\")\" \"${MEMBERS_A}\" \"A's member list is unchanged\" || true\nassert_eq \"$(domain_members \"${DOMAIN_2}\")\" \"${MEMBERS_B}\" \"…and B's\" || true\nassert_eq \"$(domain_members \"${DOMAIN_3}\")\" \"${USER_C}\" \"C has its one member\" || true\n\nmd_wait_authelia \"${DOMAIN}\"\nsign_in_everywhere\nassert_eq \"$(matrix)\" \"${BEFORE}\" \"Signed in again: every request answers as before (${BEFORE})\" || true\n\n# ===========================================================================\n# 4. C's member reaches C only\n# ==========================================================================="
+      "bash": "log_section \"A and B: the same rules, the same members, the same answers\"\n\nassert_eq \"$(access_rules_of \"${DOMAIN}\")\" \"${RULES_A}\" \"A's rendered rules are byte-equal to the snapshot\" || true\nassert_eq \"$(access_rules_of \"${DOMAIN_2}\")\" \"${RULES_B}\" \"B's rendered rules are byte-equal to the snapshot\" || true\nassert_eq \"$(domain_members \"${DOMAIN}\")\" \"${MEMBERS_A}\" \"A's member list is unchanged\" || true\nassert_eq \"$(domain_members \"${DOMAIN_2}\")\" \"${MEMBERS_B}\" \"…and B's\" || true\nassert_eq \"$(domain_members \"${DOMAIN_3}\")\" \"${USER_C}\" \"C has its one member\" || true\nassert_eq \"$(user_groups \"${USER_A}\") | $(user_groups \"${USER_B}\")\" \"${GROUPS_A} | ${GROUPS_B}\" \"${USER_A}'s and ${USER_B}'s groups in users.yml are unchanged\" || true\n\nmd_wait_authelia \"${DOMAIN}\"\nsign_in_everywhere\nassert_eq \"$(matrix)\" \"${BEFORE}\" \"Signed in again: every request answers as before (${BEFORE})\" || true\n\n# ===========================================================================\n# 4. C's member reaches C only\n# ==========================================================================="
     },
     {
       "id": "c-s-member-c-s-tunnel-refused-on-a-and-b",
       "label": "C's member: C's tunnel, refused on A and B",
       "steps": [
         {
-          "id": "step-38",
+          "id": "step-46",
           "label": "Set SECRET_C",
           "target": "local",
           "op": {
@@ -471,7 +602,7 @@
           ]
         },
         {
-          "id": "step-45",
+          "id": "step-53",
           "label": "${USER_A}'s session of A opens nothing on C: to C's own sign-in page",
           "target": "local",
           "continueOnError": true,
@@ -496,7 +627,7 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 47 — Multi-domain relay: a third domain changes nothing else (Three-VM)\n# ============================================================================\n# The multi-domain relay's third acceptance case (design: packages/core/\n# docs/multi-domain-relay-design.md, \"Proof\"): adding a customer domain\n# must not change who can reach any other. A is the relay's primary\n# domain, B and C added ones (multi-domain-harness.sh).\n#\n# 1. A member of A and a member of B, an authenticated tunnel on each. A\n#    snapshot: A's and B's rendered access rules and member lists, and a\n#    reachability matrix — each user, signed in at both sign-in pages, on\n#    each tunnel.\n# 2. C is added and activated, with a new member of C and a tunnel on C.\n# 3. A's and B's rules are byte-equal to the snapshot, so are their member\n#    lists; signed in again (C's activation restarted Authelia and ended\n#    every session), every request of the matrix answers as before.\n# 4. C's member reaches C's tunnel, and is refused on A's and B's with the\n#    domain refusal page; A's session opens nothing on C.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 47 — Multi-domain relay: a third domain changes nothing else (Three-VM)\n# ============================================================================\n# The multi-domain relay's third acceptance case (design: packages/core/\n# docs/multi-domain-relay-design.md, \"Proof\"): adding a customer domain\n# must not change who can reach any other. A is the relay's primary\n# domain, B and C added ones (multi-domain-harness.sh).\n#\n# 1. A member of A and a member of B, an authenticated tunnel on each. A\n#    snapshot: A's and B's rendered access rules (on their member groups,\n#    never a user) and member lists, each member's groups, and a\n#    reachability matrix — each user, signed in at both sign-in pages, on\n#    each tunnel.\n# 2. C is added and activated, with a new member of C and a tunnel on C.\n# 3. A's and B's rules are byte-equal to the snapshot, so are their member\n#    lists and their members' groups in users.yml; signed in again (C's\n#    activation restarted Authelia and ended every session), every request\n#    of the matrix answers as before.\n# 4. C's member reaches C's tunnel, and is refused on A's and B's with the\n#    domain refusal page; A's session opens nothing on C.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=47\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n\nrequire_commands multipass curl jq perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nUSER_A=\"e2e47-a\"\nUSER_B=\"e2e47-b\"\nUSER_C=\"e2e47-c\"\n# Test credentials for this run only, never printed\nPASSWORD_A=\"E2e-$(openssl rand -hex 12)\"\nPASSWORD_B=\"E2e-$(openssl rand -hex 12)\"\nPASSWORD_C=\"E2e-$(openssl rand -hex 12)\"\nID_A=\"\"\nID_B=\"\"\nID_C=\"\"\nSECRET_A=\"\"\nSECRET_B=\"\"\nSUB_A=\"e2e47a\"\nSUB_B=\"e2e47b\"\nSUB_C=\"e2e47c\"\nPORT_A=18471\nPORT_B=18472\nPORT_C=18473\nTUNNEL_A=\"\"\nTUNNEL_B=\"\"\nTUNNEL_C=\"\"\nMARKER_A=\"E2E_47_A_$(date +%s)\"\nMARKER_B=\"E2E_47_B_$(date +%s)\"\nMARKER_C=\"E2E_47_C_$(date +%s)\"\n\n# sign_in_everywhere — USER_A and USER_B, each at auth.A and auth.B\nsign_in_everywhere() {\n  md_sign_in \"${USER_A}\" \"${PASSWORD_A}\" \"${SECRET_A}\" \"$(md_jar a-a)\" \"${SUB_A}.${DOMAIN}\"\n  md_sign_in \"${USER_B}\" \"${PASSWORD_B}\" \"${SECRET_B}\" \"$(md_jar b-b)\" \"${SUB_B}.${DOMAIN_2}\"\n  md_sign_in \"${USER_A}\" \"${PASSWORD_A}\" \"${SECRET_A}\" \"$(md_jar a-b)\" \"${SUB_B}.${DOMAIN_2}\"\n  md_sign_in \"${USER_B}\" \"${PASSWORD_B}\" \"${SECRET_B}\" \"$(md_jar b-a)\" \"${SUB_A}.${DOMAIN}\"\n}\n\n# matrix — \"<user>@<tunnel>=<status>\" for each user (with the session of the\n# tunnel's domain) on A's and B's tunnels, from one visitor call\nmatrix() {\n  local u t host jar cmds=\"\"\n  for u in a b; do\n    for t in a b; do\n      if [ \"$t\" = \"a\" ]; then host=\"${SUB_A}.${DOMAIN}\"; else host=\"${SUB_B}.${DOMAIN_2}\"; fi\n      jar=$(md_jar \"${u}-${t}\")\n      cmds=\"${cmds} echo -n '${u}@${host%%.*}='; curl -sk -o /dev/null -w '%{http_code} ' --max-time 15 -b ${jar} https://${host}/index.html || true;\"\n    done\n  done\n  visitor_exec \"${cmds}\" 2>/dev/null | tr -s ' ' | sed 's/ $//' || echo \"\"\n}\n\nbegin_test \"47 — Multi-domain relay: a third domain changes nothing else (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id u\n  for id in ${TUNNEL_A} ${TUNNEL_B} ${TUNNEL_C}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  md_backend_stop \"${PORT_A}\" \"${PORT_B}\" \"${PORT_C}\"\n  for u in \"${USER_A}\" \"${USER_B}\" \"${USER_C}\"; do\n    host_api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true\n  done\n  md_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

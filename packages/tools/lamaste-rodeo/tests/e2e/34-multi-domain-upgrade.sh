@@ -176,7 +176,7 @@ assert_json_field "$DOMAINS" '.domains[0] | "\(.name) \(.primary) \(.status)"' "
 assert_json_field "$DOMAINS" '.newUsersNeedDomains' 'false' "…new users need no domains while it is the only one" || true
 USERS=$(api_get "users" 2>/dev/null || echo '{}')
 assert_eq "$(echo "$DOMAINS" | jq -r '.domains[0].members')" "$(echo "$USERS" | jq '[.users[]? | select((.status // "active") != "removed")] | length')" "Every user is a member of it" || true
-assert_eq "$(echo "$USERS" | jq --arg d "${DOMAIN}" '[.users[]? | select((.domains // []) != [$d])] | length')" "0" "…each user's domains are exactly the primary" || true
+assert_eq "$(echo "$USERS" | jq --arg d "${DOMAIN}" '[.users[]? | select([(.domains // [])[] | "\(.name):\(.kind)"] != ["\($d):member"])] | length')" "0" "…each user's domains are exactly the primary, as a member" || true
 
 # ===========================================================================
 # 5. lamaste-priv

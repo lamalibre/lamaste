@@ -1,0 +1,1077 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 49,
+    "name": "External members: reach only what names them",
+    "suite": "e2e-three-vm",
+    "description": "49 — External members: reach only what names them (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {
+    "MEM": {
+      "value": "e2e49-member"
+    },
+    "EXT": {
+      "value": "e2e49-ext"
+    },
+    "SUB_AUTH": {
+      "value": "e2e49a"
+    },
+    "SUB_RES": {
+      "value": "e2e49r"
+    },
+    "PORT_AUTH": {
+      "value": "18491"
+    },
+    "PORT_RES": {
+      "value": "18492"
+    },
+    "LGROUP": {
+      "value": "e2e49-team"
+    },
+    "SITE_NAME": {
+      "value": "e2e49site"
+    },
+    "MARKER_AUTH": {
+      "value": "E2E_49_AUTH_$timestamp()",
+      "expression": true
+    },
+    "MARKER_RES": {
+      "value": "E2E_49_RES_$timestamp()",
+      "expression": true
+    },
+    "MARKER_SITE": {
+      "value": "E2E_49_SITE_$timestamp()",
+      "expression": true
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE gatekeeper/grants/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "gatekeeper/grants/${id}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE gatekeeper/groups/${LGROUP}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "gatekeeper/groups/${LGROUP}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE tunnels/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${id}"
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "DELETE users/${id}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${id}?erase=true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "DELETE /api/gatekeeper/groups/${LGROUP}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "gatekeeper/groups/${LGROUP}"
+          },
+          "continueOnError": true
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\nmd_preflight\nhost_api_delete \"gatekeeper/groups/${LGROUP}\" > /dev/null 2>&1 || true\n\n# ===========================================================================\n# 1. B, a member and an external member, the hosts\n# ==========================================================================="
+    },
+    {
+      "id": "domain-b-a-member-and-an-external-member-of-b",
+      "label": "Domain B; a member and an external member of B",
+      "steps": [
+        {
+          "id": "step-5",
+          "label": "Both have a directory id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${MEM_ID}\") $(is_uuid \"${EXT_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true true"
+              },
+              "message": "Both have a directory id"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "GET /api/users: ${EXT} is an external member of B",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_kinds \"${EXT}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "${DOMAIN_2}:external"
+              },
+              "message": "GET /api/users: ${EXT} is an external member of B"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "…${MEM} a member",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_kinds \"${MEM}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "${DOMAIN_2}:member"
+              },
+              "message": "…${MEM} a member"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "GET /api/domains/${DOMAIN_2}/members",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "domains/${DOMAIN_2}/members"
+          },
+          "capture": [
+            {
+              "variable": "MEMBERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "external",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$MEMBERS\" | jq -r --arg u \"${EXT}\" '[.members[]? | select(.username == $u) | .kind] | first // "
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "')"
+              },
+              "message": "external"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "GET /api/domains counts B's external members",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(domain_entry \"${DOMAIN_2}\")"
+              },
+              "path": ".externalMembers >= 1",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "GET /api/domains counts B's external members"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Domain B; a member and an external member of B\"\n\nmd_domain_active \"${DOMAIN_2}\"\nmd_user MEM_ID \"${MEM}\" \"${MEM_PASSWORD}\" \"[\\\"${DOMAIN_2}\\\"]\"\nmd_user EXT_ID \"${EXT}\" \"${EXT_PASSWORD}\" \"[{\\\"name\\\":\\\"${DOMAIN_2}\\\",\\\"kind\\\":\\\"external\\\"}]\"\nassert_eq \"$(is_uuid \"${MEM_ID}\") $(is_uuid \"${EXT_ID}\")\" \"true true\" \"Both have a directory id\" || true\nassert_eq \"$(user_kinds \"${EXT}\")\" \"${DOMAIN_2}:external\" \"GET /api/users: ${EXT} is an external member of B\" || true\nassert_eq \"$(user_kinds \"${MEM}\")\" \"${DOMAIN_2}:member\" \"…${MEM} a member\" || true\nMEMBERS=$(host_api_get \"domains/${DOMAIN_2}/members\" 2>/dev/null || echo '{}')\nassert_eq \"$(echo \"$MEMBERS\" | jq -r --arg u \"${EXT}\" '[.members[]? | select(.username == $u) | .kind] | first // \"\"')\" \"external\" \"B's member list marks ${EXT} external\" || true\nassert_json_field \"$(domain_entry \"${DOMAIN_2}\")\" '.externalMembers >= 1' 'true' \"GET /api/domains counts B's external members\" || true"
+    },
+    {
+      "id": "an-authenticated-and-a-restricted-tunnel-on-b-a-protected-site-listing-the-member",
+      "label": "An authenticated and a restricted tunnel on B; a protected site listing the member",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "DELETE /api/sites/$(host_api_get ",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "sites/$(host_api_get "
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-15",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_api POST \"sites\" \"{\\\"name\\\":\\\"${SITE_NAME}\\\",\\\"type\\\":\\\"managed\\\",\\\"domain\\\":\\\"${DOMAIN_2}\\\",\\\"autheliaProtected\\\":true}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "Set SITE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.site.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "SITE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Set SITE_FQDN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.site.fqdn // empty'"
+          },
+          "capture": [
+            {
+              "variable": "SITE_FQDN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Site ${SITE_NAME}.${DOMAIN_2}, Authelia-protected",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SITE_FQDN"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "${SITE_NAME}.${DOMAIN_2}"
+              },
+              "message": "Site ${SITE_NAME}.${DOMAIN_2}, Authelia-protected"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_api PATCH \"sites/${SITE_ID}\" \"{\\\"allowedUsers\\\":[\\\"${MEM}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "…its listed users: ${MEM}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…its listed users: ${MEM}"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Set KEY_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "domain_group_key \"${DOMAIN_2}\""
+          },
+          "capture": [
+            {
+              "variable": "KEY_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "B's rules name its group key",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n' \"${KEY_B}\" | grep -cE '^[0-9a-f]{16}$' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "B's rules name its group key"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "…never B's member group",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(user_groups \"${EXT}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",lamaste:m:${KEY_B},"
+              },
+              "message": "…never B's member group"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "…and nothing else: no Authelia group, no host",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_groups \"${EXT}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "lamaste:x:${KEY_B}"
+              },
+              "message": "…and nothing else: no Authelia group, no host"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An authenticated and a restricted tunnel on B; a protected site listing the member\"\n\nmd_tunnel TUNNEL_AUTH \"${SUB_AUTH}\" \"${DOMAIN_2}\" \"${PORT_AUTH}\" authenticated\nmd_tunnel TUNNEL_RES \"${SUB_RES}\" \"${DOMAIN_2}\" \"${PORT_RES}\" restricted\nmd_backends \"${PORT_AUTH}:${MARKER_AUTH}\" \"${PORT_RES}:${MARKER_RES}\"\n\nhost_api_delete \"sites/$(host_api_get \"sites\" 2>/dev/null | jq -r --arg n \"${SITE_NAME}\" '.sites[]? | select(.name == $n) | .id' 2>/dev/null | head -n 1)\" > /dev/null 2>&1 || true\nRESP=$(md_api POST \"sites\" \"{\\\"name\\\":\\\"${SITE_NAME}\\\",\\\"type\\\":\\\"managed\\\",\\\"domain\\\":\\\"${DOMAIN_2}\\\",\\\"autheliaProtected\\\":true}\")\nSITE_ID=$(json_get \"$(body_of \"$RESP\")\" '.site.id // empty')\nSITE_FQDN=$(json_get \"$(body_of \"$RESP\")\" '.site.fqdn // empty')\nassert_eq \"${SITE_FQDN}\" \"${SITE_NAME}.${DOMAIN_2}\" \"Site ${SITE_NAME}.${DOMAIN_2}, Authelia-protected\" || true\n# Listing users is a structural change (the site gains a rule naming its\n# group): made before the baseline below. Editing the list later is not.\nRESP=$(md_api PATCH \"sites/${SITE_ID}\" \"{\\\"allowedUsers\\\":[\\\"${MEM}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"…its listed users: ${MEM}\" || true\nhost_exec \"echo '<h1>${MARKER_SITE}</h1>' > /var/www/lamaste/${SITE_ID}/index.html\" > /dev/null 2>&1 || true\nmd_hosts \"${SITE_FQDN}\"\nmd_wait_authelia \"${DOMAIN_2}\"\n\nKEY_B=$(domain_group_key \"${DOMAIN_2}\")\nassert_eq \"$(printf '%s\\n' \"${KEY_B}\" | grep -cE '^[0-9a-f]{16}$' || true)\" \"1\" \"B's rules name its group key\" || true\nassert_contains \"$(access_rules_of \"${DOMAIN_2}\")\" \"\\\"group:lamaste:x:${KEY_B}\\\"\" \"…and a rule for B's external members\" || true\nassert_contains \"$(access_rules_of \"${DOMAIN_2}\")\" \"\\\"group:lamaste:s:${SITE_ID}\\\"\" \"…the site's rule names its group, never a user\" || true\nassert_not_contains \"$(access_rules_of \"${DOMAIN_2}\")\" \"\\\"user:\" \"…no rule names a user\" || true\nwait_group holds \"${EXT}\" \"lamaste:x:${KEY_B}\" \"users.yml gives ${EXT} B's external group\"\nassert_not_contains \",$(user_groups \"${EXT}\"),\" \",lamaste:m:${KEY_B},\" \"…never B's member group\" || true\nassert_eq \"$(user_groups \"${EXT}\")\" \"lamaste:x:${KEY_B}\" \"…and nothing else: no Authelia group, no host\" || true\nwait_group holds \"${MEM}\" \"lamaste:s:${SITE_ID}\" \"users.yml gives ${MEM} the site's group (listed)\"\n\n# ===========================================================================\n# 2. Signed in; the baseline\n# ==========================================================================="
+    },
+    {
+      "id": "both-signed-in-at-auth-b-authelia-s-mainpid-from-here-on",
+      "label": "Both signed in at auth.B; Authelia's MainPID from here on",
+      "steps": [
+        {
+          "id": "step-33",
+          "label": "Set SECRET_MEM",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${MEM}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_MEM",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Set SECRET_EXT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${EXT}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_EXT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "Set AUTHELIA_PID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "authelia_pid"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_PID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "Authelia runs (MainPID ${AUTHELIA_PID})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${AUTHELIA_PID:-0}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Authelia runs (MainPID ${AUTHELIA_PID})"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Both signed in at auth.B; Authelia's MainPID from here on\"\n\nSECRET_MEM=$(reset_totp \"${MEM}\")\nSECRET_EXT=$(reset_totp \"${EXT}\")\nmd_wait_authelia \"${DOMAIN_2}\"\nmd_sign_in \"${MEM}\" \"${MEM_PASSWORD}\" \"${SECRET_MEM}\" \"${JAR_MEM}\" \"${SUB_AUTH}.${DOMAIN_2}\"\nmd_sign_in \"${EXT}\" \"${EXT_PASSWORD}\" \"${SECRET_EXT}\" \"${JAR_EXT}\" \"${SUB_AUTH}.${DOMAIN_2}\"\nAUTHELIA_PID=$(authelia_pid)\nassert_not_eq \"${AUTHELIA_PID:-0}\" \"0\" \"Authelia runs (MainPID ${AUTHELIA_PID})\" || true\nmember_unaffected \"signing in\"\n\n# ===========================================================================\n# 3. The authenticated tunnel\n# ==========================================================================="
+    },
+    {
+      "id": "the-authenticated-tunnel-refuses-an-external-member",
+      "label": "The authenticated tunnel refuses an external member",
+      "steps": [
+        {
+          "id": "step-42",
+          "label": "…nothing of the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(visit \"${JAR_EXT}\" \"$(url_of \"${SUB_AUTH}\")\")\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER_AUTH"
+              },
+              "message": "…nothing of the tunnel"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The authenticated tunnel refuses an external member\"\n\nassert_access_request \"$(visit \"${JAR_EXT}\" \"$(url_of \"${SUB_AUTH}\")\")\" \"${EXT} on the authenticated tunnel\"\nassert_not_contains \"$(visit_body \"$(visit \"${JAR_EXT}\" \"$(url_of \"${SUB_AUTH}\")\")\")\" \"${MARKER_AUTH}\" \"…nothing of the tunnel\" || true"
+    },
+    {
+      "id": "authelia-refuses-on-its-own-the-projection-calls-ext-a-member",
+      "label": "Authelia refuses on its own: the projection calls ${EXT} a member",
+      "steps": [
+        {
+          "id": "step-44",
+          "label": "The projection held with ${EXT} as a member (Gatekeeper would admit them)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(projection_members \"${DOMAIN_2}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",${EXT},"
+              },
+              "message": "The projection held with ${EXT} as a member (Gatekeeper would admit them)"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_EXT}\" \"$(url_of \"${SUB_AUTH}\")\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "${EXT} on the authenticated tunnel: still 403 — Authelia's rules admit B's external group only on hosts named for them",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${EXT} on the authenticated tunnel: still 403 — Authelia's rules admit B's external group only on hosts named for them"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "…nothing of the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER_AUTH"
+              },
+              "message": "…nothing of the tunnel"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Authelia refuses on its own: the projection calls ${EXT} a member\"\n\nprojection_hold \"(.domains[] | select(.name == \\\"${DOMAIN_2}\\\")) |= (.members += [\\\"${EXT}\\\"] | .externals -= [\\\"${EXT}\\\"])\"\nassert_contains \",$(projection_members \"${DOMAIN_2}\"),\" \",${EXT},\" \"The projection held with ${EXT} as a member (Gatekeeper would admit them)\" || true\nRESP=$(visit \"${JAR_EXT}\" \"$(url_of \"${SUB_AUTH}\")\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${EXT} on the authenticated tunnel: still 403 — Authelia's rules admit B's external group only on hosts named for them\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"${MARKER_AUTH}\" \"…nothing of the tunnel\" || true\nprojection_restore\nwait_for \"${AUTHZ_SETTLE_SECONDS}\" access_request_page || true\nassert_access_request \"$(visit \"${JAR_EXT}\" \"$(url_of \"${SUB_AUTH}\")\")\" \"The panel's projection back: ${EXT}\"\n\n# ===========================================================================\n# 4. The restricted tunnel\n# ==========================================================================="
+    },
+    {
+      "id": "revoked-refused-again",
+      "label": "Revoked: refused again",
+      "steps": [
+        {
+          "id": "step-58",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"gatekeeper/grants/${GRANT_DIRECT}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
+          "label": "The grant revoked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The grant revoked"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The restricted tunnel: a direct grant\"\n\nassert_access_request \"$(visit \"${JAR_EXT}\" \"$(url_of \"${SUB_RES}\")\")\" \"${EXT} on the restricted tunnel without a grant\"\nmd_grant GRANT_DIRECT user \"${EXT}\" tunnel \"${TUNNEL_RES}\"\nwait_group holds \"${EXT}\" \"${SUB_RES}.${DOMAIN_2}\" \"users.yml gives ${EXT} the tunnel's hostname as a group\"\nwait_status \"${JAR_EXT}\" \"$(url_of \"${SUB_RES}\")\" 200 \"${EXT}, granted, on the restricted tunnel: 200 — the same session\"\nassert_served \"${JAR_EXT}\" \"$(url_of \"${SUB_RES}\")\" \"${MARKER_RES}\" \"${EXT} on the restricted tunnel\"\nassert_access_request \"$(visit \"${JAR_EXT}\" \"$(url_of \"${SUB_AUTH}\")\")\" \"…still refused on the authenticated one\"\nmember_unaffected \"the grant\""
+    },
+    {
+      "id": "a-grant-to-a-lamaste-group",
+      "label": "A grant to a Lamaste group",
+      "steps": [
+        {
+          "id": "step-65",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${LGROUP}\\\",\\\"description\\\":\\\"E2E 49\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-66",
+          "label": "Lamaste group ${LGROUP} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "Lamaste group ${LGROUP} created"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"gatekeeper/groups/${LGROUP}/members\" \"{\\\"usernames\\\":[\\\"${EXT}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "…${EXT} its member",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…${EXT} its member"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "…never the Lamaste group itself (it lives in Gatekeeper)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(user_groups \"${EXT}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",${LGROUP},"
+              },
+              "message": "…never the Lamaste group itself (it lives in Gatekeeper)"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"gatekeeper/groups/${LGROUP}/members/${EXT}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "${EXT} leaves ${LGROUP}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${EXT} leaves ${LGROUP}"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Revoked: refused again\"\n\nRESP=$(host_api_call DELETE \"gatekeeper/grants/${GRANT_DIRECT}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The grant revoked\" || true\nGRANT_DIRECT=\"\"\nwait_group lacks \"${EXT}\" \"${SUB_RES}.${DOMAIN_2}\" \"users.yml takes the tunnel's group from ${EXT}\"\nwait_status \"${JAR_EXT}\" \"$(url_of \"${SUB_RES}\")\" 403 \"${EXT} on the restricted tunnel: 403 within ${AUTHZ_SETTLE_SECONDS} s\"\nassert_access_request \"$(visit \"${JAR_EXT}\" \"$(url_of \"${SUB_RES}\")\")\" \"…${EXT}, the grant revoked\"\nmember_unaffected \"the revocation\""
+    },
+    {
+      "id": "the-static-site-only-once-its-listed-users-name-ext",
+      "label": "The static site: only once its listed users name ${EXT}",
+      "steps": [
+        {
+          "id": "step-78",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_EXT}\" \"https://${SITE_FQDN}/\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-79",
+          "label": "${EXT} on the site, not listed: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${EXT} on the site, not listed: 403"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "…the refusal page names the site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "SITE_FQDN"
+              },
+              "message": "…the refusal page names the site"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "…nothing of the site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER_SITE"
+              },
+              "message": "…nothing of the site"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "…never a redirect to a sign-in page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location:"
+              },
+              "message": "…never a redirect to a sign-in page"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_api PATCH \"sites/${SITE_ID}\" \"{\\\"allowedUsers\\\":[\\\"${MEM}\\\",\\\"${EXT}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-84",
+          "label": "The site lists ${MEM} and ${EXT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The site lists ${MEM} and ${EXT}"
+            }
+          }
+        },
+        {
+          "id": "step-86",
+          "label": "…by the site's id, never its hostname",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(user_groups \"${EXT}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",${SITE_FQDN},"
+              },
+              "message": "…by the site's id, never its hostname"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "…the site's page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(visit \"${JAR_EXT}\" \"https://${SITE_FQDN}/\")\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER_SITE"
+              },
+              "message": "…the site's page"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A grant to a Lamaste group\"\n\nRESP=$(host_api_call POST \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${LGROUP}\\\",\\\"description\\\":\\\"E2E 49\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Lamaste group ${LGROUP} created\" || true\nRESP=$(host_api_call POST \"gatekeeper/groups/${LGROUP}/members\" \"{\\\"usernames\\\":[\\\"${EXT}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"…${EXT} its member\" || true\nmd_grant GRANT_GROUP group \"${LGROUP}\" tunnel \"${TUNNEL_RES}\"\nwait_group holds \"${EXT}\" \"${SUB_RES}.${DOMAIN_2}\" \"users.yml gives ${EXT} the tunnel's group — through the Lamaste group\"\nassert_not_contains \",$(user_groups \"${EXT}\"),\" \",${LGROUP},\" \"…never the Lamaste group itself (it lives in Gatekeeper)\" || true\nwait_status \"${JAR_EXT}\" \"$(url_of \"${SUB_RES}\")\" 200 \"${EXT}, in a granted Lamaste group, on the restricted tunnel: 200\"\n\nRESP=$(host_api_call DELETE \"gatekeeper/groups/${LGROUP}/members/${EXT}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${EXT} leaves ${LGROUP}\" || true\nwait_group lacks \"${EXT}\" \"${SUB_RES}.${DOMAIN_2}\" \"users.yml takes the tunnel's group from ${EXT}\"\nwait_status \"${JAR_EXT}\" \"$(url_of \"${SUB_RES}\")\" 403 \"${EXT}, no longer in the group: 403\"\nmember_unaffected \"the Lamaste group changes\"\n\n# ===========================================================================\n# 5. The static site\n# ==========================================================================="
+    },
+    {
+      "id": "nobody-was-signed-out",
+      "label": "Nobody was signed out",
+      "steps": [
+        {
+          "id": "step-90",
+          "label": "Authelia's MainPID is the one of before the first change",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "AUTHELIA_PID"
+              },
+              "message": "Authelia's MainPID is the one of before the first change"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Both sessions are still signed in at auth.${DOMAIN_2}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Both sessions are still signed in at auth.${DOMAIN_2}"
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "A session of before ended",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "A session of before ended"
+          }
+        }
+      ],
+      "bash": "log_section \"The static site: only once its listed users name ${EXT}\"\n\nRESP=$(visit \"${JAR_EXT}\" \"https://${SITE_FQDN}/\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${EXT} on the site, not listed: 403\" || true\nassert_contains \"$(visit_body \"$RESP\")\" \"${SITE_FQDN}\" \"…the refusal page names the site\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"${MARKER_SITE}\" \"…nothing of the site\" || true\nassert_not_contains \"$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\" \"location:\" \"…never a redirect to a sign-in page\" || true\n\nRESP=$(md_api PATCH \"sites/${SITE_ID}\" \"{\\\"allowedUsers\\\":[\\\"${MEM}\\\",\\\"${EXT}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The site lists ${MEM} and ${EXT}\" || true\nwait_group holds \"${EXT}\" \"lamaste:s:${SITE_ID}\" \"users.yml gives ${EXT} the site's group\"\nassert_not_contains \",$(user_groups \"${EXT}\"),\" \",${SITE_FQDN},\" \"…by the site's id, never its hostname\" || true\nwait_status \"${JAR_EXT}\" \"https://${SITE_FQDN}/\" 200 \"${EXT}, listed, on the site: 200 — the same session\"\nassert_contains \"$(visit_body \"$(visit \"${JAR_EXT}\" \"https://${SITE_FQDN}/\")\")\" \"${MARKER_SITE}\" \"…the site's page\" || true\nmember_unaffected \"the site's list\"\n\n# ===========================================================================\n# 6. No sign-out, all along\n# ==========================================================================="
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 49 — External members: reach only what names them (Three-VM)\n# ============================================================================\n# The first acceptance case of external members (design: packages/core/docs/\n# external-members-design.md, \"Proof\"). B is a second base domain\n# (multi-domain-harness.sh); on it a member and an external member, an\n# authenticated tunnel, a restricted tunnel and an Authelia-protected static\n# site that lists the member.\n#\n# 1. The external member holds B's external group in Authelia's users.yml\n#    (`lamaste:x:<key>`), never its member group, and no Authelia group.\n# 2. The authenticated tunnel refuses them with Gatekeeper's access-request\n#    page (they are on the domain, only not granted). Authelia refuses them\n#    on its own: with Gatekeeper's projection held so that it calls them a\n#    member, the request is still refused.\n# 3. The restricted tunnel: refused without a grant; through with a direct\n#    grant (users.yml gives them the tunnel's hostname as a group); refused\n#    once it is revoked; through again with a grant to a Lamaste group they\n#    belong to; refused once they leave the group.\n# 4. The static site: refused while its listed users do not name them,\n#    through once they do.\n# 5. No sign-out: the member's session from before every change above still\n#    reaches the authenticated tunnel and the site, and Authelia's MainPID\n#    never changed — membership and grant changes are users.yml changes.\n#\n# Kind changes are spec 50; surfaces and the audience 51; OIDC by grant\n# single-VM 36.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=49\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n\nrequire_commands multipass curl jq perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nMEM=\"e2e49-member\"\nEXT=\"e2e49-ext\"\n# Test credentials for this run only, never printed\nMEM_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nEXT_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nMEM_ID=\"\"\nEXT_ID=\"\"\nJAR_MEM=$(md_jar member)\nJAR_EXT=$(md_jar ext)\nSUB_AUTH=\"e2e49a\"\nSUB_RES=\"e2e49r\"\nPORT_AUTH=18491\nPORT_RES=18492\nTUNNEL_AUTH=\"\"\nTUNNEL_RES=\"\"\nLGROUP=\"e2e49-team\"\nGRANT_DIRECT=\"\"\nGRANT_GROUP=\"\"\nSITE_NAME=\"e2e49site\"\nSITE_ID=\"\"\nSITE_FQDN=\"\"\nMARKER_AUTH=\"E2E_49_AUTH_$(date +%s)\"\nMARKER_RES=\"E2E_49_RES_$(date +%s)\"\nMARKER_SITE=\"E2E_49_SITE_$(date +%s)\"\nAUTHELIA_PID=\"\"\n\n# url_of <subdomain> — the page the specs ask for on a tunnel of B\nurl_of() { echo \"https://$1.${DOMAIN_2}/index.html\"; }\n\n# member_unaffected <after what> — the member's session of before still\n# reaches the authenticated tunnel and the site, and Authelia was not restarted\nmember_unaffected() {\n  assert_served \"${JAR_MEM}\" \"$(url_of \"${SUB_AUTH}\")\" \"${MARKER_AUTH}\" \"After $1, ${MEM}'s session of before on the authenticated tunnel\"\n  assert_eq \"$(visit_status \"$(visit \"${JAR_MEM}\" \"https://${SITE_FQDN}/\")\")\" \"200\" \"…and on the site: 200\" || true\n  assert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"…Authelia not restarted (MainPID ${AUTHELIA_PID})\" || true\n}\n\n# access_request_page — the external member gets the access-request page on the authenticated tunnel\naccess_request_page() { [[ \"$(visit_body \"$(visit \"${JAR_EXT}\" \"$(url_of \"${SUB_AUTH}\")\")\")\" == *\"Access Required\"* ]]; }\n\nbegin_test \"49 — External members: reach only what names them (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${GRANT_DIRECT} ${GRANT_GROUP}; do\n    host_api_delete \"gatekeeper/grants/${id}\" > /dev/null 2>&1 || true\n  done\n  host_api_delete \"gatekeeper/groups/${LGROUP}\" > /dev/null 2>&1 || true\n  if [ -n \"${SITE_ID}\" ]; then host_api_delete \"sites/${SITE_ID}\" > /dev/null 2>&1 || true; fi\n  for id in ${TUNNEL_AUTH} ${TUNNEL_RES}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  md_backend_stop \"${PORT_AUTH}\" \"${PORT_RES}\"\n  for id in \"${MEM}\" \"${EXT}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  md_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

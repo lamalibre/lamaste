@@ -713,30 +713,9 @@
               }
             }
           ]
-        },
-        {
-          "id": "step-46",
-          "label": "…each user's domains are exactly the primary",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "expr",
-                "template": "$(echo \"$USERS\" | jq --arg d \"${DOMAIN}\" '[.users[]? | select((.domains // []) != [$d])] | length')"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "0"
-              },
-              "message": "…each user's domains are exactly the primary"
-            }
-          }
         }
       ],
-      "bash": "log_section \"One domain, the primary; every user its member\"\n\nDOMAINS=$(api_get \"domains\" 2>/dev/null || echo '{}')\nassert_json_field \"$DOMAINS\" '.domains | length' '1' \"One domain\" || true\nassert_json_field \"$DOMAINS\" '.domains[0] | \"\\(.name) \\(.primary) \\(.status)\"' \"${DOMAIN} true active\" \"…the primary, ${DOMAIN}, active\" || true\nassert_json_field \"$DOMAINS\" '.newUsersNeedDomains' 'false' \"…new users need no domains while it is the only one\" || true\nUSERS=$(api_get \"users\" 2>/dev/null || echo '{}')\nassert_eq \"$(echo \"$DOMAINS\" | jq -r '.domains[0].members')\" \"$(echo \"$USERS\" | jq '[.users[]? | select((.status // \"active\") != \"removed\")] | length')\" \"Every user is a member of it\" || true\nassert_eq \"$(echo \"$USERS\" | jq --arg d \"${DOMAIN}\" '[.users[]? | select((.domains // []) != [$d])] | length')\" \"0\" \"…each user's domains are exactly the primary\" || true\n\n# ===========================================================================\n# 5. lamaste-priv\n# ==========================================================================="
+      "bash": "log_section \"One domain, the primary; every user its member\"\n\nDOMAINS=$(api_get \"domains\" 2>/dev/null || echo '{}')\nassert_json_field \"$DOMAINS\" '.domains | length' '1' \"One domain\" || true\nassert_json_field \"$DOMAINS\" '.domains[0] | \"\\(.name) \\(.primary) \\(.status)\"' \"${DOMAIN} true active\" \"…the primary, ${DOMAIN}, active\" || true\nassert_json_field \"$DOMAINS\" '.newUsersNeedDomains' 'false' \"…new users need no domains while it is the only one\" || true\nUSERS=$(api_get \"users\" 2>/dev/null || echo '{}')\nassert_eq \"$(echo \"$DOMAINS\" | jq -r '.domains[0].members')\" \"$(echo \"$USERS\" | jq '[.users[]? | select((.status // \"active\") != \"removed\")] | length')\" \"Every user is a member of it\" || true\nassert_eq \"$(echo \"$USERS\" | jq --arg d \"${DOMAIN}\" '[.users[]? | select([(.domains // [])[] | \"\\(.name):\\(.kind)\"] != [\"\\($d):member\"])] | length')\" \"0\" \"…each user's domains are exactly the primary, as a member\" || true\n\n# ===========================================================================\n# 5. lamaste-priv\n# ==========================================================================="
     },
     {
       "id": "lamaste-priv-writes-no-vhost-under-a-4-6-name-or-an-unknown-dotted-one",

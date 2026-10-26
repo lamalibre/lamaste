@@ -1041,6 +1041,67 @@ FIXTURE_EOF
 FIXTURE_EOF
 }
 
+# write_oidc_grant_fixture_plugin dir
+# Writes the plugin package of spec 36 (OIDC sign-in of external members by
+# grant) into <dir>: @lamalibre/e2e-emoidc-server, a server plugin declaring
+# two public clients that sign people in with two factors — e2e-emoidc-web
+# (authorization code, PKCE, a fixed redirect URI nothing listens on: the
+# spec reads Authelia's redirect, never follows it) and e2e-emoidc-cli
+# (device code). Members of the plugin's domain pass; external members only
+# with a grant on the client.
+write_oidc_grant_fixture_plugin() {
+  local dir="$1"
+  mkdir -p "$dir"
+  cat > "${dir}/package.json" <<'FIXTURE_EOF'
+{
+  "name": "@lamalibre/e2e-emoidc-server",
+  "version": "0.1.0",
+  "description": "Lamaste e2e fixture: OIDC clients external members reach by grant",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "lamaste-plugin.json"],
+  "license": "PolyForm-Noncommercial-1.0.0"
+}
+FIXTURE_EOF
+  cat > "${dir}/index.js" <<'FIXTURE_EOF'
+export default async function e2eEmOidcPlugin(fastify) {
+  fastify.get('/ping', async () => ({ ok: true, plugin: 'e2e-emoidc' }));
+}
+FIXTURE_EOF
+  cat > "${dir}/lamaste-plugin.json" <<'FIXTURE_EOF'
+{
+  "name": "e2e-emoidc",
+  "displayName": "E2E external-member OIDC fixture",
+  "version": "0.1.0",
+  "description": "Declares a public authorization-code client and a public device-code client",
+  "modes": ["server", "agent"],
+  "packages": { "server": "@lamalibre/e2e-emoidc-server", "agent": "@lamalibre/e2e-emoidc-server" },
+  "capabilities": [],
+  "panel": {},
+  "config": {},
+  "oidcClients": [
+    {
+      "id": "e2e-emoidc-web",
+      "name": "E2E external-member web",
+      "grantTypes": ["authorization_code"],
+      "scopes": ["openid", "profile"],
+      "redirectUris": ["https://e2e-emoidc.example.test/callback"],
+      "requirePkce": true,
+      "authorizationPolicy": "two_factor"
+    },
+    {
+      "id": "e2e-emoidc-cli",
+      "name": "E2E external-member CLI",
+      "grantTypes": ["urn:ietf:params:oauth:grant-type:device_code"],
+      "scopes": ["openid", "profile"],
+      "audience": ["https://e2e-emoidc.{domain}"],
+      "authorizationPolicy": "two_factor"
+    }
+  ]
+}
+FIXTURE_EOF
+}
+
 # write_agent_hosted_fixture_plugins dir
 # Writes two agent-hosted ("hosting": "agent") plugin packages for spec 28:
 #   <dir>/agent-hosted        @lamalibre/e2e-agent-hosted-server — declares a
@@ -2744,9 +2805,23 @@ vhost_linked() { printf '/etc/nginx/sites-enabled/%s\n' "$(vhost_name "$1" "$2")
 AUTHELIA_CONFIG_JSON="python3 -c 'import json,yaml; print(json.dumps(yaml.safe_load(\"\".join(l for l in open(\"/etc/authelia/configuration.yml\") if \"{{\" not in l))))'"
 
 # AUTHELIA_RULES_UNDER — a jq filter (with $d): the access_control rules for
-# domain $d and the hosts under it, keys sorted by `jq -S`
+# domain $d and the hosts under it — those naming it or a host under it, and
+# its external members' `domain_regex` rule (which ends with the domain,
+# quoted) — keys sorted by `jq -S`
 # shellcheck disable=SC2016 # a jq program
-AUTHELIA_RULES_UNDER='[(.access_control.rules // [])[] | select([(.domain | if type == "string" then [.] else . end)[] | ltrimstr("*.") | . == $d or endswith("." + $d)] | any)]'
+AUTHELIA_RULES_UNDER='[(.access_control.rules // [])[] | select(([(.domain // []) | if type == "string" then [.] else . end | .[] | ltrimstr("*.") | . == $d or endswith("." + $d)] | any) or ([(.domain_regex // []) | if type == "string" then [.] else . end | .[] | endswith("+" + ($d | gsub("\\."; "\\.")) + ")$")] | any))]'
+
+# AUTHELIA_MEMBER_KEY — a jq filter (with $d) over Authelia's configuration:
+# the domain's group key — what its members' rule names
+# (`group:lamaste:m:<key>`, external members `group:lamaste:x:<key>`); empty
+# when no rule names one
+# shellcheck disable=SC2016 # a jq program
+AUTHELIA_MEMBER_KEY='[(.access_control.rules // [])[] | select((.domain | type) == "array" and (.domain | index($d)) != null and (.domain | index("*." + $d)) != null) | (.subject // [])[] | strings | select(startswith("group:lamaste:m:")) | ltrimstr("group:lamaste:m:")] | first // ""'
+
+# AUTHELIA_USERS_GROUPS_JSON — the shell command printing Authelia's users
+# file as {"<username>": [<group>…]} (read as root: `sudo bash -c` or
+# `host_exec`), never anything else of it
+AUTHELIA_USERS_GROUPS_JSON="python3 -c 'import json,yaml; d=yaml.safe_load(open(\"/etc/authelia/users.yml\")) or {}; print(json.dumps({u: (e or {}).get(\"groups\") or [] for u, e in (d.get(\"users\") or {}).items()}))'"
 
 # start_stub_registry <work dir> <package dir>... — the stand-in Feria
 # (write_stub_registry) on STUB_PORT, as STUB_ADMIN_TOKEN, trusting the

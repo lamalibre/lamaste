@@ -268,7 +268,62 @@
           }
         },
         {
+          "id": "step-12",
+          "label": "Set KEY_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "domain_group_key \"${DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "KEY_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
           "id": "step-13",
+          "label": "Set KEY_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "domain_group_key \"${DOMAIN_2}\""
+          },
+          "capture": [
+            {
+              "variable": "KEY_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "A and B each have a group key of their own",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n%s\\n' \"${KEY_A}\" \"${KEY_B}\" | grep -cE '^[0-9a-f]{16}$' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "A and B each have a group key of their own"
+            }
+          }
+        },
+        {
+          "id": "step-19",
           "label": "…and end refusing everyone else",
           "target": "local",
           "continueOnError": true,
@@ -296,7 +351,7 @@
       "label": "Signed in at auth.A: A's tunnel; B sends them to auth.B",
       "steps": [
         {
-          "id": "step-19",
+          "id": "step-25",
           "label": "Set SECRET",
           "target": "local",
           "op": {
@@ -313,7 +368,7 @@
           ]
         },
         {
-          "id": "step-20",
+          "id": "step-26",
           "label": "${DEV}'s TOTP secret reset (one secret for every domain)",
           "target": "local",
           "continueOnError": true,
@@ -334,7 +389,7 @@
           }
         },
         {
-          "id": "step-23",
+          "id": "step-29",
           "label": "B's tunnel without a session: to B's own sign-in page (auth.${DOMAIN_2})",
           "target": "local",
           "continueOnError": true,
@@ -355,7 +410,7 @@
           }
         },
         {
-          "id": "step-24",
+          "id": "step-30",
           "label": "…with A's session too: a browser never sends A's cookie to B",
           "target": "local",
           "continueOnError": true,
@@ -376,14 +431,14 @@
           }
         }
       ],
-      "bash": "log_section \"A developer, member of A and B\"\n\nmd_user DEV_ID \"${DEV}\" \"${DEV_PASSWORD}\" \"[\\\"${DOMAIN}\\\",\\\"${DOMAIN_2}\\\"]\"\nassert_eq \"$(is_uuid \"${DEV_ID}\")\" \"true\" \"…one directory id for both domains\" || true\nassert_eq \"$(user_domains \"${DEV}\")\" \"$(printf '%s\\n%s\\n' \"${DOMAIN}\" \"${DOMAIN_2}\" | sort | paste -sd, -)\" \"GET /api/users lists ${DEV}'s domains: A and B\" || true\nassert_contains \",$(domain_members \"${DOMAIN}\"),\" \",${DEV},\" \"A's member list holds ${DEV}\" || true\nassert_contains \",$(domain_members \"${DOMAIN_2}\"),\" \",${DEV},\" \"…and B's\" || true\nassert_contains \"$(access_rules_of \"${DOMAIN_2}\")\" \"\\\"user:${DEV}\\\"\" \"B's rendered access rules admit ${DEV}\" || true\nassert_eq \"$(access_rules_of \"${DOMAIN_2}\" | jq -r '.[-1].policy')\" \"deny\" \"…and end refusing everyone else\" || true\n\n# ===========================================================================\n# 3. Tunnels on both domains\n# ==========================================================================="
+      "bash": "log_section \"A developer, member of A and B\"\n\nmd_user DEV_ID \"${DEV}\" \"${DEV_PASSWORD}\" \"[\\\"${DOMAIN}\\\",\\\"${DOMAIN_2}\\\"]\"\nassert_eq \"$(is_uuid \"${DEV_ID}\")\" \"true\" \"…one directory id for both domains\" || true\nassert_eq \"$(user_domains \"${DEV}\")\" \"$(printf '%s\\n%s\\n' \"${DOMAIN}\" \"${DOMAIN_2}\" | sort | paste -sd, -)\" \"GET /api/users lists ${DEV}'s domains: A and B\" || true\nassert_contains \",$(domain_members \"${DOMAIN}\"),\" \",${DEV},\" \"A's member list holds ${DEV}\" || true\nassert_contains \",$(domain_members \"${DOMAIN_2}\"),\" \",${DEV},\" \"…and B's\" || true\nKEY_A=$(domain_group_key \"${DOMAIN}\")\nKEY_B=$(domain_group_key \"${DOMAIN_2}\")\nassert_eq \"$(printf '%s\\n%s\\n' \"${KEY_A}\" \"${KEY_B}\" | grep -cE '^[0-9a-f]{16}$' || true)\" \"2\" \"A and B each have a group key of their own\" || true\nassert_contains \"$(access_rules_of \"${DOMAIN_2}\")\" \"\\\"group:lamaste:m:${KEY_B}\\\"\" \"B's rendered access rules admit B's member group\" || true\nassert_not_contains \"$(access_rules_of \"${DOMAIN_2}\")\" \"\\\"user:\" \"…and name no user\" || true\nwait_group holds \"${DEV}\" \"lamaste:m:${KEY_A}\" \"users.yml gives ${DEV} A's member group\"\nwait_group holds \"${DEV}\" \"lamaste:m:${KEY_B}\" \"…and B's\"\nassert_eq \"$(access_rules_of \"${DOMAIN_2}\" | jq -r '.[-1].policy')\" \"deny\" \"…and end refusing everyone else\" || true\n\n# ===========================================================================\n# 3. Tunnels on both domains\n# ==========================================================================="
     },
     {
       "id": "signed-in-at-auth-b-with-the-same-password-and-totp-secret-b-s-tunnel",
       "label": "Signed in at auth.B with the same password and TOTP secret: B's tunnel",
       "steps": [
         {
-          "id": "step-27",
+          "id": "step-33",
           "label": "A's session still opens A",
           "target": "local",
           "continueOnError": true,
@@ -411,7 +466,7 @@
       "label": "B's restricted tunnel: the access-request page, then a grant",
       "steps": [
         {
-          "id": "step-28",
+          "id": "step-34",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -428,7 +483,7 @@
           ]
         },
         {
-          "id": "step-29",
+          "id": "step-35",
           "label": "Without a grant: 403",
           "target": "local",
           "continueOnError": true,
@@ -449,7 +504,7 @@
           }
         },
         {
-          "id": "step-30",
+          "id": "step-36",
           "label": "…the access-request page (a member of B, not granted this tunnel)",
           "target": "local",
           "continueOnError": true,
@@ -470,7 +525,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-37",
           "label": "…nothing of the tunnel",
           "target": "local",
           "continueOnError": true,
@@ -491,7 +546,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-38",
           "label": "POST /api/gatekeeper/grants",
           "target": "host",
           "op": {
@@ -510,7 +565,7 @@
           ]
         },
         {
-          "id": "step-33",
+          "id": "step-39",
           "label": "Set GRANT_ID",
           "target": "local",
           "op": {
@@ -527,7 +582,7 @@
           ]
         },
         {
-          "id": "step-34",
+          "id": "step-40",
           "label": "A grant for ${DEV} on ${SUB_R}.${DOMAIN_2}",
           "target": "local",
           "continueOnError": true,
@@ -548,7 +603,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-41",
           "label": "With the grant: 200",
           "target": "local",
           "op": {
@@ -558,7 +613,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-42",
           "label": "With the grant: $(restricted_status)",
           "target": "local",
           "op": {
@@ -572,7 +627,7 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 45 — Multi-domain relay: a developer on two domains (Three-VM)\n# ============================================================================\n# The multi-domain relay's first acceptance case (design: packages/core/docs/\n# multi-domain-relay-design.md, \"Proof\"): one relay, one directory, a member\n# list per base domain. A is the relay's primary domain, B a second one\n# (multi-domain-harness.sh). A developer is a member of both:\n#\n# 1. B is added, its DNS checked (auth.B is the one required record) and\n#    activated: Authelia carries a session cookie per domain (A and B).\n# 2. The developer, created a member of A and B, is in both domains' member\n#    lists and both domains' rendered rules.\n# 3. Signed in at auth.A, the developer reaches an authenticated tunnel on\n#    A. A's session opens nothing on B: B's tunnel sends them to auth.B —\n#    B's own sign-in page, not A's. Signed in there with the same password\n#    and TOTP secret, B's tunnel is reached.\n# 4. On B, `restricted` still narrows one application: without a grant the\n#    access-request page, with one the tunnel.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 45 — Multi-domain relay: a developer on two domains (Three-VM)\n# ============================================================================\n# The multi-domain relay's first acceptance case (design: packages/core/docs/\n# multi-domain-relay-design.md, \"Proof\"): one relay, one directory, a member\n# list per base domain. A is the relay's primary domain, B a second one\n# (multi-domain-harness.sh). A developer is a member of both:\n#\n# 1. B is added, its DNS checked (auth.B is the one required record) and\n#    activated: Authelia carries a session cookie per domain (A and B).\n# 2. The developer, created a member of A and B, is in both domains' member\n#    lists, and holds both domains' member groups in Authelia's users.yml\n#    (the rules name groups, never people).\n# 3. Signed in at auth.A, the developer reaches an authenticated tunnel on\n#    A. A's session opens nothing on B: B's tunnel sends them to auth.B —\n#    B's own sign-in page, not A's. Signed in there with the same password\n#    and TOTP secret, B's tunnel is reached.\n# 4. On B, `restricted` still narrows one application: without a grant the\n#    access-request page, with one the tunnel.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=45\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n\nrequire_commands multipass curl jq perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nDEV=\"e2e45-dev\"\n# Test credentials for this run only, never printed\nDEV_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nDEV_ID=\"\"\nJAR_A=$(md_jar dev-a)\nJAR_B=$(md_jar dev-b)\nSUB_A=\"e2e45a\"\nSUB_B=\"e2e45b\"\nSUB_R=\"e2e45r\"\nPORT_A=18451\nPORT_B=18452\nPORT_R=18453\nTUNNEL_A=\"\"\nTUNNEL_B=\"\"\nTUNNEL_R=\"\"\nGRANT_ID=\"\"\nMARKER_A=\"E2E_45_A_$(date +%s)\"\nMARKER_B=\"E2E_45_B_$(date +%s)\"\nMARKER_R=\"E2E_45_R_$(date +%s)\"\n\n# restricted_status — the developer's status on B's restricted tunnel\nrestricted_status() { visit_status \"$(visit \"${JAR_B}\" \"https://${SUB_R}.${DOMAIN_2}/index.html\")\"; }\nrestricted_answers() { [ \"$(restricted_status)\" = \"$1\" ]; }\n\nbegin_test \"45 — Multi-domain relay: a developer on two domains (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  if [ -n \"${GRANT_ID}\" ]; then host_api_delete \"gatekeeper/grants/${GRANT_ID}\" > /dev/null 2>&1 || true; fi\n  for id in ${TUNNEL_A} ${TUNNEL_B} ${TUNNEL_R}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  md_backend_stop \"${PORT_A}\" \"${PORT_B}\" \"${PORT_R}\"\n  host_api_delete \"users/${DEV}?erase=true\" > /dev/null 2>&1 || true\n  md_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

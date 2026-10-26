@@ -451,34 +451,71 @@ grants|grant|revoke <clientId> --user <u>|--group <g>`.
 
 ## Proof (rodeo)
 
-New three-VM specs on top of `multi-domain-harness.sh`:
+Written 2026-10-26 in `packages/tools/lamaste-rodeo` (not run yet; each
+`.json` generated from its `.sh` with rodeo's `parseBashTest`, Prettier,
+`testScriptSchema`-valid; `rodeo.config.json` lists 49–51 after 01 and
+single-VM 36 after 03). New three-VM specs on top of
+`multi-domain-harness.sh`, which gained `user_kinds`, `domain_group_key`,
+`user_groups` / `wait_group` (users.yml read as root, groups only),
+`authelia_pid`, `md_kind`, `md_grant`, `wait_status`,
+`assert_access_request` and `signed_in`; `tests/e2e/helpers.sh` gained
+`AUTHELIA_MEMBER_KEY`, `AUTHELIA_USERS_GROUPS_JSON`, a rules filter that
+includes the external `domain_regex` rule, and
+`write_oidc_grant_fixture_plugin`.
 
-- **49 — an external member reaches only what names them**: domain B;
-  `ext` external member of B; on B: an `authenticated` tunnel → access-request
-  page (Gatekeeper) and Authelia's own refusal (projection pinned, as spec 46
-  does, to prove Authelia alone); a `restricted` tunnel without a grant →
-  refused, with a grant → through, revoked → refused within the settle time;
-  a protected static site not naming them → refusal page, naming them →
-  through; a Lamaste group grant → through. A member's access on the same
-  hosts is unchanged. **No sign-out**: a member's session established before
-  is still valid after each of `ext`'s changes (same cookie, 200), and
-  Authelia's `MainPID` never changed.
-- **50 — a member turned external**: reaches an `authenticated` tunnel,
-  turned external → refused at once (≤ settle), turned back → through;
-  turning a user with `feria-admins` external is refused (409); adding a
-  group to an external member is refused.
-- **51 — surfaces and audience**: corral-like fixture plugin with a
-  `restricted` web surface and user surface on B: `ext` with a role and the
-  site grant reaches the shell and `/app/*`, is in the audience with their
-  roles; without the site grant → access-request page / 403 JSON; on an
-  `authenticated` surface → refused even when entitled.
-- **single-VM 36 — OIDC by grant**: a user-facing client on A; an external
-  member of A is refused (`access_denied`), granted → admitted, revoked →
-  refused at the next authorization; a member admitted throughout; Authelia
-  not restarted by grant changes.
-- **single-VM 37 — upgrade**: a 4.7 relay (state written with the previous
-  release, as the upgrade suite does) updated: every membership `member`,
-  every user reaches what they did, `watch: true` rendered, one restart.
+- **49 — an external member reaches only what names them** (B): the
+  external member holds `lamaste:x:<key>` alone; an `authenticated` tunnel →
+  access-request page, and still 403 with Gatekeeper's projection held to
+  call them a member (Authelia alone refuses); a `restricted` tunnel —
+  refused, a direct grant (users.yml gives the hostname group) → through,
+  revoked → refused within the settle time, a Lamaste-group grant → through,
+  left the group → refused; a protected static site listing the member
+  (listing users is structural, so before the baseline) → refused, its list
+  edited to name them (`lamaste:s:<site id>`, never the hostname) → through.
+  After every change the member's session of before still reaches the
+  tunnel and the site, both sessions stay signed in, Authelia's `MainPID`
+  never changes.
+- **50 — kind changes**: a member on an authenticated tunnel, turned
+  external → the same session refused (access-request page), audited
+  `directory.membership.changed` by id, users.yml `m` → `x`; turned back →
+  through; making a user in `e2e50team` external → 409
+  `external_member_groups`; giving it to an external member → 409; a
+  hostname-like or `lamaste:` group name → 400 `reserved_group`; users.yml
+  holds the member group, `GET /api/users` and the backend's `Remote-Groups`
+  (an echo backend) carry `e2e50team` alone; no restart.
+- **51 — a plugin's web surface and audience** (the corral case): an
+  identity + web-surface fixture moved to B, a member and an external
+  member entitled as viewers — both in the audience and the agent half's
+  projection with their role; an `authenticated` web surface: the member
+  reaches the shell and the API, the entitled external member gets the
+  access-request page and 403 `{error: forbidden}`; a `restricted` one:
+  refused without the site's grant (the member too), the grant → shell and
+  API with their directory id and role, revoked → refused; no restart.
+- **single-VM 36 — OIDC by grant**: each client's policy is
+  `lamaste_client_<id>` (`m:<key>`, `x:<key>`+`oidc@<id>`); an
+  authorization-code client — the member admitted throughout, the external
+  member refused, granted → the same session admitted, revoked → refused,
+  no restart; a device-code client — revoking the external member's grant
+  restarts Authelia (audited `authelia.restarted` `device-code`, new
+  `MainPID`) and their session of before is gone.
+- **Upgrade (`tests/e2e-upgrade/01`, extended rather than a new spec)**:
+  a user signed in on the previous release and admitted to an
+  authenticated tunnel; after the Panel Update every membership is `member`,
+  the projection is v2 with no external member, Authelia has `watch: true`,
+  `refresh_interval: always`, password change and reset off, rules on the
+  member group naming no user, every users.yml user holds it, and the user,
+  signed in again, is answered as before.
+- **Existing specs updated** for groups instead of user subjects: three-VM
+  45, 46 (a removal now refuses the same session, no restart), 47 (members'
+  groups part of the snapshot), 40 (comments), single-VM 34 and 35 (per-client
+  policies), the domain listings' `{name, kind}`.
+
+Not provable without running: Authelia's admission of external members
+through the `(?P<Group>…)` capture on a real host; the access-request page
+after Gatekeeper's identity probe; timing within rodeo's ten minutes (51
+installs and hosts a plugin). The device-code approval itself is not driven
+(it needs Authelia's consent UI); 36 proves the mitigation — the restart and
+the ended session.
 
 ## Waves
 
@@ -657,7 +694,7 @@ New three-VM specs on top of `multi-domain-harness.sh`:
    reviews, every confirmed finding fixed with a test that fails without
    it; four decided with the user (S1 device code, S2 Authelia's own
    writes, S3 grant sweep, S4 opaque names).
-5. **Rodeo** — the specs above on fresh VMs.
+5. **Rodeo** — specs written (Proof above), not yet run.
 
 ## Security review (2026-10-26)
 

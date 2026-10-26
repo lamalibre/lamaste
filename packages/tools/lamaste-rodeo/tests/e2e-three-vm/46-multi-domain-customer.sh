@@ -17,9 +17,10 @@
 #    projection without the customer refuses them on B while Authelia still
 #    admits them; no projection refuses everyone; restored, they are let
 #    through again.
-# 3. A customer removed from B, signed in at auth.B again (the removal
-#    restarted Authelia), is refused there with the refusal page, and is gone
-#    from B's member list (audited by directory id).
+# 3. A customer removed from B is refused there with the refusal page at
+#    their next request — the same session: the removal is a users.yml
+#    change, Authelia is not restarted — and is gone from B's member list
+#    (audited by directory id).
 # 4. A customer deleted loses every membership, audited by directory id
 #    (directory.membership.removed, reason deleted) — never by username.
 #
@@ -115,7 +116,11 @@ assert_eq "$(is_uuid "${CUST_ID}") $(is_uuid "${CUST2_ID}")" "true true" "Both h
 assert_eq "$(user_domains "${CUST}")" "${DOMAIN_2}" "${CUST} is a member of B alone" || true
 assert_not_contains ",$(domain_members "${DOMAIN}")," ",${CUST}," "A's member list does not hold ${CUST}" || true
 assert_contains ",$(domain_members "${DOMAIN_2}")," ",${CUST}," "B's does" || true
-assert_not_contains "$(access_rules_of "${DOMAIN}")" "\"user:${CUST}\"" "A's rendered rules never name ${CUST}" || true
+KEY_A=$(domain_group_key "${DOMAIN}")
+KEY_B=$(domain_group_key "${DOMAIN_2}")
+assert_not_contains "$(access_rules_of "${DOMAIN}")" "\"user:" "A's rendered rules name no user" || true
+wait_group holds "${CUST}" "lamaste:m:${KEY_B}" "users.yml gives ${CUST} B's member group"
+assert_not_contains ",$(user_groups "${CUST}")," ",lamaste:m:${KEY_A}," "…never A's" || true
 
 log_section "An authenticated tunnel on A and on B; an Authelia-protected site on A"
 
@@ -169,7 +174,7 @@ log_section "Gatekeeper's own check: its projection, not only Authelia"
 
 projection_hold "(.domains[] | select(.name == \"${DOMAIN_2}\") | .members) |= map(select(. != \"${CUST}\"))"
 assert_not_contains ",$(projection_members "${DOMAIN_2}")," ",${CUST}," "The projection held without ${CUST} (Authelia's rules unchanged)" || true
-assert_contains "$(access_rules_of "${DOMAIN_2}")" "\"user:${CUST}\"" "…Authelia still admits ${CUST} on B" || true
+assert_contains ",$(user_groups "${CUST}")," ",lamaste:m:${KEY_B}," "…Authelia still admits ${CUST} on B (B's member group in users.yml)" || true
 wait_b "${JAR_CUST_B}" 403 "${CUST} on B's tunnel: 403 — Gatekeeper refuses a user its projection holds no member of B"
 assert_contains "$(visit_body "$(visit "${JAR_CUST_B}" "https://${SUB_B}.${DOMAIN_2}/index.html")")" "Not a member" "…with the domain refusal page" || true
 assert_eq "$(b_status "${JAR_CUST2_B}")" "200" "${CUST2}, still in the projection: 200" || true
@@ -185,16 +190,21 @@ wait_b "${JAR_CUST_B}" 200 "The panel's projection back: ${CUST} let through aga
 
 log_section "A customer removed from B is refused there"
 
+AUTHELIA_PID=$(authelia_pid)
+
 RESP=$(md_api DELETE "domains/${DOMAIN_2}/members/${CUST2}")
 assert_eq "$(status_of "$RESP")" "200" "${CUST2} removed from B (by username)" || true
 assert_eq "$(user_domains "${CUST2}")" "" "…the directory lists no domain for ${CUST2}" || true
 assert_not_contains ",$(domain_members "${DOMAIN_2}")," ",${CUST2}," "…nor does B's member list" || true
 assert_json_field "$(membership_removed "${CUST2_ID}")" 'map(.details.domain) | join(",")' "${DOMAIN_2}" "Audited: directory.membership.removed for B, by ${CUST2}'s directory id" || true
-# The removal re-rendered Authelia's rules, and its restart ended every session.
-md_wait_authelia "${DOMAIN_2}"
-md_sign_in "${CUST2}" "${CUST2_PASSWORD}" "${SECRET2}" "${JAR_CUST2_B}" "${SUB_B}.${DOMAIN_2}"
+wait_group lacks "${CUST2}" "lamaste:m:${KEY_B}" "users.yml takes B's member group from ${CUST2}"
+assert_eq "$(authelia_pid)" "${AUTHELIA_PID}" "…Authelia was not restarted (MainPID ${AUTHELIA_PID})" || true
+
+# The same session: Authelia reads the user's groups again at their next
+# request; nginx keeps an authorization's 200 for 10 s.
+wait_b "${JAR_CUST2_B}" 403 "${CUST2}'s session of before, on B's tunnel: refused (403) — no new sign-in"
 RESP=$(visit "${JAR_CUST2_B}" "https://${SUB_B}.${DOMAIN_2}/index.html")
-assert_domain_refusal "$RESP" "${DOMAIN_2}" "${CUST2}, signed in at auth.B again, on B's tunnel"
+assert_domain_refusal "$RESP" "${DOMAIN_2}" "${CUST2}, removed from B, on B's tunnel"
 assert_not_contains "$(visit_body "$RESP")" "${MARKER_B}" "…nothing of the tunnel" || true
 
 # ===========================================================================
@@ -209,6 +219,6 @@ REMOVED=$(membership_removed "${CUST_ID}")
 assert_eq "$(json_get "$REMOVED" 'map("\(.details.domain) \(.details.reason)") | join(",")')" "${DOMAIN_2} deleted" "Audited: directory.membership.removed for B, reason deleted, by directory id" || true
 assert_not_contains "$REMOVED" "\"${CUST}\"" "…no audit entry names the username" || true
 assert_not_contains ",$(domain_members "${DOMAIN_2}")," ",${CUST}," "B's member list holds ${CUST} no more" || true
-assert_not_contains "$(access_rules_of "${DOMAIN_2}")" "\"user:${CUST}\"" "…nor do B's rendered rules" || true
+assert_eq "$(user_groups "${CUST}")" "" "…nor does users.yml give anyone of that name a group" || true
 
 end_test

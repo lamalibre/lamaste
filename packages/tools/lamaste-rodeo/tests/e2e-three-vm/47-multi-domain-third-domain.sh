@@ -8,13 +8,15 @@
 # domain, B and C added ones (multi-domain-harness.sh).
 #
 # 1. A member of A and a member of B, an authenticated tunnel on each. A
-#    snapshot: A's and B's rendered access rules and member lists, and a
+#    snapshot: A's and B's rendered access rules (on their member groups,
+#    never a user) and member lists, each member's groups, and a
 #    reachability matrix — each user, signed in at both sign-in pages, on
 #    each tunnel.
 # 2. C is added and activated, with a new member of C and a tunnel on C.
 # 3. A's and B's rules are byte-equal to the snapshot, so are their member
-#    lists; signed in again (C's activation restarted Authelia and ended
-#    every session), every request of the matrix answers as before.
+#    lists and their members' groups in users.yml; signed in again (C's
+#    activation restarted Authelia and ended every session), every request
+#    of the matrix answers as before.
 # 4. C's member reaches C's tunnel, and is refused on A's and B's with the
 #    domain refusal page; A's session opens nothing on C.
 # ============================================================================
@@ -129,10 +131,17 @@ RULES_A=$(access_rules_of "${DOMAIN}")
 RULES_B=$(access_rules_of "${DOMAIN_2}")
 MEMBERS_A=$(domain_members "${DOMAIN}")
 MEMBERS_B=$(domain_members "${DOMAIN_2}")
-assert_contains "${RULES_A}" "\"user:${USER_A}\"" "A's rules admit ${USER_A}" || true
-assert_not_contains "${RULES_A}" "\"user:${USER_B}\"" "…not ${USER_B}" || true
-assert_contains "${RULES_B}" "\"user:${USER_B}\"" "B's rules admit ${USER_B}" || true
-assert_not_contains "${RULES_B}" "\"user:${USER_A}\"" "…not ${USER_A}" || true
+KEY_A=$(domain_group_key "${DOMAIN}")
+KEY_B=$(domain_group_key "${DOMAIN_2}")
+assert_contains "${RULES_A}" "\"group:lamaste:m:${KEY_A}\"" "A's rules admit A's member group" || true
+assert_contains "${RULES_B}" "\"group:lamaste:m:${KEY_B}\"" "B's rules admit B's member group" || true
+assert_not_contains "${RULES_A}${RULES_B}" "\"user:" "…neither names a user" || true
+wait_group holds "${USER_A}" "lamaste:m:${KEY_A}" "users.yml gives ${USER_A} A's member group"
+assert_not_contains ",$(user_groups "${USER_A}")," ",lamaste:m:${KEY_B}," "…not B's" || true
+wait_group holds "${USER_B}" "lamaste:m:${KEY_B}" "users.yml gives ${USER_B} B's member group"
+assert_not_contains ",$(user_groups "${USER_B}")," ",lamaste:m:${KEY_A}," "…not A's" || true
+GROUPS_A=$(user_groups "${USER_A}")
+GROUPS_B=$(user_groups "${USER_B}")
 
 SECRET_A=$(reset_totp "${USER_A}")
 SECRET_B=$(reset_totp "${USER_B}")
@@ -164,6 +173,7 @@ assert_eq "$(access_rules_of "${DOMAIN_2}")" "${RULES_B}" "B's rendered rules ar
 assert_eq "$(domain_members "${DOMAIN}")" "${MEMBERS_A}" "A's member list is unchanged" || true
 assert_eq "$(domain_members "${DOMAIN_2}")" "${MEMBERS_B}" "…and B's" || true
 assert_eq "$(domain_members "${DOMAIN_3}")" "${USER_C}" "C has its one member" || true
+assert_eq "$(user_groups "${USER_A}") | $(user_groups "${USER_B}")" "${GROUPS_A} | ${GROUPS_B}" "${USER_A}'s and ${USER_B}'s groups in users.yml are unchanged" || true
 
 md_wait_authelia "${DOMAIN}"
 sign_in_everywhere

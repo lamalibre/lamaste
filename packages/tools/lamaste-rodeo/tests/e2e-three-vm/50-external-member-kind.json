@@ -1,0 +1,953 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 50,
+    "name": "External members: changing the kind",
+    "suite": "e2e-three-vm",
+    "description": "50 — External members: changing the kind (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {
+    "MEM": {
+      "value": "e2e50-member"
+    },
+    "GRP": {
+      "value": "e2e50-grouped"
+    },
+    "EXT": {
+      "value": "e2e50-ext"
+    },
+    "TEAM": {
+      "value": "e2e50team"
+    },
+    "SUB": {
+      "value": "e2e50a"
+    },
+    "PORT": {
+      "value": "18501"
+    },
+    "MARKER": {
+      "value": "E2E_50_$timestamp()",
+      "expression": true
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-50-backend"
+    },
+    "BACKEND_UNIT": {
+      "value": "e2e-50-backend"
+    },
+    "AUDIT_BASE": {
+      "value": "0"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE users/${id}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${id}?erase=true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "jq",
+                "expression": "[.entries[]?.id] | max // 0"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\nmd_preflight\nAUDIT_BASE=$(host_api_get \"audit?limit=1\" 2>/dev/null | jq -r '[.entries[]?.id] | max // 0' 2>/dev/null || echo 0)\n\n# ===========================================================================\n# 1. B, three users, the tunnel\n# ==========================================================================="
+    },
+    {
+      "id": "domain-b-a-member-a-member-with-an-authelia-group-an-external-member",
+      "label": "Domain B; a member, a member with an Authelia group, an external member",
+      "steps": [
+        {
+          "id": "step-4",
+          "label": "DELETE /api/users/${GRP}?erase=true",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "users/${GRP}?erase=true"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-5",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${GRP}\\\",\\\"displayname\\\":\\\"E2E ${GRP}\\\",\\\"email\\\":\\\"${GRP}@example.test\\\",\\\"password\\\":\\\"${GRP_PASSWORD}\\\",\\\"groups\\\":[\\\"${TEAM}\\\"],\\\"domains\\\":[\\\"${DOMAIN_2}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "User ${GRP} created, member of B, in the Authelia group ${TEAM}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${GRP} created, member of B, in the Authelia group ${TEAM}"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Set GRP_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "GRP_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Each has a directory id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${MEM_ID}\") $(is_uuid \"${GRP_ID}\") $(is_uuid \"${EXT_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true true true"
+              },
+              "message": "Each has a directory id"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Domain B; a member, a member with an Authelia group, an external member\"\n\nmd_domain_active \"${DOMAIN_2}\"\nmd_user MEM_ID \"${MEM}\" \"${MEM_PASSWORD}\" \"[\\\"${DOMAIN_2}\\\"]\"\nhost_api_delete \"users/${GRP}?erase=true\" > /dev/null 2>&1 || true\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${GRP}\\\",\\\"displayname\\\":\\\"E2E ${GRP}\\\",\\\"email\\\":\\\"${GRP}@example.test\\\",\\\"password\\\":\\\"${GRP_PASSWORD}\\\",\\\"groups\\\":[\\\"${TEAM}\\\"],\\\"domains\\\":[\\\"${DOMAIN_2}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${GRP} created, member of B, in the Authelia group ${TEAM}\" || true\nGRP_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nmd_user EXT_ID \"${EXT}\" \"${EXT_PASSWORD}\" \"[{\\\"name\\\":\\\"${DOMAIN_2}\\\",\\\"kind\\\":\\\"external\\\"}]\"\nassert_eq \"$(is_uuid \"${MEM_ID}\") $(is_uuid \"${GRP_ID}\") $(is_uuid \"${EXT_ID}\")\" \"true true true\" \"Each has a directory id\" || true"
+    },
+    {
+      "id": "an-authenticated-tunnel-on-b-its-backend-echoes-the-identity-headers",
+      "label": "An authenticated tunnel on B; its backend echoes the identity headers",
+      "steps": [
+        {
+          "id": "step-12",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-50-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Port ${PORT}: the backend answers through chisel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Port ${PORT}: the backend answers through chisel"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Port ${PORT}: the backend does not answer through chisel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Port ${PORT}: the backend does not answer through chisel"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Set KEY_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "domain_group_key \"${DOMAIN_2}\""
+          },
+          "capture": [
+            {
+              "variable": "KEY_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "B's rules name its group key",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n' \"${KEY_B}\" | grep -cE '^[0-9a-f]{16}$' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "B's rules name its group key"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An authenticated tunnel on B; its backend echoes the identity headers\"\n\nmd_tunnel TUNNEL \"${SUB}\" \"${DOMAIN_2}\" \"${PORT}\" authenticated\nURL=\"https://${SUB}.${DOMAIN_2}/index.html\"\nLOCAL_TMP=$(mktemp -d /tmp/e2e-50-XXXXXXXX)\nwrite_headers_backend \"${LOCAL_TMP}/headers-backend.py\"\nagent_exec \"systemctl stop ${BACKEND_UNIT} > /dev/null 2>&1; rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR}\" > /dev/null 2>&1 || true\nmultipass transfer \"${LOCAL_TMP}/headers-backend.py\" \"${AGENT_VM}:/tmp/e2e-50-headers-backend.py\"\nagent_exec \"install -m 0644 /tmp/e2e-50-headers-backend.py ${REMOTE_DIR}/headers-backend.py && rm -f /tmp/e2e-50-headers-backend.py && systemd-run --quiet --collect --unit ${BACKEND_UNIT} --uid=nobody --gid=nogroup python3 ${REMOTE_DIR}/headers-backend.py ${PORT} ${MARKER}\" > /dev/null 2>&1 || true\nnudge_sync\nif wait_for 120 tunnel_reachable \"${PORT}\" \"${MARKER}\"; then\n  log_pass \"Port ${PORT}: the backend answers through chisel\"\nelse\n  log_fail \"Port ${PORT}: the backend does not answer through chisel\"\nfi\n\nKEY_B=$(domain_group_key \"${DOMAIN_2}\")\nassert_eq \"$(printf '%s\\n' \"${KEY_B}\" | grep -cE '^[0-9a-f]{16}$' || true)\" \"1\" \"B's rules name its group key\" || true\nwait_group holds \"${MEM}\" \"lamaste:m:${KEY_B}\" \"users.yml gives ${MEM} B's member group\""
+    },
+    {
+      "id": "signed-in-at-auth-b-authelia-s-mainpid-from-here-on",
+      "label": "Signed in at auth.B; Authelia's MainPID from here on",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "Set SECRET_MEM",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${MEM}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_MEM",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Set SECRET_GRP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${GRP}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_GRP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Set AUTHELIA_PID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "authelia_pid"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_PID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Authelia runs (MainPID ${AUTHELIA_PID})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${AUTHELIA_PID:-0}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Authelia runs (MainPID ${AUTHELIA_PID})"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Signed in at auth.B; Authelia's MainPID from here on\"\n\nSECRET_MEM=$(reset_totp \"${MEM}\")\nSECRET_GRP=$(reset_totp \"${GRP}\")\nmd_wait_authelia \"${DOMAIN_2}\"\nmd_sign_in \"${MEM}\" \"${MEM_PASSWORD}\" \"${SECRET_MEM}\" \"${JAR_MEM}\" \"${SUB}.${DOMAIN_2}\"\nmd_sign_in \"${GRP}\" \"${GRP_PASSWORD}\" \"${SECRET_GRP}\" \"${JAR_GRP}\" \"${SUB}.${DOMAIN_2}\"\nAUTHELIA_PID=$(authelia_pid)\nassert_not_eq \"${AUTHELIA_PID:-0}\" \"0\" \"Authelia runs (MainPID ${AUTHELIA_PID})\" || true\nassert_served \"${JAR_MEM}\" \"${URL}\" \"${MARKER}\" \"${MEM} on B's authenticated tunnel\"\n\n# ===========================================================================\n# 2. Lamaste's groups never leave Authelia\n# ==========================================================================="
+    },
+    {
+      "id": "lamaste-s-own-groups-in-users-yml-never-shown-never-passed-on",
+      "label": "Lamaste's own groups: in users.yml, never shown, never passed on",
+      "steps": [
+        {
+          "id": "step-32",
+          "label": "…and keeps ${TEAM}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(user_groups \"${GRP}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",${TEAM},"
+              },
+              "message": "…and keeps ${TEAM}"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "USERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_GRP}\" \"https://${SUB}.${DOMAIN_2}/e2e-headers\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "${GRP} on the tunnel's /e2e-headers: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${GRP} on the tunnel's /e2e-headers: 200"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "…the backend is told the user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".user",
+              "expected": {
+                "kind": "var",
+                "name": "GRP"
+              },
+              "message": "…the backend is told the user"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "…and Remote-Groups: ${TEAM} alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".groups",
+              "expected": {
+                "kind": "var",
+                "name": "TEAM"
+              },
+              "message": "…and Remote-Groups: ${TEAM} alone"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "…no group of Lamaste's reaches a backend",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "lamaste:"
+              },
+              "message": "…no group of Lamaste's reaches a backend"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Lamaste's own groups: in users.yml, never shown, never passed on\"\n\nwait_group holds \"${GRP}\" \"lamaste:m:${KEY_B}\" \"users.yml gives ${GRP} B's member group beside ${TEAM}\"\nassert_contains \",$(user_groups \"${GRP}\"),\" \",${TEAM},\" \"…and keeps ${TEAM}\" || true\nUSERS=$(host_api_get \"users\" 2>/dev/null || echo '{}')\nassert_eq \"$(echo \"$USERS\" | jq -r --arg u \"${GRP}\" '[.users[]? | select(.username == $u) | .groups[]?] | join(\",\")')\" \"${TEAM}\" \"GET /api/users lists ${GRP}'s groups as ${TEAM} alone\" || true\nassert_eq \"$(echo \"$USERS\" | jq '[.users[]?.groups[]? | select(startswith(\"lamaste:\") or contains(\".\"))] | length')\" \"0\" \"…and no user's list holds a group of Lamaste's (lamaste:… or a hostname)\" || true\n\nRESP=$(visit \"${JAR_GRP}\" \"https://${SUB}.${DOMAIN_2}/e2e-headers\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"${GRP} on the tunnel's /e2e-headers: 200\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.user' \"${GRP}\" \"…the backend is told the user\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.groups' \"${TEAM}\" \"…and Remote-Groups: ${TEAM} alone\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"lamaste:\" \"…no group of Lamaste's reaches a backend\" || true\n\n# ===========================================================================\n# 3. Member → external → member\n# ==========================================================================="
+    },
+    {
+      "id": "mem-turned-external-the-same-session-is-refused",
+      "label": "${MEM} turned external: the same session is refused",
+      "steps": [
+        {
+          "id": "step-41",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_kind \"${DOMAIN_2}\" \"${MEM}\" external"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "PUT /api/domains/B/members/${MEM} {kind: external}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/domains/B/members/${MEM} {kind: external}"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "…GET /api/users: an external member of B",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_kinds \"${MEM}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "${DOMAIN_2}:external"
+              },
+              "message": "…GET /api/users: an external member of B"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "…in place of the member group",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(user_groups \"${MEM}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",lamaste:m:${KEY_B},"
+              },
+              "message": "…in place of the member group"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Audited: directory.membership.changed member → external, by directory id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(changed_kind \"${MEM_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "member->external"
+              },
+              "message": "Audited: directory.membership.changed member → external, by directory id"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "…Authelia not restarted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "AUTHELIA_PID"
+              },
+              "message": "…Authelia not restarted"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"${MEM} turned external: the same session is refused\"\n\nRESP=$(md_kind \"${DOMAIN_2}\" \"${MEM}\" external)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/domains/B/members/${MEM} {kind: external}\" || true\nassert_eq \"$(user_kinds \"${MEM}\")\" \"${DOMAIN_2}:external\" \"…GET /api/users: an external member of B\" || true\nwait_group holds \"${MEM}\" \"lamaste:x:${KEY_B}\" \"users.yml gives ${MEM} B's external group\"\nassert_not_contains \",$(user_groups \"${MEM}\"),\" \",lamaste:m:${KEY_B},\" \"…in place of the member group\" || true\nwait_status \"${JAR_MEM}\" \"${URL}\" 403 \"${MEM}'s session of before on the authenticated tunnel: 403 within ${AUTHZ_SETTLE_SECONDS} s\"\nassert_access_request \"$(visit \"${JAR_MEM}\" \"${URL}\")\" \"${MEM}, external, on the authenticated tunnel\"\nassert_eq \"$(changed_kind \"${MEM_ID}\")\" \"member->external\" \"Audited: directory.membership.changed member → external, by directory id\" || true\nassert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"…Authelia not restarted\" || true"
+    },
+    {
+      "id": "turned-back-let-through-again",
+      "label": "Turned back: let through again",
+      "steps": [
+        {
+          "id": "step-50",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_kind \"${DOMAIN_2}\" \"${MEM}\" member"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "PUT /api/domains/B/members/${MEM} {kind: member}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/domains/B/members/${MEM} {kind: member}"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Audited: and back, external → member",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(changed_kind \"${MEM_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "member->external,external->member"
+              },
+              "message": "Audited: and back, external → member"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "…Authelia not restarted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "AUTHELIA_PID"
+              },
+              "message": "…Authelia not restarted"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Turned back: let through again\"\n\nRESP=$(md_kind \"${DOMAIN_2}\" \"${MEM}\" member)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/domains/B/members/${MEM} {kind: member}\" || true\nwait_group holds \"${MEM}\" \"lamaste:m:${KEY_B}\" \"users.yml gives ${MEM} B's member group again\"\nwait_status \"${JAR_MEM}\" \"${URL}\" 200 \"${MEM}'s session of before: 200 again — no new sign-in\"\nassert_eq \"$(changed_kind \"${MEM_ID}\")\" \"member->external,external->member\" \"Audited: and back, external → member\" || true\nassert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"…Authelia not restarted\" || true\n\n# ===========================================================================\n# 4. Authelia groups and external members never meet\n# ==========================================================================="
+    },
+    {
+      "id": "refusals-an-authelia-group-and-an-external-membership",
+      "label": "Refusals: an Authelia group and an external membership",
+      "steps": [
+        {
+          "id": "step-56",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_kind \"${DOMAIN_2}\" \"${GRP}\" external"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "${GRP}, in ${TEAM}, made external: 409 external_member_groups",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409 external_member_groups"
+              },
+              "message": "${GRP}, in ${TEAM}, made external: 409 external_member_groups"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "…still a member of B",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_kinds \"${GRP}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "${DOMAIN_2}:member"
+              },
+              "message": "…still a member of B"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call PUT \"users/${EXT}\" \"{\\\"groups\\\":[\\\"${TEAM}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "${TEAM} given to ${EXT}, an external member: 409 external_member_groups",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409 external_member_groups"
+              },
+              "message": "${TEAM} given to ${EXT}, an external member: 409 external_member_groups"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "…users.yml gives ${EXT} B's external group alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_groups \"${EXT}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "lamaste:x:${KEY_B}"
+              },
+              "message": "…users.yml gives ${EXT} B's external group alone"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call PUT \"users/${GRP}\" \"{\\\"groups\\\":[\\\"${TEAM}\\\",\\\"team.${DOMAIN_2}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-63",
+          "label": "A group named like a hostname: 400 reserved_group",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 reserved_group"
+              },
+              "message": "A group named like a hostname: 400 reserved_group"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call PUT \"users/${GRP}\" \"{\\\"groups\\\":[\\\"${TEAM}\\\",\\\"lamaste:m:${KEY_B}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "…or like Lamaste's own (lamaste:m:<key>): 400 reserved_group",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 reserved_group"
+              },
+              "message": "…or like Lamaste's own (lamaste:m:<key>): 400 reserved_group"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Authelia's MainPID is the one of before the first change",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "AUTHELIA_PID"
+              },
+              "message": "Authelia's MainPID is the one of before the first change"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "Both sessions of before are still signed in at auth.${DOMAIN_2}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Both sessions of before are still signed in at auth.${DOMAIN_2}"
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "A session of before ended",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "A session of before ended"
+          }
+        }
+      ],
+      "bash": "log_section \"Refusals: an Authelia group and an external membership\"\n\nRESP=$(md_kind \"${DOMAIN_2}\" \"${GRP}\" external)\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')\" \"409 external_member_groups\" \"${GRP}, in ${TEAM}, made external: 409 external_member_groups\" || true\nassert_eq \"$(user_kinds \"${GRP}\")\" \"${DOMAIN_2}:member\" \"…still a member of B\" || true\n\nRESP=$(users_call PUT \"users/${EXT}\" \"{\\\"groups\\\":[\\\"${TEAM}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')\" \"409 external_member_groups\" \"${TEAM} given to ${EXT}, an external member: 409 external_member_groups\" || true\nassert_eq \"$(user_groups \"${EXT}\")\" \"lamaste:x:${KEY_B}\" \"…users.yml gives ${EXT} B's external group alone\" || true\n\nRESP=$(users_call PUT \"users/${GRP}\" \"{\\\"groups\\\":[\\\"${TEAM}\\\",\\\"team.${DOMAIN_2}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')\" \"400 reserved_group\" \"A group named like a hostname: 400 reserved_group\" || true\nRESP=$(users_call PUT \"users/${GRP}\" \"{\\\"groups\\\":[\\\"${TEAM}\\\",\\\"lamaste:m:${KEY_B}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')\" \"400 reserved_group\" \"…or like Lamaste's own (lamaste:m:<key>): 400 reserved_group\" || true\nassert_eq \"$(host_api_get \"users\" | jq -r --arg u \"${GRP}\" '[.users[]? | select(.username == $u) | .groups[]?] | join(\",\")')\" \"${TEAM}\" \"${GRP}'s groups are unchanged\" || true\n\nassert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"Authelia's MainPID is the one of before the first change\" || true\nif signed_in \"${JAR_MEM}\" \"${DOMAIN_2}\" && signed_in \"${JAR_GRP}\" \"${DOMAIN_2}\"; then\n  log_pass \"Both sessions of before are still signed in at auth.${DOMAIN_2}\"\nelse\n  log_fail \"A session of before ended\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 50 — External members: changing the kind (Three-VM)\n# ============================================================================\n# The second acceptance case of external members (design: packages/core/\n# docs/external-members-design.md, \"Proof\"). B is a second base domain\n# (multi-domain-harness.sh); an authenticated tunnel on it whose backend\n# answers with the identity headers it was sent.\n#\n# 1. A member reaches the tunnel. Turned external, the same session is\n#    refused within the settle time (the access-request page), audited\n#    (directory.membership.changed, by directory id); turned back, it is\n#    let through again — Authelia never restarted.\n# 2. Authelia groups and external members never meet: making a user who\n#    holds one (`e2e50team`) external is refused (409\n#    external_member_groups), so is giving one to an external member; a\n#    group name Lamaste could own (a dot, a colon) is refused (400\n#    reserved_group).\n# 3. Lamaste's own groups stay Authelia's: users.yml holds them, but\n#    GET /api/users never lists one, and the backend's Remote-Groups carries\n#    the administrator's groups only.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=50\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n\nrequire_commands multipass curl jq perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nMEM=\"e2e50-member\"\nGRP=\"e2e50-grouped\"\nEXT=\"e2e50-ext\"\nTEAM=\"e2e50team\"\n# Test credentials for this run only, never printed\nMEM_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nGRP_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nEXT_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nMEM_ID=\"\"\nGRP_ID=\"\"\nEXT_ID=\"\"\nJAR_MEM=$(md_jar member)\nJAR_GRP=$(md_jar grouped)\nSUB=\"e2e50a\"\nPORT=18501\nTUNNEL=\"\"\nURL=\"\"\nMARKER=\"E2E_50_$(date +%s)\"\nREMOTE_DIR=\"/var/tmp/e2e-50-backend\"\nBACKEND_UNIT=\"e2e-50-backend\"\nLOCAL_TMP=\"\"\nAUTHELIA_PID=\"\"\nAUDIT_BASE=0\n\n# write_headers_backend <file> — headers-backend.py: /index.html answers the\n# marker, /e2e-headers the identity headers it was sent (Remote-User,\n# Remote-Groups) as JSON\n#\n#   python3 headers-backend.py <port> <marker>\nwrite_headers_backend() {\n  cat > \"$1\" << 'BACKEND_EOF'\nimport json\nimport sys\nfrom http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n\n\nclass Handler(BaseHTTPRequestHandler):\n    def do_GET(self):\n        path = self.path.split(\"?\", 1)[0]\n        if path == \"/e2e-headers\":\n            body = json.dumps({\n                \"user\": self.headers.get(\"Remote-User\"),\n                \"groups\": self.headers.get(\"Remote-Groups\"),\n            }).encode()\n            kind = \"application/json\"\n        else:\n            body = (MARKER + \"\\n\").encode()\n            kind = \"text/html\"\n        self.send_response(200)\n        self.send_header(\"Content-Type\", kind)\n        self.send_header(\"Content-Length\", str(len(body)))\n        self.end_headers()\n        self.wfile.write(body)\n\n    def log_message(self, format, *args):\n        pass\n\n\nport, MARKER = int(sys.argv[1]), sys.argv[2]\nThreadingHTTPServer((\"127.0.0.1\", port), Handler).serve_forever()\nBACKEND_EOF\n}\n\n# changed_kind <userId> — the directory.membership.changed entries of a user since the spec began, \"<from>-><to>\", comma-separated\nchanged_kind() {\n  host_api_get \"audit?action=directory.membership.changed&limit=200\" 2>/dev/null |\n    jq -r --arg id \"$1\" --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base and .details.userId == $id) | \"\\(.details.from)->\\(.details.to)\"] | reverse | join(\",\")' 2>/dev/null || echo \"\"\n}\n\nbegin_test \"50 — External members: changing the kind (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  if [ -n \"${TUNNEL}\" ]; then host_api_delete \"tunnels/${TUNNEL}\" > /dev/null 2>&1 || true; fi\n  timed_exec 30 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"systemctl stop ${BACKEND_UNIT} > /dev/null 2>&1; rm -rf ${REMOTE_DIR}; true\" > /dev/null 2>&1\n  for id in \"${MEM}\" \"${GRP}\" \"${EXT}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  if [ -n \"${LOCAL_TMP}\" ]; then rm -rf \"${LOCAL_TMP}\"; fi\n  md_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

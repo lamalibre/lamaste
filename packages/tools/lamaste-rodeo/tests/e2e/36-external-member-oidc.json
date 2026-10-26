@@ -1,0 +1,948 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 36,
+    "name": "External members: OIDC sign-in by grant",
+    "suite": "e2e",
+    "description": "36 — External members: OIDC sign-in by grant (Single-VM)",
+    "deps": [],
+    "requires": ["curl", "jq", "node", "openssl", "oathtool", "python3"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "POST plugins/${PLUGIN_NAME}/disable",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "plugins/${PLUGIN_NAME}/disable"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE plugins/${PLUGIN_NAME}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN_NAME}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Extract DOMAIN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DOMAIN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ONBOARDING"
+              },
+              "expression": ".domain // empty"
+            }
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Onboarding is complete: A = ${DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete: A = ${DOMAIN}"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "${EXT} granted the client $2 (resourceType oidc-client)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${id}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "${EXT} granted the client $2 (resourceType oidc-client)"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "GET /api/audit?action=authelia.restarted&limit=50",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?action=authelia.restarted&limit=50"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(api_get \"onboarding/status\" 2>/dev/null || echo '{}')\nif [ \"$(echo \"$ONBOARDING\" | jq -r '.status' 2>/dev/null || echo unknown)\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nDOMAIN=$(echo \"$ONBOARDING\" | jq -r '.domain // empty')\nlog_pass \"Onboarding is complete: A = ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-36\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_emoidc_00000000000000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-emoidc-server\"\nPLUGIN_NAME=\"e2e-emoidc\"\nWEB_ID=\"e2e-emoidc-web\"\nCLI_ID=\"e2e-emoidc-cli\"\nREDIRECT_URI=\"https://e2e-emoidc.example.test/callback\"\nMEM=\"e2e36-member\"\nEXT=\"e2e36-ext\"\n# Test credentials for this run only, never printed\nMEM_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nEXT_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nGRANT_WEB=\"\"\nGRANT_CLI=\"\"\nAUDIT_BASE=0\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${GRANT_WEB} ${GRANT_CLI}; do api_delete \"gatekeeper/grants/${id}\" > /dev/null 2>&1 || true; done\n  api_post \"plugins/${PLUGIN_NAME}/disable\" > /dev/null 2>&1 || true\n  api_delete \"plugins/${PLUGIN_NAME}\" > /dev/null 2>&1 || true\n  for id in \"${MEM}\" \"${EXT}\"; do api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true; done\n  sudo rm -f \"${STATE_DIR}/.npmrc\"\n  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# wait_for <seconds> <command...> — until the command succeeds (every 3 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 3\n  done\n  return 1\n}\n\n# portal — curl's --resolve for auth.<A> on this VM\nportal() { echo \"--resolve auth.${DOMAIN}:443:127.0.0.1\"; }\n\n# authorize <jar> — an authorization request for the web client at auth.A\n# with the session in <jar>; prints Authelia's Location\nauthorize() {\n  local verifier challenge state\n  verifier=$(openssl rand -hex 32)\n  challenge=$(printf '%s' \"$verifier\" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')\n  state=$(openssl rand -hex 16)\n  # shellcheck disable=SC2046\n  curl -sk --max-time 15 $(portal) -b \"$1\" -o /dev/null -w '%{redirect_url}' -G \\\n    --data-urlencode \"client_id=${WEB_ID}\" --data-urlencode \"redirect_uri=${REDIRECT_URI}\" \\\n    --data-urlencode 'response_type=code' --data-urlencode 'scope=openid profile' \\\n    --data-urlencode \"state=${state}\" --data-urlencode \"code_challenge=${challenge}\" \\\n    --data-urlencode 'code_challenge_method=S256' \\\n    \"https://auth.${DOMAIN}/api/oidc/authorization\" 2>/dev/null || echo \"\"\n}\n\n# admitted <jar> / refused <jar> — the web client's authorization request goes on / is refused\nadmitted() {\n  local location\n  location=$(authorize \"$1\")\n  [ -n \"$location\" ] && [[ \"$location\" != *\"error=\"* ]]\n}\nrefused() { [[ \"$(authorize \"$1\")\" == *\"error=access_denied\"* ]]; }\n\n# config_json — Authelia's configuration as JSON\nconfig_json() { sudo bash -c \"${AUTHELIA_CONFIG_JSON}\" 2>/dev/null || echo '{}'; }\n\n# policy_subjects <name> — the subjects of an authorization policy's rules\n# (a rule's ANDed subjects joined by \"+\"), sorted, comma-separated\npolicy_subjects() {\n  config_json | jq -r --arg p \"$1\" '[.identity_providers.oidc.authorization_policies[$p].rules[]?.subject[]? | if type == \"array\" then join(\"+\") else . end] | sort | join(\",\")' 2>/dev/null || echo \"\"\n}\n\n# client_policy <client id> — the authorization_policy Authelia holds for the client\nclient_policy() {\n  config_json | jq -r --arg c \"$1\" '[.identity_providers.oidc.clients[]? | select(.client_id == $c) | .authorization_policy] | first // \"\"' 2>/dev/null || echo \"\"\n}\n\n# user_groups <username> — the user's groups in users.yml, sorted, comma-separated\nuser_groups() { sudo bash -c \"${AUTHELIA_USERS_GROUPS_JSON}\" 2>/dev/null | jq -r --arg u \"$1\" '(.[$u] // []) | sort | join(\",\")' 2>/dev/null || echo \"\"; }\nholds_group() { [[ \",$(user_groups \"$1\"),\" == *\",$2,\"* ]]; }\nlacks_group() { ! holds_group \"$@\"; }\n\n# authelia_pid — Authelia's MainPID (0 when it is not running)\nauthelia_pid() { systemctl show -p MainPID --value authelia 2> /dev/null || echo \"0\"; }\n\n# session_user <jar> — the user Authelia's /api/state names for the session (\"\" when signed out)\nsession_user() {\n  # shellcheck disable=SC2046\n  curl -sk --max-time 15 $(portal) -b \"$1\" \"https://auth.${DOMAIN}/api/state\" 2>/dev/null | jq -r '.data.username // \"\"' 2>/dev/null || echo \"\"\n}\n\n# grant <variable> <client id> — a Gatekeeper grant of the client to the external member; its id into <variable>\ngrant() {\n  local resp id\n  resp=$(api_post \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${EXT}\\\",\\\"resourceType\\\":\\\"oidc-client\\\",\\\"resourceId\\\":\\\"$2\\\"}\")\n  id=$(echo \"$resp\" | jq -r '.grant.grantId // empty' 2>/dev/null || echo \"\")\n  assert_not_eq \"${id}\" \"\" \"${EXT} granted the client $2 (resourceType oidc-client)\" || true\n  printf -v \"$1\" '%s' \"$id\"\n}\n\n# device_code_restarts — authelia.restarted entries since the spec began, reason device-code\ndevice_code_restarts() {\n  api_get \"audit?action=authelia.restarted&limit=50\" 2>/dev/null |\n    jq --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base and .details.reason == \"device-code\")] | length' 2>/dev/null || echo 0\n}\nrestarted_for_device_code() { [ \"$(device_code_restarts)\" -ge 1 ]; }\n\n# ===========================================================================\n# 1. The users, the plugin\n# ==========================================================================="
+    },
+    {
+      "id": "a-member-and-an-external-member-of-a",
+      "label": "A member and an external member of A",
+      "steps": [
+        {
+          "id": "step-68",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "jq",
+                "expression": "[.entries[]?.id] | max // 0"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "POST /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-71",
+          "label": "${MEM}: a member of A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": "[.user.domains[] | \"\\(.name):\\(.kind)\"] | join(\",\")",
+              "expected": {
+                "kind": "expr",
+                "template": "${DOMAIN}:member"
+              },
+              "message": "${MEM}: a member of A"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "POST /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-73",
+          "label": "${EXT}: an external member of A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": "[.user.domains[] | \"\\(.name):\\(.kind)\"] | join(\",\")",
+              "expected": {
+                "kind": "expr",
+                "template": "${DOMAIN}:external"
+              },
+              "message": "${EXT}: an external member of A"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A member and an external member of A\"\n\nAUDIT_BASE=$(api_get \"audit?limit=1\" 2>/dev/null | jq -r '[.entries[]?.id] | max // 0' 2>/dev/null || echo 0)\nfor u in \"${MEM}\" \"${EXT}\"; do api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true; done\nRESP=$(api_post \"users\" \"{\\\"username\\\":\\\"${MEM}\\\",\\\"displayname\\\":\\\"E2E Member\\\",\\\"email\\\":\\\"${MEM}@example.test\\\",\\\"password\\\":\\\"${MEM_PASSWORD}\\\",\\\"groups\\\":[],\\\"domains\\\":[\\\"${DOMAIN}\\\"]}\")\nassert_json_field \"$RESP\" '[.user.domains[] | \"\\(.name):\\(.kind)\"] | join(\",\")' \"${DOMAIN}:member\" \"${MEM}: a member of A\" || true\nRESP=$(api_post \"users\" \"{\\\"username\\\":\\\"${EXT}\\\",\\\"displayname\\\":\\\"E2E External\\\",\\\"email\\\":\\\"${EXT}@example.test\\\",\\\"password\\\":\\\"${EXT_PASSWORD}\\\",\\\"groups\\\":[],\\\"domains\\\":[{\\\"name\\\":\\\"${DOMAIN}\\\",\\\"kind\\\":\\\"external\\\"}]}\")\nassert_json_field \"$RESP\" '[.user.domains[] | \"\\(.name):\\(.kind)\"] | join(\",\")' \"${DOMAIN}:external\" \"${EXT}: an external member of A\" || true"
+    },
+    {
+      "id": "the-plugin-with-an-authorization-code-and-a-device-code-client",
+      "label": "The plugin with an authorization-code and a device-code client",
+      "steps": [
+        {
+          "id": "step-77",
+          "label": "Stand-in registry is up on ${STUB_URL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Stand-in registry is up on ${STUB_URL}"
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)"
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-82",
+          "label": "Fixture plugin installed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Fixture plugin installed"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/enable"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-84",
+          "label": "Plugin enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "enabled"
+              },
+              "message": "Plugin enabled"
+            }
+          }
+        },
+        {
+          "id": "step-86",
+          "label": "Set KEY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "config_json | jq -r --arg d \"${DOMAIN}\" \"${AUTHELIA_MEMBER_KEY}\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "KEY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-87",
+          "label": "A's rules name its group key",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n' \"${KEY}\" | grep -cE '^[0-9a-f]{16}$' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "A's rules name its group key"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "${c}'s authorization_policy is its own",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(client_policy \"$c\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "lamaste_client_${c}"
+              },
+              "message": "${c}'s authorization_policy is its own"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "…A's members, or A's external members granted ${c}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(policy_subjects \"lamaste_client_${c}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "group:lamaste:m:${KEY},group:lamaste:x:${KEY}+group:lamaste:oidc@${c}"
+              },
+              "message": "…A's members, or A's external members granted ${c}"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "users.yml gives ${EXT} A's external group",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "users.yml gives ${EXT} A's external group"
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "${EXT}'s groups: $(user_groups \"${EXT}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${EXT}'s groups: $(user_groups \"${EXT}\")"
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Set SECRET_MEM",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "local_reset_totp \"${MEM}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_MEM",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-95",
+          "label": "Set SECRET_EXT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "local_reset_totp \"${EXT}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_EXT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-98",
+          "label": "${MEM} signed in at auth.A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SIGN_IN_RESULT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${MEM} signed in at auth.A"
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "${EXT} signed in at auth.A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SIGN_IN_RESULT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${EXT} signed in at auth.A"
+            }
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "Set PID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "authelia_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-102",
+          "label": "Authelia runs (MainPID ${PID})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${PID:-0}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Authelia runs (MainPID ${PID})"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The plugin with an authorization-code and a device-code client\"\n\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nwrite_oidc_grant_fixture_plugin \"${WORK_DIR}/fixture\"\nif start_stub_registry \"${WORK_DIR}\" \"${WORK_DIR}/fixture\"; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)\"\n  end_test\n  exit $?\nfi\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\nsudo install -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nRESP=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PLUGIN_PACKAGE}\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"Fixture plugin installed\" || true\nRESP=$(api_post \"plugins/${PLUGIN_NAME}/enable\")\nassert_json_field \"$RESP\" '.status' 'enabled' \"Plugin enabled\" || true\nlocal_wait_authelia \"${DOMAIN}\"\n\nKEY=$(config_json | jq -r --arg d \"${DOMAIN}\" \"${AUTHELIA_MEMBER_KEY}\" 2>/dev/null || echo \"\")\nassert_eq \"$(printf '%s\\n' \"${KEY}\" | grep -cE '^[0-9a-f]{16}$' || true)\" \"1\" \"A's rules name its group key\" || true\nfor c in \"${WEB_ID}\" \"${CLI_ID}\"; do\n  assert_eq \"$(client_policy \"$c\")\" \"lamaste_client_${c}\" \"${c}'s authorization_policy is its own\" || true\n  assert_eq \"$(policy_subjects \"lamaste_client_${c}\")\" \"group:lamaste:m:${KEY},group:lamaste:x:${KEY}+group:lamaste:oidc@${c}\" \"…A's members, or A's external members granted ${c}\" || true\ndone\nif wait_for 30 holds_group \"${EXT}\" \"lamaste:x:${KEY}\"; then\n  log_pass \"users.yml gives ${EXT} A's external group\"\nelse\n  log_fail \"${EXT}'s groups: $(user_groups \"${EXT}\")\"\nfi\n\nSECRET_MEM=$(local_reset_totp \"${MEM}\")\nSECRET_EXT=$(local_reset_totp \"${EXT}\")\nlocal_wait_authelia \"${DOMAIN}\"\nlocal_sign_in \"${MEM}\" \"${MEM_PASSWORD}\" \"${SECRET_MEM}\" \"${WORK_DIR}/mem.jar\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${MEM} signed in at auth.A\" || true\nlocal_sign_in \"${EXT}\" \"${EXT_PASSWORD}\" \"${SECRET_EXT}\" \"${WORK_DIR}/ext.jar\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${EXT} signed in at auth.A\" || true\nPID=$(authelia_pid)\nassert_not_eq \"${PID:-0}\" \"0\" \"Authelia runs (MainPID ${PID})\" || true\n\n# ===========================================================================\n# 2. The authorization-code client\n# ==========================================================================="
+    },
+    {
+      "id": "the-authorization-code-client-by-grant-no-restart",
+      "label": "The authorization-code client: by grant, no restart",
+      "steps": [
+        {
+          "id": "step-103",
+          "label": "Set LOCATION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "authorize \"${WORK_DIR}/ext.jar\""
+          },
+          "capture": [
+            {
+              "variable": "LOCATION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-104",
+          "label": "${EXT}'s is sent back to the client's redirect URI",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "LOCATION"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "REDIRECT_URI"
+              },
+              "message": "${EXT}'s is sent back to the client's redirect URI"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "…refused: access_denied (an external member, not granted)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "LOCATION"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "error=access_denied"
+              },
+              "message": "…refused: access_denied (an external member, not granted)"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "users.yml gives ${EXT} the client's grant group",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "users.yml gives ${EXT} the client's grant group"
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "${EXT}'s groups: $(user_groups \"${EXT}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${EXT}'s groups: $(user_groups \"${EXT}\")"
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "${EXT}, granted: the same session's authorization request goes on",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${EXT}, granted: the same session's authorization request goes on"
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "${EXT}, granted: $(authorize \"${WORK_DIR}/ext.jar\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${EXT}, granted: $(authorize \"${WORK_DIR}/ext.jar\")"
+          }
+        },
+        {
+          "id": "step-111",
+          "label": "…and holds nothing more (no member group, no other client)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_groups \"${EXT}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "lamaste:oidc@${WEB_ID},lamaste:x:${KEY}"
+              },
+              "message": "…and holds nothing more (no member group, no other client)"
+            }
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "DELETE /api/gatekeeper/grants/${GRANT_WEB}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "gatekeeper/grants/${GRANT_WEB}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-114",
+          "label": "Revoked: users.yml takes the grant group from ${EXT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Revoked: users.yml takes the grant group from ${EXT}"
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "${EXT}'s groups: $(user_groups \"${EXT}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${EXT}'s groups: $(user_groups \"${EXT}\")"
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "${EXT}, revoked: refused at the next authorization (access_denied)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${EXT}, revoked: refused at the next authorization (access_denied)"
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "${EXT}, revoked: $(authorize \"${WORK_DIR}/ext.jar\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${EXT}, revoked: $(authorize \"${WORK_DIR}/ext.jar\")"
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "Authelia was not restarted by the grant or its revocation (MainPID ${PID})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PID"
+              },
+              "message": "Authelia was not restarted by the grant or its revocation (MainPID ${PID})"
+            }
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "…no restart audited",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(device_code_restarts)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…no restart audited"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The authorization-code client: by grant, no restart\"\n\nif admitted \"${WORK_DIR}/mem.jar\"; then log_pass \"${MEM}'s authorization request goes on\"; else log_fail \"${MEM}: $(authorize \"${WORK_DIR}/mem.jar\")\"; fi\nLOCATION=$(authorize \"${WORK_DIR}/ext.jar\")\nassert_contains \"${LOCATION}\" \"${REDIRECT_URI}\" \"${EXT}'s is sent back to the client's redirect URI\" || true\nassert_contains \"${LOCATION}\" \"error=access_denied\" \"…refused: access_denied (an external member, not granted)\" || true\n\ngrant GRANT_WEB \"${WEB_ID}\"\nif wait_for 30 holds_group \"${EXT}\" \"lamaste:oidc@${WEB_ID}\"; then\n  log_pass \"users.yml gives ${EXT} the client's grant group\"\nelse\n  log_fail \"${EXT}'s groups: $(user_groups \"${EXT}\")\"\nfi\nif wait_for 30 admitted \"${WORK_DIR}/ext.jar\"; then\n  log_pass \"${EXT}, granted: the same session's authorization request goes on\"\nelse\n  log_fail \"${EXT}, granted: $(authorize \"${WORK_DIR}/ext.jar\")\"\nfi\nassert_eq \"$(user_groups \"${EXT}\")\" \"lamaste:oidc@${WEB_ID},lamaste:x:${KEY}\" \"…and holds nothing more (no member group, no other client)\" || true\n\napi_delete \"gatekeeper/grants/${GRANT_WEB}\" > /dev/null 2>&1 || true\nGRANT_WEB=\"\"\nif wait_for 30 lacks_group \"${EXT}\" \"lamaste:oidc@${WEB_ID}\"; then\n  log_pass \"Revoked: users.yml takes the grant group from ${EXT}\"\nelse\n  log_fail \"${EXT}'s groups: $(user_groups \"${EXT}\")\"\nfi\nif wait_for 30 refused \"${WORK_DIR}/ext.jar\"; then\n  log_pass \"${EXT}, revoked: refused at the next authorization (access_denied)\"\nelse\n  log_fail \"${EXT}, revoked: $(authorize \"${WORK_DIR}/ext.jar\")\"\nfi\nif admitted \"${WORK_DIR}/mem.jar\"; then log_pass \"${MEM} admitted throughout\"; else log_fail \"${MEM}: $(authorize \"${WORK_DIR}/mem.jar\")\"; fi\nassert_eq \"$(authelia_pid)\" \"${PID}\" \"Authelia was not restarted by the grant or its revocation (MainPID ${PID})\" || true\nassert_eq \"$(device_code_restarts)\" \"0\" \"…no restart audited\" || true\n\n# ===========================================================================\n# 3. The device-code client\n# ==========================================================================="
+    },
+    {
+      "id": "the-device-code-client-a-revocation-restarts-authelia",
+      "label": "The device-code client: a revocation restarts Authelia",
+      "steps": [
+        {
+          "id": "step-121",
+          "label": "users.yml gives ${EXT} the device-code client's grant group",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "users.yml gives ${EXT} the device-code client's grant group"
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "${EXT}'s groups: $(user_groups \"${EXT}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${EXT}'s groups: $(user_groups \"${EXT}\")"
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "A grant widens: no restart",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PID"
+              },
+              "message": "A grant widens: no restart"
+            }
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "${EXT}'s session of before is signed in",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(session_user \"${WORK_DIR}/ext.jar\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "EXT"
+              },
+              "message": "${EXT}'s session of before is signed in"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "DELETE /api/gatekeeper/grants/${GRANT_CLI}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "gatekeeper/grants/${GRANT_CLI}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-127",
+          "label": "Revoked: Authelia restarted for it (audited authelia.restarted, reason device-code)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Revoked: Authelia restarted for it (audited authelia.restarted, reason device-code)"
+          }
+        },
+        {
+          "id": "step-128",
+          "label": "No device-code restart audited: $(api_get \"audit?action=authelia.restarted&limit=5\" | jq -c '[.entries[]? | .details]')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "No device-code restart audited: $(api_get \"audit?action=authelia.restarted&limit=5\" | jq -c '[.entries[]? | .details]')"
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "…a new MainPID",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PID"
+              },
+              "message": "…a new MainPID"
+            }
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "${EXT}'s session of before is gone: no device code can be approved with it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(session_user \"${WORK_DIR}/ext.jar\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "${EXT}'s session of before is gone: no device code can be approved with it"
+            }
+          }
+        },
+        {
+          "id": "step-132",
+          "label": "…and users.yml no longer gives ${EXT} the client's grant group",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…and users.yml no longer gives ${EXT} the client's grant group"
+          }
+        },
+        {
+          "id": "step-133",
+          "label": "${EXT}'s groups: $(user_groups \"${EXT}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${EXT}'s groups: $(user_groups \"${EXT}\")"
+          }
+        }
+      ],
+      "bash": "log_section \"The device-code client: a revocation restarts Authelia\"\n\ngrant GRANT_CLI \"${CLI_ID}\"\nif wait_for 30 holds_group \"${EXT}\" \"lamaste:oidc@${CLI_ID}\"; then\n  log_pass \"users.yml gives ${EXT} the device-code client's grant group\"\nelse\n  log_fail \"${EXT}'s groups: $(user_groups \"${EXT}\")\"\nfi\nassert_eq \"$(authelia_pid)\" \"${PID}\" \"A grant widens: no restart\" || true\nassert_eq \"$(session_user \"${WORK_DIR}/ext.jar\")\" \"${EXT}\" \"${EXT}'s session of before is signed in\" || true\n\napi_delete \"gatekeeper/grants/${GRANT_CLI}\" > /dev/null 2>&1 || true\nGRANT_CLI=\"\"\nif wait_for 60 restarted_for_device_code; then\n  log_pass \"Revoked: Authelia restarted for it (audited authelia.restarted, reason device-code)\"\nelse\n  log_fail \"No device-code restart audited: $(api_get \"audit?action=authelia.restarted&limit=5\" | jq -c '[.entries[]? | .details]')\"\nfi\nlocal_wait_authelia \"${DOMAIN}\"\nassert_not_eq \"$(authelia_pid)\" \"${PID}\" \"…a new MainPID\" || true\nassert_eq \"$(session_user \"${WORK_DIR}/ext.jar\")\" \"\" \"${EXT}'s session of before is gone: no device code can be approved with it\" || true\nif lacks_group \"${EXT}\" \"lamaste:oidc@${CLI_ID}\"; then\n  log_pass \"…and users.yml no longer gives ${EXT} the client's grant group\"\nelse\n  log_fail \"${EXT}'s groups: $(user_groups \"${EXT}\")\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 36 — External members: OIDC sign-in by grant (Single-VM)\n# ============================================================================\n# Authelia's access_control does not apply to OpenID Connect authorization:\n# a client's authorization_policy does. Each user-facing client has a\n# policy of its own, `lamaste_client_<id>`: the members of its plugin's\n# domain (their member group, `lamaste:m:<key>`), and its external members\n# only together with the client's grant group (`lamaste:oidc@<id>`), both in\n# Authelia's users.yml (design: packages/core/docs/external-members-\n# design.md, \"OIDC\"). A grant is a Gatekeeper grant\n# `resourceType: oidc-client`. A is the relay's primary domain.\n#\n# A server plugin with an authorization-code and a device-code client\n# (helpers.sh, write_oidc_grant_fixture_plugin) is served by a stand-in\n# registry, as in spec 35. A member and an external member of A.\n#\n# 1. The authorization-code client: the member's authorization request goes\n#    on; the external member's is refused (access_denied). Granted, the same\n#    session's next request goes on; revoked, refused again — Authelia\n#    re-reads their groups at each authorization, and is never restarted.\n# 2. The device-code client: Authelia's device flow checks the groups a\n#    session last read (residual R5), so revoking a grant on a device-code\n#    client restarts Authelia (audited authelia.restarted, reason\n#    device-code) — the external member's session of before is gone.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node openssl oathtool python3\n\nbegin_test \"36 — External members: OIDC sign-in by grant\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

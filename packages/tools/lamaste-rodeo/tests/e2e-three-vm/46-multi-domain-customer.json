@@ -156,6 +156,61 @@
               "message": "B's does"
             }
           }
+        },
+        {
+          "id": "step-8",
+          "label": "Set KEY_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "domain_group_key \"${DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "KEY_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Set KEY_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "domain_group_key \"${DOMAIN_2}\""
+          },
+          "capture": [
+            {
+              "variable": "KEY_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "…never A's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(user_groups \"${CUST}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",lamaste:m:${KEY_A},"
+              },
+              "message": "…never A's"
+            }
+          }
         }
       ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\nmd_preflight\n\n# ===========================================================================\n# 1. B, two customers of B, the hosts\n# ==========================================================================="
@@ -165,7 +220,7 @@
       "label": "An authenticated tunnel on A and on B; an Authelia-protected site on A",
       "steps": [
         {
-          "id": "step-12",
+          "id": "step-16",
           "label": "DELETE /api/sites/$(host_api_get ",
           "target": "host",
           "op": {
@@ -176,7 +231,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-13",
+          "id": "step-17",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -193,7 +248,7 @@
           ]
         },
         {
-          "id": "step-14",
+          "id": "step-18",
           "label": "Set SITE_ID",
           "target": "local",
           "op": {
@@ -210,7 +265,7 @@
           ]
         },
         {
-          "id": "step-15",
+          "id": "step-19",
           "label": "Set SITE_FQDN",
           "target": "local",
           "op": {
@@ -227,7 +282,7 @@
           ]
         },
         {
-          "id": "step-16",
+          "id": "step-20",
           "label": "Site ${SITE_NAME}.${DOMAIN}, Authelia-protected",
           "target": "local",
           "continueOnError": true,
@@ -248,14 +303,14 @@
           }
         }
       ],
-      "bash": "log_section \"Domain B; two customers, members of B only\"\n\nmd_domain_active \"${DOMAIN_2}\"\nmd_user CUST_ID \"${CUST}\" \"${CUST_PASSWORD}\" \"[\\\"${DOMAIN_2}\\\"]\"\nmd_user CUST2_ID \"${CUST2}\" \"${CUST2_PASSWORD}\" \"[\\\"${DOMAIN_2}\\\"]\"\nassert_eq \"$(is_uuid \"${CUST_ID}\") $(is_uuid \"${CUST2_ID}\")\" \"true true\" \"Both have a directory id\" || true\nassert_eq \"$(user_domains \"${CUST}\")\" \"${DOMAIN_2}\" \"${CUST} is a member of B alone\" || true\nassert_not_contains \",$(domain_members \"${DOMAIN}\"),\" \",${CUST},\" \"A's member list does not hold ${CUST}\" || true\nassert_contains \",$(domain_members \"${DOMAIN_2}\"),\" \",${CUST},\" \"B's does\" || true\nassert_not_contains \"$(access_rules_of \"${DOMAIN}\")\" \"\\\"user:${CUST}\\\"\" \"A's rendered rules never name ${CUST}\" || true"
+      "bash": "log_section \"Domain B; two customers, members of B only\"\n\nmd_domain_active \"${DOMAIN_2}\"\nmd_user CUST_ID \"${CUST}\" \"${CUST_PASSWORD}\" \"[\\\"${DOMAIN_2}\\\"]\"\nmd_user CUST2_ID \"${CUST2}\" \"${CUST2_PASSWORD}\" \"[\\\"${DOMAIN_2}\\\"]\"\nassert_eq \"$(is_uuid \"${CUST_ID}\") $(is_uuid \"${CUST2_ID}\")\" \"true true\" \"Both have a directory id\" || true\nassert_eq \"$(user_domains \"${CUST}\")\" \"${DOMAIN_2}\" \"${CUST} is a member of B alone\" || true\nassert_not_contains \",$(domain_members \"${DOMAIN}\"),\" \",${CUST},\" \"A's member list does not hold ${CUST}\" || true\nassert_contains \",$(domain_members \"${DOMAIN_2}\"),\" \",${CUST},\" \"B's does\" || true\nKEY_A=$(domain_group_key \"${DOMAIN}\")\nKEY_B=$(domain_group_key \"${DOMAIN_2}\")\nassert_not_contains \"$(access_rules_of \"${DOMAIN}\")\" \"\\\"user:\" \"A's rendered rules name no user\" || true\nwait_group holds \"${CUST}\" \"lamaste:m:${KEY_B}\" \"users.yml gives ${CUST} B's member group\"\nassert_not_contains \",$(user_groups \"${CUST}\"),\" \",lamaste:m:${KEY_A},\" \"…never A's\" || true"
     },
     {
       "id": "signed-in-at-auth-b-b-s-tunnel",
       "label": "Signed in at auth.B: B's tunnel",
       "steps": [
         {
-          "id": "step-20",
+          "id": "step-24",
           "label": "Set SECRET",
           "target": "local",
           "op": {
@@ -272,7 +327,7 @@
           ]
         },
         {
-          "id": "step-21",
+          "id": "step-25",
           "label": "Set SECRET2",
           "target": "local",
           "op": {
@@ -289,7 +344,7 @@
           ]
         },
         {
-          "id": "step-25",
+          "id": "step-29",
           "label": "${CUST2} on B's tunnel: 200",
           "target": "local",
           "continueOnError": true,
@@ -317,7 +372,7 @@
       "label": "Signed in at auth.A with the same account: A refuses with a page",
       "steps": [
         {
-          "id": "step-26",
+          "id": "step-30",
           "label": "A's tunnel without a session: to A's sign-in page",
           "target": "local",
           "continueOnError": true,
@@ -338,7 +393,7 @@
           }
         },
         {
-          "id": "step-28",
+          "id": "step-32",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -355,7 +410,7 @@
           ]
         },
         {
-          "id": "step-30",
+          "id": "step-34",
           "label": "…nothing of the tunnel",
           "target": "local",
           "continueOnError": true,
@@ -376,7 +431,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-35",
           "label": "…and the page names no user",
           "target": "local",
           "continueOnError": true,
@@ -397,7 +452,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-36",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -414,7 +469,7 @@
           ]
         },
         {
-          "id": "step-33",
+          "id": "step-37",
           "label": "${CUST} on A's Authelia-protected site: 403",
           "target": "local",
           "continueOnError": true,
@@ -435,7 +490,7 @@
           }
         },
         {
-          "id": "step-34",
+          "id": "step-38",
           "label": "…the refusal page names the site",
           "target": "local",
           "continueOnError": true,
@@ -456,7 +511,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-39",
           "label": "…and A",
           "target": "local",
           "continueOnError": true,
@@ -477,7 +532,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-40",
           "label": "…nothing of the site",
           "target": "local",
           "continueOnError": true,
@@ -498,7 +553,7 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-41",
           "label": "…never a redirect to a sign-in page",
           "target": "local",
           "continueOnError": true,
@@ -526,7 +581,7 @@
       "label": "Gatekeeper's own check: its projection, not only Authelia",
       "steps": [
         {
-          "id": "step-39",
+          "id": "step-43",
           "label": "The projection held without ${CUST} (Authelia's rules unchanged)",
           "target": "local",
           "continueOnError": true,
@@ -547,7 +602,28 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-44",
+          "label": "…Authelia still admits ${CUST} on B (B's member group in users.yml)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": ",$(user_groups \"${CUST}\"),"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ",lamaste:m:${KEY_B},"
+              },
+              "message": "…Authelia still admits ${CUST} on B (B's member group in users.yml)"
+            }
+          }
+        },
+        {
+          "id": "step-46",
           "label": "…with the domain refusal page",
           "target": "local",
           "continueOnError": true,
@@ -568,7 +644,7 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-47",
           "label": "${CUST2}, still in the projection: 200",
           "target": "local",
           "continueOnError": true,
@@ -596,7 +672,24 @@
       "label": "A customer removed from B is refused there",
       "steps": [
         {
-          "id": "step-48",
+          "id": "step-52",
+          "label": "Set AUTHELIA_PID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "authelia_pid"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_PID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -613,7 +706,7 @@
           ]
         },
         {
-          "id": "step-49",
+          "id": "step-54",
           "label": "${CUST2} removed from B (by username)",
           "target": "local",
           "continueOnError": true,
@@ -634,7 +727,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-55",
           "label": "…the directory lists no domain for ${CUST2}",
           "target": "local",
           "continueOnError": true,
@@ -655,7 +748,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-56",
           "label": "…nor does B's member list",
           "target": "local",
           "continueOnError": true,
@@ -676,7 +769,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-57",
           "label": "Audited: directory.membership.removed for B, by ${CUST2}'s directory id",
           "target": "local",
           "continueOnError": true,
@@ -698,7 +791,28 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-59",
+          "label": "…Authelia was not restarted (MainPID ${AUTHELIA_PID})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "AUTHELIA_PID"
+              },
+              "message": "…Authelia was not restarted (MainPID ${AUTHELIA_PID})"
+            }
+          }
+        },
+        {
+          "id": "step-61",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -715,7 +829,7 @@
           ]
         },
         {
-          "id": "step-57",
+          "id": "step-63",
           "label": "…nothing of the tunnel",
           "target": "local",
           "continueOnError": true,
@@ -736,14 +850,14 @@
           }
         }
       ],
-      "bash": "log_section \"Gatekeeper's own check: its projection, not only Authelia\"\n\nprojection_hold \"(.domains[] | select(.name == \\\"${DOMAIN_2}\\\") | .members) |= map(select(. != \\\"${CUST}\\\"))\"\nassert_not_contains \",$(projection_members \"${DOMAIN_2}\"),\" \",${CUST},\" \"The projection held without ${CUST} (Authelia's rules unchanged)\" || true\nassert_contains \"$(access_rules_of \"${DOMAIN_2}\")\" \"\\\"user:${CUST}\\\"\" \"…Authelia still admits ${CUST} on B\" || true\nwait_b \"${JAR_CUST_B}\" 403 \"${CUST} on B's tunnel: 403 — Gatekeeper refuses a user its projection holds no member of B\"\nassert_contains \"$(visit_body \"$(visit \"${JAR_CUST_B}\" \"https://${SUB_B}.${DOMAIN_2}/index.html\")\")\" \"Not a member\" \"…with the domain refusal page\" || true\nassert_eq \"$(b_status \"${JAR_CUST2_B}\")\" \"200\" \"${CUST2}, still in the projection: 200\" || true\n\nprojection_withdraw\nwait_b \"${JAR_CUST2_B}\" 403 \"No projection: ${CUST2} refused too (403) — Gatekeeper fails closed\"\nprojection_restore\nwait_b \"${JAR_CUST_B}\" 200 \"The panel's projection back: ${CUST} let through again\"\n\n# ===========================================================================\n# 4. Removed from B\n# ==========================================================================="
+      "bash": "log_section \"Gatekeeper's own check: its projection, not only Authelia\"\n\nprojection_hold \"(.domains[] | select(.name == \\\"${DOMAIN_2}\\\") | .members) |= map(select(. != \\\"${CUST}\\\"))\"\nassert_not_contains \",$(projection_members \"${DOMAIN_2}\"),\" \",${CUST},\" \"The projection held without ${CUST} (Authelia's rules unchanged)\" || true\nassert_contains \",$(user_groups \"${CUST}\"),\" \",lamaste:m:${KEY_B},\" \"…Authelia still admits ${CUST} on B (B's member group in users.yml)\" || true\nwait_b \"${JAR_CUST_B}\" 403 \"${CUST} on B's tunnel: 403 — Gatekeeper refuses a user its projection holds no member of B\"\nassert_contains \"$(visit_body \"$(visit \"${JAR_CUST_B}\" \"https://${SUB_B}.${DOMAIN_2}/index.html\")\")\" \"Not a member\" \"…with the domain refusal page\" || true\nassert_eq \"$(b_status \"${JAR_CUST2_B}\")\" \"200\" \"${CUST2}, still in the projection: 200\" || true\n\nprojection_withdraw\nwait_b \"${JAR_CUST2_B}\" 403 \"No projection: ${CUST2} refused too (403) — Gatekeeper fails closed\"\nprojection_restore\nwait_b \"${JAR_CUST_B}\" 200 \"The panel's projection back: ${CUST} let through again\"\n\n# ===========================================================================\n# 4. Removed from B\n# ==========================================================================="
     },
     {
       "id": "a-customer-deleted-loses-every-membership-audited-by-id",
       "label": "A customer deleted loses every membership, audited by id",
       "steps": [
         {
-          "id": "step-58",
+          "id": "step-64",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -760,7 +874,7 @@
           ]
         },
         {
-          "id": "step-59",
+          "id": "step-65",
           "label": "${CUST} deleted",
           "target": "local",
           "continueOnError": true,
@@ -781,7 +895,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-66",
           "label": "Set REMOVED",
           "target": "local",
           "op": {
@@ -798,7 +912,7 @@
           ]
         },
         {
-          "id": "step-63",
+          "id": "step-69",
           "label": "B's member list holds ${CUST} no more",
           "target": "local",
           "continueOnError": true,
@@ -817,13 +931,34 @@
               "message": "B's member list holds ${CUST} no more"
             }
           }
+        },
+        {
+          "id": "step-70",
+          "label": "…nor does users.yml give anyone of that name a group",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_groups \"${CUST}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "…nor does users.yml give anyone of that name a group"
+            }
+          }
         }
       ],
-      "bash": "log_section \"A customer removed from B is refused there\"\n\nRESP=$(md_api DELETE \"domains/${DOMAIN_2}/members/${CUST2}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${CUST2} removed from B (by username)\" || true\nassert_eq \"$(user_domains \"${CUST2}\")\" \"\" \"…the directory lists no domain for ${CUST2}\" || true\nassert_not_contains \",$(domain_members \"${DOMAIN_2}\"),\" \",${CUST2},\" \"…nor does B's member list\" || true\nassert_json_field \"$(membership_removed \"${CUST2_ID}\")\" 'map(.details.domain) | join(\",\")' \"${DOMAIN_2}\" \"Audited: directory.membership.removed for B, by ${CUST2}'s directory id\" || true\n# The removal re-rendered Authelia's rules, and its restart ended every session.\nmd_wait_authelia \"${DOMAIN_2}\"\nmd_sign_in \"${CUST2}\" \"${CUST2_PASSWORD}\" \"${SECRET2}\" \"${JAR_CUST2_B}\" \"${SUB_B}.${DOMAIN_2}\"\nRESP=$(visit \"${JAR_CUST2_B}\" \"https://${SUB_B}.${DOMAIN_2}/index.html\")\nassert_domain_refusal \"$RESP\" \"${DOMAIN_2}\" \"${CUST2}, signed in at auth.B again, on B's tunnel\"\nassert_not_contains \"$(visit_body \"$RESP\")\" \"${MARKER_B}\" \"…nothing of the tunnel\" || true\n\n# ===========================================================================\n# 5. Deleted\n# ==========================================================================="
+      "bash": "log_section \"A customer removed from B is refused there\"\n\nAUTHELIA_PID=$(authelia_pid)\n\nRESP=$(md_api DELETE \"domains/${DOMAIN_2}/members/${CUST2}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${CUST2} removed from B (by username)\" || true\nassert_eq \"$(user_domains \"${CUST2}\")\" \"\" \"…the directory lists no domain for ${CUST2}\" || true\nassert_not_contains \",$(domain_members \"${DOMAIN_2}\"),\" \",${CUST2},\" \"…nor does B's member list\" || true\nassert_json_field \"$(membership_removed \"${CUST2_ID}\")\" 'map(.details.domain) | join(\",\")' \"${DOMAIN_2}\" \"Audited: directory.membership.removed for B, by ${CUST2}'s directory id\" || true\nwait_group lacks \"${CUST2}\" \"lamaste:m:${KEY_B}\" \"users.yml takes B's member group from ${CUST2}\"\nassert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"…Authelia was not restarted (MainPID ${AUTHELIA_PID})\" || true\n\n# The same session: Authelia reads the user's groups again at their next\n# request; nginx keeps an authorization's 200 for 10 s.\nwait_b \"${JAR_CUST2_B}\" 403 \"${CUST2}'s session of before, on B's tunnel: refused (403) — no new sign-in\"\nRESP=$(visit \"${JAR_CUST2_B}\" \"https://${SUB_B}.${DOMAIN_2}/index.html\")\nassert_domain_refusal \"$RESP\" \"${DOMAIN_2}\" \"${CUST2}, removed from B, on B's tunnel\"\nassert_not_contains \"$(visit_body \"$RESP\")\" \"${MARKER_B}\" \"…nothing of the tunnel\" || true\n\n# ===========================================================================\n# 5. Deleted\n# ==========================================================================="
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 46 — Multi-domain relay: a customer on one domain (Three-VM)\n# ============================================================================\n# The multi-domain relay's second acceptance case (design: packages/core/\n# docs/multi-domain-relay-design.md, \"Proof\"). A is the relay's primary\n# domain, B a second one (multi-domain-harness.sh); two customers are\n# members of B only:\n#\n# 1. They reach B's authenticated tunnel. Signed in at auth.A with the same\n#    account — valid credentials — a customer gets no further on A: A's\n#    authenticated tunnel and A's Authelia-protected static site answer\n#    with the domain refusal page (403, never a redirect: today's login\n#    loop is gone).\n# 2. Gatekeeper checks membership again, from its own projection of the\n#    directory (domains.json), not only through Authelia's rules: a\n#    projection without the customer refuses them on B while Authelia still\n#    admits them; no projection refuses everyone; restored, they are let\n#    through again.\n# 3. A customer removed from B, signed in at auth.B again (the removal\n#    restarted Authelia), is refused there with the refusal page, and is gone\n#    from B's member list (audited by directory id).\n# 4. A customer deleted loses every membership, audited by directory id\n#    (directory.membership.removed, reason deleted) — never by username.\n#\n# The user surface of a plugin on A (JSON not_a_member) is spec 48; an OIDC\n# sign-in for a client of A's domain is single-VM spec 35.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 46 — Multi-domain relay: a customer on one domain (Three-VM)\n# ============================================================================\n# The multi-domain relay's second acceptance case (design: packages/core/\n# docs/multi-domain-relay-design.md, \"Proof\"). A is the relay's primary\n# domain, B a second one (multi-domain-harness.sh); two customers are\n# members of B only:\n#\n# 1. They reach B's authenticated tunnel. Signed in at auth.A with the same\n#    account — valid credentials — a customer gets no further on A: A's\n#    authenticated tunnel and A's Authelia-protected static site answer\n#    with the domain refusal page (403, never a redirect: today's login\n#    loop is gone).\n# 2. Gatekeeper checks membership again, from its own projection of the\n#    directory (domains.json), not only through Authelia's rules: a\n#    projection without the customer refuses them on B while Authelia still\n#    admits them; no projection refuses everyone; restored, they are let\n#    through again.\n# 3. A customer removed from B is refused there with the refusal page at\n#    their next request — the same session: the removal is a users.yml\n#    change, Authelia is not restarted — and is gone from B's member list\n#    (audited by directory id).\n# 4. A customer deleted loses every membership, audited by directory id\n#    (directory.membership.removed, reason deleted) — never by username.\n#\n# The user surface of a plugin on A (JSON not_a_member) is spec 48; an OIDC\n# sign-in for a client of A's domain is single-VM spec 35.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=46\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n\nrequire_commands multipass curl jq perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nCUST=\"e2e46-cust\"\nCUST2=\"e2e46-cust2\"\n# Test credentials for this run only, never printed\nCUST_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCUST2_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCUST_ID=\"\"\nCUST2_ID=\"\"\nJAR_CUST_A=$(md_jar cust-a)\nJAR_CUST_B=$(md_jar cust-b)\nJAR_CUST2_B=$(md_jar cust2-b)\nSUB_A=\"e2e46a\"\nSUB_B=\"e2e46b\"\nPORT_A=18461\nPORT_B=18462\nTUNNEL_A=\"\"\nTUNNEL_B=\"\"\nSITE_NAME=\"e2e46site\"\nSITE_ID=\"\"\nSITE_FQDN=\"\"\nMARKER_A=\"E2E_46_A_$(date +%s)\"\nMARKER_B=\"E2E_46_B_$(date +%s)\"\nMARKER_SITE=\"E2E_46_SITE_$(date +%s)\"\n\n# b_status <jar> — the status of B's tunnel for that session\nb_status() { visit_status \"$(visit \"$1\" \"https://${SUB_B}.${DOMAIN_2}/index.html\")\"; }\nb_answers() { [ \"$(b_status \"$1\")\" = \"$2\" ]; }\n\n# wait_b <jar> <status> <message> — until B's tunnel answers <status> for the session\nwait_b() {\n  if wait_for \"${AUTHZ_SETTLE_SECONDS}\" b_answers \"$1\" \"$2\"; then\n    log_pass \"$3\"\n  else\n    log_fail \"$3 (got $(b_status \"$1\"))\"\n  fi\n}\n\nbegin_test \"46 — Multi-domain relay: a customer on one domain (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  if [ -n \"${SITE_ID}\" ]; then host_api_delete \"sites/${SITE_ID}\" > /dev/null 2>&1 || true; fi\n  for id in ${TUNNEL_A} ${TUNNEL_B}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  md_backend_stop \"${PORT_A}\" \"${PORT_B}\"\n  for id in \"${CUST}\" \"${CUST2}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  md_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
