@@ -44,7 +44,7 @@
     },
     "installed-previous": {
       "level": 2,
-      "description": "The release before the candidate installed from the registry (upgrade suite)",
+      "description": "The registry's latest release, installed before the candidate is published (upgrade suite)",
       "coordinated": false
     },
     "provisioned": {

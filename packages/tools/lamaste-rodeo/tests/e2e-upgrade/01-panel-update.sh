@@ -2,10 +2,10 @@
 # ============================================================================
 # 01 — A relay on the previous release takes the Panel Update to the candidate
 # ============================================================================
-# The relay was installed from the registry at the release before the
-# candidate (tier installed-previous), exactly as a live relay has it. The
-# candidate is the registry's latest create-lamaste. Here, the path a live
-# relay takes:
+# The relay was installed from the registry while the release before the
+# candidate was the latest (tier installed-previous); the campaign then
+# published the candidate, now the registry's latest create-lamaste. Here,
+# the path a live relay takes:
 #
 # 1. State written by the previous release: a user beside the admin, two
 #    tunnels (one enabled, one disabled), their vhosts under that release's
@@ -138,8 +138,9 @@ UPDATE_STARTED="$(date '+%Y-%m-%d %H:%M:%S')"
 RESP=$(api_post "system/update" "{\"version\":\"${CANDIDATE}\"}")
 assert_json_field "$RESP" '.ok' 'true' "The update is accepted (202)" || true
 
+# Six minutes: a redeploy takes about two, and rodeo stops a spec at ten.
 AFTER_VERSION="down"
-for _ in $(seq 1 120); do
+for _ in $(seq 1 72); do
   sleep 5
   AFTER_VERSION=$(panel_version)
   [ "${AFTER_VERSION}" = "${CANDIDATE}" ] && break

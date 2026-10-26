@@ -2,8 +2,8 @@
   "version": 1,
   "meta": {
     "tier": "installed-previous",
-    "name": "Single-VM installed, previous release",
-    "description": "Install the release before the candidate from the registry (as a relay has it), for the upgrade suite's Panel Update.",
+    "name": "Single-VM installed, the release before the candidate",
+    "description": "Install the registry's latest create-lamaste — the release before the candidate, which the campaign publishes only after provisioning — as a relay has it, for the upgrade suite's Panel Update.",
     "dependsOn": "node-ready"
   },
   "env": {
@@ -18,13 +18,13 @@
       "steps": [
         {
           "id": "install-previous-release",
-          "label": "Install the release before the registry's latest create-lamaste",
+          "label": "Install the registry's latest release (the candidate is published after this tier)",
           "target": "host",
           "op": {
             "type": "exec",
             "command": "# inlined bash"
           },
-          "bash": "set -euo pipefail\n# The candidate under test is the registry's latest create-lamaste (the\n# campaign publishes it to the dev Feria); the release it upgrades from is\n# the highest version below it, installed exactly as a relay has it.\nLATEST=\"$(npm view @lamalibre/create-lamaste dist-tags.latest)\"\nPREVIOUS=\"$(npm view @lamalibre/create-lamaste versions --json | LATEST=\"${LATEST}\" node -e '\nconst versions = JSON.parse(require(\"fs\").readFileSync(0, \"utf8\"));\nconst key = (v) => v.split(\".\").map(Number);\nconst below = (a, b) => { const x = key(a), y = key(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };\nconst older = [].concat(versions).filter((v) => /^\\d+\\.\\d+\\.\\d+$/.test(v) && below(v, process.env.LATEST));\nolder.sort((a, b) => (below(a, b) ? -1 : 1));\nif (older.length === 0) process.exit(1);\nprocess.stdout.write(older[older.length - 1]);\n')\"\necho \"candidate ${LATEST}, installing ${PREVIOUS}\"\nnpm install -g \"@lamalibre/create-lamaste@${PREVIOUS}\"\ncreate-lamaste --dev --skip-harden --yes\n"
+          "bash": "set -euo pipefail\n# A live relay was installed while the previous release was the latest; the\n# candidate is published afterwards and reached through Panel Update. The\n# campaign mirrors that order: this tier runs before the candidate is on the\n# registry, so `latest` is the previous release, with the libraries it was\n# released with (a release before 4.7 pins nothing and would otherwise\n# resolve the candidate's core).\nPREVIOUS=\"$(npm view @lamalibre/create-lamaste dist-tags.latest)\"\necho \"installing ${PREVIOUS}\"\nnpm install -g \"@lamalibre/create-lamaste@${PREVIOUS}\"\ncreate-lamaste --dev --skip-harden --yes\n"
         },
         {
           "id": "patch-panel-ip",
