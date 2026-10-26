@@ -64,8 +64,12 @@ async function getStmts(): Promise<GrantStmts> {
     deleteById: db.prepare('DELETE FROM access_grants WHERE grant_id = ?'),
     // Retention sweep: prune consumed grants past GRANT_RETENTION_MS. The
     // matching index (idx_grants_used_used_at) covers the predicate.
+    // Only local plugin grants are ever consumed (a desktop enrolment);
+    // every other grant is access, kept until it is revoked.
     deleteConsumedBefore: db.prepare(
-      'DELETE FROM access_grants WHERE used = 1 AND used_at IS NOT NULL AND used_at < ?',
+      `DELETE FROM access_grants WHERE used = 1 AND used_at IS NOT NULL AND used_at < ?
+         AND resource_type = 'plugin'
+         AND coalesce(json_extract(context, '$.target'), 'local') = 'local'`,
     ),
     begin: db.prepare('BEGIN IMMEDIATE'),
     commit: db.prepare('COMMIT'),
@@ -121,17 +125,12 @@ function pruneStaleGrants(s: GrantStmts): void {
 }
 
 /**
- * Check if a grant should be auto-consumed on creation.
- * Tunnel grants and agent-side plugin grants are auto-consumed.
- * Local plugin grants start unused (consumed on enrollment).
+ * Whether a grant is consumable: a local plugin grant, consumed by its
+ * desktop enrolment. Every other grant is access, never consumed.
  */
-function shouldAutoConsume(options: CreateGrantOptions): boolean {
-  if (options.resourceType === 'tunnel') return true;
-  if (options.resourceType === 'plugin') {
-    const target = (options.context?.['target'] as string) ?? 'local';
-    return target.startsWith('agent:');
-  }
-  return true;
+function isConsumable(grant: Pick<Grant, 'resourceType' | 'context'>): boolean {
+  if (grant.resourceType !== 'plugin') return false;
+  return ((grant.context['target'] as string | undefined) ?? 'local') === 'local';
 }
 
 /**
@@ -184,7 +183,10 @@ export async function createGrant(
     }
 
     const now = new Date().toISOString();
-    const used = initialState?.used ?? shouldAutoConsume(options);
+    // Created unused: a local plugin grant is consumed by its desktop
+    // enrolment; every other grant is access, never consumed, so the
+    // retention sweep never deletes it.
+    const used = initialState?.used ?? false;
     const createdAt = initialState?.createdAt ?? now;
     const usedAt = initialState?.usedAt !== undefined ? initialState.usedAt : used ? now : null;
 
@@ -402,6 +404,12 @@ export async function consumeGrant(grantId: string, username: string): Promise<G
 
     if (grant.principalType !== 'user' || grant.principalId !== username) {
       throw Object.assign(new Error('Grant does not belong to this user'), { statusCode: 403 });
+    }
+
+    if (!isConsumable(grant)) {
+      throw Object.assign(new Error('Only a local plugin grant can be consumed'), {
+        statusCode: 409,
+      });
     }
 
     if (grant.used) {
