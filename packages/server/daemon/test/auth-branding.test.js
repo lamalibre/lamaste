@@ -13,12 +13,13 @@
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 
 import { AUTH_BRANDING_LOGO_MAX_BYTES } from '@lamalibre/lamaste';
+import { renderAuthBranding } from '@lamalibre/lamaste/server';
 
 import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
@@ -270,7 +271,9 @@ test('the fields: created at revision 1, rendered at once, read without blobs, r
   assert.equal(brandJson.supportEmail, 'help@samplepark.tr');
   assert.equal(brandJson.logo, null);
   assert.equal(await exists(path.join(renderedDir(PRIMARY), 'static/media/logo.png')), false);
-  assert.equal((await lstat(renderedDir(PRIMARY))).mode & 0o777, 0o750);
+  // The entry is a link to the rendering directory (switched in one rename).
+  assert.ok((await lstat(renderedDir(PRIMARY))).isSymbolicLink());
+  assert.equal((await stat(renderedDir(PRIMARY))).mode & 0o777, 0o750);
   assert.equal((await lstat(path.join(renderedDir(PRIMARY), 'brand.json'))).mode & 0o777, 0o640);
 
   const audit = (await audits('domain.branding.updated')).at(0);
@@ -553,9 +556,24 @@ test('the reconcile: a stale revision or Authelia release re-rendered, a directo
   const renderedFile = path.join(renderedDir(PRIMARY), 'rendered.json');
   const current = JSON.parse(await readFile(renderedFile, 'utf-8'));
   await writeFile(renderedFile, JSON.stringify({ ...current, revision: 99 }));
-  // A directory of a domain without a brand, and one of no domain at all.
-  await mkdir(path.join(webRoot, 'gone.example'), { recursive: true });
-  await writeFile(path.join(webRoot, 'gone.example', 'brand.json'), '{}');
+  // A rendering of a domain without a record (removed while the panel was down).
+  await renderAuthBranding({
+    domain: 'gone.example',
+    brand: {
+      name: 'Gone',
+      tagline: null,
+      theme: 'light',
+      accent: null,
+      supportEmail: null,
+      supportUrl: null,
+    },
+    revision: 1,
+    logo: null,
+    favicon: null,
+    locales: await fakeLocales(),
+    autheliaVersion: '4.39.28',
+    root: webRoot,
+  });
   assert.deepEqual(await lib.reconcileAuthBranding(), {
     rendered: [PRIMARY],
     removed: ['gone.example'],
@@ -595,7 +613,9 @@ test('removing the brand: the record and the directory go, audited; a removed do
   assert.equal(db.prepare('SELECT 1 FROM domain_branding WHERE domain = ?').get(OTHER), undefined);
   const audit = (await audits('domain.branding.removed')).at(0);
   assert.deepEqual(audit.details, { domain: OTHER, reason: 'domain-removed' });
-  assert.deepEqual(await readdir(webRoot), []);
+  // Nothing served, nothing kept: only the (empty) renders directory remains.
+  assert.deepEqual(await readdir(webRoot), ['.renders']);
+  assert.deepEqual(await readdir(path.join(webRoot, '.renders')), []);
 });
 
 test('the Authelia base: audited as a restart when the keys were added, silent otherwise; nothing rendered until it is in place', async () => {

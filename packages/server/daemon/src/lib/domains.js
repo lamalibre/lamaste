@@ -65,6 +65,7 @@ import {
 } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
+import { removeRenderedBranding } from './auth-branding.js';
 import {
   autheliaWatchesUsers,
   heldOwnedGroups,
@@ -1769,7 +1770,6 @@ export async function removeDomain(name, { actor, logger }) {
       },
       logger,
     );
-    const { removeRenderedBranding } = await import('./auth-branding.js');
     await removeRenderedBranding(name, { actor, logger });
   }
   for (const userId of removed.members) {

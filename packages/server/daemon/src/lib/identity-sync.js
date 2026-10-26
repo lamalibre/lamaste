@@ -78,6 +78,7 @@ import {
 import { getConfig } from './config.js';
 import { clearPendingPrincipals, getDirectoryId, reconcileDirectory } from './directory.js';
 import { ensurePrimaryDomain, syncDomainAccess } from './domains.js';
+import { reconcileAuthBranding } from './auth-branding.js';
 import { installedVersionApproved } from './plugin-hooks.js';
 import { findPlugin, findPluginByRoute, readPlugins } from './plugins.js';
 import { retainedIdentityPositions } from './retained-data.js';
@@ -912,7 +913,6 @@ export async function identityTick(logger) {
       }
       // The brands' renderings, as their records now say: a rendering a
       // failure left behind is tried again (compare-first; never throws).
-      const { reconcileAuthBranding } = await import('./auth-branding.js');
       await reconcileAuthBranding({ logger });
     }
     await clearPendingPrincipals({ logger });
