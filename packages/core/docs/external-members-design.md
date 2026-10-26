@@ -64,10 +64,13 @@ Checked against `github.com/authelia/authelia` tag `v4.39.28`:
    in-memory database; a user who is gone or `disabled` invalidates the
    session. So a `users.yml` change applies to existing sessions at their
    next request, without a restart.
-3. **OIDC authorization reads fresh groups too.** The authorization and
-   consent handlers call the same refresh before evaluating the client's
-   authorization policy against `userSession.Groups`
-   (`handler_oauth2_authorization_consent_core.go`).
+3. **OIDC authorization-code reads fresh groups too — the device-code
+   flow does not.** The authorization-code handlers call the same refresh
+   before evaluating the client's authorization policy against
+   `userSession.Groups` (`handler_oauth2_authorization_consent_core.go`).
+   The device-code handlers (`handler_oauth2_device_authorization.go`, the
+   consent POST in `handler_oauth2_consent.go`) evaluate the groups the
+   session last refreshed (found by the security review, S1; residual R5).
 4. **Group subjects from a hostname.** An `access_control` rule's
    `domain_regex` with a named group `(?P<Group>…)` matches only when the
    captured text is one of the user's groups (`RegexpGroupStringSubjectMatcher`,
@@ -104,37 +107,45 @@ narrowing the lost-write window `changeUsers`' `expect` exists for.
 Rendered by the panel into each user's `groups` in `users.yml`, beside the
 groups an admin assigns:
 
-| Group                       | Holds                                                                                   |
-| --------------------------- | --------------------------------------------------------------------------------------- |
-| `lamaste:member@<domain>`   | active members (kind `member`) of the active domain                                     |
-| `lamaste:external@<domain>` | active external members of the active domain                                            |
-| `<fqdn>` (a hostname)       | **host group**: the users named on that host — below                                    |
-| `lamaste:oidc@<clientId>`   | active external members of the client's domain with a grant on the client (OIDC, below) |
+| Group                     | Holds                                                                                     |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| `lamaste:m:<key>`         | active members (kind `member`) of the active domain whose group key is `<key>`            |
+| `lamaste:x:<key>`         | active external members of that domain                                                    |
+| `lamaste:s:<site id>`     | the listed users (`allowedUsers`) of a protected static site who are people of its domain |
+| `<fqdn>` (a hostname)     | **host group**: the external members granted a Gatekeeper-gated restricted host — below   |
+| `lamaste:oidc@<clientId>` | active external members of the client's domain with a grant on the client (OIDC, below)   |
 
-Host group `<fqdn>`:
+The **group key** is 16 random hex characters on the domain record
+(`domains.group_key`, state.db `0018`): a group names no domain, so a
+relying party that asks for the `groups` claim learns no tenant's name
+(security review, decision 8 as revised). A site group is named by the
+site's id for the same reason (replacing 4.7's `user:` subjects, editing
+`allowedUsers` no longer restarts Authelia).
 
-- a protected **static site** with `allowedUsers`: the listed users who are
-  members or external members of the site's domain (replaces 4.7's `user:`
-  subjects, so editing `allowedUsers` no longer restarts Authelia);
-- a **Gatekeeper-gated restricted host** — a `restricted` app or plugin
-  tunnel, a `restricted` tunnel bound as a user surface, a `restricted`
-  web surface: the **external** members of its domain who hold a grant on it
-  (direct, or through a Lamaste group) — decision 3. Members do not need
-  it: the domain rule admits them and Gatekeeper checks their grants, as in
-  4.7.
+Host group `<fqdn>` — a **Gatekeeper-gated restricted host**: an enabled
+`restricted` app or plugin tunnel (a tunnel without an access mode is
+restricted, as Gatekeeper reads it), a `restricted` tunnel bound as a user
+surface, a `restricted` web surface: the **external** members of its domain
+who hold a grant on it (direct, or through a Lamaste group) — decision 3.
+Members do not need it: the domain rule admits them and Gatekeeper checks
+their grants, as in 4.7. Only these must be hostnames: Authelia's
+`(?P<Group>…)` capture compares a host's name with the user's groups.
 
-`:` and `@` never occur in a hostname, and a host group is always a
-hostname under a relay domain, so no Lamaste group can be mistaken for a
-host or the other way round.
+`:` never occurs in a hostname, and a host group is always a hostname under
+a relay domain, so no Lamaste group can be mistaken for a host or the other
+way round.
 
 **Reserved names.** Groups an admin assigns (users API, invitations, the
 panel's editor) must match `^[A-Za-z0-9_-]{1,64}$` (`admins`, `feria-admins`
 fit); a name with `.`, `:` or `@` is refused (400 `reserved_group`). The
 render owns every group that starts with `lamaste:` or is a hostname under a
-relay domain (any domain record, pending included): it adds what is desired
-and removes the rest, so a stray host group cannot survive a render. Groups
-outside both stay as they are (an older admin group with a dot is left
-alone, but cannot be newly assigned).
+relay domain (any domain record, pending included, and every domain removed
+from the relay — `retired_domains`, state.db `0018`), compared folded as
+Authelia compares groups (NFKC, then lower case: Go's `EqualFold` takes `ſ`
+for `s` and the Kelvin sign for `k`): it adds what is desired and removes
+the rest, so a stray or look-alike host group cannot survive a render.
+Groups outside both stay as they are (an older admin group with a dot is
+left alone, but cannot be newly assigned).
 
 Lamaste-owned groups are **never shown** as groups (users list, user
 editor, `/api/identity/users`, `/api/identity/self`): the user's domains
@@ -145,22 +156,29 @@ asks for the `groups` claim (fact 5; residual R4).
 
 ### `access_control`
 
-`renderAccessControl(domains, sites)` — `domains` now
-`{ name, hasMembers, hasExternals }` (no usernames: the rules name groups):
+`renderGroupAccessControl(domains, sites)` — `domains` are
+`{ name, groupKey }` (no usernames: the rules name groups); `m(d)` /
+`x(d)` below are `lamaste:m:<key of d>` / `lamaste:x:<key of d>`:
 
 1. **Per protected static site** (domain `d`):
-   - `allowedUsers` set: `subject: group:<fqdn>`, `two_factor`;
-   - `subject: [[group:admins, group:lamaste:member@d]]`, `two_factor`
+   - `allowedUsers` set: `subject: group:lamaste:s:<site id>`, `two_factor`
+     (a site listing users without an id gets none: admins only);
+   - `subject: [[group:admins, group:m(d)]]`, `two_factor`
      (an admin who is a member — never external, below);
    - `deny`.
 2. **Per domain `d`**, in this order:
-   - members: `domain: [d, '*.d']`, `subject: group:lamaste:member@d`,
-     `two_factor`;
+   - the sign-in portal: `domain: [auth.d]`, `subject: [group:m(d),
+group:x(d)]`, `two_factor` — nginx never asks Authelia about the portal for
+     a resource but the desktop's `/api/user-access/authorize`, which refuses
+     external members itself; Gatekeeper asks it to learn who a refusal was
+     for (below);
+   - members: `domain: [d, '*.d']`, `subject: group:m(d)`, `two_factor`;
    - external members on hosts that name them:
      `domain_regex: '^(?P<Group>(?:[a-z0-9-]+\.)+<d quoted>)$'`,
-     `subject: group:lamaste:external@d`, `two_factor` — admitted only on a
-     host whose name is one of their groups (fact 4), and only while they
-     are an external member of `d`;
+     `subject: group:x(d)`, `two_factor` — admitted only on a host whose
+     name is one of their groups (fact 4), and only while they are an
+     external member of `d`. The apex is not matched: it is never a
+     Gatekeeper-gated host;
    - `domain: [d, '*.d']`, `deny`.
 3. `default_policy: deny` (unchanged).
 
@@ -195,16 +213,18 @@ does not match them, deny) — fail closed by construction.
       default_policy: deny
       rules:
         - policy: two_factor # the client's declared factor
-          subject: 'group:lamaste:member@codelama.com.tr'
+          subject: 'group:lamaste:m:<key of codelama.com.tr>'
         - policy: two_factor
-          subject: ['group:lamaste:external@codelama.com.tr', 'group:lamaste:oidc@feria-cli']
+          subject: [['group:lamaste:x:<key of codelama.com.tr>', 'group:lamaste:oidc@feria-cli']]
   ```
 
   Members of the client's domain are admitted as in 4.7; external members
   only with the grant. The policy changes only with the client set or a
   plugin's domain; a grant is a `users.yml` change, applied at the user's
-  next authorization (fact 3). Pure `client_credentials` clients keep
-  `one_factor` (unchanged).
+  next authorization (fact 3 — the authorization-code path; the
+  device-code path reads the session's groups as they were, so a narrowing
+  that reaches a device-code client restarts Authelia: security review S1).
+  Pure `client_credentials` clients keep `one_factor` (unchanged).
 
 - **Tokens already issued** survive a revocation until they expire. Plugin
   clients get no refresh tokens (4.7, R1), so the bound is the access and ID
@@ -218,7 +238,13 @@ does not match them, deny) — fail closed by construction.
   `{ "v": 2, "domains": [{ "name": "…", "members": ["…"], "externals": ["…"] }] }`.
   An unknown version is a missing projection: every check refuses (fail
   closed, as 4.7). Panel and Gatekeeper ship together (one release).
-- `checkDomain` returns the kind. Then, on every route:
+- `checkDomain` returns the kind. When Authelia refuses a signed-in
+  session (its 403 names nobody), Gatekeeper asks Authelia once more about
+  the same session for `https://auth.<d>/` (the portal rule admits the
+  domain's members and external members): an external member is then told
+  they are not granted (the access-request page, or `forbidden`), anyone
+  else gets the domain refusal. Never cached, and the request stays
+  refused. Then, on every route:
   - **tunnel** — `public` hosts are not gated; `authenticated`: a member
     passes, an external member is refused with the **access-request page**
     (403, "ask the administrator for access" — they are on the domain, only
@@ -267,28 +293,44 @@ ALTER TABLE domain_members ADD COLUMN kind TEXT NOT NULL DEFAULT 'member'
 
 `withDomainRendering` stays the one writer. `syncDomainAccess` becomes:
 
-1. read domains, memberships with kinds, protected sites, Gatekeeper-gated
-   restricted hosts, the grants on them and on OIDC clients (Gatekeeper's API,
-   Lamaste groups expanded);
-2. write **`users.yml`'s Lamaste-owned groups** (under the users lock,
-   compare first — `renderOwnedGroups`, pure, in core);
+1. read domains (with their group keys), memberships with kinds, protected
+   sites, Gatekeeper-gated restricted hosts, the grants on them and on OIDC
+   clients (Gatekeeper's API, Lamaste groups expanded); when the grants
+   cannot be read, external members hold no granted host or client group
+   (fail closed) and the step counts as failed (audited, notified);
+2. write **`users.yml`'s Lamaste-owned groups** (one file lock, compare
+   first — `renderOwnedGroups`, pure, in core);
 3. write the projection;
-4. write `configuration.yml` (cookies, `access_control`, OIDC policies) —
-   compare first; restart only when it changed (structural).
+4. write `configuration.yml` (cookies, `access_control`) — compare first;
+   restart only when it changed (structural); the OIDC provider follows in
+   `syncOidcClients`, after the domains at start too;
+5. restart Authelia when it must read `users.yml` anew: its configuration
+   does not have it hold the file as Lamaste needs (watch, refresh always,
+   its own password writes off) and the file changed; or a narrowing
+   reached a device-code OIDC client (security review S1).
 
-**Order.** When a change both widens and narrows, `users.yml` is written
-before the configuration: a new site rule or policy names a group that is
-already filled, and a revoked group is empty before any rule could matter.
-Removing a site writes the configuration first (the rule goes), then the
-group.
+Then, outside the lock, every enabled user who lost an owned group since
+the last complete rendering — whatever narrowed them, a revocation with
+Gatekeeper's own CLI included — is audited (`directory.access.narrowed`,
+by id and a count) and loses the registry tokens the registry's sign-in
+would refuse now.
+
+**Order.** `users.yml` is always written before the configuration: a new
+site rule or policy names a group that is already filled, and a revoked
+group is empty before any rule could matter (a removed site's group goes
+first too: its rule then denies everyone until it goes).
 
 **The reload cooldown** (fact 1). A write that lands within 0.5 s of the
 previous reload is skipped by Authelia, silently. So `users.yml` writes are
-serialized under the users lock and each is **followed by a confirming
-re-write** of the same bytes once 0.6 s have passed since it
-(`touchUsersFile`), guaranteeing a reload after the cooldown; the users lock
-spaces writes by at least that. Cost: ≤ 1.2 s per change, under the lock.
-`expect` (re-apply when Authelia's own save overwrote the change) stays.
+serialized under one file lock and each is **followed by a touch** once
+0.6 s have passed (`touchUsersFile`: read again, the owned groups applied
+again, written), guaranteeing a reload after the cooldown with Lamaste's
+groups even if something else wrote the file meanwhile; the identity tick
+and the start touch it too. Authelia's own writes of the file (password
+change and reset) are disabled. A write never drops a user it was not told
+to delete, never adds owned groups to a user the last rendering did not
+know (created since, perhaps under a deleted user's username), and only
+narrows after a rendering failed.
 
 **Triggers.** Every membership, kind, user, site, tunnel, user-surface,
 web-surface and plugin-domain change already renders; additionally every
@@ -298,20 +340,24 @@ tick (every minute) renders — which catches grants made with Gatekeeper's
 own CLI on the relay (Gatekeeper enforces them at once; Authelia's host
 group follows within a minute).
 
-**Revocations.** Losing a membership, the external kind's grant on an OIDC
-client whose registry it is, or turning external, revokes the user's
-registry tokens where they no longer reach the registry's client (extends
-4.7's `revokeRegistryTokensFor`).
+**Revocations.** A user narrowed loses their registry tokens when none of
+the registry's own sign-in clients — the user-facing clients whose audience
+is the registry — admits them any more: as a member of the client's domain,
+or as an external member granted it. No such client, or one that cannot be
+read, is "no" (fail closed).
 
 ### What ends when a member is made external
 
-Their `lamaste:member@d` group becomes `lamaste:external@d` in one write:
+Their `lamaste:m:<key>` group becomes `lamaste:x:<key>` in one write:
 at their next request Authelia admits them only on hosts naming them, and
 Gatekeeper (projection, session cache busted) refuses `authenticated` hosts
 — within nginx's 10 s authorization cache (`AUTHZ_SUCCESS_MAX_AGE_SECONDS`,
 plugin tunnels and user surfaces are never cached). Their Authelia groups
 must have been removed first (decision 4). OIDC: their next authorization is
-refused; issued access tokens live out their lifespan.
+refused (a device-code client of the domain: Authelia restarts so no
+session keeps the group it last read); issued access tokens live out their
+15-minute lifespan. Desktop user access (primary domain only) checks the
+kind at every request.
 
 ### Audience
 
@@ -351,12 +397,14 @@ grants|grant|revoke <clientId> --user <u>|--group <g>`.
 
 ### Upgrade in place
 
-1. Migration 0017: every membership `member`.
-2. First render after the upgrade: `configuration.yml` gains
-   `authentication_backend.file.watch: true` and the group-based rules —
+1. Migrations 0017 (every membership `member`) and 0018 (a group key per
+   domain, `retired_domains`); Gatekeeper 0004 (access grants never
+   consumed).
+2. First start after the upgrade renders the domains before the OIDC
+   clients: `users.yml` gains each member's `lamaste:m:<key>`, then
+   `configuration.yml` the users-file settings and the group-based rules —
    **one** restart (sessions end once, at the update, as every update does
-   today); `users.yml` gains `lamaste:member@<d>` for every member; the
-   projection becomes v2.
+   today); the projection becomes v2.
 3. create-lamaste's redeploy keeps `users.yml` writable by Authelia's account
    and the panel (0660 `lamaste:lamaste-authelia`, the directory 2770) — the
    watcher needs nothing more.
@@ -376,17 +424,27 @@ grants|grant|revoke <clientId> --user <u>|--group <g>`.
   it was already (Authelia groups, `admins`). Who may write it is unchanged
   (the panel and Authelia's account).
 - **R3 narrowed**: no membership, kind, grant, user or `allowedUsers` change
-  restarts Authelia. A restart (all sessions end) remains for structural
-  changes only — a domain added/activated/removed, a static site
+  restarts Authelia — but for a narrowing that reaches a device-code OIDC
+  client (R5). A restart (all sessions end) remains for structural changes
+  — a domain added/activated/removed, a static site
   protected/unprotected/created/removed, the OIDC client set or a plugin's
-  domain changed — all admin actions, none per person. Decision 1 discusses
-  removing it entirely (Redis).
-- **R4 (new, accepted?)**: an OIDC client that asks for `groups` (Feria's
-  `feria login`) sees the user's Lamaste-owned groups: the domains they
-  belong to with the kind, and the hostnames that name them. Hostnames and
-  domains are public anyway (certificate transparency); the relation
-  "this user is a member of that domain" is what leaks, to a relying party
-  the admin installed on the relay. Decision 8.
+  domain changed — all admin actions, none per person. Redis sessions,
+  which would remove it, are a later, separate design.
+- **R4 (narrowed by the review)**: an OIDC client that asks for `groups`
+  (Feria's `feria login`) sees the user's Lamaste-owned groups. Member,
+  external and site groups are opaque (random keys, site ids), so no
+  domain's or site's name leaks; what remains is that two users sharing a
+  key share a domain, the OIDC client ids granted to an external member,
+  and an external member's granted hostnames (on their own domain).
+- **R5 (new)**: Authelia's device-code flow checks a client's policy
+  against the groups a session last refreshed, never re-reading them
+  (`handler_oauth2_device_authorization.go`, `handler_oauth2_consent.go` in
+  4.39.28). A narrowing that reaches a device-code client therefore
+  restarts Authelia, ending every session on every domain: membership
+  ended or made external on a domain serving one, or a grant on one
+  revoked. Corral's external members hold no such grant; Code Lama's
+  members leave `codelama.com.tr` rarely. To be reported upstream, so the
+  flow refreshes like the authorization-code one.
 - External members can never hold `admins` (decision 4), so the
   `[group:admins, …member@d]` clause cannot admit one, and Authelia's
   `admins` bypass of static-site lists stays members-only.
@@ -595,9 +653,49 @@ New three-VM specs on top of `multi-domain-harness.sh`:
      now labels a client's OAuth grant types `flows:` (`grants:` is the
      access grants).
 
-4. **Security review** — independent reviewers; every confirmed finding
-   fixed with a test.
+4. **Security review** — done (2026-10-26, below): three independent
+   reviews, every confirmed finding fixed with a test that fails without
+   it; four decided with the user (S1 device code, S2 Authelia's own
+   writes, S3 grant sweep, S4 opaque names).
 5. **Rodeo** — the specs above on fresh VMs.
+
+## Security review (2026-10-26)
+
+Three independent reviews (code, threat model, access-decision matrix) of
+`21c092c..551f36a`, each given the code, not the design's conclusions. Each
+confirmed finding was fixed with a unit test that fails without the fix.
+
+| #   | Finding                                                                                                                                                                                                                                       | Fix                                                                                                                                                                                                                                                                                                                                                                            | Test                                                                                                                   |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| S1  | Authelia's device-code flow checks a client's policy against the groups a session last refreshed (fact 3 holds for the authorization-code path only): with no restart, someone narrowed could approve a `feria login` for the session's life. | **Decided: targeted restart.** The rendering measures every narrowing against the last complete rendering; when an enabled user lost a group admitting them to a device-code client (core `reachedOidcClients`), Authelia restarts (audited `authelia.restarted` `device-code`) and Gatekeeper's sessions are busted. Unreadable clients → restart (fail closed). Residual R5. | external-members (made external, grant revoked: restart; web client, host grants: none), external-members-core (reach) |
+| S2  | Authelia's own password change/reset writes users.yml from its in-memory copy, which may predate a skipped reload: revoked groups written back, repeatedly by someone changing their password.                                                | **Decided: disabled.** `authentication_backend.password_change.disable` and `password_reset.disable` rendered (they could not work: the notifier is a file) and migrated on every rewrite, with `refresh_interval: always`; `usersFileWatched` requires all four.                                                                                                              | external-members-core (settings, each one required)                                                                    |
+| S3  | Gatekeeper created tunnel, site, agent-plugin and OIDC-client grants consumed, and its sweep deleted them 90 days later, silently.                                                                                                            | **Decided: fixed here.** Grants are created unused; the sweep deletes consumed local plugin grants only; Gatekeeper migration 0004 un-consumes the others.                                                                                                                                                                                                                     | gatekeeper grants-retention                                                                                            |
+| S4  | The `groups` claim told an OIDC relying party every domain a user belongs to (another tenant's name) and static-site hostnames.                                                                                                               | **Decided: opaque names** (decision 8 revised). `lamaste:m:<key>` / `lamaste:x:<key>`, a random key per domain record (state.db 0018), `lamaste:s:<site id>`; hostname groups only for external members on Gatekeeper-gated hosts.                                                                                                                                             | external-members-core (names, rules name no domain), domains, external-members                                         |
+| S5  | Revocations relied on Authelia watching users.yml, unchecked; an explicitly set `refresh_interval` would lag them.                                                                                                                            | The settings are rendered and checked (`autheliaWatchesUsersFile`); a rendering restarts Authelia (`unwatched`) after users.yml changed while it does not hold the file so. Start renders the domains before the OIDC clients (an upgrade's first policies name filled groups).                                                                                                | external-members (unwatched restarts once a change, not otherwise)                                                     |
+| S6  | A failed rendering left the owned-groups cache stale; a username deleted and taken again got the deleted user's groups (static sites, OIDC — no Gatekeeper there).                                                                            | A write adds owned groups only to users the rendering knew (`known`), forgets a deleted user's, and only narrows after a failed rendering (`narrowOnly`, core `mergeOwnedGroups` options).                                                                                                                                                                                     | external-members-core (merge options), external-members (reused username, narrow only)                                 |
+| S7  | Gatekeeper unreachable: external members kept the host and OIDC groups they held — a revocation Gatekeeper took just before stayed in Authelia (OIDC has no second gate).                                                                     | Fail closed: no granted host or client group until the grants can be read; the membership groups are rendered all the same; the step counts as failed (audited, notified). A grant revoked meanwhile is found lost by the next complete rendering.                                                                                                                             | external-members (unreachable: groups dropped, audited, restored)                                                      |
+| S8  | A grant change whose rendering failed answered success with no warning.                                                                                                                                                                       | The proxy answers `warnings` and renders again within 5 s (`scheduleRenderRetry`).                                                                                                                                                                                                                                                                                             | external-members (warnings on a failed rendering)                                                                      |
+| S9  | Registry tokens were kept when the user reached any user-facing client of the registry's domain.                                                                                                                                              | Only the registry's own sign-in clients count — user-facing clients whose audience is the registry; none or unreadable → revoked. Revocations follow every narrowing (a revocation with Gatekeeper's own CLI too, found by the tick).                                                                                                                                          | external-members (another client's grant revoked, the CLI revocation), domains                                         |
+| S10 | `oidc-client` grants outlived their plugin's uninstall: a later install of the same client id admitted whoever was granted.                                                                                                                   | Uninstall revokes every grant on the plugin's clients (`revokeOidcClientGrants`).                                                                                                                                                                                                                                                                                              | external-members (uninstall)                                                                                           |
+| S11 | The touch skipped a file something else had written; a skipped reload or a panel restart within 0.6 s of a write left Authelia on old groups.                                                                                                 | The touch re-applies the owned groups to whatever the file holds and always writes; the start and the identity tick touch too.                                                                                                                                                                                                                                                 | external-members (a hand edit gets the groups back)                                                                    |
+| S12 | Ownership compared with JavaScript lower case; Authelia folds with Go's `EqualFold` (`ſ`, Kelvin sign).                                                                                                                                       | `foldGroupName`: NFKC, then lower case.                                                                                                                                                                                                                                                                                                                                        | external-members-core (look-alike spellings owned)                                                                     |
+| S13 | Host groups of a removed domain became "admin groups": shown, passed in `Remote-Groups`, blocking a kind change.                                                                                                                              | Removed domains are kept in `retired_domains`; hostnames under them stay owned and are stripped.                                                                                                                                                                                                                                                                               | external-members (retired domain)                                                                                      |
+| S14 | The CLI's `revoke` removed only the first of several grants naming the principal.                                                                                                                                                             | `findClientGrants` returns every match; all are revoked.                                                                                                                                                                                                                                                                                                                       | cli oidc-client-grants                                                                                                 |
+| S15 | An external member Authelia refused (no host group) got the domain refusal ("not a member") and a user surface `not_a_member`.                                                                                                                | The portal rule admits members and external members on `auth.<d>`; on Authelia's 403 Gatekeeper asks once more for `https://auth.<d>/` and, for an external member, answers the access-request page / `forbidden`. Never cached; the request stays refused. The desktop's `authorize` (the one forward-auth on the portal) refuses external members itself.                    | gatekeeper authz-external-members, authz-domain-membership; external-members-core (portal rule)                        |
+| S16 | A web surface moved off a tunnel left the disabled tunnel's grants in the host group.                                                                                                                                                         | `restrictedHosts` skips disabled tunnels (and agent panels).                                                                                                                                                                                                                                                                                                                   | external-members (disabled tunnel)                                                                                     |
+| S17 | A tunnel without an access mode (restricted for Gatekeeper) got no host group: the two gates disagreed.                                                                                                                                       | Absent or unknown modes are restricted, as Gatekeeper reads them.                                                                                                                                                                                                                                                                                                              | external-members (mode-less tunnel)                                                                                    |
+| S18 | An empty or partial users.yml read could be written back, dropping users.                                                                                                                                                                     | A write re-reads an empty file before believing it and refuses to drop a user it was not told to delete (`deleting`).                                                                                                                                                                                                                                                          | external-members (empty read, undeclared drop)                                                                         |
+| S19 | Narrowings made past the panel (Gatekeeper's CLI) were neither audited nor followed; Gatekeeper's secret compared with `!==`.                                                                                                                 | Every narrowing found by a rendering is audited (`directory.access.narrowed`, id and count) and followed (registry, device code); the secret is compared in constant time (`secretMatches`).                                                                                                                                                                                   | external-members (audit), gatekeeper grants-retention (secret)                                                         |
+| S20 | Desktop user access (primary domain) admitted external members and kept a member made external signed in.                                                                                                                                     | `authorize`, `exchange` and every session request require a `member` of the primary domain (`isPrimaryMember`).                                                                                                                                                                                                                                                                | external-members (desktop session)                                                                                     |
+
+The apex of a domain is never a Gatekeeper-gated host, so the external
+host rule not matching it (a reviewer's note) refuses nothing that exists.
+
+**Residual, documented in `01-concepts/security-model.md`:** R3 narrowed
+(structural changes restart; a device-code narrowing too — R5), R4
+narrowed (opaque groups; the relation "these users share a domain", client
+ids and an external member's granted hostnames remain), R5 (Authelia's
+device flow does not refresh groups — to be reported upstream).
 
 ## Decisions (agreed 2026-10-26)
 
@@ -630,7 +728,7 @@ The user agreed to every recommendation below; the alternatives are kept for the
 4. **Authelia groups.** _Recommended:_ a user who is external on **any**
    domain holds no Authelia group (relay-wide; groups are relay-wide).
    Alternative: per domain — groups kept, but every rule ANDs them with
-   `lamaste:member@<d>` (Authelia) and Gatekeeper ignores them for external
+   the domain's member group (Authelia) and Gatekeeper ignores them for external
    hosts; leaves `feria-*` reaching Feria through OIDC's `groups` claim for a
    user external on Feria's domain, so not recommended.
 5. **OIDC grant model.** _Recommended:_ Gatekeeper grants with
@@ -653,6 +751,9 @@ The user agreed to every recommendation below; the alternatives are kept for the
    Alternative: opaque names (`lamaste:m:<random id>`) for the member and
    external groups — hides which domains, but host groups must stay
    hostnames (fact 4), and the panel and logs get harder to read.
+   **Revised 2026-10-26 (security review S4, the user's decision): opaque
+   names** — member, external and site groups; hostname groups only for
+   external members on Gatekeeper-gated hosts.
 9. **User and web surfaces for external members.** _Recommended:_ as the
    plan says — only `restricted` surfaces with the surface's grant; a plugin
    entitlement (role) alone does not admit them to an `authenticated`

@@ -274,7 +274,9 @@ Create a new authorization grant linking a principal (user or group) to a resour
 
 **OIDC client grants.** For `resourceType: "oidc-client"` the panel checks that `resourceId` is a client an installed plugin declares (`400`, `code: "unknown_oidc_client"`) that signs users in (`400`, `code: "service_oidc_client"`). Such a grant admits an **external member** of the plugin's domain to the client's sign-in ([Registry and OIDC](registry-and-oidc.md#several-domains-one-issuer-each)); members need none. Gatekeeper is not in the OIDC path — it only keeps the grant; the panel renders it into Authelia.
 
-**Every grant or group change through the proxy re-renders** who may reach what: the groups Lamaste owns in `users.yml` (external members' host groups follow their grants on `restricted` hosts) — applied by Authelia without a restart.
+**Every grant or group change through the proxy re-renders** who may reach what: the groups Lamaste owns in `users.yml` (external members' host groups follow their grants on `restricted` hosts) — applied by Authelia without a restart, except a revocation that takes a device-code OIDC client away from someone (Authelia restarts: its device flow reads a session's groups as they were). A change Gatekeeper took whose rendering failed is answered with `warnings` and rendered again within seconds; a change made with Gatekeeper's own CLI is rendered by the identity tick within a minute.
+
+**Grants are never consumed** but a local plugin grant (by its desktop enrolment); the 90-day sweep deletes only consumed local plugin grants (Gatekeeper migration `0004` un-consumed the tunnel, site, agent-side plugin and OIDC-client grants older versions created consumed).
 
 **Errors:** 400 (invalid body; a role grant or an OIDC client grant as above), 409 (duplicate grant), 503 (Gatekeeper unavailable, or a removed user's principal under `principalId` cannot be cleared — `code: "gatekeeper_unavailable"`)
 

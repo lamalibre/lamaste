@@ -353,7 +353,7 @@ Every user listed by `GET /api/users` carries `domains`: their memberships, `{ n
 
 **External members** reach only what names them — `restricted` hosts that grant them, static sites that list them, OIDC clients granted to them — and **hold no Authelia groups**: a user who is an external member of any domain cannot be given a group (409 `external_member_groups`), a user with groups cannot be made external (409), and a new user or an invitation asking for both is refused (400 `external_member_groups`).
 
-**Groups Lamaste owns.** Who may reach what is written into each user's `groups` in `users.yml` as groups Lamaste owns — `lamaste:member@<domain>`, `lamaste:external@<domain>`, hostnames, `lamaste:oidc@<client id>` ([Domains API](domains.md#where-membership-is-enforced)). The users and identity APIs never show them and an edit keeps them; an administrator assigns only names of letters, digits, `-` and `_` (400 `reserved_group` for a name with `.`, `:` or `@` the user does not hold already).
+**Groups Lamaste owns.** Who may reach what is written into each user's `groups` in `users.yml` as groups Lamaste owns — `lamaste:m:<key>`, `lamaste:x:<key>` (a random key per domain), `lamaste:s:<site id>`, hostnames (external members' granted hosts), `lamaste:oidc@<client id>` ([Domains API](domains.md#where-membership-is-enforced)). The users and identity APIs never show them and an edit keeps them; an administrator assigns only names of letters, digits, `-` and `_` (400 `reserved_group` for a name with `.`, `:` or `@` the user does not hold already).
 
 ## The User Directory
 
