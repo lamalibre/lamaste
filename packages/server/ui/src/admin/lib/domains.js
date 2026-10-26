@@ -78,9 +78,75 @@ export function memberCandidates(users, members) {
     .sort((a, b) => a.username.localeCompare(b.username));
 }
 
-/** Whether two domain lists hold the same domains, in any order. */
-export function sameDomains(a, b) {
-  const left = new Set(a ?? []);
-  const right = new Set(b ?? []);
-  return left.size === right.size && [...left].every((d) => right.has(d));
+/**
+ * What an external member reaches, in the panel's words: only what names
+ * them (decided per domain, packages/core/docs/external-members-design.md).
+ */
+export const EXTERNAL_MEMBER_HINT =
+  'An external member reaches only what names them: restricted tunnels and surfaces that grant them, sites that list them, OIDC clients granted to them. They hold no Authelia groups.';
+
+/**
+ * Memberships as the panel answers them — `{ name, kind }` — each domain
+ * once, by name. A bare name (an answer of an older panel) is a member.
+ *
+ * @param {ReadonlyArray<string | { name: string, kind?: string }> | undefined} list
+ * @returns {Array<{ name: string, kind: 'member' | 'external' }>}
+ */
+export function membershipsOf(list) {
+  const byName = new Map();
+  for (const entry of list ?? []) {
+    const name = typeof entry === 'string' ? entry : entry?.name;
+    if (typeof name !== 'string') continue;
+    byName.set(name, entry?.kind === 'external' ? 'external' : 'member');
+  }
+  return [...byName].sort(([a], [b]) => a.localeCompare(b)).map(([name, kind]) => ({ name, kind }));
+}
+
+/** Whether any of `memberships` is external — such a user holds no Authelia groups. */
+export function isExternalAnywhere(memberships) {
+  return membershipsOf(memberships).some((m) => m.kind === 'external');
+}
+
+/** The kind of the membership of `name` among `memberships`, or null when there is none. */
+export function membershipKind(memberships, name) {
+  return membershipsOf(memberships).find((m) => m.name === name)?.kind ?? null;
+}
+
+/**
+ * `memberships` with the membership of `name` set to `kind` — or ended,
+ * when `kind` is null.
+ *
+ * @param {ReadonlyArray<string | { name: string, kind?: string }> | undefined} memberships
+ * @param {string} name
+ * @param {'member' | 'external' | null} kind
+ */
+export function withMembership(memberships, name, kind) {
+  const others = membershipsOf(memberships).filter((m) => m.name !== name);
+  return membershipsOf(kind === null ? others : [...others, { name, kind }]);
+}
+
+/** Whether two membership lists hold the same domains with the same kinds, in any order. */
+export function sameMemberships(a, b) {
+  const key = (list) =>
+    membershipsOf(list)
+      .map((m) => `${m.name}:${m.kind}`)
+      .join(',');
+  return key(a) === key(b);
+}
+
+/**
+ * The directory ids of the users who are external members of `domain` —
+ * for marking them where a list does not say (a plugin's audience).
+ *
+ * @param {ReadonlyArray<{ userId: string | null, domains?: unknown }>} users
+ * @param {string | undefined} domain
+ * @returns {Set<string>}
+ */
+export function externalUserIds(users, domain) {
+  const ids = new Set();
+  if (!domain) return ids;
+  for (const user of users ?? []) {
+    if (user.userId && membershipKind(user.domains, domain) === 'external') ids.add(user.userId);
+  }
+  return ids;
 }

@@ -99,8 +99,11 @@ export const webAdminClient = {
   activateDomain: (name) => jsonPost(domainPath(name, '/activate')),
   removeDomain: (name) => jsonDelete(domainPath(name)),
   getDomainMembers: (name) => apiFetch(domainPath(name, '/members')),
-  addDomainMember: (name, user) =>
-    jsonPut(domainPath(name, `/members/${encodeURIComponent(user)}`)),
+  addDomainMember: (name, user, options) =>
+    jsonPut(
+      domainPath(name, `/members/${encodeURIComponent(user)}`),
+      options?.kind ? { kind: options.kind } : {},
+    ),
   removeDomainMember: (name, user) =>
     jsonDelete(domainPath(name, `/members/${encodeURIComponent(user)}`)),
   setPluginDomain: (name, domain) => jsonPut(pluginPath(name, 'domain'), { domain }),
@@ -262,6 +265,7 @@ export const webAdminClient = {
   updatePlugin: (name, version) =>
     jsonPost(`/api/plugins/${encodeURIComponent(name)}/update`, version ? { version } : {}),
   discardPluginUpdate: (name) => jsonDelete(`/api/plugins/${encodeURIComponent(name)}/update`),
+  getPluginOidcClients: (name) => apiFetch(pluginPath(name, 'oidc-clients')),
   getPluginIdentity: (name) => apiFetch(pluginPath(name, 'identity')),
   getPluginAudience: (name) => apiFetch(pluginPath(name, 'audience')),
   getPluginEntitlements: (name) => apiFetch(pluginPath(name, 'entitlements')),

@@ -19,6 +19,8 @@ import { useToast } from './Toast.jsx';
 import CopyableId from './CopyableId.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 import { relativeTime } from '../lib/formatters.js';
+import { externalUserIds } from '../lib/domains.js';
+import { ExternalBadge } from './DomainChoice.jsx';
 import {
   attributeLabel,
   audienceRowView,
@@ -385,7 +387,7 @@ const STATUS_STYLE = {
 };
 
 /** One audience row: who, their roles, where they stand. */
-function AudienceRow({ view, now }) {
+function AudienceRow({ view, now, external }) {
   const name =
     view.status === 'erased'
       ? 'erased'
@@ -396,6 +398,11 @@ function AudienceRow({ view, now }) {
     <tr className="border-t border-zinc-800">
       <td className={`py-1 pr-2 ${view.status === 'erased' ? 'text-zinc-600' : 'text-zinc-200'}`}>
         {name}
+        {external && (
+          <span className="ml-2">
+            <ExternalBadge />
+          </span>
+        )}
       </td>
       <td className="py-1 pr-2">
         <CopyableId id={view.userId} />
@@ -426,6 +433,10 @@ function AudienceSection({ plugin }) {
     queryFn: () => client.getPluginAudience(plugin.name),
     refetchInterval: 15000,
   });
+  // Who is an external member of the plugin's domain — the audience counts
+  // them when entitled, and does not say which they are.
+  const usersQuery = useQuery({ queryKey: ['users'], queryFn: () => client.getUsers() });
+  const externals = externalUserIds(usersQuery.data?.users, plugin.domain);
   const now = query.dataUpdatedAt;
   const views = (query.data?.audience ?? []).map(audienceRowView);
   const members = views.filter((v) => v.member);
@@ -460,7 +471,12 @@ function AudienceSection({ plugin }) {
                 </thead>
                 <tbody>
                   {shown.map((view) => (
-                    <AudienceRow key={view.userId} view={view} now={now} />
+                    <AudienceRow
+                      key={view.userId}
+                      view={view}
+                      now={now}
+                      external={view.member && externals.has(view.userId)}
+                    />
                   ))}
                 </tbody>
               </table>

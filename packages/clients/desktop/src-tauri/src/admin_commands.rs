@@ -393,8 +393,21 @@ pub async fn admin_get_domain_members(name: String) -> Result<serde_json::Value,
 pub async fn admin_add_domain_member(
     name: String,
     user: String,
+    kind: Option<String>,
 ) -> Result<serde_json::Value, serde_json::Value> {
-    admin_refusable_task("PUT", domain_member_path(&name, &user), None).await
+    let body = domain_member_body(kind.as_deref())?;
+    admin_refusable_task("PUT", domain_member_path(&name, &user), Some(body)).await
+}
+
+/// The body of a membership PUT: the kind when named — `member` or
+/// `external`, anything else refused before the panel is asked.
+fn domain_member_body(kind: Option<&str>) -> Result<String, serde_json::Value> {
+    let body = match kind {
+        None => serde_json::json!({}),
+        Some(k @ ("member" | "external")) => serde_json::json!({ "kind": k }),
+        Some(_) => return Err(refusal("A membership is of kind member or external".to_string())),
+    };
+    Ok(body.to_string())
 }
 
 #[tauri::command]
@@ -1143,6 +1156,13 @@ pub async fn admin_get_plugin_identity(name: String) -> Result<serde_json::Value
 #[tauri::command]
 pub async fn admin_get_plugin_audience(name: String) -> Result<serde_json::Value, serde_json::Value> {
     plugin_people_get(name, "audience").await
+}
+
+/// The OIDC clients the plugin declares (metadata, never a secret), each
+/// user-facing one with its grants.
+#[tauri::command]
+pub async fn admin_get_plugin_oidc_clients(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    plugin_people_get(name, "oidc-clients").await
 }
 
 /// The role grants on the plugin, and how many of its grants carry no roles.
@@ -1923,6 +1943,14 @@ pub async fn admin_clear_access_request_log() -> Result<serde_json::Value, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_membership_body_names_a_known_kind_only() {
+        assert_eq!(domain_member_body(None).unwrap(), "{}");
+        assert_eq!(domain_member_body(Some("external")).unwrap(), r#"{"kind":"external"}"#);
+        assert_eq!(domain_member_body(Some("member")).unwrap(), r#"{"kind":"member"}"#);
+        assert!(domain_member_body(Some("admin")).is_err());
+    }
 
     #[test]
     fn an_approval_names_the_digest_and_the_version_only_when_there_is_one() {

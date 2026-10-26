@@ -1,7 +1,7 @@
 /**
  * The relay's domains in the panel's words: which domains a form offers,
  * when it asks at all, what keeps a domain from being removed, who can be
- * added as a member, and whether two lists of domains are the same.
+ * added as a member, and memberships with their kinds.
  */
 
 import { test } from 'node:test';
@@ -13,8 +13,13 @@ import {
   domainUsageLines,
   explainDomainRefusal,
   memberCandidates,
+  externalUserIds,
+  isExternalAnywhere,
+  membershipKind,
+  membershipsOf,
   needsDomainChoice,
-  sameDomains,
+  sameMemberships,
+  withMembership,
 } from '../src/admin/lib/domains.js';
 
 const DOMAINS = [
@@ -83,10 +88,41 @@ test('member candidates: users the directory knows who are not members yet, by n
   );
 });
 
-test('two domain lists are the same whatever their order', () => {
-  assert.equal(sameDomains(['b.example', 'a.example'], ['a.example', 'b.example']), true);
-  assert.equal(sameDomains(['a.example'], ['a.example', 'b.example']), false);
-  assert.equal(sameDomains([], undefined), true);
+test('memberships: a bare name is a member, each domain once, sorted', () => {
+  assert.deepEqual(
+    membershipsOf(['b.example', { name: 'a.example', kind: 'external' }, { name: 'b.example' }]),
+    [
+      { name: 'a.example', kind: 'external' },
+      { name: 'b.example', kind: 'member' },
+    ],
+  );
+  assert.deepEqual(membershipsOf(undefined), []);
+  assert.equal(membershipKind([{ name: 'a.example', kind: 'external' }], 'a.example'), 'external');
+  assert.equal(membershipKind(['a.example'], 'b.example'), null);
+  assert.equal(isExternalAnywhere(['a.example']), false);
+  assert.equal(isExternalAnywhere([{ name: 'a.example', kind: 'external' }]), true);
+});
+
+test('a membership is set, changed or ended; lists compare by domain and kind', () => {
+  const one = withMembership([], 'a.example', 'member');
+  assert.deepEqual(one, [{ name: 'a.example', kind: 'member' }]);
+  const external = withMembership(one, 'a.example', 'external');
+  assert.deepEqual(external, [{ name: 'a.example', kind: 'external' }]);
+  assert.deepEqual(withMembership(external, 'a.example', null), []);
+  assert.equal(sameMemberships(['b.example', 'a.example'], ['a.example', 'b.example']), true);
+  assert.equal(sameMemberships(one, external), false);
+  assert.equal(sameMemberships([], undefined), true);
+});
+
+test('the external members of a domain, by directory id', () => {
+  const users = [
+    { userId: 'u1', domains: [{ name: 'a.example', kind: 'external' }] },
+    { userId: 'u2', domains: [{ name: 'a.example', kind: 'member' }] },
+    { userId: null, domains: [{ name: 'a.example', kind: 'external' }] },
+    { userId: 'u3', domains: [{ name: 'b.example', kind: 'external' }] },
+  ];
+  assert.deepEqual([...externalUserIds(users, 'a.example')], ['u1']);
+  assert.deepEqual([...externalUserIds(users, undefined)], []);
 });
 
 test('a request path with a dot segment is refused before fetch could resolve it', async () => {

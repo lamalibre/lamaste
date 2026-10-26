@@ -8,6 +8,7 @@ import {
   Globe2,
   Plus,
   Power,
+  Repeat,
   Search,
   Trash2,
   UserMinus,
@@ -15,10 +16,11 @@ import {
 } from 'lucide-react';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { useToast } from '../components/Toast.jsx';
-import { useDomains } from '../components/DomainChoice.jsx';
+import { ExternalBadge, useDomains } from '../components/DomainChoice.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 import { ConfirmDialog } from '../components/Dialog.jsx';
 import {
+  EXTERNAL_MEMBER_HINT,
   domainStatusText,
   domainUsageLines,
   explainDomainRefusal,
@@ -97,15 +99,17 @@ function Members({ domain }) {
   const queryClient = useQueryClient();
   const addToast = useToast();
   const [candidate, setCandidate] = useState('');
+  const [kind, setKind] = useState('member');
   const members = useQuery({
     queryKey: ['domain-members', domain.name],
     queryFn: () => client.getDomainMembers(domain.name),
   });
   const users = useQuery({ queryKey: ['users'], queryFn: () => client.getUsers() });
   const change = useMutation({
-    mutationFn: ({ userId, add }) =>
-      add
-        ? client.addDomainMember(domain.name, userId)
+    // `kind` set: add the user, or change the kind of their membership; null: end it.
+    mutationFn: ({ userId, kind }) =>
+      kind
+        ? client.addDomainMember(domain.name, userId, { kind })
         : client.removeDomainMember(domain.name, userId),
     onSuccess: () => {
       setCandidate('');
@@ -130,18 +134,39 @@ function Members({ domain }) {
             <li key={m.userId} className="flex items-center justify-between px-3 py-2 text-sm">
               <span className="font-mono text-cyan-400">
                 {m.username ?? m.userId}
+                {m.kind === 'external' && (
+                  <span className="ml-2">
+                    <ExternalBadge />
+                  </span>
+                )}
                 {m.status !== 'active' && (
                   <span className="ml-2 font-sans text-xs text-zinc-500">({m.status})</span>
                 )}
               </span>
-              <button
-                type="button"
-                className={BUTTON}
-                disabled={change.isPending}
-                onClick={() => change.mutate({ userId: m.userId, add: false })}
-              >
-                <UserMinus size={14} /> Remove
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className={BUTTON}
+                  disabled={change.isPending}
+                  title={m.kind === 'external' ? undefined : EXTERNAL_MEMBER_HINT}
+                  onClick={() =>
+                    change.mutate({
+                      userId: m.userId,
+                      kind: m.kind === 'external' ? 'member' : 'external',
+                    })
+                  }
+                >
+                  <Repeat size={14} /> {m.kind === 'external' ? 'Make member' : 'Make external'}
+                </button>
+                <button
+                  type="button"
+                  className={BUTTON}
+                  disabled={change.isPending}
+                  onClick={() => change.mutate({ userId: m.userId, kind: null })}
+                >
+                  <UserMinus size={14} /> Remove
+                </button>
+              </div>
             </li>
           ))}
         </ul>
@@ -160,11 +185,21 @@ function Members({ domain }) {
               </option>
             ))}
           </select>
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+            aria-label="Kind of membership"
+            title={EXTERNAL_MEMBER_HINT}
+            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white focus:border-cyan-500 focus:outline-none"
+          >
+            <option value="member">member</option>
+            <option value="external">external</option>
+          </select>
           <button
             type="button"
             className={BUTTON}
             disabled={!candidate || change.isPending}
-            onClick={() => change.mutate({ userId: candidate, add: true })}
+            onClick={() => change.mutate({ userId: candidate, kind })}
           >
             <UserPlus size={14} /> Add
           </button>
@@ -208,6 +243,7 @@ function DomainCard({ domain }) {
           <p className="font-mono text-base text-white">{domain.name}</p>
           <p className={`text-xs ${active ? 'text-green-400' : 'text-yellow-400'}`}>
             {domainStatusText(domain)} · {domain.members} member{domain.members === 1 ? '' : 's'}
+            {domain.externalMembers > 0 && ` · ${domain.externalMembers} external`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -257,7 +293,7 @@ function DomainCard({ domain }) {
       {confirmRemove && (
         <ConfirmDialog
           title={`Remove ${domain.name}?`}
-          message={`Its sign-in stops and its ${domain.members} membership(s) end. The users stay.`}
+          message={`Its sign-in stops and its ${domain.members + (domain.externalMembers ?? 0)} membership(s) end. The users stay.`}
           confirmLabel="Remove domain"
           destructive
           isPending={remove.isPending}
@@ -341,7 +377,8 @@ export default function Domains() {
       </div>
       {domains.length === 1 && (
         <p className="flex items-center gap-2 text-xs text-zinc-500">
-          <CheckCircle2 size={14} /> One domain: every user is its member, as before.
+          <CheckCircle2 size={14} /> One domain: every new user is its member, as before, unless
+          made external.
         </p>
       )}
     </div>

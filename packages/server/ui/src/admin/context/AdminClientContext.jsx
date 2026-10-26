@@ -23,7 +23,7 @@ const AdminClientContext = createContext(null);
  * @typedef {Object} AdminClient
  *
  * Users:
- * @property {() => Promise<{users: Array<{username, displayname, email, groups, disabled, userId, status}>}>} getUsers — `userId` is the directory's (null until it has seen the user, within a minute); `status` active | disabled
+ * @property {() => Promise<{users: Array<{username, displayname, email, groups, disabled, userId, status, domains: Array<{name, kind}>}>}>} getUsers — `userId` is the directory's (null until it has seen the user, within a minute); `status` active | disabled; `domains` the memberships, `kind` member | external (an external member holds no groups)
  * @property {(data: {username, displayname, email, password, groups?}) => Promise<{ok, user, warnings?}>} createUser
  * @property {(username: string, data: {displayname?, email?, password?, groups?, disabled?}) => Promise<{ok, user, warnings?}>} updateUser
  * @property {(username: string) => Promise<{ok, user, warnings?}>} disableUser — they cannot sign in, every plugin audience shows them disabled, the user surface refuses them, desktop sessions and registry tokens end; refused with `code` last_admin for the last enabled administrator
@@ -113,6 +113,7 @@ const AdminClientContext = createContext(null);
  * @property {(name: string, enabled: boolean) => Promise<{ok, autoApprove}>} setPluginHooksAutoApprove
  * @property {(name: string, version?: string) => Promise<{ok, upToDate?, pendingUpdate?, operation?}>} updatePlugin
  * @property {(name: string) => Promise<{ok}>} discardPluginUpdate
+ * @property {(name: string) => Promise<{clients: Array<{id, name, confidential, userFacing, grants?: Array<{grantId, principalType, principalId, createdAt}> | null, grantTypes, scopes, audience, accessTokenClaims, enabled}>}>} getPluginOidcClients — a user-facing client's grants (`oidc-client` Gatekeeper grants) admit external members of the plugin's domain to its sign-in
  * @property {(name: string) => Promise<{identity: {declared, readiness, sync, audience, pendingErasures, approval}}>} getPluginIdentity — the identity block the installed version declares (null: none), whether users reach its `/app` (`readiness.reason` not_installed | no_identity | not_approved | not_hosted | not_answered), the feed to its agent half, the audience in numbers, the erasures it has not acknowledged
  * @property {(name: string) => Promise<{head, audience: Array<{userId, seq, version, updatedAt, change}>}>} getPluginAudience — members (`change.kind` upsert) and tombstones (remove: deleted | unentitled | erased), in seq order; refused with `code` no_identity
  * @property {(name: string) => Promise<{entitlements: Array<{grantId, principalType, principalId, userId, roles, unknownRoles, createdAt}>, roleless}>} getPluginEntitlements — Gatekeeper plugin grants with roles; `roleless` counts the grants without (they never make anyone a member)

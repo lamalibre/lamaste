@@ -31,9 +31,11 @@ import { ConfirmDialog, DialogButtons, Modal } from '../components/Dialog.jsx';
 import {
   DomainChips,
   DomainMembershipChoice,
+  ExternalBadge,
   useDomains,
   useMembershipChoice,
 } from '../components/DomainChoice.jsx';
+import { isExternalAnywhere } from '../lib/domains.js';
 
 /**
  * Refetch what a users change touches: the users, the directory (ids,
@@ -111,6 +113,46 @@ function TotpModal({ totpUri, onClose }) {
   );
 }
 
+/** The groups a form's text names, trimmed, empty ones dropped. */
+function groupList(text) {
+  return text
+    .split(',')
+    .map((g) => g.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Authelia groups (`admins`, `feria-admins`) — never for an external member:
+ * groups grant by membership, everywhere. While the form makes the user
+ * external the field is closed, or — when groups are still named — says to
+ * remove them.
+ */
+function GroupsField({ label, value, onChange, placeholder, external }) {
+  const blocked = external && groupList(value).length > 0;
+  return (
+    <div>
+      <label className="mb-1 block text-sm text-zinc-400">{label}</label>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={external && !blocked}
+        placeholder={external ? 'External members hold no groups' : placeholder}
+        className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-cyan-500 focus:outline-none disabled:text-zinc-500"
+      />
+      {blocked && (
+        <p className="mt-1 text-xs text-amber-300">
+          An external member holds no Authelia groups — remove them to make the user external.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The refusal a form shows before asking the panel: groups for an external member. */
+const EXTERNAL_GROUPS_ERROR =
+  'An external member holds no Authelia groups — remove the groups first';
+
 // --- Add/Edit User Modal ---
 
 function UserFormModal({ user, onClose, onSuccess }) {
@@ -183,10 +225,11 @@ function UserFormModal({ user, onClose, onSuccess }) {
       return;
     }
 
-    const groups = form.groups
-      .split(',')
-      .map((g) => g.trim())
-      .filter(Boolean);
+    const groups = groupList(form.groups);
+    if (membership.external && groups.length > 0) {
+      setError(EXTERNAL_GROUPS_ERROR);
+      return;
+    }
 
     try {
       if (isEdit) {
@@ -282,16 +325,13 @@ function UserFormModal({ user, onClose, onSuccess }) {
             </button>
           </div>
         </div>
-        <div>
-          <label className="mb-1 block text-sm text-zinc-400">Groups (comma-separated)</label>
-          <input
-            type="text"
-            value={form.groups}
-            onChange={(e) => handleChange('groups', e.target.value)}
-            placeholder="admins, users"
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-cyan-500 focus:outline-none"
-          />
-        </div>
+        <GroupsField
+          label="Groups (comma-separated)"
+          value={form.groups}
+          onChange={(v) => handleChange('groups', v)}
+          placeholder="admins, users"
+          external={membership.external}
+        />
         <DomainMembershipChoice choice={membership} />
 
         {error && <p className="text-sm text-red-400">{error}</p>}
@@ -361,10 +401,11 @@ function InviteUserModal({ onClose, onSuccess }) {
       return;
     }
 
-    const groups = form.groups
-      .split(',')
-      .map((g) => g.trim())
-      .filter(Boolean);
+    const groups = groupList(form.groups);
+    if (membership.external && groups.length > 0) {
+      setError(EXTERNAL_GROUPS_ERROR);
+      return;
+    }
 
     try {
       const result = await mutation.mutateAsync({
@@ -407,18 +448,13 @@ function InviteUserModal({ onClose, onSuccess }) {
             className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-cyan-500 focus:outline-none"
           />
         </div>
-        <div>
-          <label className="mb-1 block text-sm text-zinc-400">
-            Groups (comma-separated, optional)
-          </label>
-          <input
-            type="text"
-            value={form.groups}
-            onChange={(e) => handleChange('groups', e.target.value)}
-            placeholder="users"
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-cyan-500 focus:outline-none"
-          />
-        </div>
+        <GroupsField
+          label="Groups (comma-separated, optional)"
+          value={form.groups}
+          onChange={(v) => handleChange('groups', v)}
+          placeholder="users"
+          external={membership.external}
+        />
         <DomainMembershipChoice choice={membership} />
 
         {error && <p className="text-sm text-red-400">{error}</p>}
@@ -1045,6 +1081,11 @@ export default function Users() {
                       className={`px-4 py-3 font-mono text-sm ${disabled ? 'text-zinc-500' : 'text-cyan-400'}`}
                     >
                       {u.username}
+                      {isExternalAnywhere(u.domains) && (
+                        <span className="ml-2">
+                          <ExternalBadge />
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-zinc-300">{u.displayname}</td>
                     <td className="px-4 py-3 text-sm text-zinc-400 hidden sm:table-cell">
@@ -1178,7 +1219,14 @@ export default function Users() {
             <tbody>
               {invitations.map((inv) => (
                 <tr key={inv.id} className="border-b border-zinc-700 last:border-b-0">
-                  <td className="px-4 py-3 font-mono text-sm text-cyan-400">{inv.username}</td>
+                  <td className="px-4 py-3 font-mono text-sm text-cyan-400">
+                    {inv.username}
+                    {isExternalAnywhere(inv.domains) && (
+                      <span className="ml-2">
+                        <ExternalBadge />
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-sm text-zinc-400 hidden sm:table-cell">
                     {inv.email}
                   </td>

@@ -6,6 +6,7 @@
  */
 
 import type { PluginHosting, PluginMode } from './constants.js';
+import type { MembershipKind } from './domains.js';
 import type { HostEligibility } from './host-eligibility.js';
 import type { AudienceChange, NormalizedIdentityBlock } from './identity.js';
 import type { SettingsField, SettingsValue } from './plugin-settings.js';
@@ -141,8 +142,52 @@ export interface AdminUser {
   /** The directory's id (UUID v4); null until the directory has seen the user (within a minute). */
   readonly userId: string | null;
   readonly status: 'active' | 'disabled';
-  /** The domains the user is a member of (the multi-domain relay); empty until the directory has seen them. */
-  readonly domains: readonly string[];
+  /**
+   * The user's domain memberships, each with its kind; empty until the
+   * directory has seen them. An external member of any domain holds no
+   * Authelia groups.
+   */
+  readonly domains: readonly DomainMembership[];
+}
+
+/**
+ * A membership of a domain: a `member` reaches what the domain's members
+ * reach; an `external` member reaches only what names them (restricted
+ * hosts that grant them, sites that list them, OIDC clients granted to them).
+ */
+export interface DomainMembership {
+  readonly name: string;
+  readonly kind: MembershipKind;
+}
+
+/** A membership as a request names it: a domain name (a `member`), or the name with its kind. */
+export type DomainMembershipInput = string | DomainMembership;
+
+/** A grant on a user-facing OIDC client (a Gatekeeper grant, `resourceType` `oidc-client`). */
+export interface OidcClientGrantView {
+  readonly grantId: string;
+  readonly principalType: 'user' | 'group';
+  /** A username, or a Lamaste (Gatekeeper) group's name. */
+  readonly principalId: string;
+  readonly createdAt: string;
+}
+
+/** An OIDC client a plugin declares, as `GET /api/plugins/:name/oidc-clients` lists it. */
+export interface PluginOidcClientView {
+  readonly id: string;
+  readonly name: string | null;
+  readonly confidential: boolean;
+  /** Signs users in (device code, authorization code) — a grant can name it. */
+  readonly userFacing: boolean;
+  /** A user-facing client's grants; null when Gatekeeper could not be read. Absent for a service client. */
+  readonly grants?: readonly OidcClientGrantView[] | null;
+  readonly grantTypes: readonly string[];
+  readonly scopes: readonly string[];
+  readonly audience: readonly string[];
+  readonly accessTokenClaims: readonly string[];
+  readonly enabled: boolean;
+  readonly secretCreatedAt: string | null;
+  readonly secretRotatedAt: string | null;
 }
 
 /** A base domain of the relay, as `GET /api/domains` lists it. */
@@ -154,8 +199,10 @@ export interface DomainView {
   readonly status: 'pending' | 'active';
   readonly createdAt: string;
   readonly activatedAt: string | null;
-  /** How many users are members (disabled ones too). */
+  /** How many users are members of kind `member` (disabled ones too). */
   readonly members: number;
+  /** How many users are external members (disabled ones too). */
+  readonly externalMembers: number;
   readonly usedBy: DomainUsage;
 }
 
@@ -176,6 +223,7 @@ export interface DomainMemberView {
   readonly userId: string;
   readonly username: string | null;
   readonly status: 'active' | 'disabled' | 'removed';
+  readonly kind: MembershipKind;
   readonly addedAt: string;
   readonly addedBy: string;
 }
@@ -474,8 +522,12 @@ export interface AdminClient {
     email: string;
     password: string;
     groups?: string[];
-    /** Required once the relay has two domains (`code` `domains_required`); the one domain otherwise. */
-    domains?: string[];
+    /**
+     * Required once the relay has two domains (`code` `domains_required`);
+     * a member of the one domain otherwise. With an external membership no
+     * `groups` (400 `external_member_groups`).
+     */
+    domains?: DomainMembershipInput[];
   }): Promise<{ ok: boolean; user: AdminUser; warnings?: AdminWarning[] }>;
   updateUser(
     username: string,
@@ -485,8 +537,13 @@ export interface AdminClient {
       password?: string;
       groups?: string[];
       disabled?: boolean;
-      /** The domains the user is a member of afterwards, exactly (one change, each membership audited). */
-      domains?: string[];
+      /**
+       * The user's memberships afterwards, exactly (one change, each
+       * membership audited). Refused (409 `external_member_groups`) when the
+       * user would be external and hold groups; a group with `.`, `:` or `@`
+       * the user does not hold already is refused (400 `reserved_group`).
+       */
+      domains?: DomainMembershipInput[];
     },
   ): Promise<{ ok: boolean; user: AdminUser; warnings?: AdminWarning[] }>;
   /**
@@ -548,8 +605,17 @@ export interface AdminClient {
   /** Refused for the primary (`primary_domain`) and while used (409 `domain_in_use`, `usedBy`). */
   removeDomain(name: string): Promise<unknown>;
   getDomainMembers(name: string): Promise<{ members: DomainMemberView[] }>;
-  /** `user`: a directory id or a username. */
-  addDomainMember(name: string, user: string): Promise<unknown>;
+  /**
+   * Make `user` (a directory id or a username) a member of the domain — of
+   * `kind` (`member` unless named); a user who is one already gets that
+   * kind. Making a user with Authelia groups external is refused (409
+   * `external_member_groups`).
+   */
+  addDomainMember(
+    name: string,
+    user: string,
+    options?: { kind?: MembershipKind },
+  ): Promise<unknown>;
   removeDomainMember(name: string, user: string): Promise<unknown>;
   /** Move a plugin to another active domain — refused while one of its surfaces is served. */
   setPluginDomain(
@@ -564,8 +630,12 @@ export interface AdminClient {
     email: string;
     groups?: string[];
     expiresInDays?: number;
-    /** The domains the invited user joins on accepting — required as for {@link AdminClient.createUser}. */
-    domains?: string[];
+    /**
+     * The domains the invited user joins on accepting, with their kinds —
+     * required as for {@link AdminClient.createUser}; no `groups` with an
+     * external membership (400 `external_member_groups`).
+     */
+    domains?: DomainMembershipInput[];
   }): Promise<{ ok: boolean; invitation: unknown; token: string }>;
   revokeInvitation(id: string): Promise<{ ok: boolean }>;
 
@@ -745,6 +815,14 @@ export interface AdminClient {
     operation?: unknown;
   }>;
   discardPluginUpdate(name: string): Promise<{ ok: boolean }>;
+  /**
+   * The OIDC clients a plugin declares (metadata, never a secret); each
+   * user-facing one with its grants — Gatekeeper grants with `resourceType`
+   * `oidc-client`, made with {@link AdminClient.createGatekeeperGrant}: what
+   * admits an external member of the plugin's domain to the client's
+   * sign-in (`grants` null: Gatekeeper could not be read).
+   */
+  getPluginOidcClients(name: string): Promise<{ clients: PluginOidcClientView[] }>;
   // Settings of an agent-hosted plugin, kept by its agent half: a partial
   // change against the `revision` they were read at; `null` puts a field
   // back to its default or clears a secret. Secrets travel in the body only.

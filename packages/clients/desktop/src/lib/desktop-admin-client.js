@@ -81,7 +81,8 @@ export const desktopAdminClient = {
   activateDomain: (name) => invokeRefusable('admin_activate_domain', { name }),
   removeDomain: (name) => invokeRefusable('admin_remove_domain', { name }),
   getDomainMembers: (name) => invokeRefusable('admin_get_domain_members', { name }),
-  addDomainMember: (name, user) => invokeRefusable('admin_add_domain_member', { name, user }),
+  addDomainMember: (name, user, options) =>
+    invokeRefusable('admin_add_domain_member', { name, user, kind: options?.kind ?? null }),
   removeDomainMember: (name, user) => invokeRefusable('admin_remove_domain_member', { name, user }),
   setPluginDomain: (name, domain) => invokeRefusable('admin_set_plugin_domain', { name, domain }),
 
@@ -200,6 +201,7 @@ export const desktopAdminClient = {
   updatePlugin: (name, version) =>
     invokeRefusable('admin_update_plugin', { name, version: version ?? null }),
   discardPluginUpdate: (name) => invoke('admin_discard_plugin_update', { name }),
+  getPluginOidcClients: (name) => invokeRefusable('admin_get_plugin_oidc_clients', { name }),
   getPluginIdentity: (name) => invokeRefusable('admin_get_plugin_identity', { name }),
   getPluginAudience: (name) => invokeRefusable('admin_get_plugin_audience', { name }),
   getPluginEntitlements: (name) => invokeRefusable('admin_get_plugin_entitlements', { name }),
