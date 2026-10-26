@@ -7,17 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Multi-domain relay: one relay serves several base domains — one user directory, a sign-in page (`auth.<domain>`) and an explicit member list per domain. A person has one account and reaches a domain's protected hosts only as its member. The entries for it are the "— multi-domain relay" sections below; slice 7's follow them. Design: `packages/core/docs/multi-domain-relay-design.md`.
+## [4.7.0] - 2026-10-26
 
-### Upgrade notes — multi-domain relay
+All lockstep packages, the desktop crate and its Tauri config move to 4.7.0; internal `@lamalibre/*` ranges become `^4.7.0`. Multi-domain relay: one relay serves several base domains — one user directory, a sign-in page (`auth.<domain>`) and an explicit member list per domain. A person has one account and reaches a domain's protected hosts only as its member. The entries for it are the "— multi-domain relay" sections below; slice 7's follow them. Design: `packages/core/docs/multi-domain-relay-design.md`.
 
-**Only the relay is upgraded** (the panel's Update action or a `create-lamaste --yes` redeploy); agents need nothing — chisel and the enrolled `tunnel.<primary>` do not change.
+### Upgrade notes
+
+**Only the relay is upgraded** (the panel's Update action or a `create-lamaste@4.7.0 --yes` redeploy); agents need nothing — chisel and the enrolled `tunnel.<primary>` do not change.
 
 1. `state.db` migration `0016` adds `domains`, `domain_members` and `plugins.domain`. At the first start the primary domain (panel.json `domain`) is recorded and **every user becomes its member**, so a single-domain relay admits exactly whom it did.
 2. **`lamaste-priv` must be this release's** before the panel starts: vhost files are now named by full hostname (`lamalibre-lamaste-app-<fqdn>`, `lamalibre-lamaste-agent-panel-<fqdn>`, `lamalibre-lamaste-auth-<domain>`), and the panel renames the existing ones at start (one `nginx -t` and reload, restored on failure).
 3. Authelia's `access_control` gains a members rule per domain and `default_policy: deny`; Gatekeeper reads the new `/etc/lamalibre/lamaste/domains.json` (written by the panel) and refuses when it is missing.
+4. **Plugin authors**: a manifest whose OIDC clients declare the `refresh_token` grant or the `offline` / `offline_access` scope is refused at install and update from now on; a plugin installed before keeps its clients, served without them. Users of such a client sign in again when its access token expires.
 
-### Added — multi-domain relay
+### Added
 
 - **Domains** (`/api/domains`, admin): add (`pending`), `verify-dns` (does `auth.<domain>` resolve here; is a wildcard in place), `activate` (certificate, auth vhost, session cookie, members rendered — one operation with rollback), remove (refused for the primary and while used: 409 `domain_in_use` with `usedBy`), members (`PUT`/`DELETE /api/domains/:name/members/:user`, by directory id or username). `GET /api/domains` answers `newUsersNeedDomains`; `verify-dns` lists the records the domain needs with what each resolves to. Domains never overlap. Audit `domain.*`, `directory.membership.*` (by `userId`).
 - **Membership enforced twice**: rendered into Authelia (one `session.cookies` entry per domain, `access_control` with every site rule narrowed to members, per-domain OIDC `authorization_policies` `lamaste_<domain>_<factor>`) and checked again by Gatekeeper from `domains.json`. A signed-in non-member gets a "not a member of this domain" page (JSON `not_a_member` on user surfaces; `/authz/refusal/:fqdn` for static sites) instead of a sign-in loop.
@@ -27,14 +30,14 @@ Multi-domain relay: one relay serves several base domains — one user directory
 - **One OIDC issuer per domain**; the registry credential's `auth.issuerDomain` names the one the registry trusts (`--issuer-domain`). Losing membership of it revokes a user's registry tokens.
 - **Panel**: a Domains page (DNS records to create, activate, members, removal with what uses the domain), domain pickers on tunnels and sites (shown once there are two active domains), domain chips and editing on Users, domains on invitations, a plugin's domain on its card; desktop `admin_*` domain commands. **CLI**: `lamaste-server domains list|add|verify-dns|activate|remove|members`, `--domain` on `tunnels create` and `sites create`, `plugins domain`, `registry-credential set --issuer-domain`, domains in `status`; `lamaste-agent status` prints each tunnel's hostname.
 
-### Changed — multi-domain relay
+### Changed
 
 - Managed sites refuse `agent-` names; custom sites and aliases refuse the relay's own hosts on any domain (`panel.`, `auth.`, `tunnel.`, `agent-*`); a domain's apex may now be an alias. Signing in on a hostname under none of the relay's domains is refused (`NOT_UNDER_DOMAIN`).
 - `authenticated` and `restricted` tunnels share one vhost; Gatekeeper decides by the access mode.
 - A user surface answers a refused request with its refusal as JSON — `{ "error": "not_a_member" }` for a user who is not a member of the host's domain, `{ "error": "forbidden" }` otherwise — instead of nginx's 403 page: Gatekeeper names the refusal in `X-Lamalibre-Refusal`, nginx answers with one of those two bodies.
 - Starting or restarting Authelia waits until it serves requests (its health endpoint answers), not a fixed 2 s: everywhere the relay starts or restarts it — the panel's rendering, the Services page, a redeploy.
 
-### Security — multi-domain relay
+### Security
 
 From the review of the feature (design doc, Security review):
 

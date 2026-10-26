@@ -1,6 +1,6 @@
 # Multi-Domain Relay — Design Document
 
-> **Status:** agreed 2026-10-25 (all nine decisions as recommended); implementation in progress. Target: Lamaste 4.7 (after 4.6, slice 7).
+> **Status:** agreed 2026-10-25 (all nine decisions as recommended); implemented in Lamaste 4.7.0 (2026-10-26), proven by the rodeo campaigns recorded under Waves.
 > **Pilot:** `codelama.com.tr` next to `samplepark.tr` on the relay `138.68.65.228`.
 > **Companions:** `identity-directory-design.md` (the slice 6 directory this builds on),
 > `gatekeeper-design.md`, `herd/docs/r730-workload-plan.md` §14 (why, and the live steps).
