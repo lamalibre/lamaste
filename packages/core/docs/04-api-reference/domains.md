@@ -143,6 +143,105 @@ End a membership. **200** `{ removed }`. When the user no longer reaches the reg
 
 Move a plugin to another active domain: `{ "domain": "codelama.com.tr" }`. A plugin belongs to one domain — its OIDC clients' `{domain}` and sign-in policy, which tunnels may be bound as its user surface, its web surface, its audience (entitled users who are members). **200** `{ name, domain, changed }`. **409** `surface_bound` while a tunnel is bound as its user surface or it owns a web surface; **400** `unknown_domain` for a domain that is not active.
 
+## Branding
+
+A domain's brand on its auth pages (design: `packages/core/docs/auth-branding-design.md`). The operator sets a brand once per domain; the record lives in `state.db` (`domain_branding`, migration `0019`) and is the source of truth. Every change renders the files nginx will serve on `auth.<domain>` into `/var/www/lamaste/auth/<domain>/` (the web root, `lamaste:www-data`, 0750/0640): the locale files for the three routes Authelia lets a file override, the stylesheet and `brand.json` — see [What is rendered](#what-is-rendered). **This release ships the model, the API and the rendering; the vhost that serves the files, the branded invitation and refusal pages, the panel section and the CLI follow in its later waves** — until then a domain's sign-in page is the stock one whatever its brand says.
+
+Everything a visitor would receive is rendered from validated fields: the name cannot carry a tag or an interpolation, the colour matches a regex, the images are parsed (PNG headers; ICO directories) — no CSS, HTML or SVG of the operator's ever reaches the sign-in origin.
+
+### The brand
+
+| Field          | Rule                                                                                                                 |
+| -------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `name`         | 1–64 printable characters; no control, bidirectional or invisible characters; none of `<` `>` `{` `}`. Required      |
+| `tagline`      | ≤ 160, same characters. Under the name on Lamaste's own pages (later wave)                                           |
+| `theme`        | `light` (default), `dark`, `grey`, `oled`, `auto` — Authelia's theme for the domain's sign-in                        |
+| `accent`       | `#rrggbb`, lower case — buttons, focus rings, links                                                                  |
+| `supportEmail` | an e-mail address (the Let's Encrypt rule) — shown on refusal pages (later wave), else Gatekeeper's `adminEmail`     |
+| `supportUrl`   | `https://` only, no credentials, ≤ 512 characters                                                                    |
+| logo           | a PNG ≤ 512 KiB, ≤ 1024 pixels a side (`PUT …/branding/logo`); never SVG — a script carrier on the sign-in origin    |
+| favicon        | an ICO (a valid directory, every entry's image inside the file) or a PNG ≤ 256 pixels a side, ≤ 64 KiB (`…/favicon`) |
+
+The validation lives in `@lamalibre/lamaste` (`validateBrandFields`, `inspectBrandLogo`, `inspectBrandFavicon`, browser-safe) so a client form applies the same rules; a refusal names the field and the rule, never the value.
+
+### `GET /api/domains/:name/branding`
+
+`{ branding }` — the record without the blobs, or `null` when the domain has none:
+
+```json
+{
+  "branding": {
+    "domain": "codelama.com.tr",
+    "name": "Code Lama",
+    "tagline": null,
+    "theme": "dark",
+    "accent": "#22d3ee",
+    "supportEmail": "support@codelama.com.tr",
+    "supportUrl": null,
+    "logo": { "sha256": "…", "bytes": 15845, "format": "png", "width": 128, "height": 128 },
+    "favicon": null,
+    "revision": 3,
+    "updatedAt": "2026-10-27T10:00:00.000Z",
+    "rendered": { "v": 1, "revision": 3, "autheliaVersion": "4.39.28", "renderedAt": "…" },
+    "renderedCurrent": true
+  }
+}
+```
+
+`rendered` is what `rendered.json` of the directory says (null while nothing is rendered); `renderedCurrent` whether it is this revision from the pinned Authelia release. **404** `unknown_domain` for a name the relay does not have.
+
+### `PUT /api/domains/:name/branding`
+
+The fields (created when the domain has none; absent or `null` clears an optional one), with `ifRevision` optional. Assets stay. **200** `{ branding, created, changed, warnings? }` — `changed: false` when nothing differed. Then rendered: when the rendering fails (Authelia not answering its locales, the web root unwritable) the record is kept and `warnings` says so; the panel renders again within a minute.
+
+| Status | `code`              | When                                                                                       |
+| ------ | ------------------- | ------------------------------------------------------------------------------------------ |
+| 400    | `invalid_branding`  | `errors: [{ field, message }]` — by field name, never a value; an unknown field is refused |
+| 404    | `unknown_domain`    |                                                                                            |
+| 409    | `revision_mismatch` | `ifRevision` is not the current one — `revision` says which is                             |
+
+### `DELETE /api/domains/:name/branding`
+
+Back to the stock page: the record and the rendered directory go. **200** `{ removed }`.
+
+### `PUT /api/domains/:name/branding/logo` · `/favicon`
+
+`{ "data": "<base64>", "ifRevision": 3 }` — base64 in JSON (every client already sends bodies on curl's stdin; a 512 KiB logo fits the panel's request limit). Checked, stored with its SHA-256, the revision bumped, rendered. **200** `{ branding, changed, warnings? }` (`changed: false` for the same bytes again).
+
+| Status | `code`              | When                                                                                                                                     |
+| ------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `invalid_image`     | `reason`: `not_base64`, `not_png` (logo), `not_ico_or_png` (favicon), `bad_image` (too many pixels a side), `empty`                      |
+| 404    | `no_branding`       | The domain has no brand yet — set its fields first                                                                                       |
+| 409    | `revision_mismatch` |                                                                                                                                          |
+| 413    | `asset_too_large`   | Longer, as base64, than the limit allows — refused before decoding; a body far over it is refused by the route's body limit the same way |
+
+### `DELETE /api/domains/:name/branding/logo` · `/favicon`
+
+**200** `{ removed, branding, warnings? }`.
+
+### `GET /api/domains/:name/branding/preview`
+
+What a client previews without the page: `{ locale: "en", css, title, footer, theme, logo, favicon }` — the rendered `brand.css` and the English title and footer as the sign-in will show them (`Login - Code Lama`, `Powered by Code Lama`). **404** `no_branding`; **503** `authelia_unavailable` when Authelia's texts cannot be read.
+
+### What is rendered
+
+`/var/www/lamaste/auth/<domain>/`, written into a fresh sibling directory (every file fsynced, 0640; directories 0750) and moved into place as a whole — nginx sees the old rendering or the new one, never a mix:
+
+| File                                | Content                                                                                                                                                                                                                                                                        |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `favicon.ico`                       | the favicon's bytes, when set (ICO or PNG; the content type comes from the extension, never from the bytes)                                                                                                                                                                    |
+| `static/media/logo.png`             | the logo, when set                                                                                                                                                                                                                                                             |
+| `locales/<locale>/<namespace>.json` | every locale file Authelia lists (`GET 127.0.0.1:9091/locales`: ~60 languages, parents such as `tr` beside `tr-TR`, and every namespace — `portal`, `settings`, `consent`), with the brand name in place of `{{authelia}}` in every value that carries it: "Giriş - Code Lama" |
+| `brand.css`                         | generated from `accent`: `--primary`, `--primary-foreground` (black or white by contrast), `--ring`, `--custom-icon`, `--custom-loading-bar` on `[data-theme]` — Authelia 4.39.28's theme contract, pinned by a unit test — and the hidden "Powered by Authelia" footer link   |
+| `brand.json`                        | the fields, `logo` / `favicon` digests, for Gatekeeper's pages and the invitation page (later wave)                                                                                                                                                                            |
+| `rendered.json`                     | `{ v: 1, revision, autheliaVersion, renderedAt }`                                                                                                                                                                                                                              |
+
+Every language is rendered because an override file replaces the whole language for Authelia — a partial `tr` would lose its translations. The locale files come from the running Authelia, so a pin bump re-renders every brand at the next start (`autheliaVersion` differs).
+
+**Reconcile.** At the panel's start — after Authelia has its asset path, placeholder logo and explicit theme (one restart, once, audited `authelia.restarted` with reason `branding-base`) — and every minute: every record whose directory is missing, at another revision or from another Authelia release is rendered; directories of domains without a record are removed. A relay restored from a backup of `state.db` renders its brands again by itself. Removing a domain removes its brand and directory in the same operation.
+
+**Audit.** `domain.branding.updated` (`fields` — the names that changed — or `asset` with `sha256`, `format`, `width`, `height`, `bytes`, or `removed: true`; always `revision`), `domain.branding.removed` (`reason: domain-removed` when the domain went), `domain.branding.render.failed` / `domain.branding.render.recovered` (once per streak, with a warning to the administrators). Never the bytes, never the name.
+
 ## Memberships
 
 - **Explicit, by `userId`.** A re-created username is a new user with no membership.
@@ -189,4 +288,4 @@ lamaste-server tunnels create --subdomain feria --port 20060 --agent feria --dom
 - [Tunnels API](tunnels.md), [Sites API](sites.md) — `domain` on creation
 - [Registry and OIDC](registry-and-oidc.md) — one issuer per domain, `issuerDomain`
 - [Gatekeeper](gatekeeper.md) — the membership check and refusal page
-- Design: `packages/core/docs/multi-domain-relay-design.md`, `packages/core/docs/external-members-design.md`
+- Design: `packages/core/docs/multi-domain-relay-design.md`, `packages/core/docs/external-members-design.md`, `packages/core/docs/auth-branding-design.md` (branding)
