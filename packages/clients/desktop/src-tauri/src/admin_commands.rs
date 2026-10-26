@@ -418,6 +418,98 @@ pub async fn admin_remove_domain_member(
     admin_refusable_task("DELETE", domain_member_path(&name, &user), None).await
 }
 
+// --- A domain's brand on its auth pages ---
+
+/// `/api/domains/<name>/branding<rest>`.
+fn domain_branding_path(name: &str, rest: &str) -> String {
+    domain_path(name, &format!("/branding{}", rest))
+}
+
+/// `/api/domains/<name>/branding/<kind>` for the two assets a brand carries.
+fn domain_branding_asset_path(name: &str, kind: &str) -> Result<String, serde_json::Value> {
+    match kind {
+        "logo" | "favicon" => Ok(domain_branding_path(name, &format!("/{}", kind))),
+        _ => Err(refusal("A brand asset is the logo or the favicon".to_string())),
+    }
+}
+
+/// The brand without its blobs (`branding: null` for none). Rejects with
+/// the panel's refusal (`code` `unknown_domain`).
+#[tauri::command]
+pub async fn admin_get_domain_branding(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("GET", domain_branding_path(&name, ""), None).await
+}
+
+/// Set the brand's fields (`{ name, tagline?, theme?, accent?, supportEmail?,
+/// supportUrl?, ifRevision? }`). Rejects with the panel's refusal (`code`
+/// `invalid_branding` with `errors` by field, `revision_mismatch` with `revision`).
+#[tauri::command]
+pub async fn admin_update_domain_branding(
+    name: String,
+    fields: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    if !fields.is_object() {
+        return Err(refusal("A brand is a JSON object of its fields".to_string()));
+    }
+    let path = domain_branding_path(&name, "");
+    tokio::task::spawn_blocking(move || {
+        let body = fields.to_string();
+        admin_refusable("PUT", &path, Some(&body))
+    })
+    .await
+    .map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
+/// Remove the brand: back to the stock sign-in page.
+#[tauri::command]
+pub async fn admin_remove_domain_branding(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("DELETE", domain_branding_path(&name, ""), None).await
+}
+
+/// Set the logo or the favicon from base64 `data` (the body reaches curl on
+/// stdin, never an argument — up to 512 KiB of PNG). Rejects with the
+/// panel's refusal (`code` `invalid_image` with `reason`, `asset_too_large`,
+/// `no_branding`, `revision_mismatch`).
+#[tauri::command]
+pub async fn admin_set_domain_branding_asset(
+    name: String,
+    kind: String,
+    data: String,
+    if_revision: Option<u64>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = domain_branding_asset_path(&name, &kind)?;
+    tokio::task::spawn_blocking(move || {
+        let mut body = serde_json::Map::new();
+        body.insert("data".to_string(), serde_json::Value::String(data));
+        if let Some(revision) = if_revision {
+            body.insert("ifRevision".to_string(), serde_json::json!(revision));
+        }
+        let body = serde_json::Value::Object(body).to_string();
+        admin_refusable("PUT", &path, Some(&body))
+    })
+    .await
+    .map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
+/// Remove the logo or the favicon.
+#[tauri::command]
+pub async fn admin_remove_domain_branding_asset(
+    name: String,
+    kind: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = domain_branding_asset_path(&name, &kind)?;
+    admin_refusable_task("DELETE", path, None).await
+}
+
+/// The rendered stylesheet and the English title and footer, for a preview.
+/// Rejects with the panel's refusal (`code` `no_branding`, `authelia_unavailable`).
+#[tauri::command]
+pub async fn admin_get_domain_branding_preview(
+    name: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("GET", domain_branding_path(&name, "/preview"), None).await
+}
+
 /// Move a plugin to another active domain. Rejects with the panel's refusal
 /// (409 while one of its surfaces is served).
 #[tauri::command]
