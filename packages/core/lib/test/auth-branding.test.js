@@ -9,7 +9,17 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
@@ -33,6 +43,7 @@ import {
 import {
   AUTHELIA_ASSET_PATH,
   AUTHELIA_THEME_DEFAULT,
+  AUTH_BRANDING_RENDERS_DIR,
   autheliaBrandingConfigured,
   ensureAutheliaBrandingBase,
   ensureAutheliaBrandingConfig,
@@ -115,9 +126,12 @@ test('a brand name: 1–64 printable characters, no control, bidi or invisible c
     'x'.repeat(65),
     'Code\u0000Lama',
     'Code\tLama',
-    'Code‮Lama', // right-to-left override
-    'Code​Lama', // zero width space
-    'Code⁦Lama', // isolate
+    'Code\u202eLama', // right-to-left override
+    'Code\u200bLama', // zero width space
+    'Code\u2028Lama', // line separator
+    'Code\u2066Lama', // isolate
+    'Code\u00adLama', // soft hyphen
+    'Code\ufeffLama', // byte-order mark
     '{{authelia}}',
     'Code {Lama}',
     '<b>Code</b>',
@@ -430,7 +444,7 @@ async function fixtureLocales() {
   };
 }
 
-test('a brand is rendered into its domain’s directory — 0750/0640, every file from validated fields — replaced as a whole, listed and removed', async () => {
+test('a brand is rendered into a directory of its own and served through its domain’s link — 0750/0640, every file from validated fields — switched in one rename, listed and removed', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'lamaste-auth-branding-'));
   try {
     const locales = await fixtureLocales();
@@ -454,10 +468,18 @@ test('a brand is rendered into its domain’s directory — 0750/0640, every fil
       autheliaVersion: PINNED,
       renderedAt: '2026-10-27T10:00:00.000Z',
     });
-    const dir = path.join(root, domain);
+    const link = path.join(root, domain);
     const mode = async (p) => (await lstat(p)).mode & 0o777;
-    assert.equal(await mode(dir), 0o750);
-    assert.equal(await mode(path.join(dir, 'locales', 'tr-TR')), 0o750);
+    // The entry is a link into .renders/, named by domain and revision.
+    assert.ok((await lstat(link)).isSymbolicLink());
+    const target1 = await readlink(link);
+    assert.match(
+      target1,
+      new RegExp(`^${AUTH_BRANDING_RENDERS_DIR}/codelama\\.com\\.tr-1-[a-f0-9]{16}$`),
+    );
+    const dir1 = path.join(root, target1);
+    assert.equal(await mode(dir1), 0o750);
+    assert.equal(await mode(path.join(dir1, 'locales', 'tr-TR')), 0o750);
     for (const file of [
       AUTH_BRANDING_FILES.favicon,
       AUTH_BRANDING_FILES.logo,
@@ -468,20 +490,20 @@ test('a brand is rendered into its domain’s directory — 0750/0640, every fil
       'locales/en/settings.json',
       'locales/tr-TR/portal.json',
     ]) {
-      assert.equal(await mode(path.join(dir, file)), 0o640, file);
+      assert.equal(await mode(path.join(link, file)), 0o640, file);
     }
-    assert.ok((await readFile(path.join(dir, AUTH_BRANDING_FILES.logo))).equals(logo));
-    assert.ok((await readFile(path.join(dir, AUTH_BRANDING_FILES.favicon))).equals(favicon));
-    const tr = JSON.parse(await readFile(path.join(dir, 'locales/tr-TR/portal.json'), 'utf-8'));
+    assert.ok((await readFile(path.join(link, AUTH_BRANDING_FILES.logo))).equals(logo));
+    assert.ok((await readFile(path.join(link, AUTH_BRANDING_FILES.favicon))).equals(favicon));
+    const tr = JSON.parse(await readFile(path.join(link, 'locales/tr-TR/portal.json'), 'utf-8'));
     assert.equal(tr['Login - {{authelia}}'], 'Giriş - Code Lama');
     assert.equal(tr.Password, 'Şifre');
     const settings = JSON.parse(
-      await readFile(path.join(dir, 'locales/en/settings.json'), 'utf-8'),
+      await readFile(path.join(link, 'locales/en/settings.json'), 'utf-8'),
     );
     assert.equal(settings['Settings - {{authelia}}'], 'Settings - Code Lama');
-    const css = await readFile(path.join(dir, AUTH_BRANDING_FILES.css), 'utf-8');
+    const css = await readFile(path.join(link, AUTH_BRANDING_FILES.css), 'utf-8');
     assert.ok(css.includes('--primary: #22d3ee !important'));
-    const brand = JSON.parse(await readFile(path.join(dir, AUTH_BRANDING_FILES.brand), 'utf-8'));
+    const brand = JSON.parse(await readFile(path.join(link, AUTH_BRANDING_FILES.brand), 'utf-8'));
     assert.equal(brand.v, 1);
     assert.equal(brand.domain, domain);
     assert.equal(brand.name, 'Code Lama');
@@ -490,8 +512,19 @@ test('a brand is rendered into its domain’s directory — 0750/0640, every fil
     assert.equal(brand.favicon.sha256.length, 64);
     assert.deepEqual(await readRenderedBrand(domain, root), rendered);
 
-    // Re-rendered without the favicon at revision 2: the old directory is gone as a whole.
-    await writeFile(path.join(dir, 'stray.txt'), 'x');
+    // Re-rendered without the favicon at revision 2: the link now names a
+    // new directory, the old one is gone, and brand.json was readable
+    // through the link at every moment (the link is replaced, never absent).
+    await writeFile(path.join(dir1, 'stray.txt'), 'x');
+    let gap = false;
+    const watcher = (async () => {
+      for (let i = 0; i < 200; i += 1) {
+        await readFile(path.join(link, AUTH_BRANDING_FILES.brand)).catch(() => {
+          gap = true;
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    })();
     await renderAuthBranding({
       domain,
       brand: { ...BRAND, accent: null },
@@ -502,35 +535,99 @@ test('a brand is rendered into its domain’s directory — 0750/0640, every fil
       autheliaVersion: PINNED,
       root,
     });
+    await watcher;
+    assert.equal(gap, false, 'brand.json was readable throughout the switch');
+    const target2 = await readlink(link);
+    assert.notEqual(target2, target1);
+    assert.match(target2, /-2-[a-f0-9]{16}$/);
+    assert.equal(await lstat(dir1).catch((err) => err.code), 'ENOENT');
     assert.equal((await readRenderedBrand(domain, root)).revision, 2);
-    assert.deepEqual((await readdir(dir)).sort(), [
+    assert.deepEqual((await readdir(link)).sort(), [
       'brand.css',
       'brand.json',
       'locales',
       'rendered.json',
       'static',
     ]);
-    const brand2 = JSON.parse(await readFile(path.join(dir, AUTH_BRANDING_FILES.brand), 'utf-8'));
+    const brand2 = JSON.parse(await readFile(path.join(link, AUTH_BRANDING_FILES.brand), 'utf-8'));
     assert.equal(brand2.favicon, null);
     assert.equal(brand2.accent, null);
 
-    // Listing: domains only; staging and outgoing leftovers pruned, strays ignored.
-    await mkdir(path.join(root, '.staging-deadbeef'));
+    // Listing: domains whose entry links to a rendering of theirs; a
+    // crash-left rendering nothing links to, a temporary link and an
+    // outgoing entry are pruned; strays are ignored.
+    const rendersDir = path.join(root, AUTH_BRANDING_RENDERS_DIR);
+    await mkdir(path.join(rendersDir, 'codelama.com.tr-9-deadbeefdeadbeef'));
+    await mkdir(path.join(rendersDir, 'samplepark.tr-1-deadbeefdeadbeef'));
+    await symlink(target2, path.join(root, '.link-deadbeef'));
     await mkdir(path.join(root, '.outgoing-deadbeef'));
     await writeFile(path.join(root, 'not-a-dir.tr'), 'x');
     await mkdir(path.join(root, 'Not A Domain'));
+    // A domain entry that links elsewhere, or to another domain's rendering, is no rendering.
+    await symlink(target2, path.join(root, 'samplepark.tr'));
+    await symlink('/etc', path.join(root, 'other.example'));
     assert.deepEqual(await listRenderedBrands(root), [domain]);
-    assert.deepEqual((await readdir(root)).sort(), ['Not A Domain', domain, 'not-a-dir.tr']);
+    assert.deepEqual((await readdir(rendersDir)).sort(), [path.basename(target2)]);
+    assert.deepEqual((await readdir(root)).sort(), [
+      AUTH_BRANDING_RENDERS_DIR,
+      'Not A Domain',
+      domain,
+      'not-a-dir.tr',
+      'other.example',
+      'samplepark.tr',
+    ]);
+    await rm(path.join(root, 'samplepark.tr'));
+
+    // A plain directory at a domain's entry (not a rendering of ours) is
+    // replaced by the link, never followed; so is a link elsewhere — and
+    // what it pointed at is untouched.
+    await rm(path.join(root, 'other.example'));
+    const elsewhere = await mkdtemp(path.join(tmpdir(), 'lamaste-elsewhere-'));
+    try {
+      await writeFile(path.join(elsewhere, 'keep.txt'), 'keep');
+      await symlink(elsewhere, path.join(root, 'other.example'));
+      await mkdir(path.join(root, 'samplepark.tr'));
+      await writeFile(path.join(root, 'samplepark.tr', 'brand.json'), '{"planted":true}');
+      for (const name of ['other.example', 'samplepark.tr']) {
+        await renderAuthBranding({
+          domain: name,
+          brand: BRAND,
+          revision: 1,
+          logo: null,
+          favicon: null,
+          locales,
+          autheliaVersion: PINNED,
+          root,
+        });
+        assert.ok((await lstat(path.join(root, name))).isSymbolicLink());
+        assert.equal(
+          JSON.parse(await readFile(path.join(root, name, 'brand.json'), 'utf-8')).domain,
+          name,
+        );
+      }
+      assert.equal(await readFile(path.join(elsewhere, 'keep.txt'), 'utf-8'), 'keep');
+      assert.deepEqual(await listRenderedBrands(root), [domain, 'other.example', 'samplepark.tr']);
+      // Removing one: its link and its rendering go, nothing else.
+      assert.equal(await removeAuthBranding('other.example', root), true);
+      assert.equal(await readFile(path.join(elsewhere, 'keep.txt'), 'utf-8'), 'keep');
+      assert.equal(await removeAuthBranding('samplepark.tr', root), true);
+    } finally {
+      await rm(elsewhere, { recursive: true, force: true });
+    }
+    assert.deepEqual(await listRenderedBrands(root), [domain]);
+    assert.deepEqual((await readdir(rendersDir)).sort(), [path.basename(target2)]);
 
     // rendered.json behind a link is not ours.
-    await rm(path.join(dir, AUTH_BRANDING_FILES.rendered));
+    const dir2 = path.join(root, target2);
+    await rm(path.join(dir2, AUTH_BRANDING_FILES.rendered));
     await writeFile(path.join(root, 'elsewhere.json'), JSON.stringify(rendered));
-    await symlink(path.join(root, 'elsewhere.json'), path.join(dir, AUTH_BRANDING_FILES.rendered));
+    await symlink(path.join(root, 'elsewhere.json'), path.join(dir2, AUTH_BRANDING_FILES.rendered));
     assert.equal(await readRenderedBrand(domain, root), null);
 
     assert.equal(await removeAuthBranding(domain, root), true);
     assert.equal(await removeAuthBranding(domain, root), false);
-    assert.equal(await lstat(dir).catch((err) => err.code), 'ENOENT');
+    assert.equal(await lstat(link).catch((err) => err.code), 'ENOENT');
+    assert.equal(await lstat(dir2).catch((err) => err.code), 'ENOENT');
     assert.equal(await readRenderedBrand(domain, root), null);
     assert.deepEqual(await listRenderedBrands(path.join(root, 'none')), []);
     await assert.rejects(

@@ -131,8 +131,17 @@ brand.json                     name, tagline, theme, accent, support — read by
   selectors are the pinned release's theme contract; a unit test pins them
   against a fixture of 4.39.28's `tailwind-themes.css`, so a pin bump that
   renames one fails the build, not the visitor.
-- Written atomically (temp → fsync → rename, directory fsync), the
-  directory replaced as a whole on change, pruned on brand removal.
+- Written as the web-tree store writes a plugin's shell: each rendering is
+  a directory of its own, `/var/www/lamaste/auth/.renders/<domain>-<revision>-<hex>/`
+  (every file fsynced, 0640; directories 0750), and `/var/www/lamaste/auth/<domain>`
+  is a **symbolic link** to the one that serves. A change renders beside
+  the old directory and replaces the link with one `rename` — nginx and
+  Gatekeeper see the old rendering or the new one, never none and never a
+  mix — then removes the old directory (renamed aside first, never deleted
+  through the served path). A brand's removal removes the link, then its
+  directory; the reconcile prunes `.renders/` entries nothing links to.
+  nginx's `root` resolves the link on every open (`disable_symlinks` is
+  `off` by default; the auth vhost must leave it so).
 
 ### The `auth.<domain>` vhost
 

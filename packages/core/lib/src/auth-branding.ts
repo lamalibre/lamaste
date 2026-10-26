@@ -74,14 +74,19 @@ export const AUTH_BRANDING_FAVICON_MAX_DIMENSION = 256;
 export const AUTH_BRANDING_ACCENT_RE = /^#[0-9a-f]{6}$/;
 
 /**
- * What a brand text may not carry: control characters (C0, DEL, C1),
- * bidirectional and other invisible format characters (a name that reads
- * one way and renders another), and the four characters that could be a
- * tag or an interpolation in Authelia's translation strings, some of which
- * carry `<policy>` tags and `{{…}}` placeholders.
+ * What a brand text may not carry: control characters (C0, DEL, C1), the
+ * soft hyphen (U+00AD), the Arabic letter mark (U+061C), zero-width and
+ * bidirectional marks (U+200B–U+200F), the line and paragraph separators
+ * and the bidi embeddings and overrides (U+2028–U+202E), word joiner and
+ * invisible operators (U+2060–U+2064), the bidi isolates (U+2066–U+2069),
+ * the byte-order mark (U+FEFF) — a name that reads one way and renders
+ * another — and the four characters that could be a tag or an
+ * interpolation in Authelia's translation strings, some of which carry
+ * `<policy>` tags and `{{…}}` placeholders.
  */
 // eslint-disable-next-line no-control-regex
-const BRAND_TEXT_FORBIDDEN_RE = /[\u0000-\u001f\u007f-\u009f؜​-‏‪-‮⁠⁦-⁩﻿<>{}]/u;
+const BRAND_TEXT_FORBIDDEN_RE =
+  /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff<>{}]/u;
 
 /** Why a brand text is refused, or null when it is fine. Never echoes the text. */
 export function brandTextProblem(value: unknown, maxLength: number): string | null {
