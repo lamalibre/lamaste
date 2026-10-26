@@ -147,6 +147,24 @@ for _ in $(seq 1 72); do
 done
 assert_eq "${AFTER_VERSION}" "${CANDIDATE}" "The panel is back on ${CANDIDATE}" || true
 
+# The panel answers /api/health before its start-up has rendered the domains
+# into Authelia, which restarts Authelia once more; compare the hosts only
+# after that rendering and once Authelia serves again.
+RENDERED="no"
+for _ in $(seq 1 30); do
+  if sudo journalctl -u lamalibre-lamaste-serverd --since "${UPDATE_STARTED}" --no-pager -o cat 2>/dev/null | grep -q '"msg":"Authelia domain access updated"'; then
+    RENDERED="yes"
+    break
+  fi
+  sleep 2
+done
+assert_eq "${RENDERED}" "yes" "The panel's start-up rendered the domains into Authelia" || true
+if wait_for_http "http://127.0.0.1:9091/api/health" 60; then
+  log_pass "Authelia serves again"
+else
+  log_fail "Authelia does not answer its health check after the update"
+fi
+
 UNIT=$(systemctl list-units --all --no-legend --plain 'lamalibre-lamaste-update-*' 2>/dev/null | awk '{print $1}' | tail -1)
 if [ -n "${UNIT}" ]; then
   RESULT=$(systemctl show -p Result --value "${UNIT}" 2>/dev/null || echo unknown)

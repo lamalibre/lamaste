@@ -569,7 +569,57 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-45",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "The panel's start-up rendered the domains into Authelia",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RENDERED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "The panel's start-up rendered the domains into Authelia"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Authelia serves again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia serves again"
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Authelia does not answer its health check after the update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia does not answer its health check after the update"
+          }
+        },
+        {
+          "id": "step-50",
           "label": "Set UNIT",
           "target": "local",
           "op": {
@@ -586,7 +636,7 @@
           ]
         },
         {
-          "id": "step-42",
+          "id": "step-51",
           "label": "Set RESULT",
           "target": "local",
           "op": {
@@ -603,7 +653,7 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-52",
           "label": "The update unit ${UNIT} ended in success",
           "target": "local",
           "continueOnError": true,
@@ -624,7 +674,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-53",
           "label": "The update unit finished (journal)",
           "target": "local",
           "op": {
@@ -634,7 +684,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-54",
           "label": "No trace of the update unit finishing",
           "target": "local",
           "op": {
@@ -644,14 +694,14 @@
           }
         }
       ],
-      "bash": "log_section \"POST /api/system/update to ${CANDIDATE}\"\n\nUPDATE_STARTED=\"$(date '+%Y-%m-%d %H:%M:%S')\"\nRESP=$(api_post \"system/update\" \"{\\\"version\\\":\\\"${CANDIDATE}\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"The update is accepted (202)\" || true\n\n# Six minutes: a redeploy takes about two, and rodeo stops a spec at ten.\nAFTER_VERSION=\"down\"\nfor _ in $(seq 1 72); do\n  sleep 5\n  AFTER_VERSION=$(panel_version)\n  [ \"${AFTER_VERSION}\" = \"${CANDIDATE}\" ] && break\ndone\nassert_eq \"${AFTER_VERSION}\" \"${CANDIDATE}\" \"The panel is back on ${CANDIDATE}\" || true\n\nUNIT=$(systemctl list-units --all --no-legend --plain 'lamalibre-lamaste-update-*' 2>/dev/null | awk '{print $1}' | tail -1)\nif [ -n \"${UNIT}\" ]; then\n  RESULT=$(systemctl show -p Result --value \"${UNIT}\" 2>/dev/null || echo unknown)\n  assert_eq \"${RESULT}\" \"success\" \"The update unit ${UNIT} ended in success\" || true\nelse\n  # A oneshot unit that succeeded is unloaded once it stopped; its journal stays.\n  if sudo journalctl --since \"${UPDATE_STARTED}\" --no-pager -o cat 2>/dev/null | grep -q \"Finished.*Lamaste update to ${CANDIDATE}\"; then\n    log_pass \"The update unit finished (journal)\"\n  else\n    log_fail \"No trace of the update unit finishing\"\n  fi\nfi\n\n# ===========================================================================\n# 3. After the update\n# ==========================================================================="
+      "bash": "log_section \"POST /api/system/update to ${CANDIDATE}\"\n\nUPDATE_STARTED=\"$(date '+%Y-%m-%d %H:%M:%S')\"\nRESP=$(api_post \"system/update\" \"{\\\"version\\\":\\\"${CANDIDATE}\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"The update is accepted (202)\" || true\n\n# Six minutes: a redeploy takes about two, and rodeo stops a spec at ten.\nAFTER_VERSION=\"down\"\nfor _ in $(seq 1 72); do\n  sleep 5\n  AFTER_VERSION=$(panel_version)\n  [ \"${AFTER_VERSION}\" = \"${CANDIDATE}\" ] && break\ndone\nassert_eq \"${AFTER_VERSION}\" \"${CANDIDATE}\" \"The panel is back on ${CANDIDATE}\" || true\n\n# The panel answers /api/health before its start-up has rendered the domains\n# into Authelia, which restarts Authelia once more; compare the hosts only\n# after that rendering and once Authelia serves again.\nRENDERED=\"no\"\nfor _ in $(seq 1 30); do\n  if sudo journalctl -u lamalibre-lamaste-serverd --since \"${UPDATE_STARTED}\" --no-pager -o cat 2>/dev/null | grep -q '\"msg\":\"Authelia domain access updated\"'; then\n    RENDERED=\"yes\"\n    break\n  fi\n  sleep 2\ndone\nassert_eq \"${RENDERED}\" \"yes\" \"The panel's start-up rendered the domains into Authelia\" || true\nif wait_for_http \"http://127.0.0.1:9091/api/health\" 60; then\n  log_pass \"Authelia serves again\"\nelse\n  log_fail \"Authelia does not answer its health check after the update\"\nfi\n\nUNIT=$(systemctl list-units --all --no-legend --plain 'lamalibre-lamaste-update-*' 2>/dev/null | awk '{print $1}' | tail -1)\nif [ -n \"${UNIT}\" ]; then\n  RESULT=$(systemctl show -p Result --value \"${UNIT}\" 2>/dev/null || echo unknown)\n  assert_eq \"${RESULT}\" \"success\" \"The update unit ${UNIT} ended in success\" || true\nelse\n  # A oneshot unit that succeeded is unloaded once it stopped; its journal stays.\n  if sudo journalctl --since \"${UPDATE_STARTED}\" --no-pager -o cat 2>/dev/null | grep -q \"Finished.*Lamaste update to ${CANDIDATE}\"; then\n    log_pass \"The update unit finished (journal)\"\n  else\n    log_fail \"No trace of the update unit finishing\"\n  fi\nfi\n\n# ===========================================================================\n# 3. After the update\n# ==========================================================================="
     },
     {
       "id": "the-root-helper-is-the-candidate-s",
       "label": "The root helper is the candidate's",
       "steps": [
         {
-          "id": "step-46",
+          "id": "step-55",
           "label": "Set PRIV_AFTER",
           "target": "local",
           "op": {
@@ -668,7 +718,7 @@
           ]
         },
         {
-          "id": "step-47",
+          "id": "step-56",
           "label": "lamaste-priv was replaced by the update",
           "target": "local",
           "op": {
@@ -678,7 +728,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-57",
           "label": "lamaste-priv is still the one ${BEFORE_VERSION} installed",
           "target": "local",
           "op": {
@@ -688,7 +738,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-58",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -705,7 +755,7 @@
           ]
         },
         {
-          "id": "step-50",
+          "id": "step-59",
           "label": "It refuses a vhost under a ${BEFORE_VERSION} name",
           "target": "local",
           "continueOnError": true,
@@ -733,7 +783,7 @@
       "label": "The vhosts under the candidate's names, link state kept",
       "steps": [
         {
-          "id": "step-51",
+          "id": "step-60",
           "label": "${ON_FQDN}: renamed to its full hostname, still linked",
           "target": "local",
           "continueOnError": true,
@@ -754,7 +804,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-61",
           "label": "${OFF_FQDN}: renamed, still not linked",
           "target": "local",
           "continueOnError": true,
@@ -775,7 +825,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-62",
           "label": "The auth portal: lamalibre-lamaste-auth-${DOMAIN}, linked",
           "target": "local",
           "continueOnError": true,
@@ -796,7 +846,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-63",
           "label": "No ${BEFORE_VERSION} name is left, as a file or a link",
           "target": "local",
           "continueOnError": true,
@@ -817,7 +867,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-64",
           "label": "nginx -t passes",
           "target": "local",
           "op": {
@@ -827,7 +877,7 @@
           }
         },
         {
-          "id": "step-56",
+          "id": "step-65",
           "label": "nginx -t fails after the update",
           "target": "local",
           "op": {
@@ -837,7 +887,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-66",
           "label": "Every host answers as before (${BEFORE})",
           "target": "local",
           "continueOnError": true,
@@ -865,7 +915,7 @@
       "label": "One domain; every user of ${BEFORE_VERSION} its member",
       "steps": [
         {
-          "id": "step-58",
+          "id": "step-67",
           "label": "GET /api/domains",
           "target": "host",
           "op": {
@@ -883,7 +933,7 @@
           ]
         },
         {
-          "id": "step-59",
+          "id": "step-68",
           "label": "One domain",
           "target": "local",
           "continueOnError": true,
@@ -905,7 +955,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-69",
           "label": "…the primary, ${DOMAIN}, active",
           "target": "local",
           "continueOnError": true,
@@ -927,7 +977,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-70",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -945,7 +995,7 @@
           ]
         },
         {
-          "id": "step-62",
+          "id": "step-71",
           "label": "The same users as before the update",
           "target": "local",
           "continueOnError": true,
@@ -966,7 +1016,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-72",
           "label": "…each a member of ${DOMAIN}, and of nothing else",
           "target": "local",
           "continueOnError": true,
@@ -994,7 +1044,7 @@
       "label": "Authelia and Gatekeeper enforce membership",
       "steps": [
         {
-          "id": "step-64",
+          "id": "step-73",
           "label": "Set AUTHELIA_POLICY",
           "target": "local",
           "op": {
@@ -1011,7 +1061,7 @@
           ]
         },
         {
-          "id": "step-65",
+          "id": "step-74",
           "label": "Authelia's access_control denies by default",
           "target": "local",
           "continueOnError": true,
@@ -1032,7 +1082,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-75",
           "label": "Gatekeeper's domains.json names ${DOMAIN}",
           "target": "local",
           "op": {
@@ -1042,7 +1092,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-76",
           "label": "domains.json is missing or does not name ${DOMAIN}",
           "target": "local",
           "op": {
@@ -1052,7 +1102,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-77",
           "label": "Authelia and Gatekeeper are running",
           "target": "local",
           "continueOnError": true,
@@ -1080,7 +1130,7 @@
       "label": "The panel logged no error since the update",
       "steps": [
         {
-          "id": "step-69",
+          "id": "step-78",
           "label": "Set ERRORS",
           "target": "local",
           "op": {
@@ -1097,7 +1147,7 @@
           ]
         },
         {
-          "id": "step-70",
+          "id": "step-79",
           "label": "No level ≥ 50 line in the panel's journal since ${UPDATE_STARTED}",
           "target": "local",
           "continueOnError": true,
