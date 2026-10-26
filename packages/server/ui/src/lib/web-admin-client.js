@@ -63,6 +63,14 @@ function removalQuery({ force = false, purge = false } = {}) {
 }
 
 /** `/api/domains/<name><rest>`. */
+/** The body of a brand asset upload: the base64 data and, when given, the revision it is for. */
+function brandingAssetBody(data, options) {
+  return {
+    data,
+    ...(Number.isInteger(options?.ifRevision) ? { ifRevision: options.ifRevision } : {}),
+  };
+}
+
 function domainPath(name, rest = '') {
   return `/api/domains/${encodeURIComponent(name)}${rest}`;
 }
@@ -107,6 +115,18 @@ export const webAdminClient = {
   removeDomainMember: (name, user) =>
     jsonDelete(domainPath(name, `/members/${encodeURIComponent(user)}`)),
   setPluginDomain: (name, domain) => jsonPut(pluginPath(name, 'domain'), { domain }),
+
+  // --- A domain's brand on its auth pages ---
+  getDomainBranding: (name) => apiFetch(domainPath(name, '/branding')),
+  updateDomainBranding: (name, fields) => jsonPut(domainPath(name, '/branding'), fields),
+  removeDomainBranding: (name) => jsonDelete(domainPath(name, '/branding')),
+  setDomainBrandingLogo: (name, data, options) =>
+    jsonPut(domainPath(name, '/branding/logo'), brandingAssetBody(data, options)),
+  removeDomainBrandingLogo: (name) => jsonDelete(domainPath(name, '/branding/logo')),
+  setDomainBrandingFavicon: (name, data, options) =>
+    jsonPut(domainPath(name, '/branding/favicon'), brandingAssetBody(data, options)),
+  removeDomainBrandingFavicon: (name) => jsonDelete(domainPath(name, '/branding/favicon')),
+  getDomainBrandingPreview: (name) => apiFetch(domainPath(name, '/branding/preview')),
 
   // --- Invitations ---
   getInvitations: () => apiFetch('/api/invitations'),

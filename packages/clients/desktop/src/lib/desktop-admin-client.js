@@ -86,6 +86,32 @@ export const desktopAdminClient = {
   removeDomainMember: (name, user) => invokeRefusable('admin_remove_domain_member', { name, user }),
   setPluginDomain: (name, domain) => invokeRefusable('admin_set_plugin_domain', { name, domain }),
 
+  // --- A domain's brand on its auth pages ---
+  getDomainBranding: (name) => invokeRefusable('admin_get_domain_branding', { name }),
+  updateDomainBranding: (name, fields) =>
+    invokeRefusable('admin_update_domain_branding', { name, fields }),
+  removeDomainBranding: (name) => invokeRefusable('admin_remove_domain_branding', { name }),
+  setDomainBrandingLogo: (name, data, options) =>
+    invokeRefusable('admin_set_domain_branding_asset', {
+      name,
+      kind: 'logo',
+      data,
+      ifRevision: options?.ifRevision ?? null,
+    }),
+  removeDomainBrandingLogo: (name) =>
+    invokeRefusable('admin_remove_domain_branding_asset', { name, kind: 'logo' }),
+  setDomainBrandingFavicon: (name, data, options) =>
+    invokeRefusable('admin_set_domain_branding_asset', {
+      name,
+      kind: 'favicon',
+      data,
+      ifRevision: options?.ifRevision ?? null,
+    }),
+  removeDomainBrandingFavicon: (name) =>
+    invokeRefusable('admin_remove_domain_branding_asset', { name, kind: 'favicon' }),
+  getDomainBrandingPreview: (name) =>
+    invokeRefusable('admin_get_domain_branding_preview', { name }),
+
   // --- Invitations ---
   getInvitations: () => invoke('admin_get_invitations'),
   createInvitation: (data) => invokeRefusable('admin_create_invitation', { data }),
