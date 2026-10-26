@@ -13,6 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertProductionBundle } from '../../../../scripts/assert-production-bundle.js';
+import { workspaceVersions, writePinnedManifest } from './pin-release.js';
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(thisDir, '..');
@@ -24,6 +25,10 @@ async function main() {
   await rm(vendorDir, { recursive: true, force: true });
   await mkdir(vendorDir, { recursive: true });
 
+  // Each vendored manifest names this release's own packages exactly
+  // (pin-release.js), so the relay's `npm install` never mixes releases.
+  const versions = await workspaceVersions(monorepoRoot);
+
   // --- lamaste-serverd: package.json + src/ ---
   const serverSrc = join(monorepoRoot, 'packages', 'server', 'daemon');
   if (!existsSync(serverSrc)) {
@@ -32,7 +37,11 @@ async function main() {
 
   const serverDest = join(vendorDir, 'serverd');
   await mkdir(serverDest, { recursive: true });
-  await cp(join(serverSrc, 'package.json'), join(serverDest, 'package.json'));
+  await writePinnedManifest(
+    join(serverSrc, 'package.json'),
+    join(serverDest, 'package.json'),
+    versions,
+  );
   await cp(join(serverSrc, 'src'), join(serverDest, 'src'), {
     recursive: true,
   });
@@ -49,7 +58,11 @@ async function main() {
   }
   const serverCliDest = join(vendorDir, 'server');
   await mkdir(serverCliDest, { recursive: true });
-  await cp(join(serverCliSrc, 'package.json'), join(serverCliDest, 'package.json'));
+  await writePinnedManifest(
+    join(serverCliSrc, 'package.json'),
+    join(serverCliDest, 'package.json'),
+    versions,
+  );
   await cp(join(serverCliSrc, 'bin'), join(serverCliDest, 'bin'), { recursive: true });
   await cp(join(serverCliSrc, 'src'), join(serverCliDest, 'src'), { recursive: true });
   console.error('Bundled vendor/server from lamaste-server CLI (package.json + bin/ + src/)');
@@ -81,7 +94,11 @@ async function main() {
   }
   const gatekeeperDest = join(vendorDir, 'gatekeeper');
   await mkdir(gatekeeperDest, { recursive: true });
-  await cp(join(gatekeeperSrc, 'package.json'), join(gatekeeperDest, 'package.json'));
+  await writePinnedManifest(
+    join(gatekeeperSrc, 'package.json'),
+    join(gatekeeperDest, 'package.json'),
+    versions,
+  );
   await cp(gatekeeperDist, join(gatekeeperDest, 'dist'), { recursive: true });
   console.error('Bundled vendor/gatekeeper (package.json + dist/)');
 
