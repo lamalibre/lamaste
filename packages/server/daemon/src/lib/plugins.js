@@ -628,6 +628,13 @@ export function uninstallPlugin(name, logger) {
     const { removeRelayHooks } = await import('./plugin-hooks.js');
     await removeRelayHooks(name, logger);
 
+    // The OIDC clients it declares, read while its manifest is installed:
+    // their grants go with it below.
+    const { collectPluginOidcClients } = await import('./plugin-oidc.js');
+    const clientIds = (await collectPluginOidcClients().catch(() => []))
+      .filter((c) => c.plugin === name)
+      .map((c) => c.id);
+
     // Uninstall the npm package
     logger.info({ name, packageName: plugin.packageName }, 'Uninstalling plugin package');
     await execa('npm', ['uninstall', plugin.packageName], {
@@ -701,6 +708,24 @@ export function uninstallPlugin(name, logger) {
 
     logger.info({ name }, 'Plugin uninstalled');
     await syncOidcClientsBestEffort(logger);
+
+    // Grants on its OIDC clients end with it: client ids are chosen, not
+    // random, so a later install of the plugin (or another declaring the
+    // same id) would otherwise admit whoever was granted before.
+    const { revokeOidcClientGrants } = await import('./owned-groups.js');
+    const revoked = await revokeOidcClientGrants(clientIds);
+    if (!revoked.ok) {
+      logger.warn(
+        { name, err: revoked.error },
+        "Grants on the uninstalled plugin's OIDC clients stayed — revoke them in Gatekeeper",
+      );
+    } else if (revoked.revoked > 0) {
+      logger.info({ name, revoked: revoked.revoked }, 'Grants on its OIDC clients revoked');
+      const { syncDomainAccess } = await import('./domains.js');
+      await syncDomainAccess({ logger }).catch((err) => {
+        logger.warn({ err: err.message }, 'Rendering domain access after an uninstall failed');
+      });
+    }
     return { ok: true, name };
   });
 }

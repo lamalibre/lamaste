@@ -887,6 +887,15 @@ export async function identityTick(logger) {
       } catch (err) {
         logger?.warn({ err: err.message }, 'Could not render domain access');
       }
+      // users.yml touched once a minute: a reload Authelia skipped (its
+      // cooldown) or that a restart of the panel cut short is never missing
+      // for longer, and a hand edit gets Lamaste's groups back.
+      try {
+        const { touchUsersFile } = await import('./authelia.js');
+        await touchUsersFile();
+      } catch (err) {
+        logger?.warn({ err: err.message }, 'Could not touch users.yml');
+      }
       // The OIDC provider too, as the plugins and the members now say: a
       // plugin moved to another domain whose sync failed is healed here.
       // Compare-first, so a steady relay writes nothing.

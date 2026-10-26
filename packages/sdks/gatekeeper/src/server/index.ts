@@ -35,6 +35,7 @@ import { grantRoutes } from './routes/grants.js';
 import { diagnosticRoutes } from './routes/diagnostic.js';
 import { accessRequestRoutes } from './routes/access-request.js';
 import { principalRoutes } from './routes/principals.js';
+import { secretMatches } from '../lib/secret.js';
 
 const dataDir = process.env.LAMALIBRE_LAMASTE_DATA_DIR ?? DEFAULT_DATA_DIR;
 const tunnelsPath = path.join(dataDir, TUNNELS_FILE);
@@ -332,7 +333,7 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   await server.register(async (scope) => {
     scope.addHook('onRequest', async (request, reply) => {
       const auth = request.headers['x-gatekeeper-secret'];
-      if (auth !== apiSecret) {
+      if (!secretMatches(auth, apiSecret)) {
         return reply.code(401).send({ error: 'Unauthorized' });
       }
     });

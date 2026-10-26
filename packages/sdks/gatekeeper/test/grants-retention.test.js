@@ -33,6 +33,7 @@ test('access grants are created unused; a local plugin grant starts unused too',
   for (const [resourceType, resourceId, context] of [
     ['tunnel', 't1', {}],
     ['site', 's1', {}],
+    ['oidc-client', 'feria-cli', {}],
     ['plugin', 'herd', { target: 'agent:r730' }],
     ['plugin', 'shell', { target: 'local' }],
   ]) {
@@ -87,6 +88,7 @@ test('migration 0004 un-consumes every grant but local plugin grants', async () 
      VALUES (?, 'user', 'u', ?, ?, ?, 1, ?, ?)`,
   );
   insert.run('tunnel', 'tunnel', 't', '{}', LONG_AGO, LONG_AGO);
+  insert.run('oidc', 'oidc-client', 'c', '{}', LONG_AGO, LONG_AGO);
   insert.run('agent', 'plugin', 'p', '{"target":"agent:r730"}', LONG_AGO, LONG_AGO);
   insert.run('local', 'plugin', 'p', '{"target":"local"}', LONG_AGO, LONG_AGO);
   insert.run('legacy-local', 'plugin', 'p', '{}', LONG_AGO, LONG_AGO);
@@ -99,6 +101,7 @@ test('migration 0004 un-consumes every grant but local plugin grants', async () 
   );
   assert.deepEqual(used, {
     tunnel: [0, null],
+    oidc: [0, null],
     agent: [0, null],
     local: [1, LONG_AGO],
     'legacy-local': [1, LONG_AGO],

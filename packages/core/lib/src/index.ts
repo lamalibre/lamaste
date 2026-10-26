@@ -361,21 +361,29 @@ export type {
 // users.yml so a change needs no Authelia restart (external members)
 export {
   ADMIN_GROUP_NAME_RE,
+  DOMAIN_GROUP_KEY_RE,
   OWNED_GROUP_PREFIX,
   externalGroup,
+  foldGroupName,
   isAssignableGroupName,
+  isDomainGroupKey,
   isLamasteOwnedGroup,
   memberGroup,
   mergeOwnedGroups,
   oidcClientGroup,
+  reachedOidcClients,
   renderOwnedGroups,
+  siteGroup,
 } from './owned-groups.js';
 export type {
+  DeviceCodeClient,
   GroupsHolder,
+  MergeOwnedGroupsOptions,
   OwnedGroupsClient,
   OwnedGroupsDomain,
   OwnedGroupsHost,
   OwnedGroupsInput,
+  OwnedGroupsSite,
 } from './owned-groups.js';
 
 // Authelia's session cookie: its name, how Gatekeeper reads it, and the

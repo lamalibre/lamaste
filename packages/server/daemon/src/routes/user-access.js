@@ -4,6 +4,7 @@ import { getConfig } from '../lib/config.js';
 import { ensureSessionSecret } from '../lib/session.js';
 import { createUserSession } from '../lib/user-access-session.js';
 import { findDirectoryUser, reconcileDirectory } from '../lib/directory.js';
+import { isPrimaryMember } from '../lib/domains.js';
 import {
   createGrant,
   listGrants,
@@ -166,6 +167,17 @@ export async function userAccessPublicRoutes(fastify, _opts) {
     if (!username) {
       return reply.code(401).send({ error: 'Authentication required' });
     }
+    // Authelia admits external members on the portal too (its rule for
+    // `auth.<domain>`); desktop user access is for members of the primary
+    // domain only.
+    let holder = await findDirectoryUser(username);
+    if (!holder) {
+      await reconcileDirectory({ actor: 'lamaste', logger: request.log });
+      holder = await findDirectoryUser(username);
+    }
+    if (!holder || holder.status !== 'active' || !(await isPrimaryMember(holder.userId))) {
+      return reply.code(403).send({ error: 'Desktop access is for members of this domain' });
+    }
 
     let query;
     try {
@@ -245,7 +257,7 @@ export async function userAccessPublicRoutes(fastify, _opts) {
         await reconcileDirectory({ actor: 'lamaste', logger: request.log });
         user = await findDirectoryUser(username);
       }
-      if (!user || user.status !== 'active') {
+      if (!user || user.status !== 'active' || !(await isPrimaryMember(user.userId))) {
         throw Object.assign(new Error('Invalid or expired token'), { statusCode: 401 });
       }
       const sessionSecret = await ensureSessionSecret();

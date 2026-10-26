@@ -57,8 +57,8 @@ import { readRegistryCredentialConfig } from './registry-credential.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
-/** The names of the domains a rendering read. */
-const names = (domains) => domains.map((d) => d.name);
+/** The domains a rendering read, as the OIDC provider's policies name them: name and group key. */
+const keyed = (domains) => domains.map(({ name, groupKey }) => ({ name, groupKey }));
 
 /**
  * The OIDC clients every installed plugin declares, tagged with the plugin
@@ -213,7 +213,7 @@ export async function syncOidcClients(logger) {
       return {
         served: plan.served,
         reconciled: secrets,
-        result: await updateOidcProvider(names(domains), plan.served, {
+        result: await updateOidcProvider(keyed(domains), plan.served, {
           secretDigests: secrets.digests,
           scopes: plan.scopes,
         }),
@@ -316,7 +316,7 @@ export async function rotatePluginOidcClientSecret(pluginName, clientId, logger)
       const secret = await rotateOidcClientSecret(STATE_DIR, clientId);
       if (client.enabled) {
         const { served, scopes } = await planOidcClients();
-        await updateOidcProvider(names(domains), served, {
+        await updateOidcProvider(keyed(domains), served, {
           secretDigests: await readOidcClientSecretDigests(STATE_DIR),
           scopes,
         });

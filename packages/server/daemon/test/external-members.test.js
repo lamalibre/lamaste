@@ -5,9 +5,10 @@
  * each other; the groups Lamaste owns in users.yml — membership by kind,
  * host groups of restricted tunnels and static sites, OIDC client grants —
  * rendered from state.db and Gatekeeper's grants, kept by every edit,
- * hidden from every answer, and never restarting Authelia; only a
- * structural change rewrites its configuration. Authelia is a users file
- * and a recorder, Gatekeeper a fake (`fake-gatekeeper.js`), Feria a
+ * hidden from every answer, and never restarting Authelia — but for a
+ * narrowing that reaches a device-code OIDC client, whose sessions must end;
+ * only a structural change rewrites its configuration. Authelia is a users
+ * file and a recorder, Gatekeeper a fake (`fake-gatekeeper.js`), Feria a
  * stand-in for registry revocations.
  */
 
@@ -27,8 +28,9 @@ import { installFakeGatekeeper } from './fake-gatekeeper.js';
 
 const HASH = '$2b$12$abcdefghijklmnopqrstuuJ2s4L6rjpDLHi3qL7Nn5D0o3M6a1g2a';
 const D = 'samplepark.tr';
-const MEMBER = `lamaste:member@${D}`;
-const EXTERNAL = `lamaste:external@${D}`;
+/** The domain's member and external groups, named by its random group key (set in `before`). */
+let MEMBER;
+let EXTERNAL;
 const PLUGIN_PACKAGE = '@lamalibre/e2e-external-fixture-server';
 
 /** A plugin with a user-facing OIDC client and a service client. */
@@ -42,6 +44,15 @@ const fixtureManifest = {
       grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
       scopes: ['openid', 'profile'],
       audience: ['https://fixture.{domain}'],
+    },
+    {
+      // A user-facing client that signs in with the authorization code
+      // flow — not the registry's, not a device-code client.
+      id: 'e2e-external-fixture-web',
+      grantTypes: ['authorization_code'],
+      scopes: ['openid', 'profile'],
+      redirectUris: ['https://fixture.example.org/callback'],
+      audience: ['https://fixture.{domain}/web'],
     },
     {
       id: 'e2e-external-fixture-service',
@@ -66,6 +77,9 @@ let configChanges = 0;
 /** The rendered configuration sections, as JSON. */
 let configNow = null;
 let restarts = 0;
+/** Authelia restarts audited by the rendering, with their reason. */
+const restartReasons = async () =>
+  (await audits('authelia.restarted')).map((a) => a.details.reason).reverse();
 const quietLog = { info() {}, warn() {}, error() {}, debug() {} };
 
 const person = (displayname, email, groups = []) => ({
@@ -162,7 +176,7 @@ before(async () => {
     // What core's updateDomainAccess compares: the rendered sections.
     domainAccess: async (access) => {
       const sections = JSON.stringify([
-        renderSessionCookies(access.domains),
+        renderSessionCookies(access.domains.map((d) => d.name)),
         renderGroupAccessControl(access.domains, access.sites),
       ]);
       const changed = sections !== configNow;
@@ -197,6 +211,9 @@ before(async () => {
 
   await lib.reconcileDirectory({ confirmDelayMs: 0 });
   await lib.ensurePrimaryDomain();
+  const key = await lib.domainGroupKey(D);
+  MEMBER = `lamaste:m:${key}`;
+  EXTERNAL = `lamaste:x:${key}`;
   await lib.syncDomainAccess();
 
   const { default: Fastify } = await import('fastify');
@@ -262,8 +279,17 @@ test('a membership’s kind: made external through the members API, audited, pro
   });
   assert.deepEqual(await groupsOf('ext'), [EXTERNAL]);
   assert.deepEqual(await groupsOf('admin'), ['admins', MEMBER]);
-  assert.equal(restarts, 0, 'no membership change restarts Authelia');
   assert.equal(configChanges, 1, 'the configuration was written once, at the first rendering');
+  // ext was a member of a domain serving a device-code client
+  // (e2e-external-fixture-cli): Authelia's device flow checks the groups a
+  // session last refreshed, so the narrowing ends sessions — once.
+  assert.equal(restarts, 1);
+  assert.deepEqual(await restartReasons(), ['device-code']);
+  assert.deepEqual(
+    (await audits('directory.access.narrowed')).map((a) => a.details),
+    [{ userId: ext, groups: 1 }],
+    'audited by id and a count, never a username or a group',
+  );
   assert.equal(
     (await call('PUT', `/api/domains/${D}/members/ext`, { kind: 'guest' })).statusCode,
     400,
@@ -339,7 +365,9 @@ test('Authelia groups and external memberships exclude each other', async () => 
   assert.deepEqual(await lib.invitationDomainsNow((await lib.readInvitations()).at(-1)), [
     { name: D, kind: 'external' },
   ]);
-  assert.equal(restarts, 0);
+  // Made a member and back: only narrowing restarts — ext turned external
+  // again lost the member group, which reached the device-code client.
+  assert.equal(restarts, 2);
 });
 
 test('the groups Lamaste owns: hidden from every answer, kept by every edit, a stray one removed', async () => {
@@ -368,7 +396,7 @@ test('the groups Lamaste owns: hidden from every answer, kept by every edit, a s
   // A write from before a rendering never brings back what it removed: the
   // users file keeps the groups the rendering last decided.
   const stale = { users: await usersNow() };
-  stale.users.onur.groups = [MEMBER, 'stray.samplepark.tr', 'lamaste:external@samplepark.tr'];
+  stale.users.onur.groups = [MEMBER, 'stray.samplepark.tr', EXTERNAL];
   await lib.writeUsers(stale);
   assert.deepEqual(await groupsOf('onur'), [MEMBER]);
   // Planted outside the panel: the next rendering removes it.
@@ -378,7 +406,7 @@ test('the groups Lamaste owns: hidden from every answer, kept by every edit, a s
   );
   await lib.syncDomainAccess();
   assert.deepEqual(await groupsOf('onur'), [MEMBER]);
-  assert.equal(restarts, 0);
+  assert.equal(restarts, 2, 'nothing narrowed: no restart');
 });
 
 test('host groups: an external member granted a restricted tunnel holds its group — directly or through a Lamaste group', async () => {
@@ -429,12 +457,21 @@ test('host groups: an external member granted a restricted tunnel holds its grou
   await call('POST', '/api/gatekeeper/groups/clients/members', { usernames: ['ext'] });
   assert.deepEqual(await groupsOf('ext'), ['corral.samplepark.tr', EXTERNAL]);
 
-  // Gatekeeper unreachable: what external members hold now is kept.
+  // Gatekeeper unreachable: external members hold no granted host until it
+  // answers again (fail closed) — the membership groups are rendered all
+  // the same, and the failure is audited.
   gatekeeper.state.unreachable = true;
-  const kept = await lib.syncDomainAccess({ logger: quietLog });
+  await assert.rejects(lib.syncDomainAccess({ logger: quietLog }), /grants: .*could not be read/);
   gatekeeper.state.unreachable = false;
-  assert.match(kept.warnings[0], /could not be read/);
-  assert.deepEqual(await groupsOf('ext'), ['corral.samplepark.tr', EXTERNAL]);
+  assert.deepEqual(await groupsOf('ext'), [EXTERNAL]);
+  assert.deepEqual(await groupsOf('onur'), [MEMBER]);
+  assert.deepEqual((await audits('domain.render.failed')).at(0).details, { steps: ['grants'] });
+  await lib.syncDomainAccess({ logger: quietLog });
+  assert.deepEqual(
+    await groupsOf('ext'),
+    ['corral.samplepark.tr', EXTERNAL],
+    'back once it answers',
+  );
 
   // The tunnel no longer restricted: its group goes, without being asked.
   await lib.writeTunnels([
@@ -446,7 +483,20 @@ test('host groups: an external member granted a restricted tunnel holds its grou
   await lib.writeTunnels([tunnel('t-corral', 'corral.samplepark.tr', 'restricted')]);
   await settle();
   assert.deepEqual(await groupsOf('ext'), ['corral.samplepark.tr', EXTERNAL]);
-  assert.equal(restarts, 0, 'no grant or tunnel change restarts Authelia');
+  // A disabled tunnel serves nobody: its grants name no one (a web surface
+  // moved off a tunnel leaves it disabled on the same hostname).
+  await lib.writeTunnels([
+    { ...tunnel('t-corral', 'corral.samplepark.tr', 'restricted'), enabled: false },
+  ]);
+  await settle();
+  assert.deepEqual(await groupsOf('ext'), [EXTERNAL]);
+  // A tunnel without an access mode is restricted, as Gatekeeper reads it.
+  const legacy = tunnel('t-corral', 'corral.samplepark.tr', 'restricted');
+  delete legacy.accessMode;
+  await lib.writeTunnels([legacy]);
+  await settle();
+  assert.deepEqual(await groupsOf('ext'), ['corral.samplepark.tr', EXTERNAL]);
+  assert.equal(restarts, 2, 'no host grant or tunnel change restarts Authelia');
 });
 
 test('a static site’s listed users are its host group: editing the list rewrites no configuration, protecting a site does', async () => {
@@ -460,21 +510,23 @@ test('a static site’s listed users are its host group: editing the list rewrit
   const changesBefore = configChanges;
   await lib.syncDomainAccess({ sites: [site(['ext', 'onur', 'nobody'])] });
   assert.equal(configChanges, changesBefore + 1, 'a newly protected site is a structural change');
-  assert.ok((await groupsOf('ext')).includes('docs.samplepark.tr'));
-  assert.ok((await groupsOf('onur')).includes('docs.samplepark.tr'));
+  // The site's group is named by its id, never its hostname.
+  assert.ok((await groupsOf('ext')).includes('lamaste:s:s-docs'));
+  assert.ok((await groupsOf('onur')).includes('lamaste:s:s-docs'));
+  assert.ok(!(await groupsOf('onur')).includes('docs.samplepark.tr'));
   assert.deepEqual(
-    rendered.sites.map((s) => s.fqdn),
-    ['docs.samplepark.tr'],
+    rendered.sites.map((s) => [s.id, s.fqdn]),
+    [['s-docs', 'docs.samplepark.tr']],
   );
 
   await lib.syncDomainAccess({ sites: [site(['onur'])] });
   assert.equal(configChanges, changesBefore + 1, 'the rules name the group, not the people');
-  assert.ok(!(await groupsOf('ext')).includes('docs.samplepark.tr'));
-  assert.ok((await groupsOf('onur')).includes('docs.samplepark.tr'));
+  assert.ok(!(await groupsOf('ext')).includes('lamaste:s:s-docs'));
+  assert.ok((await groupsOf('onur')).includes('lamaste:s:s-docs'));
 
   await lib.syncDomainAccess({ sites: [] });
-  assert.ok(!(await groupsOf('onur')).includes('docs.samplepark.tr'));
-  assert.equal(restarts, 0);
+  assert.ok(!(await groupsOf('onur')).includes('lamaste:s:s-docs'));
+  assert.equal(restarts, 2, 'a site list reaches no OIDC client: no restart');
 });
 
 test('OIDC client grants: a user-facing client of an installed plugin only; an external member granted holds its group', async () => {
@@ -509,12 +561,23 @@ test('OIDC client grants: a user-facing client of an installed plugin only; an e
   const granted = gatekeeper.grants.find(
     (g) => g.principalId === 'ext' && g.resourceType === 'oidc-client',
   );
+  // Revoked: the group goes — and, the client signing in with the device
+  // code, Authelia restarts so no session keeps the group it last read.
   await call('DELETE', `/api/gatekeeper/grants/${granted.grantId}`);
   assert.ok(!(await groupsOf('ext')).includes('lamaste:oidc@e2e-external-fixture-cli'));
-  assert.equal(restarts, 0);
+  assert.equal(restarts, 3);
+  // The same for a client without the device flow: no restart.
+  assert.equal((await grant('e2e-external-fixture-web')).statusCode, 201);
+  assert.ok((await groupsOf('ext')).includes('lamaste:oidc@e2e-external-fixture-web'));
+  const web = gatekeeper.grants.find(
+    (g) => g.principalId === 'ext' && g.resourceId === 'e2e-external-fixture-web',
+  );
+  await call('DELETE', `/api/gatekeeper/grants/${web.grantId}`);
+  assert.ok(!(await groupsOf('ext')).includes('lamaste:oidc@e2e-external-fixture-web'));
+  assert.equal(restarts, 3);
 });
 
-test('registry tokens: a member made external, or an external member losing the client grant, is revoked', async () => {
+test('registry tokens: revoked when no sign-in client of the registry admits them any more — the registry’s own clients only', async () => {
   const revoked = [];
   const feria = createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
@@ -525,11 +588,24 @@ test('registry tokens: a member made external, or an external member losing the 
     res.end(JSON.stringify({ revoked: [] }));
   });
   await new Promise((resolve) => feria.listen(0, '127.0.0.1', resolve));
+  const registryUrl = `http://127.0.0.1:${feria.address().port}`;
+  // The registry's sign-in is the client whose audience is the registry:
+  // e2e-external-fixture-cli here. The web client is any other client.
+  const manifestFile = path.join(
+    stateDir,
+    'node_modules',
+    ...PLUGIN_PACKAGE.split('/'),
+    'lamaste-plugin.json',
+  );
+  const original = await readFile(manifestFile, 'utf-8');
+  const manifest = JSON.parse(original);
+  manifest.oidcClients[0].audience = [registryUrl];
+  await writeFile(manifestFile, JSON.stringify(manifest));
   const registry = await import('../src/lib/registry-credential.js');
   try {
     await registry.writeRegistryCredentialConfig({
       provider: 'feria',
-      registryUrl: `http://127.0.0.1:${feria.address().port}/`,
+      registryUrl: `${registryUrl}/`,
       scope: '@lamalibre',
       auth: { kind: 'token', token: 'feria_test_service_token_000000' },
       configuredAt: new Date().toISOString(),
@@ -544,31 +620,47 @@ test('registry tokens: a member made external, or an external member losing the 
     assert.equal(made.statusCode, 200, made.body);
     assert.deepEqual(revoked, ['user:onur']);
 
-    // An external member granted the user-facing client keeps theirs …
-    await call('POST', '/api/gatekeeper/grants', {
-      principalType: 'user',
-      principalId: 'onur',
-      resourceType: 'oidc-client',
-      resourceId: 'e2e-external-fixture-cli',
-    });
+    const give = (resourceId) =>
+      call('POST', '/api/gatekeeper/grants', {
+        principalType: 'user',
+        principalId: 'onur',
+        resourceType: 'oidc-client',
+        resourceId,
+      });
+    // Another client granted is not the registry's sign-in: revoked on the
+    // next narrowing all the same.
+    await give('e2e-external-fixture-web');
+    await call('PUT', `/api/domains/${D}/members/onur`, { kind: 'member' });
+    revoked.length = 0;
+    await call('PUT', `/api/domains/${D}/members/onur`, { kind: 'external' });
+    assert.deepEqual(revoked, ['user:onur'], 'a grant on another client does not reach Feria');
+
+    // Granted the registry's own client: kept …
+    await give('e2e-external-fixture-cli');
     revoked.length = 0;
     await call('PUT', `/api/domains/${D}/members/onur`, { kind: 'member' });
     await call('PUT', `/api/domains/${D}/members/onur`, { kind: 'external' });
-    assert.deepEqual(revoked, [], 'granted the client: still reaches the registry');
-    // … until the grant goes.
+    assert.deepEqual(revoked, [], 'granted the registry’s client: still reaches the registry');
+    // … until the grant goes — revoked with Gatekeeper's own CLI, past the
+    // panel: the next rendering (the identity tick's) finds the narrowing.
     const granted = gatekeeper.grants.find(
-      (g) => g.principalId === 'onur' && g.resourceType === 'oidc-client',
+      (g) => g.principalId === 'onur' && g.resourceId === 'e2e-external-fixture-cli',
     );
-    await call('DELETE', `/api/gatekeeper/grants/${granted.grantId}`);
+    gatekeeper.grants.splice(gatekeeper.grants.indexOf(granted), 1);
+    await lib.syncDomainAccess({ logger: quietLog });
     assert.deepEqual(revoked, ['user:onur']);
   } finally {
     await registry.clearRegistryCredentialConfig();
     await new Promise((resolve) => feria.close(resolve));
+    await writeFile(manifestFile, original);
+    for (const g of gatekeeper.grants.filter((x) => x.principalId === 'onur')) {
+      gatekeeper.grants.splice(gatekeeper.grants.indexOf(g), 1);
+    }
     await call('PUT', `/api/domains/${D}/members/onur`, { kind: 'member' });
   }
 });
 
-test('every write of users.yml is written again once Authelia’s reload cooldown has passed', async () => {
+test('every write of users.yml is touched once Authelia’s reload cooldown has passed — a hand edit gets the owned groups back', async () => {
   lib.setAutheliaForTests({
     usersFile,
     touchDelayMs: 20,
@@ -578,6 +670,7 @@ test('every write of users.yml is written again once Authelia’s reload cooldow
     domainAccess: async () => ({ changed: false }),
   });
   try {
+    await lib.syncDomainAccess({ logger: quietLog });
     const { ino: first } = await stat(usersFile);
     await lib.writeUsers({ users: await usersNow() });
     const { ino: written } = await stat(usersFile);
@@ -585,15 +678,242 @@ test('every write of users.yml is written again once Authelia’s reload cooldow
     await settle(80);
     const { ino: touched } = await stat(usersFile);
     assert.notEqual(touched, written, 'written again: Authelia reloads after its cooldown');
-    // Changed by someone else meanwhile (Authelia's own password reset): not touched.
+    // Changed by something else meanwhile (a hand edit dropping a group of
+    // Lamaste's): touched all the same, the edit kept, the group back.
     await lib.writeUsers({ users: await usersNow() });
     const changed = { users: await usersNow() };
     changed.users.onur.displayname = 'Onur V';
+    changed.users.onur.groups = [];
     await writeFile(usersFile, yaml.dump(changed));
     const { ino: theirs } = await stat(usersFile);
     await settle(80);
-    assert.equal((await stat(usersFile)).ino, theirs);
+    assert.notEqual((await stat(usersFile)).ino, theirs);
     assert.equal((await usersNow()).onur.displayname, 'Onur V');
+    assert.deepEqual(await groupsOf('onur'), [MEMBER]);
+    // The touch the identity tick and the start do: the same, at once.
+    await writeFile(usersFile, yaml.dump(changed));
+    await lib.touchUsersFile();
+    assert.deepEqual(await groupsOf('onur'), [MEMBER]);
+  } finally {
+    lib.setAutheliaForTests({
+      usersFile,
+      restart: async () => {
+        restarts += 1;
+      },
+      domainAccess: async () => ({ changed: false }),
+    });
+  }
+});
+
+test('a write never drops a user it was not told to delete; a deleted username’s groups never reach whoever takes it next', async () => {
+  await lib.syncDomainAccess({ logger: quietLog });
+  // A write built from a read that missed a user (a partial file) is refused.
+  const partial = { users: await usersNow() };
+  delete partial.users.mert;
+  await assert.rejects(lib.writeUsers(partial), /would remove users this change does not delete/);
+  assert.ok((await usersNow()).mert, 'nothing written');
+
+  // Deleted, declared: the rendering's groups for the username are forgotten.
+  assert.deepEqual(await groupsOf('mert'), ['feria-admins', MEMBER]);
+  await lib.writeUsers(partial, { deleting: ['mert'] });
+  // Someone else given the username before any rendering ran: the deleted
+  // user's membership is not theirs.
+  const reused = { users: await usersNow() };
+  reused.users.mert = person('Another Mert', 'other@example.com', [MEMBER]);
+  await lib.writeUsers(reused);
+  assert.deepEqual(await groupsOf('mert'), [], 'not the earlier holder’s, nor one planted');
+  // The next rendering decides theirs (the directory knows them as a new user).
+  await lib.reconcileDirectory({ confirmDelayMs: 0 });
+  await lib.syncDomainAccess({ logger: quietLog });
+  assert.deepEqual(await groupsOf('mert'), [MEMBER], 'one domain: every new user its member');
+});
+
+test('after a rendering failed, a write only narrows the owned groups', async () => {
+  await lib.syncDomainAccess({ logger: quietLog });
+  assert.deepEqual(await groupsOf('onur'), [MEMBER]);
+  const extBefore = await groupsOf('ext');
+  assert.ok(extBefore.includes(EXTERNAL));
+  lib.narrowOwnedGroupsOnly();
+  try {
+    const planted = { users: await usersNow() };
+    planted.users.onur.groups = [MEMBER, EXTERNAL, 'lamaste:oidc@e2e-external-fixture-cli'];
+    planted.users.ext.groups = [];
+    await lib.writeUsers(planted);
+    assert.deepEqual(
+      await groupsOf('onur'),
+      [MEMBER],
+      'kept what is held and decided, nothing new',
+    );
+    assert.deepEqual(await groupsOf('ext'), [], 'nothing added back while narrowing only');
+  } finally {
+    await lib.syncDomainAccess({ logger: quietLog });
+  }
+  assert.deepEqual(await groupsOf('ext'), extBefore, 'a rendering that succeeds decides again');
+});
+
+test('Authelia not watching users.yml (a configuration it could not be brought to): a change restarts it, as before', async () => {
+  let watched = false;
+  const counted = restarts;
+  lib.setAutheliaForTests({
+    usersFile,
+    watchesUsersFile: async () => watched,
+    restart: async () => {
+      restarts += 1;
+    },
+    domainAccess: async () => ({ changed: false }),
+  });
+  try {
+    await lib.syncDomainAccess({ logger: quietLog });
+    const before = restarts;
+    // Nothing changed: no restart.
+    await lib.syncDomainAccess({ logger: quietLog });
+    assert.equal(restarts, before);
+    // users.yml changed: restarted so Authelia reads it.
+    const data = { users: await usersNow() };
+    data.users.onur.displayname = 'Onur Changed';
+    await lib.writeUsers(data);
+    await lib.syncDomainAccess({ logger: quietLog });
+    assert.equal(restarts, before + 1);
+    assert.equal((await restartReasons()).at(-1), 'unwatched');
+    // Watched again: a change needs none.
+    watched = true;
+    data.users.onur.displayname = 'Onur';
+    await lib.writeUsers(data);
+    await lib.syncDomainAccess({ logger: quietLog });
+    assert.equal(restarts, before + 1);
+    assert.ok(restarts > counted);
+  } finally {
+    lib.setAutheliaForTests({
+      usersFile,
+      restart: async () => {
+        restarts += 1;
+      },
+      domainAccess: async () => ({ changed: false }),
+    });
+    await lib.syncDomainAccess({ logger: quietLog });
+  }
+});
+
+test('a domain removed: hostnames under it stay Lamaste’s groups, so one left on a user is stripped', async () => {
+  const db = await lib.getStateDb();
+  db.prepare("INSERT INTO retired_domains (name, removed_at) VALUES ('gone.example', ?)").run(
+    new Date().toISOString(),
+  );
+  const planted = { users: await usersNow() };
+  planted.users.ext.groups = [...(planted.users.ext.groups ?? []), 'corral.gone.example'];
+  await writeFile(usersFile, yaml.dump(planted));
+  await lib.syncDomainAccess({ logger: quietLog });
+  assert.equal((await groupsOf('ext')).includes('corral.gone.example'), false);
+  assert.equal((await lib.ownedGroupDomains()).includes('gone.example'), true);
+});
+
+test('desktop user access is for members of the primary domain: an external member gets no session', async () => {
+  const crypto = await import('node:crypto');
+  const secret = crypto.randomBytes(32).toString('hex');
+  await lib.updateConfig({ sessionSecret: secret });
+  const { default: Fastify } = await import('fastify');
+  const { default: sessionPlugin } = await import('../src/middleware/user-access-session.js');
+  const desk = Fastify({ logger: false });
+  await desk.register(async (scope) => {
+    await scope.register(sessionPlugin);
+    scope.get('/me', async (request) => ({ username: request.userAccessUsername }));
+  });
+  await desk.ready();
+  const token = (username, userId) => {
+    const now = Math.floor(Date.now() / 1000);
+    const payload = Buffer.from(
+      JSON.stringify({
+        iat: now,
+        exp: now + 3600,
+        lastActivity: now,
+        type: 'user-access',
+        username,
+        userId,
+      }),
+    ).toString('base64url');
+    const sig = crypto
+      .createHmac('sha256', Buffer.from(secret, 'hex'))
+      .update(payload)
+      .digest('base64url');
+    return `${payload}.${sig}`;
+  };
+  const me = async (username) =>
+    (
+      await desk.inject({
+        method: 'GET',
+        url: '/me',
+        headers: { authorization: `Bearer ${token(username, await idOf(username))}` },
+      })
+    ).statusCode;
+  try {
+    assert.equal(await me('onur'), 200, 'a member');
+    assert.equal(await me('ext'), 401, 'an external member');
+    await call('PUT', `/api/domains/${D}/members/onur`, { kind: 'external' });
+    assert.equal(await me('onur'), 401, 'made external: out at once');
+    await call('PUT', `/api/domains/${D}/members/onur`, { kind: 'member' });
+    assert.equal(await me('onur'), 200);
+  } finally {
+    await desk.close();
+  }
+});
+
+test('uninstalling a plugin revokes the grants on its OIDC clients — a later install admits no one by them', async () => {
+  const res = await call('POST', '/api/gatekeeper/grants', {
+    principalType: 'user',
+    principalId: 'ext',
+    resourceType: 'oidc-client',
+    resourceId: 'e2e-external-fixture-web',
+  });
+  assert.equal(res.statusCode, 201, res.body);
+  assert.ok((await groupsOf('ext')).includes('lamaste:oidc@e2e-external-fixture-web'));
+  const plugins = await lib.readPlugins();
+  plugins.plugins[0].status = 'disabled';
+  await lib.writePlugins(plugins);
+  await lib.uninstallPlugin('e2e-external-fixture', quietLog);
+  assert.deepEqual(
+    gatekeeper.grants.filter((g) => g.resourceType === 'oidc-client'),
+    [],
+    'no grant on its clients left',
+  );
+  assert.equal((await groupsOf('ext')).includes('lamaste:oidc@e2e-external-fixture-web'), false);
+});
+
+test('a users file read empty mid-write is read again before a write believes it', async () => {
+  const full = await readFile(usersFile, 'utf-8');
+  const partial = { users: yaml.load(full).users };
+  delete partial.users.mert;
+  // Truncated by another writer for a moment: the write reads again, sees
+  // every user, and refuses to drop one it was not told to delete.
+  await writeFile(usersFile, '');
+  setTimeout(() => void writeFile(usersFile, full), 30);
+  await assert.rejects(lib.writeUsers(partial), /would remove users/);
+  assert.ok((await usersNow()).mert);
+});
+
+test('a grant change Gatekeeper took whose rendering failed: answered with warnings, rendered again within seconds', async () => {
+  const created = await call('POST', '/api/gatekeeper/grants', {
+    principalType: 'user',
+    principalId: 'ext',
+    resourceType: 'tunnel',
+    resourceId: 't-somewhere',
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  lib.setAutheliaForTests({
+    usersFile,
+    restart: async () => {
+      restarts += 1;
+    },
+    domainAccess: async () => {
+      throw new Error('Authelia did not restart');
+    },
+  });
+  try {
+    const revoked = await call('DELETE', `/api/gatekeeper/grants/${created.json().grant.grantId}`);
+    assert.equal(revoked.statusCode, 200, revoked.body);
+    const { warnings } = revoked.json();
+    assert.ok(
+      warnings.some((w) => w.step === 'render' && /tries again within seconds/.test(w.message)),
+    );
   } finally {
     lib.setAutheliaForTests({
       usersFile,

@@ -83,15 +83,17 @@ const usersNow = async () => yaml.load(await readFile(usersFile, 'utf-8')).users
 
 /**
  * The members Authelia's users file names, by rendered domain: the users
- * holding `lamaste:member@<d>` (or `lamaste:external@<d>`, with `kind`).
+ * holding the domain's member group `lamaste:m:<key>` (or its external
+ * group `lamaste:x:<key>`, with `kind`).
  */
 async function renderedMembers(kind = 'member') {
   const users = await usersNow();
+  const tag = kind === 'member' ? 'm' : 'x';
   return Object.fromEntries(
-    rendered.domains.map((name) => [
+    rendered.domains.map(({ name, groupKey }) => [
       name,
       Object.keys(users)
-        .filter((u) => users[u].groups?.includes(`lamaste:${kind}@${name}`))
+        .filter((u) => users[u].groups?.includes(`lamaste:${tag}:${groupKey}`))
         .sort(),
     ]),
   );
@@ -218,8 +220,12 @@ test('an upgraded single-domain relay: the primary recorded with everyone its me
 
   await lib.syncDomainAccess();
   assert.deepEqual(await renderedMembers(), { 'samplepark.tr': ['admin', 'cust', 'onur'] });
-  // Membership is a group Lamaste owns, beside the administrator's own.
-  assert.deepEqual((await usersNow()).admin.groups, ['admins', 'lamaste:member@samplepark.tr']);
+  // Membership is a group Lamaste owns, beside the administrator's own,
+  // named by the domain's random group key — never its name.
+  const key = await lib.domainGroupKey('samplepark.tr');
+  assert.match(key, /^[0-9a-f]{16}$/);
+  assert.deepEqual(rendered.domains, [{ name: 'samplepark.tr', groupKey: key }]);
+  assert.deepEqual((await usersNow()).admin.groups, ['admins', `lamaste:m:${key}`]);
   assert.deepEqual(await projection(), {
     v: 2,
     domains: [{ name: 'samplepark.tr', members: ['admin', 'cust', 'onur'], externals: [] }],
@@ -230,14 +236,19 @@ test('an upgraded single-domain relay: the primary recorded with everyone its me
   // then the deny the rest falls to.
   assert.deepEqual(renderGroupAccessControl(rendered.domains, []).rules, [
     {
+      domain: ['auth.samplepark.tr'],
+      policy: 'two_factor',
+      subject: [`group:lamaste:m:${key}`, `group:lamaste:x:${key}`],
+    },
+    {
       domain: ['samplepark.tr', '*.samplepark.tr'],
       policy: 'two_factor',
-      subject: ['group:lamaste:member@samplepark.tr'],
+      subject: [`group:lamaste:m:${key}`],
     },
     {
       domain_regex: [externalHostRegex('samplepark.tr')],
       policy: 'two_factor',
-      subject: ['group:lamaste:external@samplepark.tr'],
+      subject: [`group:lamaste:x:${key}`],
     },
     { domain: ['samplepark.tr', '*.samplepark.tr'], policy: 'deny' },
   ]);
@@ -789,7 +800,7 @@ test('rendering: both steps are always tried; a failure streak is audited and no
   assert.equal((await audits('domain.render.recovered')).length, 1);
 });
 
-test('registry tokens follow the registry’s domains: revoked when a user is a member of none of them', async () => {
+test('registry tokens follow the registry’s sign-in: revoked when its client admits the user no more', async () => {
   const revoked = [];
   const feria = createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
@@ -808,8 +819,33 @@ test('registry tokens follow the registry’s domains: revoked when a user is a 
     auth,
     configuredAt: new Date().toISOString(),
   });
+  // Feria's sign-in: the client of the Feria plugin (on codelama.com.tr)
+  // whose audience is the registry.
+  const pkg = path.join(stateDir, 'node_modules', '@lamalibre', 'feria-server');
+  await mkdir(pkg, { recursive: true });
+  await writeFile(
+    path.join(pkg, 'package.json'),
+    JSON.stringify({ name: '@lamalibre/feria-server', version: '0.4.0', type: 'module' }),
+  );
+  await writeFile(
+    path.join(pkg, 'lamaste-plugin.json'),
+    JSON.stringify({
+      name: 'feria',
+      version: '0.4.0',
+      hosting: 'agent',
+      packages: { server: '@lamalibre/feria-server' },
+      oidcClients: [
+        {
+          id: 'feria-cli',
+          grantTypes: ['urn:ietf:params:oauth:grant-type:device_code'],
+          scopes: ['openid', 'groups'],
+          audience: [`http://127.0.0.1:${feria.address().port}`],
+        },
+      ],
+    }),
+  );
   try {
-    // A pasted token: the registry's domain is the primary.
+    // A pasted token: the registry's domains are the primary and Feria's own.
     await registry.writeRegistryCredentialConfig(
       credential({ kind: 'token', token: 'feria_test_service_token_000000' }),
     );
@@ -819,14 +855,20 @@ test('registry tokens follow the registry’s domains: revoked when a user is a 
     await call('PUT', `/api/domains/codelama.com.tr/members/${onur}`);
     await call('PUT', `/api/domains/samplepark.tr/members/${onur}`);
     revoked.length = 0;
-    // Still a member of the registry's domain: nothing to revoke.
-    await call('DELETE', `/api/domains/codelama.com.tr/members/${onur}`);
+    // Still a member of the sign-in client's domain: nothing to revoke.
+    await call('DELETE', `/api/domains/samplepark.tr/members/${onur}`);
     assert.deepEqual(revoked, []);
-    // A member of none of them any more: revoked.
+    // The client admits them no more: revoked.
+    await call('DELETE', `/api/domains/codelama.com.tr/members/${onur}`);
+    assert.deepEqual(revoked, ['user:onur']);
+    // Another domain's membership ending never reached the client: but it
+    // narrowed them, and the client admits them no more either — revoked.
+    revoked.length = 0;
     const ended = await call('DELETE', `/api/domains/samplepark.tr/members/${cust}`);
     assert.equal(ended.statusCode, 200, ended.body);
     assert.deepEqual(revoked, ['user:cust']);
     await call('PUT', `/api/domains/samplepark.tr/members/${cust}`);
+    await call('PUT', `/api/domains/samplepark.tr/members/${onur}`);
 
     // Who is revoked when the registry's domains become codelama.com.tr:
     // everyone who is a member of none of them; onur keeps theirs.
@@ -861,6 +903,7 @@ test('registry tokens follow the registry’s domains: revoked when a user is a 
   } finally {
     await registry.clearRegistryCredentialConfig();
     await new Promise((resolve) => feria.close(resolve));
+    await rm(pkg, { recursive: true, force: true });
   }
 });
 

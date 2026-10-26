@@ -395,7 +395,7 @@ async function authenticatedSession(
   cookieHeader: string | string[] | undefined,
   originalUrl: string,
   hostname: string,
-): Promise<AutheliaSession | typeof FORBIDDEN | null> {
+): Promise<AutheliaSession | Forbidden | null> {
   const requestId = request.id;
   const presented = presentedSession(cookieHeader);
   if (presented.kind !== 'one') {
@@ -422,7 +422,7 @@ async function authenticatedSession(
   const validated = await validateWithAuthelia(presented.value, originalUrl, requestId);
   // Never cached: a membership added a moment later must be seen. Logged
   // by the refusal that answers it.
-  if (validated === FORBIDDEN) return FORBIDDEN;
+  if (validated === FORBIDDEN) return refusedSession(fastify, presented.value, hostname, requestId);
   if (!validated) {
     request.log.info({ requestId, reason: 'authelia_rejected', fqdn: hostname }, 'authz denied');
     return null;
@@ -440,6 +440,41 @@ async function authenticatedSession(
 }
 
 /**
+ * Authelia refused a valid session for a host: and, when the session's user
+ * is an external member of the host's domain, who they are — so the answer
+ * can be the access-request page (they are on the domain, only not
+ * granted) rather than the domain refusal.
+ */
+interface Forbidden {
+  readonly forbidden: true;
+  readonly external: AutheliaSession | null;
+}
+
+/**
+ * Who an Authelia refusal for `hostname` was for, when they are an external
+ * member of its domain: Authelia's 403 names nobody, so Authelia is asked
+ * once more about the same session for the domain's sign-in portal
+ * (`https://auth.<domain>/`), which its rules admit for the domain's
+ * members and external members alike, and the projection says the kind.
+ * Never cached, and nothing but the refusal's wording follows from it: the
+ * request stays refused.
+ */
+async function refusedSession(
+  fastify: FastifyInstance,
+  session: string,
+  hostname: string,
+  requestId: string,
+): Promise<Forbidden> {
+  const index = fastify.getDomains();
+  const domain = index ? domainOfHost(hostname, index.names) : null;
+  if (!index || domain === null) return { forbidden: true, external: null };
+  const probe = await validateWithAuthelia(session, `https://auth.${domain}/`, requestId);
+  if (!probe || probe === FORBIDDEN) return { forbidden: true, external: null };
+  const { kind } = domainMembership(index, hostname, probe.username);
+  return { forbidden: true, external: kind === 'external' ? probe : null };
+}
+
+/**
  * The domain `hostname` is under — of the panel's projection; `hostname`
  * itself when the projection names none for it (or is unreadable).
  */
@@ -450,9 +485,11 @@ function domainShownFor(fastify: FastifyInstance, hostname: string): string | nu
 
 /** Why a signed-in user may not reach a host's domain, and the domain to name. */
 interface DomainRefusal {
-  readonly reason: 'authelia_forbidden' | 'not_a_member';
+  readonly reason: 'authelia_forbidden' | 'not_a_member' | 'external_not_granted';
   /** Null: the host is under none of the relay's domains (or no projection). */
   readonly domain: string | null;
+  /** An external member of the domain Authelia refused: who, for the access-request page. */
+  readonly external?: AutheliaSession;
 }
 
 /**
@@ -467,13 +504,18 @@ interface DomainRefusal {
  */
 function checkDomain(
   fastify: FastifyInstance,
-  answer: AutheliaSession | typeof FORBIDDEN,
+  answer: AutheliaSession | Forbidden,
   hostname: string,
 ):
   | { readonly session: AutheliaSession; readonly kind: MembershipKind }
   | { readonly refused: DomainRefusal } {
-  if (answer === FORBIDDEN) {
-    return { refused: { reason: 'authelia_forbidden', domain: domainShownFor(fastify, hostname) } };
+  if ('forbidden' in answer) {
+    const domain = domainShownFor(fastify, hostname);
+    return {
+      refused: answer.external
+        ? { reason: 'external_not_granted', domain, external: answer.external }
+        : { reason: 'authelia_forbidden', domain },
+    };
   }
   const index = fastify.getDomains();
   const verdict = index ? domainMembership(index, hostname, answer.username) : null;
@@ -568,6 +610,13 @@ async function authorizeTunnelRequest(
   if (!answer) return reply.code(401).send();
   const checked = checkDomain(fastify, answer, parsed.hostname);
   if ('refused' in checked) {
+    const { external } = checked.refused;
+    if (external) {
+      return refuseUngranted(fastify, request, reply, external, parsed.hostname, {
+        reason: 'external_not_granted',
+        resourceId: tunnel.id,
+      });
+    }
     return sendRefusalPage(fastify, request, reply, parsed.hostname, checked.refused);
   }
   const { session } = checked;
@@ -708,7 +757,12 @@ async function authorizeUserSurfaceRequest(
       { requestId, reason: checked.refused.reason, tunnel: fqdn },
       'user-surface authz denied',
     );
-    return reply.code(403).header(USER_SURFACE_REFUSAL_HEADER, 'not_a_member').send();
+    // An external member Authelia refused is on the domain, only not
+    // granted: `forbidden`, as Gatekeeper's own refusal of them says.
+    return reply
+      .code(403)
+      .header(USER_SURFACE_REFUSAL_HEADER, checked.refused.external ? 'forbidden' : 'not_a_member')
+      .send();
   }
   const { session } = checked;
 
@@ -799,13 +853,31 @@ async function authorizeUserSurfaceShellRequest(
   );
   if (!answer) return reply.code(401).send();
   const checked = checkDomain(fastify, answer, parsed.hostname);
+  const settings = fastify.getSettings();
+  const templateOptions = { adminContact: settings.adminEmail, adminName: settings.adminName };
   if ('refused' in checked) {
-    return sendRefusalPage(fastify, request, reply, parsed.hostname, checked.refused);
+    const { external } = checked.refused;
+    if (!external) {
+      return sendRefusalPage(fastify, request, reply, parsed.hostname, checked.refused);
+    }
+    // An external member Authelia refused: on the domain, only not granted.
+    request.log.info(
+      {
+        requestId,
+        reason: 'external_not_granted',
+        site: fqdn,
+        resourceType: 'site',
+        resourceId: host.id,
+      },
+      'shell authz denied',
+    );
+    return reply
+      .code(403)
+      .type('text/html; charset=utf-8')
+      .send(buildAccessRequestPage(external.username, parsed.hostname, templateOptions));
   }
   const { session } = checked;
 
-  const settings = fastify.getSettings();
-  const templateOptions = { adminContact: settings.adminEmail, adminName: settings.adminName };
   const deny = (resourceType: 'plugin' | 'site', resourceId: string): FastifyReply => {
     // The host and the reason only — never who was refused.
     request.log.info(

@@ -92,7 +92,7 @@ import { pluginDomainCmd } from './domains.js';
 import { fail as failPanel } from '../fail.js';
 import {
   OIDC_CLIENT_RESOURCE,
-  findClientGrant,
+  findClientGrants,
   parsePrincipal,
   principalText,
 } from '../oidc-client-grants.js';
@@ -1547,7 +1547,7 @@ async function revokeOidcClientCmd(name, clientId, principal, { json }) {
       'GET',
       `/api/plugins/${encodeURIComponent(name)}/oidc-clients`,
     );
-    found = findClientGrant(clients ?? [], clientId, principal);
+    found = findClientGrants(clients ?? [], clientId, principal);
   } catch (err) {
     failPanel(err.message, json, err);
   }
@@ -1559,17 +1559,20 @@ async function revokeOidcClientCmd(name, clientId, principal, { json }) {
     }[found.error];
     failPanel(reason, json);
   }
-  let result;
+  // Every grant naming the principal goes: one left behind would still let
+  // them sign in.
+  const results = [];
   try {
-    result = await panelRequest(
-      'DELETE',
-      `/api/gatekeeper/grants/${encodeURIComponent(found.grantId)}`,
-    );
+    for (const grantId of found.grantIds) {
+      results.push(
+        await panelRequest('DELETE', `/api/gatekeeper/grants/${encodeURIComponent(grantId)}`),
+      );
+    }
   } catch (err) {
     failPanel(err.message, json, err);
   }
   if (json) {
-    emitComplete(result);
+    emitComplete({ revoked: found.grantIds.length, results });
     return;
   }
   console.log(

@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { findClientGrant, parsePrincipal, principalText } from '../src/oidc-client-grants.js';
+import { findClientGrants, parsePrincipal, principalText } from '../src/oidc-client-grants.js';
 
 test('one principal: --user or --group with a name, nothing else', () => {
   assert.deepEqual(parsePrincipal(['--user', 'ali']), {
@@ -32,7 +32,7 @@ test('a principal in words, as terminal text', () => {
   );
 });
 
-test('the grant to revoke, or why there is none', () => {
+test('every grant to revoke, or why there is none', () => {
   const clients = [
     {
       id: 'corral-web',
@@ -40,21 +40,23 @@ test('the grant to revoke, or why there is none', () => {
       grants: [
         { grantId: 'g1', principalType: 'user', principalId: 'ali' },
         { grantId: 'g2', principalType: 'group', principalId: 'ali' },
+        // A second grant to the same user (another context): both must go.
+        { grantId: 'g3', principalType: 'user', principalId: 'ali' },
       ],
     },
     { id: 'corral-svc', userFacing: false },
     { id: 'corral-cli', userFacing: true, grants: null },
   ];
   const ali = { principalType: 'user', principalId: 'ali' };
-  assert.deepEqual(findClientGrant(clients, 'corral-web', ali), { grantId: 'g1' });
+  assert.deepEqual(findClientGrants(clients, 'corral-web', ali), { grantIds: ['g1', 'g3'] });
   assert.deepEqual(
-    findClientGrant(clients, 'corral-web', { principalType: 'group', principalId: 'ali' }),
-    { grantId: 'g2' },
+    findClientGrants(clients, 'corral-web', { principalType: 'group', principalId: 'ali' }),
+    { grantIds: ['g2'] },
   );
-  assert.deepEqual(findClientGrant(clients, 'corral-web', { ...ali, principalId: 'bob' }), {
+  assert.deepEqual(findClientGrants(clients, 'corral-web', { ...ali, principalId: 'bob' }), {
     error: 'no_grant',
   });
-  assert.deepEqual(findClientGrant(clients, 'corral-svc', ali), { error: 'no_client' });
-  assert.deepEqual(findClientGrant(clients, 'nope', ali), { error: 'no_client' });
-  assert.deepEqual(findClientGrant(clients, 'corral-cli', ali), { error: 'unreadable' });
+  assert.deepEqual(findClientGrants(clients, 'corral-svc', ali), { error: 'no_client' });
+  assert.deepEqual(findClientGrants(clients, 'nope', ali), { error: 'no_client' });
+  assert.deepEqual(findClientGrants(clients, 'corral-cli', ali), { error: 'unreadable' });
 });

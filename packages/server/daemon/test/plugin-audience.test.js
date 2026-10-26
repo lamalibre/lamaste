@@ -372,7 +372,7 @@ test('deleted: a remove with the last known attributes; erased: none, rewritten 
     async () => {
       const data = await lib.readUsersRaw();
       delete data.users.zeynep;
-      await lib.writeUsers(data);
+      await lib.writeUsers(data, { deleting: ['zeynep'] });
       delete users.zeynep;
     },
     { actor: 'admin', deleted: ['zeynep'], confirmDelayMs: 0 },
@@ -450,7 +450,7 @@ test('entitlements through the panel: roles checked, one grant per principal, au
     async () => {
       const data = await lib.readUsersRaw();
       delete data.users.selin;
-      await lib.writeUsers(data);
+      await lib.writeUsers(data, { deleting: ['selin'] });
       delete users.selin;
     },
     { actor: 'admin', deleted: ['selin'], confirmDelayMs: 0 },
@@ -854,7 +854,7 @@ test('a plugin that stops declaring identity keeps its ledger: erasures alone re
     async () => {
       const data = await lib.readUsersRaw();
       delete data.users[username];
-      await lib.writeUsers(data);
+      await lib.writeUsers(data, { deleting: [username] });
       delete users[username];
     },
     { actor: 'admin', deleted: [username], confirmDelayMs: 0 },

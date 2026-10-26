@@ -38,22 +38,26 @@ export function principalText(grant) {
 }
 
 /**
- * The grant on `clientId` that names `principal`, among the clients
- * `GET /api/plugins/:name/oidc-clients` lists — or why there is none to
- * revoke: `no_client` (not a user-facing client of the plugin),
- * `unreadable` (Gatekeeper could not be read), `no_grant`.
+ * Every grant on `clientId` that names `principal`, among the clients
+ * `GET /api/plugins/:name/oidc-clients` lists — Gatekeeper may hold more
+ * than one (grants differing only in their context), and revoking means
+ * revoking them all — or why there is none to revoke: `no_client` (not a
+ * user-facing client of the plugin), `unreadable` (Gatekeeper could not be
+ * read), `no_grant`.
  *
  * @param {ReadonlyArray<Record<string, any>>} clients
  * @param {string} clientId
  * @param {{ principalType: string, principalId: string }} principal
- * @returns {{ grantId: string } | { error: 'no_client' | 'unreadable' | 'no_grant' }}
+ * @returns {{ grantIds: string[] } | { error: 'no_client' | 'unreadable' | 'no_grant' }}
  */
-export function findClientGrant(clients, clientId, principal) {
+export function findClientGrants(clients, clientId, principal) {
   const client = clients.find((c) => c.id === clientId && c.userFacing);
   if (!client) return { error: 'no_client' };
   if (!Array.isArray(client.grants)) return { error: 'unreadable' };
-  const grant = client.grants.find(
-    (g) => g.principalType === principal.principalType && g.principalId === principal.principalId,
-  );
-  return grant ? { grantId: grant.grantId } : { error: 'no_grant' };
+  const grantIds = client.grants
+    .filter(
+      (g) => g.principalType === principal.principalType && g.principalId === principal.principalId,
+    )
+    .map((g) => g.grantId);
+  return grantIds.length > 0 ? { grantIds } : { error: 'no_grant' };
 }

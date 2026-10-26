@@ -49,7 +49,8 @@ import {
   reconcileTunnelVhosts,
   renameLegacyVhosts,
 } from './lib/vhost-reconcile.js';
-import { activeDomains, ensurePrimaryDomain } from './lib/domains.js';
+import { activeDomains, ensurePrimaryDomain, syncDomainAccess } from './lib/domains.js';
+import { touchUsersFile } from './lib/authelia.js';
 import { reconcileWebSurfaces } from './lib/web-surface.js';
 import {
   loadTicketScopeCapabilities,
@@ -106,16 +107,6 @@ async function start() {
   // closed — chisel is stopped when this cannot be done — and retries until
   // it can.
   startChiselReconciler(server.log);
-
-  // Bring Authelia's OIDC clients (plugin manifests, the panel's own
-  // registry client) and the client-secret store in line with persisted
-  // state. Best effort: a failure is logged and the next lifecycle change
-  // retries. Only once onboarding has written Authelia's configuration.
-  if (config.onboarding.status === 'COMPLETED') {
-    syncOidcClients(server.log).catch((err) => {
-      server.log.warn({ err: err.message }, 'Startup OIDC client sync failed');
-    });
-  }
 
   // The key relay assertions to agents' lamaste-agentd are signed with —
   // created here when missing, before Gatekeeper (which signs with it too)
@@ -235,6 +226,29 @@ async function start() {
     } catch (err) {
       server.log.error({ err: err.message }, 'Startup site vhost reconcile failed');
     }
+  }
+
+  // Who may reach what, then Authelia's OIDC clients (plugin manifests, the
+  // panel's own registry client) and the client-secret store, in that
+  // order: the clients' policies name users.yml's groups, which the
+  // domains' rendering writes first — an upgrade's first start fills them
+  // before any policy names them. users.yml is touched either way, so a
+  // reload the previous run left pending (its touch cut short) is not
+  // missing. Best effort, in the background: a failure is logged and the
+  // identity tick tries again within a minute. Only once onboarding has
+  // written Authelia's configuration.
+  if (config.onboarding.status === 'COMPLETED') {
+    void (async () => {
+      await syncDomainAccess({ logger: server.log }).catch((err) => {
+        server.log.warn({ err: err.message }, 'Startup domain access rendering failed');
+      });
+      await touchUsersFile().catch((err) => {
+        server.log.warn({ err: err.message }, 'Startup touch of users.yml failed');
+      });
+      await syncOidcClients(server.log).catch((err) => {
+        server.log.warn({ err: err.message }, 'Startup OIDC client sync failed');
+      });
+    })();
   }
 
   await server.listen({ host: '127.0.0.1', port: 3100 });

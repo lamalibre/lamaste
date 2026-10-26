@@ -102,9 +102,9 @@ async function readUsersOrFail() {
   }
 }
 
-async function writeUsersOrFail(usersData) {
+async function writeUsersOrFail(usersData, opts) {
   try {
-    await writeUsers(usersData);
+    await writeUsers(usersData, opts);
   } catch (err) {
     throw httpError('Failed to update user database', 500, { cause: err });
   }
@@ -506,7 +506,7 @@ export default async function usersRoutes(fastify, _opts) {
               throw httpError('Cannot delete the last user', 400);
             }
             delete usersData.users[username];
-            await writeUsersOrFail(usersData);
+            await writeUsersOrFail(usersData, { deleting: [username] });
           },
           {
             actor,

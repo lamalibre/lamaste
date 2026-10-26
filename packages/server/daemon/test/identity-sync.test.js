@@ -656,7 +656,7 @@ test('erasures wait for the half: pending until its cursor passes them, and the 
     async () => {
       const data = await lib.readUsersRaw();
       delete data.users.ali;
-      await lib.writeUsers(data);
+      await lib.writeUsers(data, { deleting: ['ali'] });
       delete users.ali;
     },
     { actor: 'admin', logger, deleted: ['ali'], confirmDelayMs: 0 },

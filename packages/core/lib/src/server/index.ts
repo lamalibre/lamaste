@@ -235,6 +235,8 @@ export {
   renderOidcClientPolicies,
   oidcClientPolicyName,
   ensureUsersFileWatched,
+  usersFileWatched,
+  autheliaWatchesUsersFile,
   OIDC_USER_LIFESPAN,
   buildOidcProviderSection,
   oidcIssuerKeyTemplateLine,
@@ -263,6 +265,7 @@ export type {
   OidcScopeDefinitions,
   OidcProviderOptions,
   DomainAccess,
+  AutheliaDomain,
   AutheliaSessionCookie,
 } from './authelia.js';
 

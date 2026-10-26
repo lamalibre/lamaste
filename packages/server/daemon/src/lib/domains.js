@@ -38,6 +38,7 @@
  * Audit entries name domains and user ids, never a username.
  */
 
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { z } from 'zod';
 import {
@@ -53,18 +54,29 @@ import {
   isRelayHost,
   isIdentityUuid,
   isLamasteUsername,
+  reachedOidcClients,
 } from '@lamalibre/lamaste';
 import {
   assertDomainRegistrable,
+  registryAudience,
   registryIssuerDomain,
   resolveHostA,
   withTunnelLock,
 } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
-import { readUsersRaw, updateDomainAccess, writeOwnedGroups } from './authelia.js';
+import {
+  autheliaWatchesUsers,
+  heldOwnedGroups,
+  narrowOwnedGroupsOnly,
+  readUsersRaw,
+  reloadAuthelia,
+  takeUsersFileDirty,
+  updateDomainAccess,
+  writeOwnedGroups,
+} from './authelia.js';
 import { getConfig } from './config.js';
-import { desiredOwnedGroups } from './owned-groups.js';
+import { deviceCodeClients, desiredOwnedGroups, narrowingSince } from './owned-groups.js';
 import { getStateDb } from './state-db.js';
 import { readSites, readTunnels, withSitesLock } from './state.js';
 import { withUsersLock } from './users-lock.js';
@@ -152,6 +164,29 @@ export async function domainNames() {
 }
 
 /**
+ * Every domain whose hostnames are Lamaste's groups in users.yml (core
+ * `isLamasteOwnedGroup`): every domain record, pending ones too, and every
+ * domain removed from the relay — a host group it left on a user is
+ * stripped by the next rendering, never taken for an administrator's group.
+ */
+export async function ownedGroupDomains() {
+  const db = await getStateDb();
+  const retired = db.prepare('SELECT name FROM retired_domains').all();
+  return [...new Set([...(await domainNames()), ...retired.map((r) => r.name)])];
+}
+
+/** The group key of domain `name` (core owned-groups.ts), or null when there is no such domain. */
+export async function domainGroupKey(name) {
+  const db = await getStateDb();
+  return db.prepare('SELECT group_key FROM domains WHERE name = ?').get(name)?.group_key ?? null;
+}
+
+/** A new domain's group key: 8 random bytes, hex (core `DOMAIN_GROUP_KEY_RE`). */
+function newGroupKey() {
+  return crypto.randomBytes(8).toString('hex');
+}
+
+/**
  * A tunnel, site or alias that holds one of the relay's own hostnames of
  * `name` (`auth.`, `panel.`, `tunnel.`, `agent-*`): what was created there
  * before the domain was added — its hostname, or null. A domain is added
@@ -199,6 +234,24 @@ export async function activeDomainNames() {
 export async function primaryDomainName() {
   const db = await getStateDb();
   return db.prepare('SELECT name FROM domains WHERE is_primary = 1').get()?.name ?? configDomain();
+}
+
+/**
+ * Whether user `userId` is a member — of kind `member`, not external — of
+ * the primary domain: who desktop user access (`/api/user-access/*`,
+ * primary only) is for. An external member reaches only what names them;
+ * the desktop's plugin grants are no such thing.
+ *
+ * @param {string} userId
+ */
+export async function isPrimaryMember(userId) {
+  const primary = await primaryDomainName();
+  if (!primary) return false;
+  const db = await getStateDb();
+  const row = db
+    .prepare('SELECT kind FROM domain_members WHERE domain = ? AND user_id = ?')
+    .get(primary, userId);
+  return row?.kind === 'member';
 }
 
 /**
@@ -695,9 +748,9 @@ export async function ensurePrimaryDomain({ logger } = {}) {
     const now = new Date().toISOString();
     const members = inTransaction(db, () => {
       db.prepare(
-        `INSERT INTO domains (name, is_primary, status, created_at, activated_at)
-         VALUES (?, 1, 'active', ?, ?)`,
-      ).run(domain, now, now);
+        `INSERT INTO domains (name, is_primary, status, created_at, activated_at, group_key)
+         VALUES (?, 1, 'active', ?, ?, ?)`,
+      ).run(domain, now, now, newGroupKey());
       return db
         .prepare(
           `INSERT INTO domain_members (domain, user_id, added_at, added_by)
@@ -723,6 +776,7 @@ function protectedSiteRules(sites) {
   return sites
     .filter((s) => s && typeof s.fqdn === 'string')
     .map((s) => ({
+      ...(typeof s.id === 'string' ? { id: s.id } : {}),
       fqdn: s.fqdn,
       autheliaProtected: s.autheliaProtected === true,
       allowedUsers: Array.isArray(s.allowedUsers) ? s.allowedUsers : [],
@@ -741,11 +795,15 @@ let loggedIneligible = 0;
  * anything from it.
  *
  * @param {import('pino').Logger} [logger]
- * @returns {Promise<Array<{ name: string, members: string[], externals: string[] }>>}
+ * @returns {Promise<Array<{ name: string, groupKey: string, members: string[], externals: string[] }>>}
  */
 async function domainsWithMembers(logger) {
   const db = await getStateDb();
-  const domains = await activeDomains();
+  const domains = db
+    .prepare(
+      "SELECT name, group_key FROM domains WHERE status = 'active' ORDER BY is_primary DESC, name",
+    )
+    .all();
   const rows = db
     .prepare(
       `SELECT dm.domain, dm.kind, u.username FROM domain_members dm
@@ -772,7 +830,7 @@ async function domainsWithMembers(logger) {
       logger?.warn({ ineligible }, 'Members whose username Authelia cannot be told are left out');
     }
   }
-  return domains.map((d) => ({ name: d.name, ...byDomain.get(d.name) }));
+  return domains.map((d) => ({ name: d.name, groupKey: d.group_key, ...byDomain.get(d.name) }));
 }
 
 /**
@@ -783,7 +841,7 @@ async function domainsWithMembers(logger) {
  * access, the projection and the OIDC provider goes through here.
  *
  * @template T
- * @param {(domains: Array<{ name: string, members: string[], externals: string[] }>) => Promise<T>} fn
+ * @param {(domains: Array<{ name: string, groupKey: string, members: string[], externals: string[] }>) => Promise<T>} fn
  * @param {{ logger?: import('pino').Logger }} [opts]
  * @returns {Promise<T>}
  */
@@ -801,55 +859,75 @@ let renderFailing = false;
  * Render the domains and their people, in this order:
  *
  * 1. the groups Lamaste owns into users.yml (lib/owned-groups.js) — who is
- *    a member or an external member of which domain, the hosts and OIDC
- *    clients that name each external member, the static sites' listed
- *    users. Authelia applies them at each user's next request;
+ *    a member or an external member of which domain, the static sites'
+ *    listed users, the hosts and OIDC clients that name each external
+ *    member. Authelia applies them at each user's next request. When the
+ *    grants cannot be read, external members hold no granted host or
+ *    client (fail closed) and the step counts as failed;
  * 2. Gatekeeper's projection (`domains.json`, v2: members and external
  *    members of each active domain);
  * 3. Authelia's session cookies and `access_control` (`sites`: the
  *    protected sites, `sites.json` unless given — a site change passes the
  *    sites it is saving), whose rules name the groups of step 1 and change
- *    only with the domains and protected sites: Authelia restarts only then.
+ *    only with the domains and protected sites: Authelia restarts only then;
+ * 4. Authelia restarted when it must read users.yml anew: when its
+ *    configuration does not have it watch the file (one that could not be
+ *    brought in line) and the file changed; and when a narrowing reached a
+ *    device-code OIDC client — Authelia's device flow checks the groups a
+ *    session last refreshed, never re-reading them, so a session that lost
+ *    a member's or a granted client's group must end.
  *
  * The groups come first: a rule never names a group that is not yet filled,
- * and a host group never outlives the rule that narrows its host (an
- * external member holding a host group is admitted there by their domain's
- * rule). Each step is always attempted — one failing never keeps another
- * at older, more permissive members. Nothing before onboarding made a
- * domain. Throws when any failed (callers report a warning; the identity
- * tick renders again within a minute); the first failure of a streak is
- * audited (`domain.render.failed`) and notified to the administrators, its
- * end audited (`domain.render.recovered`). Gatekeeper's grants that could
- * not be read are a warning (`warnings`), not a failure: the grants
- * external members hold are kept as they are.
+ * and a host group never outlives the rule that narrows its host. Each step
+ * is always attempted — one failing never keeps another at older, more
+ * permissive members. Nothing before onboarding made a domain.
+ *
+ * Then, outside the rendering's lock, each enabled user who lost an owned
+ * group is followed: audited (`directory.access.narrowed`, by id), and their
+ * registry tokens revoked when they no longer reach the registry's sign-in
+ * — whatever narrowed them (a membership, a kind, a grant revoked through
+ * the panel or with Gatekeeper's own CLI).
+ *
+ * Throws when any step failed (callers report a warning; the identity tick
+ * renders again within a minute); the first failure of a streak is audited
+ * (`domain.render.failed`) and notified to the administrators, its end
+ * audited (`domain.render.recovered`).
  *
  * @param {{ logger?: import('pino').Logger, sites?: readonly object[] }} [opts]
- * @returns {Promise<{ changed: boolean, groupsChanged: boolean, domains: number, warnings?: string[] }>}
+ * @returns {Promise<{ changed: boolean, groupsChanged: boolean, restarted: boolean, domains: number, warnings?: object[] }>}
  */
-export function syncDomainAccess({ logger, sites } = {}) {
-  return withDomainRendering(
+export async function syncDomainAccess({ logger, sites } = {}) {
+  const outcome = await withDomainRendering(
     async (domains) => {
-      if (domains.length === 0) return { changed: false, groupsChanged: false, domains: 0 };
+      if (domains.length === 0) {
+        return { changed: false, groupsChanged: false, restarted: false, domains: 0, failures: [] };
+      }
       const siteList = sites ?? (await readSites());
       const failures = [];
-      const warnings = [];
       let groupsChanged = false;
+      let narrowed = [];
       try {
-        const allDomains = await domainNames();
-        const owned = await desiredOwnedGroups({ domains, allDomains, sites: siteList });
-        if (owned.warning) {
+        const allDomains = await ownedGroupDomains();
+        const owned = await desiredOwnedGroups({ domains, sites: siteList });
+        if (!owned.complete) {
           logger?.warn(owned.warning);
-          warnings.push(owned.warning);
+          failures.push({ step: 'grants', message: owned.warning });
         }
+        const held = await heldOwnedGroups(allDomains);
         ({ changed: groupsChanged } = await writeOwnedGroups(owned.desired, allDomains));
+        narrowed = narrowingSince(owned.desired, owned.complete, held);
         if (groupsChanged) logger?.info('Authelia users file groups updated');
       } catch (err) {
+        narrowOwnedGroupsOnly();
         failures.push({ step: 'groups', message: err.message });
       }
       try {
         await atomicWriteJSONIfChanged(
           path.join(STATE_DIR, DOMAINS_PROJECTION_FILE),
-          { v: 2, domains },
+          {
+            v: 2,
+            domains: domains.map(({ name, members, externals }) => ({ name, members, externals })),
+          },
           { mode: 0o600 },
         );
       } catch (err) {
@@ -858,26 +936,130 @@ export function syncDomainAccess({ logger, sites } = {}) {
       let changed = false;
       try {
         ({ changed } = await updateDomainAccess({
-          domains: domains.map((d) => d.name),
+          domains: domains.map(({ name, groupKey }) => ({ name, groupKey })),
           sites: protectedSiteRules(siteList),
         }));
         if (changed) logger?.info({ domains: domains.length }, 'Authelia domain access updated');
       } catch (err) {
         failures.push({ step: 'authelia', message: err.message });
       }
-      await recordRenderOutcome(failures, logger);
-      if (failures.length > 0) {
-        throw new Error(failures.map((f) => `${f.step}: ${f.message}`).join('; '));
+      let restarted = changed;
+      if (changed) takeUsersFileDirty();
+      try {
+        const reason = changed ? null : await restartReason(domains, narrowed);
+        if (reason) {
+          await reloadAuthelia();
+          restarted = true;
+          logger?.info({ reason }, 'Authelia restarted to read users.yml anew');
+          await recordAuditBestEffort(
+            { actor: 'lamaste', action: 'authelia.restarted', details: { reason } },
+            logger,
+          );
+        }
+      } catch (err) {
+        failures.push({ step: 'restart', message: err.message });
       }
-      return {
-        changed,
-        groupsChanged,
-        domains: domains.length,
-        ...(warnings.length > 0 ? { warnings } : {}),
-      };
+      await recordRenderOutcome(failures, logger);
+      return { changed, groupsChanged, restarted, domains: domains.length, failures, narrowed };
     },
     { logger },
   );
+
+  const { failures, narrowed = [], ...result } = outcome;
+  const warnings = [];
+  if (result.restarted) {
+    const { bustGatekeeperSessions } = await import('./gatekeeper-client.js');
+    const busted = await bustGatekeeperSessions();
+    if (!busted.ok) {
+      warnings.push({
+        step: 'gatekeeper',
+        message: `Gatekeeper did not drop its cached sessions (${busted.error}); they expire within 30 seconds`,
+      });
+    }
+  }
+  if (narrowed.length > 0) warnings.push(...(await followNarrowing(narrowed, logger)));
+  if (failures.length > 0) {
+    const err = new Error(failures.map((f) => `${f.step}: ${f.message}`).join('; '));
+    err.warnings = warnings;
+    throw err;
+  }
+  return { ...result, ...(warnings.length > 0 ? { warnings } : {}) };
+}
+
+/**
+ * Why Authelia must be restarted after this rendering wrote users.yml, or
+ * null: `unwatched` — its configuration does not have it watch the file and
+ * the file changed (a configuration that could not be brought in line);
+ * `device-code` — an enabled user lost a group that admitted them to a
+ * device-code OIDC client ({@link syncDomainAccess} step 4). When the
+ * device-code clients cannot be read, any narrowing restarts (fail closed).
+ */
+async function restartReason(domains, narrowed) {
+  if (!(await autheliaWatchesUsers()) && takeUsersFileDirty()) return 'unwatched';
+  if (narrowed.length === 0) return null;
+  let clients;
+  try {
+    clients = await deviceCodeClients(domains);
+  } catch {
+    return 'device-code';
+  }
+  if (clients.length === 0) return null;
+  const lostReach = narrowed.some(({ before, after }) => {
+    const still = new Set(reachedOidcClients(after, clients));
+    return reachedOidcClients(before, clients).some((id) => !still.has(id));
+  });
+  return lostReach ? 'device-code' : null;
+}
+
+/**
+ * Follow the users a rendering narrowed: audit each (`directory.access.narrowed`,
+ * by directory id and the number of groups lost — never a username or a
+ * group), and revoke the registry tokens of those who no longer reach the
+ * registry's sign-in. Best effort; returns warnings.
+ */
+async function followNarrowing(narrowed, logger) {
+  const db = await getStateDb();
+  const ids = new Map(
+    db
+      .prepare("SELECT user_id, username FROM directory_users WHERE status = 'active'")
+      .all()
+      .map((r) => [r.username, r.user_id]),
+  );
+  const warnings = [];
+  for (const { username, lost } of narrowed) {
+    const userId = ids.get(username);
+    if (!userId) continue;
+    await recordAuditBestEffort(
+      {
+        actor: 'lamaste',
+        action: 'directory.access.narrowed',
+        details: { userId, groups: lost.length },
+      },
+      logger,
+    );
+    warnings.push(...(await revokeRegistryTokensFor(username, userId, logger)));
+  }
+  return warnings;
+}
+
+/** How soon a rendering a grant change could not finish is tried again. */
+const RENDER_RETRY_DELAY_MS = 5_000;
+let renderRetryTimer = null;
+
+/**
+ * Render once more shortly — after a grant or group change whose rendering
+ * failed, so an external member a revocation narrowed is not left holding
+ * the group for the identity tick's minute. Coalesced, best effort.
+ */
+export function scheduleRenderRetry(logger) {
+  if (renderRetryTimer) return;
+  renderRetryTimer = setTimeout(() => {
+    renderRetryTimer = null;
+    void syncDomainAccess({ logger }).catch(() => {
+      // Audited by the rendering itself; the identity tick renders again.
+    });
+  }, RENDER_RETRY_DELAY_MS);
+  renderRetryTimer.unref();
 }
 
 /** How long a change of tunnels or sites waits before the hosts it names are rendered. */
@@ -942,10 +1124,10 @@ async function recordRenderOutcome(failures, logger) {
 async function settleMembership(logger, { effective = true } = {}) {
   const warnings = [];
   try {
-    await syncDomainAccess({ logger });
+    warnings.push(...((await syncDomainAccess({ logger })).warnings ?? []));
   } catch (err) {
     logger?.error({ err: err.message }, 'Rendering domain access failed');
-    warnings.push({
+    warnings.push(...(err.warnings ?? []), {
       step: 'render',
       message: `Domain access was not fully rendered (${err.message}); the panel renders it again within a minute`,
     });
@@ -1051,9 +1233,6 @@ export async function addDomainMember(name, user, { kind = 'member', actor, logg
   );
   if (!change.added && !change.changed) return { added: false, changed: false };
   const warnings = await settleMembership(logger, { effective: change.effective });
-  if (change.changed && change.external && change.username) {
-    warnings.push(...(await revokeRegistryTokensFor(change.username, change.userId, logger)));
-  }
   return { added: change.added, changed: change.changed, ...withWarnings(warnings) };
 }
 
@@ -1111,9 +1290,6 @@ export async function removeDomainMember(name, user, { actor, logger }) {
   });
   if (!removed) return { removed: false };
   const warnings = await settleMembership(logger, { effective: removed.effective });
-  if (removed.username) {
-    warnings.push(...(await revokeRegistryTokensFor(removed.username, userId, logger)));
-  }
   return { removed: true, ...withWarnings(warnings) };
 }
 
@@ -1178,7 +1354,6 @@ export async function setUserDomains(userId, memberships, { actor, logger }) {
       const touched = events.map((e) => known.get(e.details.domain));
       return {
         username: user.username,
-        narrowed: ended.length > 0 || rekinded.some((m) => m.kind === 'external'),
         changed: events.length > 0,
         effective: user.status === 'active' && touched.some((d) => d?.status === 'active'),
       };
@@ -1186,39 +1361,56 @@ export async function setUserDomains(userId, memberships, { actor, logger }) {
   );
   if (!change.changed) return { domains: wanted, changed: false };
   const warnings = await settleMembership(logger, { effective: change.effective });
-  if (change.username && change.narrowed) {
-    warnings.push(...(await revokeRegistryTokensFor(change.username, userId, logger)));
-  }
   return { domains: wanted, changed: true, ...withWarnings(warnings) };
 }
 
 /**
- * Whether user `userId` (`username`) still reaches the registry's sign-in
- * on one of `domains` (its issuer domain, Feria's own domain): as a member
- * of one, or as an external member of one granted a user-facing OIDC client
- * of it (a grant directly or through a Lamaste group). Gatekeeper not
- * answering is "no" — fail closed.
+ * Whether user `userId` (`username`) still reaches the registry's sign-in:
+ * one of the registry's own sign-in clients — the user-facing OIDC clients
+ * whose audience is the registry (`registryAudience` of its URL) — admits
+ * them: as a member of the client's domain, or as an external member of it
+ * granted the client (a grant directly or through a Lamaste group). No
+ * such client, or one that cannot be read — the plugin manifests,
+ * Gatekeeper — is "no": fail closed.
  *
  * @param {string} username
  * @param {string} userId
- * @param {readonly string[]} domains
+ * @param {{ registryUrl: string }} config the stored registry credential
  */
-async function reachesRegistry(username, userId, domains) {
-  const db = await getStateDb();
-  const kinds = db
-    .prepare('SELECT domain, kind FROM domain_members WHERE user_id = ?')
-    .all(userId)
-    .filter((r) => domains.includes(r.domain));
-  if (kinds.some((r) => r.kind === 'member')) return true;
-  if (kinds.length === 0) return false;
-  const { readGrantedResources, userFacingOidcClients, OIDC_CLIENT_RESOURCE } =
+async function reachesRegistry(username, userId, config) {
+  let audience;
+  try {
+    audience = registryAudience(config.registryUrl);
+  } catch {
+    return false;
+  }
+  const { planOidcClients } = await import('./plugin-oidc.js');
+  const { isUserFacingOidcClient, readGrantedResources, OIDC_CLIENT_RESOURCE } =
     await import('./owned-groups.js');
+  let signIn;
+  try {
+    signIn = (await planOidcClients()).served.filter(
+      (c) =>
+        isUserFacingOidcClient(c) &&
+        c.audience.some((a) => a.replaceAll('{domain}', c.domain) === audience),
+    );
+  } catch {
+    return false;
+  }
+  if (signIn.length === 0) return false;
+  const db = await getStateDb();
+  const kinds = new Map(
+    db
+      .prepare('SELECT domain, kind FROM domain_members WHERE user_id = ?')
+      .all(userId)
+      .map((r) => [r.domain, r.kind]),
+  );
+  if (signIn.some((c) => kinds.get(c.domain) === 'member')) return true;
+  const external = signIn.filter((c) => kinds.get(c.domain) === 'external');
+  if (external.length === 0) return false;
   const read = await readGrantedResources();
   if (!read.ok) return false;
-  const externalOf = new Set(kinds.map((r) => r.domain));
-  return (await userFacingOidcClients()).some(
-    (c) => externalOf.has(c.domain) && read.granted[OIDC_CLIENT_RESOURCE].get(c.id)?.has(username),
-  );
+  return external.some((c) => read.granted[OIDC_CLIENT_RESOURCE].get(c.id)?.has(username));
 }
 
 /**
@@ -1237,7 +1429,7 @@ export async function revokeRegistryTokensFor(username, userId, logger) {
     const { readRegistryCredentialConfig } = await import('./registry-credential.js');
     const config = await readRegistryCredentialConfig();
     if (!config) return [];
-    if (await reachesRegistry(username, userId, await registryDomainsOf(config))) return [];
+    if (await reachesRegistry(username, userId, config)) return [];
     return await revokeTokensOf([{ username, userId }], config, logger);
   } catch (err) {
     logger?.warn({ userId, err: err.message }, 'Registry tokens were not revoked');
@@ -1349,8 +1541,9 @@ export async function addDomain(name, { actor, logger }) {
     }
     await assertRelayHostsFree(name);
     db.prepare(
-      "INSERT INTO domains (name, is_primary, status, created_at) VALUES (?, 0, 'pending', ?)",
-    ).run(name, new Date().toISOString());
+      `INSERT INTO domains (name, is_primary, status, created_at, group_key)
+       VALUES (?, 0, 'pending', ?, ?)`,
+    ).run(name, new Date().toISOString(), newGroupKey());
     await recordAuditBestEffort(
       { actor, action: 'domain.added', details: { domain: name, primary: false } },
       logger,
@@ -1555,6 +1748,10 @@ export async function removeDomain(name, { actor, logger }) {
         .all(name)
         .map((r) => r.user_id);
       db.prepare('DELETE FROM domains WHERE name = ?').run(name);
+      db.prepare(
+        `INSERT INTO retired_domains (name, removed_at) VALUES (?, ?)
+         ON CONFLICT (name) DO UPDATE SET removed_at = excluded.removed_at`,
+      ).run(name, new Date().toISOString());
       return ended;
     });
     return { active: domain.status === 'active', members };

@@ -3,29 +3,31 @@
  * be (packages/core/docs/external-members-design.md; core owned-groups.ts) —
  * what lib/domains.js `syncDomainAccess` writes into users.yml:
  *
- * - each domain's members and external members (`lamaste:member@<d>`,
- *   `lamaste:external@<d>`);
- * - a protected static site's listed users (its host group);
+ * - each domain's members and external members (`lamaste:m:<key>`,
+ *   `lamaste:x:<key>`, the key a random one of the domain's record);
+ * - a protected static site's listed users (`lamaste:s:<site id>`);
  * - the external members granted a Gatekeeper-gated `restricted` host — a
  *   restricted tunnel (a user surface's too) or a restricted web surface —
  *   by a grant in Gatekeeper, direct or through a Lamaste group (the host's
- *   group);
+ *   group, named by its hostname);
  * - the external members granted a user-facing OIDC client
  *   (`lamaste:oidc@<id>`, a Gatekeeper grant `resourceType: 'oidc-client'`).
  *
  * Grants are read from Gatekeeper only while some domain has external
  * members (members reach those hosts and clients through their domain's
- * group). When Gatekeeper cannot be read, the hosts and clients each
- * external member holds now are kept — narrowing nothing a revocation could
- * have asked for (a revocation is a Gatekeeper write, and Gatekeeper is
- * what cannot be reached), widening nothing either: a membership's own
- * group still decides, and it comes from state.db.
+ * group). When they cannot be read — Gatekeeper, the tunnels or the plugin
+ * manifests — external members hold no host or client group until they
+ * can (fail closed): the memberships, from state.db, are rendered all the
+ * same.
  */
 
-import { isLamasteOwnedGroup, oidcClientGroup, renderOwnedGroups } from '@lamalibre/lamaste';
+import { OWNED_GROUP_PREFIX, renderOwnedGroups } from '@lamalibre/lamaste';
 import { httpError } from './app-error.js';
-import { readUsersRaw } from './authelia.js';
-import { listGatekeeperGroups, listGrantsOfType } from './gatekeeper-client.js';
+import {
+  listGatekeeperGroups,
+  listGrantsOfType,
+  revokeGatekeeperGrant,
+} from './gatekeeper-client.js';
 import { readTunnels } from './state.js';
 
 /** The Gatekeeper resource type of a grant on an OIDC client (`resourceId`: the client id). */
@@ -41,10 +43,19 @@ export function isUserFacingOidcClient(client) {
   return !client.grantTypes.includes('client_credentials');
 }
 
+/** An access mode as Gatekeeper reads it: restricted when absent or unknown. */
+function accessModeOf(value) {
+  return value === 'public' || value === 'authenticated' ? value : 'restricted';
+}
+
 /**
- * The Gatekeeper-gated restricted hosts: restricted tunnels with a
- * hostname (an internal plugin tunnel has none) and restricted web
- * surfaces (plugin-owned sites), each with the resource its grants name.
+ * The Gatekeeper-gated restricted hosts: enabled restricted tunnels with a
+ * hostname (an internal plugin tunnel has none; an agent panel is mTLS,
+ * not Gatekeeper's; a tunnel without an access mode is restricted, as
+ * Gatekeeper reads it) and restricted web surfaces (plugin-owned sites),
+ * each with the resource its grants name. A disabled tunnel serves nobody —
+ * a web surface moved off a tunnel leaves it disabled on the same hostname,
+ * and its grants must not name anyone there.
  *
  * @param {ReadonlyArray<Record<string, unknown>>} tunnels
  * @param {ReadonlyArray<Record<string, unknown>>} sites
@@ -53,12 +64,19 @@ export function isUserFacingOidcClient(client) {
 export function restrictedHosts(tunnels, sites) {
   const hosts = [];
   for (const t of tunnels) {
-    if (typeof t?.fqdn === 'string' && t.accessMode === 'restricted' && typeof t.id === 'string') {
+    if (
+      typeof t?.fqdn === 'string' &&
+      typeof t.id === 'string' &&
+      t.enabled !== false &&
+      t.type !== 'panel' &&
+      t.exposure !== 'internal' &&
+      accessModeOf(t.accessMode) === 'restricted'
+    ) {
       hosts.push({ fqdn: t.fqdn.toLowerCase(), resourceType: 'tunnel', resourceId: t.id });
     }
   }
   for (const s of sites) {
-    if (s?.owner && s.accessMode === 'restricted' && typeof s.fqdn === 'string') {
+    if (s?.owner && accessModeOf(s.accessMode) === 'restricted' && typeof s.fqdn === 'string') {
       hosts.push({ fqdn: s.fqdn.toLowerCase(), resourceType: 'site', resourceId: s.id });
     }
   }
@@ -124,82 +142,158 @@ export async function userFacingOidcClients() {
 }
 
 /**
- * The owned groups every user should hold (core `renderOwnedGroups`), and a
- * warning when Gatekeeper could not be read (the grants each external
- * member holds now are then kept).
+ * The owned groups every user should hold (core `renderOwnedGroups`):
+ * `complete` false — with a `warning` — when the grants could not be read,
+ * and the hosts and OIDC clients external members are granted were then
+ * left out (fail closed).
  *
  * @param {{
- *   domains: ReadonlyArray<{ name: string, members: readonly string[], externals: readonly string[] }>,
- *   allDomains: readonly string[],
+ *   domains: ReadonlyArray<{ name: string, groupKey: string, members: readonly string[], externals: readonly string[] }>,
  *   sites: ReadonlyArray<Record<string, unknown>>,
- * }} input `domains` the active ones with their people, `allDomains` every
- *   domain record, `sites` sites.json (or the sites being saved)
- * @returns {Promise<{ desired: Map<string, string[]>, warning?: string }>}
+ * }} input `domains` the active ones with their people, `sites` sites.json
+ *   (or the sites being saved)
+ * @returns {Promise<{ desired: Map<string, string[]>, complete: boolean, warning?: string }>}
  */
-export async function desiredOwnedGroups({ domains, allDomains, sites }) {
+export async function desiredOwnedGroups({ domains, sites }) {
   const siteGroups = sites
     .filter(
       (s) =>
         s?.autheliaProtected === true &&
+        typeof s.id === 'string' &&
         typeof s.fqdn === 'string' &&
         Array.isArray(s.allowedUsers) &&
         s.allowedUsers.length > 0,
     )
-    .map((s) => ({ fqdn: s.fqdn.toLowerCase(), users: s.allowedUsers }));
+    .map((s) => ({ id: s.id, fqdn: s.fqdn.toLowerCase(), users: s.allowedUsers }));
 
   let hostGrants = [];
   let clientGrants = [];
   let warning;
   if (domains.some((d) => d.externals.length > 0)) {
-    const [hosts, clients, read] = await Promise.all([
-      readTunnels().then((tunnels) => restrictedHosts(tunnels, sites)),
-      userFacingOidcClients(),
-      readGrantedResources(),
-    ]);
-    const granted = read.ok ? read.granted : await grantsHeldNow(hosts, clients, allDomains);
-    if (!read.ok) {
-      warning = `Gatekeeper's grants could not be read (${read.error}); the hosts and OIDC clients external members hold now are kept`;
+    try {
+      const [hosts, clients, read] = await Promise.all([
+        readTunnels().then((tunnels) => restrictedHosts(tunnels, sites)),
+        userFacingOidcClients(),
+        readGrantedResources(),
+      ]);
+      if (!read.ok) throw new Error(`Gatekeeper: ${read.error}`);
+      hostGrants = hosts.map((h) => ({
+        fqdn: h.fqdn,
+        users: [...(read.granted[h.resourceType].get(h.resourceId) ?? [])],
+      }));
+      clientGrants = clients.map((c) => ({
+        clientId: c.id,
+        domain: c.domain,
+        users: [...(read.granted[OIDC_CLIENT_RESOURCE].get(c.id) ?? [])],
+      }));
+    } catch (err) {
+      hostGrants = [];
+      clientGrants = [];
+      warning = `What external members are granted could not be read (${err.message}): they hold no granted host or OIDC client until it can — the panel renders again within a minute`;
     }
-    hostGrants = hosts.map((h) => ({
-      fqdn: h.fqdn,
-      users: [...(granted[h.resourceType].get(h.resourceId) ?? [])],
-    }));
-    clientGrants = clients.map((c) => ({
-      clientId: c.id,
-      domain: c.domain,
-      users: [...(granted[OIDC_CLIENT_RESOURCE].get(c.id) ?? [])],
-    }));
   }
 
   return {
     desired: renderOwnedGroups({ domains, sites: siteGroups, hostGrants, clientGrants }),
+    complete: warning === undefined,
     ...(warning ? { warning } : {}),
   };
 }
 
+/** Whether an owned group names a grant (a host group, an OIDC client group) rather than a membership or a site's list. */
+function isGrantGroup(group) {
+  return !group.startsWith(OWNED_GROUP_PREFIX) || group.startsWith(`${OWNED_GROUP_PREFIX}oidc@`);
+}
+
 /**
- * The grants users.yml says its users hold now — who holds each host's
- * group and each client's group — as {@link readGrantedResources} would
- * answer them: what a rendering keeps while Gatekeeper cannot be read.
+ * The owned groups each user held as the last rendering from complete
+ * inputs decided (membership groups as the last rendering of any kind
+ * did) — what a narrowing is measured against. Null until the first
+ * rendering, which takes what users.yml holds then.
+ *
+ * @type {Map<string, readonly string[]> | null}
  */
-async function grantsHeldNow(hosts, clients, allDomains) {
-  const users = (await readUsersRaw()).users ?? {};
-  const holders = new Map();
-  for (const [username, entry] of Object.entries(users)) {
-    for (const group of Array.isArray(entry?.groups) ? entry.groups : []) {
-      if (typeof group !== 'string' || !isLamasteOwnedGroup(group, allDomains)) continue;
-      const key = group.toLowerCase();
-      if (!holders.has(key)) holders.set(key, new Set());
-      holders.get(key).add(username);
+let baseline = null;
+
+/** Forget the baseline (tests). */
+export function resetOwnedGroupsBaselineForTests() {
+  baseline = null;
+}
+
+/**
+ * Who lost owned groups since the baseline, as `desired` decides — each
+ * enabled user of `held` (users.yml now) with the groups they lose — and
+ * the baseline moved on. When `complete` is false the grants were not read
+ * and `desired` holds none: grant groups are then neither counted as lost
+ * nor forgotten — a grant revoked meanwhile is found lost by the next
+ * complete rendering. A user who is gone or disabled is no narrowing to
+ * follow (Authelia refuses them; offboarding revokes their tokens).
+ *
+ * @param {ReadonlyMap<string, readonly string[]>} desired
+ * @param {boolean} complete
+ * @param {ReadonlyMap<string, { groups: readonly string[], active: boolean }>} held
+ * @returns {Array<{ username: string, lost: string[], before: readonly string[], after: string[] }>}
+ */
+export function narrowingSince(desired, complete, held) {
+  if (baseline === null) {
+    baseline = new Map([...held].map(([u, h]) => [u, [...h.groups]]));
+  }
+  const previous = baseline;
+  const next = new Map();
+  const narrowed = [];
+  for (const username of new Set([...previous.keys(), ...desired.keys()])) {
+    const before = previous.get(username) ?? [];
+    const kept = complete ? [] : before.filter(isGrantGroup);
+    const after = [...new Set([...(desired.get(username) ?? []), ...kept])];
+    if (after.length > 0) next.set(username, after);
+    const lost = before.filter((g) => !after.includes(g));
+    if (lost.length > 0 && held.get(username)?.active) {
+      narrowed.push({ username, lost, before, after });
     }
   }
-  const granted = { tunnel: new Map(), site: new Map(), [OIDC_CLIENT_RESOURCE]: new Map() };
-  for (const h of hosts)
-    granted[h.resourceType].set(h.resourceId, holders.get(h.fqdn) ?? new Set());
-  for (const c of clients) {
-    granted[OIDC_CLIENT_RESOURCE].set(c.id, holders.get(oidcClientGroup(c.id)) ?? new Set());
+  baseline = next;
+  return narrowed;
+}
+
+/**
+ * The user-facing OIDC clients that sign users in with the device-code
+ * flow, each with its domain's group key (core `reachedOidcClients`) —
+ * those Authelia checks against the groups a session last refreshed.
+ *
+ * @param {ReadonlyArray<{ name: string, groupKey: string }>} domains the active domains
+ * @returns {Promise<Array<{ id: string, groupKey: string }>>}
+ */
+export async function deviceCodeClients(domains) {
+  const keys = new Map(domains.map((d) => [d.name, d.groupKey]));
+  const { planOidcClients } = await import('./plugin-oidc.js');
+  const { served } = await planOidcClients();
+  return served
+    .filter((c) => isUserFacingOidcClient(c) && c.grantTypes.includes(DEVICE_CODE_GRANT))
+    .filter((c) => keys.has(c.domain))
+    .map((c) => ({ id: c.id, groupKey: keys.get(c.domain) }));
+}
+
+/** The OAuth grant type of the device-code flow. */
+export const DEVICE_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
+
+/**
+ * Revoke every Gatekeeper grant on the OIDC clients `clientIds` — a plugin
+ * uninstalled takes the grants on its clients with it.
+ *
+ * @param {readonly string[]} clientIds
+ * @returns {Promise<{ ok: true, revoked: number } | { ok: false, error: string }>}
+ */
+export async function revokeOidcClientGrants(clientIds) {
+  if (clientIds.length === 0) return { ok: true, revoked: 0 };
+  const list = await listGrantsOfType(OIDC_CLIENT_RESOURCE);
+  if (!list.ok) return { ok: false, error: list.error };
+  let revoked = 0;
+  for (const grant of list.grants.filter((g) => clientIds.includes(g.resourceId))) {
+    const result = await revokeGatekeeperGrant(grant.grantId);
+    if (!result.ok) return { ok: false, error: result.error };
+    revoked += 1;
   }
-  return granted;
+  return { ok: true, revoked };
 }
 
 /**

@@ -262,9 +262,14 @@ test('OIDC: an enabled agent-hosted plugin has its clients served, without being
     [null, null],
   );
   const served = plan.served.map((c) => ({ ...c, domain: 'relay.test' }));
-  const section = buildOidcProviderSection(['relay.test'], 'hmac', served, {
-    secretDigests: { 'e2e-agent-hosted-service': '$pbkdf2-sha512$310000$c2FsdA$a2V5' },
-  });
+  const section = buildOidcProviderSection(
+    [{ name: 'relay.test', groupKey: '0a0a0a0a0a0a0a0a' }],
+    'hmac',
+    served,
+    {
+      secretDigests: { 'e2e-agent-hosted-service': '$pbkdf2-sha512$310000$c2FsdA$a2V5' },
+    },
+  );
   assert.deepEqual(
     section.clients.map((c) => c.client_id),
     ['e2e-agent-hosted-cli', 'e2e-agent-hosted-service'],

@@ -131,9 +131,16 @@ test('Authelia’s refusal of a signed-in non-member is a refusal page, never a 
   assert.match(res.body, /href="https:\/\/auth\.codelama\.com\.tr\/logout"/);
   assert.match(res.body, /ops@codelama\.com\.tr/);
   assert.doesNotMatch(res.body, /cust/, 'the page names no user');
-  // Not cached: asked again next time.
+  // Each refusal asks once more, for the domain's portal, who it was for
+  // (an external member gets the access-request page instead) — never
+  // cached: asked again next time.
   await check('workspace.codelama.com.tr', 'cust');
-  assert.equal(askedAuthelia.length, 2);
+  assert.deepEqual(askedAuthelia, [
+    'https://workspace.codelama.com.tr/',
+    'https://auth.codelama.com.tr/',
+    'https://workspace.codelama.com.tr/',
+    'https://auth.codelama.com.tr/',
+  ]);
 });
 
 test('Gatekeeper checks the membership itself, after Authelia — cached sessions too', async () => {

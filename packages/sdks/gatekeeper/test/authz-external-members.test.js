@@ -34,6 +34,8 @@ let app;
 let key;
 let previousDispatcher;
 const sessions = new Map();
+/** What Authelia was asked about `xr` and `stranger`: [user, X-Original-URL]. */
+const askedFor = [];
 
 const TUNNELS = [
   { id: 'wiki', fqdn: 'wiki.example.com', accessMode: 'authenticated', enabled: true },
@@ -119,8 +121,8 @@ before(async () => {
   setGlobalDispatcher(mock);
   const authelia = mock.get('http://127.0.0.1:9091');
   for (const [user, groups] of [
-    ['ext', 'lamaste:external@example.com,corral.example.com,herd.example.com'],
-    ['mem', 'admins,lamaste:member@example.com,staff,docs.example.com'],
+    ['ext', 'lamaste:x:0123456789abcdef,corral.example.com,herd.example.com'],
+    ['mem', 'admins,lamaste:m:0123456789abcdef,staff,lamaste:s:site-docs,LAMASTE:oidc@x'],
   ]) {
     authelia
       .intercept({
@@ -129,6 +131,31 @@ before(async () => {
         headers: { cookie: `authelia_session=${user}` },
       })
       .reply(200, '', { headers: { 'remote-user': user, 'remote-groups': groups } })
+      .persist();
+  }
+  // Authelia refuses `xr` (an external member without a host group) on
+  // every host but the domain's portal, where it admits them — what
+  // Gatekeeper asks to learn who a refusal was for. `stranger` (a member of
+  // no domain) is refused on the portal too.
+  for (const user of ['xr', 'stranger']) {
+    authelia
+      .intercept({
+        path: '/api/authz/auth-request',
+        method: 'GET',
+        headers: { cookie: `authelia_session=${user}` },
+      })
+      .reply((opts) => {
+        const url = opts.headers['X-Original-URL'];
+        askedFor.push([user, url]);
+        if (user === 'xr' && url === 'https://auth.example.com/') {
+          return {
+            statusCode: 200,
+            data: '',
+            responseOptions: { headers: { 'remote-user': user, 'remote-groups': '' } },
+          };
+        }
+        return { statusCode: 403, data: '' };
+      })
       .persist();
   }
 
@@ -162,7 +189,7 @@ before(async () => {
   app.decorate('getTunnels', () => TUNNELS);
   app.decorate('getUserSurfaceHosts', () => hosts);
   app.decorate('getDomains', () =>
-    domainsIndex([{ name: 'example.com', members: ['mem'], externals: ['ext'] }]),
+    domainsIndex([{ name: 'example.com', members: ['mem'], externals: ['ext', 'xr'] }]),
   );
   app.decorate('getSessionCache', () => sessions);
   app.decorate('getCacheVersion', () => 1);
@@ -178,7 +205,10 @@ after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-beforeEach(() => sessions.clear());
+beforeEach(() => {
+  sessions.clear();
+  askedFor.length = 0;
+});
 
 const headers = (fqdn, user, url = `https://${fqdn}/`) => ({
   host: fqdn,
@@ -251,4 +281,32 @@ test('the groups Lamaste owns never reach a backend: Remote-Groups and the relay
   });
   assert.equal(verified.ok, true);
   assert.deepEqual(verified.payload.caller.groups, []);
+});
+
+test('an external member Authelia refused gets the access-request page, not the domain refusal — asked for the portal, never cached', async () => {
+  const refused = await tunnel('wiki.example.com', 'xr');
+  assert.equal(refused.statusCode, 403);
+  assert.equal(refused.headers['cache-control'], 'no-store');
+  assert.match(refused.body, /ops@example\.com/);
+  assert.doesNotMatch(refused.body, /Not a member of/, 'they are on the domain');
+  assert.deepEqual(askedFor, [
+    ['xr', 'https://wiki.example.com/'],
+    ['xr', 'https://auth.example.com/'],
+  ]);
+  // Never admitted on the strength of the probe, whatever Gatekeeper's grants say.
+  assert.equal((await tunnel('corral.example.com', 'xr')).statusCode, 403);
+
+  const surfaced = await surface('shut.example.com', 'shut', 'xr');
+  assert.equal(surfaced.statusCode, 403);
+  assert.equal(surfaced.headers['x-lamalibre-refusal'], 'forbidden');
+  const shellRefused = await shell('webshut.example.com', 'xr');
+  assert.equal(shellRefused.statusCode, 403);
+  assert.doesNotMatch(shellRefused.body, /Not a member of/);
+
+  // Someone the portal refuses too is no member: the domain refusal, as before.
+  const stranger = await tunnel('wiki.example.com', 'stranger');
+  assert.equal(stranger.statusCode, 403);
+  assert.match(stranger.body, /Not a member of/);
+  const strangerSurface = await surface('shut.example.com', 'shut', 'stranger');
+  assert.equal(strangerSurface.headers['x-lamalibre-refusal'], 'not_a_member');
 });

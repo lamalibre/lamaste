@@ -6,24 +6,27 @@
  * file and applies a change at each user's next request, so a membership,
  * a kind, a grant or a site's `allowedUsers` changes without a restart.
  *
- * - `lamaste:member@<domain>` — the domain's active members;
- * - `lamaste:external@<domain>` — its active external members;
+ * - `lamaste:m:<key>` — the active members of the domain whose group key
+ *   is `<key>` (a random key on the domain record: the name says nothing
+ *   of the domain, so a relying party asking for the `groups` claim learns
+ *   no other tenant's name);
+ * - `lamaste:x:<key>` — its active external members;
+ * - `lamaste:s:<site id>` — the listed users of a protected static site;
  * - `lamaste:oidc@<client id>` — external members of the client's domain
  *   granted the OIDC client;
- * - `<hostname>` (a **host group**) — the people named on that host: the
- *   listed users of a protected static site, or the external members granted
- *   a Gatekeeper-gated restricted host. Authelia's `domain_regex` with a
+ * - `<hostname>` (a **host group**) — the external members granted a
+ *   Gatekeeper-gated restricted host. Authelia's `domain_regex` with a
  *   `(?P<Group>…)` capture admits a user on a host whose name is one of
- *   their groups.
+ *   their groups, so these alone must be hostnames.
  *
- * `:` and `@` never occur in a hostname, and a host group is always a
- * hostname under a relay domain, so the two kinds cannot be mistaken for each
- * other. Groups an administrator assigns (`admins`, `feria-admins`) match
+ * `:` never occurs in a hostname, and a host group is always a hostname
+ * under a relay domain, so the two kinds cannot be mistaken for each other.
+ * Groups an administrator assigns (`admins`, `feria-admins`) match
  * {@link ADMIN_GROUP_NAME_RE} and are never owned. Pure; browser-safe.
  */
 
 import { isLamasteUsername, isOidcClientId } from './constants.js';
-import { assertDomainName, domainOfHost } from './domains.js';
+import { domainOfHost } from './domains.js';
 
 /** The prefix of every Lamaste-owned group that is not a hostname. */
 export const OWNED_GROUP_PREFIX = 'lamaste:';
@@ -35,21 +38,42 @@ export const OWNED_GROUP_PREFIX = 'lamaste:';
  */
 export const ADMIN_GROUP_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
+/** A domain's group key: 16 lower-case hex characters, random, on the domain record. */
+export const DOMAIN_GROUP_KEY_RE = /^[0-9a-f]{16}$/;
+
+/** A site id as a site group carries it (sites are named by UUIDs). */
+const SITE_ID_RE = /^[a-z0-9-]{1,64}$/;
+
 /** Whether `name` may be assigned to a user as an Authelia group by an administrator. */
 export function isAssignableGroupName(name: unknown): name is string {
   return typeof name === 'string' && ADMIN_GROUP_NAME_RE.test(name);
 }
 
-/** `lamaste:member@<domain>`. */
-export function memberGroup(domain: string): string {
-  assertDomainName(domain);
-  return `${OWNED_GROUP_PREFIX}member@${domain}`;
+/** Whether `key` is a domain group key ({@link DOMAIN_GROUP_KEY_RE}). */
+export function isDomainGroupKey(key: unknown): key is string {
+  return typeof key === 'string' && DOMAIN_GROUP_KEY_RE.test(key);
 }
 
-/** `lamaste:external@<domain>`. */
-export function externalGroup(domain: string): string {
-  assertDomainName(domain);
-  return `${OWNED_GROUP_PREFIX}external@${domain}`;
+function assertGroupKey(key: string): void {
+  if (!isDomainGroupKey(key)) throw new Error('Not a domain group key');
+}
+
+/** `lamaste:m:<key>` — the members of the domain with group key `key`. */
+export function memberGroup(key: string): string {
+  assertGroupKey(key);
+  return `${OWNED_GROUP_PREFIX}m:${key}`;
+}
+
+/** `lamaste:x:<key>` — the external members of the domain with group key `key`. */
+export function externalGroup(key: string): string {
+  assertGroupKey(key);
+  return `${OWNED_GROUP_PREFIX}x:${key}`;
+}
+
+/** `lamaste:s:<site id>` — the listed users of a protected static site. */
+export function siteGroup(siteId: string): string {
+  if (!SITE_ID_RE.test(siteId)) throw new Error('Not a site id');
+  return `${OWNED_GROUP_PREFIX}s:${siteId}`;
 }
 
 /** `lamaste:oidc@<client id>`. */
@@ -59,24 +83,44 @@ export function oidcClientGroup(clientId: string): string {
 }
 
 /**
- * Whether `group` is Lamaste's: it starts with `lamaste:`, or it is a
- * hostname equal to or under one of `domains` (every domain record,
- * pending ones too — so a host group of a domain not yet active cannot be
- * planted ahead of it). Case-insensitive, as Authelia compares groups.
+ * A group name as Authelia compares it, near enough to be safe: Authelia
+ * matches groups case-insensitively with Go's `strings.EqualFold` (Unicode
+ * simple folding — `ſ` is `s`, the Kelvin sign `K` is `k`). NFKC maps those
+ * compatibility characters to their plain letters, then lower case.
  */
-export function isLamasteOwnedGroup(group: string, domains: readonly string[]): boolean {
-  const lower = group.toLowerCase();
-  return lower.startsWith(OWNED_GROUP_PREFIX) || domainOfHost(lower, domains) !== null;
+export function foldGroupName(name: string): string {
+  return name.normalize('NFKC').toLowerCase();
 }
 
-/** One active domain and its active people by kind. */
+/**
+ * Whether `group` is Lamaste's: it starts with `lamaste:`, or it is a
+ * hostname equal to or under one of `domains` (every domain record,
+ * pending ones too, and domains removed from the relay — so a host group
+ * cannot be planted ahead of a domain nor outlive one). Compared folded
+ * ({@link foldGroupName}), as Authelia compares groups: a look-alike
+ * spelling is owned too, and so never survives a rendering.
+ */
+export function isLamasteOwnedGroup(group: string, domains: readonly string[]): boolean {
+  const folded = foldGroupName(group);
+  return folded.startsWith(OWNED_GROUP_PREFIX) || domainOfHost(folded, domains) !== null;
+}
+
+/** One active domain, its group key and its active people by kind. */
 export interface OwnedGroupsDomain {
   readonly name: string;
+  readonly groupKey: string;
   readonly members: readonly string[];
   readonly externals: readonly string[];
 }
 
-/** A hostname and the usernames named on it. */
+/** A protected static site with a user list: its id, hostname and the usernames it lists. */
+export interface OwnedGroupsSite {
+  readonly id: string;
+  readonly fqdn: string;
+  readonly users: readonly string[];
+}
+
+/** A hostname and the usernames granted it. */
 export interface OwnedGroupsHost {
   readonly fqdn: string;
   readonly users: readonly string[];
@@ -94,7 +138,7 @@ export interface OwnedGroupsInput {
   /** The active domains with their active members and external members. */
   readonly domains: readonly OwnedGroupsDomain[];
   /** Protected static sites with an `allowedUsers` list. */
-  readonly sites: readonly OwnedGroupsHost[];
+  readonly sites: readonly OwnedGroupsSite[];
   /** Gatekeeper-gated restricted hosts with the users granted each (Lamaste groups expanded). */
   readonly hostGrants: readonly OwnedGroupsHost[];
   /** User-facing OIDC clients with the users granted each (Lamaste groups expanded). */
@@ -111,16 +155,17 @@ function assertUsername(username: string): void {
  * (users who should hold none are absent):
  *
  * - members and external members get their domain's group;
- * - a static site's host group: its listed users who are members or
- *   external members of the site's domain (a site under no active domain
- *   names nobody);
+ * - a static site's group: its listed users who are members or external
+ *   members of the site's domain (a site under no active domain names
+ *   nobody);
  * - a restricted host's group and an OIDC client's group: the granted users
  *   who are **external** members of its domain — members reach those through
  *   their domain's group already.
  *
  * A listed user or a grant's principal who is none of the domain's people
  * is ignored. Throws on a member or external member who is not a Lamaste
- * username and on a user who is both on one domain. Pure.
+ * username, on a user who is both on one domain, and on a domain without a
+ * group key. Pure.
  */
 export function renderOwnedGroups(input: OwnedGroupsInput): Map<string, string[]> {
   const names = input.domains.map((d) => d.name);
@@ -139,9 +184,11 @@ export function renderOwnedGroups(input: OwnedGroupsInput): Map<string, string[]
     if ([...externals].some((x) => members.has(x))) {
       throw new Error(`A user is both a member and an external member of ${domain.name}`);
     }
+    const member = memberGroup(domain.groupKey);
+    const external = externalGroup(domain.groupKey);
     people.set(domain.name, { members, externals });
-    for (const m of members) give(m, memberGroup(domain.name));
-    for (const x of externals) give(x, externalGroup(domain.name));
+    for (const m of members) give(m, member);
+    for (const x of externals) give(x, external);
   }
 
   /** The people of `host`'s domain that `admit` keeps, among `users`. */
@@ -159,9 +206,13 @@ export function renderOwnedGroups(input: OwnedGroupsInput): Map<string, string[]
   };
 
   for (const site of input.sites) {
-    const fqdn = site.fqdn.toLowerCase();
-    for (const u of named(fqdn, site.users, (p, u) => p.members.has(u) || p.externals.has(u))) {
-      give(u, fqdn);
+    const group = siteGroup(site.id);
+    for (const u of named(
+      site.fqdn,
+      site.users,
+      (p, u) => p.members.has(u) || p.externals.has(u),
+    )) {
+      give(u, group);
     }
   }
   for (const host of input.hostGrants) {
@@ -183,12 +234,30 @@ export interface GroupsHolder {
   [k: string]: unknown;
 }
 
+/** How {@link mergeOwnedGroups} may change a user's owned groups. */
+export interface MergeOwnedGroupsOptions {
+  /**
+   * The usernames `desired` was computed for (the users file's entries
+   * then). An entry for anyone else — a user created since, perhaps under a
+   * username a deleted user held — keeps no owned group and gains none
+   * until a rendering computes theirs.
+   */
+  readonly known?: ReadonlySet<string>;
+  /**
+   * Narrow only: each user keeps the owned groups they hold that `desired`
+   * holds too, and gains none — what a write does after a rendering failed,
+   * when `desired` may be older than the relay's state.
+   */
+  readonly narrowOnly?: boolean;
+}
+
 /**
  * `users` (the users map of `users.yml`) with exactly the Lamaste-owned
  * groups of `desired` ({@link renderOwnedGroups}): every owned group a user
  * holds that is not desired goes — a stray host group cannot survive — and
  * every desired one is added after the administrator's groups, which keep
- * their order. `domains` are every domain record (see
+ * their order (see {@link MergeOwnedGroupsOptions} for when none is
+ * added). `domains` are every domain record (see
  * {@link isLamasteOwnedGroup}). A desired user the file does not hold is
  * skipped. `changed` says whether any entry differs; entries that do not
  * are the same objects. Pure — `users` is not modified.
@@ -197,16 +266,22 @@ export function mergeOwnedGroups<T extends GroupsHolder>(
   users: Readonly<Record<string, T>>,
   desired: ReadonlyMap<string, readonly string[]>,
   domains: readonly string[],
+  options: MergeOwnedGroupsOptions = {},
 ): { readonly users: Record<string, T>; readonly changed: boolean } {
   let changed = false;
   const out: Record<string, T> = {};
   for (const [username, entry] of Object.entries(users)) {
     const before: readonly unknown[] = Array.isArray(entry.groups) ? entry.groups : [];
+    const owned = (g: unknown): g is string =>
+      typeof g === 'string' && isLamasteOwnedGroup(g, domains);
+    const wanted =
+      options.known && !options.known.has(username) ? [] : (desired.get(username) ?? []);
+    const owns = options.narrowOnly
+      ? before.filter(owned).filter((g) => wanted.includes(g))
+      : wanted;
     const next = [
-      ...before.filter(
-        (g): g is string => typeof g === 'string' && !isLamasteOwnedGroup(g, domains),
-      ),
-      ...(desired.get(username) ?? []),
+      ...before.filter((g): g is string => typeof g === 'string' && !owned(g)),
+      ...owns,
     ];
     if (next.length === before.length && next.every((g, i) => before[i] === g)) {
       out[username] = entry;
@@ -216,4 +291,32 @@ export function mergeOwnedGroups<T extends GroupsHolder>(
     }
   }
   return { users: out, changed };
+}
+
+/** A user-facing OIDC client that signs users in with the device-code flow, with its domain's key. */
+export interface DeviceCodeClient {
+  readonly id: string;
+  readonly groupKey: string;
+}
+
+/**
+ * The ids of `clients` whose authorization policy admits a user holding
+ * `groups` — a member of the client's domain, or an external member of it
+ * granted the client (the policy {@link renderOidcClientPolicies} renders).
+ * What a narrowing is weighed by: Authelia's device-code flow checks the
+ * groups a session held when it last refreshed, so losing one of these
+ * needs the session ended. Pure.
+ */
+export function reachedOidcClients(
+  groups: Iterable<string>,
+  clients: readonly DeviceCodeClient[],
+): string[] {
+  const held = new Set(groups);
+  return clients
+    .filter(
+      (c) =>
+        held.has(memberGroup(c.groupKey)) ||
+        (held.has(externalGroup(c.groupKey)) && held.has(oidcClientGroup(c.id))),
+    )
+    .map((c) => c.id);
 }
