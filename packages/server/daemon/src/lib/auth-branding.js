@@ -52,7 +52,7 @@ import {
 } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
-import { getDomain } from './domains.js';
+import { notifyAdminsBestEffort } from './notifications.js';
 import { getStateDb } from './state-db.js';
 
 /** One change or reconcile of the brands at a time. */
@@ -192,11 +192,16 @@ async function brandingView(row) {
   };
 }
 
-/** The domain, or a 404 `unknown_domain`. */
+/**
+ * The domain's row — name and status — or a 404 `unknown_domain`. Its own
+ * query, not lib/domains.js: that module imports this one (a removed
+ * domain takes its brand with it), and the dependency runs one way.
+ */
 async function domainOr404(name) {
-  const domain = await getDomain(name);
-  if (!domain) throw httpError('Domain not found', 404, { code: 'unknown_domain' });
-  return domain;
+  const db = await getStateDb();
+  const row = db.prepare('SELECT name, status FROM domains WHERE name = ?').get(name);
+  if (!row) throw httpError('Domain not found', 404, { code: 'unknown_domain' });
+  return row;
 }
 
 /**
@@ -245,7 +250,6 @@ async function recordRenderOutcome(domain, err, logger) {
     logger,
   );
   if (failing) {
-    const { notifyAdminsBestEffort } = await import('./notifications.js');
     await notifyAdminsBestEffort(
       {
         source: 'lamaste',
