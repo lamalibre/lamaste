@@ -1,6 +1,6 @@
 # External Members of a Domain — Design Document
 
-> **Status:** proposed 2026-10-26, decisions open (below).
+> **Status:** agreed 2026-10-26 (all ten decisions as recommended; Redis left for a later, separate design).
 > **Base:** the multi-domain relay (`multi-domain-relay-design.md`, Lamaste 4.7.0, PR lamalibre/lamaste#1, not merged).
 > **Pilot:** corral (`corral.codelama.com.tr`): the client's people are external members of `codelama.com.tr`.
 > **Companions:** `herd/docs/r730-workload-plan.md` §15.2a (scope), §15.2 (delegated invitations, which come after this),
@@ -440,7 +440,9 @@ New three-VM specs on top of `multi-domain-harness.sh`:
    fixed with a test.
 5. **Rodeo** — the specs above on fresh VMs.
 
-## Decisions (open)
+## Decisions (agreed 2026-10-26)
+
+The user agreed to every recommendation below; the alternatives are kept for the record.
 
 1. **How membership changes avoid restarts.**
    - **(a) Recommended:** Lamaste-owned groups in `users.yml` with
