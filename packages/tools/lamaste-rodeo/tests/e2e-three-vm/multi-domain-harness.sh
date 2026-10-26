@@ -205,16 +205,23 @@ md_tunnel() {
 # step of their last code has passed waits for the next one. The step is the
 # one when the sign-in ended (the code is made during it, and a sign-in begun
 # at a step's last second takes the next step's code); it is remembered per
-# user — never call this in a command substitution.
+# user — never call this in a command substitution. Steps are read from the
+# visitor's clock, where sign_in makes the code: by this machine's clock a
+# visitor a second behind would still be in the step just used.
 md_sign_in() {
-  local domain="${5#*.}" key
+  local domain="${5#*.}" key now
   key="MD_TOTP_STEP_${1//[^A-Za-z0-9]/_}"
-  while [ -n "${!key:-}" ] && [ "$(($(date +%s) / 30))" -le "${!key}" ]; do
-    wait_for_next_totp_window
+  while [ -n "${!key:-}" ]; do
+    now=$(md_visitor_seconds)
+    [ "$((now / 30))" -gt "${!key}" ] && break
+    sleep "$((31 - now % 30))"
   done
   assert_eq "$(sign_in "$1" "$2" "$3" "$4" "$5" "${domain}")" "OK OK" "$1 signed in at auth.${domain} (password, TOTP)" || true
-  printf -v "$key" '%s' "$(($(date +%s) / 30))"
+  printf -v "$key" '%s' "$(($(md_visitor_seconds) / 30))"
 }
+
+# md_visitor_seconds — the visitor's clock, in seconds since the epoch
+md_visitor_seconds() { visitor_exec 'date +%s' < /dev/null | tail -n 1; }
 
 # outcome <jar | -> <url> — "<status> <redirect host | ->" of one request from the visitor
 outcome() {

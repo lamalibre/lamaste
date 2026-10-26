@@ -694,7 +694,20 @@ the ended session.
    reviews, every confirmed finding fixed with a test that fails without
    it; four decided with the user (S1 device code, S2 Authelia's own
    writes, S3 grant sweep, S4 opaque names).
-5. **Rodeo** — specs written (Proof above), not yet run.
+5. **Rodeo** — run on fresh Multipass VMs on 2026-10-26, this branch's 16
+   packages published to the dev Feria as 4.7.0 (on top of `aac7ce3`):
+
+   | Suite     | Result                                                                                                                                                   |
+   | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | single-VM | 35/35 specs (36 — OIDC by grant, device-code restart — 35/35 checks)                                                                                     |
+   | three-VM  | 51/51 specs: 49 (104 checks), 50 (54), 51 (71); 47 passed 62/62 on a rerun after the harness fix below                                                   |
+   | upgrade   | 01 Panel Update from 4.6.0: 38/38 (memberships `member`, watch, `refresh_interval`, password change/reset off, member group on every user, same answers) |
+
+   **Harness fix.** Spec 47 first failed one sign-in: Authelia refused a
+   TOTP code as already used. `md_sign_in` waited for the next 30 s step by
+   the orchestrator's clock while `sign_in` makes the code on the visitor,
+   so a visitor a moment behind made the same code again. Steps are read
+   from the visitor's clock now (`md_visitor_seconds`).
 
 ## Security review (2026-10-26)
 
