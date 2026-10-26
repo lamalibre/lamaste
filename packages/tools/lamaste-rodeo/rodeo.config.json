@@ -42,6 +42,11 @@
       "description": "Lamaste installed (create-lamaste completed)",
       "coordinated": false
     },
+    "installed-previous": {
+      "level": 2,
+      "description": "The release before the candidate installed from the registry (upgrade suite)",
+      "coordinated": false
+    },
     "provisioned": {
       "level": 3,
       "description": "Onboarding complete, agent enrolled, visitor configured",
@@ -168,6 +173,31 @@
         "32": [3],
         "34": [3],
         "35": [3]
+      }
+    },
+    "upgrade": {
+      "label": "Upgrade Tests",
+      "runner": "vm",
+      "path": "tests/e2e-upgrade",
+      "tiersPath": "tests/e2e/tiers",
+      "helpersPath": "../e2e/helpers.sh",
+      "networkInterface": "enp0s1",
+      "subnet": "10.13.39.0/24",
+      "vms": {
+        "host": {
+          "name": "lamaste-upgrade",
+          "ip": "10.13.39.1",
+          "label": "Host"
+        }
+      },
+      "tierAppliesTo": {
+        "node-ready": ["host"],
+        "installed-previous": ["host"],
+        "provisioned": ["host"]
+      },
+      "monitorServices": ["lamalibre-lamaste-serverd", "nginx", "authelia", "chisel-server"],
+      "testDeps": {
+        "1": []
       }
     }
   },

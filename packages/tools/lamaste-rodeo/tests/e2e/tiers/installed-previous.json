@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "meta": {
+    "tier": "installed-previous",
+    "name": "Single-VM installed, previous release",
+    "description": "Install the release before the candidate from the registry (as a relay has it), for the upgrade suite's Panel Update.",
+    "dependsOn": "node-ready"
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "Static IP of the single-VM host (auto-injected by the tier runner from ctx.vmIps[host])."
+    }
+  },
+  "sections": [
+    {
+      "id": "install-previous",
+      "label": "Install the previous Lamaste release via create-lamaste",
+      "steps": [
+        {
+          "id": "install-previous-release",
+          "label": "Install the release before the registry's latest create-lamaste",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "# inlined bash"
+          },
+          "bash": "set -euo pipefail\n# The candidate under test is the registry's latest create-lamaste (the\n# campaign publishes it to the dev Feria); the release it upgrades from is\n# the highest version below it, installed exactly as a relay has it.\nLATEST=\"$(npm view @lamalibre/create-lamaste dist-tags.latest)\"\nPREVIOUS=\"$(npm view @lamalibre/create-lamaste versions --json | LATEST=\"${LATEST}\" node -e '\nconst versions = JSON.parse(require(\"fs\").readFileSync(0, \"utf8\"));\nconst key = (v) => v.split(\".\").map(Number);\nconst below = (a, b) => { const x = key(a), y = key(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };\nconst older = [].concat(versions).filter((v) => /^\\d+\\.\\d+\\.\\d+$/.test(v) && below(v, process.env.LATEST));\nolder.sort((a, b) => (below(a, b) ? -1 : 1));\nif (older.length === 0) process.exit(1);\nprocess.stdout.write(older[older.length - 1]);\n')\"\necho \"candidate ${LATEST}, installing ${PREVIOUS}\"\nnpm install -g \"@lamalibre/create-lamaste@${PREVIOUS}\"\ncreate-lamaste --dev --skip-harden --yes\n"
+        },
+        {
+          "id": "patch-panel-ip",
+          "label": "Patch panel.json IP to match the VM static IP",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "patch-panel-ip"
+          },
+          "bash": "set -euo pipefail\nHOST_IP='{{HOST_IP}}'\nif [ -n \"${HOST_IP}\" ]; then\n  sed -i \"s/\\\"ip\\\": *\\\"[^\\\"]*\\\"/\\\"ip\\\": \\\"${HOST_IP}\\\"/\" /etc/lamalibre/lamaste/panel.json\nfi\n"
+        },
+        {
+          "id": "restart-panel",
+          "label": "Restart lamalibre-lamaste-serverd to pick up the patched IP",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl restart lamalibre-lamaste-serverd"
+          },
+          "continueOnError": true
+        }
+      ]
+    }
+  ]
+}

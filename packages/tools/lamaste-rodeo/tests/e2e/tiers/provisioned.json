@@ -21,7 +21,7 @@
       "vm-api-helper.sh",
       "vm-api-status-helper.sh",
       "certbot-shim.sh",
-      "test-domains.sh"
+      "../e2e/test-domains.sh"
     ]
   },
   "sections": [
