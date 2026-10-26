@@ -282,7 +282,9 @@ assert_eq "$MANAGED_ALIAS_STATUS" "400" "Aliases on a managed site rejected (HTT
 SELF_ALIAS_STATUS=$(custom_site_status "[\"e2e-aliasv-${RUN_ID}.test\"]")
 assert_eq "$SELF_ALIAS_STATUS" "400" "Alias equal to the site's own domain rejected (HTTP 400)" || true
 
-for reserved in "panel.${DOMAIN}" "auth.${DOMAIN}" "tunnel.${DOMAIN}" "${DOMAIN}"; do
+# From 4.7 a domain's apex is no relay host: it may be an alias, as it may
+# be a custom site's own domain (multi-domain relay design, "Hostnames").
+for reserved in "panel.${DOMAIN}" "auth.${DOMAIN}" "tunnel.${DOMAIN}"; do
   RESERVED_ALIAS_STATUS=$(custom_site_status "[\"${reserved}\"]")
   assert_eq "$RESERVED_ALIAS_STATUS" "400" "Lamaste hostname ${reserved} rejected as alias (HTTP 400)" || true
 done
