@@ -391,7 +391,7 @@ The Panel Server writes Authelia's files itself, without sudo (`writeAutheliaFil
 2. `rename()`s it over the destination — atomic on the same filesystem, so Authelia never reads a partial file
 3. The mode decides Authelia's access: `users.yml` `0660` (Authelia rewrites it when a user changes a password), `configuration.yml` `0640`, `.secrets.json` `0600` (the panel only)
 
-**Critical invariant:** After writing `users.yml`, the Authelia service must be restarted to pick up changes. Authelia does not watch the file for changes. The Panel Server calls `reloadAuthelia()` (which runs `systemctl restart authelia`) after every user modification.
+**Critical invariant:** Authelia must see every write of `users.yml`. Authelia watches `users.yml` (`authentication_backend.file.watch: true`) and reloads it in place; with the watch it re-reads a user's details at each of their requests, so a change applies at the user's next request without a restart and without ending anyone else's session. It skips a reload within 0.5 s of the previous one, so the panel writes the file once more 0.6 s after its last write. Every write goes through one file lock in the panel (`lib/authelia.js`), which also keeps the groups Lamaste owns as the last rendering decided.
 
 **Safety rule:** The Panel Server prevents deleting the last user in the Authelia database. Without at least one user, no one could authenticate to access tunneled apps.
 

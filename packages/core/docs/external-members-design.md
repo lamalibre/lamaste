@@ -546,7 +546,55 @@ New three-VM specs on top of `multi-domain-harness.sh`:
      `grants`), the API reference (users, domains, invitations, Gatekeeper
      grants with `oidc-client`, registry-and-oidc), CHANGELOG, CLAUDE.md.
 
-3. **UI, desktop, CLI, docs** — as above; CHANGELOG; CLAUDE.md.
+3. **UI, desktop, CLI, docs** — done. Core `types.ts`: `DomainMembership`
+   / `DomainMembershipInput` (`AdminUser.domains`, `domains` on user
+   creation, edits and invitations), `DomainView.externalMembers`,
+   `DomainMemberView.kind`, `addDomainMember(name, user, { kind })`,
+   `getPluginOidcClients` with `PluginOidcClientView` / `OidcClientGrantView`.
+   Web client and desktop client implement them (`admin_add_domain_member`
+   takes `kind`, checked before curl — `domain_member_body`, cargo-tested;
+   `admin_get_plugin_oidc_clients`). Panel: UI helpers `admin/lib/domains.js`
+   (`membershipsOf`, `isExternalAnywhere`, `membershipKind`,
+   `withMembership`, `sameMemberships`, `externalUserIds`,
+   `EXTERNAL_MEMBER_HINT`; tests), `useMembershipChoice` /
+   `DomainMembershipChoice` with a kind per domain (a one-domain relay shows
+   one **External member** checkbox and sends `domains` only when it is
+   ticked), `ExternalBadge` on users, invitations, domain members and a
+   plugin's audience, `DomainChips` marking external memberships; Users'
+   `GroupsField` closes for an external member and says to remove groups
+   first (the form refuses before asking the panel); the Domains page adds
+   members of either kind and switches a kind (**Make external** /
+   **Make member**) and counts external members; the plugin card's
+   `PluginOidcClients` (**OIDC sign-in**) grants a user-facing client to
+   external members of the plugin's domain or Lamaste groups and revokes.
+   CLI: `domains members <d> add <user> [--external]`,
+   `domains members <d> kind <user> member|external` (pure
+   `memberRequest`), kinds in `domains members`, `domains list` and
+   `users list` (`membershipsText`), `plugins oidc-clients <name> [grants]`
+   with each client's grants, `grant|revoke <clientId> --user|--group`
+   (`src/oidc-client-grants.js`); tests. Docs: `04-api-reference/domains.md`
+   (kinds, where enforced), `users.md` (no restart, kinds, groups Lamaste
+   owns), `registry-and-oidc.md` (per-client policies, client grants, 15-minute
+   tokens), `gatekeeper.md` (projection v2, the external-member matrix, OIDC
+   client grants), `01-concepts/security-model.md` (R3 narrowed, R4),
+   `02-guides/second-domain.md` (External members), and the restart
+   wording of `managing-users.md`, `state-management.md`,
+   `authentication.md`; CHANGELOG 4.7.0; CLAUDE.md.
+
+   **Deviations, for review:**
+   - One new `AdminClient` method, `getPluginOidcClients`: granting and
+     revoking go through the existing `createGatekeeperGrant` /
+     `revokeGatekeeperGrant` (the panel's proxy checks an `oidc-client`
+     grant and re-renders), not dedicated `grantOidcClient` /
+     `revokeOidcClientGrant` methods — one grant model, one path.
+   - The panel marks an external member of a plugin's audience from the
+     users list (their membership of the plugin's domain), not from the
+     audience rows, which do not carry the kind (decision 7).
+   - The CLI's `revoke` finds the grant through
+     `GET /api/plugins/:name/oidc-clients` and revokes it by id; its listing
+     now labels a client's OAuth grant types `flows:` (`grants:` is the
+     access grants).
+
 4. **Security review** — independent reviewers; every confirmed finding
    fixed with a test.
 5. **Rodeo** — the specs above on fresh VMs.

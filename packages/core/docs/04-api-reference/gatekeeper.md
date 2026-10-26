@@ -272,7 +272,11 @@ Create a new authorization grant linking a principal (user or group) to a resour
 
 **Plugin role grants.** For `resourceType: "plugin"` with `context.roles`, the panel checks the grant before Gatekeeper sees it: `resourceId` must be the route of an installed plugin that declares `identity` (`400`, `code: "no_identity"`) and `roles` a non-empty list of its role ids (`400`, `code: "invalid_roles"`, or `"unknown_roles"` with the `unknown` ones); they go on sorted and without repeats. The plugin's **People** panel and `lamaste-server plugins entitlements` manage these grants one principal at a time (`PUT /api/plugins/:name/entitlements` replaces a principal's role grants) — prefer them to creating one here. A plugin grant without `roles` (the desktop's local-install grants) never makes anyone a plugin user.
 
-**Errors:** 400 (invalid body; a role grant as above), 409 (duplicate grant), 503 (Gatekeeper unavailable, or a removed user's principal under `principalId` cannot be cleared — `code: "gatekeeper_unavailable"`)
+**OIDC client grants.** For `resourceType: "oidc-client"` the panel checks that `resourceId` is a client an installed plugin declares (`400`, `code: "unknown_oidc_client"`) that signs users in (`400`, `code: "service_oidc_client"`). Such a grant admits an **external member** of the plugin's domain to the client's sign-in ([Registry and OIDC](registry-and-oidc.md#several-domains-one-issuer-each)); members need none. Gatekeeper is not in the OIDC path — it only keeps the grant; the panel renders it into Authelia.
+
+**Every grant or group change through the proxy re-renders** who may reach what: the groups Lamaste owns in `users.yml` (external members' host groups follow their grants on `restricted` hosts) — applied by Authelia without a restart.
+
+**Errors:** 400 (invalid body; a role grant or an OIDC client grant as above), 409 (duplicate grant), 503 (Gatekeeper unavailable, or a removed user's principal under `principalId` cannot be cleared — `code: "gatekeeper_unavailable"`)
 
 ---
 
@@ -655,7 +659,17 @@ Every answer is `Cache-Control: no-store`. A refusal for want of an entitlement 
 
 ### Domain membership
 
-Every authorization route (tunnel, user surface, shell) checks the user's membership of the host's domain after Authelia, from `/etc/lamalibre/lamaste/domains.json` (written by the panel, watched like `tunnels.json`): `{ "v": 1, "domains": [{ "name", "members": [username…] }] }`, active domains and active members only. A missing or unreadable projection, or a host under no domain, refuses (fail closed). Authelia's own 403 — it renders the same membership — is no longer taken for "not signed in": a signed-in non-member gets **403** with the domain refusal page (the domain, the admin contact, a sign-out link to `https://auth.<domain>/logout`; no username), or JSON `{ "error": "not_a_member" }` on a user surface, instead of a 401 that sent the browser back to the sign-in page in a loop. Refusals are never cached; a membership change busts the session cache.
+Every authorization route (tunnel, user surface, shell) checks the user's membership of the host's domain after Authelia, from `/etc/lamalibre/lamaste/domains.json` (written by the panel, watched like `tunnels.json`): `{ "v": 2, "domains": [{ "name", "members": [username…], "externals": [username…] }] }`, active domains and active people only. A missing or unreadable projection, one of another version, or a host under no domain, refuses (fail closed). Authelia's own 403 — it renders the same membership — is no longer taken for "not signed in": a signed-in non-member gets **403** with the domain refusal page (the domain, the admin contact, a sign-out link to `https://auth.<domain>/logout`; no username), or JSON `{ "error": "not_a_member" }` on a user surface, instead of a 401 that sent the browser back to the sign-in page in a loop. Refusals are never cached; a membership change busts the session cache.
+
+**External members** reach only what names them. After the membership check:
+
+| Route             | `authenticated` host                                     | `restricted` host                        |
+| ----------------- | -------------------------------------------------------- | ---------------------------------------- |
+| Tunnel            | access-request page (403), logged `external_not_granted` | their grant (to them or a Lamaste group) |
+| User surface      | 403, `X-Lamalibre-Refusal: forbidden`                    | the host's grant                         |
+| Web-surface shell | access-request page (403)                                | the plugin's audience and the site grant |
+
+Members are unchanged. **Groups Lamaste owns** (`lamaste:…`, and hostnames under the relay's domains — [Domains API](domains.md#where-membership-is-enforced)) are stripped from `Remote-Groups` and from a plugin tunnel's relay assertion: a backend sees only the groups an administrator assigned.
 
 ### Refusal Page (nginx `error_page 403`)
 

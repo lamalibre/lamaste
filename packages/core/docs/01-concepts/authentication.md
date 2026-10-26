@@ -40,7 +40,7 @@ From the Users page in the management panel, you can:
 1. Navigate to the Users page in the management panel
 2. Click "Add User"
 3. Enter a username, display name, email, and password
-4. Lamaste creates the user in `users.yml` and restarts Authelia
+4. Lamaste creates the user in `users.yml`; Authelia reloads it in place
 5. Share the credentials with the user — they enroll in TOTP on first login
 
 ### TOTP enrollment flow
@@ -221,7 +221,7 @@ users:
 
 Lamaste manages this file through the panel server API. All writes are atomic: content is written to a temporary file first, then moved into place. This prevents Authelia from reading a partially written file.
 
-After every write to `users.yml`, the panel server reloads Authelia via `systemctl restart authelia` so the changes take effect.
+Authelia watches `users.yml` (`authentication_backend.file.watch: true`) and reloads it in place; with the watch it re-reads a user's details at each of their requests, so a change applies at the user's next request without a restart and without ending anyone else's session. It skips a reload within 0.5 s of the previous one, so the panel writes the file once more 0.6 s after its last write.
 
 ### Creating users programmatically
 

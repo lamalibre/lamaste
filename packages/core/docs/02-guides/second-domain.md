@@ -52,6 +52,25 @@ Tunnel and managed-site forms gain a **Domain** picker; the CLI takes `--domain`
 - A signed-in non-member gets a "not a member of this domain" page with your contact and a sign-out link.
 - `authenticated` means "any member of this domain"; `restricted` still needs a Gatekeeper grant.
 
+## External members
+
+A client's people can sign in on your domain without reaching all of it: make them **external** members. An external member reaches only what names them:
+
+- a `restricted` tunnel, user surface or web surface — with a Gatekeeper grant (to them, or a Lamaste group they are in);
+- a protected static site that lists them in its allowed users;
+- an OIDC client of a plugin on the domain that is granted to them (the plugin card's **OIDC sign-in**, or `lamaste-server plugins oidc-clients <plugin> grant <client> --user <name>`).
+
+Every `authenticated` host stays closed to them — they get the access-request page. They hold no Authelia groups (`admins`, `feria-*`): remove a user's groups before making them external. A plugin's audience counts them when they are entitled to it, so the plugin sees them with their roles.
+
+Make someone external when you create or invite them (the membership's kind, or **External member** on a one-domain relay), on the domain's **Members** list (**Make external**), or with the CLI:
+
+```
+lamaste-server domains members codelama.com.tr add client-ali --external
+lamaste-server domains members codelama.com.tr kind onur external
+```
+
+None of this restarts Authelia or signs anyone out: a change applies at the person's next request.
+
 ## Removing a domain
 
 Delete or move what uses it first (the card lists it), then **Remove**. Its memberships end; the primary can never be removed.

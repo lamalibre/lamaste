@@ -19,10 +19,10 @@ If onboarding is not complete, all endpoints return `503 Service Unavailable`.
 ## Important Behavior
 
 - **Password hashing:** Passwords are hashed with bcrypt (not argon2id — argon2id uses ~93MB per hash and causes OOM kills on a 512MB droplet).
-- **Authelia restart:** After every user change that modifies `users.yml` (create, update, delete), Authelia is restarted via `systemctl restart authelia` to pick up the changes. If the restart fails, the operation still succeeds — the failure is logged and listed in the response's `warnings`. Note: TOTP reset does **not** restart Authelia — it writes directly to Authelia's SQLite database via the `authelia storage user totp generate` CLI command, which takes effect immediately.
+- **No Authelia restart:** Authelia watches `users.yml` (`authentication_backend.file.watch: true`) and re-reads a user's details at each of their requests, so a user change (create, update, disable, delete) applies without a restart and without ending anyone else's session: a disabled or deleted user's session ends at their next request. Authelia skips a reload within 0.5 s of its previous one, so the panel writes the file once more 0.6 s after its last write — the change is always picked up. TOTP reset writes directly to Authelia's SQLite database via the `authelia storage user totp generate` CLI command, which takes effect immediately.
 - **Atomic writes:** The `users.yml` file is written atomically (write to temp file, then rename) to prevent Authelia from reading a partially written file.
-- **One lock for every user write:** creating, updating, disabling and deleting users, and accepting an invitation, are read-modify-writes of `users.yml` under one lock in the panel. Under the same lock the panel brings the directory in line with the file **before** Authelia restarts — so a disabled user is refused by plugins at once — [offboards](#offboarding) every user that stopped being one, then restarts Authelia, then recomputes the plugins' audiences. Concurrent user changes therefore run one after the other.
-- **A change must stick:** Authelia's own password reset rewrites `users.yml` from what Authelia read when it started, so a change written just before its restart can be lost. After the restart the panel reads `users.yml` again and checks that it holds the change (the fields set, the user created or gone); when it does not, the change is made once more (and Authelia restarted again). When it still does not, the answer carries `"ok": false`, `"persisted": false` and a `persist` warning — never a silent success.
+- **One lock for every user write:** creating, updating, disabling and deleting users, and accepting an invitation, are read-modify-writes of `users.yml` under one lock in the panel. Under the same lock the panel brings the directory in line with the file — so a disabled user is refused by plugins at once — [offboards](#offboarding) every user that stopped being one, renders who may reach each domain, drops Gatekeeper's cached sessions, then recomputes the plugins' audiences. Concurrent user changes therefore run one after the other.
+- **A change must stick:** Authelia's own password reset rewrites `users.yml` from what it holds in memory, so a change written in the instant before can be lost. The panel reads `users.yml` again and checks that it holds the change (the fields set, the user created or gone); when it does not, the change is made once more. When it still does not, the answer carries `"ok": false`, `"persisted": false` and a `persist` warning — never a silent success.
 - **The directory follows `users.yml`, read only:** at start, after onboarding and every minute the panel reconciles the directory with the file without writing it (Authelia's own password reset rewrites it; an operator may edit it): an unknown username gets a new `userId`, a changed display name, email or `disabled` is adopted, and a username gone from the file — seen missing in two reads, so a half-written file never tombstones anyone — is removed as `deleted-outside`. A user the reconcile sees disabled or removed is offboarded exactly as one disabled or deleted through the API. Every change is audited (`directory.user.created`, `.updated`, `.removed`) by `userId` alone; audit entries never name a user.
 - **Audit:** besides the directory's own entries, the users API records `user.password.set` (a password set through `PUT`), `user.groups.changed` (`added`, `removed` group names) and `user.totp.reset` — each by `userId` alone.
 - **Last user protection:** You cannot delete the last remaining user. At least one user must always exist.
@@ -75,10 +75,11 @@ curl -s --cert client.p12:password \
 | `username`    | `string`         | Unique login identifier                                                                                                                  |
 | `displayname` | `string`         | Human-readable display name                                                                                                              |
 | `email`       | `string`         | User's email address                                                                                                                     |
-| `groups`      | `string[]`       | Authelia group memberships                                                                                                               |
+| `groups`      | `string[]`       | Authelia group memberships an administrator assigned — never the groups Lamaste owns ([Domains](#domains))                               |
 | `disabled`    | `boolean`        | Authelia's `disabled: true` — the user cannot sign in                                                                                    |
 | `userId`      | `string \| null` | The user's directory id; `null` until the directory has seen the user (within a minute of an edit of `users.yml` made outside the panel) |
 | `status`      | `string`         | `active` or `disabled`                                                                                                                   |
+| `domains`     | `object[]`       | Domain memberships, `{ name, kind }` — `kind` `member` or `external` ([Domains](#domains))                                               |
 
 Users deleted from `users.yml` are not listed here; the [directory](#get-api-identity-directory) keeps their tombstones.
 
@@ -106,14 +107,14 @@ Creates a new Authelia user. The password is hashed with bcrypt before being sto
 }
 ```
 
-| Field         | Type       | Validation                                                                                  | Description                                                                        |
-| ------------- | ---------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `username`    | `string`   | 2-32 chars, lowercase alphanumeric + underscores + hyphens, starting with a letter or digit | Login identifier                                                                   |
-| `displayname` | `string`   | 1-100 chars                                                                                 | Display name                                                                       |
-| `email`       | `string`   | Valid email format                                                                          | Email address                                                                      |
-| `password`    | `string`   | 8-128 chars                                                                                 | Plain-text password (hashed before storage)                                        |
-| `groups`      | `string[]` | Optional, defaults to `[]`                                                                  | Authelia group memberships                                                         |
-| `domains`     | `string[]` | The relay's domains, at most 50; required once it has two (400 `domains_required`)          | Domains the user is a member of ([Domains](domains.md)); with one domain, that one |
+| Field         | Type       | Validation                                                                                      | Description                                                                                |
+| ------------- | ---------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `username`    | `string`   | 2-32 chars, lowercase alphanumeric + underscores + hyphens, starting with a letter or digit     | Login identifier                                                                           |
+| `displayname` | `string`   | 1-100 chars                                                                                     | Display name                                                                               |
+| `email`       | `string`   | Valid email format                                                                              | Email address                                                                              |
+| `password`    | `string`   | 8-128 chars                                                                                     | Plain-text password (hashed before storage)                                                |
+| `groups`      | `string[]` | Optional, defaults to `[]`                                                                      | Authelia group memberships                                                                 |
+| `domains`     | array      | Names or `{ name, kind }`, at most 50; required once the relay has two (400 `domains_required`) | Memberships ([Domains](#domains)); with one domain, a member of it unless named `external` |
 
 **Username regex** (the same rule applies to invitations — a leading `-` would read as a flag to Authelia's CLI, which the panel runs per username for TOTP secrets, second factors and OpenID Connect identities):
 
@@ -146,7 +147,7 @@ curl -s --cert client.p12:password \
 }
 ```
 
-A new user gets a new `userId`, even when an earlier, deleted user had the same username. Before the new user is created ([Reused usernames](#reused-usernames)): the username is refused when Authelia holds an OpenID Connect identity for it; and when a deleted user held it, Gatekeeper drops everything it holds under the username (grants, group memberships) and Authelia the second factors (TOTP, WebAuthn) — always, not only when a cleanup was pending — so a reused username inherits no grant, group, role or second factor. `warnings` (`[{ step, message }]`) lists what went wrong after `users.yml` was written — the directory not updated, Authelia not restarted; a change that did not stick answers `200` with `"ok": false`, `"persisted": false`.
+A new user gets a new `userId`, even when an earlier, deleted user had the same username. Before the new user is created ([Reused usernames](#reused-usernames)): the username is refused when Authelia holds an OpenID Connect identity for it; and when a deleted user held it, Gatekeeper drops everything it holds under the username (grants, group memberships) and Authelia the second factors (TOTP, WebAuthn) — always, not only when a cleanup was pending — so a reused username inherits no grant, group, role or second factor. `warnings` (`[{ step, message }]`) lists what went wrong after `users.yml` was written — the directory not updated, domain access not rendered; a change that did not stick answers `200` with `"ok": false`, `"persisted": false`.
 
 **Errors:**
 
@@ -180,13 +181,14 @@ If a new password is provided, it is hashed with bcrypt before storage.
 }
 ```
 
-| Field         | Type       | Validation            | Description                                                                 |
-| ------------- | ---------- | --------------------- | --------------------------------------------------------------------------- |
-| `displayname` | `string`   | 1-100 chars, optional | New display name                                                            |
-| `email`       | `string`   | Valid email, optional | New email address                                                           |
-| `password`    | `string`   | 8-128 chars, optional | New password (hashed before storage)                                        |
-| `groups`      | `string[]` | Optional              | New group memberships (replaces entire list)                                |
-| `disabled`    | `boolean`  | Optional              | `true` disables the user, `false` enables them ([below](#disabling-a-user)) |
+| Field         | Type       | Validation            | Description                                                                       |
+| ------------- | ---------- | --------------------- | --------------------------------------------------------------------------------- |
+| `displayname` | `string`   | 1-100 chars, optional | New display name                                                                  |
+| `email`       | `string`   | Valid email, optional | New email address                                                                 |
+| `password`    | `string`   | 8-128 chars, optional | New password (hashed before storage)                                              |
+| `groups`      | `string[]` | Optional              | New group memberships (replaces entire list; Lamaste's own groups are kept)       |
+| `domains`     | array      | Optional              | Memberships afterwards, exactly — names or `{ name, kind }` ([Domains](#domains)) |
+| `disabled`    | `boolean`  | Optional              | `true` disables the user, `false` enables them ([below](#disabling-a-user))       |
 
 All fields are optional, but at least one must be provided (validated by a Zod `.refine()`).
 
@@ -215,11 +217,11 @@ curl -s --cert client.p12:password \
 }
 ```
 
-`warnings` lists what did not happen after the write (the directory, Authelia's restart, the steps of [offboarding](#offboarding)); `"ok": false` with `"persisted": false` and a `persist` warning says the change did not stick ([above](#important-behavior)). A change of `groups` revokes the user's registry (Feria) tokens, whose scopes were granted from `feria-*` groups at login.
+`warnings` lists what did not happen after the write (the directory, rendering domain access, the steps of [offboarding](#offboarding)); `"ok": false` with `"persisted": false` and a `persist` warning says the change did not stick ([above](#important-behavior)). A change of `groups` revokes the user's registry (Feria) tokens, whose scopes were granted from `feria-*` groups at login.
 
 #### Disabling a user
 
-`{ "disabled": true }` is the offboarding action. It sets Authelia's `disabled: true` — the user can no longer sign in — and, before Authelia restarts:
+`{ "disabled": true }` is the offboarding action. It sets Authelia's `disabled: true` — the user can no longer sign in, and their session ends at their next request — and:
 
 - the directory marks the user `disabled`, so every plugin's [user surface](agent-hosted-plugins.md#the-user-surface) refuses them at once (`403`);
 - every plugin audience that holds them shows them `disabled`, and their agent halves are told;
@@ -257,7 +259,7 @@ Desktop sessions are bound to the `userId` as well as the username: one is valid
 
 ### `DELETE /api/users/:username`
 
-Deletes an Authelia user: the user is removed from `users.yml`, the directory turns their row into a **tombstone** (`removed`, reason `deleted`, keeping the `userId`, the username and the last display name and email, so plugins' history stays readable), and Authelia restarts. With `?erase=true` the tombstone is [erased](#erasing-a-removed-user) at once as well.
+Deletes an Authelia user: the user is removed from `users.yml`, the directory turns their row into a **tombstone** (`removed`, reason `deleted`, keeping the `userId`, the username and the last display name and email, so plugins' history stays readable); their session ends at their next request. With `?erase=true` the tombstone is [erased](#erasing-a-removed-user) at once as well.
 
 You cannot delete the last remaining user. This safety check prevents accidentally locking out all users from tunneled applications.
 
@@ -347,7 +349,11 @@ The `totpUri` follows the [Key Uri Format](https://github.com/google/google-auth
 
 ### Domains
 
-Every user listed by `GET /api/users` carries `domains`: the base domains they are a member of (empty until the directory has seen them). `PUT /api/users/:username` takes `domains` too — the memberships afterwards, exactly: the difference is applied in one change, each membership audited (409 `user_not_in_directory` until the directory has seen the user, 400 `unknown_domain`); one membership at a time is the [Domains API](domains.md) (`PUT`/`DELETE /api/domains/:name/members/:user`, by `userId` or username). On a relay with two domains or more, `POST /api/users` needs a non-empty `domains` (400 `domains_required`). `POST /api/invitations` takes `domains` exactly as `POST /api/users` does; the invitation link is on the sign-in page of the first domain it names (`https://auth.<domain>/invite/<token>`). Disabling a user keeps their memberships (they are let in nowhere while disabled); deleting ends them.
+Every user listed by `GET /api/users` carries `domains`: their memberships, `{ name, kind }` — `kind` `member` or `external` (empty until the directory has seen them). `PUT /api/users/:username` takes `domains` too — the memberships afterwards, exactly: the difference is applied in one change, each membership audited (409 `user_not_in_directory` until the directory has seen the user, 400 `unknown_domain`, 400 `conflicting_membership` for one domain named twice with two kinds); one membership at a time is the [Domains API](domains.md) (`PUT`/`DELETE /api/domains/:name/members/:user`, by `userId` or username). Wherever a request names memberships, a domain name is a `member` and `{ "name": "…", "kind": "external" }` an external member. On a relay with two domains or more, `POST /api/users` needs a non-empty `domains` (400 `domains_required`). `POST /api/invitations` takes `domains` exactly as `POST /api/users` does, and `GET /api/invitations` lists each invitation's `domains` as `{ name, kind }`; the invitation link is on the sign-in page of the first domain it names (`https://auth.<domain>/invite/<token>`). Disabling a user keeps their memberships (they are let in nowhere while disabled); deleting ends them.
+
+**External members** reach only what names them — `restricted` hosts that grant them, static sites that list them, OIDC clients granted to them — and **hold no Authelia groups**: a user who is an external member of any domain cannot be given a group (409 `external_member_groups`), a user with groups cannot be made external (409), and a new user or an invitation asking for both is refused (400 `external_member_groups`).
+
+**Groups Lamaste owns.** Who may reach what is written into each user's `groups` in `users.yml` as groups Lamaste owns — `lamaste:member@<domain>`, `lamaste:external@<domain>`, hostnames, `lamaste:oidc@<client id>` ([Domains API](domains.md#where-membership-is-enforced)). The users and identity APIs never show them and an edit keeps them; an administrator assigns only names of letters, digits, `-` and `_` (400 `reserved_group` for a name with `.`, `:` or `@` the user does not hold already).
 
 ## The User Directory
 
@@ -480,13 +486,14 @@ Returned by list and mutation endpoints (sensitive fields excluded):
 
 ### Validation Summary
 
-| Field         | Rules                                         |
-| ------------- | --------------------------------------------- |
-| `username`    | 2-32 chars, `/^[a-z0-9][a-z0-9_-]*$/`, unique |
-| `displayname` | 1-100 chars                                   |
-| `email`       | Valid email format                            |
-| `password`    | 8-128 chars                                   |
-| `groups`      | Array of strings, optional                    |
+| Field         | Rules                                                                               |
+| ------------- | ----------------------------------------------------------------------------------- |
+| `username`    | 2-32 chars, `/^[a-z0-9][a-z0-9_-]*$/`, unique                                       |
+| `displayname` | 1-100 chars                                                                         |
+| `email`       | Valid email format                                                                  |
+| `password`    | 8-128 chars                                                                         |
+| `groups`      | Array of strings, optional; `[A-Za-z0-9_-]{1,64}` each; none for an external member |
+| `domains`     | Names or `{ name, kind }`, at most 50                                               |
 
 ### curl Cheat Sheet
 

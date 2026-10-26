@@ -117,13 +117,13 @@ When someone leaves, **disable** them first — it is immediate and reversible:
 The user's status turns **disabled**. From that moment:
 
 - they can no longer sign in to Authelia (Authelia's `disabled: true`);
-- every agent-hosted plugin's user surface refuses them (`403`) — the panel's directory is updated before Authelia restarts;
+- every agent-hosted plugin's user surface refuses them (`403`) — the panel's directory is updated in the same step;
 - every plugin they use sees them as `disabled` in its audience (its agent half is told within seconds while it is online);
 - their desktop app sessions end and their registry (Feria) tokens are revoked.
 
 Their `userId`, grants and group memberships stay, so **Enable** brings everything back as it was (their desktop app signs in again). The last enabled member of the `admins` group cannot be disabled — the panel refuses with "Cannot disable the last enabled administrator". A user disabled by editing `users.yml` directly is offboarded the same way within a minute, when the panel notices.
 
-If Authelia rewrites `users.yml` at the very moment you disable someone (a password reset it handles writes the whole file), the panel notices after Authelia restarts and disables the user again; should that not stick either, the panel says the change did not persist instead of reporting success — check the user and disable them again.
+If Authelia rewrites `users.yml` at the very moment you disable someone (a password reset it handles writes the whole file), the panel notices when it reads the file back and disables the user again; should that not stick either, the panel says the change did not persist instead of reporting success — check the user and disable them again.
 
 ```bash
 lamaste-server users disable alice
@@ -141,7 +141,7 @@ lamaste-server users enable alice
 
 **What happens behind the scenes:**
 
-1. The panel removes the user from `users.yml` (atomic write, under the panel's one lock for user changes) and restarts Authelia.
+1. The panel removes the user from `users.yml` (atomic write, under the panel's one lock for user changes); Authelia reloads it and ends the user's session at their next request.
 2. The user directory keeps a **tombstone**: the user's `userId` and their last username, display name and email, marked `removed`. Plugins that had the user as a member are told the user was deleted and keep what they last received, so a plugin's history — "approved by Alice Smith" — stays readable.
 3. Gatekeeper drops every grant naming the username and its membership of every Lamaste group. If Gatekeeper is unreachable, the panel says so and retries every minute; until it succeeds, the username holds no role in any plugin and cannot be given to a new user.
 4. Authelia deletes the user's second factors — their TOTP configuration and WebAuthn security keys.
@@ -227,7 +227,7 @@ Details: [Users API](../04-api-reference/users.md).
 
 ### The User Directory
 
-Authelia's `users.yml` stays Authelia's credential file; the panel's `state.db` holds the **directory** beside it: a `userId` per user, the status, and the tombstones of deleted users. Every write of `users.yml` the panel makes goes through one lock that brings the directory in line before Authelia restarts. The panel also reads `users.yml` at start and every minute — never writing it — and adopts what changed outside Lamaste (Authelia's own password reset rewrites the file): a new username gets a new `userId`, a changed name, address or `disabled` flag is taken over, and a user gone from the file (seen in two reads) becomes a tombstone marked `deleted-outside`. Audit entries name users by `userId` only.
+Authelia's `users.yml` stays Authelia's credential file; the panel's `state.db` holds the **directory** beside it: a `userId` per user, the status, and the tombstones of deleted users. Every write of `users.yml` the panel makes goes through one lock that brings the directory in line in the same step. The panel also reads `users.yml` at start and every minute — never writing it — and adopts what changed outside Lamaste (Authelia's own password reset rewrites the file): a new username gets a new `userId`, a changed name, address or `disabled` flag is taken over, and a user gone from the file (seen in two reads) becomes a tombstone marked `deleted-outside`. Audit entries name users by `userId` only.
 
 ### The CLI
 
@@ -310,13 +310,7 @@ Passwords are hashed with bcrypt at cost factor 12. The `hashPassword()` functio
 
 ### Authelia Reload
 
-After every write to `users.yml`, the panel restarts Authelia:
-
-```bash
-sudo systemctl restart authelia
-```
-
-Authelia reads `users.yml` on restart. If the restart fails, a warning is logged but the API request still succeeds — the user data is persisted and the next Authelia restart picks it up.
+Authelia watches `users.yml` (`authentication_backend.file.watch: true`) and reloads it in place; with the watch it re-reads a user's details at each of their requests, so a change applies at the user's next request without a restart and without ending anyone else's session. It skips a reload within 0.5 s of the previous one, so the panel writes the file once more 0.6 s after its last write. Who may reach which domain is part of the file too: the groups Lamaste owns (`lamaste:member@<domain>`, `lamaste:external@<domain>`, hostnames, `lamaste:oidc@<client>` — never shown as groups). Authelia restarts only when its configuration changes: a domain or a protected static site added or removed, the OIDC clients changed.
 
 ## Quick Reference
 

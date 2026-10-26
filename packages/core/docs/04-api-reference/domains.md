@@ -6,7 +6,9 @@
 
 A relay serves one **primary** domain (the panel's, set at onboarding) and any number of **added** domains. Every domain has its own sign-in page, `auth.<domain>`, and its own member list. A person has one account — one password, one TOTP — and reaches a domain's protected hosts (`authenticated` and `restricted` tunnels, protected sites, plugin user and web surfaces, OIDC sign-ins of the domain's plugins) only as a member of it. Admin stays relay-wide: the admin certificate manages every domain. The panel (`panel.`) and the tunnel endpoint (`tunnel.`) stay on the primary.
 
-While the relay has one domain, every user is its member and nothing looks different. See [DNS & Domains](../01-concepts/dns-and-domains.md#multiple-domains) and the guide [Adding a Second Domain](../02-guides/second-domain.md).
+A membership has a **kind**. A `member` reaches what the domain's members reach. An `external` member — a client's people, say — reaches only what names them: `restricted` tunnels, user surfaces and web surfaces that grant them (Gatekeeper grants, to them or a Lamaste group they belong to), static sites whose `allowedUsers` lists them, and OIDC clients granted to them. An external member holds no Authelia groups (`admins`, `feria-*`).
+
+While the relay has one domain, every user is its member and nothing looks different — unless a user is made external. See [DNS & Domains](../01-concepts/dns-and-domains.md#multiple-domains) and the guide [Adding a Second Domain](../02-guides/second-domain.md).
 
 ## Authentication
 
@@ -14,15 +16,16 @@ Every endpoint requires an admin certificate (mTLS) — agents never manage doma
 
 ## Domain Object
 
-| Field         | Type           | Description                                                                                               |
-| ------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
-| `name`        | string         | Lower case, two labels or more (`codelama.com.tr`)                                                        |
-| `primary`     | boolean        | The panel's domain; exactly one; never removed                                                            |
-| `status`      | string         | `pending` (added, sign-in not served) or `active` (`auth.<name>` issued, members admitted)                |
-| `createdAt`   | string         | ISO 8601                                                                                                  |
-| `activatedAt` | string \| null | ISO 8601, once active                                                                                     |
-| `members`     | number         | Members, disabled users included (`GET /api/domains` only)                                                |
-| `usedBy`      | object         | `{ tunnels, sites, plugins, registry }` — hostnames, plugin names, whether the registry trusts its issuer |
+| Field             | Type           | Description                                                                                               |
+| ----------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
+| `name`            | string         | Lower case, two labels or more (`codelama.com.tr`)                                                        |
+| `primary`         | boolean        | The panel's domain; exactly one; never removed                                                            |
+| `status`          | string         | `pending` (added, sign-in not served) or `active` (`auth.<name>` issued, members admitted)                |
+| `createdAt`       | string         | ISO 8601                                                                                                  |
+| `activatedAt`     | string \| null | ISO 8601, once active                                                                                     |
+| `members`         | number         | Members of kind `member`, disabled users included (`GET /api/domains` only)                               |
+| `externalMembers` | number         | External members, disabled users included (`GET /api/domains` only)                                       |
+| `usedBy`          | object         | `{ tunnels, sites, plugins, registry }` — hostnames, plugin names, whether the registry trusts its issuer |
 
 Domains never overlap: `a.samplepark.tr` cannot be added beside `samplepark.tr` (a browser sends a domain's cookies to every host under it).
 
@@ -42,6 +45,7 @@ Every domain, the primary first, with its member count and what uses it, and `ne
       "createdAt": "2026-10-25T10:00:00.000Z",
       "activatedAt": "2026-10-25T10:00:00.000Z",
       "members": 5,
+      "externalMembers": 2,
       "usedBy": {
         "tunnels": ["gitlab.samplepark.tr"],
         "sites": [],
@@ -99,7 +103,7 @@ The DNS records the domain needs at its DNS host, each with what it resolves to 
 
 ### `POST /api/domains/:name/activate`
 
-Issue the certificate of `auth.<name>` (HTTP-01), write its vhost, add its Authelia session cookie, render its members into Authelia's `access_control` and OIDC authorization policies and into Gatekeeper's projection, restart Authelia — one operation, rolled back as a whole on failure. Rate limited (10 a minute). **200** `{ domain }`.
+Issue the certificate of `auth.<name>` (HTTP-01), write its vhost, add its Authelia session cookie and its rules to `access_control`, give its members and external members their groups in `users.yml` and write Gatekeeper's projection, restart Authelia — one operation, rolled back as a whole on failure. Rate limited (10 a minute). **200** `{ domain }`.
 
 | Status | `code`                                           | When                                   |
 | ------ | ------------------------------------------------ | -------------------------------------- |
@@ -117,20 +121,23 @@ Remove a domain: its memberships end (audited, reason `domain-removed`), its sig
 
 ### `GET /api/domains/:name/members`
 
-`{ members: [{ userId, username, status, addedAt, addedBy }] }` — `status` is the directory's (`active`, `disabled`, `removed`).
+`{ members: [{ userId, username, status, kind, addedAt, addedBy }] }` — `status` is the directory's (`active`, `disabled`, `removed`); `kind` is `member` or `external`.
 
 ### `PUT /api/domains/:name/members/:user`
 
-Make a user a member — `:user` is a directory `userId` or the username of a user the directory holds. **200** `{ added }` (`false` when already one), with `warnings` when Gatekeeper or the audiences could not be brought along. A pending domain takes members too: they are let in when it is activated.
+Make a user a member — `:user` is a directory `userId` or the username of a user the directory holds. Body `{ "kind": "member" | "external" }` (optional, `member`): a user who is a member already gets the kind named (audited `directory.membership.changed`). **200** `{ added, changed }` (both `false` when nothing changed), with `warnings` when Gatekeeper or the audiences could not be brought along. A pending domain takes members too: they are let in when it is activated.
 
-| Status | `code`           | When                |
-| ------ | ---------------- | ------------------- |
-| 404    | `user_not_found` |                     |
-| 409    | `user_removed`   | The user is deleted |
+A change applies at the user's next request — Authelia is not restarted (see [Where membership is enforced](#where-membership-is-enforced)).
+
+| Status | `code`                   | When                                                                       |
+| ------ | ------------------------ | -------------------------------------------------------------------------- |
+| 404    | `user_not_found`         |                                                                            |
+| 409    | `user_removed`           | The user is deleted                                                        |
+| 409    | `external_member_groups` | Making a user external who holds Authelia groups — remove the groups first |
 
 ### `DELETE /api/domains/:name/members/:user`
 
-End a membership. **200** `{ removed }`. When the domain is the registry credential's issuer domain, the user's registry tokens are revoked too.
+End a membership. **200** `{ removed }`. When the user no longer reaches the registry's sign-in (a member of none of the registry's domains, nor an external member of one granted its client), their registry tokens are revoked too.
 
 ### `PUT /api/plugins/:name/domain`
 
@@ -139,14 +146,22 @@ Move a plugin to another active domain: `{ "domain": "codelama.com.tr" }`. A plu
 ## Memberships
 
 - **Explicit, by `userId`.** A re-created username is a new user with no membership.
-- **New users.** While the relay has one domain, every new user — created, invited, adopted from `users.yml` — becomes its member. With two or more, `POST /api/users` and `POST /api/invitations` take `domains` (required, and not empty: 400 `domains_required` — a user who is a member of nothing reaches nothing); a user adopted from `users.yml` gets none until an admin adds one. `PUT /api/users/:username` with `domains` sets a user's memberships exactly: the difference applied in one change, each membership audited.
+- **Kinds.** `member` or `external`, per membership: a user may be a member of one domain and an external member of another. Where a request names memberships (`domains` on users and invitations) each is a domain name — a `member` — or `{ "name": "codelama.com.tr", "kind": "external" }`; one domain named with two kinds is refused (400 `conflicting_membership`). Answers always carry `{ name, kind }`.
+- **New users.** While the relay has one domain, every new user — created, invited, adopted from `users.yml` — becomes its member unless the request names it as `external`. With two or more, `POST /api/users` and `POST /api/invitations` take `domains` (required, and not empty: 400 `domains_required` — a user who is a member of nothing reaches nothing); a user adopted from `users.yml` gets none until an admin adds one. `PUT /api/users/:username` with `domains` sets a user's memberships exactly: the difference applied in one change, each membership audited.
+- **External members hold no Authelia groups.** Giving one a group, making a user with groups external, or inviting with both is refused (`external_member_groups`). Lamaste groups (Gatekeeper's) are not Authelia groups: grants to them reach external members too.
 - **Disable** keeps memberships; a disabled user is let in nowhere, and enabling restores them. **Delete** ends them.
-- **Audit:** `domain.added`, `domain.activated`, `domain.removed`, `directory.membership.added`, `directory.membership.removed` — by `userId` and domain name, never username.
+- **Audit:** `domain.added`, `domain.activated`, `domain.removed`, `directory.membership.added` (with `kind`), `directory.membership.changed` (`from`, `to`), `directory.membership.removed` — by `userId` and domain name, never username.
 
 ## Where membership is enforced
 
-1. **Authelia** (`/etc/authelia/configuration.yml`): one `session.cookies` entry per active domain; `access_control` per site (its users ∩ members), per domain (members, then deny), `default_policy: deny`; per-domain OIDC `authorization_policies` (`lamaste_<domain with . as _>_<factor>`).
-2. **Gatekeeper** (`/etc/lamalibre/lamaste/domains.json`, 0600, written by the panel): checked again after Authelia on every tunnel, user-surface and shell request; a missing or unreadable projection refuses. A signed-in non-member gets a refusal page (JSON `{ "error": "not_a_member" }` on a user surface) — never the sign-in page again.
+1. **Authelia.** Who is let in lives in `users.yml` as groups Lamaste owns, which Authelia watches (`authentication_backend.file.watch: true`) and re-reads at every request — so a membership, a kind, a grant or a site's `allowedUsers` changes without restarting Authelia or ending anyone's session:
+   - `lamaste:member@<domain>`, `lamaste:external@<domain>` — the domain's members and external members;
+   - `<hostname>` — a protected static site's listed users; and the external members granted a `restricted` tunnel, user surface or web surface;
+   - `lamaste:oidc@<client id>` — the external members granted a user-facing OIDC client.
+
+   `configuration.yml` names only those groups and changes only with the domains and protected sites (Authelia restarts then): one `session.cookies` entry per active domain; `access_control` per protected site (its host group; admins who are members), then per domain — members on every host, external members only on a host whose name is one of their groups (`domain_regex` with a `(?P<Group>…)` capture), deny — and `default_policy: deny`; one OIDC authorization policy per user-facing client (`lamaste_client_<id>`: members of its domain, external members with its group). The panel never shows these groups as groups, refuses assigning a name with `.`, `:` or `@` (400 `reserved_group`), and Gatekeeper strips them from `Remote-Groups`.
+
+2. **Gatekeeper** (`/etc/lamalibre/lamaste/domains.json`, version 2, 0600, written by the panel): checked again after Authelia on every tunnel, user-surface and shell request; a missing, unreadable or older projection refuses. A signed-in non-member gets a refusal page (JSON `{ "error": "not_a_member" }` on a user surface) — never the sign-in page again. An external member on an `authenticated` tunnel or web-surface shell gets the access-request page; on an `authenticated` user surface a 403 (`forbidden`); on a `restricted` host their grant decides, as for members.
 
 ## CLI
 
@@ -156,7 +171,10 @@ lamaste-server domains add codelama.com.tr
 lamaste-server domains verify-dns codelama.com.tr
 lamaste-server domains activate codelama.com.tr
 lamaste-server domains members codelama.com.tr add onur
+lamaste-server domains members codelama.com.tr add client-ali --external
+lamaste-server domains members codelama.com.tr kind client-ali member
 lamaste-server domains members codelama.com.tr remove onur
+lamaste-server plugins oidc-clients corral grant corral-web --user client-ali
 lamaste-server domains remove codelama.com.tr
 lamaste-server plugins domain feria codelama.com.tr
 lamaste-server tunnels create --subdomain feria --port 20060 --agent feria --domain codelama.com.tr
@@ -168,4 +186,4 @@ lamaste-server tunnels create --subdomain feria --port 20060 --agent feria --dom
 - [Tunnels API](tunnels.md), [Sites API](sites.md) — `domain` on creation
 - [Registry and OIDC](registry-and-oidc.md) — one issuer per domain, `issuerDomain`
 - [Gatekeeper](gatekeeper.md) — the membership check and refusal page
-- Design: `packages/core/docs/multi-domain-relay-design.md`
+- Design: `packages/core/docs/multi-domain-relay-design.md`, `packages/core/docs/external-members-design.md`
