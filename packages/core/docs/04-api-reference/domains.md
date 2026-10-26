@@ -225,7 +225,7 @@ What a client previews without the page: `{ locale: "en", css, title, footer, th
 
 ### What is rendered
 
-`/var/www/lamaste/auth/<domain>/`, written into a fresh sibling directory (every file fsynced, 0640; directories 0750) and moved into place as a whole — nginx sees the old rendering or the new one, never a mix:
+Each rendering is a directory of its own, `/var/www/lamaste/auth/.renders/<domain>-<revision>-<hex>/` (every file fsynced, 0640; directories 0750), and `/var/www/lamaste/auth/<domain>` is a **symbolic link** to the one that serves: a change renders beside the old directory, replaces the link with one `rename` — nginx and Gatekeeper see the old rendering or the new one, never none and never a mix — and removes the old directory afterwards (renamed aside first). nginx's `root` resolves the link on every open (`disable_symlinks` is `off` by default and the auth vhost leaves it so). The files:
 
 | File                                | Content                                                                                                                                                                                                                                                                        |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -238,7 +238,7 @@ What a client previews without the page: `{ locale: "en", css, title, footer, th
 
 Every language is rendered because an override file replaces the whole language for Authelia — a partial `tr` would lose its translations. The locale files come from the running Authelia, so a pin bump re-renders every brand at the next start (`autheliaVersion` differs).
 
-**Reconcile.** At the panel's start — after Authelia has its asset path, placeholder logo and explicit theme (one restart, once, audited `authelia.restarted` with reason `branding-base`) — and every minute: every record whose directory is missing, at another revision or from another Authelia release is rendered; directories of domains without a record are removed. A relay restored from a backup of `state.db` renders its brands again by itself. Removing a domain removes its brand and directory in the same operation.
+**Removal and reconcile.** Removing the brand removes the link, then its directory; the reconcile also prunes renderings nothing links to. At the panel's start — after Authelia has its asset path, placeholder logo and explicit theme (one restart, once, audited `authelia.restarted` with reason `branding-base`) — and every minute: every record whose directory is missing, at another revision or from another Authelia release is rendered; directories of domains without a record are removed. A relay restored from a backup of `state.db` renders its brands again by itself. Removing a domain removes its brand and directory in the same operation.
 
 **Audit.** `domain.branding.updated` (`fields` — the names that changed — or `asset` with `sha256`, `format`, `width`, `height`, `bytes`, or `removed: true`; always `revision`), `domain.branding.removed` (`reason: domain-removed` when the domain went), `domain.branding.render.failed` / `domain.branding.render.recovered` (once per streak, with a warning to the administrators). Never the bytes, never the name.
 

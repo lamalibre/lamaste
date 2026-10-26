@@ -1,19 +1,28 @@
 /**
  * The rendered brands on the relay (packages/core/docs/auth-branding-design.md):
- * one directory per domain under {@link AUTH_BRANDING_WEB_ROOT}, holding
- * what nginx serves on `auth.<domain>` for the routes Authelia lets a file
+ * one entry per domain under {@link AUTH_BRANDING_WEB_ROOT}, holding what
+ * nginx serves on `auth.<domain>` for the routes Authelia lets a file
  * override, the generated stylesheet and `brand.json`. The brand record in
- * `state.db` is the source of truth; a directory is a **rendering** of it,
+ * `state.db` is the source of truth; a rendering is a projection of it,
  * rebuilt at every change and reconciled at start (`rendered.json` says
  * which revision and Authelia release it came from).
  *
- * A rendering is written into a fresh sibling directory (files 0640,
- * directories 0750, every file fsynced), then moved into place: the
- * directory it replaces is renamed aside first and removed afterwards, so
- * nginx sees the old rendering or the new one — never a mix — apart from
- * a moment with none, when `try_files` falls through to Authelia's stock
- * asset. Nothing is ever written through an existing path: targets are
- * created exclusively, and reads never follow a link.
+ * The layout is the web-tree store's: each rendering is a directory of its
+ * own under `<root>/.renders/<domain>-<revision>-<hex>/` (files 0640,
+ * directories 0750, every file fsynced), and `<root>/<domain>` is a
+ * **symbolic link** to the one that serves. A new rendering is written
+ * beside the old one, then the link is replaced with a rename — one atomic
+ * switch, so nginx and Gatekeeper see the old rendering or the new one,
+ * never none and never a mix — and the previous directory goes afterwards
+ * (renamed aside first; nothing is ever deleted through the served path).
+ * Nothing is written through an existing path either: files are created
+ * exclusively, and `rendered.json` is read without following a link on
+ * the file itself (the directory link is a path component, which
+ * `O_NOFOLLOW` does not refuse).
+ *
+ * nginx's `root /var/www/lamaste/auth/<domain>` resolves the link on every
+ * open: `disable_symlinks` is `off` by default, and the vhost that serves
+ * the rendering must leave it so.
  *
  * The web root belongs to the lamaste user with group www-data (see
  * `files.ts`): nginx reads through the group, nobody else can.
@@ -25,7 +34,7 @@
 
 import crypto from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, readdir, rename, rm } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, readlink, rename, rm, symlink } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -43,18 +52,57 @@ import { assertDomainName } from '../domains.js';
 
 const DIR_MODE = 0o750;
 const FILE_MODE = 0o640;
-/** Staging and outgoing directories: dot-prefixed, never a domain name. */
-const STAGING_PREFIX = '.staging-';
+/** Where the renderings live under the root; the domain entries beside it link into it. */
+export const AUTH_BRANDING_RENDERS_DIR = '.renders';
+/** A rendering's directory name: `<domain>-<revision>-<16 hex>`. */
+const RENDER_DIR_RE = /^(.+)-(\d+)-([a-f0-9]{16})$/;
+/** Temporary links and outgoing entries: dot-prefixed, never a domain name. */
+const LINK_PREFIX = '.link-';
 const OUTGOING_PREFIX = '.outgoing-';
 
 function errnoCode(err: unknown): string | undefined {
   return (err as NodeJS.ErrnoException | null)?.code;
 }
 
-/** The rendered directory of `domain` under `root`. Throws on anything but a domain name. */
+/**
+ * The served entry of `domain` under `root` — a link to its rendering —
+ * through which its files are read. Throws on anything but a domain name.
+ */
 export function authBrandingDir(domain: string, root: string = AUTH_BRANDING_WEB_ROOT): string {
   assertDomainName(domain);
   return path.join(root, domain);
+}
+
+/** The name of a rendering's directory, or null for a name that is not one. */
+function parseRenderDirName(name: string): { domain: string; revision: number } | null {
+  const match = RENDER_DIR_RE.exec(name);
+  if (!match) return null;
+  const domain = match[1] ?? '';
+  try {
+    assertDomainName(domain);
+  } catch {
+    return null;
+  }
+  return { domain, revision: Number(match[2]) };
+}
+
+/**
+ * What the entry of `domain` links to — the name of a rendering directory
+ * under `.renders/` — or null when the entry is absent, not a link, or a
+ * link to anything else (never followed).
+ */
+async function linkedRender(domain: string, root: string): Promise<string | null> {
+  let target: string;
+  try {
+    target = await readlink(authBrandingDir(domain, root));
+  } catch {
+    return null;
+  }
+  const prefix = `${AUTH_BRANDING_RENDERS_DIR}/`;
+  if (!target.startsWith(prefix)) return null;
+  const name = target.slice(prefix.length);
+  if (name.includes('/') || parseRenderDirName(name)?.domain !== domain) return null;
+  return name;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,15 +298,22 @@ export function sha256Hex(bytes: Uint8Array): string {
 /**
  * Render a domain's brand under `root`: the favicon and logo when set,
  * every locale file with the brand name spliced in, `brand.css`,
- * `brand.json` and `rendered.json` — in a fresh directory, then moved
- * into place. Returns what `rendered.json` says.
+ * `brand.json` and `rendered.json` — into a directory of its own under
+ * `.renders/`, then served by replacing the domain's link in one rename.
+ * The rendering it replaces is removed afterwards. Returns what
+ * `rendered.json` says.
  */
 export async function renderAuthBranding(input: AuthBrandingRenderInput): Promise<RenderedBrand> {
   const root = input.root ?? AUTH_BRANDING_WEB_ROOT;
-  const target = authBrandingDir(input.domain, root);
-  await mkdir(root, { recursive: true, mode: DIR_MODE });
-  const staging = path.join(root, `${STAGING_PREFIX}${crypto.randomBytes(8).toString('hex')}`);
-  await mkdir(staging, { mode: DIR_MODE });
+  const link = authBrandingDir(input.domain, root);
+  if (!Number.isInteger(input.revision) || input.revision < 0) {
+    throw new Error('A rendering has a non-negative integer revision');
+  }
+  const rendersDir = path.join(root, AUTH_BRANDING_RENDERS_DIR);
+  await mkdir(rendersDir, { recursive: true, mode: DIR_MODE });
+  const name = `${input.domain}-${input.revision}-${crypto.randomBytes(8).toString('hex')}`;
+  const dir = path.join(rendersDir, name);
+  await mkdir(dir, { mode: DIR_MODE });
   const rendered: RenderedBrand = {
     v: 1,
     revision: input.revision,
@@ -267,29 +322,34 @@ export async function renderAuthBranding(input: AuthBrandingRenderInput): Promis
   };
   try {
     if (input.favicon)
-      await writeNewFile(path.join(staging, AUTH_BRANDING_FILES.favicon), input.favicon);
-    if (input.logo) await writeNewFile(path.join(staging, AUTH_BRANDING_FILES.logo), input.logo);
+      await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.favicon), input.favicon);
+    if (input.logo) await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.logo), input.logo);
     for (const file of input.locales.files) {
       const relative = authBrandingLocaleFile(file.locale, file.namespace);
       const messages = renderBrandLocale(file.messages, input.brand.name);
-      await writeNewFile(path.join(staging, relative), `${JSON.stringify(messages, null, '\t')}\n`);
+      await writeNewFile(path.join(dir, relative), `${JSON.stringify(messages, null, '\t')}\n`);
     }
-    await writeNewFile(path.join(staging, AUTH_BRANDING_FILES.css), renderBrandCss(input.brand));
+    await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.css), renderBrandCss(input.brand));
     const brandJson = renderBrandJson(input.domain, input.brand, input.revision, {
       logoSha256: input.logo ? sha256Hex(input.logo) : null,
       faviconSha256: input.favicon ? sha256Hex(input.favicon) : null,
     });
     await writeNewFile(
-      path.join(staging, AUTH_BRANDING_FILES.brand),
+      path.join(dir, AUTH_BRANDING_FILES.brand),
       `${JSON.stringify(brandJson, null, 2)}\n`,
     );
     await writeNewFile(
-      path.join(staging, AUTH_BRANDING_FILES.rendered),
+      path.join(dir, AUTH_BRANDING_FILES.rendered),
       `${JSON.stringify(rendered, null, 2)}\n`,
     );
-    await replaceDirectory(target, staging);
+    await syncDir(dir);
+    const previous = await linkedRender(input.domain, root);
+    await switchLink(link, `${AUTH_BRANDING_RENDERS_DIR}/${name}`);
+    if (previous !== null && previous !== name) {
+      await removeAside(path.join(rendersDir, previous));
+    }
   } catch (err) {
-    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
     throw err;
   }
   await syncDir(root);
@@ -297,32 +357,55 @@ export async function renderAuthBranding(input: AuthBrandingRenderInput): Promis
 }
 
 /**
- * Put `staging` at `target`: whatever is at `target` — a directory of an
- * earlier rendering, or anything else — is renamed aside first (never
- * removed through its path) and removed afterwards.
+ * Make `link` a symbolic link to `target` in one atomic step: the link is
+ * created under a temporary name beside it and renamed over whatever is
+ * at `link`. A plain directory or file there (never a rendering of ours)
+ * is renamed aside first and removed afterwards — never followed.
  */
-async function replaceDirectory(target: string, staging: string): Promise<void> {
-  const outgoing = `${path.dirname(target)}/${OUTGOING_PREFIX}${crypto.randomBytes(8).toString('hex')}`;
-  let moved = false;
+async function switchLink(link: string, target: string): Promise<void> {
+  const parent = path.dirname(link);
+  const temp = path.join(parent, `${LINK_PREFIX}${crypto.randomBytes(8).toString('hex')}`);
+  await symlink(target, temp);
   try {
-    await rename(target, outgoing);
-    moved = true;
+    const current = await lstat(link).catch(() => null);
+    let aside: string | null = null;
+    if (current && !current.isSymbolicLink()) {
+      aside = path.join(parent, `${OUTGOING_PREFIX}${crypto.randomBytes(8).toString('hex')}`);
+      await rename(link, aside);
+    }
+    try {
+      await rename(temp, link);
+    } catch (err) {
+      if (aside) await rename(aside, link).catch(() => undefined);
+      throw err;
+    }
+    if (aside) await rm(aside, { recursive: true, force: true }).catch(() => undefined);
   } catch (err) {
-    if (errnoCode(err) !== 'ENOENT') throw err;
-  }
-  try {
-    await rename(staging, target);
-  } catch (err) {
-    if (moved) await rename(outgoing, target).catch(() => undefined);
+    await rm(temp, { force: true }).catch(() => undefined);
     throw err;
   }
-  if (moved) await rm(outgoing, { recursive: true, force: true }).catch(() => undefined);
+}
+
+/** Remove `entry` (a directory, a link or a file): renamed aside beside itself, then removed. */
+async function removeAside(entry: string): Promise<void> {
+  const aside = path.join(
+    path.dirname(entry),
+    `${OUTGOING_PREFIX}${crypto.randomBytes(8).toString('hex')}`,
+  );
+  try {
+    await rename(entry, aside);
+  } catch (err) {
+    if (errnoCode(err) === 'ENOENT') return;
+    throw err;
+  }
+  await rm(aside, { recursive: true, force: true });
 }
 
 /**
- * What `rendered.json` of `domain` says, or null when there is no
- * rendering, it cannot be read (a link, not a file) or it is not one of
- * ours — a reconcile renders then.
+ * What `rendered.json` of `domain` says — read through the domain's link,
+ * the file itself opened without following a link — or null when there
+ * is no rendering, it cannot be read or it is not one of ours: a
+ * reconcile renders then.
  */
 export async function readRenderedBrand(
   domain: string,
@@ -363,28 +446,31 @@ export async function readRenderedBrand(
   return null;
 }
 
-/** Remove the rendering of `domain` (back to the stock page). Idempotent. */
+/**
+ * Remove the rendering of `domain` (back to the stock page): its link, then
+ * the rendering it served; a plain directory or a link elsewhere at its
+ * entry is removed and never followed. Idempotent.
+ */
 export async function removeAuthBranding(
   domain: string,
   root: string = AUTH_BRANDING_WEB_ROOT,
 ): Promise<boolean> {
-  const dir = authBrandingDir(domain, root);
-  const existed = await lstat(dir)
-    .then(() => true)
-    .catch(() => false);
-  if (!existed) return false;
-  // Renamed aside, then removed: nothing is deleted through the served path.
-  const outgoing = `${root}/${OUTGOING_PREFIX}${crypto.randomBytes(8).toString('hex')}`;
-  await rename(dir, outgoing);
-  await rm(outgoing, { recursive: true, force: true });
+  const link = authBrandingDir(domain, root);
+  const current = await lstat(link).catch(() => null);
+  if (!current) return false;
+  const served = await linkedRender(domain, root);
+  await removeAside(link);
+  if (served !== null) await removeAside(path.join(root, AUTH_BRANDING_RENDERS_DIR, served));
   await syncDir(root);
   return true;
 }
 
 /**
- * The domains with a rendering under `root` (directories named like a
- * domain), and a staging or outgoing directory a crash left behind
- * removed. An empty root lists nothing.
+ * The domains with a rendering under `root` — an entry that is a link to
+ * a rendering directory of theirs under `.renders/` — sorted. Everything
+ * a crash left behind is removed on the way: temporary links and outgoing
+ * entries, and every rendering directory no domain's entry links to. An
+ * empty root lists nothing.
  */
 export async function listRenderedBrands(root: string = AUTH_BRANDING_WEB_ROOT): Promise<string[]> {
   let names: string[];
@@ -395,8 +481,9 @@ export async function listRenderedBrands(root: string = AUTH_BRANDING_WEB_ROOT):
     throw err;
   }
   const domains: string[] = [];
+  const linked = new Set<string>();
   for (const name of names) {
-    if (name.startsWith(STAGING_PREFIX) || name.startsWith(OUTGOING_PREFIX)) {
+    if (name.startsWith(LINK_PREFIX) || name.startsWith(OUTGOING_PREFIX)) {
       await rm(path.join(root, name), { recursive: true, force: true }).catch(() => undefined);
       continue;
     }
@@ -405,8 +492,17 @@ export async function listRenderedBrands(root: string = AUTH_BRANDING_WEB_ROOT):
     } catch {
       continue;
     }
-    const st = await lstat(path.join(root, name)).catch(() => null);
-    if (st?.isDirectory()) domains.push(name);
+    const render = await linkedRender(name, root);
+    if (render === null) continue;
+    const st = await lstat(path.join(root, AUTH_BRANDING_RENDERS_DIR, render)).catch(() => null);
+    if (!st?.isDirectory()) continue;
+    linked.add(render);
+    domains.push(name);
+  }
+  const rendersDir = path.join(root, AUTH_BRANDING_RENDERS_DIR);
+  for (const name of await readdir(rendersDir).catch(() => [] as string[])) {
+    if (linked.has(name)) continue;
+    await rm(path.join(rendersDir, name), { recursive: true, force: true }).catch(() => undefined);
   }
   return domains.sort();
 }

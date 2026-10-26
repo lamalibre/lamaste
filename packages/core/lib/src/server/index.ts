@@ -649,6 +649,7 @@ export {
   AUTHELIA_LOCALES_MAX_LANGUAGES,
   AUTHELIA_LOCALES_MAX_NAMESPACES,
   AUTHELIA_LOCALE_FILE_MAX_BYTES,
+  AUTH_BRANDING_RENDERS_DIR,
   authBrandingDir,
   parseAutheliaLocalesList,
   fetchAutheliaLocales,
