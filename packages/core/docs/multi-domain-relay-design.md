@@ -768,26 +768,21 @@ Fixed on the way:
   recently"). The step is now the one when the sign-in ended, and a user
   waits while the current step is not later than it.
 - **Spec harness — single-VM specs could not find `test-domains.sh`.** The
-  VM runner uploads only the specs and `helpers.sh`; `helpers.sh` now falls
-  back to the provisioned tier's copy in `/tmp/e2e`.
+  VM runner uploaded only the specs and `helpers.sh`. Fixed in rodeo
+  (`5b8db11`): a VM-runner suite uploads every `.sh` file beside its specs
+  and the suite's helpers file; `helpers.sh` sources `test-domains.sh` from
+  beside itself again (the interim `/tmp/e2e` fallback is gone).
 - **Campaign environment — the VMs' MTU.** The orchestrator's uplink was a
   VPN tunnel (MTU 1420) that drops ICMP "fragmentation needed" for the VMs'
   NATed traffic: full-size TLS packets vanished (npm `ECONNRESET`, chisel's
-  GitHub download reset). `node-ready` (both suites) sets the VMs' MTU to
-  1400 at once and persists it in a netplan drop-in on the `default` entry
-  rodeo's static address extends (`99-lamaste-mtu.yaml`), so it survives the
-  tier's snapshot/restore and a reboot.
+  GitHub download reset). Fixed in rodeo (`dce725c`), below every project:
+  when the host's default route has an MTU below Ethernet's, rodeo
+  launches each VM with that MTU (a cloud-init netplan drop-in on the
+  `default` entry). The interim `node-ready` MTU step is gone from both
+  suites.
 
-Follow-ups outside this repository (not done here):
-
-- **rodeo's single-VM runner** should upload what `helpers.sh` sources (rodeo
-  `agent/suite.ts`); `helpers.sh` falling back to the tier's
-  `/tmp/e2e/test-domains.sh` stands in until it does.
-- **The MTU at a deeper layer** — an MSS clamp on the orchestrator or rodeo's
-  VM launch configuration — so no project's tiers need to know about the
-  uplink.
-- One constant for Authelia's loopback base URL, shared by `authelia.ts` and
-  `registry-credential.ts` (a nit).
+Follow-up (a nit, not done here): one constant for Authelia's loopback base
+URL, shared by `authelia.ts` and `registry-credential.ts`.
 
 The three points the specs could not prove without running:
 

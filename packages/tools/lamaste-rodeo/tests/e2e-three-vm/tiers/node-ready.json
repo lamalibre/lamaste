@@ -15,31 +15,22 @@
           "id": "node-host",
           "label": "Install Node.js + Feria registry on host",
           "target": "host",
-          "op": {
-            "type": "exec",
-            "command": "# inlined bash"
-          },
-          "bash": "set -euo pipefail\n# The orchestrator's uplink may be a tunnel (a VPN: MTU 1420) that drops ICMP\n# \"fragmentation needed\" for the VMs' NATed traffic: full-size TLS packets then\n# vanish (connection resets, timeouts to npmjs and GitHub). 1400 fits every common\n# tunnel. Persisted on the netplan entry rodeo's static address extends\n# (`default`), so it survives the tier's snapshot/restore and a reboot; set at\n# once as well — `netplan apply` here could drop the exec session running this.\nprintf 'network:\\n  version: 2\\n  ethernets:\\n    default:\\n      mtu: 1400\\n' > /etc/netplan/99-lamaste-mtu.yaml\nchmod 600 /etc/netplan/99-lamaste-mtu.yaml\nip link set dev \"$(ip route | awk '/default/{print $5; exit}')\" mtu 1400\nif command -v npm >/dev/null 2>&1; then\n  echo \"npm already available ($(npm --version))\"\nelse\n  apt-get update\n  apt-get install -y ca-certificates curl gnupg\n  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -\n  apt-get install -y nodejs\nfi\nGATEWAY=\"$(ip route | awk '/default/{print $3; exit}')\"\nif [ -z \"${GATEWAY}\" ]; then GATEWAY=\"192.168.2.1\"; fi\nprintf '@lamalibre:registry=http://%s:4873\\n' \"${GATEWAY}\" | tee /root/.npmrc /home/ubuntu/.npmrc >/dev/null\n"
+          "op": { "type": "exec", "command": "# inlined bash" },
+          "bash": "set -euo pipefail\nif command -v npm >/dev/null 2>&1; then\n  echo \"npm already available ($(npm --version))\"\nelse\n  apt-get update\n  apt-get install -y ca-certificates curl gnupg\n  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -\n  apt-get install -y nodejs\nfi\nGATEWAY=\"$(ip route | awk '/default/{print $3; exit}')\"\nif [ -z \"${GATEWAY}\" ]; then GATEWAY=\"192.168.2.1\"; fi\nprintf '@lamalibre:registry=http://%s:4873\\n' \"${GATEWAY}\" | tee /root/.npmrc /home/ubuntu/.npmrc >/dev/null\n"
         },
         {
           "id": "node-agent",
           "label": "Install Node.js + Feria registry on agent",
           "target": "agent",
-          "op": {
-            "type": "exec",
-            "command": "# inlined bash"
-          },
-          "bash": "set -euo pipefail\n# The orchestrator's uplink may be a tunnel (a VPN: MTU 1420) that drops ICMP\n# \"fragmentation needed\" for the VMs' NATed traffic: full-size TLS packets then\n# vanish (connection resets, timeouts to npmjs and GitHub). 1400 fits every common\n# tunnel. Persisted on the netplan entry rodeo's static address extends\n# (`default`), so it survives the tier's snapshot/restore and a reboot; set at\n# once as well — `netplan apply` here could drop the exec session running this.\nprintf 'network:\\n  version: 2\\n  ethernets:\\n    default:\\n      mtu: 1400\\n' > /etc/netplan/99-lamaste-mtu.yaml\nchmod 600 /etc/netplan/99-lamaste-mtu.yaml\nip link set dev \"$(ip route | awk '/default/{print $5; exit}')\" mtu 1400\nif command -v npm >/dev/null 2>&1; then\n  echo \"npm already available ($(npm --version))\"\nelse\n  apt-get update\n  apt-get install -y ca-certificates curl gnupg\n  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -\n  apt-get install -y nodejs\nfi\nGATEWAY=\"$(ip route | awk '/default/{print $3; exit}')\"\nif [ -z \"${GATEWAY}\" ]; then GATEWAY=\"192.168.2.1\"; fi\nprintf '@lamalibre:registry=http://%s:4873\\n' \"${GATEWAY}\" | tee /root/.npmrc /home/ubuntu/.npmrc >/dev/null\n"
+          "op": { "type": "exec", "command": "# inlined bash" },
+          "bash": "set -euo pipefail\nif command -v npm >/dev/null 2>&1; then\n  echo \"npm already available ($(npm --version))\"\nelse\n  apt-get update\n  apt-get install -y ca-certificates curl gnupg\n  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -\n  apt-get install -y nodejs\nfi\nGATEWAY=\"$(ip route | awk '/default/{print $3; exit}')\"\nif [ -z \"${GATEWAY}\" ]; then GATEWAY=\"192.168.2.1\"; fi\nprintf '@lamalibre:registry=http://%s:4873\\n' \"${GATEWAY}\" | tee /root/.npmrc /home/ubuntu/.npmrc >/dev/null\n"
         },
         {
           "id": "node-visitor",
           "label": "Install Node.js + Feria registry on visitor",
           "target": "visitor",
-          "op": {
-            "type": "exec",
-            "command": "# inlined bash"
-          },
-          "bash": "set -euo pipefail\n# The orchestrator's uplink may be a tunnel (a VPN: MTU 1420) that drops ICMP\n# \"fragmentation needed\" for the VMs' NATed traffic: full-size TLS packets then\n# vanish (connection resets, timeouts to npmjs and GitHub). 1400 fits every common\n# tunnel. Persisted on the netplan entry rodeo's static address extends\n# (`default`), so it survives the tier's snapshot/restore and a reboot; set at\n# once as well — `netplan apply` here could drop the exec session running this.\nprintf 'network:\\n  version: 2\\n  ethernets:\\n    default:\\n      mtu: 1400\\n' > /etc/netplan/99-lamaste-mtu.yaml\nchmod 600 /etc/netplan/99-lamaste-mtu.yaml\nip link set dev \"$(ip route | awk '/default/{print $5; exit}')\" mtu 1400\nif command -v npm >/dev/null 2>&1; then\n  echo \"npm already available ($(npm --version))\"\nelse\n  apt-get update\n  apt-get install -y ca-certificates curl gnupg\n  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -\n  apt-get install -y nodejs\nfi\nGATEWAY=\"$(ip route | awk '/default/{print $3; exit}')\"\nif [ -z \"${GATEWAY}\" ]; then GATEWAY=\"192.168.2.1\"; fi\nprintf '@lamalibre:registry=http://%s:4873\\n' \"${GATEWAY}\" | tee /root/.npmrc /home/ubuntu/.npmrc >/dev/null\n"
+          "op": { "type": "exec", "command": "# inlined bash" },
+          "bash": "set -euo pipefail\nif command -v npm >/dev/null 2>&1; then\n  echo \"npm already available ($(npm --version))\"\nelse\n  apt-get update\n  apt-get install -y ca-certificates curl gnupg\n  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -\n  apt-get install -y nodejs\nfi\nGATEWAY=\"$(ip route | awk '/default/{print $3; exit}')\"\nif [ -z \"${GATEWAY}\" ]; then GATEWAY=\"192.168.2.1\"; fi\nprintf '@lamalibre:registry=http://%s:4873\\n' \"${GATEWAY}\" | tee /root/.npmrc /home/ubuntu/.npmrc >/dev/null\n"
         }
       ]
     }
