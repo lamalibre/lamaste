@@ -164,7 +164,8 @@ async function runProvisioning(log) {
     await nginx.writePanelVhost(domain);
 
     emitProgress('configure-nginx', 'running', 'Writing auth vhost...');
-    await nginx.writeAuthVhost(domain, { primary: true });
+    // A fresh relay: no brand yet.
+    await nginx.writeAuthVhost(domain, { primary: true, branding: null });
 
     emitProgress('configure-nginx', 'running', 'Writing tunnel vhost...');
     await nginx.writeTunnelVhost(domain);

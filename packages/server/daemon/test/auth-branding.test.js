@@ -8,7 +8,10 @@
  * once per streak and healed by the reconcile; the reconcile re-rendering
  * what is stale and removing what has no record; a removed domain taking
  * its brand and directory with it; the Authelia base audited when it
- * restarts.
+ * restarts. The auth vhost: rewritten — once, its link state kept — when
+ * the theme or the logo switch changed and the domain is active, never for
+ * any other change; a refused rewrite warned, audited once per streak and
+ * retried by the reconcile until it converges.
  */
 
 import { test, before, after } from 'node:test';
@@ -20,6 +23,8 @@ import yaml from 'js-yaml';
 
 import { AUTH_BRANDING_LOGO_MAX_BYTES } from '@lamalibre/lamaste';
 import { renderAuthBranding } from '@lamalibre/lamaste/server';
+
+import { renderAuthVhost } from '../src/lib/nginx.js';
 
 import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
@@ -40,6 +45,32 @@ let autheliaDown = false;
 let autheliaVersion = '4.39.28';
 /** What the Authelia base check answers. */
 let base = { logoWritten: false, restarted: false };
+
+/** The stand-in nginx: the installed auth vhost of each domain, what was written, whether a write fails. */
+const installedVhosts = new Map();
+const vhostWrites = [];
+let failVhost = false;
+let vhostLinked = true;
+const PRIMARY_CERT = `/etc/letsencrypt/live/auth.${PRIMARY}`;
+const fakeVhost = {
+  readInstalled: async (domain) => installedVhosts.get(domain) ?? null,
+  isEnabled: async () => vhostLinked,
+  write: async (domain, opts) => {
+    if (failVhost) throw new Error('nginx site write failed: lamaste-priv: vhost line 7: refused');
+    vhostWrites.push({ domain, ...opts });
+    installedVhosts.set(domain, renderAuthVhost(domain, PRIMARY_CERT, opts).config);
+  },
+};
+/** The overrides every test runs with. */
+const overrides = () => ({
+  webRoot,
+  get autheliaVersion() {
+    return autheliaVersion;
+  },
+  fetchLocales: fakeLocales,
+  ensureBase: async () => base,
+  vhost: fakeVhost,
+});
 
 function png(width, height) {
   const ihdr = Buffer.alloc(13);
@@ -185,17 +216,15 @@ before(async () => {
     writeAuthVhost: async () => {},
     removeAuthVhost: async () => {},
   });
-  lib.setAuthBrandingForTests({
-    webRoot,
-    get autheliaVersion() {
-      return autheliaVersion;
-    },
-    fetchLocales: fakeLocales,
-    ensureBase: async () => base,
-  });
+  lib.setAuthBrandingForTests(overrides());
   installFakeGatekeeper(lib);
   await lib.reconcileDirectory({ confirmDelayMs: 0 });
   await lib.ensurePrimaryDomain();
+  // The primary's auth vhost as the relay wrote it before any brand.
+  installedVhosts.set(
+    PRIMARY,
+    renderAuthVhost(PRIMARY, PRIMARY_CERT, { primary: true, branding: null }).config,
+  );
   // As the panel's start does, before anything renders.
   await lib.ensureBrandingBase();
 
@@ -258,6 +287,13 @@ test('the fields: created at revision 1, rendered at once, read without blobs, r
   assert.equal(branding.rendered.autheliaVersion, '4.39.28');
   assert.equal(branding.renderedCurrent, true);
   assert.equal(created.json().warnings, undefined);
+  // The auth vhost rewritten once for the theme: the primary's, linked as it
+  // is, no logo yet.
+  assert.deepEqual(vhostWrites, [
+    { domain: PRIMARY, primary: true, enabled: true, branding: { theme: 'dark', logo: false } },
+  ]);
+  assert.match(installedVhosts.get(PRIMARY), /data-theme="dark"/);
+  assert.deepEqual(await lib.authVhostBranding(PRIMARY), { theme: 'dark', logo: false });
 
   // Rendered under the web root: the locales with the name spliced in, the stylesheet, brand.json.
   const tr = JSON.parse(await readRendered(PRIMARY, 'locales/tr-TR/portal.json'));
@@ -351,6 +387,8 @@ test('the fields: created at revision 1, rendered at once, read without blobs, r
   assert.ok(!(await readRendered(PRIMARY, 'brand.css')).includes('[data-theme]'));
   // Authelia's locales were fetched once: they are cached.
   assert.equal(localeFetches, 1);
+  // The name and the accent are files nginx serves; the vhost says the same.
+  assert.equal(vhostWrites.length, 1);
 });
 
 test('the logo and the favicon: checked, stored and audited by digest, served from the rendering, removed', async () => {
@@ -369,6 +407,10 @@ test('the logo and the favicon: checked, stored and audited by digest, served fr
   assert.equal(branding.logo.sha256.length, 64);
   assert.equal(branding.logo.data, undefined);
   assert.ok((await readRendered(PRIMARY, 'static/media/logo.png')).equals(logo));
+  // The first logo switches the page's logo on: the vhost rewritten once.
+  assert.equal(vhostWrites.length, 2);
+  assert.deepEqual(vhostWrites.at(-1).branding, { theme: 'dark', logo: true });
+  assert.match(installedVhosts.get(PRIMARY), /data-logooverride="true"/);
   const audit = (await audits('domain.branding.updated')).at(0);
   assert.equal(audit.details.asset, 'logo');
   assert.equal(audit.details.sha256, branding.logo.sha256);
@@ -443,8 +485,120 @@ test('the logo and the favicon: checked, stored and audited by digest, served fr
     (await call('DELETE', `/api/domains/${PRIMARY}/branding/favicon`)).json().removed,
     false,
   );
-  // The logo stays through it all.
+  // The logo stays through it all; the favicon is a file alone, the vhost untouched.
   assert.ok((await readRendered(PRIMARY, 'static/media/logo.png')).equals(logo));
+  assert.equal(vhostWrites.length, 2);
+});
+
+test('the auth vhost: untouched by a change it does not say; a refused rewrite warned, audited once per streak, retried by the reconcile until it converges; its link state kept', async () => {
+  const { listNotifications } = await import('../src/lib/notifications.js');
+  assert.equal(await lib.authVhostBranding('nobody.example'), null);
+  const writesBefore = vhostWrites.length;
+  const revision = (await call('GET', `/api/domains/${PRIMARY}/branding`)).json().branding.revision;
+
+  // The tagline, the support contact: files; nginx is not asked anything.
+  const tagline = await call('PUT', `/api/domains/${PRIMARY}/branding`, {
+    name: 'Sample Park',
+    tagline: 'Parks of the sample',
+    theme: 'dark',
+    supportEmail: 'help@samplepark.tr',
+  });
+  assert.equal(tagline.statusCode, 200, tagline.body);
+  assert.equal(tagline.json().branding.revision, revision + 1);
+  assert.equal(vhostWrites.length, writesBefore);
+
+  // nginx refuses the theme change: the record moves on, the answer warns,
+  // the streak is audited and raised once, the rendering is current.
+  failVhost = true;
+  const grey = await call('PUT', `/api/domains/${PRIMARY}/branding`, {
+    name: 'Sample Park',
+    theme: 'grey',
+  });
+  assert.equal(grey.statusCode, 200, grey.body);
+  assert.equal(grey.json().branding.revision, revision + 2);
+  assert.equal(grey.json().branding.renderedCurrent, true);
+  assert.deepEqual(
+    grey.json().warnings.map((w) => w.step),
+    ['vhost'],
+  );
+  assert.match(grey.json().warnings[0].message, /keeps its previous theme/);
+  assert.equal(JSON.parse(await readRendered(PRIMARY, 'brand.json')).theme, 'grey');
+  assert.match(installedVhosts.get(PRIMARY), /data-theme="dark"/, 'the previous vhost stays');
+  const oled = await call('PUT', `/api/domains/${PRIMARY}/branding`, {
+    name: 'Sample Park',
+    theme: 'oled',
+  });
+  assert.equal(oled.json().warnings[0].step, 'vhost');
+  const failed = (await audits('domain.branding.vhost.failed')).filter(
+    (e) => e.details.domain === PRIMARY,
+  );
+  assert.equal(failed.length, 1);
+  assert.match(failed[0].details.message, /lamaste-priv/);
+  assert.ok(!JSON.stringify(failed).includes('Sample Park'));
+  const notes = await listNotifications({ limit: 10 });
+  assert.ok(
+    notes.notifications.some(
+      (n) => n.level === 'warning' && n.message.includes(PRIMARY) && /theme/.test(n.message),
+    ),
+  );
+
+  // The tick: still refused, named as failing; then accepted, rewritten from
+  // the record as it is now (oled, with the logo), recovered once, and
+  // nothing to do afterwards.
+  assert.deepEqual(await lib.reconcileAuthBranding(), {
+    rendered: [],
+    removed: [],
+    failed: [],
+    vhostsFailed: [PRIMARY],
+  });
+  assert.equal(vhostWrites.length, writesBefore);
+  failVhost = false;
+  assert.deepEqual(await lib.reconcileAuthBranding(), {
+    rendered: [],
+    removed: [],
+    failed: [],
+    vhostsRewritten: [PRIMARY],
+  });
+  assert.equal(vhostWrites.length, writesBefore + 1);
+  assert.deepEqual(vhostWrites.at(-1), {
+    domain: PRIMARY,
+    primary: true,
+    enabled: true,
+    branding: { theme: 'oled', logo: true },
+  });
+  assert.equal(
+    (await audits('domain.branding.vhost.recovered')).filter((e) => e.details.domain === PRIMARY)
+      .length,
+    1,
+  );
+  assert.deepEqual(await lib.reconcileAuthBranding(), { rendered: [], removed: [], failed: [] });
+  assert.equal(vhostWrites.length, writesBefore + 1);
+
+  // A vhost someone unlinked is rewritten unlinked.
+  vhostLinked = false;
+  const dark = await call('PUT', `/api/domains/${PRIMARY}/branding`, {
+    name: 'Sample Park',
+    theme: 'dark',
+  });
+  assert.equal(dark.json().warnings, undefined);
+  assert.equal(vhostWrites.at(-1).enabled, false);
+  vhostLinked = true;
+
+  // The vhost of an active domain not installed at all: nothing written, no
+  // retry — the start's vhost reconcile reports it.
+  const installed = installedVhosts.get(PRIMARY);
+  installedVhosts.delete(PRIMARY);
+  const grey2 = await call('PUT', `/api/domains/${PRIMARY}/branding`, {
+    name: 'Sample Park',
+    theme: 'grey',
+  });
+  assert.equal(grey2.json().warnings, undefined);
+  assert.equal(vhostWrites.length, writesBefore + 2);
+  assert.deepEqual(await lib.reconcileAuthBranding(), { rendered: [], removed: [], failed: [] });
+  installedVhosts.set(PRIMARY, installed);
+  // Back to dark: the installed text already says so — nothing written.
+  await call('PUT', `/api/domains/${PRIMARY}/branding`, { name: 'Sample Park', theme: 'dark' });
+  assert.equal(vhostWrites.length, writesBefore + 2);
 });
 
 test('the preview: the rendered stylesheet and the English title and footer', async () => {
@@ -482,18 +636,13 @@ test('an asset before the fields: no_branding; the brand of a pending domain ren
     JSON.parse(await readRendered(OTHER, 'locales/en/portal.json'))['Login - {{authelia}}'],
     'Login - Code Lama',
   );
+  // Pending: no auth vhost yet — activation writes it from the record.
+  assert.ok(vhostWrites.every((w) => w.domain !== OTHER));
 });
 
 test('a rendering that fails keeps the record and warns; the streak is audited once and healed by the reconcile', async () => {
   autheliaDown = true;
-  lib.setAuthBrandingForTests({
-    webRoot,
-    get autheliaVersion() {
-      return autheliaVersion;
-    },
-    fetchLocales: fakeLocales,
-    ensureBase: async () => base,
-  }); // forgets the locale cache
+  lib.setAuthBrandingForTests(overrides()); // forgets the locale cache
   const first = await call('PUT', `/api/domains/${OTHER}/branding`, {
     name: 'Code Lama',
     theme: 'oled',
@@ -599,6 +748,17 @@ test('removing the brand: the record and the directory go, audited; a removed do
   assert.equal(removed.statusCode, 200);
   assert.equal(removed.json().removed, true);
   assert.equal(await exists(renderedDir(PRIMARY)), false);
+  // The vhost back to the stock page.
+  assert.deepEqual(vhostWrites.at(-1), {
+    domain: PRIMARY,
+    primary: true,
+    enabled: true,
+    branding: null,
+  });
+  assert.equal(
+    installedVhosts.get(PRIMARY),
+    renderAuthVhost(PRIMARY, PRIMARY_CERT, { primary: true, branding: null }).config,
+  );
   assert.deepEqual(await call('GET', `/api/domains/${PRIMARY}/branding`).then((r) => r.json()), {
     branding: null,
   });
@@ -622,8 +782,7 @@ test('the Authelia base: audited as a restart when the keys were added, silent o
   lib.setAuthBrandingForTests(null);
   let baseFails = true;
   lib.setAuthBrandingForTests({
-    webRoot,
-    fetchLocales: fakeLocales,
+    ...overrides(),
     ensureBase: async () => {
       if (baseFails) throw new Error('/etc/authelia is not writable');
       return base;

@@ -65,7 +65,7 @@ import {
 } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
-import { removeRenderedBranding } from './auth-branding.js';
+import { authVhostBranding, removeRenderedBranding } from './auth-branding.js';
 import {
   autheliaWatchesUsers,
   heldOwnedGroups,
@@ -1647,7 +1647,11 @@ export async function activateDomain(name, { actor, logger }) {
     if (domain.status === 'active') return null;
     await assertRelayHostsFree(name);
     try {
-      await deps.writeAuthVhost(name, { primary: false });
+      // A brand set while the domain was pending is in the vhost from the start.
+      await deps.writeAuthVhost(name, {
+        primary: false,
+        branding: await authVhostBranding(name),
+      });
     } catch (err) {
       throw httpError(`nginx refused the vhost of ${fqdn}: ${err.message}`, 502, {
         code: 'nginx_failed',

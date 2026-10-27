@@ -131,13 +131,21 @@ function namingClientHost(config, fqdn) {
   return out;
 }
 
-function fakeDeps(installed, { failOn, tunnels, sites = [], linked = [], served } = {}) {
+function fakeDeps(
+  installed,
+  { failOn, tunnels, sites = [], linked = [], served, branding = {} } = {},
+) {
   const writes = [];
   return {
     writes,
     deps: {
       readTunnels: async () => tunnels ?? [panel, plugin, current, app, open, internal, missing],
       readSites: async () => sites,
+      // The domain's brand as its record says (lib/auth-branding.js).
+      authVhostBranding: async (domain) => {
+        if (branding[domain] instanceof Error) throw branding[domain];
+        return branding[domain] ?? null;
+      },
       servedUserSurface: async (routes) => (served ? served(routes) : []),
       readInstalledVhost: async (name) => installed[name] ?? null,
       isSiteEnabled: async (name) => linked.includes(name),
@@ -410,6 +418,56 @@ test('the panel, the auth portal and static sites are rewritten', async () => {
   );
   assert.match(siteWrite.config, /X-Original-URL https:\/\/docs\.example\.com\$request_uri;/);
   assert.doesNotMatch(siteWrite.config, /\$http_host/);
+});
+
+test('the auth portal is rendered with the domain’s brand as its record says', async () => {
+  const unbranded = renderAuthVhost('example.com', WILDCARD).config;
+  const dark = { theme: 'dark', logo: true };
+  // An auth vhost written before the brand was set: rewritten with it, on
+  // its certificate, its link state kept.
+  const branded = fakeDeps(
+    { 'lamalibre-lamaste-auth-example.com': unbranded },
+    { linked: ['lamalibre-lamaste-auth-example.com'], branding: { 'example.com': dark } },
+  );
+  const result = await reconcileSiteVhosts(
+    log,
+    [{ name: 'example.com', primary: true }],
+    branded.deps,
+  );
+  assert.deepEqual(result.rewritten, ['auth.example.com']);
+  assert.equal(branded.writes.length, 1);
+  assert.equal(branded.writes[0].enabled, true);
+  assert.equal(
+    branded.writes[0].config,
+    renderAuthVhost('example.com', WILDCARD, { primary: true, branding: dark }).config,
+  );
+  assert.match(branded.writes[0].config, /data-theme="dark"/);
+
+  // The brand removed since: back to the unbranded text.
+  const removed = fakeDeps({ 'lamalibre-lamaste-auth-example.com': branded.writes[0].config });
+  await reconcileSiteVhosts(log, [{ name: 'example.com', primary: true }], removed.deps);
+  assert.equal(removed.writes.length, 1);
+  assert.equal(removed.writes[0].config, unbranded);
+
+  // The record unreadable: that vhost fails, the others still run.
+  const failing = fakeDeps(
+    {
+      'lamalibre-lamaste-auth-example.com': unbranded,
+      'lamalibre-lamaste-auth-codelama.com.tr':
+        'server {\n    ssl_certificate /etc/letsencrypt/live/auth.codelama.com.tr/fullchain.pem;\n}\n',
+    },
+    { branding: { 'example.com': new Error('state.db is locked') } },
+  );
+  const outcome = await reconcileSiteVhosts(
+    log,
+    [
+      { name: 'example.com', primary: true },
+      { name: 'codelama.com.tr', primary: false },
+    ],
+    failing.deps,
+  );
+  assert.deepEqual(outcome.failed, [{ vhost: 'auth.example.com', error: 'state.db is locked' }]);
+  assert.deepEqual(outcome.rewritten, ['auth.codelama.com.tr']);
 });
 
 test('a site whose installed vhost disagrees with its protection is left alone', async () => {

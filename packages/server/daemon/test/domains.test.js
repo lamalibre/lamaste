@@ -139,8 +139,21 @@ before(async () => {
     ...(await import('../src/lib/audit.js')),
     ...(await import('../src/lib/state.js')),
     ...(await import('../src/lib/plugins.js')),
+    ...(await import('../src/lib/auth-branding.js')),
   };
   await lib.loadConfig();
+  // A brand renders under a temporary web root from no locales; its vhost
+  // is activation's to write here (the fake writeAuthVhost below).
+  lib.setAuthBrandingForTests({
+    webRoot: path.join(dir, 'www', 'auth'),
+    fetchLocales: async () => ({ languages: [], files: [] }),
+    ensureBase: async () => ({ logoWritten: false, restarted: false }),
+    vhost: {
+      readInstalled: async () => null,
+      isEnabled: async () => false,
+      write: async () => {},
+    },
+  });
   lib.setAutheliaForTests({
     usersFile,
     restart: async () => {
@@ -202,6 +215,7 @@ after(async () => {
   lib.setAutheliaForTests(null);
   lib.setGatekeeperClientForTests(null);
   lib.setDomainActivationForTests(null);
+  lib.setAuthBrandingForTests(null);
   await app?.close();
   await rm(dir, { recursive: true, force: true });
 });
@@ -291,6 +305,16 @@ test('a domain: added pending, refused when it overlaps or is no domain, activat
     (err) => err.code === 'unknown_domain',
   );
 
+  // A brand set while the domain is pending: no vhost to write yet, and
+  // activation writes the vhost with it.
+  const branded = await call('PUT', '/api/domains/codelama.com.tr/branding', {
+    name: 'Code Lama',
+    theme: 'dark',
+  });
+  assert.equal(branded.statusCode, 200, branded.body);
+  assert.equal(branded.json().warnings, undefined);
+  assert.deepEqual(activation, []);
+
   failVhost = true;
   const failed = await call('POST', '/api/domains/codelama.com.tr/activate');
   assert.equal(failed.statusCode, 502);
@@ -304,7 +328,7 @@ test('a domain: added pending, refused when it overlaps or is no domain, activat
   assert.equal(active.json().domain.status, 'active');
   assert.deepEqual(activation, [
     ['cert', 'auth.codelama.com.tr', 'ops@samplepark.tr'],
-    ['vhost', 'codelama.com.tr', { primary: false }],
+    ['vhost', 'codelama.com.tr', { primary: false, branding: { theme: 'dark', logo: false } }],
   ]);
   assert.deepEqual(await renderedMembers(), {
     'samplepark.tr': ['admin', 'ayse', 'cust', 'onur'],
