@@ -28,6 +28,8 @@ import {
 } from '../lib/constants.js';
 import type { TunnelInfo, GatekeeperSettings, AutheliaSession } from '../lib/types.js';
 import { registerCacheInvalidator } from '../lib/cache-bust.js';
+import { createBrandReader } from '../lib/brand.js';
+import type { PageBrand } from '../lib/types.js';
 import { tunnelInfoFromState } from '../lib/tunnels.js';
 import { authzRoutes } from './routes/authz.js';
 import { groupRoutes } from './routes/groups.js';
@@ -227,6 +229,10 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   server.decorate('getSessionCache', () => sessionCache);
   server.decorate('getCacheVersion', () => cacheVersion);
   server.decorate('getRelaySigner', () => relaySigner);
+  // The domains' brands for the pages served inline, read from their
+  // renderings under the web root (fail open: the stock page).
+  const brandReader = createBrandReader({ logger: server.log });
+  server.decorate('readDomainBrand', (domain: string) => brandReader.readDomainBrand(domain));
   const bustCache = (): void => {
     cacheVersion++;
     sessionCache.clear();
@@ -391,6 +397,8 @@ declare module 'fastify' {
     getSessionCache(): Map<string, AutheliaSession>;
     getCacheVersion(): number;
     getRelaySigner(): RelaySigner;
+    /** The brand of a domain of this relay for the pages, or null for the stock page (never throws). */
+    readDomainBrand(domain: string): Promise<PageBrand | null>;
     bustCache(): void;
     /** Read `domains.json` again now. */
     reloadDomains(): Promise<void>;

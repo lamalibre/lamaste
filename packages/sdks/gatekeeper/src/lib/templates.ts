@@ -1,7 +1,25 @@
-import type { AccessRequestTemplates, TemplateOptions } from './types.js';
+import { AUTH_BRANDING_ACCENT_RE, brandSupportUrlProblem } from '@lamalibre/lamaste';
+import type { AccessRequestTemplates, PageBrand, TemplateOptions } from './types.js';
 
-/** The look every page Gatekeeper serves shares: the panel's dark terminal style. */
-const BASE_CSS = `    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/** The pages' own accent (cyan-400), when the host's domain has no brand or no accent. */
+export const PAGE_DEFAULT_ACCENT = '#22d3ee';
+
+/**
+ * The one URL a page loads a logo from: the domain's sign-in host, a host
+ * under one of this relay's domains (`lib/brand.ts` builds it from the
+ * domain of the panel's projection; a host under no domain has no brand,
+ * so no logo). Checked again here before it enters an attribute.
+ */
+const LOGO_URL_RE =
+  /^https:\/\/auth\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+\/static\/media\/logo\.png$/;
+
+/**
+ * The look every page Gatekeeper serves shares: the panel's dark terminal
+ * style, with the accent of the host's domain when it has a brand.
+ */
+function baseCss(brand: PageBrand | null | undefined): string {
+  return `    :root { --accent: ${pageAccent(brand)}; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
       background: #09090b; color: #e4e4e7;
@@ -11,10 +29,82 @@ const BASE_CSS = `    *, *::before, *::after { box-sizing: border-box; margin: 0
     .card {
       background: #18181b; border: 1px solid #27272a; border-radius: 0.75rem;
       max-width: 560px; width: 100%; padding: 2rem;
+    }${
+      brand
+        ? `
+    .brand {
+      display: flex; align-items: center; gap: 0.75rem;
+      padding-bottom: 1rem; margin-bottom: 1.25rem; border-bottom: 1px solid #27272a;
+    }
+    .brand-logo { max-height: 40px; max-width: 120px; }
+    .brand-name { color: #f4f4f5; font-size: 0.9375rem; font-weight: 700; }
+    .brand-tagline { color: #a1a1aa; font-size: 0.75rem; margin-top: 0.125rem; }`
+        : ''
     }
     .icon { font-size: 2.5rem; margin-bottom: 1rem; }
     h1 { font-size: 1.25rem; color: #f4f4f5; margin-bottom: 0.5rem; }
-    .fqdn { color: #22d3ee; }`;
+    .fqdn { color: var(--accent); }`;
+}
+
+/** The accent a page uses: the brand's when it is a colour, else the pages' own. */
+function pageAccent(brand: PageBrand | null | undefined): string {
+  const accent = brand?.accent ?? null;
+  return accent !== null && AUTH_BRANDING_ACCENT_RE.test(accent) ? accent : PAGE_DEFAULT_ACCENT;
+}
+
+/**
+ * The brand's header at the top of the card — the logo when the brand
+ * serves one at a URL the page may load, the name, the tagline when set —
+ * or nothing for the stock page. Name and tagline are escaped (the record's
+ * validation already refuses `<`, `>`, `{`, `}`).
+ */
+function brandHeader(brand: PageBrand | null | undefined): string {
+  if (!brand) return '';
+  const logo =
+    brand.logoUrl !== null && LOGO_URL_RE.test(brand.logoUrl)
+      ? `<img class="brand-logo" src="${escapeAttr(brand.logoUrl)}" alt="">`
+      : '';
+  const tagline =
+    brand.tagline === null ? '' : `<div class="brand-tagline">${escapeHtml(brand.tagline)}</div>`;
+  return `
+    <header class="brand">${logo}<div><div class="brand-name">${escapeHtml(brand.name)}</div>${tagline}</div></header>`;
+}
+
+/**
+ * Who a refused visitor is told to contact: the brand's support e-mail
+ * when the host's domain has one, else the settings' administrator
+ * e-mail; empty when neither is set.
+ */
+function contactEmail(options: TemplateOptions | undefined): string {
+  return options?.brand?.supportEmail ?? options?.adminContact ?? '';
+}
+
+/**
+ * The contact lines at the foot of a page: the e-mail as a `mailto:` link
+ * and, when the brand names a support URL (an `https:` URL by the
+ * record's rule, checked again), that as a link.
+ */
+function contactLines(options: TemplateOptions | undefined): string {
+  const email = contactEmail(options);
+  const url = options?.brand?.supportUrl ?? null;
+  const lines: string[] = [];
+  if (email) {
+    lines.push(
+      `<p class="contact">Admin: <a href="mailto:${escapeAttr(email)}">${escapeHtml(email)}</a></p>`,
+    );
+  }
+  if (url !== null && brandSupportUrlProblem(url) === null) {
+    lines.push(
+      `<p class="contact">Help: <a href="${escapeAttr(url)}" rel="noopener">${escapeHtml(url)}</a></p>`,
+    );
+  }
+  return lines.join('\n    ');
+}
+
+/** The title's tail: the brand's name, when there is one. */
+function titleSuffix(brand: PageBrand | null | undefined): string {
+  return brand ? ` — ${escapeHtml(brand.name)}` : '';
+}
 
 /**
  * Generate pre-filled message templates for requesting access to a resource.
@@ -30,7 +120,7 @@ export function getAccessRequestTemplates(
   options?: TemplateOptions,
 ): AccessRequestTemplates {
   const adminName = options?.adminName ?? 'Administrator';
-  const adminContact = options?.adminContact ?? '';
+  const adminContact = contactEmail(options);
   const contactLine = adminContact ? `\nAdmin contact: ${adminContact}` : '';
 
   return {
@@ -51,11 +141,15 @@ export function getAccessRequestTemplates(
 
 /**
  * Build an HTML page for the access-request denial page.
- * Server-rendered with inline CSS, no external dependencies.
+ * Server-rendered with inline CSS, no external dependencies — but, with
+ * `options.brand`, the brand of the host's domain: its name in the title
+ * and a header, its logo from the domain's sign-in host, its accent, its
+ * support contact in place of the administrator's e-mail. The message
+ * templates stay addressed to `adminName`.
  *
  * @param username - The authenticated user's username
  * @param resourceFqdn - The tunnel FQDN the user tried to access
- * @param options - Optional admin contact info
+ * @param options - Optional admin contact info and the domain's brand
  * @returns Full HTML page string
  */
 export function buildAccessRequestPage(
@@ -64,17 +158,17 @@ export function buildAccessRequestPage(
   options?: TemplateOptions,
 ): string {
   const templates = getAccessRequestTemplates(username, resourceFqdn, options);
-  const adminContact = options?.adminContact ?? '';
   const adminName = options?.adminName ?? 'your administrator';
+  const brand = options?.brand;
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Access Required — ${escapeHtml(resourceFqdn)}</title>
+  <title>Access Required — ${escapeHtml(resourceFqdn)}${titleSuffix(brand)}</title>
   <style>
-${BASE_CSS}
+${baseCss(brand)}
     .subtitle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1.5rem; }
     .section-label {
       color: #71717a; font-size: 0.75rem; text-transform: uppercase;
@@ -96,16 +190,17 @@ ${BASE_CSS}
     .copy-btn:hover { background: #3f3f46; color: #e4e4e7; }
     .copy-btn.copied { background: #065f46; color: #6ee7b7; border-color: #065f46; }
     .contact { color: #a1a1aa; font-size: 0.8125rem; margin-top: 1.5rem; }
-    .contact a { color: #22d3ee; text-decoration: none; }
+    .contact + .contact { margin-top: 0.375rem; }
+    .contact a { color: var(--accent); text-decoration: none; }
     .contact a:hover { text-decoration: underline; }
     .user-badge {
       display: inline-block; background: #27272a; border-radius: 0.25rem;
-      padding: 0.125rem 0.375rem; font-size: 0.75rem; color: #22d3ee;
+      padding: 0.125rem 0.375rem; font-size: 0.75rem; color: var(--accent);
     }
   </style>
 </head>
 <body>
-  <div class="card">
+  <div class="card">${brandHeader(brand)}
     <div class="icon">&#128274;</div>
     <h1>Access Required</h1>
     <p class="subtitle">
@@ -129,7 +224,7 @@ ${escapeHtml(templates.email.body)}<button class="copy-btn" onclick="copyTemplat
     <div class="section-label">WhatsApp</div>
     <div class="template-box" id="tpl-whatsapp">${escapeHtml(templates.whatsapp)}<button class="copy-btn" onclick="copyTemplate('tpl-whatsapp', this)">Copy</button></div>
 
-    ${adminContact ? `<p class="contact">Admin: <a href="mailto:${escapeAttr(adminContact)}">${escapeHtml(adminContact)}</a></p>` : ''}
+    ${contactLines(options)}
   </div>
   <script>
     function copyTemplate(id, btn) {
@@ -171,8 +266,8 @@ export function buildDomainRefusalPage(
   options: TemplateOptions | undefined,
   { host, site = false }: { host: string; site?: boolean },
 ): string {
-  const adminContact = options?.adminContact ?? '';
   const adminName = options?.adminName ?? 'your administrator';
+  const brand = options?.brand;
   const heading =
     domain === null || site
       ? `Not allowed on <span class="fqdn">${escapeHtml(host)}</span>`
@@ -199,24 +294,25 @@ export function buildDomainRefusalPage(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Not allowed — ${escapeHtml(domain ?? host)}</title>
+  <title>Not allowed — ${escapeHtml(domain ?? host)}${titleSuffix(brand)}</title>
   <style>
-${BASE_CSS}
+${baseCss(brand)}
     .subtitle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1rem; }
     .contact { color: #a1a1aa; font-size: 0.8125rem; margin-top: 1.5rem; }
-    a { color: #22d3ee; text-decoration: none; }
+    .contact + .contact { margin-top: 0.375rem; }
+    a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
-  <div class="card">
+  <div class="card">${brandHeader(brand)}
     <div class="icon">&#128683;</div>
     <h1>${heading}</h1>
     <p class="subtitle">
       ${explanation} Ask ${escapeHtml(adminName)} to add you if you should have access.
     </p>
     ${signOut}
-    ${adminContact ? `<p class="contact">Admin: <a href="mailto:${escapeAttr(adminContact)}">${escapeHtml(adminContact)}</a></p>` : ''}
+    ${contactLines(options)}
   </div>
 </body>
 </html>`;

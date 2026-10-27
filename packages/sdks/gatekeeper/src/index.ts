@@ -14,6 +14,7 @@ export type {
   AccessResult,
   AccessRequestTemplates,
   TemplateOptions,
+  PageBrand,
   GatekeeperSettings,
   AccessRequestEntry,
   TunnelInfo,
@@ -78,7 +79,23 @@ export { checkAccess, isPluginAudienceMember } from './lib/authz.js';
 export { tunnelInfoFromState } from './lib/tunnels.js';
 
 // Templates
-export { getAccessRequestTemplates, buildAccessRequestPage } from './lib/templates.js';
+export {
+  getAccessRequestTemplates,
+  buildAccessRequestPage,
+  buildDomainRefusalPage,
+  PAGE_DEFAULT_ACCENT,
+} from './lib/templates.js';
+
+// The domains' brands for the pages
+export {
+  createBrandReader,
+  readBrandFile,
+  pageBrandOf,
+  brandLogoUrl,
+  BRAND_FILE_MAX_BYTES,
+  BRAND_CACHE_TTL_MS,
+} from './lib/brand.js';
+export type { BrandReader, BrandReaderLogger, BrandReaderOptions } from './lib/brand.js';
 
 // Migration
 export { migrateFromLegacy } from './lib/migration.js';
