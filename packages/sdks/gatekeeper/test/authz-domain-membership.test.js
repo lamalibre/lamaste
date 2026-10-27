@@ -88,6 +88,7 @@ before(async () => {
     adminEmail: 'ops@codelama.com.tr',
   }));
   app.decorate('getRelaySigner', () => null);
+  app.decorate('readDomainBrand', async () => null);
   await app.register(authzRoutes);
   await app.ready();
 });

@@ -154,6 +154,7 @@ async function gatekeeperApp({ logger = false, rateLimitPerClient } = {}) {
   instance.decorate('getCacheVersion', () => 1);
   instance.decorate('getSettings', () => ({}));
   instance.decorate('getRelaySigner', () => signer);
+  instance.decorate('readDomainBrand', async () => null);
   await instance.register(authzRoutes, rateLimitPerClient ? { rateLimitPerClient } : {});
   await instance.ready();
   return instance;

@@ -19,7 +19,7 @@ import { AUTHELIA_VERIFY_URL, SESSION_CACHE_TTL_MS } from '../../lib/constants.j
 import { checkAccess, isPluginAudienceMember } from '../../lib/authz.js';
 import { buildAccessRequestPage, buildDomainRefusalPage } from '../../lib/templates.js';
 import { logAccessRequest } from '../routes/diagnostic.js';
-import type { AutheliaSession, TunnelInfo } from '../../lib/types.js';
+import type { AutheliaSession, TemplateOptions, TunnelInfo } from '../../lib/types.js';
 
 /**
  * The header a user-surface 403 names its refusal in — `not_a_member` or
@@ -535,30 +535,47 @@ function externalRefused(kind: MembershipKind, accessMode: string): boolean {
 }
 
 /**
+ * What the pages are built with: the settings' administrator contact and
+ * the brand of `domain` (`lib/brand.ts`, fail open: null for the stock
+ * page) — none for a host under no domain, which gets no logo and no
+ * sign-in link alike.
+ */
+async function pageOptions(
+  fastify: FastifyInstance,
+  domain: string | null,
+): Promise<TemplateOptions> {
+  const settings = fastify.getSettings();
+  return {
+    adminContact: settings.adminEmail,
+    adminName: settings.adminName,
+    brand: domain === null ? null : await fastify.readDomainBrand(domain),
+  };
+}
+
+/**
  * Answer a refused request with a refusal page — nginx serves it inline
  * (`error_page 403`): a signed-in user who may not reach the host's domain,
  * or (`site`) a static site that refused one. Logged with the host and the
- * reason — never the user.
+ * reason — never the user. The page carries the brand of the host's
+ * domain.
  */
-function sendRefusalPage(
+async function sendRefusalPage(
   fastify: FastifyInstance,
   request: FastifyRequest,
   reply: FastifyReply,
   hostname: string,
   { reason, domain, site = false }: { reason: string; domain: string | null; site?: boolean },
-): FastifyReply {
+): Promise<FastifyReply> {
   request.log.info({ requestId: request.id, reason, fqdn: hostname }, 'authz denied');
-  const settings = fastify.getSettings();
   return reply
     .code(403)
     .header('Cache-Control', 'no-store')
     .type('text/html; charset=utf-8')
     .send(
-      buildDomainRefusalPage(
-        domain,
-        { adminContact: settings.adminEmail, adminName: settings.adminName },
-        { host: hostname.toLowerCase(), site },
-      ),
+      buildDomainRefusalPage(domain, await pageOptions(fastify, domain), {
+        host: hostname.toLowerCase(),
+        site,
+      }),
     );
 }
 
@@ -652,16 +669,17 @@ async function authorizeTunnelRequest(
  * Answer a tunnel request its user is not granted with the access-request
  * page (403): no grant on a `restricted` tunnel, or an external member on an
  * `authenticated` one (they are on the domain, only not granted). Logged
- * with the tunnel and the reason — never who was refused.
+ * with the tunnel and the reason — never who was refused. The page carries
+ * the brand of the host's domain.
  */
-function refuseUngranted(
+async function refuseUngranted(
   fastify: FastifyInstance,
   request: FastifyRequest,
   reply: FastifyReply,
   session: AutheliaSession,
   hostname: string,
   { reason, resourceId }: { reason: string; resourceId: string },
-): FastifyReply {
+): Promise<FastifyReply> {
   request.log.info(
     { requestId: request.id, reason, tunnel: hostname, resourceType: 'tunnel', resourceId },
     'authz denied',
@@ -679,10 +697,11 @@ function refuseUngranted(
   // Inline HTML as the 403 body. Cache-Control: no-store so nginx never
   // caches the denial; the matching proxy_cache_valid 403 0 in the snippet
   // is the authoritative setting.
-  const html = buildAccessRequestPage(session.username, hostname, {
-    adminContact: settings.adminEmail,
-    adminName: settings.adminName,
-  });
+  const html = buildAccessRequestPage(
+    session.username,
+    hostname,
+    await pageOptions(fastify, domainShownFor(fastify, hostname)),
+  );
   return reply
     .code(403)
     .header('Cache-Control', 'no-store')
@@ -854,7 +873,9 @@ async function authorizeUserSurfaceShellRequest(
   if (!answer) return reply.code(401).send();
   const checked = checkDomain(fastify, answer, parsed.hostname);
   const settings = fastify.getSettings();
-  const templateOptions = { adminContact: settings.adminEmail, adminName: settings.adminName };
+  // The site's host is under the plugin's domain (the panel serves a web
+  // surface nowhere else): its brand on every page of this host.
+  const templateOptions = await pageOptions(fastify, domainShownFor(fastify, parsed.hostname));
   if ('refused' in checked) {
     const { external } = checked.refused;
     if (!external) {

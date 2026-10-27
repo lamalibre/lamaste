@@ -195,6 +195,7 @@ before(async () => {
   app.decorate('getCacheVersion', () => 1);
   app.decorate('getSettings', () => ({ adminName: 'Ops', adminEmail: 'ops@example.com' }));
   app.decorate('getRelaySigner', () => signer);
+  app.decorate('readDomainBrand', async () => null);
   await app.register(authzRoutes);
   await app.ready();
 });

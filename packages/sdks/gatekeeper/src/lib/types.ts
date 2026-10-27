@@ -127,12 +127,33 @@ export interface AccessRequestTemplates {
 }
 
 /**
+ * A domain's brand as the pages Gatekeeper serves take it (read from the
+ * domain's `brand.json` by `lib/brand.ts`): the name and the tagline for
+ * the header, the accent for the colours, the logo's URL on the domain's
+ * sign-in host (null when the brand serves none), and the support contact
+ * shown instead of the settings' administrator e-mail.
+ */
+export interface PageBrand {
+  readonly name: string;
+  readonly tagline: string | null;
+  /** `#rrggbb`, or null for the pages' own accent. */
+  readonly accent: string | null;
+  /** `https://auth.<domain>/static/media/logo.png`, or null. */
+  readonly logoUrl: string | null;
+  readonly supportEmail: string | null;
+  /** `https:` only. */
+  readonly supportUrl: string | null;
+}
+
+/**
  * Options for generating access request templates.
  */
 export interface TemplateOptions {
   readonly adminContact?: string | undefined;
   readonly adminName?: string | undefined;
   readonly domain?: string | undefined;
+  /** The brand of the host's domain; null or absent for the stock page. */
+  readonly brand?: PageBrand | null | undefined;
 }
 
 /**

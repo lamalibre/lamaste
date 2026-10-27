@@ -75,6 +75,7 @@ before(async () => {
   app.decorate('getCacheVersion', () => 1);
   app.decorate('getSettings', () => ({}));
   app.decorate('getRelaySigner', () => null);
+  app.decorate('readDomainBrand', async () => null);
   await app.register(authzRoutes);
   await app.ready();
 });
