@@ -20,9 +20,15 @@
 #    member); Authelia denies by default, watches its users file (refresh
 #    always, its own password change and reset off — external-members-
 #    design.md) and every user holds the domain's member group there;
-#    Gatekeeper has its member file (v2); the user signed in before the
-#    update, signed in again after it, reaches what they reached; the panel
-#    logged no error since the update.
+#    Gatekeeper has its member file (v2); the branded sign-in's base is in
+#    place with the page pixel-for-pixel stock (auth-branding-design.md,
+#    "Upgrade and reconcile": the override locations in the auth vhost,
+#    data-theme="light", data-logooverride="false", no stylesheet; theme
+#    and server.asset_path in Authelia's configuration — one restart,
+#    audited; no brand; nginx built with the sub module; the stock
+#    invitation page rewritten); the user signed in before the update,
+#    signed in again after it, reaches what they reached; the panel logged
+#    no error since the update.
 # ============================================================================
 
 set -euo pipefail
@@ -155,6 +161,8 @@ USERS_BEFORE=$(api_get "users" 2>/dev/null | jq '[.users[]? | .username] | sort'
 BEFORE="$(host_status "${ON_FQDN}") $(host_status "${OFF_FQDN}") $(host_status "${AUTH_FQDN}")"
 log_info "Users ${USERS_BEFORE//[$'\n' ]/}; ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}"
 PRIV_BEFORE=$(sudo sha256sum "${PRIV}" | cut -d' ' -f1)
+# The last audit entry of the previous release: what the update adds comes after it
+AUDIT_BASE=$(api_get "audit?limit=1" 2>/dev/null | jq '.entries[0].id // 0' 2>/dev/null || echo "0")
 
 # ===========================================================================
 # 2. The Panel Update
@@ -267,6 +275,30 @@ assert_eq "$(printf '%s\n' "${KEY}" | grep -cE '^[0-9a-f]{16}$' || true)" "1" "T
 assert_not_contains "$(echo "$CONFIG" | jq -c '.access_control.rules')" '"user:' "…and name no user" || true
 USERS_GROUPS=$(sudo bash -c "${AUTHELIA_USERS_GROUPS_JSON}" 2>/dev/null || echo '{}')
 assert_eq "$(echo "$USERS_GROUPS" | jq --arg g "lamaste:m:${KEY}" '[to_entries[] | select(.value | index($g) | not)] | length')" "0" "Every user of users.yml holds the member group" || true
+
+log_section "The branded sign-in's base is in place; the page is pixel-for-pixel stock"
+
+AUTH_VHOST=$(sudo cat "${AVAILABLE}/$(vhost_name auth "${DOMAIN}")" 2>/dev/null || echo "")
+assert_contains "${AUTH_VHOST}" "location = /brand.css {" "The auth vhost carries the brand-override locations (/brand.css)" || true
+assert_contains "${AUTH_VHOST}" "location = /static/media/logo.png {" "…/static/media/logo.png" || true
+assert_contains "${AUTH_VHOST}" "location /locales/ {" "…/locales/" || true
+assert_contains "${AUTH_VHOST}" "location @authelia {" "…with @authelia as the fallback" || true
+assert_contains "${AUTH_VHOST}" "sub_filter 'data-logooverride=\"true\"' 'data-logooverride=\"false\"';" "…and switches the logo off (data-logooverride=\"false\": no brand)" || true
+assert_not_contains "${AUTH_VHOST}" "brand.css\"></head>" "…adds no stylesheet link" || true
+AUTH_PAGE=$(curl -sk --max-time 15 --resolve "${AUTH_FQDN}:443:127.0.0.1" -w '\n%{http_code}' "https://${AUTH_FQDN}/" 2>/dev/null || echo "000")
+assert_eq "$(printf '%s\n' "${AUTH_PAGE}" | tail -n 1)" "200" "https://${AUTH_FQDN}/ answers 200" || true
+assert_contains "${AUTH_PAGE}" 'data-theme="light"' "…data-theme=\"light\"" || true
+assert_contains "${AUTH_PAGE}" 'data-logooverride="false"' "…data-logooverride=\"false\" (the placeholder is never shown)" || true
+assert_not_contains "${AUTH_PAGE}" 'brand.css' "…no stylesheet: the stock page until a brand is set" || true
+assert_json_field "$CONFIG" '"\(.theme) \(.server.asset_path)"' "light /etc/authelia/assets" "Authelia's configuration gained theme light and server.asset_path /etc/authelia/assets" || true
+assert_eq "$(sudo stat -c '%G' /etc/authelia/assets/logo.png 2>/dev/null || echo "missing")" "lamaste-authelia" "The placeholder logo is in the asset directory, group lamaste-authelia" || true
+BASE_RESTARTS=$(api_get "audit?action=authelia.restarted&limit=200" 2>/dev/null | jq --argjson base "${AUDIT_BASE}" '[.entries[]? | select(.id > $base and .details.reason == "branding-base")] | length' 2>/dev/null || echo "?")
+assert_eq "${BASE_RESTARTS}" "1" "Exactly one authelia.restarted audited with reason branding-base since the update" || true
+assert_json_field "$(api_get "domains/${DOMAIN}/branding" 2>/dev/null || echo '{}')" '.branding' "null" "GET /api/domains/${DOMAIN}/branding: no brand" || true
+assert_eq "$(nginx -V 2>&1 | grep '^configure arguments:' | tr ' ' '\n' | grep -cx -- '--with-http_sub_module' || true)" "1" "nginx -V lists --with-http_sub_module (compiled in)" || true
+INVITE_PAGE=$(sudo cat /var/www/lamaste/invite/index.html 2>/dev/null || echo "")
+assert_contains "${INVITE_PAGE}" "<title>Lamaste — Accept Invitation</title>" "The stock invitation page is in place" || true
+assert_contains "${INVITE_PAGE}" "--accent-foreground:" "…rewritten by the candidate (its palette variables, which ${BEFORE_VERSION}'s page lacked)" || true
 
 log_section "Signed in again: the user reaches what they reached"
 

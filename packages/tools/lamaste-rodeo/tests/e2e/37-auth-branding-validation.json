@@ -1,0 +1,2277 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 37,
+    "name": "Per-domain branding: refusals, reconcile, removal (Single-VM)",
+    "suite": "e2e",
+    "description": "37 — Per-domain branding: refusals, reconcile, removal (Single-VM)",
+    "deps": [],
+    "requires": ["curl", "jq", "nginx", "python3", "sha256sum", "openssl", "node"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE domains/${DOMAIN}/branding",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "domains/${DOMAIN}/branding"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE certs/agent/${AGENT_LABEL_37}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL_37}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Extract DOMAIN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DOMAIN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ONBOARDING"
+              },
+              "expression": ".domain // empty"
+            }
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Onboarding is complete (domain ${DOMAIN})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete (domain ${DOMAIN})"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "DELETE /api/domains/${DOMAIN}/branding",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "domains/${DOMAIN}/branding"
+          },
+          "continueOnError": true
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(api_get \"onboarding/status\" 2>/dev/null || echo '{}')\nif [ \"$(echo \"$ONBOARDING\" | jq -r '.status' 2>/dev/null || echo unknown)\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nDOMAIN=$(echo \"$ONBOARDING\" | jq -r '.domain // empty')\nlog_pass \"Onboarding is complete (domain ${DOMAIN})\"\n# A brand left by an interrupted run would make \"created\" and the revisions lie\napi_delete \"domains/${DOMAIN}/branding\" > /dev/null 2>&1 || true\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\" \"${AGENT_CERT_DIR}\"\nwrite_fixtures\n\n# ===========================================================================\n# 1. Refusals\n# ==========================================================================="
+    },
+    {
+      "id": "refusals-name-the-field-never-the-value",
+      "label": "Refusals name the field, never the value",
+      "steps": [
+        {
+          "id": "step-7",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call PUT \"domains/${DOMAIN}/branding\" '{\"name\":\"<script>alert(1)</script>\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "…the answer does not echo the name",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<script>"
+              },
+              "message": "…the answer does not echo the name"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Set LONG_NAME",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "printf 'n%.0s' $(seq 1 65)"
+          },
+          "capture": [
+            {
+              "variable": "LONG_NAME",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call PUT \"domains/${DOMAIN}/branding\" '{\"name\":\"E2E\",\"theme\":\"solarized\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "…the answer does not echo the theme",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "solarized"
+              },
+              "message": "…the answer does not echo the theme"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call PUT \"domains/${DOMAIN}/branding\" '{\"name\":\"E2E\",\"supportUrl\":\"http://help.example.test/e2e37\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "…the answer does not echo the URL",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "help.example.test"
+              },
+              "message": "…the answer does not echo the URL"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Refusals name the field, never the value\"\n\nRESP=$(brand_call PUT \"domains/${DOMAIN}/branding\" '{\"name\":\"<script>alert(1)</script>\"}')\nassert_refused \"$RESP\" 400 invalid_branding name \"A name with a tag\"\nassert_not_contains \"$(body_of \"$RESP\")\" \"<script>\" \"…the answer does not echo the name\" || true\nLONG_NAME=$(printf 'n%.0s' $(seq 1 65))\nassert_refused \"$(brand_call PUT \"domains/${DOMAIN}/branding\" \"{\\\"name\\\":\\\"${LONG_NAME}\\\"}\")\" 400 invalid_branding name \"A 65-character name\"\nRESP=$(brand_call PUT \"domains/${DOMAIN}/branding\" '{\"name\":\"E2E\",\"theme\":\"solarized\"}')\nassert_refused \"$RESP\" 400 invalid_branding theme \"Theme solarized\"\nassert_not_contains \"$(body_of \"$RESP\")\" \"solarized\" \"…the answer does not echo the theme\" || true\nassert_refused \"$(brand_call PUT \"domains/${DOMAIN}/branding\" '{\"name\":\"E2E\",\"accent\":\"#FFF\"}')\" 400 invalid_branding accent \"Accent #FFF (not #rrggbb lower case)\"\nRESP=$(brand_call PUT \"domains/${DOMAIN}/branding\" '{\"name\":\"E2E\",\"supportUrl\":\"http://help.example.test/e2e37\"}')\nassert_refused \"$RESP\" 400 invalid_branding supportUrl \"An http:// support URL\"\nassert_not_contains \"$(body_of \"$RESP\")\" \"help.example.test\" \"…the answer does not echo the URL\" || true\nassert_refused \"$(brand_call PUT \"domains/${DOMAIN}/branding\" '{\"name\":\"E2E\",\"css\":\"body { display: none }\"}')\" 400 invalid_branding css \"An unknown field (css)\""
+    },
+    {
+      "id": "refusals-of-an-asset-before-any-brand-an-svg-over-the-limit",
+      "label": "Refusals of an asset: before any brand, an SVG, over the limit",
+      "steps": [
+        {
+          "id": "step-20",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call_file PUT \"domains/${DOMAIN}/branding/logo\" \"${WORK_DIR}/logo.png.json\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "A logo before any brand: 404 no_branding",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(body_of \"$RESP\" | jq -r '.code // \"-\"')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404 no_branding"
+              },
+              "message": "A logo before any brand: 404 no_branding"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call_file PUT \"domains/${DOMAIN}/branding/logo\" \"${WORK_DIR}/logo.svg.json\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "…the answer does not echo the bytes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "svg"
+              },
+              "message": "…the answer does not echo the bytes"
+            }
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call_file PUT \"domains/${DOMAIN}/branding/logo\" \"${WORK_DIR}/big.png.json\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "A PNG 100 bytes over 512 KiB: 413 asset_too_large",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(body_of \"$RESP\" | jq -r '.code // \"-\"')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "413 asset_too_large"
+              },
+              "message": "A PNG 100 bytes over 512 KiB: 413 asset_too_large"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call_file PUT \"domains/${DOMAIN}/branding/favicon\" \"${WORK_DIR}/logo.svg.json\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"Refusals of an asset: before any brand, an SVG, over the limit\"\n\nRESP=$(brand_call_file PUT \"domains/${DOMAIN}/branding/logo\" \"${WORK_DIR}/logo.png.json\")\nassert_eq \"$(status_of \"$RESP\") $(body_of \"$RESP\" | jq -r '.code // \"-\"')\" \"404 no_branding\" \"A logo before any brand: 404 no_branding\" || true\nRESP=$(brand_call_file PUT \"domains/${DOMAIN}/branding/logo\" \"${WORK_DIR}/logo.svg.json\")\nassert_eq \"$(status_of \"$RESP\") $(body_of \"$RESP\" | jq -r '\"\\(.code // \"-\") \\(.reason // \"-\")\"')\" \"400 invalid_image not_png\" \"An SVG as the logo: 400 invalid_image, reason not_png\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"svg\" \"…the answer does not echo the bytes\" || true\nRESP=$(brand_call_file PUT \"domains/${DOMAIN}/branding/logo\" \"${WORK_DIR}/big.png.json\")\nassert_eq \"$(status_of \"$RESP\") $(body_of \"$RESP\" | jq -r '.code // \"-\"')\" \"413 asset_too_large\" \"A PNG 100 bytes over 512 KiB: 413 asset_too_large\" || true\nRESP=$(brand_call_file PUT \"domains/${DOMAIN}/branding/favicon\" \"${WORK_DIR}/logo.svg.json\")\nassert_eq \"$(status_of \"$RESP\") $(body_of \"$RESP\" | jq -r '\"\\(.code // \"-\") \\(.reason // \"-\")\"')\" \"400 invalid_image not_ico_or_png\" \"An SVG as the favicon: 400 invalid_image, reason not_ico_or_png\" || true"
+    },
+    {
+      "id": "the-brand-set-a-stale-revision-an-unknown-domain-an-agent-certificate",
+      "label": "The brand set; a stale revision, an unknown domain, an agent certificate",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call PUT \"domains/${DOMAIN}/branding\" \"{\\\"name\\\":\\\"${BRAND}\\\",\\\"theme\\\":\\\"dark\\\",\\\"accent\\\":\\\"${ACCENT}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "PUT /api/domains/${DOMAIN}/branding: ${BRAND}, dark, ${ACCENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/domains/${DOMAIN}/branding: ${BRAND}, dark, ${ACCENT}"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "…created at revision 1, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.created) \\(.branding.revision) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true 1 0"
+              },
+              "message": "…created at revision 1, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call PUT \"domains/${DOMAIN}/branding\" \"{\\\"name\\\":\\\"${BRAND}\\\",\\\"theme\\\":\\\"grey\\\",\\\"ifRevision\\\":99}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "…nothing changed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(branding_json)"
+              },
+              "path": "\"\\(.branding.theme) \\(.branding.revision)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "dark 1"
+              },
+              "message": "…nothing changed"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call PUT \"domains/${NO_SUCH_DOMAIN}/branding\" '{\"name\":\"E2E\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "A domain the relay lacks: 404 unknown_domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(body_of \"$RESP\" | jq -r '.code // \"-\"')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404 unknown_domain"
+              },
+              "message": "A domain the relay lacks: 404 unknown_domain"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "…GET too",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(brand_call GET \"domains/${NO_SUCH_DOMAIN}/branding\" | tail -n 1)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "…GET too"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "A throwaway agent ${AGENT_LABEL_37} enrolled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "A throwaway agent ${AGENT_LABEL_37} enrolled"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Extract P12_PASS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Set AGENT_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" \"${BASE_URL}/api/domains/${DOMAIN}/branding\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "AGENT_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "An agent certificate: 403 on GET /api/domains/${DOMAIN}/branding (admin only)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "An agent certificate: 403 on GET /api/domains/${DOMAIN}/branding (admin only)"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Set AGENT_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo curl -sk --max-time 30 -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{\"name\":\"E2E\"}' --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" \"${BASE_URL}/api/domains/${DOMAIN}/branding\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "AGENT_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "…and on PUT",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "…and on PUT"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The brand set; a stale revision, an unknown domain, an agent certificate\"\n\nRESP=$(brand_call PUT \"domains/${DOMAIN}/branding\" \"{\\\"name\\\":\\\"${BRAND}\\\",\\\"theme\\\":\\\"dark\\\",\\\"accent\\\":\\\"${ACCENT}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/domains/${DOMAIN}/branding: ${BRAND}, dark, ${ACCENT}\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.created) \\(.branding.revision) \\(.warnings // [] | length)\"' \"true 1 0\" \"…created at revision 1, no warning\" || true\nRESP=$(brand_call PUT \"domains/${DOMAIN}/branding\" \"{\\\"name\\\":\\\"${BRAND}\\\",\\\"theme\\\":\\\"grey\\\",\\\"ifRevision\\\":99}\")\nassert_eq \"$(status_of \"$RESP\") $(body_of \"$RESP\" | jq -r '\"\\(.code // \"-\") \\(.revision // \"-\")\"')\" \"409 revision_mismatch 1\" \"ifRevision 99: 409 revision_mismatch, the current revision named (1)\" || true\nassert_json_field \"$(branding_json)\" '\"\\(.branding.theme) \\(.branding.revision)\"' \"dark 1\" \"…nothing changed\" || true\nRESP=$(brand_call PUT \"domains/${NO_SUCH_DOMAIN}/branding\" '{\"name\":\"E2E\"}')\nassert_eq \"$(status_of \"$RESP\") $(body_of \"$RESP\" | jq -r '.code // \"-\"')\" \"404 unknown_domain\" \"A domain the relay lacks: 404 unknown_domain\" || true\nassert_eq \"$(brand_call GET \"domains/${NO_SUCH_DOMAIN}/branding\" | tail -n 1)\" \"404\" \"…GET too\" || true\n\nCERT_RESPONSE=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL_37}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"A throwaway agent ${AGENT_LABEL_37} enrolled\" || true\nP12_PASS=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nsudo openssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL_37}/client.p12\" -out \"${AGENT_CERT_DIR}/client.crt\" -clcerts -nokeys -passin pass:\"${P12_PASS}\" 2>/dev/null\nsudo openssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL_37}/client.p12\" -out \"${AGENT_CERT_DIR}/client.key\" -nocerts -nodes -passin pass:\"${P12_PASS}\" 2>/dev/null\nsudo chmod 600 \"${AGENT_CERT_DIR}/client.key\"\nunset P12_PASS\nAGENT_STATUS=$(sudo curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" \"${BASE_URL}/api/domains/${DOMAIN}/branding\" 2>/dev/null || echo \"000\")\nassert_eq \"${AGENT_STATUS}\" \"403\" \"An agent certificate: 403 on GET /api/domains/${DOMAIN}/branding (admin only)\" || true\nAGENT_STATUS=$(sudo curl -sk --max-time 30 -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{\"name\":\"E2E\"}' --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" \"${BASE_URL}/api/domains/${DOMAIN}/branding\" 2>/dev/null || echo \"000\")\nassert_eq \"${AGENT_STATUS}\" \"403\" \"…and on PUT\" || true\n\n# ===========================================================================\n# 2. The rendering and the vhost\n# ==========================================================================="
+    },
+    {
+      "id": "the-rendering-the-record-s-revision-from-the-pinned-authelia-release",
+      "label": "The rendering: the record's revision from the pinned Authelia release",
+      "steps": [
+        {
+          "id": "step-49",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call_file PUT \"domains/${DOMAIN}/branding/logo\" \"${WORK_DIR}/logo.png.json\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "The logo set: revision 2, the fixture's digest, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.branding.revision) \\(.branding.logo.sha256) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "true 2 ${LOGO_SHA} 0"
+              },
+              "message": "The logo set: revision 2, the fixture's digest, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "brand_call_file PUT \"domains/${DOMAIN}/branding/favicon\" \"${WORK_DIR}/favicon.ico.json\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "The favicon set: revision 3, an ICO, the fixture's digest",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.branding.revision) \\(.branding.favicon.format) \\(.branding.favicon.sha256)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "true 3 ico ${FAVICON_SHA}"
+              },
+              "message": "The favicon set: revision 3, an ICO, the fixture's digest"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "The rendering is current (revision 3)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The rendering is current (revision 3)"
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "The rendering is not current: $(branding_json | jq -c '.branding.rendered')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The rendering is not current: $(branding_json | jq -c '.branding.rendered')"
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set TARGET_1",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "link_target"
+          },
+          "capture": [
+            {
+              "variable": "TARGET_1",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "${WEB_ROOT}/${DOMAIN} links to a rendering of revision 3 under .renders/ (${TARGET_1})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "TARGET_1"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ".renders/${DOMAIN}-3-"
+              },
+              "message": "${WEB_ROOT}/${DOMAIN} links to a rendering of revision 3 under .renders/ (${TARGET_1})"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Set PINNED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "node --input-type=module -e \"import { AUTHELIA_RELEASE } from '${LAMASTE_LIB}/dist/index.js'; console.log(AUTHELIA_RELEASE.version);\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "PINNED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "The installed core library pins an Authelia release (${PINNED})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n' \"${PINNED}\" | grep -cE '^[0-9]+\\.[0-9]+\\.[0-9]+$' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The installed core library pins an Authelia release (${PINNED})"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "The rendered files are lamaste:www-data 0640 (nginx reads through the group)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo stat -c '%U:%G %a' \"${WEB_ROOT}/${DOMAIN}/brand.json\" 2>/dev/null || echo \"\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "lamaste:www-data 640"
+              },
+              "message": "The rendered files are lamaste:www-data 0640 (nginx reads through the group)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The rendering: the record's revision from the pinned Authelia release\"\n\nRESP=$(brand_call_file PUT \"domains/${DOMAIN}/branding/logo\" \"${WORK_DIR}/logo.png.json\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.branding.revision) \\(.branding.logo.sha256) \\(.warnings // [] | length)\"' \"true 2 ${LOGO_SHA} 0\" \"The logo set: revision 2, the fixture's digest, no warning\" || true\nRESP=$(brand_call_file PUT \"domains/${DOMAIN}/branding/favicon\" \"${WORK_DIR}/favicon.ico.json\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.branding.revision) \\(.branding.favicon.format) \\(.branding.favicon.sha256)\"' \"true 3 ico ${FAVICON_SHA}\" \"The favicon set: revision 3, an ICO, the fixture's digest\" || true\nif wait_for 30 rendered_current; then\n  log_pass \"The rendering is current (revision 3)\"\nelse\n  log_fail \"The rendering is not current: $(branding_json | jq -c '.branding.rendered')\"\nfi\nTARGET_1=$(link_target)\nassert_contains \"${TARGET_1}\" \".renders/${DOMAIN}-3-\" \"${WEB_ROOT}/${DOMAIN} links to a rendering of revision 3 under .renders/ (${TARGET_1})\" || true\nPINNED=$(node --input-type=module -e \"import { AUTHELIA_RELEASE } from '${LAMASTE_LIB}/dist/index.js'; console.log(AUTHELIA_RELEASE.version);\" 2>/dev/null || echo \"\")\nassert_eq \"$(printf '%s\\n' \"${PINNED}\" | grep -cE '^[0-9]+\\.[0-9]+\\.[0-9]+$' || true)\" \"1\" \"The installed core library pins an Authelia release (${PINNED})\" || true\nassert_eq \"$(sudo jq -r '\"\\(.v) \\(.revision) \\(.autheliaVersion)\"' \"${WEB_ROOT}/${DOMAIN}/rendered.json\" 2>/dev/null || echo \"\")\" \"1 3 ${PINNED}\" \"rendered.json: v 1, revision 3, the pinned Authelia release\" || true\nassert_eq \"$(sudo stat -c '%U:%G %a' \"${WEB_ROOT}/${DOMAIN}/brand.json\" 2>/dev/null || echo \"\")\" \"lamaste:www-data 640\" \"The rendered files are lamaste:www-data 0640 (nginx reads through the group)\" || true\nassert_eq \"$(sudo jq -r '\"\\(.domain) \\(.name) \\(.logo.sha256)\"' \"${WEB_ROOT}/${DOMAIN}/brand.json\" 2>/dev/null || echo \"\")\" \"${DOMAIN} ${BRAND} ${LOGO_SHA}\" \"brand.json names the domain, the brand and the logo's digest\" || true"
+    },
+    {
+      "id": "the-served-link-deleted-by-hand-back-at-the-panel-s-restart",
+      "label": "The served link deleted by hand: back at the panel's restart",
+      "steps": [
+        {
+          "id": "step-63",
+          "label": "The link is gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_target)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "-"
+              },
+              "message": "The link is gone"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "GET says the brand is not rendered (renderedCurrent false, rendered null)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(branding_json)"
+              },
+              "path": "\"\\(.branding.renderedCurrent) \\(.branding.rendered)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "false null"
+              },
+              "message": "GET says the brand is not rendered (renderedCurrent false, rendered null)"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "The start's reconcile rendered the brand again (renderedCurrent within 90 s)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The start's reconcile rendered the brand again (renderedCurrent within 90 s)"
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "The brand is not rendered 90 s after the restart: $(branding_json | jq -c '.branding.rendered')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The brand is not rendered 90 s after the restart: $(branding_json | jq -c '.branding.rendered')"
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "Set TARGET_2",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "link_target"
+          },
+          "capture": [
+            {
+              "variable": "TARGET_2",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-69",
+          "label": "…the link points at a rendering of revision 3 again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "TARGET_2"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ".renders/${DOMAIN}-3-"
+              },
+              "message": "…the link points at a rendering of revision 3 again"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "…a new one (the deleted link's directory was pruned)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "TARGET_2"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "TARGET_1"
+              },
+              "message": "…a new one (the deleted link's directory was pruned)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The served link deleted by hand: back at the panel's restart\"\n\nsudo rm -f \"${WEB_ROOT}/${DOMAIN}\"\nassert_eq \"$(link_target)\" \"-\" \"The link is gone\" || true\nassert_json_field \"$(branding_json)\" '\"\\(.branding.renderedCurrent) \\(.branding.rendered)\"' \"false null\" \"GET says the brand is not rendered (renderedCurrent false, rendered null)\" || true\nrestart_panel\nif wait_for 90 rendered_current; then\n  log_pass \"The start's reconcile rendered the brand again (renderedCurrent within 90 s)\"\nelse\n  log_fail \"The brand is not rendered 90 s after the restart: $(branding_json | jq -c '.branding.rendered')\"\nfi\nTARGET_2=$(link_target)\nassert_contains \"${TARGET_2}\" \".renders/${DOMAIN}-3-\" \"…the link points at a rendering of revision 3 again\" || true\nassert_not_eq \"${TARGET_2}\" \"${TARGET_1}\" \"…a new one (the deleted link's directory was pruned)\" || true"
+    },
+    {
+      "id": "rendered-json-tampered-rendered-again-by-the-minute-reconcile",
+      "label": "rendered.json tampered: rendered again by the minute reconcile",
+      "steps": [
+        {
+          "id": "step-72",
+          "label": "GET reads the tampered revision and says the rendering is not current",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(branding_json)"
+              },
+              "path": "\"\\(.branding.renderedCurrent) \\(.branding.rendered.revision)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "false 300"
+              },
+              "message": "GET reads the tampered revision and says the rendering is not current"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "The reconcile rendered the brand again within 90 s",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The reconcile rendered the brand again within 90 s"
+          }
+        },
+        {
+          "id": "step-74",
+          "label": "The tampered rendering stayed for 90 s",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The tampered rendering stayed for 90 s"
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "Set TARGET_3",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "link_target"
+          },
+          "capture": [
+            {
+              "variable": "TARGET_3",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "…into a new directory (${TARGET_3})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "TARGET_3"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "TARGET_2"
+              },
+              "message": "…into a new directory (${TARGET_3})"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "…and only that one is left under .renders/",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo ls \"${WEB_ROOT}/.renders\" | grep -c \"^${DOMAIN}-\" || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…and only that one is left under .renders/"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"rendered.json tampered: rendered again by the minute reconcile\"\n\nsudo sed -i 's/\"revision\": 3/\"revision\": 300/' \"${WEB_ROOT}/${DOMAIN}/rendered.json\"\nassert_json_field \"$(branding_json)\" '\"\\(.branding.renderedCurrent) \\(.branding.rendered.revision)\"' \"false 300\" \"GET reads the tampered revision and says the rendering is not current\" || true\nif wait_for 90 rendered_current; then\n  log_pass \"The reconcile rendered the brand again within 90 s\"\nelse\n  log_fail \"The tampered rendering stayed for 90 s\"\nfi\nTARGET_3=$(link_target)\nassert_not_eq \"${TARGET_3}\" \"${TARGET_2}\" \"…into a new directory (${TARGET_3})\" || true\nassert_eq \"$(sudo ls \"${WEB_ROOT}/.renders\" | grep -c \"^${DOMAIN}-\" || true)\" \"1\" \"…and only that one is left under .renders/\" || true"
+    },
+    {
+      "id": "the-auth-vhost-the-override-locations-the-index-rewrite-accepted-by-lamaste-priv",
+      "label": "The auth vhost: the override locations, the index rewrite, accepted by lamaste-priv",
+      "steps": [
+        {
+          "id": "step-78",
+          "label": "Set VHOST_NAME",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "vhost_name auth \"${DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "VHOST_NAME",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-79",
+          "label": "Set VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"/etc/nginx/sites-available/${VHOST_NAME}\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "The installed ${VHOST_NAME} overrides /favicon.ico",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location = /favicon.ico {"
+              },
+              "message": "The installed ${VHOST_NAME} overrides /favicon.ico"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "…/static/media/logo.png",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location = /static/media/logo.png {"
+              },
+              "message": "…/static/media/logo.png"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "…/locales/",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location /locales/ {"
+              },
+              "message": "…/locales/"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "…and serves /brand.css",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location = /brand.css {"
+              },
+              "message": "…and serves /brand.css"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "…from the domain's rendering",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "root ${WEB_ROOT}/${DOMAIN};"
+              },
+              "message": "…from the domain's rendering"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "…with @authelia as the fallback",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location @authelia {"
+              },
+              "message": "…with @authelia as the fallback"
+            }
+          }
+        },
+        {
+          "id": "step-86",
+          "label": "…and rewrites every occurrence in the index (sub_filter_once off)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "sub_filter_once off;"
+              },
+              "message": "…and rewrites every occurrence in the index (sub_filter_once off)"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "lamaste-priv nginx-site write accepts the vhost as installed (sub_filter allowed)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "lamaste-priv nginx-site write accepts the vhost as installed (sub_filter allowed)"
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "lamaste-priv nginx-site write refused the installed vhost",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "lamaste-priv nginx-site write refused the installed vhost"
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "nginx -t passes",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "nginx -t passes"
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "nginx -t fails",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "nginx -t fails"
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "auth_get /"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-95",
+          "label": "https://auth.${DOMAIN}/ answers 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "https://auth.${DOMAIN}/ answers 200"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "…data-theme=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-theme=\"dark\""
+              },
+              "message": "…data-theme=\\"
+            }
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "…with the stylesheet",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<link rel=\"stylesheet\" href=\"/brand.css\">"
+              },
+              "message": "…with the stylesheet"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "auth_get /brand.css"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "https://auth.${DOMAIN}/brand.css answers 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "https://auth.${DOMAIN}/brand.css answers 200"
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "…with the accent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "--primary: ${ACCENT} !important;"
+              },
+              "message": "…with the accent"
+            }
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "https://auth.${DOMAIN}/static/media/logo.png is the logo's bytes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/static/media/logo.png\" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "LOGO_SHA"
+              },
+              "message": "https://auth.${DOMAIN}/static/media/logo.png is the logo's bytes"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The auth vhost: the override locations, the index rewrite, accepted by lamaste-priv\"\n\nVHOST_NAME=$(vhost_name auth \"${DOMAIN}\")\nVHOST=$(sudo cat \"/etc/nginx/sites-available/${VHOST_NAME}\" 2>/dev/null || echo \"\")\nassert_contains \"${VHOST}\" \"location = /favicon.ico {\" \"The installed ${VHOST_NAME} overrides /favicon.ico\" || true\nassert_contains \"${VHOST}\" \"location = /static/media/logo.png {\" \"…/static/media/logo.png\" || true\nassert_contains \"${VHOST}\" \"location /locales/ {\" \"…/locales/\" || true\nassert_contains \"${VHOST}\" \"location = /brand.css {\" \"…and serves /brand.css\" || true\nassert_contains \"${VHOST}\" \"root ${WEB_ROOT}/${DOMAIN};\" \"…from the domain's rendering\" || true\nassert_contains \"${VHOST}\" \"location @authelia {\" \"…with @authelia as the fallback\" || true\nassert_contains \"${VHOST}\" \"sub_filter_once off;\" \"…and rewrites every occurrence in the index (sub_filter_once off)\" || true\nassert_contains \"${VHOST}\" \"sub_filter 'data-theme=\\\"light\\\"' 'data-theme=\\\"dark\\\"';\" \"…the theme to dark\" || true\nassert_contains \"${VHOST}\" \"sub_filter 'data-logooverride=\\\"true\\\"' 'data-logooverride=\\\"true\\\"';\" \"…the logo switch on\" || true\nassert_contains \"${VHOST}\" \"sub_filter '</head>' '<link rel=\\\"stylesheet\\\" href=\\\"/brand.css\\\"></head>';\" \"…the stylesheet link\" || true\nif sudo cat \"/etc/nginx/sites-available/${VHOST_NAME}\" | sudo /usr/local/sbin/lamaste-priv nginx-site write \"${VHOST_NAME}\" > /dev/null 2>&1; then\n  log_pass \"lamaste-priv nginx-site write accepts the vhost as installed (sub_filter allowed)\"\nelse\n  log_fail \"lamaste-priv nginx-site write refused the installed vhost\"\nfi\nif sudo nginx -t > /dev/null 2>&1; then\n  log_pass \"nginx -t passes\"\nelse\n  log_fail \"nginx -t fails\"\nfi\nRESP=$(auth_get /)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"https://auth.${DOMAIN}/ answers 200\" || true\nassert_contains \"$(body_of \"$RESP\")\" 'data-theme=\"dark\"' \"…data-theme=\\\"dark\\\"\" || true\nassert_contains \"$(body_of \"$RESP\")\" '<link rel=\"stylesheet\" href=\"/brand.css\">' \"…with the stylesheet\" || true\nRESP=$(auth_get /brand.css)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"https://auth.${DOMAIN}/brand.css answers 200\" || true\nassert_contains \"$(body_of \"$RESP\")\" \"--primary: ${ACCENT} !important;\" \"…with the accent\" || true\nassert_eq \"$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/static/media/logo.png\" 2>/dev/null | sha256sum | cut -d' ' -f1)\" \"${LOGO_SHA}\" \"https://auth.${DOMAIN}/static/media/logo.png is the logo's bytes\" || true\n\n# ===========================================================================\n# 3. The CLI\n# ==========================================================================="
+    },
+    {
+      "id": "lamaste-server-domains-branding-show-set-logo-preview-remove",
+      "label": "lamaste-server domains branding: show, set, logo, preview, remove",
+      "steps": [
+        {
+          "id": "step-102",
+          "label": "Set SHOWN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json"
+          },
+          "capture": [
+            {
+              "variable": "SHOWN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-103",
+          "label": "branding ${DOMAIN} --json: the brand, revision 3, rendered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SHOWN"
+              },
+              "path": "\"\\(.branding.name) \\(.branding.theme) \\(.branding.revision) \\(.branding.renderedCurrent)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${BRAND} dark 3 true"
+              },
+              "message": "branding ${DOMAIN} --json: the brand, revision 3, rendered"
+            }
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "Set PLAIN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_plain"
+          },
+          "capture": [
+            {
+              "variable": "PLAIN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-105",
+          "label": "branding ${DOMAIN}: names the brand",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PLAIN"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "BRAND"
+              },
+              "message": "branding ${DOMAIN}: names the brand"
+            }
+          }
+        },
+        {
+          "id": "step-106",
+          "label": "…and says the rendering is current",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PLAIN"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "current"
+              },
+              "message": "…and says the rendering is current"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_plain set --theme grey"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-108",
+          "label": "set --theme grey: saved at revision 4",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "revision 4"
+              },
+              "message": "set --theme grey: saved at revision 4"
+            }
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "…the theme is grey, the accent kept (set merges over the brand read)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(branding_json)"
+              },
+              "path": "\"\\(.branding.theme) \\(.branding.revision) \\(.branding.accent)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "grey 4 ${ACCENT}"
+              },
+              "message": "…the theme is grey, the accent kept (set merges over the brand read)"
+            }
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_plain logo --remove"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-111",
+          "label": "logo --remove",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "logo of ${DOMAIN} removed"
+              },
+              "message": "logo --remove"
+            }
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "…no logo, revision 5",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(branding_json)"
+              },
+              "path": "\"\\(.branding.logo) \\(.branding.revision)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null 5"
+              },
+              "message": "…no logo, revision 5"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "Set SET",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json logo \"${WORK_DIR}/logo.png\""
+          },
+          "capture": [
+            {
+              "variable": "SET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
+          "label": "logo <file> --json: the fixture's digest, revision 6",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SET"
+              },
+              "path": "\"\\(.event) \\(.changed) \\(.branding.logo.sha256) \\(.branding.revision)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "complete true ${LOGO_SHA} 6"
+              },
+              "message": "logo <file> --json: the fixture's digest, revision 6"
+            }
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_plain logo \"${WORK_DIR}/big.png\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-116",
+          "label": "logo <a file over the limit>: refused before the request, the limit named",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "512 KiB"
+              },
+              "message": "logo <a file over the limit>: refused before the request, the limit named"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "…nothing sent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(branding_json)"
+              },
+              "path": ".branding.revision",
+              "expected": {
+                "kind": "literal",
+                "value": "6"
+              },
+              "message": "…nothing sent"
+            }
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "Set PREVIEW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json preview"
+          },
+          "capture": [
+            {
+              "variable": "PREVIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-119",
+          "label": "preview --json: the English title and footer, the theme, the logo served",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PREVIEW"
+              },
+              "path": "\"\\(.title) | \\(.footer) | \\(.theme) | \\(.logo)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "Login - ${BRAND} | Powered by ${BRAND} | grey | true"
+              },
+              "message": "preview --json: the English title and footer, the theme, the logo served"
+            }
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "preview: prints the title",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cli_plain preview)"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "Login - ${BRAND}"
+              },
+              "message": "preview: prints the title"
+            }
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "…and the generated brand.css",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cli_plain preview)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "display: none"
+              },
+              "message": "…and the generated brand.css"
+            }
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_plain remove"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-123",
+          "label": "remove",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "removed"
+              },
+              "message": "remove"
+            }
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "…GET says the domain has no brand",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(branding_json)"
+              },
+              "path": ".branding",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "…GET says the domain has no brand"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "${WEB_ROOT}/${DOMAIN} is gone",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${WEB_ROOT}/${DOMAIN} is gone"
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "${WEB_ROOT}/${DOMAIN} is still there",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${WEB_ROOT}/${DOMAIN} is still there"
+          }
+        },
+        {
+          "id": "step-127",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "auth_get /"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-128",
+          "label": "https://auth.${DOMAIN}/ is the stock page again: data-logooverride=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-logooverride=\"false\""
+              },
+              "message": "https://auth.${DOMAIN}/ is the stock page again: data-logooverride=\\"
+            }
+          }
+        },
+        {
+          "id": "step-129",
+          "label": "…no stylesheet",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "brand.css"
+              },
+              "message": "…no stylesheet"
+            }
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "…/brand.css 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(auth_get /brand.css)\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "…/brand.css 404"
+            }
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "Set SHOWN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_plain"
+          },
+          "capture": [
+            {
+              "variable": "SHOWN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-132",
+          "label": "branding ${DOMAIN}: says the domain has no brand",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SHOWN"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "has no brand"
+              },
+              "message": "branding ${DOMAIN}: says the domain has no brand"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"lamaste-server domains branding: show, set, logo, preview, remove\"\n\nSHOWN=$(cli_json)\nassert_json_field \"${SHOWN}\" '\"\\(.branding.name) \\(.branding.theme) \\(.branding.revision) \\(.branding.renderedCurrent)\"' \"${BRAND} dark 3 true\" \"branding ${DOMAIN} --json: the brand, revision 3, rendered\" || true\nPLAIN=$(cli_plain)\nassert_contains \"${PLAIN}\" \"${BRAND}\" \"branding ${DOMAIN}: names the brand\" || true\nassert_contains \"${PLAIN}\" \"current\" \"…and says the rendering is current\" || true\nOUT=$(cli_plain set --theme grey)\nassert_contains \"${OUT}\" \"revision 4\" \"set --theme grey: saved at revision 4\" || true\nassert_json_field \"$(branding_json)\" '\"\\(.branding.theme) \\(.branding.revision) \\(.branding.accent)\"' \"grey 4 ${ACCENT}\" \"…the theme is grey, the accent kept (set merges over the brand read)\" || true\nOUT=$(cli_plain logo --remove)\nassert_contains \"${OUT}\" \"logo of ${DOMAIN} removed\" \"logo --remove\" || true\nassert_json_field \"$(branding_json)\" '\"\\(.branding.logo) \\(.branding.revision)\"' \"null 5\" \"…no logo, revision 5\" || true\nSET=$(cli_json logo \"${WORK_DIR}/logo.png\")\nassert_json_field \"${SET}\" '\"\\(.event) \\(.changed) \\(.branding.logo.sha256) \\(.branding.revision)\"' \"complete true ${LOGO_SHA} 6\" \"logo <file> --json: the fixture's digest, revision 6\" || true\nOUT=$(cli_plain logo \"${WORK_DIR}/big.png\")\nassert_contains \"${OUT}\" \"512 KiB\" \"logo <a file over the limit>: refused before the request, the limit named\" || true\nassert_json_field \"$(branding_json)\" '.branding.revision' \"6\" \"…nothing sent\" || true\nPREVIEW=$(cli_json preview)\nassert_json_field \"${PREVIEW}\" '\"\\(.title) | \\(.footer) | \\(.theme) | \\(.logo)\"' \"Login - ${BRAND} | Powered by ${BRAND} | grey | true\" \"preview --json: the English title and footer, the theme, the logo served\" || true\nassert_contains \"$(cli_plain preview)\" \"Login - ${BRAND}\" \"preview: prints the title\" || true\nassert_contains \"$(cli_plain preview)\" \"display: none\" \"…and the generated brand.css\" || true\nOUT=$(cli_plain remove)\nassert_contains \"${OUT}\" \"removed\" \"remove\" || true\nassert_json_field \"$(branding_json)\" '.branding' \"null\" \"…GET says the domain has no brand\" || true\nif entry_gone; then\n  log_pass \"${WEB_ROOT}/${DOMAIN} is gone\"\nelse\n  log_fail \"${WEB_ROOT}/${DOMAIN} is still there\"\nfi\nRESP=$(auth_get /)\nassert_contains \"$(body_of \"$RESP\")\" 'data-logooverride=\"false\"' \"https://auth.${DOMAIN}/ is the stock page again: data-logooverride=\\\"false\\\"\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" 'brand.css' \"…no stylesheet\" || true\nassert_eq \"$(status_of \"$(auth_get /brand.css)\")\" \"404\" \"…/brand.css 404\" || true\nSHOWN=$(cli_plain)\nassert_contains \"${SHOWN}\" \"has no brand\" \"branding ${DOMAIN}: says the domain has no brand\" || true\n\n# ===========================================================================\n# 4. Authelia's base\n# ==========================================================================="
+    },
+    {
+      "id": "authelia-s-base-theme-light-the-asset-path-the-placeholder-one-restart-never-again",
+      "label": "Authelia's base: theme light, the asset path, the placeholder — one restart, never again",
+      "steps": [
+        {
+          "id": "step-133",
+          "label": "Set CONFIG",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "config_json"
+          },
+          "capture": [
+            {
+              "variable": "CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-134",
+          "label": "configuration.yml: theme light, server.asset_path /etc/authelia/assets",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CONFIG"
+              },
+              "path": "\"\\(.theme) \\(.server.asset_path)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "light /etc/authelia/assets"
+              },
+              "message": "configuration.yml: theme light, server.asset_path /etc/authelia/assets"
+            }
+          }
+        },
+        {
+          "id": "step-135",
+          "label": "/etc/authelia/assets/logo.png exists, group lamaste-authelia, 0640",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo stat -c '%G %a' /etc/authelia/assets/logo.png 2>/dev/null || echo \"missing\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "lamaste-authelia 640"
+              },
+              "message": "/etc/authelia/assets/logo.png exists, group lamaste-authelia, 0640"
+            }
+          }
+        },
+        {
+          "id": "step-137",
+          "label": "Set TOTAL_BASE_RESTARTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "branding_base_restarts 0"
+          },
+          "capture": [
+            {
+              "variable": "TOTAL_BASE_RESTARTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-138",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-141",
+          "label": "Two panel restarts later: no further authelia.restarted with reason branding-base",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(branding_base_restarts \"${AUDIT_BASE}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Two panel restarts later: no further authelia.restarted with reason branding-base"
+            }
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "…at most one such restart in the whole audit (${TOTAL_BASE_RESTARTS})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$([ \"${TOTAL_BASE_RESTARTS}\" -le 1 ] && echo \"at most one\" || echo \"${TOTAL_BASE_RESTARTS}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "at most one"
+              },
+              "message": "…at most one such restart in the whole audit (${TOTAL_BASE_RESTARTS})"
+            }
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "Authelia is running",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(systemctl is-active authelia)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Authelia is running"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Authelia's base: theme light, the asset path, the placeholder — one restart, never again\"\n\nCONFIG=$(config_json)\nassert_json_field \"$CONFIG\" '\"\\(.theme) \\(.server.asset_path)\"' \"light /etc/authelia/assets\" \"configuration.yml: theme light, server.asset_path /etc/authelia/assets\" || true\nassert_eq \"$(sudo stat -c '%G %a' /etc/authelia/assets/logo.png 2>/dev/null || echo \"missing\")\" \"lamaste-authelia 640\" \"/etc/authelia/assets/logo.png exists, group lamaste-authelia, 0640\" || true\nassert_eq \"$(sudo python3 -c 'import sys; sys.exit(0 if open(\"/etc/authelia/assets/logo.png\",\"rb\").read(8) == b\"\\x89PNG\\r\\n\\x1a\\n\" else 1)' > /dev/null 2>&1 && echo png || echo other)\" \"png\" \"…a PNG\" || true\nTOTAL_BASE_RESTARTS=$(branding_base_restarts 0)\nAUDIT_BASE=$(api_get \"audit?limit=1\" 2>/dev/null | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\nrestart_panel\nrestart_panel\nassert_eq \"$(branding_base_restarts \"${AUDIT_BASE}\")\" \"0\" \"Two panel restarts later: no further authelia.restarted with reason branding-base\" || true\nassert_eq \"$([ \"${TOTAL_BASE_RESTARTS}\" -le 1 ] && echo \"at most one\" || echo \"${TOTAL_BASE_RESTARTS}\")\" \"at most one\" \"…at most one such restart in the whole audit (${TOTAL_BASE_RESTARTS})\" || true\nassert_eq \"$(systemctl is-active authelia)\" \"active\" \"Authelia is running\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 37 — Per-domain branding: refusals, reconcile, removal (Single-VM)\n# ============================================================================\n# The relay's side of a domain's brand (design: packages/core/docs/\n# auth-branding-design.md) on the one VM, for the primary domain:\n#\n# 1. Refusals name the field or the reason and never echo a value: a name\n#    with a tag or too long, an unknown theme, an accent that is not\n#    #rrggbb, an http:// support URL, an unknown field (400\n#    invalid_branding by field), an SVG logo (400 invalid_image), a logo\n#    over 512 KiB (413 asset_too_large), a logo before any brand (404\n#    no_branding), a stale ifRevision (409 revision_mismatch with the\n#    current one), a domain the relay lacks (404 unknown_domain), an agent\n#    certificate (403).\n# 2. The rendering is a projection of the record: the link nginx serves\n#    deleted by hand comes back at the panel's restart; rendered.json names\n#    the pinned Authelia release; a tampered rendered.json is rendered\n#    again by the minute reconcile. The installed auth vhost carries the\n#    four override locations, @authelia and the index rewrite, and\n#    lamaste-priv accepts it as written.\n# 3. lamaste-server domains branding: show (--json and plain), set, logo,\n#    logo --remove, preview, remove — the record and the directory follow.\n# 4. Authelia's base: theme light and server.asset_path in its\n#    configuration, the placeholder logo in the asset directory (group\n#    lamaste-authelia); two panel restarts restart Authelia for it no more.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq nginx python3 sha256sum openssl node\n\nbegin_test \"37 — Per-domain branding: refusals, reconcile, removal (Single-VM)\"\n\nRUN_ID=\"$(date +%s)\"\nAGENT_LABEL_37=\"branding-e2e-${RUN_ID}\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-branding-37\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nLAMASTE_LIB=\"/opt/lamalibre/lamaste/serverd/node_modules/@lamalibre/lamaste\"\nWEB_ROOT=\"/var/www/lamaste/auth\"\nBRAND=\"E2E Brand 37\"\nACCENT=\"#0f766e\"\nNO_SUCH_DOMAIN=\"nosuch-e2e37.example.test\"\nLOGO_SHA=\"\"\nFAVICON_SHA=\"\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  api_delete \"domains/${DOMAIN}/branding\" > /dev/null 2>&1 || true\n  api_delete \"certs/agent/${AGENT_LABEL_37}\" > /dev/null 2>&1 || true\n  sudo rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# brand_call <method> <path> [json] — the body, then the HTTP status on a\n# line of its own (status_of / body_of split them)\nbrand_call() {\n  local data=()\n  if [ -n \"${3:-}\" ]; then data=(-H 'Content-Type: application/json' -d \"$3\"); fi\n  _curl_mtls -X \"$1\" \"${data[@]}\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || echo \"000\"\n}\n# brand_call_file <method> <path> <file> — the JSON body read from a file (a base64 asset)\nbrand_call_file() {\n  _curl_mtls -X \"$1\" -H 'Content-Type: application/json' --data-binary \"@$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || echo \"000\"\n}\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\n\n# wait_for <seconds> <command...> — until the command succeeds (every 3 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 3\n  done\n  return 1\n}\n\n# assert_refused <response> <status> <code> <field> <what> — a refusal by\n# field: the status, the code, the field among the errors' names\nassert_refused() {\n  local fields\n  fields=$(body_of \"$1\" | jq -r '[.errors[]?.field] | join(\",\")' 2>/dev/null || echo \"\")\n  assert_eq \"$(status_of \"$1\") $(body_of \"$1\" | jq -r '.code // \"-\"' 2>/dev/null || echo \"-\")\" \"$2 $3\" \"$5: $2 $3\" || true\n  assert_contains \",${fields},\" \",$4,\" \"…the error names the field $4 (errors: ${fields})\" || true\n}\n\nbranding_json() { api_get \"domains/${DOMAIN}/branding\" 2>/dev/null || echo '{}'; }\nrendered_current() { [ \"$(branding_json | jq -r '.branding.renderedCurrent' 2>/dev/null)\" = \"true\" ]; }\n# link_target — what the domain's entry under the web root links to (\"-\" when it is not a link)\nlink_target() { sudo readlink \"${WEB_ROOT}/${DOMAIN}\" 2>/dev/null || echo \"-\"; }\nentry_gone() { ! sudo test -L \"${WEB_ROOT}/${DOMAIN}\" && ! sudo test -e \"${WEB_ROOT}/${DOMAIN}\"; }\n# auth_get <path> — one request to auth.<DOMAIN><path> through this VM's nginx: the body, then the status\nauth_get() { curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -w '\\n%{http_code}' \"https://auth.${DOMAIN}$1\" 2>/dev/null || echo \"000\"; }\n# cli_json <args...> — lamaste-server domains branding <DOMAIN> <args> --json: its JSON line\ncli_json() { sudo lamaste-server domains branding \"${DOMAIN}\" \"$@\" --json 2>/dev/null | grep -E '^\\{' | tail -n 1 || echo '{}'; }\n# cli_plain <args...>\ncli_plain() { sudo lamaste-server domains branding \"${DOMAIN}\" \"$@\" 2>&1 || true; }\n# restart_panel — the panel restarted and answering\nrestart_panel() {\n  sudo systemctl restart lamalibre-lamaste-serverd\n  if wait_for_http \"${BASE_URL}/api/health\" 90 --cert \"${CERT_PATH}\" --key \"${KEY_PATH}\" --cacert \"${CA_PATH}\"; then\n    log_pass \"The panel is back after its restart\"\n  else\n    log_fail \"The panel did not come back after its restart\"\n  fi\n}\n# config_json — Authelia's configuration as JSON\nconfig_json() { sudo bash -c \"${AUTHELIA_CONFIG_JSON}\" 2>/dev/null || echo '{}'; }\n# branding_base_restarts <audit id> — authelia.restarted entries with reason branding-base after <audit id>\nbranding_base_restarts() {\n  api_get \"audit?action=authelia.restarted&limit=200\" 2>/dev/null |\n    jq --argjson base \"$1\" '[.entries[]? | select(.id > $base and .details.reason == \"branding-base\")] | length' 2>/dev/null || echo \"?\"\n}\n\n# write_fixtures — the images in WORK_DIR, deterministic (python3 with zlib):\n# a solid PNG logo, an ICO wrapping a PNG entry, a PNG 100 bytes over the\n# logo limit (padded with an ancillary chunk, a whole image still), an SVG;\n# each with a JSON body {data: <base64>} beside it. Never printed.\nwrite_fixtures() {\n  python3 - \"${WORK_DIR}\" << 'PY'\nimport base64, json, os, struct, sys, zlib\nout = sys.argv[1]\nLIMIT = 512 * 1024\ndef chunk(kind, data):\n    return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)\ndef png(w, h, rgb, pad=0):\n    raw = b''.join(b'\\x00' + bytes(rgb) * w for _ in range(h))\n    body = b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw, 9))\n    if pad:\n        body += chunk(b'tEXt', b'\\x00' * pad)\n    return body + chunk(b'IEND', b'')\ndef ico(entry, w, h):\n    return struct.pack('<HHH', 0, 1, 1) + struct.pack('<BBBBHHII', w, h, 0, 0, 1, 32, len(entry), 22) + entry\nsmall = png(2, 2, (15, 118, 110))\nbig = png(2, 2, (15, 118, 110), pad=LIMIT + 100 - len(small) - 12)\nassert len(big) == LIMIT + 100, len(big)\nfiles = {\n    'logo.png': png(48, 48, (15, 118, 110)),\n    'favicon.ico': ico(png(16, 16, (15, 118, 110)), 16, 16),\n    'big.png': big,\n    'logo.svg': b'<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"><script>void 0</script></svg>',\n}\nfor name, data in files.items():\n    with open(os.path.join(out, name), 'wb') as f:\n        f.write(data)\n    with open(os.path.join(out, name + '.json'), 'w') as f:\n        json.dump({'data': base64.b64encode(data).decode('ascii')}, f)\nPY\n  LOGO_SHA=$(sha256sum \"${WORK_DIR}/logo.png\" | cut -d' ' -f1)\n  FAVICON_SHA=$(sha256sum \"${WORK_DIR}/favicon.ico\" | cut -d' ' -f1)\n  assert_eq \"$(stat -c %s \"${WORK_DIR}/big.png\")\" \"$((512 * 1024 + 100))\" \"Fixtures written: a logo, a favicon, a PNG 100 bytes over the logo limit, an SVG\" || true\n}\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

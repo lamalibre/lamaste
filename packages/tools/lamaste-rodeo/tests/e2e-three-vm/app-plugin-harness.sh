@@ -120,6 +120,15 @@ host_api_call() {
   out=$(timed_exec $((limit + 20)) multipass exec "${HOST_VM}" -- sudo bash -c "${CURL_MTLS} --max-time ${limit} -X $1 -H 'Accept: application/json' ${data} -w '\n%{http_code}' '${PANEL}/$2' || true" 2>/dev/null)
   if [ -n "$out" ]; then printf '%s\n' "$out"; else echo "000"; fi
 }
+# host_api_call_file <method> <path> <file on the host VM> — host_api_call
+# with the JSON body read from a file on the host VM: a body too long for a
+# command line (a base64 asset — spec 52's logos), or one the spec's shell
+# must never see (it is built and read there alone)
+host_api_call_file() {
+  local limit="${API_TIMEOUT:-30}" out
+  out=$(timed_exec $((limit + 20)) multipass exec "${HOST_VM}" -- sudo bash -c "${CURL_MTLS} --max-time ${limit} -X $1 -H 'Accept: application/json' -H 'Content-Type: application/json' --data-binary @$(printf %q "$3") -w '\n%{http_code}' '${PANEL}/$2' || true" 2>/dev/null)
+  if [ -n "$out" ]; then printf '%s\n' "$out"; else echo "000"; fi
+}
 status_of() { printf '%s\n' "$1" | tail -n 1; }
 body_of() { printf '%s\n' "$1" | sed '$d'; }
 
