@@ -267,9 +267,12 @@ function BrandEditor({ domain, view }) {
     onError: (err) => {
       const { code } = refusalOf(err);
       if (code === 'invalid_branding') {
+        // Beside each field; a refusal of the request as a whole as a toast.
         const byField = fieldErrorsOf(err);
         setErrors(byField);
-        if (byField._) addToast(byField._, 'error');
+        if (byField._ || Object.keys(byField).length === 0) {
+          addToast(explainBrandingRefusal(err), 'error');
+        }
         return;
       }
       if (code === 'revision_mismatch') {
