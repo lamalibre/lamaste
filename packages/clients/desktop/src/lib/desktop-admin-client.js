@@ -6,6 +6,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { settingsErrorsOf } from '@lamalibre/lamaste-server-ui/lib/pluginSettings.js';
+import { fieldErrorsIn } from '@lamalibre/lamaste-server-ui/lib/errorMessage.js';
 
 /**
  * Invoke a command whose refusal the panel UI explains: one that starts a
@@ -13,10 +14,11 @@ import { settingsErrorsOf } from '@lamalibre/lamaste-server-ui/lib/pluginSetting
  * approving an update, purging retained data), settles one's leftovers
  * (forgetting retained data), reads or changes a plugin's settings or its
  * people (identity, audience, entitlements, sync), disables, enables,
- * deletes or erases a user, binds a tunnel as a user surface, or reads,
- * creates, moves or deletes a plugin's web surface. It rejects with the
- * panel's refusal — `{ error, status?, code?, reasons?, operationId?,
- * errors? }` — which is rethrown as the Error the web client throws for it,
+ * deletes or erases a user, binds a tunnel as a user surface, reads,
+ * creates, moves or deletes a plugin's web surface, or reads or changes a
+ * domain's brand. It rejects with the panel's refusal — `{ error, status?,
+ * code?, reasons?, operationId?, errors?, reason?, revision? }` — which is
+ * rethrown as the Error the web client throws for it,
  * so the panel UI can explain it (an ineligible agent's reasons, closed push
  * install, a stale settings revision, a message per setting, the last
  * enabled administrator, a route served elsewhere, a hostname taken). The
@@ -31,7 +33,7 @@ async function invokeRefusable(command, args) {
       typeof rejection === 'object' &&
       typeof rejection.error === 'string'
     ) {
-      const errors = settingsErrorsOf(rejection);
+      const errors = settingsErrorsOf(rejection) ?? fieldErrorsIn(rejection.errors);
       throw Object.assign(new Error(rejection.error), {
         ...(Number.isInteger(rejection.status) ? { status: rejection.status } : {}),
         ...(typeof rejection.code === 'string' ? { code: rejection.code } : {}),
@@ -43,6 +45,10 @@ async function invokeRefusable(command, args) {
           ? { operationId: rejection.operationId }
           : {}),
         ...(errors ? { errors } : {}),
+        ...(typeof rejection.reason === 'string' ? { reason: rejection.reason } : {}),
+        ...(Number.isSafeInteger(rejection.revision) && rejection.revision >= 0
+          ? { revision: rejection.revision }
+          : {}),
       });
     }
     throw rejection;

@@ -26,3 +26,27 @@ export function refusalOf(err) {
     reasons: Array.isArray(err.reasons) ? err.reasons.filter((r) => typeof r === 'string') : [],
   };
 }
+
+/**
+ * The per-field refusals a panel answer carries as a list — `errors:
+ * [{ field, message }]`, as a refused brand (`invalid_branding`) sends
+ * them; a field of `""` is the request as a whole. Only entries of that
+ * shape are kept (the panel's messages never contain a value); null when
+ * there are none, or when `errors` is the settings map (`settingsErrorsOf`).
+ *
+ * @param {unknown} raw
+ * @returns {Array<{ field: string, message: string }> | null}
+ */
+export function fieldErrorsIn(raw) {
+  if (!Array.isArray(raw)) return null;
+  const kept = raw
+    .filter(
+      (e) =>
+        e !== null &&
+        typeof e === 'object' &&
+        typeof e.field === 'string' &&
+        typeof e.message === 'string',
+    )
+    .map((e) => ({ field: e.field, message: e.message }));
+  return kept.length > 0 ? kept : null;
+}

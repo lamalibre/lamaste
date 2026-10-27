@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   Globe2,
+  Palette,
   Plus,
   Power,
   Repeat,
@@ -19,6 +20,7 @@ import { useToast } from '../components/Toast.jsx';
 import { ExternalBadge, useDomains } from '../components/DomainChoice.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 import { ConfirmDialog } from '../components/Dialog.jsx';
+import { DomainBranding } from '../components/DomainBranding.jsx';
 import {
   EXTERNAL_MEMBER_HINT,
   domainStatusText,
@@ -214,6 +216,7 @@ function DomainCard({ domain }) {
   const queryClient = useQueryClient();
   const addToast = useToast();
   const [open, setOpen] = useState(false);
+  const [brandOpen, setBrandOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const onError = (err) => addToast(explainDomainRefusal(err), 'error');
   const activate = useMutation({
@@ -271,6 +274,15 @@ function DomainCard({ domain }) {
           <button type="button" className={BUTTON} onClick={() => setOpen(!open)}>
             {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />} Members
           </button>
+          <button
+            type="button"
+            className={BUTTON}
+            onClick={() => setBrandOpen(!brandOpen)}
+            title="The brand of the domain’s sign-in, invitation and refusal pages"
+          >
+            <Palette size={14} /> Branding{' '}
+            {brandOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
         </div>
       </div>
       {usage.length > 0 && (
@@ -288,6 +300,11 @@ function DomainCard({ domain }) {
       {open && (
         <div className="mt-3">
           <Members domain={domain} />
+        </div>
+      )}
+      {brandOpen && (
+        <div className="mt-3 border-t border-zinc-800 pt-3">
+          <DomainBranding domain={domain} />
         </div>
       )}
       {confirmRemove && (

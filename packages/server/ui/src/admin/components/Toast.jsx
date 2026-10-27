@@ -14,6 +14,7 @@ let toastId = 0;
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
+  /** `variant`: `success` (default), `warning` (done, with something left to see to), `error`. */
   const addToast = useCallback((message, variant = 'success') => {
     const id = ++toastId;
     setToasts((prev) => [...prev, { id, message, variant }]);
@@ -36,7 +37,9 @@ export function ToastProvider({ children }) {
             className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-sm font-mono shadow-lg ${
               toast.variant === 'error'
                 ? 'bg-red-500/10 border-red-500/20 text-red-400'
-                : 'bg-green-500/10 border-green-500/20 text-green-400'
+                : toast.variant === 'warning'
+                  ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400'
+                  : 'bg-green-500/10 border-green-500/20 text-green-400'
             }`}
           >
             <span className="flex-1">{toast.message}</span>
