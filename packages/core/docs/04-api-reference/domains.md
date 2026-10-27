@@ -192,7 +192,7 @@ The validation lives in `@lamalibre/lamaste` (`validateBrandFields`, `inspectBra
 
 ### `PUT /api/domains/:name/branding`
 
-The fields (created when the domain has none; absent or `null` clears an optional one), with `ifRevision` optional. Assets stay. **200** `{ branding, created, changed, warnings? }` — `changed: false` when nothing differed. Then rendered: when the rendering fails (Authelia not answering its locales, the web root unwritable) the record is kept and `warnings` says so; the panel renders again within a minute.
+The fields (created when the domain has none; absent or `null` clears an optional one), with `ifRevision` optional. Assets stay. **200** `{ branding, created, changed, warnings? }` — `changed: false` when nothing differed. Then rendered: when the rendering fails (Authelia not answering its locales, the web root unwritable) the record is kept and `warnings` says so (`{ step: "render", message }`); the panel renders again within a minute. A change of the `theme` on an active domain also rewrites its `auth.<domain>` vhost (the theme and the logo switch are in its text; nothing else about a brand is — see [nginx configuration](../03-architecture/nginx-configuration.md#3-auth-vhost-lamalibre-lamaste-auth-domain)): a rewrite nginx refused is `{ step: "vhost", message }`, audited `domain.branding.vhost.failed` and retried every minute until it is in (`domain.branding.vhost.recovered`). A brand set on a pending domain is in the vhost from the domain's activation.
 
 | Status | `code`              | When                                                                                       |
 | ------ | ------------------- | ------------------------------------------------------------------------------------------ |
@@ -202,11 +202,11 @@ The fields (created when the domain has none; absent or `null` clears an optiona
 
 ### `DELETE /api/domains/:name/branding`
 
-Back to the stock page: the record and the rendered directory go. **200** `{ removed }`.
+Back to the stock page: the record and the rendered directory go, and the domain's auth vhost is rewritten unbranded. **200** `{ removed, warnings? }`.
 
 ### `PUT /api/domains/:name/branding/logo` · `/favicon`
 
-`{ "data": "<base64>", "ifRevision": 3 }` — base64 in JSON (every client already sends bodies on curl's stdin; a 512 KiB logo fits the panel's request limit). Checked, stored with its SHA-256, the revision bumped, rendered. **200** `{ branding, changed, warnings? }` (`changed: false` for the same bytes again).
+`{ "data": "<base64>", "ifRevision": 3 }` — base64 in JSON (every client already sends bodies on curl's stdin; a 512 KiB logo fits the panel's request limit). Checked, stored with its SHA-256, the revision bumped, rendered — and the first logo switches the sign-in page's logo on (the auth vhost rewritten, as a theme change does; the favicon is a file alone). **200** `{ branding, changed, warnings? }` (`changed: false` for the same bytes again).
 
 | Status | `code`              | When                                                                                                                                     |
 | ------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |

@@ -233,7 +233,7 @@ Both carry the same site upload location with the same 64 MiB request limit; the
 
 ### 3. Auth Vhost (`lamalibre-lamaste-auth-<domain>`)
 
-Created during onboarding provisioning. Serves the Authelia authentication portal.
+Created during onboarding provisioning (the primary's) and at a domain's activation (every other). Serves the Authelia authentication portal, the invitation page, and — since 4.8 — the domain's brand on it. The example is a branded domain's (theme `dark`, a logo set); what an unbranded domain's differs in follows.
 
 ```nginx
 server {
@@ -265,16 +265,71 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Lamalibre-Relay-Assertion "";
+    }
+
+    # Brand overrides: the domain's file when it has one, else Authelia's own
+    location = /favicon.ico {
+        root /var/www/lamaste/auth/example.com;
+        try_files $uri @authelia;
+        add_header X-Content-Type-Options nosniff;
+        add_header Cache-Control "public, max-age=0, must-revalidate";
+    }
+    location = /static/media/logo.png {
+        root /var/www/lamaste/auth/example.com;
+        try_files $uri @authelia;
+        add_header X-Content-Type-Options nosniff;
+        add_header Cache-Control "public, max-age=0, must-revalidate";
+    }
+    location /locales/ {
+        root /var/www/lamaste/auth/example.com;
+        try_files $uri @authelia;
+        add_header X-Content-Type-Options nosniff;
+        add_header Cache-Control "public, max-age=0, must-revalidate";
+    }
+    location = /brand.css {
+        root /var/www/lamaste/auth/example.com;
+        try_files $uri =404;
+        add_header X-Content-Type-Options nosniff;
+        add_header Cache-Control "public, max-age=0, must-revalidate";
+    }
+
+    # Authelia's own answer for an override the domain lacks
+    location @authelia {
+        proxy_pass http://127.0.0.1:9091;
+        proxy_set_header Host auth.example.com;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host auth.example.com;
+        proxy_set_header X-Forwarded-Proto https;
     }
 
     # Default — proxy to Authelia
     location / {
         proxy_pass http://127.0.0.1:9091;
+        proxy_set_header Host auth.example.com;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host auth.example.com;
+        proxy_set_header X-Forwarded-Proto https;
+
+        # The index HTML, as Authelia renders it for every domain, made this domain's
+        proxy_set_header Accept-Encoding "";
+        sub_filter_once off;
+        sub_filter 'data-theme="light"' 'data-theme="dark"';
+        sub_filter 'data-logooverride="true"' 'data-logooverride="true"';
+        sub_filter '</head>' '<link rel="stylesheet" href="/brand.css"></head>';
     }
 }
 ```
 
-No mTLS requirement — end users access this to authenticate. Protected by Authelia's own login form and TOTP. The auth vhost also serves the invitation page (static HTML at `/invite/`) and proxies invitation API requests (`/api/invite/`) to the panel server, allowing invited users to set up their accounts without needing mTLS credentials.
+No mTLS requirement — end users access this to authenticate. Protected by Authelia's own login form and TOTP. The auth vhost also serves the invitation page (static HTML at `/invite/`) and proxies invitation API requests (`/api/invite/`) to the panel server, allowing invited users to set up their accounts without needing mTLS credentials. The primary domain's portal besides serves `/api/user-access/authorize` (the desktop's user login) with its rate-limit zone; a second domain's does not (see [Vhosts on several domains](#vhosts-on-several-domains)).
+
+**Why the brand lives in nginx.** One Authelia serves every domain's `auth.<domain>`, and Authelia 4.39 can brand only one instance: one `server.asset_path`, from which it serves a file in place of its own for exactly three routes — `/favicon.ico`, `/static/media/logo.png`, `/locales/<lang>/<namespace>.json` — never reading the `Host` header; one `theme`; and `data-logooverride` on the index HTML decided once at start by whether `asset_path/logo.png` exists. So the per-domain part is the vhost's ([Per-Domain Branding of the Auth Pages](../auth-branding-design.md)): the three overridable routes and the generated stylesheet are answered from the domain's rendered directory `/var/www/lamaste/auth/<domain>/` when the file is there (`try_files $uri @authelia`: a domain without a brand has no directory, so every request falls through to Authelia; `/brand.css` alone answers 404 instead), and the index HTML is rewritten on its way through with `ngx_http_sub_module`: `data-theme="light"` — Authelia's global theme, written explicitly into its configuration — becomes the domain's theme, `data-logooverride="true"` — true for every domain, because the panel keeps a placeholder `logo.png` in Authelia's asset directory — becomes `"false"` unless the domain has a logo, and the stylesheet link is added before `</head>`. `sub_filter` matches literal strings, ignoring case, in `text/html` responses only (the module's default), so Authelia's JSON, scripts and the per-request CSP nonce are untouched; `Accept-Encoding` is cleared towards Authelia so the filter reads plain text. The directory entry is a symbolic link to the rendering that serves, switched by one rename at every change, so the vhost never sets `disable_symlinks`. The static answers add `nosniff` and `Cache-Control: public, max-age=0, must-revalidate`; their content type comes from the extension, never from the bytes. The headers apply to a file served from the override location alone — the fallback is produced in `@authelia`, which adds none and, like `location /`, sets every proxy header itself (a location that sets any header inherits none of the server's).
+
+An **unbranded domain's** vhost differs in `location /` alone: `data-theme="light"` stays `light`, `data-logooverride` becomes `"false"`, and there is no stylesheet line — the visitor gets exactly the stock page, the placeholder logo never shown. A **branded domain without a logo** gets its theme and stylesheet with `data-logooverride="false"`: Authelia's generic icon, never Lamaste's placeholder.
+
+The vhost says two things about a brand — the theme and whether a logo is served — and the panel rewrites it when either changes (`lib/auth-branding.js`: after the record is committed and the directory rendered, through the write-with-rollback pattern, its link state kept; a change to the name, the tagline, the accent, the support contact or the favicon touches nginx not at all). A rewrite nginx or `lamaste-priv` refused keeps the record, answers the change with a `vhost` warning, is audited `domain.branding.vhost.failed` and raised to the administrators, and is retried every minute until it converges (`domain.branding.vhost.recovered`); the startup reconcile compares every auth vhost against its record, so a restart loses nothing. A brand set on a pending domain is in its vhost from activation. The relay's nginx must be built with the sub module (`--with-http_sub_module` in `nginx -V`, static — Ubuntu 24.04's `nginx` package is): `create-lamaste` checks it on a fresh install right after installing nginx and first on a redeploy, before anything on the relay changes.
 
 ### 4. Tunnel Vhost (`lamalibre-lamaste-tunnel`)
 
@@ -947,14 +1002,14 @@ nginx's master process runs as root and opens the files a configuration names �
 - its **name** is one the panel manages: `lamalibre-lamaste-panel-domain`, `-auth`, `-tunnel`, `-app-<subdomain>`, `-agent-panel-<label>` or `-site-<uuid>`. `lamalibre-lamaste-panel-ip` (written by the installer) may only be enabled or disabled — which is how panel 2FA turns the IP vhost off;
 - every **directive** is on the allow-list for its context, with arguments that cannot name a file outside what Lamaste serves:
 
-| Context    | Allowed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| top level  | `server`, `map` (plain `key value;` entries, no `include`), `limit_req_zone`                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `server`   | `listen 443` / `[::]:443` with optional `ssl` / `http2`; `server_name` (hostnames); `ssl_certificate(_key)` only `/etc/letsencrypt/live/<name>/{fullchain,privkey}.pem`; `include` only `/etc/nginx/snippets/lamalibre-lamaste-*.conf`; `root` only under `/var/www/lamaste/`; `auth_request` only a URI of the server or `off`; `ssl_protocols`, `ssl_ciphers`, `ssl_prefer_server_ciphers`, `client_max_body_size`, `index`, `add_header`, `proxy_set_header`, `error_page`, `return`, `rewrite`, `location` (a path, or a named location `@name`) |
-| `location` | `proxy_pass` only `http://127.0.0.1:<port>[/path]`; `root` / `alias` only under `/var/www/lamaste/`; `proxy_set_header`, `proxy_http_version`, `proxy_read_timeout`, `proxy_send_timeout`, `proxy_buffers`, `proxy_next_upstream`, `proxy_pass_request_body`, `auth_request`, `auth_request_set`, `limit_req`, `try_files` (the last argument may name a location, `@name`), `index`, `add_header`, `error_page`, `client_max_body_size`, `internal`, `return`, `rewrite`, `if`, nested `location`                                                   |
-| `if`       | `return`, `rewrite`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Context    | Allowed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| top level  | `server`, `map` (plain `key value;` entries, no `include`), `limit_req_zone`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `server`   | `listen 443` / `[::]:443` with optional `ssl` / `http2`; `server_name` (hostnames); `ssl_certificate(_key)` only `/etc/letsencrypt/live/<name>/{fullchain,privkey}.pem`; `include` only `/etc/nginx/snippets/lamalibre-lamaste-*.conf`; `root` only under `/var/www/lamaste/`; `auth_request` only a URI of the server or `off`; `ssl_protocols`, `ssl_ciphers`, `ssl_prefer_server_ciphers`, `client_max_body_size`, `index`, `add_header`, `proxy_set_header`, `error_page`, `return`, `rewrite`, `location` (a path, or a named location `@name`)                                                                                               |
+| `location` | `proxy_pass` only `http://127.0.0.1:<port>[/path]`; `root` / `alias` only under `/var/www/lamaste/`; `proxy_set_header`, `proxy_http_version`, `proxy_read_timeout`, `proxy_send_timeout`, `proxy_buffers`, `proxy_next_upstream`, `proxy_pass_request_body`, `auth_request`, `auth_request_set`, `limit_req`, `try_files` (the last argument may name a location, `@name`), `index`, `add_header`, `error_page`, `client_max_body_size`, `internal`, `return`, `rewrite`, `sub_filter` (exactly two strings of 1–512 bytes, neither naming a variable — nginx expands `$name` in both), `sub_filter_once` (`on` / `off`), `if`, nested `location` |
+| `if`       | `return`, `rewrite`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
-Port 80 is not allowed: it belongs to the installer's HTTPS redirect and to certbot's HTTP-01 challenges. Backslashes, `${`, control characters and non-ASCII text outside comments are refused rather than interpreted, as is any directive not listed — including ones nginx would accept (`access_log`, `log_format`, `ssl_*` files elsewhere, `proxy_pass` to another host, ...). A refused `write` fails with `nginx site write failed for <name>: lamaste-priv: vhost line <n>: ...` and leaves the previous vhost in place.
+Port 80 is not allowed: it belongs to the installer's HTTPS redirect and to certbot's HTTP-01 challenges. Backslashes, `${`, control characters and non-ASCII text outside comments are refused rather than interpreted (a quoted string, single or double, is read as nginx reads it: it may carry the other quote and must be followed by a space or a delimiter), as is any directive not listed — including ones nginx would accept (`access_log`, `log_format`, `ssl_*` files elsewhere, `proxy_pass` to another host, ...). A refused `write` fails with `nginx site write failed for <name>: lamaste-priv: vhost line <n>: ...` and leaves the previous vhost in place.
 
 Adding a directive to a generator therefore means adding it to the allow-list in `packages/provisioners/server/scripts/lamaste-priv` too. `npm test` checks both sides: `packages/server/daemon/test/nginx-vhosts.test.js` runs every generator's output through the allow-list, and `packages/provisioners/server/test/lamaste-priv.test.js` covers the refusals.
 
@@ -1085,7 +1140,7 @@ Without it nothing listens on port 80 and `http://` links to the relay's hostnam
 
 A vhost is written when its tunnel or site is created or changed, so a generator change does not reach existing vhosts by itself. At startup, once onboarding is complete, the panel (`lib/vhost-reconcile.js`) renders installed vhosts again and rewrites each one whose text differs through the write-with-rollback pattern, on the certificate directory the installed file names (a wildcard certificate stays a wildcard certificate). A rewrite never links a vhost that is not linked now; a disabled tunnel's vhost is unlinked:
 
-- **Before it listens:** the domain panel vhost (`lamalibre-lamaste-panel-domain`), the auth portal (`lamalibre-lamaste-auth`) and every static site, from `sites.json` and the domain. Site changes take no lock, so this runs while none can arrive.
+- **Before it listens:** the domain panel vhost (`lamalibre-lamaste-panel-domain`), every active domain's auth portal (`lamalibre-lamaste-auth-<domain>`, with the domain's brand as its record says — the theme and the logo switch) and every static site, from `sites.json` and the domain. Site changes take no lock, so this runs while none can arrive.
 - **Once it listens**, under the tunnel lock: every agent-panel, app and plugin tunnel, from `tunnels.json` — the stored access mode (`restricted` when absent, as Gatekeeper reads it), the plugin route, the body limit only when the tunnel has one, and the user-surface locations of the bound routes it serves now. The same reconcile, limited to the tunnels a route is bound to, runs whenever whether that route is served can change: the plugin's approval, update or revert, hosting and unhosting, uninstall. After listen because a rewritten agent-panel vhost asks the panel about every request.
 
 That is how vhosts written before 4.3 start forwarding relay assertions (agent-panel and plugin tunnels) and start naming their own hostname to Gatekeeper and Authelia (see [above](#authorization-subrequests-name-their-own-hostname)). A rewrite never adds or removes authentication: a tunnel or site vhost whose `auth_request` disagrees with its state (a public vhost for a restricted tunnel, say) is logged and left alone until the tunnel or site is reconfigured — the agent-panel vhost, which gains the panel's `auth_request` beside its mTLS check, is the exception. Missing vhosts are logged (a site still waiting for its certificate has none yet); a failed rewrite restores the previous file and the others still run.
