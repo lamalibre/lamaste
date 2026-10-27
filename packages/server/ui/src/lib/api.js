@@ -6,6 +6,7 @@
  */
 
 import { settingsErrorsOf } from '../admin/lib/pluginSettings.js';
+import { fieldErrorsIn } from '../admin/lib/errorMessage.js';
 
 export const TWO_FA_REQUIRED_EVENT = 'lamaste:2fa-required';
 
@@ -34,8 +35,10 @@ function errorText(data, status) {
  * what a failed validation found) as its message, the HTTP `status`, and
  * what a client acts on beyond the message
  * when the panel sent it: `code` (e.g. `agent_not_eligible`), `reasons`,
- * a running operation's `operationId` and a refused settings update's
- * per-field `errors`.
+ * a running operation's `operationId`, a refused settings update's
+ * per-field `errors` (a map) or a refused brand's (a list of `{ field,
+ * message }`), a refused image's `reason`, and the current `revision` of
+ * a `revision_mismatch`.
  *
  * @param {string} url - The API URL (e.g., '/api/settings/2fa')
  * @param {RequestInit} [opts] - Fetch options
@@ -76,8 +79,9 @@ export async function apiFetch(url, opts) {
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const data = body !== null && typeof body === 'object' ? body : {};
-    // A refused settings update's per-field messages (they never contain a value).
-    const errors = settingsErrorsOf(data);
+    // Per-field messages of a refused settings update (a map) or brand
+    // change (a list) — they never contain a value.
+    const errors = settingsErrorsOf(data) ?? fieldErrorsIn(data.errors);
     throw Object.assign(new Error(errorText(data, res.status)), {
       status: res.status,
       ...(typeof data.code === 'string' ? { code: data.code } : {}),
@@ -85,6 +89,10 @@ export async function apiFetch(url, opts) {
       ...(data.usedBy && typeof data.usedBy === 'object' ? { usedBy: data.usedBy } : {}),
       ...(typeof data.operationId === 'string' ? { operationId: data.operationId } : {}),
       ...(errors ? { errors } : {}),
+      ...(typeof data.reason === 'string' ? { reason: data.reason } : {}),
+      ...(Number.isSafeInteger(data.revision) && data.revision >= 0
+        ? { revision: data.revision }
+        : {}),
     });
   }
 

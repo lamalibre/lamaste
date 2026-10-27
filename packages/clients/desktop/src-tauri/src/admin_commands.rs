@@ -1107,7 +1107,8 @@ pub async fn admin_discard_plugin_update(name: String) -> Result<serde_json::Val
 /// A refused panel request as the settings commands reject with it: the
 /// panel's message (`error`, with what a failed validation found), the HTTP
 /// `status`, and what the panel UI acts on — `code`, `reasons`,
-/// `operationId`, `errors` (a message per setting, or `_`), the current
+/// `operationId`, `errors` (a message per setting, or `_` — or a brand's
+/// list of `{ field, message }`), a refused image's `reason`, the current
 /// `revision` (`revision_mismatch`) and the `hosting` (`hosting_offline`).
 /// Built from the panel's answer only, never from the request, so a secret
 /// of the change cannot end up in it (the panel's messages hold no value).
@@ -1140,14 +1141,16 @@ fn panel_refusal(status: u16, body: &str) -> serde_json::Value {
 }
 
 /// What `panel_refusal` passes on beyond the message and the status.
-const REFUSAL_FIELDS: [&str; 6] = ["code", "reasons", "operationId", "errors", "revision", "hosting"];
+const REFUSAL_FIELDS: [&str; 7] =
+    ["code", "reasons", "operationId", "errors", "reason", "revision", "hosting"];
 
 /// Whether a field of a refusal has the shape the panel UI reads it in.
 fn refusal_field_kept(key: &str, field: &serde_json::Value) -> bool {
     match key {
-        "code" | "operationId" => field.is_string(),
+        "code" | "operationId" | "reason" => field.is_string(),
         "reasons" => field.is_array(),
-        "errors" => field.is_object(),
+        // A settings refusal's map, or a brand refusal's list by field.
+        "errors" => field.is_object() || field.is_array(),
         "revision" => field.is_u64(),
         "hosting" => field.is_object() || field.is_null(),
         _ => false,
@@ -2097,6 +2100,35 @@ mod tests {
         })
         .to_string();
         assert_eq!(panel_refusal(503, &offline)["hosting"], hosting);
+    }
+
+    #[test]
+    fn a_brand_refusal_keeps_its_field_errors_and_an_image_reason() {
+        let fields = serde_json::json!({
+            "error": "The brand fields are not valid",
+            "code": "invalid_branding",
+            "errors": [{ "field": "accent", "message": "must be a colour as #rrggbb (lower case)" }],
+        })
+        .to_string();
+        assert_eq!(
+            panel_refusal(400, &fields),
+            serde_json::json!({
+                "error": "The brand fields are not valid",
+                "status": 400,
+                "code": "invalid_branding",
+                "errors": [{ "field": "accent", "message": "must be a colour as #rrggbb (lower case)" }],
+            })
+        );
+        let image = serde_json::json!({
+            "error": "The logo must be a PNG (no SVG, no JPEG)",
+            "code": "invalid_image",
+            "reason": "not_png",
+        })
+        .to_string();
+        assert_eq!(panel_refusal(400, &image)["reason"], "not_png");
+        // A reason that is not a string is left out.
+        let odd = serde_json::json!({ "error": "x", "reason": 7 }).to_string();
+        assert_eq!(panel_refusal(400, &odd), serde_json::json!({ "error": "x", "status": 400 }));
     }
 
     #[test]
