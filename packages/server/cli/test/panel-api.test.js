@@ -523,6 +523,57 @@ test('a failed validation names what to correct, not just that it failed', () =>
   );
 });
 
+test('a refused brand keeps its field errors as a list, a refused image its reason', () => {
+  assert.throws(
+    () =>
+      parsePanelResponse(
+        JSON.stringify({
+          error: 'The brand fields are not valid',
+          code: 'invalid_branding',
+          errors: [
+            { field: 'accent', message: 'must be a colour as #rrggbb (lower case)' },
+            { field: '', message: 'must be an object' },
+            { field: 7, message: 'dropped: not a field name' },
+            'dropped: not an entry',
+          ],
+        }) + '\n400',
+        'PUT',
+        '/api/domains/codelama.com.tr/branding',
+      ),
+    (err) => {
+      assert.equal(err.code, 'invalid_branding');
+      assert.deepEqual(err.errors, [
+        { field: 'accent', message: 'must be a colour as #rrggbb (lower case)' },
+        { field: '', message: 'must be an object' },
+      ]);
+      assert.equal(err.reason, undefined);
+      return true;
+    },
+  );
+  assert.throws(
+    () =>
+      parsePanelResponse(
+        '{"error":"The logo must be a PNG (no SVG, no JPEG)","code":"invalid_image","reason":"not_png"}\n400',
+        'PUT',
+        '/api/domains/codelama.com.tr/branding/logo',
+      ),
+    (err) => {
+      assert.equal(err.reason, 'not_png');
+      assert.equal(err.errors, undefined);
+      return true;
+    },
+  );
+  // A reason that is not a string, and an errors list with nothing of the shape, are left out.
+  assert.throws(
+    () => parsePanelResponse('{"error":"x","reason":7,"errors":[1,"two"]}\n400', 'PUT', '/p'),
+    (err) => {
+      assert.equal(err.reason, undefined);
+      assert.equal(err.errors, undefined);
+      return true;
+    },
+  );
+});
+
 test("a refused settings change keeps each field's message, the revision and the hosting", () => {
   assert.throws(
     () =>

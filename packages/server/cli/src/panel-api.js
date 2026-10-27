@@ -269,6 +269,24 @@ function detailsText(details) {
  * @param {unknown} errors
  * @returns {Record<string, string> | null}
  */
+/**
+ * The per-field refusals a panel answer carries as a list — `errors:
+ * [{ field, message }]`, as a refused brand (`invalid_branding`) sends them
+ * (a field of `""` is the request as a whole) — or null when the panel
+ * sent none; only entries of that shape are kept.
+ *
+ * @param {unknown} errors
+ * @returns {Array<{ field: string, message: string }> | null}
+ */
+function fieldErrors(errors) {
+  if (!Array.isArray(errors)) return null;
+  const kept = errors
+    .filter((e) => e !== null && typeof e === 'object' && typeof e.field === 'string')
+    .filter((e) => typeof e.message === 'string')
+    .map((e) => ({ field: e.field, message: e.message }));
+  return kept.length > 0 ? kept : null;
+}
+
 function settingsErrors(errors) {
   if (errors === null || typeof errors !== 'object' || Array.isArray(errors)) return null;
   const kept = Object.entries(errors).filter(
@@ -283,7 +301,9 @@ function settingsErrors(errors) {
  * the status as `statusCode`, and what a caller acts on beyond the message
  * when the panel sent it: `code` (e.g. `agent_not_eligible`), `reasons`, a
  * running operation's `operationId`, and for a refused settings change its
- * per-field `errors`, the current `revision` (`revision_mismatch`) and the
+ * per-field `errors` (a map — or, for a refused brand, a list of `{ field,
+ * message }`), a refused image's `reason`, the current `revision`
+ * (`revision_mismatch`) and the
  * `hosting` (`hosting_offline`). Pure, exported for tests.
  *
  * @param {string} stdout
@@ -317,8 +337,9 @@ export function parsePanelResponse(stdout, method, path) {
       err.reasons = parsed.reasons.filter((r) => typeof r === 'string');
     }
     if (typeof parsed.operationId === 'string') err.operationId = parsed.operationId;
-    const errors = settingsErrors(parsed.errors);
+    const errors = settingsErrors(parsed.errors) ?? fieldErrors(parsed.errors);
     if (errors) err.errors = errors;
+    if (typeof parsed.reason === 'string') err.reason = parsed.reason;
     if (Number.isSafeInteger(parsed.revision) && parsed.revision >= 0) {
       err.revision = parsed.revision;
     }
@@ -384,7 +405,8 @@ export async function curlPanelRequest({
  * in curl's arguments. Resolves with the JSON body; rejects with an Error
  * (`statusCode`, the panel's `error` in the message, a refusal's `code`,
  * `reasons` and `operationId`, a refused settings change's `errors`,
- * `revision` and `hosting`) for any non-2xx answer, and with one that says
+ * `revision` and `hosting`, a refused brand's `errors` list and a refused
+ * image's `reason`) for any non-2xx answer, and with one that says
  * why when the request could not be made.
  *
  * @param {string} method

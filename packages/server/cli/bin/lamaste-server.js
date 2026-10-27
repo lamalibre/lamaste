@@ -16,7 +16,7 @@
  *   plugins       Manage server-side plugins
  *   push-install  Push install: the switch, the default policy, agents' windows
  *   users         Users and the user directory: disable, delete, erase
- *   domains       The relay's base domains and their members
+ *   domains       The relay's base domains, their members and their brands
  *   tunnels       Manage tunnels
  *   sites         Manage static sites
  *   certs         Certificate status and renewal
@@ -66,7 +66,7 @@ ${b('COMMANDS')}
   ${c('push-install')}    Push install: on/off, default policy, open/close an agent's window
   ${c('audit')}           The panel's audit log (approvals, hostings, updates, hook events)
   ${c('users')}           Users and the user directory (list, disable, enable, delete, erase, directory)
-  ${c('domains')}         The relay's base domains and their members (list, add, verify-dns, activate, remove, members)
+  ${c('domains')}         The relay's base domains (list, add, verify-dns, activate, remove, members, branding)
   ${c('tunnels')}         Manage tunnels (list, create, delete, toggle, bind a plugin's user surface)
   ${c('sites')}           Manage static sites (list, create, delete)
   ${c('certs')}           Certificate status, renewal, and agent cert listing
