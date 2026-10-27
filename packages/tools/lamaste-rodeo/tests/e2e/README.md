@@ -28,6 +28,7 @@ This directory contains end-to-end tests that verify the complete Lamaste system
 | 27  | `27-registry-credential-broker.sh` | Registry credential broker against a stub Feria with a throwaway enrolled agent: `--oidc` and `--token-stdin`, agent tokens, cache, per-agent limit (agent-daemon install path: three-VM spec 10)                                                                                                                |      No       |
 | 28  | `28-agent-hosted-plugin.sh`        | Agent-hosted plugin (`hosting: "agent"`): never imported, route 404s, panel declaration refused, OIDC client served while enabled, removed on disable                                                                                                                                                            |      No       |
 | 32  | `32-identity-directory.sh`         | User directory (ids stable across a restart, disable/enable, delete tombstone with Gatekeeper cleanup, re-created username, erase with access-log purge), identity manifest refusals, entitlement roles, the identity approval gate, reserved `/admin/identity*`, panel vhosts clearing a client relay assertion |      No       |
+| 37  | `37-auth-branding-validation.sh`   | Per-domain branding: refusals by field and reason (never a value), the rendering reconciled after a restart and after tampering, the auth vhost's override locations accepted by `lamaste-priv`, `lamaste-server domains branding`, Authelia's base (theme, asset path, one restart)                             |      No       |
 
 ## Prerequisites
 

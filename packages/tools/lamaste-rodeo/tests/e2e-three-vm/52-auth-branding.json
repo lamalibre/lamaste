@@ -1,0 +1,2891 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 52,
+    "name": "Per-domain branding: two brands, a stock third",
+    "suite": "e2e-three-vm",
+    "description": "52 — Per-domain branding: two brands, a stock third (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {
+    "USER_A": {
+      "value": "e2e52-a"
+    },
+    "BRAND_A": {
+      "value": "Brand A"
+    },
+    "BRAND_B": {
+      "value": "Brand B"
+    },
+    "TAGLINE_A": {
+      "value": "Sign in to A"
+    },
+    "ACCENT_A": {
+      "value": "#1d4ed8"
+    },
+    "ACCENT_B": {
+      "value": "#b91c1c"
+    },
+    "SUPPORT_A": {
+      "value": "support-a@example.test"
+    },
+    "HELP_A": {
+      "value": "https://help.example.test/a"
+    },
+    "STOCK_ACCENT": {
+      "value": "#22d3ee"
+    },
+    "SUB_A": {
+      "value": "e2e52a"
+    },
+    "SUB_B": {
+      "value": "e2e52b"
+    },
+    "SUB_C": {
+      "value": "e2e52c"
+    },
+    "PORT_A": {
+      "value": "18521"
+    },
+    "PORT_B": {
+      "value": "18522"
+    },
+    "PORT_C": {
+      "value": "18523"
+    },
+    "FIXTURES": {
+      "value": "/var/tmp/e2e-52-branding"
+    },
+    "WEB_ROOT": {
+      "value": "/var/www/lamaste/auth"
+    },
+    "LOGO_A_SHA": {
+      "value": "$(host_digest \"${FIXTURES}/logo-a.png\")",
+      "expression": true
+    },
+    "LOGO_B_SHA": {
+      "value": "$(host_digest \"${FIXTURES}/logo-b.png\")",
+      "expression": true
+    },
+    "FAVICON_A_SHA": {
+      "value": "$(host_digest \"${FIXTURES}/favicon-a.ico\")",
+      "expression": true
+    },
+    "FAVICON_B_SHA": {
+      "value": "$(host_digest \"${FIXTURES}/favicon-b.png\")",
+      "expression": true
+    },
+    "LOGO_A_B64_HEAD": {
+      "value": "$(host_exec \"base64 -w0 ${FIXTURES}/logo-a.png | head -c 24\" 2>/dev/null | tail -n 1 | tr -d '\\r' || echo \"\")",
+      "expression": true
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE domains/${d}/branding",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "domains/${d}/branding"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE tunnels/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${id}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE users/${USER_A}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${USER_A}?erase=true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "${DOMAIN_3} is left over from an interrupted run — removed first",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "${DOMAIN_3} is left over from an interrupted run — removed first"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "DELETE /api/domains/${DOMAIN}/branding",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "domains/${DOMAIN}/branding"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-4",
+          "label": "DELETE /api/domains/${DOMAIN_2}/branding",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "domains/${DOMAIN_2}/branding"
+          },
+          "continueOnError": true
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\nmd_preflight\nif [ \"$(domain_entry \"${DOMAIN_3}\")\" != \"null\" ]; then\n  log_info \"${DOMAIN_3} is left over from an interrupted run — removed first\"\n  md_api DELETE \"domains/${DOMAIN_3}\" > /dev/null || true\nfi\n# A brand left by an interrupted run would make \"created\" and the revisions lie\nhost_api_delete \"domains/${DOMAIN}/branding\" > /dev/null 2>&1 || true\nhost_api_delete \"domains/${DOMAIN_2}/branding\" > /dev/null 2>&1 || true\n\n# ===========================================================================\n# 1. Three domains, two brands\n# ==========================================================================="
+    },
+    {
+      "id": "domains-b-and-c-active-the-image-fixtures",
+      "label": "Domains B and C active; the image fixtures",
+      "steps": [
+        {
+          "id": "step-8",
+          "label": "Set PLACEHOLDER_SHA",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_digest /etc/authelia/assets/logo.png"
+          },
+          "capture": [
+            {
+              "variable": "PLACEHOLDER_SHA",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Authelia's asset directory holds the placeholder logo (/etc/authelia/assets/logo.png)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n' \"${PLACEHOLDER_SHA}\" | grep -cE '^[0-9a-f]{64}$' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Authelia's asset directory holds the placeholder logo (/etc/authelia/assets/logo.png)"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "awk '\\$NF == \\"
+          },
+          "capture": [
+            {
+              "variable": "ICO_TYPE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "nginx's mime.types names a type for .ico (${ICO_TYPE})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "ICO_TYPE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "image/"
+              },
+              "message": "nginx's mime.types names a type for .ico (${ICO_TYPE})"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Domains B and C active; the image fixtures\"\n\nmd_domain_active \"${DOMAIN_2}\"\nmd_domain_active \"${DOMAIN_3}\"\nwrite_fixtures\nPLACEHOLDER_SHA=$(host_digest /etc/authelia/assets/logo.png)\nassert_eq \"$(printf '%s\\n' \"${PLACEHOLDER_SHA}\" | grep -cE '^[0-9a-f]{64}$' || true)\" \"1\" \"Authelia's asset directory holds the placeholder logo (/etc/authelia/assets/logo.png)\" || true\nICO_TYPE=$(host_exec \"awk '\\$NF == \\\"ico;\\\" {print \\$1}' /etc/nginx/mime.types\" 2>/dev/null | tail -n 1 | tr -d '\\r' || echo \"\")\nassert_contains \"${ICO_TYPE}\" \"image/\" \"nginx's mime.types names a type for .ico (${ICO_TYPE})\" || true"
+    },
+    {
+      "id": "brand-a-dark-logo-ico-favicon-and-brand-b-light-logo-png-favicon-c-stays-stock",
+      "label": "Brand A (dark, logo, ICO favicon) and brand B (light, logo, PNG favicon); C stays stock",
+      "steps": [
+        {
+          "id": "step-12",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_api PUT \"domains/${DOMAIN}/branding\" \"$(brand_body \"${BRAND_A}\" \"${TAGLINE_A}\" dark \"${ACCENT_A}\" \"${SUPPORT_A}\" \"${HELP_A}\")\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "PUT /api/domains/${DOMAIN}/branding: ${BRAND_A}, dark, ${ACCENT_A}, support contact",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/domains/${DOMAIN}/branding: ${BRAND_A}, dark, ${ACCENT_A}, support contact"
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "…created at revision 1, dark, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.created) \\(.branding.revision) \\(.branding.theme) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true 1 dark 0"
+              },
+              "message": "…created at revision 1, dark, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "API_TIMEOUT=60 host_api_call_file PUT \"domains/${DOMAIN}/branding/logo\" \"${FIXTURES}/logo-a.png.json\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "PUT …/branding/logo: logo A (base64 in JSON)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT …/branding/logo: logo A (base64 in JSON)"
+            }
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "…revision 2, a 48×48 PNG, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.branding.revision) \\(.branding.logo.format) \\(.branding.logo.width)x\\(.branding.logo.height) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true 2 png 48x48 0"
+              },
+              "message": "…revision 2, a 48×48 PNG, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "…the answer's digest is the fixture's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".branding.logo.sha256",
+              "expected": {
+                "kind": "var",
+                "name": "LOGO_A_SHA"
+              },
+              "message": "…the answer's digest is the fixture's"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "API_TIMEOUT=60 host_api_call_file PUT \"domains/${DOMAIN}/branding/favicon\" \"${FIXTURES}/favicon-a.ico.json\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "PUT …/branding/favicon: favicon A, an ICO — revision 3, its digest, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.branding.revision) \\(.branding.favicon.format) \\(.branding.favicon.sha256) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "true 3 ico ${FAVICON_A_SHA} 0"
+              },
+              "message": "PUT …/branding/favicon: favicon A, an ICO — revision 3, its digest, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_api PUT \"domains/${DOMAIN_2}/branding\" \"$(brand_body \"${BRAND_B}\" - light \"${ACCENT_B}\" - -)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "PUT /api/domains/${DOMAIN_2}/branding: ${BRAND_B}, light, ${ACCENT_B}, nothing else",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.created) \\(.branding.revision) \\(.branding.theme) \\(.branding.tagline) \\(.branding.supportEmail) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true 1 light null null 0"
+              },
+              "message": "PUT /api/domains/${DOMAIN_2}/branding: ${BRAND_B}, light, ${ACCENT_B}, nothing else"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "API_TIMEOUT=60 host_api_call_file PUT \"domains/${DOMAIN_2}/branding/logo\" \"${FIXTURES}/logo-b.png.json\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Logo B set — revision 2, the fixture's digest",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.branding.revision) \\(.branding.logo.sha256) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "2 ${LOGO_B_SHA} 0"
+              },
+              "message": "Logo B set — revision 2, the fixture's digest"
+            }
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "API_TIMEOUT=60 host_api_call_file PUT \"domains/${DOMAIN_2}/branding/favicon\" \"${FIXTURES}/favicon-b.png.json\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Favicon B set, a PNG — revision 3, the fixture's digest",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.branding.revision) \\(.branding.favicon.format) \\(.branding.favicon.sha256) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "3 png ${FAVICON_B_SHA} 0"
+              },
+              "message": "Favicon B set, a PNG — revision 3, the fixture's digest"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "${DOMAIN_3} has no brand",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(branding_of \"${DOMAIN_3}\")"
+              },
+              "path": ".branding",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "${DOMAIN_3} has no brand"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Both brands are rendered at their revision (renderedCurrent)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Both brands are rendered at their revision (renderedCurrent)"
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "A brand is not rendered: A $(json_get \"$(branding_of \"${DOMAIN}\")\" '.branding.rendered'), B $(json_get \"$(branding_of \"${DOMAIN_2}\")\" '.branding.rendered')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "A brand is not rendered: A $(json_get \"$(branding_of \"${DOMAIN}\")\" '.branding.rendered'), B $(json_get \"$(branding_of \"${DOMAIN_2}\")\" '.branding.rendered')"
+          }
+        }
+      ],
+      "bash": "log_section \"Brand A (dark, logo, ICO favicon) and brand B (light, logo, PNG favicon); C stays stock\"\n\nRESP=$(md_api PUT \"domains/${DOMAIN}/branding\" \"$(brand_body \"${BRAND_A}\" \"${TAGLINE_A}\" dark \"${ACCENT_A}\" \"${SUPPORT_A}\" \"${HELP_A}\")\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/domains/${DOMAIN}/branding: ${BRAND_A}, dark, ${ACCENT_A}, support contact\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.created) \\(.branding.revision) \\(.branding.theme) \\(.warnings // [] | length)\"' \"true 1 dark 0\" \"…created at revision 1, dark, no warning\" || true\nRESP=$(API_TIMEOUT=60 host_api_call_file PUT \"domains/${DOMAIN}/branding/logo\" \"${FIXTURES}/logo-a.png.json\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT …/branding/logo: logo A (base64 in JSON)\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.branding.revision) \\(.branding.logo.format) \\(.branding.logo.width)x\\(.branding.logo.height) \\(.warnings // [] | length)\"' \"true 2 png 48x48 0\" \"…revision 2, a 48×48 PNG, no warning\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.branding.logo.sha256' \"${LOGO_A_SHA}\" \"…the answer's digest is the fixture's\" || true\nRESP=$(API_TIMEOUT=60 host_api_call_file PUT \"domains/${DOMAIN}/branding/favicon\" \"${FIXTURES}/favicon-a.ico.json\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.branding.revision) \\(.branding.favicon.format) \\(.branding.favicon.sha256) \\(.warnings // [] | length)\"' \"true 3 ico ${FAVICON_A_SHA} 0\" \"PUT …/branding/favicon: favicon A, an ICO — revision 3, its digest, no warning\" || true\n\nRESP=$(md_api PUT \"domains/${DOMAIN_2}/branding\" \"$(brand_body \"${BRAND_B}\" - light \"${ACCENT_B}\" - -)\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.created) \\(.branding.revision) \\(.branding.theme) \\(.branding.tagline) \\(.branding.supportEmail) \\(.warnings // [] | length)\"' \"true 1 light null null 0\" \"PUT /api/domains/${DOMAIN_2}/branding: ${BRAND_B}, light, ${ACCENT_B}, nothing else\" || true\nRESP=$(API_TIMEOUT=60 host_api_call_file PUT \"domains/${DOMAIN_2}/branding/logo\" \"${FIXTURES}/logo-b.png.json\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.branding.revision) \\(.branding.logo.sha256) \\(.warnings // [] | length)\"' \"2 ${LOGO_B_SHA} 0\" \"Logo B set — revision 2, the fixture's digest\" || true\nRESP=$(API_TIMEOUT=60 host_api_call_file PUT \"domains/${DOMAIN_2}/branding/favicon\" \"${FIXTURES}/favicon-b.png.json\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.branding.revision) \\(.branding.favicon.format) \\(.branding.favicon.sha256) \\(.warnings // [] | length)\"' \"3 png ${FAVICON_B_SHA} 0\" \"Favicon B set, a PNG — revision 3, the fixture's digest\" || true\nassert_json_field \"$(branding_of \"${DOMAIN_3}\")\" '.branding' \"null\" \"${DOMAIN_3} has no brand\" || true\n\nif wait_for 60 rendered_current \"${DOMAIN}\" && wait_for 60 rendered_current \"${DOMAIN_2}\"; then\n  log_pass \"Both brands are rendered at their revision (renderedCurrent)\"\nelse\n  log_fail \"A brand is not rendered: A $(json_get \"$(branding_of \"${DOMAIN}\")\" '.branding.rendered'), B $(json_get \"$(branding_of \"${DOMAIN_2}\")\" '.branding.rendered')\"\nfi\n\n# ===========================================================================\n# 2. The sign-in pages\n# ==========================================================================="
+    },
+    {
+      "id": "the-sign-in-pages-theme-logo-switch-stylesheet-c-is-the-stock-page",
+      "label": "The sign-in pages: theme, logo switch, stylesheet — C is the stock page",
+      "steps": [
+        {
+          "id": "step-30",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"$(auth_url \"${DOMAIN}\" /)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-31",
+          "label": "auth.${DOMAIN}/: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "auth.${DOMAIN}/: 200"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Set PAGE_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "PAGE_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "…data-theme=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_A"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-theme=\"dark\""
+              },
+              "message": "…data-theme=\\"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "…data-logooverride=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_A"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-logooverride=\"true\""
+              },
+              "message": "…data-logooverride=\\"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "…links /brand.css",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_A"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<link rel=\"stylesheet\" href=\"/brand.css\">"
+              },
+              "message": "…links /brand.css"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Set CSP_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]' | awk '$1 == \"content-security-policy:\" {print}' | tail -n 1"
+          },
+          "capture": [
+            {
+              "variable": "CSP_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "…Authelia's Content-Security-Policy is sent, style-src 'self' as Authelia writes it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CSP_A"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "style-src 'self'"
+              },
+              "message": "…Authelia's Content-Security-Policy is sent, style-src 'self' as Authelia writes it"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "…no light theme left anywhere in the page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_A"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-theme=\"light\""
+              },
+              "message": "…no light theme left anywhere in the page"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Set PAGE_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /)\")\""
+          },
+          "capture": [
+            {
+              "variable": "PAGE_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "auth.${DOMAIN_2}/: data-theme=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_B"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-theme=\"light\""
+              },
+              "message": "auth.${DOMAIN_2}/: data-theme=\\"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "…data-logooverride=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_B"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-logooverride=\"true\""
+              },
+              "message": "…data-logooverride=\\"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "…links /brand.css",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_B"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<link rel=\"stylesheet\" href=\"/brand.css\">"
+              },
+              "message": "…links /brand.css"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"$(auth_url \"${DOMAIN_3}\" /)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Set PAGE_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "PAGE_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "auth.${DOMAIN_3}/: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "auth.${DOMAIN_3}/: 200"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "…data-theme=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_C"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-theme=\"light\""
+              },
+              "message": "…data-theme=\\"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "…data-logooverride=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_C"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-logooverride=\"false\""
+              },
+              "message": "…data-logooverride=\\"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "…no stylesheet: exactly the stock page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_C"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "brand.css"
+              },
+              "message": "…no stylesheet: exactly the stock page"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "…the same CSP as a branded domain's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]' | awk '$1 == \"content-security-policy:\" {print}' | tail -n 1)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "style-src 'self'"
+              },
+              "message": "…the same CSP as a branded domain's"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The sign-in pages: theme, logo switch, stylesheet — C is the stock page\"\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN}\" /)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN}/: 200\" || true\nPAGE_A=$(visit_body \"$RESP\")\nassert_contains \"${PAGE_A}\" 'data-theme=\"dark\"' \"…data-theme=\\\"dark\\\" (A's theme)\" || true\nassert_contains \"${PAGE_A}\" 'data-logooverride=\"true\"' \"…data-logooverride=\\\"true\\\" (A serves a logo)\" || true\nassert_contains \"${PAGE_A}\" '<link rel=\"stylesheet\" href=\"/brand.css\">' \"…links /brand.css\" || true\nCSP_A=$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]' | awk '$1 == \"content-security-policy:\" {print}' | tail -n 1)\nassert_contains \"${CSP_A}\" \"style-src 'self'\" \"…Authelia's Content-Security-Policy is sent, style-src 'self' as Authelia writes it\" || true\nassert_not_contains \"${PAGE_A}\" 'data-theme=\"light\"' \"…no light theme left anywhere in the page\" || true\n\nPAGE_B=$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /)\")\")\nassert_contains \"${PAGE_B}\" 'data-theme=\"light\"' \"auth.${DOMAIN_2}/: data-theme=\\\"light\\\" (B's theme)\" || true\nassert_contains \"${PAGE_B}\" 'data-logooverride=\"true\"' \"…data-logooverride=\\\"true\\\" (B serves a logo)\" || true\nassert_contains \"${PAGE_B}\" '<link rel=\"stylesheet\" href=\"/brand.css\">' \"…links /brand.css\" || true\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN_3}\" /)\")\nPAGE_C=$(visit_body \"$RESP\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN_3}/: 200\" || true\nassert_contains \"${PAGE_C}\" 'data-theme=\"light\"' \"…data-theme=\\\"light\\\" (the stock theme)\" || true\nassert_contains \"${PAGE_C}\" 'data-logooverride=\"false\"' \"…data-logooverride=\\\"false\\\" (the placeholder is never shown)\" || true\nassert_not_contains \"${PAGE_C}\" 'brand.css' \"…no stylesheet: exactly the stock page\" || true\nassert_contains \"$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]' | awk '$1 == \"content-security-policy:\" {print}' | tail -n 1)\" \"style-src 'self'\" \"…the same CSP as a branded domain's\" || true"
+    },
+    {
+      "id": "brand-css-the-accent-the-hidden-footer-the-asset-headers",
+      "label": "/brand.css: the accent, the hidden footer, the asset headers",
+      "steps": [
+        {
+          "id": "step-50",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"$(auth_url \"${DOMAIN}\" /brand.css)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "auth.${DOMAIN}/brand.css: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "auth.${DOMAIN}/brand.css: 200"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Set HEADERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]'"
+          },
+          "capture": [
+            {
+              "variable": "HEADERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "…text/css (by the extension)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HEADERS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "content-type: text/css"
+              },
+              "message": "…text/css (by the extension)"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "…X-Content-Type-Options: nosniff",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HEADERS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "x-content-type-options: nosniff"
+              },
+              "message": "…X-Content-Type-Options: nosniff"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "…Cache-Control: public, max-age=0, must-revalidate",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HEADERS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "cache-control: public, max-age=0, must-revalidate"
+              },
+              "message": "…Cache-Control: public, max-age=0, must-revalidate"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Set CSS_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "CSS_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "…--primary is A's accent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CSS_A"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "--primary: ${ACCENT_A} !important;"
+              },
+              "message": "…--primary is A's accent"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "…the \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CSS_A"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "a[href^=\"https://www.authelia.com\"] { display: none !important; }"
+              },
+              "message": "…the \\"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "auth.${DOMAIN_2}/brand.css: --primary is B's accent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /brand.css)\")\")"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "--primary: ${ACCENT_B} !important;"
+              },
+              "message": "auth.${DOMAIN_2}/brand.css: --primary is B's accent"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "auth.${DOMAIN_3}/brand.css: 404 (no brand, no stylesheet)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit - \"$(auth_url \"${DOMAIN_3}\" /brand.css)\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "auth.${DOMAIN_3}/brand.css: 404 (no brand, no stylesheet)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"/brand.css: the accent, the hidden footer, the asset headers\"\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN}\" /brand.css)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN}/brand.css: 200\" || true\nHEADERS=$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\nassert_contains \"${HEADERS}\" \"content-type: text/css\" \"…text/css (by the extension)\" || true\nassert_contains \"${HEADERS}\" \"x-content-type-options: nosniff\" \"…X-Content-Type-Options: nosniff\" || true\nassert_contains \"${HEADERS}\" \"cache-control: public, max-age=0, must-revalidate\" \"…Cache-Control: public, max-age=0, must-revalidate\" || true\nCSS_A=$(visit_body \"$RESP\")\nassert_contains \"${CSS_A}\" \"--primary: ${ACCENT_A} !important;\" \"…--primary is A's accent\" || true\nassert_contains \"${CSS_A}\" 'a[href^=\"https://www.authelia.com\"] { display: none !important; }' \"…the \\\"Powered by\\\" footer link is hidden\" || true\nassert_contains \"$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /brand.css)\")\")\" \"--primary: ${ACCENT_B} !important;\" \"auth.${DOMAIN_2}/brand.css: --primary is B's accent\" || true\nassert_eq \"$(visit_status \"$(visit - \"$(auth_url \"${DOMAIN_3}\" /brand.css)\")\")\" \"404\" \"auth.${DOMAIN_3}/brand.css: 404 (no brand, no stylesheet)\" || true"
+    },
+    {
+      "id": "the-logos-and-favicons-the-fixtures-bytes-c-gets-authelia-s",
+      "label": "The logos and favicons: the fixtures' bytes; C gets Authelia's",
+      "steps": [
+        {
+          "id": "step-61",
+          "label": "auth.${DOMAIN}/static/media/logo.png: logo A's bytes, image/png",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(fetch_digest \"$(auth_url \"${DOMAIN}\" /static/media/logo.png)\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "200 image/png ${LOGO_A_SHA}"
+              },
+              "message": "auth.${DOMAIN}/static/media/logo.png: logo A's bytes, image/png"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "auth.${DOMAIN_2}/static/media/logo.png: logo B's bytes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(fetch_digest \"$(auth_url \"${DOMAIN_2}\" /static/media/logo.png)\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "200 image/png ${LOGO_B_SHA}"
+              },
+              "message": "auth.${DOMAIN_2}/static/media/logo.png: logo B's bytes"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "auth.${DOMAIN_3}/static/media/logo.png: Authelia's placeholder (the asset directory's logo.png)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(fetch_digest \"$(auth_url \"${DOMAIN_3}\" /static/media/logo.png)\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "200 image/png ${PLACEHOLDER_SHA}"
+              },
+              "message": "auth.${DOMAIN_3}/static/media/logo.png: Authelia's placeholder (the asset directory's logo.png)"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "auth.${DOMAIN}/favicon.ico: favicon A's bytes, ${ICO_TYPE}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(fetch_digest \"$(auth_url \"${DOMAIN}\" /favicon.ico)\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "200 ${ICO_TYPE} ${FAVICON_A_SHA}"
+              },
+              "message": "auth.${DOMAIN}/favicon.ico: favicon A's bytes, ${ICO_TYPE}"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "auth.${DOMAIN_2}/favicon.ico: favicon B's PNG bytes under the .ico name, ${ICO_TYPE} by the extension",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(fetch_digest \"$(auth_url \"${DOMAIN_2}\" /favicon.ico)\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "200 ${ICO_TYPE} ${FAVICON_B_SHA}"
+              },
+              "message": "auth.${DOMAIN_2}/favicon.ico: favicon B's PNG bytes under the .ico name, ${ICO_TYPE} by the extension"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "Set FAVICON_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "fetch_digest \"$(auth_url \"${DOMAIN_3}\" /favicon.ico)\""
+          },
+          "capture": [
+            {
+              "variable": "FAVICON_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-67",
+          "label": "auth.${DOMAIN_3}/favicon.ico: 200, Authelia's own",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${FAVICON_C%% *}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "auth.${DOMAIN_3}/favicon.ico: 200, Authelia's own"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "…not favicon A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "FAVICON_C"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "FAVICON_A_SHA"
+              },
+              "message": "…not favicon A"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "…not favicon B",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "FAVICON_C"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "FAVICON_B_SHA"
+              },
+              "message": "…not favicon B"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The logos and favicons: the fixtures' bytes; C gets Authelia's\"\n\nassert_eq \"$(fetch_digest \"$(auth_url \"${DOMAIN}\" /static/media/logo.png)\")\" \"200 image/png ${LOGO_A_SHA}\" \"auth.${DOMAIN}/static/media/logo.png: logo A's bytes, image/png\" || true\nassert_eq \"$(fetch_digest \"$(auth_url \"${DOMAIN_2}\" /static/media/logo.png)\")\" \"200 image/png ${LOGO_B_SHA}\" \"auth.${DOMAIN_2}/static/media/logo.png: logo B's bytes\" || true\nassert_eq \"$(fetch_digest \"$(auth_url \"${DOMAIN_3}\" /static/media/logo.png)\")\" \"200 image/png ${PLACEHOLDER_SHA}\" \"auth.${DOMAIN_3}/static/media/logo.png: Authelia's placeholder (the asset directory's logo.png)\" || true\nassert_eq \"$(fetch_digest \"$(auth_url \"${DOMAIN}\" /favicon.ico)\")\" \"200 ${ICO_TYPE} ${FAVICON_A_SHA}\" \"auth.${DOMAIN}/favicon.ico: favicon A's bytes, ${ICO_TYPE}\" || true\nassert_eq \"$(fetch_digest \"$(auth_url \"${DOMAIN_2}\" /favicon.ico)\")\" \"200 ${ICO_TYPE} ${FAVICON_B_SHA}\" \"auth.${DOMAIN_2}/favicon.ico: favicon B's PNG bytes under the .ico name, ${ICO_TYPE} by the extension\" || true\nFAVICON_C=$(fetch_digest \"$(auth_url \"${DOMAIN_3}\" /favicon.ico)\")\nassert_eq \"${FAVICON_C%% *}\" \"200\" \"auth.${DOMAIN_3}/favicon.ico: 200, Authelia's own\" || true\nassert_not_contains \"${FAVICON_C}\" \"${FAVICON_A_SHA}\" \"…not favicon A\" || true\nassert_not_contains \"${FAVICON_C}\" \"${FAVICON_B_SHA}\" \"…not favicon B\" || true"
+    },
+    {
+      "id": "the-locale-files-the-brand-name-in-place-of-authelia-in-english-and-turkish",
+      "label": "The locale files: the brand name in place of {{authelia}}, in English and Turkish",
+      "steps": [
+        {
+          "id": "step-70",
+          "label": "Set EN_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "locale_file \"${DOMAIN}\" en portal"
+          },
+          "capture": [
+            {
+              "variable": "EN_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-71",
+          "label": "auth.${DOMAIN}/locales/en/portal.json: \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EN_A"
+              },
+              "path": ".\"Login - {{authelia}}\"",
+              "expected": {
+                "kind": "expr",
+                "template": "Login - ${BRAND_A}"
+              },
+              "message": "auth.${DOMAIN}/locales/en/portal.json: \\"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "…\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EN_A"
+              },
+              "path": ".\"Powered by {{authelia}}\"",
+              "expected": {
+                "kind": "expr",
+                "template": "Powered by ${BRAND_A}"
+              },
+              "message": "…\\"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "…no {{authelia}} left in any value",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EN_A"
+              },
+              "path": "[.. | strings | select(contains(\"{{authelia}}\"))] | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…no {{authelia}} left in any value"
+            }
+          }
+        },
+        {
+          "id": "step-74",
+          "label": "Set TR_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(locale_file \"${DOMAIN}\" tr portal)\" '.\"Login - {{authelia}}\"'"
+          },
+          "capture": [
+            {
+              "variable": "TR_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "auth.${DOMAIN}/locales/tr/portal.json: the Turkish title carries ${BRAND_A} (${TR_A})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "TR_A"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "BRAND_A"
+              },
+              "message": "auth.${DOMAIN}/locales/tr/portal.json: the Turkish title carries ${BRAND_A} (${TR_A})"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "…and no placeholder",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "TR_A"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "{{authelia}}"
+              },
+              "message": "…and no placeholder"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "auth.${DOMAIN_2}/locales/en/portal.json says ${BRAND_B}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(locale_file \"${DOMAIN_2}\" en portal)"
+              },
+              "path": ".\"Login - {{authelia}}\"",
+              "expected": {
+                "kind": "expr",
+                "template": "Login - ${BRAND_B}"
+              },
+              "message": "auth.${DOMAIN_2}/locales/en/portal.json says ${BRAND_B}"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Set EN_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "locale_file \"${DOMAIN_3}\" en portal"
+          },
+          "capture": [
+            {
+              "variable": "EN_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-79",
+          "label": "auth.${DOMAIN_3}/locales/en/portal.json is Authelia's own: the title still interpolates {{authelia}}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EN_C"
+              },
+              "path": ".\"Login - {{authelia}}\"",
+              "expected": {
+                "kind": "literal",
+                "value": "Login - {{authelia}}"
+              },
+              "message": "auth.${DOMAIN_3}/locales/en/portal.json is Authelia's own: the title still interpolates {{authelia}}"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "…no brand of another domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "EN_C"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "BRAND_A"
+              },
+              "message": "…no brand of another domain"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "\"))] | length > 0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(locale_file \"${DOMAIN}\" en settings)"
+              },
+              "path": "[.. | strings | select(contains(\"",
+              "expected": {
+                "kind": "var",
+                "name": "BRAND_A"
+              },
+              "message": "\"))] | length > 0"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The locale files: the brand name in place of {{authelia}}, in English and Turkish\"\n\nEN_A=$(locale_file \"${DOMAIN}\" en portal)\nassert_json_field \"${EN_A}\" '.\"Login - {{authelia}}\"' \"Login - ${BRAND_A}\" \"auth.${DOMAIN}/locales/en/portal.json: \\\"Login - {{authelia}}\\\" → \\\"Login - ${BRAND_A}\\\"\" || true\nassert_json_field \"${EN_A}\" '.\"Powered by {{authelia}}\"' \"Powered by ${BRAND_A}\" \"…\\\"Powered by {{authelia}}\\\" → \\\"Powered by ${BRAND_A}\\\"\" || true\nassert_json_field \"${EN_A}\" '[.. | strings | select(contains(\"{{authelia}}\"))] | length' \"0\" \"…no {{authelia}} left in any value\" || true\nTR_A=$(json_get \"$(locale_file \"${DOMAIN}\" tr portal)\" '.\"Login - {{authelia}}\"')\nassert_contains \"${TR_A}\" \"${BRAND_A}\" \"auth.${DOMAIN}/locales/tr/portal.json: the Turkish title carries ${BRAND_A} (${TR_A})\" || true\nassert_not_contains \"${TR_A}\" \"{{authelia}}\" \"…and no placeholder\" || true\nassert_json_field \"$(locale_file \"${DOMAIN_2}\" en portal)\" '.\"Login - {{authelia}}\"' \"Login - ${BRAND_B}\" \"auth.${DOMAIN_2}/locales/en/portal.json says ${BRAND_B}\" || true\nEN_C=$(locale_file \"${DOMAIN_3}\" en portal)\nassert_json_field \"${EN_C}\" '.\"Login - {{authelia}}\"' \"Login - {{authelia}}\" \"auth.${DOMAIN_3}/locales/en/portal.json is Authelia's own: the title still interpolates {{authelia}}\" || true\nassert_not_contains \"${EN_C}\" \"${BRAND_A}\" \"…no brand of another domain\" || true\nassert_json_field \"$(locale_file \"${DOMAIN}\" en settings)\" '[.. | strings | select(contains(\"'\"${BRAND_A}\"'\"))] | length > 0' \"true\" \"auth.${DOMAIN}/locales/en/settings.json carries ${BRAND_A} too\" || true\n\n# ===========================================================================\n# 3. The invitation page\n# ==========================================================================="
+    },
+    {
+      "id": "the-invitation-page-a-s-branded-c-s-the-stock-page-the-same-script",
+      "label": "The invitation page: A's branded, C's the stock page, the same script",
+      "steps": [
+        {
+          "id": "step-82",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"$(auth_url \"${DOMAIN}\" /invite/x)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "auth.${DOMAIN}/invite/x: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "auth.${DOMAIN}/invite/x: 200"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Set INVITE_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "INVITE_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-85",
+          "label": "…titled ${BRAND_A} — Accept Invitation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_A"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "<title>${BRAND_A} — Accept Invitation</title>"
+              },
+              "message": "…titled ${BRAND_A} — Accept Invitation"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "…the logo from the same origin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_A"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<img class=\"brand-logo\" src=\"/static/media/logo.png\""
+              },
+              "message": "…the logo from the same origin"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "…the accent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_A"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "--accent: ${ACCENT_A};"
+              },
+              "message": "…the accent"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"$(auth_url \"${DOMAIN_3}\" /invite/x)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-91",
+          "label": "auth.${DOMAIN_3}/invite/x: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "auth.${DOMAIN_3}/invite/x: 200"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "Set INVITE_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "INVITE_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "…the stock page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_C"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<title>Lamaste — Accept Invitation</title>"
+              },
+              "message": "…the stock page"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "…no brand header",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_C"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "class=\"brand"
+              },
+              "message": "…no brand header"
+            }
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "Both pages carry a script of the same length",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(script_of \"${INVITE_A}\" | wc -l | tr -d ' ')"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(script_of \"${INVITE_C}\" | wc -l | tr -d ' ')"
+              },
+              "message": "Both pages carry a script of the same length"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "…byte for byte the same script (the API calls are unchanged)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(script_of \"${INVITE_A}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(script_of \"${INVITE_C}\")"
+              },
+              "message": "…byte for byte the same script (the API calls are unchanged)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The invitation page: A's branded, C's the stock page, the same script\"\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN}\" /invite/x)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN}/invite/x: 200\" || true\nINVITE_A=$(visit_body \"$RESP\")\nassert_contains \"${INVITE_A}\" \"<title>${BRAND_A} — Accept Invitation</title>\" \"…titled ${BRAND_A} — Accept Invitation\" || true\nassert_contains \"${INVITE_A}\" \"<div class=\\\"brand-name\\\">${BRAND_A}</div>\" \"…the brand's name in the header\" || true\nassert_contains \"${INVITE_A}\" \"<div class=\\\"brand-tagline\\\">${TAGLINE_A}</div>\" \"…and its tagline\" || true\nassert_contains \"${INVITE_A}\" '<img class=\"brand-logo\" src=\"/static/media/logo.png\"' \"…the logo from the same origin\" || true\nassert_contains \"${INVITE_A}\" \"--accent: ${ACCENT_A};\" \"…the accent\" || true\nRESP=$(visit - \"$(auth_url \"${DOMAIN_3}\" /invite/x)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN_3}/invite/x: 200\" || true\nINVITE_C=$(visit_body \"$RESP\")\nassert_contains \"${INVITE_C}\" \"<title>Lamaste — Accept Invitation</title>\" \"…the stock page\" || true\nassert_not_contains \"${INVITE_C}\" 'class=\"brand' \"…no brand header\" || true\nassert_eq \"$(script_of \"${INVITE_A}\" | wc -l | tr -d ' ')\" \"$(script_of \"${INVITE_C}\" | wc -l | tr -d ' ')\" \"Both pages carry a script of the same length\" || true\nassert_eq \"$(script_of \"${INVITE_A}\")\" \"$(script_of \"${INVITE_C}\")\" \"…byte for byte the same script (the API calls are unchanged)\" || true\n\n# ===========================================================================\n# 4. Gatekeeper's pages\n# ==========================================================================="
+    },
+    {
+      "id": "a-member-of-a-a-tunnel-on-each-domain-b-and-c-authenticated-a-restricted",
+      "label": "A member of A; a tunnel on each domain (B and C authenticated, A restricted)",
+      "steps": [
+        {
+          "id": "step-98",
+          "label": "${USER_A} has a directory id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${ID_A}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "${USER_A} has a directory id"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "Set SECRET_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${USER_A}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"A member of A; a tunnel on each domain (B and C authenticated, A restricted)\"\n\nmd_user ID_A \"${USER_A}\" \"${PASSWORD_A}\" \"[\\\"${DOMAIN}\\\"]\"\nassert_eq \"$(is_uuid \"${ID_A}\")\" \"true\" \"${USER_A} has a directory id\" || true\nmd_tunnel TUNNEL_B \"${SUB_B}\" \"${DOMAIN_2}\" \"${PORT_B}\" authenticated\nmd_tunnel TUNNEL_A \"${SUB_A}\" \"${DOMAIN}\" \"${PORT_A}\" restricted\nmd_tunnel TUNNEL_C \"${SUB_C}\" \"${DOMAIN_3}\" \"${PORT_C}\" authenticated\nSECRET_A=$(reset_totp \"${USER_A}\")\nmd_wait_authelia \"${DOMAIN}\"\nmd_sign_in \"${USER_A}\" \"${PASSWORD_A}\" \"${SECRET_A}\" \"$(md_jar a-b)\" \"${SUB_B}.${DOMAIN_2}\"\nmd_sign_in \"${USER_A}\" \"${PASSWORD_A}\" \"${SECRET_A}\" \"$(md_jar a-a)\" \"${SUB_A}.${DOMAIN}\"\nmd_sign_in \"${USER_A}\" \"${PASSWORD_A}\" \"${SECRET_A}\" \"$(md_jar a-c)\" \"${SUB_C}.${DOMAIN_3}\""
+    },
+    {
+      "id": "the-domain-refusal-on-b-s-tunnel-carries-brand-b",
+      "label": "The domain refusal on B's tunnel carries brand B",
+      "steps": [
+        {
+          "id": "step-107",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"$(md_jar a-b)\" \"https://${SUB_B}.${DOMAIN_2}/index.html\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-109",
+          "label": "Set REFUSAL_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "REFUSAL_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-110",
+          "label": "…titled with ${BRAND_B}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "REFUSAL_B"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "<title>Not allowed — ${DOMAIN_2} — ${BRAND_B}</title>"
+              },
+              "message": "…titled with ${BRAND_B}"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "…B's accent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "REFUSAL_B"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "--accent: ${ACCENT_B};"
+              },
+              "message": "…B's accent"
+            }
+          }
+        },
+        {
+          "id": "step-114",
+          "label": "…no Help link (B names no support URL)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "REFUSAL_B"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Help:"
+              },
+              "message": "…no Help link (B names no support URL)"
+            }
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "…nothing of brand A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "REFUSAL_B"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "BRAND_A"
+              },
+              "message": "…nothing of brand A"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The domain refusal on B's tunnel carries brand B\"\n\nRESP=$(visit \"$(md_jar a-b)\" \"https://${SUB_B}.${DOMAIN_2}/index.html\")\nassert_domain_refusal \"$RESP\" \"${DOMAIN_2}\" \"${USER_A} (a member of A) on B's tunnel\"\nREFUSAL_B=$(visit_body \"$RESP\")\nassert_contains \"${REFUSAL_B}\" \"<title>Not allowed — ${DOMAIN_2} — ${BRAND_B}</title>\" \"…titled with ${BRAND_B}\" || true\nassert_contains \"${REFUSAL_B}\" \"<div class=\\\"brand-name\\\">${BRAND_B}</div>\" \"…${BRAND_B} in the header\" || true\nassert_contains \"${REFUSAL_B}\" \"src=\\\"https://auth.${DOMAIN_2}/static/media/logo.png\\\"\" \"…the logo from B's sign-in host\" || true\nassert_contains \"${REFUSAL_B}\" \"--accent: ${ACCENT_B};\" \"…B's accent\" || true\nassert_not_contains \"${REFUSAL_B}\" \"Help:\" \"…no Help link (B names no support URL)\" || true\nassert_not_contains \"${REFUSAL_B}\" \"${BRAND_A}\" \"…nothing of brand A\" || true"
+    },
+    {
+      "id": "the-access-request-page-on-a-s-restricted-tunnel-carries-brand-a-and-its-support-contact",
+      "label": "The access-request page on A's restricted tunnel carries brand A and its support contact",
+      "steps": [
+        {
+          "id": "step-116",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"$(md_jar a-a)\" \"https://${SUB_A}.${DOMAIN}/index.html\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-118",
+          "label": "Set REQUEST_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "REQUEST_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-119",
+          "label": "…titled with ${BRAND_A}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "REQUEST_A"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "<title>Access Required — ${SUB_A}.${DOMAIN} — ${BRAND_A}</title>"
+              },
+              "message": "…titled with ${BRAND_A}"
+            }
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "…A's accent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "REQUEST_A"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "--accent: ${ACCENT_A};"
+              },
+              "message": "…A's accent"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The access-request page on A's restricted tunnel carries brand A and its support contact\"\n\nRESP=$(visit \"$(md_jar a-a)\" \"https://${SUB_A}.${DOMAIN}/index.html\")\nassert_access_request \"$RESP\" \"${USER_A} on A's restricted tunnel without a grant\"\nREQUEST_A=$(visit_body \"$RESP\")\nassert_contains \"${REQUEST_A}\" \"<title>Access Required — ${SUB_A}.${DOMAIN} — ${BRAND_A}</title>\" \"…titled with ${BRAND_A}\" || true\nassert_contains \"${REQUEST_A}\" \"<div class=\\\"brand-name\\\">${BRAND_A}</div>\" \"…${BRAND_A} in the header\" || true\nassert_contains \"${REQUEST_A}\" \"<div class=\\\"brand-tagline\\\">${TAGLINE_A}</div>\" \"…its tagline\" || true\nassert_contains \"${REQUEST_A}\" \"src=\\\"https://auth.${DOMAIN}/static/media/logo.png\\\"\" \"…the logo from A's sign-in host\" || true\nassert_contains \"${REQUEST_A}\" \"--accent: ${ACCENT_A};\" \"…A's accent\" || true\nassert_contains \"${REQUEST_A}\" \"Admin: <a href=\\\"mailto:${SUPPORT_A}\\\">${SUPPORT_A}</a>\" \"…the brand's support e-mail as the contact\" || true\nassert_contains \"${REQUEST_A}\" \"Help: <a href=\\\"${HELP_A}\\\" rel=\\\"noopener\\\">${HELP_A}</a>\" \"…and its support URL as the Help link\" || true"
+    },
+    {
+      "id": "on-c-s-tunnel-the-refusal-is-the-stock-page",
+      "label": "On C's tunnel the refusal is the stock page",
+      "steps": [
+        {
+          "id": "step-126",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"$(md_jar a-c)\" \"https://${SUB_C}.${DOMAIN_3}/index.html\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-128",
+          "label": "Set REFUSAL_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "REFUSAL_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-129",
+          "label": "…titled without a brand",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "REFUSAL_C"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "<title>Not allowed — ${DOMAIN_3}</title>"
+              },
+              "message": "…titled without a brand"
+            }
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "…no brand header",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "REFUSAL_C"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "class=\"brand"
+              },
+              "message": "…no brand header"
+            }
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "…the pages' own accent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "REFUSAL_C"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "--accent: ${STOCK_ACCENT};"
+              },
+              "message": "…the pages' own accent"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"On C's tunnel the refusal is the stock page\"\n\nRESP=$(visit \"$(md_jar a-c)\" \"https://${SUB_C}.${DOMAIN_3}/index.html\")\nassert_domain_refusal \"$RESP\" \"${DOMAIN_3}\" \"${USER_A} on C's tunnel\"\nREFUSAL_C=$(visit_body \"$RESP\")\nassert_contains \"${REFUSAL_C}\" \"<title>Not allowed — ${DOMAIN_3}</title>\" \"…titled without a brand\" || true\nassert_not_contains \"${REFUSAL_C}\" 'class=\"brand' \"…no brand header\" || true\nassert_contains \"${REFUSAL_C}\" \"--accent: ${STOCK_ACCENT};\" \"…the pages' own accent\" || true\n\n# ===========================================================================\n# 5. A change, a logo removed, a brand removed\n# ==========================================================================="
+    },
+    {
+      "id": "a-s-theme-changed-to-oled-the-page-and-its-vhost-follow",
+      "label": "A's theme changed to oled: the page and its vhost follow",
+      "steps": [
+        {
+          "id": "step-132",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_api PUT \"domains/${DOMAIN}/branding\" \"$(brand_body \"${BRAND_A}\" \"${TAGLINE_A}\" oled \"${ACCENT_A}\" \"${SUPPORT_A}\" \"${HELP_A}\")\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-133",
+          "label": "PUT …/branding with theme oled: revision 4, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.branding.revision) \\(.branding.theme) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true 4 oled 0"
+              },
+              "message": "PUT …/branding with theme oled: revision 4, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-134",
+          "label": "auth.${DOMAIN}/ says data-theme=\\\"oled\\\"",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "auth.${DOMAIN}/ says data-theme=\\\"oled\\\""
+          }
+        },
+        {
+          "id": "step-135",
+          "label": "auth.${DOMAIN}/ does not say data-theme=\\\"oled\\\" within 90 s",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "auth.${DOMAIN}/ does not say data-theme=\\\"oled\\\" within 90 s"
+          }
+        },
+        {
+          "id": "step-136",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /etc/nginx/sites-available/$(vhost_name auth "
+          },
+          "capture": [
+            {
+              "variable": "VHOST_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-139",
+          "label": "nginx -t passes",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "nginx -t passes"
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "nginx -t fails with the rewritten auth vhost",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "nginx -t fails with the rewritten auth vhost"
+          }
+        }
+      ],
+      "bash": "log_section \"A's theme changed to oled: the page and its vhost follow\"\n\nRESP=$(md_api PUT \"domains/${DOMAIN}/branding\" \"$(brand_body \"${BRAND_A}\" \"${TAGLINE_A}\" oled \"${ACCENT_A}\" \"${SUPPORT_A}\" \"${HELP_A}\")\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.branding.revision) \\(.branding.theme) \\(.warnings // [] | length)\"' \"true 4 oled 0\" \"PUT …/branding with theme oled: revision 4, no warning\" || true\nif wait_for 90 page_says \"${DOMAIN}\" 'data-theme=\"oled\"'; then\n  log_pass \"auth.${DOMAIN}/ says data-theme=\\\"oled\\\"\"\nelse\n  log_fail \"auth.${DOMAIN}/ does not say data-theme=\\\"oled\\\" within 90 s\"\nfi\nVHOST_A=$(host_exec \"cat /etc/nginx/sites-available/$(vhost_name auth \"${DOMAIN}\")\" 2>/dev/null || echo \"\")\nassert_contains \"${VHOST_A}\" \"sub_filter 'data-theme=\\\"light\\\"' 'data-theme=\\\"oled\\\"';\" \"The installed auth vhost of ${DOMAIN} rewrites the theme to oled\" || true\nassert_contains \"${VHOST_A}\" \"sub_filter 'data-logooverride=\\\"true\\\"' 'data-logooverride=\\\"true\\\"';\" \"…and keeps the logo switch on\" || true\nif host_exec \"nginx -t\" > /dev/null 2>&1; then\n  log_pass \"nginx -t passes\"\nelse\n  log_fail \"nginx -t fails with the rewritten auth vhost\"\nfi"
+    },
+    {
+      "id": "a-s-logo-removed-the-logo-switch-off-the-placeholder-back",
+      "label": "A's logo removed: the logo switch off, the placeholder back",
+      "steps": [
+        {
+          "id": "step-141",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_api DELETE \"domains/${DOMAIN}/branding/logo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-142",
+          "label": "DELETE …/branding/logo: removed, revision 5, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.removed) \\(.branding.logo) \\(.branding.revision) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true null 5 0"
+              },
+              "message": "DELETE …/branding/logo: removed, revision 5, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "auth.${DOMAIN}/ says data-logooverride=\\\"false\\\"",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "auth.${DOMAIN}/ says data-logooverride=\\\"false\\\""
+          }
+        },
+        {
+          "id": "step-144",
+          "label": "auth.${DOMAIN}/ still says the logo is served, 90 s after its removal",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "auth.${DOMAIN}/ still says the logo is served, 90 s after its removal"
+          }
+        },
+        {
+          "id": "step-145",
+          "label": "auth.${DOMAIN}/static/media/logo.png is Authelia's placeholder again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(fetch_digest \"$(auth_url \"${DOMAIN}\" /static/media/logo.png)\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "200 image/png ${PLACEHOLDER_SHA}"
+              },
+              "message": "auth.${DOMAIN}/static/media/logo.png is Authelia's placeholder again"
+            }
+          }
+        },
+        {
+          "id": "step-146",
+          "label": "…the stylesheet stays (the brand does)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN}\" /)\")\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<link rel=\"stylesheet\" href=\"/brand.css\">"
+              },
+              "message": "…the stylesheet stays (the brand does)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A's logo removed: the logo switch off, the placeholder back\"\n\nRESP=$(md_api DELETE \"domains/${DOMAIN}/branding/logo\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.removed) \\(.branding.logo) \\(.branding.revision) \\(.warnings // [] | length)\"' \"true null 5 0\" \"DELETE …/branding/logo: removed, revision 5, no warning\" || true\nif wait_for 90 page_says \"${DOMAIN}\" 'data-logooverride=\"false\"'; then\n  log_pass \"auth.${DOMAIN}/ says data-logooverride=\\\"false\\\"\"\nelse\n  log_fail \"auth.${DOMAIN}/ still says the logo is served, 90 s after its removal\"\nfi\nassert_eq \"$(fetch_digest \"$(auth_url \"${DOMAIN}\" /static/media/logo.png)\")\" \"200 image/png ${PLACEHOLDER_SHA}\" \"auth.${DOMAIN}/static/media/logo.png is Authelia's placeholder again\" || true\nassert_contains \"$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN}\" /)\")\")\" '<link rel=\"stylesheet\" href=\"/brand.css\">' \"…the stylesheet stays (the brand does)\" || true"
+    },
+    {
+      "id": "b-s-brand-removed-the-stock-page-its-rendering-gone",
+      "label": "B's brand removed: the stock page, its rendering gone",
+      "steps": [
+        {
+          "id": "step-147",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_api DELETE \"domains/${DOMAIN_2}/branding\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-148",
+          "label": "DELETE /api/domains/${DOMAIN_2}/branding: removed, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.removed) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true 0"
+              },
+              "message": "DELETE /api/domains/${DOMAIN_2}/branding: removed, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-149",
+          "label": "GET says ${DOMAIN_2} has no brand",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(branding_of \"${DOMAIN_2}\")"
+              },
+              "path": ".branding",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "GET says ${DOMAIN_2} has no brand"
+            }
+          }
+        },
+        {
+          "id": "step-150",
+          "label": "auth.${DOMAIN_2}/ is the stock page: data-logooverride=\\\"false\\\", no stylesheet",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "auth.${DOMAIN_2}/ is the stock page: data-logooverride=\\\"false\\\", no stylesheet"
+          }
+        },
+        {
+          "id": "step-151",
+          "label": "auth.${DOMAIN_2}/ is not the stock page 90 s after the removal",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "auth.${DOMAIN_2}/ is not the stock page 90 s after the removal"
+          }
+        },
+        {
+          "id": "step-152",
+          "label": "…data-theme=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /)\")\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-theme=\"light\""
+              },
+              "message": "…data-theme=\\"
+            }
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "auth.${DOMAIN_2}/brand.css: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /brand.css)\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "auth.${DOMAIN_2}/brand.css: 404"
+            }
+          }
+        },
+        {
+          "id": "step-154",
+          "label": "auth.${DOMAIN_2}/static/media/logo.png: the placeholder",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(fetch_digest \"$(auth_url \"${DOMAIN_2}\" /static/media/logo.png)\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "200 image/png ${PLACEHOLDER_SHA}"
+              },
+              "message": "auth.${DOMAIN_2}/static/media/logo.png: the placeholder"
+            }
+          }
+        },
+        {
+          "id": "step-155",
+          "label": "${WEB_ROOT}/${DOMAIN_2} is gone",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${WEB_ROOT}/${DOMAIN_2} is gone"
+          }
+        },
+        {
+          "id": "step-156",
+          "label": "${WEB_ROOT}/${DOMAIN_2} is still there",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${WEB_ROOT}/${DOMAIN_2} is still there"
+          }
+        },
+        {
+          "id": "step-157",
+          "label": "No rendering of ${DOMAIN_2} is left under .renders/",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "No rendering of ${DOMAIN_2} is left under .renders/"
+          }
+        },
+        {
+          "id": "step-158",
+          "label": "A rendering of ${DOMAIN_2} is left under .renders/ ($(renders_of \"${DOMAIN_2}\"))",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "A rendering of ${DOMAIN_2} is left under .renders/ ($(renders_of \"${DOMAIN_2}\"))"
+          }
+        },
+        {
+          "id": "step-159",
+          "label": "Exactly one rendering of ${DOMAIN} serves (the previous ones removed)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(renders_of \"${DOMAIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Exactly one rendering of ${DOMAIN} serves (the previous ones removed)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"B's brand removed: the stock page, its rendering gone\"\n\nRESP=$(md_api DELETE \"domains/${DOMAIN_2}/branding\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.removed) \\(.warnings // [] | length)\"' \"true 0\" \"DELETE /api/domains/${DOMAIN_2}/branding: removed, no warning\" || true\nassert_json_field \"$(branding_of \"${DOMAIN_2}\")\" '.branding' \"null\" \"GET says ${DOMAIN_2} has no brand\" || true\nif wait_for 90 stock_page \"${DOMAIN_2}\"; then\n  log_pass \"auth.${DOMAIN_2}/ is the stock page: data-logooverride=\\\"false\\\", no stylesheet\"\nelse\n  log_fail \"auth.${DOMAIN_2}/ is not the stock page 90 s after the removal\"\nfi\nassert_contains \"$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /)\")\")\" 'data-theme=\"light\"' \"…data-theme=\\\"light\\\"\" || true\nassert_eq \"$(visit_status \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /brand.css)\")\")\" \"404\" \"auth.${DOMAIN_2}/brand.css: 404\" || true\nassert_eq \"$(fetch_digest \"$(auth_url \"${DOMAIN_2}\" /static/media/logo.png)\")\" \"200 image/png ${PLACEHOLDER_SHA}\" \"auth.${DOMAIN_2}/static/media/logo.png: the placeholder\" || true\nif wait_for 90 entry_gone \"${DOMAIN_2}\"; then\n  log_pass \"${WEB_ROOT}/${DOMAIN_2} is gone\"\nelse\n  log_fail \"${WEB_ROOT}/${DOMAIN_2} is still there\"\nfi\nif wait_for 90 renders_gone \"${DOMAIN_2}\"; then\n  log_pass \"No rendering of ${DOMAIN_2} is left under .renders/\"\nelse\n  log_fail \"A rendering of ${DOMAIN_2} is left under .renders/ ($(renders_of \"${DOMAIN_2}\"))\"\nfi\nassert_eq \"$(renders_of \"${DOMAIN}\")\" \"1\" \"Exactly one rendering of ${DOMAIN} serves (the previous ones removed)\" || true"
+    },
+    {
+      "id": "the-audit-names-fields-and-digests-never-the-name-or-the-bytes",
+      "label": "The audit names fields and digests, never the name or the bytes",
+      "steps": [
+        {
+          "id": "step-160",
+          "label": "GET /api/audit?action=domain.branding.updated&limit=200",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?action=domain.branding.updated&limit=200"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-161",
+          "label": "Five domain.branding.updated entries for ${DOMAIN}: fields, logo, favicon, fields, logo removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUDIT"
+              },
+              "path": "length",
+              "expected": {
+                "kind": "literal",
+                "value": "5"
+              },
+              "message": "Five domain.branding.updated entries for ${DOMAIN}: fields, logo, favicon, fields, logo removed"
+            }
+          }
+        },
+        {
+          "id": "step-162",
+          "label": "…the field entries name the fields (name, theme, accent, …)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUDIT"
+              },
+              "path": "[.[] | select(.details.fields != null) | .details.fields[]] | unique | contains([\"name\", \"theme\", \"accent\"])",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…the field entries name the fields (name, theme, accent, …)"
+            }
+          }
+        },
+        {
+          "id": "step-163",
+          "label": "…the logo entry carries its digest",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUDIT"
+              },
+              "path": "[.[] | select(.details.asset == \"logo\" and .details.removed != true) | .details.sha256] | first",
+              "expected": {
+                "kind": "var",
+                "name": "LOGO_A_SHA"
+              },
+              "message": "…the logo entry carries its digest"
+            }
+          }
+        },
+        {
+          "id": "step-164",
+          "label": "…and the removal is one entry",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUDIT"
+              },
+              "path": "[.[] | select(.details.asset == \"logo\" and .details.removed == true)] | length",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…and the removal is one entry"
+            }
+          }
+        },
+        {
+          "id": "step-165",
+          "label": "…revisions 1 to 5",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUDIT"
+              },
+              "path": "[.[] | .details.revision] | sort",
+              "expected": {
+                "kind": "literal",
+                "value": "[1,2,3,4,5]"
+              },
+              "message": "…revisions 1 to 5"
+            }
+          }
+        },
+        {
+          "id": "step-166",
+          "label": "…no entry carries the brand's name",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUDIT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "BRAND_A"
+              },
+              "message": "…no entry carries the brand's name"
+            }
+          }
+        },
+        {
+          "id": "step-167",
+          "label": "…nor the logo's bytes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUDIT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "LOGO_A_B64_HEAD"
+              },
+              "message": "…nor the logo's bytes"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The audit names fields and digests, never the name or the bytes\"\n\nAUDIT=$(host_api_get \"audit?action=domain.branding.updated&limit=200\" 2>/dev/null | jq -c --arg d \"${DOMAIN}\" --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base and .details.domain == $d)]' 2>/dev/null || echo \"[]\")\nassert_json_field \"${AUDIT}\" 'length' \"5\" \"Five domain.branding.updated entries for ${DOMAIN}: fields, logo, favicon, fields, logo removed\" || true\nassert_json_field \"${AUDIT}\" '[.[] | select(.details.fields != null) | .details.fields[]] | unique | contains([\"name\", \"theme\", \"accent\"])' \"true\" \"…the field entries name the fields (name, theme, accent, …)\" || true\nassert_json_field \"${AUDIT}\" '[.[] | select(.details.asset == \"logo\" and .details.removed != true) | .details.sha256] | first' \"${LOGO_A_SHA}\" \"…the logo entry carries its digest\" || true\nassert_json_field \"${AUDIT}\" '[.[] | select(.details.asset == \"logo\" and .details.removed == true)] | length' \"1\" \"…and the removal is one entry\" || true\nassert_json_field \"${AUDIT}\" '[.[] | .details.revision] | sort' \"[1,2,3,4,5]\" \"…revisions 1 to 5\" || true\nassert_not_contains \"${AUDIT}\" \"${BRAND_A}\" \"…no entry carries the brand's name\" || true\nassert_not_contains \"${AUDIT}\" \"${LOGO_A_B64_HEAD}\" \"…nor the logo's bytes\" || true\nassert_json_field \"$(host_api_get \"audit?action=domain.branding.removed&limit=50\" 2>/dev/null | jq -c --arg d \"${DOMAIN_2}\" --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base and .details.domain == $d)]' 2>/dev/null || echo \"[]\")\" 'length' \"1\" \"One domain.branding.removed entry for ${DOMAIN_2}\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 52 — Per-domain branding: two brands, a stock third (Three-VM)\n# ============================================================================\n# The auth pages of a domain carry its brand (design: packages/core/docs/\n# auth-branding-design.md): A — the relay's primary — and B are branded\n# differently, C has no brand and must be exactly the stock page\n# (multi-domain-harness.sh names B and C).\n#\n# 1. B and C active. Two logos (PNG) and two favicons (an ICO, a PNG) made\n#    on the host VM, their digests kept. Brand A (dark, an accent, a\n#    support e-mail and URL, logo A, favicon A) and brand B (light, another\n#    accent, logo B, favicon B) through the API; each answer names the\n#    revision and the asset's digest, carries no warning; both rendered.\n# 2. The sign-in pages, from the visitor: A's index says data-theme=\"dark\",\n#    data-logooverride=\"true\" and links /brand.css; B's \"light\"; C's\n#    \"light\", \"false\" and no stylesheet — and Authelia's CSP is untouched.\n#    /brand.css carries the accent and the hidden footer, nosniff and the\n#    assets' cache policy; C has none (404). The logos and favicons are the\n#    fixtures' bytes under the content type of the extension; C gets\n#    Authelia's placeholder logo and its own favicon. The locale files say\n#    \"Login - Brand A\" in English and the brand in Turkish, no {{authelia}}\n#    left in a value; C's are Authelia's own.\n# 3. The invitation page of A carries the brand's name, logo and tagline\n#    with the stock page's script; C's is the stock page.\n# 4. Gatekeeper's pages: a member of A, signed in at B, gets B's branded\n#    domain refusal on B's tunnel; without a grant, A's branded\n#    access-request page on A's restricted tunnel (its support contact);\n#    on C's tunnel the stock refusal, no brand.\n# 5. A's theme changed to oled: the page and its vhost say so; A's logo\n#    removed: the logo switch off, the placeholder back; B's brand removed:\n#    the stock page, its rendering gone. The audit names fields and\n#    digests, never the name or the bytes.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=52\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n\nrequire_commands multipass curl jq perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nUSER_A=\"e2e52-a\"\n# Test credentials for this run only, never printed\nPASSWORD_A=\"E2e-$(openssl rand -hex 12)\"\nID_A=\"\"\nSECRET_A=\"\"\nBRAND_A=\"Brand A\"\nBRAND_B=\"Brand B\"\nTAGLINE_A=\"Sign in to A\"\nACCENT_A=\"#1d4ed8\"\nACCENT_B=\"#b91c1c\"\nSUPPORT_A=\"support-a@example.test\"\nHELP_A=\"https://help.example.test/a\"\n# The pages' own accent (Gatekeeper's PAGE_DEFAULT_ACCENT), on a stock page\nSTOCK_ACCENT=\"#22d3ee\"\nSUB_A=\"e2e52a\"\nSUB_B=\"e2e52b\"\nSUB_C=\"e2e52c\"\nPORT_A=18521\nPORT_B=18522\nPORT_C=18523\nTUNNEL_A=\"\"\nTUNNEL_B=\"\"\nTUNNEL_C=\"\"\n# The fixtures on the host VM (images and their JSON bodies)\nFIXTURES=\"/var/tmp/e2e-52-branding\"\nWEB_ROOT=\"/var/www/lamaste/auth\"\nLOGO_A_SHA=\"\"\nLOGO_B_SHA=\"\"\nFAVICON_A_SHA=\"\"\nFAVICON_B_SHA=\"\"\nPLACEHOLDER_SHA=\"\"\nLOGO_A_B64_HEAD=\"\"\nICO_TYPE=\"\"\n\n# brand_body <name> <tagline | -> <theme> <accent> <support e-mail | -> <support URL | -> — a PUT body\nbrand_body() {\n  jq -c -n --arg n \"$1\" --arg t \"$2\" --arg th \"$3\" --arg a \"$4\" --arg e \"$5\" --arg u \"$6\" \\\n    '{name: $n, theme: $th, accent: $a} + (if $t != \"-\" then {tagline: $t} else {} end) + (if $e != \"-\" then {supportEmail: $e} else {} end) + (if $u != \"-\" then {supportUrl: $u} else {} end)'\n}\n\n# auth_url <domain> <path> — a page of the domain's sign-in host\nauth_url() { echo \"https://auth.$1$2\"; }\n\n# branding_of <domain> — GET /api/domains/<domain>/branding, its body\nbranding_of() { body_of \"$(host_api_call GET \"domains/$1/branding\")\"; }\n\n# rendered_current <domain> — the rendering nginx serves is the record's revision\nrendered_current() { [ \"$(json_get \"$(branding_of \"$1\")\" '.branding.renderedCurrent')\" = \"true\" ]; }\n\n# page_says <domain> <substring> — the sign-in page of <domain> carries <substring>\npage_says() { [[ \"$(visit_body \"$(visit - \"$(auth_url \"$1\" /)\")\")\" == *\"$2\"* ]]; }\n\n# fetch_digest <url> — \"<status> <content type> <sha256 of the body>\" of one request from the visitor\nfetch_digest() {\n  visitor_exec \"curl -sk --max-time 20 -o /tmp/e2e-52-body -w '%{http_code} %{content_type} ' $(q \"$1\") && sha256sum /tmp/e2e-52-body | cut -d' ' -f1 || echo fetch-failed\" 2>/dev/null | tr -d '\\r\\n' || echo \"\"\n}\n\n# host_digest <file on the host VM> — its SHA-256\nhost_digest() { host_exec \"sha256sum $(printf %q \"$1\") | cut -d' ' -f1\" 2>/dev/null | tail -n 1 | tr -d '\\r' || echo \"\"; }\n\n# locale_file <domain> <locale> <namespace> — the locale file as served on the domain's sign-in host\nlocale_file() { visit_body \"$(visit - \"$(auth_url \"$1\" \"/locales/$2/$3.json\")\")\"; }\n\n# script_of <html> — the page's <script> section alone\nscript_of() { printf '%s\\n' \"$1\" | sed -n '/<script>/,/<\\/script>/p'; }\n\n# renders_of <domain> — how many rendering directories of <domain>\n# (`<domain>-<revision>-<hex>`) are under .renders/\nrenders_of() { host_exec \"ls ${WEB_ROOT}/.renders 2>/dev/null | awk -v p=$(printf %q \"$1-\") 'index(\\$0, p) == 1' | wc -l | tr -d ' '\" 2>/dev/null | tail -n 1 | tr -d '\\r' || echo \"?\"; }\n\n# renders_gone <domain> — none is left\nrenders_gone() { [ \"$(renders_of \"$1\")\" = \"0\" ]; }\n\n# entry_gone <domain> — the domain has no entry under the web root (no link, no directory)\nentry_gone() { [ \"$(host_exec \"test -L ${WEB_ROOT}/$1 -o -e ${WEB_ROOT}/$1 && echo there || echo gone\" 2>/dev/null | tail -n 1 | tr -d '\\r')\" = \"gone\" ]; }\n\n# stock_page <domain> — the sign-in page of <domain> is the stock one: no logo switch, no stylesheet\nstock_page() {\n  local body\n  body=$(visit_body \"$(visit - \"$(auth_url \"$1\" /)\")\")\n  [[ \"$body\" == *'data-logooverride=\"false\"'* && \"$body\" != *'brand.css'* ]]\n}\n\n# write_fixtures — the images on the host VM, deterministic (python3 with\n# zlib: a solid PNG of each colour; the ICO wraps a PNG entry), each with a\n# JSON body {data: <base64>} beside it; never printed\nwrite_fixtures() {\n  local script\n  script=$(\n    cat << 'PY'\nimport base64, json, os, struct, sys, zlib\nout = sys.argv[1]\ndef chunk(kind, data):\n    return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)\ndef png(w, h, rgb):\n    raw = b''.join(b'\\x00' + bytes(rgb) * w for _ in range(h))\n    return (b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))\n            + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b''))\ndef ico(entry, w, h):\n    return struct.pack('<HHH', 0, 1, 1) + struct.pack('<BBBBHHII', w, h, 0, 0, 1, 32, len(entry), 22) + entry\nfiles = {\n    'logo-a.png': png(48, 48, (29, 78, 216)),\n    'logo-b.png': png(64, 32, (185, 28, 28)),\n    'favicon-a.ico': ico(png(16, 16, (29, 78, 216)), 16, 16),\n    'favicon-b.png': png(32, 32, (185, 28, 28)),\n}\nfor name, data in files.items():\n    with open(os.path.join(out, name), 'wb') as f:\n        f.write(data)\n    with open(os.path.join(out, name + '.json'), 'w') as f:\n        json.dump({'data': base64.b64encode(data).decode('ascii')}, f)\nPY\n  )\n  host_exec \"rm -rf ${FIXTURES} && mkdir -p ${FIXTURES} && echo $(printf '%s' \"$script\" | base64 | tr -d '\\n') | base64 -d > ${FIXTURES}/mkimages.py && python3 ${FIXTURES}/mkimages.py ${FIXTURES} && ls ${FIXTURES}\" > /dev/null 2>&1 || true\n  LOGO_A_SHA=$(host_digest \"${FIXTURES}/logo-a.png\")\n  LOGO_B_SHA=$(host_digest \"${FIXTURES}/logo-b.png\")\n  FAVICON_A_SHA=$(host_digest \"${FIXTURES}/favicon-a.ico\")\n  FAVICON_B_SHA=$(host_digest \"${FIXTURES}/favicon-b.png\")\n  LOGO_A_B64_HEAD=$(host_exec \"base64 -w0 ${FIXTURES}/logo-a.png | head -c 24\" 2>/dev/null | tail -n 1 | tr -d '\\r' || echo \"\")\n  assert_eq \"$(printf '%s\\n%s\\n%s\\n%s\\n' \"${LOGO_A_SHA}\" \"${LOGO_B_SHA}\" \"${FAVICON_A_SHA}\" \"${FAVICON_B_SHA}\" | grep -cE '^[0-9a-f]{64}$' || true)\" \"4\" \"Four image fixtures written on the host VM, each with a digest\" || true\n  assert_eq \"$(printf '%s\\n%s\\n%s\\n%s\\n' \"${LOGO_A_SHA}\" \"${LOGO_B_SHA}\" \"${FAVICON_A_SHA}\" \"${FAVICON_B_SHA}\" | sort -u | wc -l | tr -d ' ')\" \"4\" \"…all four distinct\" || true\n}\n\nbegin_test \"52 — Per-domain branding: two brands, a stock third (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id d\n  for d in \"${DOMAIN}\" \"${DOMAIN_2}\"; do\n    host_api_delete \"domains/${d}/branding\" > /dev/null 2>&1 || true\n  done\n  for id in ${TUNNEL_A} ${TUNNEL_B} ${TUNNEL_C}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  host_api_delete \"users/${USER_A}?erase=true\" > /dev/null 2>&1 || true\n  timed_exec 30 multipass exec \"${HOST_VM}\" -- sudo bash -c \"rm -rf ${FIXTURES}; true\" > /dev/null 2>&1\n  timed_exec 30 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f /tmp/e2e-52-body; true\" > /dev/null 2>&1\n  md_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}
