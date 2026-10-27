@@ -341,18 +341,29 @@ async function renderLocked(domain, logger) {
   const row = brandingRow(await getStateDb(), domain);
   if (!row) return null;
   try {
+    const all = await locales();
     const rendered = await renderAuthBranding({
       domain,
       brand: rowFields(row),
       revision: row.revision,
       logo: row.logo ?? null,
       favicon: row.favicon ?? null,
-      locales: await locales(),
+      locales: all,
       autheliaVersion: dep('autheliaVersion'),
       root: dep('webRoot'),
     });
     await recordRenderOutcome(domain, null, logger);
-    logger?.info({ domain, revision: row.revision }, 'Brand rendered');
+    // Files Authelia lists but does not serve (4.39.28: `srp`) are left out
+    // of the rendering, as they are of the stock page.
+    logger?.info(
+      {
+        domain,
+        revision: row.revision,
+        localeFiles: all.files.length,
+        localesMissing: all.missing?.length ?? 0,
+      },
+      'Brand rendered',
+    );
     return rendered;
   } catch (err) {
     logger?.warn({ domain, err: err.message }, 'Brand rendering failed');

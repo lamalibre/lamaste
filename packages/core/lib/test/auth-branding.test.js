@@ -415,11 +415,35 @@ test(`GET /locales as Authelia ${PINNED} answers it: every listed locale, parent
   };
   const locales = await fetchAutheliaLocales({ fetchImpl, baseUrl: 'http://authelia.test' });
   assert.equal(locales.files.length, 12);
+  assert.deepEqual(locales.missing, []);
   assert.equal(requested[0], '/locales');
   assert.ok(requested.includes('/locales/tr-TR/settings.json'));
-  // A file Authelia does not serve fails the whole fetch: a partial language would lose its texts.
+  // A listed file Authelia answers 404 to (4.39.28 lists `srp` and serves
+  // none of its files) is left out, named in `missing`: the portal never
+  // gets it from Authelia either, so no override is the same page.
   served.delete('/locales/tr/consent.json');
-  await assert.rejects(fetchAutheliaLocales({ fetchImpl, baseUrl: 'http://authelia.test' }), /404/);
+  const partial = await fetchAutheliaLocales({ fetchImpl, baseUrl: 'http://authelia.test' });
+  assert.equal(partial.files.length, 11);
+  assert.deepEqual(partial.missing, [{ locale: 'tr', namespace: 'consent' }]);
+  // Any other refusal, and a list Authelia serves nothing of, still fail the fetch.
+  served.set('/locales/tr/consent.json', null);
+  const refusing = async (url) => {
+    const route = url.replace('http://authelia.test', '');
+    if (route === '/locales/tr/consent.json') {
+      return { ok: false, status: 500, text: async () => '' };
+    }
+    return fetchImpl(url);
+  };
+  await assert.rejects(
+    fetchAutheliaLocales({ fetchImpl: refusing, baseUrl: 'http://authelia.test' }),
+    /500/,
+  );
+  const nothing = async (url) =>
+    url.endsWith('/locales') ? fetchImpl(url) : { ok: false, status: 404, text: async () => '' };
+  await assert.rejects(
+    fetchAutheliaLocales({ fetchImpl: nothing, baseUrl: 'http://authelia.test' }),
+    /served none/,
+  );
 });
 
 // --- brand.json, as Gatekeeper reads it back ------------------------------

@@ -127,13 +127,20 @@ export interface AutheliaLocaleFile {
   readonly messages: Record<string, unknown>;
 }
 
-/** Authelia's locales: the languages it lists and every file of theirs. */
+/**
+ * Authelia's locales: the languages it lists, every file of theirs it
+ * serves, and the files it lists but does not serve (`missing`) — 4.39.28
+ * lists `srp` with three namespaces and answers 404 to each
+ * (`/locales/srp/*.json`); the portal never gets those from Authelia
+ * either, so a rendering leaves them out rather than failing.
+ */
 export interface AutheliaLocales {
   readonly languages: ReadonlyArray<{
     readonly locale: string;
     readonly namespaces: readonly string[];
   }>;
   readonly files: readonly AutheliaLocaleFile[];
+  readonly missing: ReadonlyArray<{ readonly locale: string; readonly namespace: string }>;
 }
 
 type FetchLike = (
@@ -208,18 +215,21 @@ function namespaceList(value: unknown): string[] {
  * Authelia's language list and every locale file of every language it
  * lists, from the running Authelia on the relay. Throws when it does not
  * answer or answers something else: a rendering needs all of them, since
- * an override file replaces the whole language.
+ * an override file replaces the whole language. A listed file Authelia
+ * answers 404 to is reported in `missing`, not fetched: nothing of
+ * Authelia's is lost by not overriding what it does not serve.
  */
 export async function fetchAutheliaLocales({
   fetchImpl = globalThis.fetch as unknown as FetchLike,
   baseUrl = AUTHELIA_LOCAL_URL,
   timeoutMs = 10_000,
 }: FetchAutheliaLocalesOptions = {}): Promise<AutheliaLocales> {
-  const get = async (route: string): Promise<unknown> => {
+  const get = async (route: string, { absent = false } = {}): Promise<unknown> => {
     const response = await fetchImpl(`${baseUrl}${route}`, {
       signal: AbortSignal.timeout(timeoutMs),
       headers: { accept: 'application/json' },
     });
+    if (absent && response.status === 404) return undefined;
     if (!response.ok) throw new Error(`Authelia answered ${response.status} to GET ${route}`);
     const text = await response.text();
     if (text.length > AUTHELIA_LOCALE_FILE_MAX_BYTES) {
@@ -233,16 +243,22 @@ export async function fetchAutheliaLocales({
   };
   const languages = parseAutheliaLocalesList(await get('/locales'));
   const files: AutheliaLocaleFile[] = [];
+  const missing: Array<{ locale: string; namespace: string }> = [];
   for (const { locale, namespaces } of languages) {
     for (const namespace of namespaces) {
-      const messages = await get(`/locales/${locale}/${namespace}.json`);
+      const messages = await get(`/locales/${locale}/${namespace}.json`, { absent: true });
+      if (messages === undefined) {
+        missing.push({ locale, namespace });
+        continue;
+      }
       if (messages === null || typeof messages !== 'object' || Array.isArray(messages)) {
         throw new Error(`Authelia's ${locale}/${namespace} locale is not an object`);
       }
       files.push({ locale, namespace, messages: messages as Record<string, unknown> });
     }
   }
-  return { languages, files };
+  if (files.length === 0) throw new Error('Authelia served none of the locale files it lists');
+  return { languages, files, missing };
 }
 
 // ---------------------------------------------------------------------------
