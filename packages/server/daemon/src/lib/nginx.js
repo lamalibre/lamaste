@@ -2,6 +2,9 @@ import { execa } from 'execa';
 import { access, lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  AUTH_BRANDING_FILES,
+  AUTH_BRANDING_LOCALES_DIR,
+  AUTH_BRANDING_THEMES,
   BACKEND_COOKIE_VARIABLE,
   RELAY_PANEL_PORT,
   SITE_UPLOAD_MAX_REQUEST_MIB,
@@ -11,6 +14,7 @@ import {
   userSurfaceApiPath,
   WEB_TREE_CONTENT_TYPES,
 } from '@lamalibre/lamaste';
+import { authBrandingDir } from '@lamalibre/lamaste/server';
 
 const SITES_AVAILABLE = '/etc/nginx/sites-available';
 const SITES_ENABLED = '/etc/nginx/sites-enabled';
@@ -418,15 +422,121 @@ export const LEGACY_AUTH_VHOST = 'lamalibre-lamaste-auth';
 
 /**
  * Write the Authelia auth portal vhost of one of the relay's domains
- * (`primary`: the panel's — see {@link renderAuthVhost}).
+ * (`primary`: the panel's; `branding`: what the vhost says of the domain's
+ * brand, null for none — see {@link renderAuthVhost}).
  *
  * @param {string} domain
- * @param {{ primary: boolean, enabled?: boolean }} opts
+ * @param {{ primary: boolean, enabled?: boolean, branding?: AuthVhostBranding | null }} opts
  */
-export async function writeAuthVhost(domain, { primary, enabled = true }) {
-  const { name, config } = renderAuthVhost(domain, undefined, { primary });
+export async function writeAuthVhost(domain, { primary, enabled = true, branding = null }) {
+  const { name, config } = renderAuthVhost(domain, undefined, { primary, branding });
   await safeWriteVhost(name, config, `auth.${domain}`, { enabled });
   return path.join(SITES_AVAILABLE, name);
+}
+
+/**
+ * What the auth vhost says of a domain's brand (lib/auth-branding.js
+ * `authVhostBranding`): Authelia's theme for the page and whether the
+ * domain serves a logo of its own. Everything else about the brand is a
+ * file nginx serves when it exists.
+ *
+ * @typedef {{ theme: string, logo: boolean }} AuthVhostBranding
+ */
+
+/**
+ * The brand-override locations of an auth vhost: the three routes Authelia
+ * lets a file override, answered from the domain's rendered directory when
+ * the file is there and by Authelia otherwise, and the generated stylesheet.
+ * Same for a branded and an unbranded domain — a domain without a brand has
+ * no directory, so every request falls through.
+ *
+ * @param {string} domain
+ * @param {string} fqdn
+ */
+function authBrandLocations(domain, fqdn) {
+  const root = authBrandingDir(domain);
+  const headers = `
+        add_header X-Content-Type-Options nosniff;
+        add_header Cache-Control "public, max-age=0, must-revalidate";`;
+  const override = (matcher, fallback) => `
+    location ${matcher} {
+        root ${root};
+        try_files $uri ${fallback};${headers}
+    }`;
+  return `
+    # Brand overrides (packages/core/docs/auth-branding-design.md): the
+    # domain's file when it has one, else Authelia's own. The root is a link
+    # to the rendering that serves, switched by rename — disable_symlinks
+    # stays off. The headers apply to a file served from here alone: the
+    # fallback is produced in @authelia, which adds none. The content type
+    # comes from the extension, never from the bytes.${override(`= /${AUTH_BRANDING_FILES.favicon}`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.logo}`, '@authelia')}${override(`/${AUTH_BRANDING_LOCALES_DIR}/`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.css}`, '=404')}
+
+    # Authelia's own answer for an override the domain lacks (a location
+    # that sets any header inherits none of the server's).
+    location @authelia {
+        proxy_pass http://127.0.0.1:9091;${autheliaProxyHeaders(fqdn)}
+    }
+`;
+}
+
+/**
+ * The headers every location proxying to Authelia sets. Authelia takes the
+ * OIDC issuer and the session cookie's domain from X-Forwarded-Host /
+ * -Proto: this portal's own name, never what the client sent.
+ */
+function autheliaProxyHeaders(fqdn) {
+  return `
+        proxy_set_header Host ${fqdn};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host ${fqdn};
+        proxy_set_header X-Forwarded-Proto https;`;
+}
+
+/**
+ * The rewrite of Authelia's index HTML for this domain (`ngx_http_sub_module`:
+ * literal strings, matched ignoring case, `text/html` only — the module's
+ * default types; `sub_filter_once off` so every occurrence is replaced).
+ * Authelia renders the page once for every domain with the global theme
+ * (`theme: light`, written explicitly) and `data-logooverride="true"` (its
+ * asset directory always holds Lamaste's placeholder logo); the vhost makes
+ * it the domain's. An unbranded domain keeps the light theme, gets no
+ * stylesheet, and `data-logooverride="false"`: exactly the stock page, the
+ * placeholder never shown. A branded domain without a logo keeps Authelia's
+ * generic icon the same way.
+ *
+ * @param {AuthVhostBranding | null} branding
+ */
+function autheliaIndexRewrite(branding) {
+  const theme = branding === null ? 'light' : branding.theme;
+  const logo = branding !== null && branding.logo;
+  return `
+        # The index HTML, as Authelia renders it for every domain, made this
+        # domain's: its theme, its stylesheet, its logo switch. Uncompressed
+        # from Authelia so the filter sees the text; text/html only (the
+        # module's default).
+        proxy_set_header Accept-Encoding "";
+        sub_filter_once off;
+        sub_filter 'data-theme="light"' 'data-theme="${theme}"';
+        sub_filter 'data-logooverride="true"' 'data-logooverride="${logo ? 'true' : 'false'}"';${
+          branding === null
+            ? ''
+            : `
+        sub_filter '</head>' '<link rel="stylesheet" href="/${AUTH_BRANDING_FILES.css}"></head>';`
+        }`;
+}
+
+/** Refuse what the vhost cannot say: anything but a known theme (the value is interpolated into a root-validated file). */
+function assertAuthVhostBranding(branding) {
+  if (branding === null) return;
+  if (
+    typeof branding !== 'object' ||
+    typeof branding.theme !== 'string' ||
+    !AUTH_BRANDING_THEMES.includes(branding.theme) ||
+    typeof branding.logo !== 'boolean'
+  ) {
+    throw new Error('Invalid auth vhost branding: theme must be one of Authelia’s, logo a boolean');
+  }
 }
 
 /**
@@ -451,14 +561,17 @@ export async function removeAuthVhost(domain) {
  * names. Every domain's portal serves Authelia and the invitation page; only
  * the primary's — the panel's domain, which the desktop's user login
  * exchanges at — serves `/api/user-access/authorize` and declares its rate
- * limit zone (an http-level name, declared once).
+ * limit zone (an http-level name, declared once). Every portal serves the
+ * domain's brand ({@link authBrandLocations}, {@link autheliaIndexRewrite}):
+ * `branding` is null for a domain without one.
  *
  * @param {string} domain
  * @param {string} [certPath] - certificate directory (default: the portal's own lineage)
- * @param {{ primary?: boolean }} [opts]
+ * @param {{ primary?: boolean, branding?: AuthVhostBranding | null }} [opts]
  * @returns {{ name: string, fqdn: string, config: string }}
  */
-export function renderAuthVhost(domain, certPath, { primary = true } = {}) {
+export function renderAuthVhost(domain, certPath, { primary = true, branding = null } = {}) {
+  assertAuthVhostBranding(branding);
   const fqdn = `auth.${domain}`;
   let certDirClean = certPath || `/etc/letsencrypt/live/${fqdn}`;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
@@ -545,18 +658,14 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
     }
-${userAccess}
+${userAccess}${authBrandLocations(domain, fqdn)}
     # Default — proxy to Authelia. Authelia takes the OIDC issuer and the
     # session cookie's domain from X-Forwarded-Host / -Proto: this portal's
     # own name, never what the client sent. (A location that sets any
     # header inherits none of the server's.)
     location / {
-        proxy_pass http://127.0.0.1:9091;
-        proxy_set_header Host ${fqdn};
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Host ${fqdn};
-        proxy_set_header X-Forwarded-Proto https;
+        proxy_pass http://127.0.0.1:9091;${autheliaProxyHeaders(fqdn)}
+${autheliaIndexRewrite(branding)}
     }
 }
 `;

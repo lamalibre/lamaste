@@ -24,6 +24,23 @@
  * renders its brands again by itself. A start whose base check failed is
  * tried again by the tick before anything is rendered.
  *
+ * **The auth vhost.** `auth.<domain>`'s vhost (lib/nginx.js `renderAuthVhost`)
+ * serves the rendering and rewrites Authelia's index HTML for the domain,
+ * and two things about a brand are in its text: the theme and whether a
+ * logo is served ({@link authVhostBranding}). A change to either on an
+ * active domain rewrites the vhost once the record is committed and the
+ * directory rendered ({@link convergeAuthVhostLocked}: the installed text
+ * compared with the rendering, written only when it differs, its link
+ * state kept); a change to anything else touches nginx not at all. A
+ * rewrite nginx or lamaste-priv refused keeps the record, answers with a
+ * `vhost` warning, and the domain joins {@link vhostPending}, retried at
+ * every reconcile until it converges or the domain is gone — the pending
+ * set rather than a compare of every vhost at every tick, because the
+ * start's vhost reconcile (lib/vhost-reconcile.js, which reads the record
+ * through `authVhostBranding`) already compares every auth vhost once, so
+ * a restart loses nothing. A brand set on a pending domain waits for its
+ * activation, which renders the vhost from the record.
+ *
  * Everything that writes runs under one lock; reads do not.
  */
 
@@ -52,6 +69,14 @@ import {
 } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
+import {
+  authVhostName,
+  isSiteEnabled,
+  readInstalledVhost,
+  renderAuthVhost,
+  vhostCertDir,
+  writeAuthVhost,
+} from './nginx.js';
 import { notifyAdminsBestEffort } from './notifications.js';
 import { getStateDb } from './state-db.js';
 
@@ -86,6 +111,12 @@ const realDeps = Object.freeze({
   autheliaVersion: AUTHELIA_RELEASE.version,
   fetchLocales: () => fetchAutheliaLocales(),
   ensureBase: () => ensureAutheliaBrandingBase(execa),
+  /** The installed auth vhost of a domain: read, its link state, written (lib/nginx.js). */
+  vhost: Object.freeze({
+    readInstalled: (domain) => readInstalledVhost(authVhostName(domain)),
+    isEnabled: (domain) => isSiteEnabled(authVhostName(domain)),
+    write: (domain, opts) => writeAuthVhost(domain, opts),
+  }),
 });
 
 /** What tests replaced, read at every use (a test may change a value between calls). */
@@ -97,17 +128,19 @@ function dep(key) {
 }
 
 /**
- * Point the web root, the Authelia version, the locale source and the
- * Authelia base check elsewhere (tests); `null` restores the relay's and
- * forgets that the base was ensured. The locale cache and the failure
- * streaks are forgotten either way.
+ * Point the web root, the Authelia version, the locale source, the
+ * Authelia base check and the auth vhost elsewhere (tests); `null`
+ * restores the relay's and forgets that the base was ensured. The locale
+ * cache, the failure streaks and the pending vhosts are forgotten either
+ * way.
  *
- * @param {{ webRoot?: string, autheliaVersion?: string, fetchLocales?: () => Promise<object>, ensureBase?: () => Promise<{ logoWritten: boolean, restarted: boolean }> } | null} overrides
+ * @param {{ webRoot?: string, autheliaVersion?: string, fetchLocales?: () => Promise<object>, ensureBase?: () => Promise<{ logoWritten: boolean, restarted: boolean }>, vhost?: { readInstalled: (domain: string) => Promise<string | null>, isEnabled: (domain: string) => Promise<boolean>, write: (domain: string, opts: { primary: boolean, enabled: boolean, branding: AuthVhostBranding | null }) => Promise<unknown> } } | null} overrides
  */
 export function setAuthBrandingForTests(overrides) {
   overridden = overrides;
   localesCache = null;
   renderFailing.clear();
+  vhostPending.clear();
   if (overrides === null) baseReady = false;
 }
 
@@ -193,15 +226,54 @@ async function brandingView(row) {
 }
 
 /**
- * The domain's row — name and status — or a 404 `unknown_domain`. Its own
- * query, not lib/domains.js: that module imports this one (a removed
- * domain takes its brand with it), and the dependency runs one way.
+ * The domain's row — name, status, whether it is the primary — or null.
+ * Its own query, not lib/domains.js: that module imports this one (a
+ * removed domain takes its brand with it), and the dependency runs one way.
  */
+function domainRow(db, name) {
+  const row = db.prepare('SELECT name, status, is_primary FROM domains WHERE name = ?').get(name);
+  return row ? { name: row.name, status: row.status, primary: row.is_primary === 1 } : null;
+}
+
+/** The domain's row or a 404 `unknown_domain`. */
 async function domainOr404(name) {
-  const db = await getStateDb();
-  const row = db.prepare('SELECT name, status FROM domains WHERE name = ?').get(name);
+  const row = domainRow(await getStateDb(), name);
   if (!row) throw httpError('Domain not found', 404, { code: 'unknown_domain' });
   return row;
+}
+
+/**
+ * What the auth vhost says of a brand (lib/nginx.js `renderAuthVhost`):
+ * Authelia's theme for the page and whether a logo is served. Null for a
+ * row without a brand.
+ *
+ * @typedef {{ theme: string, logo: boolean }} AuthVhostBranding
+ * @returns {AuthVhostBranding | null}
+ */
+function vhostBrandingOf(row) {
+  return row ? { theme: row.theme, logo: row.logo_sha256 !== null } : null;
+}
+
+function sameVhostBranding(a, b) {
+  return a === null || b === null ? a === b : a.theme === b.theme && a.logo === b.logo;
+}
+
+/**
+ * What the auth vhost of `domain` says of its brand — `{ theme, logo }`,
+ * or null for a domain without one — read from the record, the source of
+ * truth (the rendered files catch up within a minute). For whoever writes
+ * the vhost: activation (lib/domains.js), the start's vhost reconcile
+ * (lib/vhost-reconcile.js). A domain the relay does not have answers null.
+ *
+ * @param {string} domain
+ * @returns {Promise<AuthVhostBranding | null>}
+ */
+export async function authVhostBranding(domain) {
+  const db = await getStateDb();
+  return vhostBrandingOf(
+    db.prepare('SELECT theme, logo_sha256 FROM domain_branding WHERE domain = ?').get(domain) ??
+      null,
+  );
 }
 
 /**
@@ -316,6 +388,133 @@ async function removeRenderedLocked(domain, logger) {
   return [];
 }
 
+// ---------------------------------------------------------------------------
+// The auth vhost
+// ---------------------------------------------------------------------------
+
+/**
+ * The domains whose auth vhost does not say what their record says: a
+ * rewrite that nginx or lamaste-priv refused, retried at every reconcile.
+ * Entering is audited (`domain.branding.vhost.failed`) and raised to the
+ * administrators, leaving too (`domain.branding.vhost.recovered`).
+ */
+const vhostPending = new Set();
+
+/** Audit and notify a domain joining {@link vhostPending}, audit its leaving (the domain and the step, never the brand). */
+async function recordVhostOutcome(domain, err, logger) {
+  const failing = err !== null;
+  if (vhostPending.has(domain) === failing) return;
+  if (failing) vhostPending.add(domain);
+  else vhostPending.delete(domain);
+  await recordAuditBestEffort(
+    failing
+      ? {
+          actor: 'lamaste',
+          action: 'domain.branding.vhost.failed',
+          details: { domain, message: err.message },
+        }
+      : { actor: 'lamaste', action: 'domain.branding.vhost.recovered', details: { domain } },
+    logger,
+  );
+  if (failing) {
+    await notifyAdminsBestEffort(
+      {
+        source: 'lamaste',
+        level: 'warning',
+        message: `The sign-in page of ${domain} could not be switched to its brand's theme and logo (${err.message}); visitors see the page as it was. The panel retries every minute.`,
+      },
+      logger,
+    );
+  }
+}
+
+/**
+ * Bring the auth vhost of `domain` in line with its record (holding the
+ * lock): rendered on the certificate the installed vhost names, written —
+ * its link state kept — only when the installed text differs. Nothing for
+ * a domain that is not active (its activation renders the vhost from the
+ * record) or whose vhost is not installed (the start's vhost reconcile
+ * reports that); either leaves the pending set. Throws when the write
+ * failed, the domain pending; the outcome of the streak is recorded.
+ *
+ * @param {string} domain
+ * @param {import('pino').Logger} [logger]
+ * @returns {Promise<'written' | 'unchanged' | 'not_active' | 'not_installed'>}
+ */
+async function convergeAuthVhostLocked(domain, logger) {
+  const db = await getStateDb();
+  const row = domainRow(db, domain);
+  if (!row || row.status !== 'active') {
+    vhostPending.delete(domain);
+    return 'not_active';
+  }
+  const vhost = dep('vhost');
+  try {
+    const installed = await vhost.readInstalled(domain);
+    const certDir = installed === null ? null : vhostCertDir(installed);
+    if (certDir === null) {
+      logger?.warn({ domain }, 'The auth vhost is not installed; its brand waits for it');
+      vhostPending.delete(domain);
+      return 'not_installed';
+    }
+    const branding = vhostBrandingOf(brandingRow(db, domain));
+    const expected = renderAuthVhost(domain, certDir, { primary: row.primary, branding });
+    if (expected.config === installed) {
+      await recordVhostOutcome(domain, null, logger);
+      return 'unchanged';
+    }
+    await vhost.write(domain, {
+      primary: row.primary,
+      enabled: await vhost.isEnabled(domain),
+      branding,
+    });
+    await recordVhostOutcome(domain, null, logger);
+    logger?.info({ domain, branded: branding !== null }, 'Auth vhost rewritten for the brand');
+    return 'written';
+  } catch (err) {
+    logger?.warn({ domain, err: err.message }, 'Auth vhost rewrite for the brand failed');
+    await recordVhostOutcome(domain, err, logger);
+    throw err;
+  }
+}
+
+/**
+ * Rewrite the vhost after a change that moved what it says
+ * ({@link vhostBrandingOf} before and after differ): the warning the
+ * answer carries when it failed, else none.
+ */
+async function convergeAuthVhostAfterChange(domain, before, after, logger) {
+  if (sameVhostBranding(before, after)) return [];
+  try {
+    await convergeAuthVhostLocked(domain, logger);
+    return [];
+  } catch (err) {
+    return [
+      {
+        step: 'vhost',
+        message: `The brand was saved but the sign-in page keeps its previous theme and logo switch (${err.message}); the panel retries within a minute`,
+      },
+    ];
+  }
+}
+
+/**
+ * Retry the vhosts of {@link vhostPending} (holding the lock): the domains
+ * rewritten and those still failing. Never throws.
+ */
+async function convergePendingVhostsLocked(logger) {
+  const result = { rewritten: [], failed: [] };
+  for (const domain of [...vhostPending]) {
+    try {
+      if ((await convergeAuthVhostLocked(domain, logger)) === 'written')
+        result.rewritten.push(domain);
+    } catch {
+      result.failed.push(domain);
+    }
+  }
+  return result;
+}
+
 /**
  * Remove the rendered brand of a domain that was removed (lib/domains.js
  * `removeDomain`, whose transaction deleted the record). Idempotent.
@@ -332,12 +531,15 @@ export async function removeRenderedBranding(domain, { logger } = {}) {
  * directory is missing, at another revision or from another Authelia
  * release; remove the directories of domains without a record. Nothing
  * before {@link ensureBrandingBase} succeeded — tried here again when the
- * start's attempt failed. Never throws.
+ * start's attempt failed. Then the auth vhosts a change could not rewrite
+ * ({@link vhostPending}), base or no base: `vhostsRewritten` and
+ * `vhostsFailed` name them when there were any. Never throws.
  *
  * @param {{ logger?: import('pino').Logger }} [opts]
- * @returns {Promise<{ rendered: string[], removed: string[], failed: string[], skipped?: 'base' }>}
+ * @returns {Promise<{ rendered: string[], removed: string[], failed: string[], skipped?: 'base', vhostsRewritten?: string[], vhostsFailed?: string[] }>}
  */
 export async function reconcileAuthBranding({ logger } = {}) {
+  const result = { rendered: [], removed: [], failed: [] };
   if (!baseReady) {
     try {
       await ensureBrandingBase({ logger });
@@ -346,42 +548,49 @@ export async function reconcileAuthBranding({ logger } = {}) {
         { err: err.message },
         'Authelia branding base not in place; brands not rendered',
       );
-      return { rendered: [], removed: [], failed: [], skipped: 'base' };
+      result.skipped = 'base';
     }
   }
   return brandingMutex.run(async () => {
-    const result = { rendered: [], removed: [], failed: [] };
-    try {
-      const db = await getStateDb();
-      const records = db
-        .prepare('SELECT domain, revision FROM domain_branding ORDER BY domain')
-        .all();
-      const known = new Set(records.map((r) => r.domain));
-      for (const domain of await listRenderedBrands(dep('webRoot'))) {
-        if (known.has(domain)) continue;
-        if ((await removeRenderedLocked(domain, logger)).length === 0) result.removed.push(domain);
-      }
-      for (const record of records) {
-        const current = await readRenderedBrand(record.domain, dep('webRoot'));
-        if (
-          current &&
-          current.revision === record.revision &&
-          current.autheliaVersion === dep('autheliaVersion')
-        ) {
-          continue;
-        }
-        try {
-          await renderLocked(record.domain, logger);
-          result.rendered.push(record.domain);
-        } catch {
-          result.failed.push(record.domain);
-        }
-      }
-    } catch (err) {
-      logger?.warn({ err: err.message }, 'Could not reconcile the rendered brands');
-    }
+    if (result.skipped !== 'base') await reconcileRenderingsLocked(result, logger);
+    const vhosts = await convergePendingVhostsLocked(logger);
+    if (vhosts.rewritten.length > 0) result.vhostsRewritten = vhosts.rewritten;
+    if (vhosts.failed.length > 0) result.vhostsFailed = vhosts.failed;
     return result;
   });
+}
+
+/** The renderings in line with the records (holding the lock); see {@link reconcileAuthBranding}. */
+async function reconcileRenderingsLocked(result, logger) {
+  try {
+    const db = await getStateDb();
+    const records = db
+      .prepare('SELECT domain, revision FROM domain_branding ORDER BY domain')
+      .all();
+    const known = new Set(records.map((r) => r.domain));
+    for (const domain of await listRenderedBrands(dep('webRoot'))) {
+      if (known.has(domain)) continue;
+      if ((await removeRenderedLocked(domain, logger)).length === 0) result.removed.push(domain);
+    }
+    for (const record of records) {
+      const current = await readRenderedBrand(record.domain, dep('webRoot'));
+      if (
+        current &&
+        current.revision === record.revision &&
+        current.autheliaVersion === dep('autheliaVersion')
+      ) {
+        continue;
+      }
+      try {
+        await renderLocked(record.domain, logger);
+        result.rendered.push(record.domain);
+      } catch {
+        result.failed.push(record.domain);
+      }
+    }
+  } catch (err) {
+    logger?.warn({ err: err.message }, 'Could not reconcile the rendered brands');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -406,7 +615,8 @@ const withWarnings = (warnings) => (warnings.length > 0 ? { warnings } : {});
  * `invalid_branding` with `errors` by field name, never a value). Assets
  * stay. `ifRevision` refuses a stale change (409 `revision_mismatch`).
  * Audited `domain.branding.updated` with the names of the fields that
- * changed. Then rendered.
+ * changed. Then rendered; the auth vhost rewritten when the theme changed
+ * (warning `vhost` when nginx refused it; see the module comment).
  *
  * @param {string} name
  * @param {unknown} fields
@@ -461,9 +671,18 @@ export async function updateDomainBranding(name, fields, { ifRevision, actor, lo
       },
       logger,
     );
-    const warnings = await renderAfterChange(name, logger);
+    const updated = brandingRow(db, name);
+    const warnings = [
+      ...(await renderAfterChange(name, logger)),
+      ...(await convergeAuthVhostAfterChange(
+        name,
+        vhostBrandingOf(row),
+        vhostBrandingOf(updated),
+        logger,
+      )),
+    ];
     return {
-      branding: await brandingView(brandingRow(db, name)),
+      branding: await brandingView(updated),
       created: row === null,
       changed: true,
       ...withWarnings(warnings),
@@ -472,9 +691,9 @@ export async function updateDomainBranding(name, fields, { ifRevision, actor, lo
 }
 
 /**
- * Remove the brand of domain `name`: the record and its rendering — back
- * to the stock page. `removed: false` when there was none. Audited
- * `domain.branding.removed`.
+ * Remove the brand of domain `name`: the record, its rendering and the
+ * brand in its auth vhost — back to the stock page. `removed: false` when
+ * there was none. Audited `domain.branding.removed`.
  *
  * @param {string} name
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
@@ -494,7 +713,10 @@ export async function removeDomainBranding(name, { actor, logger }) {
       },
       logger,
     );
-    const warnings = await removeRenderedLocked(name, logger);
+    const warnings = [
+      ...(await removeRenderedLocked(name, logger)),
+      ...(await convergeAuthVhostAfterChange(name, vhostBrandingOf(row), null, logger)),
+    ];
     return { removed: true, ...withWarnings(warnings) };
   });
 }
@@ -543,8 +765,9 @@ export function decodeBrandAsset(kind, data) {
  * Set the logo or the favicon of the brand of domain `name` from base64
  * `data`: checked (400 `invalid_image`, 413 `asset_too_large`), stored
  * with its digest, the revision bumped, audited by digest and dimensions,
- * rendered. 404 `no_branding` when the domain has no brand yet (set its
- * fields first).
+ * rendered — and, for the first logo, the auth vhost rewritten to show it.
+ * 404 `no_branding` when the domain has no brand yet (set its fields
+ * first).
  *
  * @param {string} name
  * @param {'logo' | 'favicon'} kind
@@ -585,9 +808,18 @@ export async function setDomainBrandingAsset(name, kind, data, { ifRevision, act
       },
       logger,
     );
-    const warnings = await renderAfterChange(name, logger);
+    const updated = brandingRow(db, name);
+    const warnings = [
+      ...(await renderAfterChange(name, logger)),
+      ...(await convergeAuthVhostAfterChange(
+        name,
+        vhostBrandingOf(row),
+        vhostBrandingOf(updated),
+        logger,
+      )),
+    ];
     return {
-      branding: await brandingView(brandingRow(db, name)),
+      branding: await brandingView(updated),
       changed: true,
       ...withWarnings(warnings),
     };
@@ -596,7 +828,8 @@ export async function setDomainBrandingAsset(name, kind, data, { ifRevision, act
 
 /**
  * Remove the logo or the favicon of the brand of domain `name`
- * (`removed: false` when there was none). Audited, rendered.
+ * (`removed: false` when there was none). Audited, rendered; the auth
+ * vhost rewritten when it was the logo.
  *
  * @param {string} name
  * @param {'logo' | 'favicon'} kind
@@ -623,10 +856,19 @@ export async function removeDomainBrandingAsset(name, kind, { actor, logger }) {
       },
       logger,
     );
-    const warnings = await renderAfterChange(name, logger);
+    const updated = brandingRow(db, name);
+    const warnings = [
+      ...(await renderAfterChange(name, logger)),
+      ...(await convergeAuthVhostAfterChange(
+        name,
+        vhostBrandingOf(row),
+        vhostBrandingOf(updated),
+        logger,
+      )),
+    ];
     return {
       removed: true,
-      branding: await brandingView(brandingRow(db, name)),
+      branding: await brandingView(updated),
       ...withWarnings(warnings),
     };
   });

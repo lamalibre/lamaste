@@ -53,6 +53,11 @@ test('every generated vhost passes the lamaste-priv allow-list', async () => {
   await nginx.writeAuthVhost(d, { primary: true });
   // A second domain's portal: Authelia and the invitation page, nothing of the panel's.
   await nginx.writeAuthVhost('codelama.com.tr', { primary: false });
+  // A branded domain's portal: its theme, stylesheet and logo in the index HTML.
+  await nginx.writeAuthVhost('samplepark.tr', {
+    primary: false,
+    branding: { theme: 'dark', logo: true },
+  });
   await nginx.writeTunnelVhost(d);
   await nginx.writePublicVhost('app1.example.com', d, 20010);
   await nginx.writePublicVhost('app2.example.com', d, 20011, '/etc/letsencrypt/live/example.com/', {
@@ -109,7 +114,7 @@ test('every generated vhost passes the lamaste-priv allow-list', async () => {
   );
 
   const names = await readdir(captured);
-  assert.equal(names.length, 13);
+  assert.equal(names.length, 14);
   for (const name of names) {
     assert.match(name, PANEL_SITE_RE);
     const text = await readFile(path.join(captured, name), 'utf8');
@@ -491,9 +496,9 @@ test('every location that proxies a browser to the panel clears a client’s rel
     }
   }
   // panel (8: the site upload location too) + primary auth (2) + second
-  // domain's auth (1: the invitation API) + agent-panel authz (1) + user
-  // surfaces (2 × 3)
-  assert.equal(checked, 18);
+  // and branded domains' auth (1 each: the invitation API) + agent-panel
+  // authz (1) + user surfaces (2 × 3)
+  assert.equal(checked, 19);
 });
 
 test('no location proxying to a tunnel or agent backend passes Authelia’s session cookie on', async () => {
@@ -581,6 +586,104 @@ test('a second domain’s auth portal serves Authelia and invitations — never 
   const primary = await readFile(path.join(captured, 'lamalibre-lamaste-auth-example.com'), 'utf8');
   assert.match(primary, /limit_req_zone \$binary_remote_addr zone=user_access_auth/);
   assert.match(primary, /location \/api\/user-access\/authorize \{/);
+});
+
+test('every auth portal serves the domain’s brand overrides and rewrites Authelia’s index for it; an unbranded domain gets the stock page', async () => {
+  const unbranded = await readFile(
+    path.join(captured, 'lamalibre-lamaste-auth-codelama.com.tr'),
+    'utf8',
+  );
+  const branded = await readFile(
+    path.join(captured, 'lamalibre-lamaste-auth-samplepark.tr'),
+    'utf8',
+  );
+  const autheliaHeaders = (fqdn) => [
+    `proxy_set_header Host ${fqdn};`,
+    'proxy_set_header X-Real-IP $remote_addr;',
+    'proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+    `proxy_set_header X-Forwarded-Host ${fqdn};`,
+    'proxy_set_header X-Forwarded-Proto https;',
+  ];
+
+  for (const [text, domain] of [
+    [unbranded, 'codelama.com.tr'],
+    [branded, 'samplepark.tr'],
+  ]) {
+    // The three routes Authelia lets a file override fall back to it; the
+    // stylesheet does not. Each static answer: nosniff, revalidated.
+    for (const [matcher, fallback] of [
+      ['= /favicon.ico', '@authelia'],
+      ['= /static/media/logo.png', '@authelia'],
+      ['/locales/', '@authelia'],
+      ['= /brand.css', '=404'],
+    ]) {
+      const body = locationBody(text, matcher);
+      assert.ok(body.includes(`root /var/www/lamaste/auth/${domain};`), `${domain} ${matcher}`);
+      assert.ok(body.includes(`try_files $uri ${fallback};`), `${domain} ${matcher}`);
+      assert.ok(body.includes('add_header X-Content-Type-Options nosniff;'), matcher);
+      assert.ok(
+        body.includes('add_header Cache-Control "public, max-age=0, must-revalidate";'),
+        matcher,
+      );
+      assert.doesNotMatch(body, /proxy_pass|sub_filter/, matcher);
+    }
+    // Authelia's own answer: every header the portal's catch-all sends, no rewrite.
+    const fallback = locationBody(text, '@authelia');
+    assert.match(fallback, /proxy_pass http:\/\/127\.0\.0\.1:9091;/);
+    for (const line of autheliaHeaders(`auth.${domain}`)) assert.ok(fallback.includes(line), line);
+    assert.doesNotMatch(fallback, /sub_filter|add_header/);
+    // The index rewrite: uncompressed from Authelia, every occurrence, text/html only (the default).
+    const portal = locationBody(text, '/');
+    for (const line of autheliaHeaders(`auth.${domain}`)) assert.ok(portal.includes(line), line);
+    assert.match(portal, /proxy_set_header Accept-Encoding "";/);
+    assert.match(portal, /sub_filter_once off;/);
+    assert.doesNotMatch(portal, /sub_filter_types/);
+    // The per-domain root is a link switched by rename: never disabled (the comment names it).
+    assert.doesNotMatch(text, /^\s*disable_symlinks/m);
+  }
+
+  // Unbranded: the light theme, no logo (the placeholder never shown), no stylesheet — the stock page.
+  const stock = locationBody(unbranded, '/');
+  assert.ok(stock.includes(`sub_filter 'data-theme="light"' 'data-theme="light"';`));
+  assert.ok(stock.includes(`sub_filter 'data-logooverride="true"' 'data-logooverride="false"';`));
+  assert.doesNotMatch(stock, /brand\.css/);
+  // Branded with a logo: its theme, its logo, its stylesheet.
+  const dark = locationBody(branded, '/');
+  assert.ok(dark.includes(`sub_filter 'data-theme="light"' 'data-theme="dark"';`));
+  assert.ok(dark.includes(`sub_filter 'data-logooverride="true"' 'data-logooverride="true"';`));
+  assert.ok(
+    dark.includes(`sub_filter '</head>' '<link rel="stylesheet" href="/brand.css"></head>';`),
+  );
+  // Branded without a logo: Authelia's generic icon, never Lamaste's placeholder.
+  const noLogo = locationBody(
+    nginx.renderAuthVhost('samplepark.tr', undefined, {
+      primary: false,
+      branding: { theme: 'oled', logo: false },
+    }).config,
+    '/',
+  );
+  assert.ok(noLogo.includes(`sub_filter 'data-theme="light"' 'data-theme="oled"';`));
+  assert.ok(noLogo.includes(`sub_filter 'data-logooverride="true"' 'data-logooverride="false"';`));
+  assert.match(noLogo, /brand\.css/);
+  // The primary's portal carries the same, beside its user-access locations.
+  const primary = await readFile(path.join(captured, 'lamalibre-lamaste-auth-example.com'), 'utf8');
+  assert.match(locationBody(primary, '/'), /sub_filter_once off;/);
+  assert.match(primary, /location @authelia \{/);
+
+  // Only Authelia's themes reach a root-validated file; the logo switch is a boolean.
+  for (const branding of [
+    { theme: 'solarized', logo: true },
+    { theme: 'dark"', logo: true },
+    { theme: 'dark', logo: 'yes' },
+    { theme: 'dark' },
+    'dark',
+  ]) {
+    assert.throws(
+      () => nginx.renderAuthVhost('samplepark.tr', undefined, { branding }),
+      /Invalid auth vhost branding/,
+      JSON.stringify(branding),
+    );
+  }
 });
 
 test('tunnel vhosts are named by their hostname; a hostname not one label under its domain is refused', () => {

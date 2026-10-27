@@ -65,6 +65,7 @@ import {
   renderTunnelVhost,
   vhostCertDir,
 } from './nginx.js';
+import { authVhostBranding } from './auth-branding.js';
 import { notifyAdminsBestEffort } from './notifications.js';
 import { readSites, readTunnels } from './state.js';
 
@@ -317,14 +318,15 @@ const defaultSiteDeps = {
   installVhost,
   isSiteEnabled,
   notify: notifyAdminsBestEffort,
+  authVhostBranding,
 };
 
 /**
  * Reconcile the vhosts that proxy a browser to the panel or ask Authelia
  * directly: the panel's own (`panel.<primary>`), every active domain's auth
- * portal (`auth.<domain>`) and every static site but a plugin's web surface.
- * Call it before the panel listens — then nothing can change a site
- * meanwhile.
+ * portal (`auth.<domain>`, with the domain's brand as its record says) and
+ * every static site but a plugin's web surface. Call it before the panel
+ * listens — then nothing can change a site or a brand meanwhile.
  *
  * @param {Parameters<typeof logResult>[0]} log
  * @param {ReadonlyArray<{ name: string, primary: boolean }>} domains the active domains
@@ -350,11 +352,23 @@ export async function reconcileSiteVhosts(log, domains, deps = defaultSiteDeps) 
 
   for (const domain of domains) {
     const name = authVhostName(domain.name);
+    const label = `auth.${domain.name}`;
+    // The domain's brand as its record says (lib/auth-branding.js): the
+    // theme and the logo switch are in the vhost's text, so an upgrade
+    // rolls the branded vhost out here and a restart repairs a drifted one.
+    let branding;
+    try {
+      branding = await deps.authVhostBranding(domain.name);
+    } catch (err) {
+      result.failed.push({ vhost: label, error: err instanceof Error ? err.message : String(err) });
+      continue;
+    }
     await reconcileOne(
       {
         name,
-        label: `auth.${domain.name}`,
-        render: (certDir) => renderAuthVhost(domain.name, certDir, { primary: domain.primary }),
+        label,
+        render: (certDir) =>
+          renderAuthVhost(domain.name, certDir, { primary: domain.primary, branding }),
         enabled: () => deps.isSiteEnabled(name),
       },
       result,
