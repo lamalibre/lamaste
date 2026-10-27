@@ -1,19 +1,41 @@
-# Copies a release that is already on npmjs to Feria (https://feria.samplepark.tr)
-# byte for byte. Feria serves @lamalibre as a closed scope, so every release
-# must land there too. npmjs publishing stays a manual step; run this
-# afterwards on the release tag:
+# Copies a release that is already on npmjs to Feria byte for byte. Feria
+# serves @lamalibre as a closed scope, so every release must land there too.
+# npmjs publishing stays a manual step; run this afterwards on the release
+# tag:
 #
 #   gh workflow run feria.yml -R lamalibre/lamaste --ref v<version>
+#   gh workflow run feria.yml -R lamalibre/lamaste --ref v<version> -f dry_run=true
+#
+# The second form proves the login and reports each package's state
+# (already on Feria, would be published, refused) without publishing.
+#
+# Feria's address is FERIA_URL below, the one place it is named: the script
+# reads it from the environment, and the job derives the npmrc host from it.
 #
 # No registry secret is stored in GitHub: the job exchanges its OIDC token
-# (audience = Feria) at Feria's login. Feria grants `publish` only to
-# refs/tags/v* of repositories owned by the lamalibre organisation; the
-# token is revoked when the job ends. See .github/scripts/mirror-to-feria.mjs
-# for what is copied, skipped or refused.
+# (audience = FERIA_URL) at Feria's login. Feria grants `publish` only to
+# refs/tags/v* of repositories owned by the lamalibre organisation, through
+# the rule for GitHub's issuer (https://token.actions.githubusercontent.com)
+# in its auth.json on the relay — and that rule names the audience, so the
+# address here and the audience there must be the same URL. A login that
+# answers 401 right after the address changed means the relay's rule still
+# names the previous one; curl failing on the certificate (exit 60) means the
+# host no longer serves Feria at all (4.8.0's run, when the registry had
+# moved from feria.samplepark.tr to feria.codelama.com.tr). The token is
+# revoked when the job ends. See .github/scripts/mirror-to-feria.mjs for what
+# is copied, skipped or refused.
 name: Mirror to Feria
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Prove the login and report each package, publish nothing'
+        type: boolean
+        default: false
+
+env:
+  FERIA_URL: https://feria.codelama.com.tr
 
 permissions:
   contents: read
@@ -39,10 +61,9 @@ jobs:
 
       - name: Feria token from the job's OIDC identity
         id: feria
-        env:
-          FERIA_URL: https://feria.samplepark.tr
         run: |
           set -euo pipefail
+          host="${FERIA_URL#*://}"; host="${host%%/*}"
           jwt="$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${FERIA_URL}" | jq -r .value)"
           echo "::add-mask::${jwt}"
@@ -64,16 +85,22 @@ jobs:
           echo "Feria token $(jq -r '.id + " for " + .owner + " (" + (.scopes | join(",")) + "), expires " + .expiresAt' <<<"$issued")"
           echo "id=$(jq -r .id <<<"$issued")" >> "$GITHUB_OUTPUT"
           umask 077
-          printf '//feria.samplepark.tr/:_authToken=%s\n' "$token" > "${RUNNER_TEMP}/feria.npmrc"
+          printf '//%s/:_authToken=%s\n' "$host" "$token" > "${RUNNER_TEMP}/feria.npmrc"
 
       - name: Copy the release from npmjs to Feria
-        run: node .github/scripts/mirror-to-feria.mjs "${GITHUB_REF_NAME#v}" --npmrc "${RUNNER_TEMP}/feria.npmrc"
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=()
+          if [ "${DRY_RUN}" = "true" ]; then args+=(--dry-run); fi
+          node .github/scripts/mirror-to-feria.mjs "${GITHUB_REF_NAME#v}" --npmrc "${RUNNER_TEMP}/feria.npmrc" "${args[@]}"
 
       - name: Revoke the Feria token
         if: ${{ always() && steps.feria.outputs.id != '' }}
         run: |
-          token="$(sed -n 's|^//feria.samplepark.tr/:_authToken=||p' "${RUNNER_TEMP}/feria.npmrc")"
+          host="${FERIA_URL#*://}"; host="${host%%/*}"
+          token="$(sed -n "s|^//${host}/:_authToken=||p" "${RUNNER_TEMP}/feria.npmrc")"
           curl -sS -o /dev/null -w 'revoke %{http_code}\n' -X DELETE -H @- \
-            "https://feria.samplepark.tr/-/feria/tokens/${{ steps.feria.outputs.id }}" \
+            "${FERIA_URL}/-/feria/tokens/${{ steps.feria.outputs.id }}" \
             <<<"Authorization: Bearer ${token}"
           rm -f "${RUNNER_TEMP}/feria.npmrc"

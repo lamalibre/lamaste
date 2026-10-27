@@ -2,7 +2,13 @@
 // Copy one release of this repository's @lamalibre packages from npmjs to
 // Feria, byte for byte.
 //
-//   node .github/scripts/mirror-to-feria.mjs <version> --npmrc <file> [--dry-run]
+//   FERIA_URL=https://feria.codelama.com.tr \
+//     node .github/scripts/mirror-to-feria.mjs <version> --npmrc <file> [--dry-run]
+//
+// Feria's address comes from FERIA_URL — the workflow's `env` names it
+// once for the job and the script (there is no default here, so the two
+// can never disagree); a run by hand sets it as above, with the token in
+// `~/.npmrc` (`//<feria-host>/:_authToken=`).
 //
 // Releases are published to npmjs by hand; Feria serves @lamalibre as a
 // closed scope (it never falls back to npmjs), so every release must also
@@ -29,7 +35,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const NPMJS = 'https://registry.npmjs.org';
-const FERIA = (process.env.FERIA_URL ?? 'https://feria.samplepark.tr').replace(/\/$/, '');
+if (!process.env.FERIA_URL || !/^https:\/\/[^/\s]+\/?$/.test(process.env.FERIA_URL)) {
+  console.error(
+    'FERIA_URL must name the registry as https://<host> (the workflow sets it; by hand, export it)',
+  );
+  process.exit(2);
+}
+const FERIA = process.env.FERIA_URL.replace(/\/$/, '');
 
 let version;
 let npmrc;
@@ -42,7 +54,9 @@ for (const args = process.argv.slice(2); args.length > 0; ) {
   else version = null;
 }
 if (!version || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version) || !npmrc) {
-  console.error('usage: mirror-to-feria.mjs <version> --npmrc <file> [--dry-run]');
+  console.error(
+    'usage: FERIA_URL=https://<host> mirror-to-feria.mjs <version> --npmrc <file> [--dry-run]',
+  );
   process.exit(2);
 }
 
