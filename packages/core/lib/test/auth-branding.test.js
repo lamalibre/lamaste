@@ -32,11 +32,13 @@ import {
   AUTH_BRANDING_THEMES,
   BRAND_CSS_ACCENT_PROPERTIES,
   BRAND_CSS_FOOTER_SELECTOR,
+  BrandJsonSchema,
   accentForeground,
   authBrandingLocaleFile,
   inspectBrandFavicon,
   inspectBrandLogo,
   renderBrandCss,
+  renderBrandJson,
   renderBrandLocale,
   validateBrandFields,
 } from '../dist/index.js';
@@ -44,6 +46,9 @@ import {
   AUTHELIA_ASSET_PATH,
   AUTHELIA_THEME_DEFAULT,
   AUTH_BRANDING_RENDERS_DIR,
+  INVITE_PAGE_DEFAULT_ACCENT,
+  INVITE_PAGE_DEFAULT_ACCENT_LIGHT,
+  INVITE_PAGE_LOGO_PATH,
   autheliaBrandingConfigured,
   ensureAutheliaBrandingBase,
   ensureAutheliaBrandingConfig,
@@ -53,6 +58,7 @@ import {
   readRenderedBrand,
   removeAuthBranding,
   renderAuthBranding,
+  renderInvitePage,
   writeAutheliaConfig,
 } from '../dist/server/index.js';
 
@@ -416,6 +422,134 @@ test(`GET /locales as Authelia ${PINNED} answers it: every listed locale, parent
   await assert.rejects(fetchAutheliaLocales({ fetchImpl, baseUrl: 'http://authelia.test' }), /404/);
 });
 
+// --- brand.json, as Gatekeeper reads it back ------------------------------
+
+test('brand.json as rendered parses with BrandJsonSchema; a tampered file does not, and nothing is taken from it', () => {
+  const fields = {
+    name: 'Code Lama',
+    tagline: 'Software, crafted',
+    theme: 'light',
+    accent: '#1d4ed8',
+    supportEmail: 'help@codelama.com.tr',
+    supportUrl: 'https://codelama.com.tr/help',
+  };
+  const sha = 'a'.repeat(64);
+  const rendered = renderBrandJson('codelama.com.tr', fields, 3, {
+    logoSha256: sha,
+    faviconSha256: null,
+  });
+  assert.deepEqual(BrandJsonSchema.parse(rendered), rendered);
+  assert.deepEqual(
+    BrandJsonSchema.parse(
+      JSON.parse(
+        JSON.stringify(
+          renderBrandJson(
+            'samplepark.tr',
+            { ...fields, tagline: null, accent: null, supportEmail: null, supportUrl: null },
+            0,
+            { logoSha256: null, faviconSha256: null },
+          ),
+        ),
+      ),
+    ).logo,
+    null,
+  );
+  const tampered = [
+    { ...rendered, v: 2 },
+    { ...rendered, domain: 'Not A Domain' },
+    { ...rendered, revision: -1 },
+    { ...rendered, revision: 1.5 },
+    { ...rendered, name: '<script>' },
+    { ...rendered, name: 'x'.repeat(65) },
+    { ...rendered, tagline: 'a\u202eb' },
+    { ...rendered, theme: 'neon' },
+    { ...rendered, accent: 'red' },
+    { ...rendered, accent: '#1D4ED8' },
+    { ...rendered, supportEmail: 'not an address' },
+    { ...rendered, supportUrl: 'http://codelama.com.tr/help' },
+    { ...rendered, supportUrl: 'javascript:alert(1)' },
+    { ...rendered, logo: { sha256: 'xyz' } },
+    { ...rendered, logo: { sha256: sha, path: '/etc/passwd' } },
+    { ...rendered, favicon: {} },
+    { ...rendered, css: 'body { }' },
+    { ...rendered, name: undefined },
+    [],
+    null,
+    'brand',
+  ];
+  for (const file of tampered) {
+    const result = BrandJsonSchema.safeParse(file);
+    assert.equal(result.success, false, JSON.stringify(file));
+    // The refusal names the field and a rule, never the value.
+    assert.doesNotMatch(JSON.stringify(result.error.issues), /script|passwd|neon|alert/);
+  }
+});
+
+// --- the invitation page ----------------------------------------------------
+
+test('the stock invitation page carries no brand; a branded one its name, tagline, logo, accent and palette — escaped, re-validated', () => {
+  const stock = renderInvitePage(null);
+  assert.match(stock, /<title>Lamaste — Accept Invitation<\/title>/);
+  assert.doesNotMatch(stock, /class="brand/);
+  assert.doesNotMatch(stock, /static\/media\/logo\.png/);
+  assert.ok(stock.includes(`--accent: ${INVITE_PAGE_DEFAULT_ACCENT};`));
+  assert.ok(stock.includes('background: #09090b; color: #a1a1aa;'), 'the dark palette');
+  // The script and its API calls, as before.
+  assert.ok(stock.includes("fetch('/api/invite/' + encodeURIComponent(token))"));
+  assert.ok(stock.includes("fetch('/api/invite/' + encodeURIComponent(token) + '/accept'"));
+  assert.ok(stock.includes('<h1>You\\u2019ve Been Invited</h1>'));
+  // No external URL but the QR library the success view always loaded.
+  const urls = stock.match(/https?:\/\/[^'"\s]+/g);
+  assert.deepEqual(urls, ['https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js']);
+
+  const branded = renderInvitePage({
+    name: "Code Lama & Co's",
+    tagline: 'Software, "crafted"',
+    theme: 'light',
+    accent: '#1d4ed8',
+    logo: true,
+  });
+  assert.match(branded, /<title>Code Lama &amp; Co&#039;s — Accept Invitation<\/title>/);
+  assert.ok(branded.includes('<div class="brand-name">Code Lama &amp; Co&#039;s</div>'));
+  assert.ok(branded.includes('<div class="brand-tagline">Software, &quot;crafted&quot;</div>'));
+  assert.ok(branded.includes(`<img class="brand-logo" src="${INVITE_PAGE_LOGO_PATH}" alt="">`));
+  assert.ok(branded.includes('--accent: #1d4ed8;'));
+  assert.ok(branded.includes('--accent-foreground: #ffffff;'));
+  assert.ok(branded.includes('background: #fafafa; color: #52525b;'), 'the light palette');
+  assert.doesNotMatch(branded, /Lamaste/);
+  // The same script: only the head and the header differ.
+  const script = (html) => html.slice(html.indexOf('<script>'));
+  assert.equal(script(branded), script(stock));
+  // No logo, no tagline, a dark theme: no image, no tagline line, the dark
+  // palette; an accent that is not a colour (never from a validated record)
+  // is the default, never in the stylesheet.
+  const dark = renderInvitePage({
+    name: 'Sample Park',
+    tagline: null,
+    theme: 'oled',
+    accent: 'url(evil)',
+    logo: false,
+  });
+  assert.doesNotMatch(dark, /static\/media\/logo\.png|<div class="brand-tagline">|evil/);
+  assert.ok(dark.includes(`--accent: ${INVITE_PAGE_DEFAULT_ACCENT};`));
+  assert.ok(dark.includes('background: #09090b; color: #a1a1aa;'));
+  assert.ok(
+    renderInvitePage({
+      name: 'S',
+      tagline: null,
+      theme: 'light',
+      accent: null,
+      logo: false,
+    }).includes(`--accent: ${INVITE_PAGE_DEFAULT_ACCENT_LIGHT};`),
+  );
+  for (const theme of AUTH_BRANDING_THEMES) {
+    renderInvitePage({ name: 'S', tagline: null, theme, accent: null, logo: false });
+  }
+  assert.throws(() =>
+    renderInvitePage({ name: 'S', tagline: null, theme: 'neon', accent: null, logo: false }),
+  );
+});
+
 // --- the rendered directory -----------------------------------------------
 
 const BRAND = {
@@ -484,6 +618,7 @@ test('a brand is rendered into a directory of its own and served through its dom
       AUTH_BRANDING_FILES.favicon,
       AUTH_BRANDING_FILES.logo,
       AUTH_BRANDING_FILES.css,
+      AUTH_BRANDING_FILES.invite,
       AUTH_BRANDING_FILES.brand,
       AUTH_BRANDING_FILES.rendered,
       'locales/en/portal.json',
@@ -503,6 +638,21 @@ test('a brand is rendered into a directory of its own and served through its dom
     assert.equal(settings['Settings - {{authelia}}'], 'Settings - Code Lama');
     const css = await readFile(path.join(link, AUTH_BRANDING_FILES.css), 'utf-8');
     assert.ok(css.includes('--primary: #22d3ee !important'));
+    // The domain's invitation page: the brand's name and accent, the logo
+    // because one is served, the dark palette for the dark theme.
+    const invite = await readFile(path.join(link, AUTH_BRANDING_FILES.invite), 'utf-8');
+    assert.equal(
+      invite,
+      renderInvitePage({
+        name: 'Code Lama',
+        tagline: null,
+        theme: 'dark',
+        accent: '#22d3ee',
+        logo: true,
+      }),
+    );
+    assert.ok(invite.includes('<div class="brand-name">Code Lama</div>'));
+    assert.ok(invite.includes(`src="${INVITE_PAGE_LOGO_PATH}"`));
     const brand = JSON.parse(await readFile(path.join(link, AUTH_BRANDING_FILES.brand), 'utf-8'));
     assert.equal(brand.v, 1);
     assert.equal(brand.domain, domain);
@@ -545,6 +695,7 @@ test('a brand is rendered into a directory of its own and served through its dom
     assert.deepEqual((await readdir(link)).sort(), [
       'brand.css',
       'brand.json',
+      'invite',
       'locales',
       'rendered.json',
       'static',
@@ -552,6 +703,12 @@ test('a brand is rendered into a directory of its own and served through its dom
     const brand2 = JSON.parse(await readFile(path.join(link, AUTH_BRANDING_FILES.brand), 'utf-8'));
     assert.equal(brand2.favicon, null);
     assert.equal(brand2.accent, null);
+    assert.ok(
+      (await readFile(path.join(link, AUTH_BRANDING_FILES.invite), 'utf-8')).includes(
+        `--accent: ${INVITE_PAGE_DEFAULT_ACCENT};`,
+      ),
+      'no accent: the default',
+    );
 
     // Listing: domains whose entry links to a rendering of theirs; a
     // crash-left rendering nothing links to, a temporary link and an

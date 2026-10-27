@@ -46,7 +46,9 @@
  * everything else verbatim, so a Turkish visitor still reads Turkish.
  */
 
-import { LETSENCRYPT_EMAIL_REGEX } from './constants.js';
+import { z } from 'zod';
+
+import { HOSTNAME_REGEX, LETSENCRYPT_EMAIL_REGEX } from './constants.js';
 
 // ---------------------------------------------------------------------------
 // Limits and rules
@@ -422,6 +424,8 @@ export const AUTH_BRANDING_FILES = Object.freeze({
   css: 'brand.css',
   /** The brand for Lamaste's own pages (Gatekeeper, the invitation page) — {@link renderBrandJson}. */
   brand: 'brand.json',
+  /** The domain's invitation page (`server/invite-page.ts`), served by the auth vhost for `/invite/`. */
+  invite: 'invite/index.html',
   /** What was rendered: revision and Authelia version ({@link RenderedBrand}). */
   rendered: 'rendered.json',
 });
@@ -583,3 +587,54 @@ export function renderBrandJson(
     favicon: assets.faviconSha256 ? { sha256: assets.faviconSha256 } : null,
   };
 }
+
+/** A SHA-256 digest as `brand.json` carries one: 64 lower-case hex digits. */
+const SHA256_HEX_RE = /^[a-f0-9]{64}$/;
+
+const BrandAssetSchema = z.object({ sha256: z.string().regex(SHA256_HEX_RE) }).strict();
+
+const brandTextSchema = (maxLength: number): z.ZodEffects<z.ZodString, string, string> =>
+  z.string().refine((value) => brandTextProblem(value, maxLength) === null, {
+    message: 'not a brand text',
+  });
+
+/**
+ * `brand.json` as Gatekeeper reads it back (browser-safe): exactly
+ * {@link BrandJson}, every field under the rule the record was validated
+ * with — a file that says anything else (another version, a text the
+ * record could not hold, an unknown key) is not a rendering of ours and is
+ * refused, never partly taken. The parse never echoes a value in its
+ * messages.
+ */
+export const BrandJsonSchema = z
+  .object({
+    // `z.literal` and `z.enum` put the received value in their issues; a
+    // custom check names the rule alone.
+    v: z.custom<1>((value) => value === 1, { message: 'not version 1' }),
+    domain: z.string().regex(HOSTNAME_REGEX, 'not a domain name'),
+    revision: z.number().int().nonnegative(),
+    name: brandTextSchema(AUTH_BRANDING_NAME_MAX_LENGTH),
+    tagline: brandTextSchema(AUTH_BRANDING_TAGLINE_MAX_LENGTH).nullable(),
+    theme: z.custom<BrandTheme>(
+      (value) =>
+        typeof value === 'string' && (AUTH_BRANDING_THEMES as readonly string[]).includes(value),
+      { message: 'not one of Authelia’s themes' },
+    ),
+    accent: z.string().regex(AUTH_BRANDING_ACCENT_RE, 'not a colour').nullable(),
+    supportEmail: z.string().regex(LETSENCRYPT_EMAIL_REGEX, 'not an e-mail address').nullable(),
+    supportUrl: z
+      .string()
+      .refine((value) => brandSupportUrlProblem(value) === null, { message: 'not a support URL' })
+      .nullable(),
+    logo: BrandAssetSchema.nullable(),
+    favicon: BrandAssetSchema.nullable(),
+  })
+  .strict();
+
+// The schema and the interface say the same thing, both ways (a field added
+// to one without the other fails to compile).
+type BrandJsonParsed = z.infer<typeof BrandJsonSchema>;
+const _brandJsonFromSchema: BrandJson = {} as BrandJsonParsed;
+const _brandJsonToSchema: BrandJsonParsed = {} as BrandJson;
+void _brandJsonFromSchema;
+void _brandJsonToSchema;
