@@ -145,7 +145,7 @@ Move a plugin to another active domain: `{ "domain": "codelama.com.tr" }`. A plu
 
 ## Branding
 
-A domain's brand on its auth pages (design: `packages/core/docs/auth-branding-design.md`). The operator sets a brand once per domain; the record lives in `state.db` (`domain_branding`, migration `0019`) and is the source of truth. Every change renders the files nginx will serve on `auth.<domain>` into `/var/www/lamaste/auth/<domain>/` (the web root, `lamaste:www-data`, 0750/0640): the locale files for the three routes Authelia lets a file override, the stylesheet, the domain's invitation page and `brand.json` — see [What is rendered](#what-is-rendered). A brand reaches every page a visitor of the domain can meet: the **sign-in** (Authelia's pages, through the `auth.<domain>` vhost — [nginx configuration](../03-architecture/nginx-configuration.md#3-auth-vhost-lamalibre-lamaste-auth-domain)), the **invitation page** (`auth.<domain>/invite/<token>`, served from the rendering — the stock page for a domain without a brand), and Gatekeeper's **access-request and refusal pages** on the domain's hosts ([Gatekeeper — Branded pages](gatekeeper.md#branded-pages), read from `brand.json`, fail open). The panel's Domains page section and the CLI follow in the next wave; until then the API below sets a brand.
+A domain's brand on its auth pages (design: `packages/core/docs/auth-branding-design.md`). The operator sets a brand once per domain; the record lives in `state.db` (`domain_branding`, migration `0019`) and is the source of truth. Every change renders the files nginx will serve on `auth.<domain>` into `/var/www/lamaste/auth/<domain>/` (the web root, `lamaste:www-data`, 0750/0640): the locale files for the three routes Authelia lets a file override, the stylesheet, the domain's invitation page and `brand.json` — see [What is rendered](#what-is-rendered). A brand reaches every page a visitor of the domain can meet: the **sign-in** (Authelia's pages, through the `auth.<domain>` vhost — [nginx configuration](../03-architecture/nginx-configuration.md#3-auth-vhost-lamalibre-lamaste-auth-domain)), the **invitation page** (`auth.<domain>/invite/<token>`, served from the rendering — the stock page for a domain without a brand), and Gatekeeper's **access-request and refusal pages** on the domain's hosts ([Gatekeeper — Branded pages](gatekeeper.md#branded-pages), read from `brand.json`, fail open). Set it in the panel ([In the panel](#in-the-panel)), with the CLI (`lamaste-server domains branding`, [CLI](#cli)) or through the API below.
 
 Everything a visitor would receive is rendered from validated fields: the name cannot carry a tag or an interpolation, the colour matches a regex, the images are parsed (PNG headers; ICO directories) — no CSS, HTML or SVG of the operator's ever reaches the sign-in origin.
 
@@ -223,6 +223,10 @@ Back to the stock page: the record and the rendered directory go, and the domain
 
 What a client previews without the page: `{ locale: "en", css, title, footer, theme, logo, favicon }` — the rendered `brand.css` and the English title and footer as the sign-in will show them (`Login - Code Lama`, `Powered by Code Lama`). **404** `no_branding`; **503** `authelia_unavailable` when Authelia's texts cannot be read.
 
+### In the panel
+
+The Domains page has a **Branding** section on each domain's card, beside Members. It shows the brand the domain has — or that it has none and the sign-in is Authelia's stock page — with a form of the six fields, validated in the browser with the same rules the panel applies (`@lamalibre/lamaste/branding`, a refusal beside its field; the panel's `errors` are shown the same way, and never a value), **Save brand** / **Create brand**, a **Remove brand** confirm, and the logo and favicon as file inputs (`image/png`; `.ico` or PNG) that are refused before anything is sent when over the limit and otherwise sent as base64 with `ifRevision`. A change made elsewhere in the meantime (409 `revision_mismatch`) reloads the form with the current brand and says so; a change's `warnings` are shown as toasts. Beside the form, a **preview of the sign-in card** from the form's values and `GET …/branding/preview`: the theme's background and card (`auto` previewed as light), the accent on the sign-in button with a black or white text by `accentForeground`, the browser title, the struck-through footer with a note that it is hidden, and the logo loaded from `https://auth.<domain>/static/media/logo.png?r=<revision>` only when the page would show it (the domain active, the rendering current, a logo set — otherwise a note says why not). The desktop app shows the same section; its webview's CSP allows `https:` images for that logo.
+
 ### What is rendered
 
 Each rendering is a directory of its own, `/var/www/lamaste/auth/.renders/<domain>-<revision>-<hex>/` (every file fsynced, 0640; directories 0750), and `/var/www/lamaste/auth/<domain>` is a **symbolic link** to the one that serves: a change renders beside the old directory, replaces the link with one `rename` — nginx and Gatekeeper see the old rendering or the new one, never none and never a mix — and removes the old directory afterwards (renamed aside first). nginx's `root` resolves the link on every open (`disable_symlinks` is `off` by default and the auth vhost leaves it so). The files:
@@ -282,6 +286,26 @@ lamaste-server domains remove codelama.com.tr
 lamaste-server plugins domain feria codelama.com.tr
 lamaste-server tunnels create --subdomain feria --port 20060 --agent feria --domain codelama.com.tr
 ```
+
+The brand of a domain's auth pages (`--json` emits the panel's answer as it came):
+
+```
+lamaste-server domains branding codelama.com.tr
+lamaste-server domains branding codelama.com.tr set --name "Code Lama" --theme dark --accent "#1f6feb"
+lamaste-server domains branding codelama.com.tr set --tagline "Software" --support-email help@codelama.com.tr
+lamaste-server domains branding codelama.com.tr set --clear tagline --clear support-url --if-revision 4
+lamaste-server domains branding codelama.com.tr logo ./logo.png
+lamaste-server domains branding codelama.com.tr favicon ./favicon.ico --if-revision 6
+lamaste-server domains branding codelama.com.tr logo --remove
+lamaste-server domains branding codelama.com.tr preview
+lamaste-server domains branding codelama.com.tr remove
+```
+
+- `branding <domain>` prints the fields, the logo and favicon (format, dimensions, size, digest), the revision and whether the rendering nginx serves is current.
+- `set` reads the brand first and sends every field: a field not named keeps its value, `--clear <tagline|accent|support-email|support-url>` sends `null`, and `ifRevision` is the revision read unless `--if-revision <n>` is given — a change made elsewhere in between is refused (`revision_mismatch`, with the current revision), never overwritten. A domain without a brand needs `--name`. The values are passed as given; the panel applies the rules and the refusal names each field.
+- `logo <file.png>` and `favicon <file.ico|.png>` check the file's size against the limit before the request (the limit named), then send it as base64 in the JSON body on curl's stdin; the bytes are never printed. `--remove` deletes the asset.
+- `preview` prints the English title and footer (with a note that the footer is hidden), the theme, whether the logo and favicon are served, and the generated `brand.css`.
+- Refusals are explained in words — `invalid_branding` by field, `invalid_image` by its `reason`, `asset_too_large` with the limit, `no_branding` with the command to set a name, `revision_mismatch` with the current revision, `authelia_unavailable` — never with a value; the panel's `warnings` are printed as warnings.
 
 ## Related
 
