@@ -671,6 +671,7 @@ export {
   accentForeground,
   renderBrandCss,
   renderBrandJson,
+  BrandJsonSchema,
 } from './auth-branding.js';
 
 export type {

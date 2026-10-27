@@ -49,6 +49,7 @@ import {
 } from '../auth-branding.js';
 import type { BrandFields, RenderedBrand } from '../auth-branding.js';
 import { assertDomainName } from '../domains.js';
+import { renderInvitePage } from './invite-page.js';
 
 const DIR_MODE = 0o750;
 const FILE_MODE = 0o640;
@@ -297,7 +298,8 @@ export function sha256Hex(bytes: Uint8Array): string {
 
 /**
  * Render a domain's brand under `root`: the favicon and logo when set,
- * every locale file with the brand name spliced in, `brand.css`,
+ * every locale file with the brand name spliced in, `brand.css`, the
+ * domain's invitation page (`invite/index.html`, {@link renderInvitePage}),
  * `brand.json` and `rendered.json` — into a directory of its own under
  * `.renders/`, then served by replacing the domain's link in one rename.
  * The rendering it replaces is removed afterwards. Returns what
@@ -330,6 +332,16 @@ export async function renderAuthBranding(input: AuthBrandingRenderInput): Promis
       await writeNewFile(path.join(dir, relative), `${JSON.stringify(messages, null, '\t')}\n`);
     }
     await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.css), renderBrandCss(input.brand));
+    await writeNewFile(
+      path.join(dir, AUTH_BRANDING_FILES.invite),
+      renderInvitePage({
+        name: input.brand.name,
+        tagline: input.brand.tagline,
+        theme: input.brand.theme,
+        accent: input.brand.accent,
+        logo: input.logo !== null,
+      }),
+    );
     const brandJson = renderBrandJson(input.domain, input.brand, input.revision, {
       logoSha256: input.logo ? sha256Hex(input.logo) : null,
       faviconSha256: input.favicon ? sha256Hex(input.favicon) : null,

@@ -665,3 +665,10 @@ export type {
   FetchAutheliaLocalesOptions,
   AuthBrandingRenderInput,
 } from './auth-branding-store.js';
+export {
+  INVITE_PAGE_DEFAULT_ACCENT,
+  INVITE_PAGE_DEFAULT_ACCENT_LIGHT,
+  INVITE_PAGE_LOGO_PATH,
+  renderInvitePage,
+} from './invite-page.js';
+export type { InviteBrand } from './invite-page.js';
