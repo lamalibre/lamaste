@@ -71,6 +71,21 @@ const refused = {
   'types entry with no extension': location('  types { text/html; }'),
   'default_type naming a file': location('  default_type /etc/shadow;'),
   'default_type at server level': server(' default_type application/json;'),
+  'sub_filter with one argument': location('  sub_filter \'data-theme="light"\';'),
+  'sub_filter with three arguments': location("  sub_filter 'a' 'b' 'c';"),
+  'sub_filter with an empty string': location("  sub_filter '' 'b';"),
+  'sub_filter with an argument over 512 bytes': location(`  sub_filter 'a' '${'b'.repeat(513)}';`),
+  'sub_filter with a newline inside an argument': location("  sub_filter 'a\nb' 'c';"),
+  'sub_filter with a variable in the string': location("  sub_filter '$host' 'x';"),
+  'sub_filter with a variable in the replacement': location(
+    "  sub_filter '</head>' '$http_cookie';",
+  ),
+  'sub_filter with a backslash escape': location(String.raw`  sub_filter '</head>' '\x3c';`),
+  'sub_filter at server level': server(" sub_filter 'a' 'b';"),
+  'sub_filter_once with an unknown value': location('  sub_filter_once maybe;'),
+  sub_filter_types: location('  sub_filter_types text/css;'),
+  sub_filter_last_modified: location('  sub_filter_last_modified on;'),
+  'single-quoted string followed by a character': location("  sub_filter 'a'b 'c';"),
 };
 
 for (const [name, text] of Object.entries(refused)) {
@@ -104,6 +119,26 @@ test('accepts a user surface’s JSON refusal: a media type and a fixed body', (
         '  return 403 \'{"error":"forbidden"}\';',
     ),
   );
+});
+
+test('accepts the auth portal’s brand overrides and index rewrite: single-quoted strings carrying double quotes', () => {
+  validateVhost(
+    server(
+      ' location = /favicon.ico {\n  root /var/www/lamaste/auth/codelama.com.tr;\n  try_files $uri @authelia;\n' +
+        '  add_header X-Content-Type-Options nosniff;\n  add_header Cache-Control "public, max-age=0, must-revalidate";\n }\n' +
+        ' location = /brand.css {\n  root /var/www/lamaste/auth/codelama.com.tr;\n  try_files $uri =404;\n }\n' +
+        ' location @authelia {\n  proxy_pass http://127.0.0.1:9091;\n  proxy_set_header Host auth.codelama.com.tr;\n }\n' +
+        ' location / {\n  proxy_pass http://127.0.0.1:9091;\n  proxy_set_header Accept-Encoding "";\n  sub_filter_once off;\n' +
+        `  sub_filter 'data-theme="light"' 'data-theme="dark"';\n` +
+        `  sub_filter 'data-logooverride="true"' 'data-logooverride="false"';\n` +
+        `  sub_filter '</head>' '<link rel="stylesheet" href="/brand.css"></head>';\n` +
+        `  sub_filter 'a' '${'b'.repeat(512)}';\n }`,
+    ),
+  );
+  // As nginx reads them: a single-quoted string may carry double quotes and a
+  // double-quoted one single quotes; a bare word may not carry either.
+  validateVhost(location(`  sub_filter "it's" 'say "hi"';`));
+  assert.throws(() => validateVhost(location("  sub_filter it's x;")));
 });
 
 test('site names: only the vhosts the panel writes', () => {

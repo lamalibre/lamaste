@@ -23,6 +23,7 @@ import {
   nodeVersionSupported,
   nodeVersionTooNew,
 } from '../lib/node-version.js';
+import { assertNginxSubModule } from '../lib/nginx-modules.js';
 import { deployGatekeeperPackage } from './gatekeeper.js';
 import { autheliaReady } from '@lamalibre/lamaste/server';
 
@@ -101,7 +102,12 @@ export function redeployTasks(ctx, task) {
         const latest = await getLatestNpmVersion();
         ctx.installedVersion = installed;
         ctx.latestVersion = latest;
-        subtask.output = `Installed: ${installed || 'unknown'} → Latest: ${latest || 'unknown'}`;
+        // First, while the running panel is untouched: the panel this
+        // redeploy starts writes every auth vhost with `sub_filter`, which
+        // an nginx without the sub module refuses. Fatal — a relay whose
+        // nginx lacks it keeps the version it runs (lib/nginx-modules.js).
+        const nginxVersion = await assertNginxSubModule();
+        subtask.output = `Installed: ${installed || 'unknown'} → Latest: ${latest || 'unknown'}; ${nginxVersion}`;
       },
       rendererOptions: { persistentOutput: true },
     },

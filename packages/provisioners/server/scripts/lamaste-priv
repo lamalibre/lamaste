@@ -392,6 +392,10 @@ const RULES = {
     proxy_pass_request_body: { args: oneOf('on', 'off') },
     auth_request: { args: (a) => a.length === 1 && (a[0] === 'off' || URI_PATH_RE.test(a[0])) },
     auth_request_set: { args: (a) => a.length === 2 && VARIABLE_RE.test(a[0]) },
+    // The auth portal's rewrite of Authelia's index HTML for a domain's
+    // brand (two literal strings; see subFilterArgs).
+    sub_filter: { args: subFilterArgs },
+    sub_filter_once: { args: oneOf('on', 'off') },
   },
   if: {
     return: { args: argc(1, 2) },
@@ -414,6 +418,22 @@ function rewriteArgs(a) {
       (a.length === 3 && ['last', 'break', 'redirect', 'permanent'].includes(a[2]))) &&
     a[0].length <= 512 &&
     a[1].length <= 512
+  );
+}
+
+/**
+ * `sub_filter <string> <replacement>`: exactly two arguments of 1–512
+ * bytes. Neither may name a variable: nginx expands `$name` in both (the
+ * replacement always, the string since 1.9.4), which would put request data
+ * into the page — the generator writes literal attribute strings only.
+ * Newlines and control characters cannot reach here (the tokenizer refuses
+ * them), nor can backslashes or `${`.
+ */
+const SUB_FILTER_MAX_BYTES = 512;
+function subFilterArgs(a) {
+  return (
+    a.length === 2 &&
+    a.every((v) => v.length >= 1 && v.length <= SUB_FILTER_MAX_BYTES && !v.includes('$'))
   );
 }
 
