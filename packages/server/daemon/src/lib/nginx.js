@@ -15,6 +15,7 @@ import {
   WEB_TREE_CONTENT_TYPES,
 } from '@lamalibre/lamaste';
 import { authBrandingDir } from '@lamalibre/lamaste/server';
+import { INVITE_DIR } from './invite-page.js';
 
 const SITES_AVAILABLE = '/etc/nginx/sites-available';
 const SITES_ENABLED = '/etc/nginx/sites-enabled';
@@ -558,7 +559,9 @@ export async function removeAuthVhost(domain) {
 /**
  * Render the Authelia auth portal vhost of one domain. Pure; the startup
  * reconcile renders it on the certificate directory the installed vhost
- * names. Every domain's portal serves Authelia and the invitation page; only
+ * names. Every domain's portal serves Authelia and the invitation page (the
+ * domain's own from its rendering when it has a brand, else the stock one
+ * from `INVITE_DIR`); only
  * the primary's — the panel's domain, which the desktop's user login
  * exchanges at — serves `/api/user-access/authorize` and declares its rate
  * limit zone (an http-level name, declared once). Every portal serves the
@@ -644,10 +647,19 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 
-    # Invitation page — static HTML
+    # Invitation page — the domain's own when it has a brand (its rendering
+    # holds one, served through the same link as the overrides below), else
+    # the stock page. A fixed path in try_files resolves against the
+    # location's root; the token stays in the URL for the page's script.
     location /invite/ {
-        alias /var/www/lamaste/invite/;
-        try_files $uri /invite/index.html;
+        root ${authBrandingDir(domain)};
+        try_files /${AUTH_BRANDING_FILES.invite} @invite;
+        add_header X-Content-Type-Options nosniff;
+    }
+    location @invite {
+        root ${INVITE_DIR};
+        try_files /index.html =404;
+        add_header X-Content-Type-Options nosniff;
     }
 
     # Invitation API — proxied to panel server (no mTLS)
