@@ -51,6 +51,7 @@ import {
 } from './lib/vhost-reconcile.js';
 import { activeDomains, ensurePrimaryDomain, syncDomainAccess } from './lib/domains.js';
 import { ensureBrandingBase, reconcileAuthBranding } from './lib/auth-branding.js';
+import { writeInvitePage } from './lib/invite-page.js';
 import { touchUsersFile } from './lib/authelia.js';
 import { reconcileWebSurfaces } from './lib/web-surface.js';
 import {
@@ -239,6 +240,12 @@ async function start() {
   // written Authelia's configuration.
   if (config.onboarding.status === 'COMPLETED') {
     void (async () => {
+      // The stock invitation page (what an unbranded domain's /invite/
+      // serves): this release's, written only when the installed file
+      // differs, so a change to the page reaches a relay at its update.
+      await writeInvitePage({ logger: server.log }).catch((err) => {
+        server.log.warn({ err: err.message }, 'Startup write of the invitation page failed');
+      });
       // First what the branded sign-in needs from Authelia — its asset
       // path, the placeholder logo and an explicit theme: the one
       // structural change the upgrade makes, one restart — so the

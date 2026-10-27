@@ -640,6 +640,18 @@ test('every auth portal serves the domain’s brand overrides and rewrites Authe
     assert.doesNotMatch(portal, /sub_filter_types/);
     // The per-domain root is a link switched by rename: never disabled (the comment names it).
     assert.doesNotMatch(text, /^\s*disable_symlinks/m);
+    // The invitation page: the domain's own from its rendering when it has
+    // one, else the stock page — the token left in the URL for the script.
+    const invite = locationBody(text, '/invite/');
+    assert.ok(invite.includes(`root /var/www/lamaste/auth/${domain};`), domain);
+    assert.ok(invite.includes('try_files /invite/index.html @invite;'), domain);
+    assert.ok(invite.includes('add_header X-Content-Type-Options nosniff;'), domain);
+    assert.doesNotMatch(invite, /alias|\$uri|proxy_pass/);
+    const stockInvite = locationBody(text, '@invite');
+    assert.ok(stockInvite.includes('root /var/www/lamaste/invite;'));
+    assert.ok(stockInvite.includes('try_files /index.html =404;'));
+    assert.ok(stockInvite.includes('add_header X-Content-Type-Options nosniff;'));
+    assert.doesNotMatch(text, /alias \/var\/www\/lamaste\/invite/);
   }
 
   // Unbranded: the light theme, no logo (the placeholder never shown), no stylesheet — the stock page.
