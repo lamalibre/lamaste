@@ -25,6 +25,10 @@
     "./domains": {
       "types": "./dist/domains.d.ts",
       "import": "./dist/domains.js"
+    },
+    "./branding": {
+      "types": "./dist/auth-branding.d.ts",
+      "import": "./dist/auth-branding.js"
     }
   },
   "files": [
