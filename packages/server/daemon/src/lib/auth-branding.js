@@ -141,11 +141,16 @@ export function setAuthBrandingForTests(overrides) {
   localesCache = null;
   renderFailing.clear();
   vhostPending.clear();
-  if (overrides === null) baseReady = false;
+  if (overrides === null) {
+    baseReady = false;
+    baseInFlight = null;
+  }
 }
 
 /** Whether {@link ensureBrandingBase} has run this process: before that, nothing is rendered. */
 let baseReady = false;
+/** The base check under way, shared by whoever asks meanwhile ({@link ensureBrandingBase}). */
+let baseInFlight = null;
 
 /**
  * What every branded relay needs from Authelia (core
@@ -158,17 +163,29 @@ let baseReady = false;
  * @param {{ logger?: import('pino').Logger }} [opts]
  */
 export async function ensureBrandingBase({ logger } = {}) {
-  const result = await dep('ensureBase')();
-  if (result.restarted) {
-    logger?.info('Authelia restarted for the branded sign-in (asset path, theme)');
-    await recordAuditBestEffort(
-      { actor: 'lamaste', action: 'authelia.restarted', details: { reason: 'branding-base' } },
-      logger,
-    );
+  // One check at a time: the start's call and the first tick's reconcile
+  // overlap, and two checks reading the configuration before either wrote
+  // it would both add the keys and restart Authelia (seen on an upgraded
+  // relay: two `branding-base` restarts 2 ms apart).
+  if (baseInFlight) return baseInFlight;
+  baseInFlight = (async () => {
+    const result = await dep('ensureBase')();
+    if (result.restarted) {
+      logger?.info('Authelia restarted for the branded sign-in (asset path, theme)');
+      await recordAuditBestEffort(
+        { actor: 'lamaste', action: 'authelia.restarted', details: { reason: 'branding-base' } },
+        logger,
+      );
+    }
+    if (result.logoWritten) logger?.info('Authelia placeholder logo written');
+    baseReady = true;
+    return result;
+  })();
+  try {
+    return await baseInFlight;
+  } finally {
+    baseInFlight = null;
   }
-  if (result.logoWritten) logger?.info('Authelia placeholder logo written');
-  baseReady = true;
-  return result;
 }
 
 // ---------------------------------------------------------------------------
