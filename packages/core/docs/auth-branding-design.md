@@ -1,6 +1,6 @@
 # Per-Domain Branding of the Auth Pages — Design Document
 
-> **Status:** agreed 2026-10-27 (decisions D1–D8 as recommended); implementation on `feat/auth-branding`, waves below.
+> **Status:** agreed 2026-10-27 (decisions D1–D8 as recommended); implementation on `feat/auth-branding`, waves below. Waves 1 and 2 done. Wave 2 as built differs in three details: `lamaste-priv` also refuses a `$` in either `sub_filter` argument (nginx expands variables in both; the generator writes literals only); a brand change that nginx refuses is kept on a pending set retried every minute (the start's vhost reconcile compares every auth vhost, so a restart loses nothing — no per-tick compare of every vhost); and a brand may be set on a pending domain, whose activation writes the vhost branded. `renderAuthVhost` takes `branding: { theme, logo } | null`, not a `branded` flag.
 > **Target:** Lamaste 4.8.0, on top of 4.7.0 (multi-domain relay, external members).
 > **Pilot:** `codelama.com.tr` and `samplepark.tr` on the relay `138.68.65.228`, each with its own name, logo, favicon, colours and sign-in text.
 > **Companions:** `multi-domain-relay-design.md` (one sign-in host per domain), `external-members-design.md`, `gatekeeper-design.md`.
