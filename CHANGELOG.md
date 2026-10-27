@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.8.0] - 2026-10-27
+
+All lockstep packages, the desktop crate and its Tauri config move to 4.8.0; internal `@lamalibre/*` ranges become `^4.8.0`. Per-domain branding of the auth pages: each of the relay's domains may carry its own name, logo, favicon, theme and colours on its sign-in, its invitation page and Gatekeeper's refusal pages; a domain without a brand keeps the stock page. Design: `packages/core/docs/auth-branding-design.md`.
 
 ### Upgrade notes
 

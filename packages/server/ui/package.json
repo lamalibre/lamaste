@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste-server-ui",
-  "version": "4.7.0",
+  "version": "4.8.0",
   "description": "Lamaste server management panel frontend",
   "private": true,
   "type": "module",
@@ -20,7 +20,7 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "@lamalibre/lamaste": "^4.7.0",
+    "@lamalibre/lamaste": "^4.8.0",
     "@tailwindcss/typography": "^0.5.19",
     "@tanstack/react-query": "^5.0.0",
     "clsx": "^2.1.0",
