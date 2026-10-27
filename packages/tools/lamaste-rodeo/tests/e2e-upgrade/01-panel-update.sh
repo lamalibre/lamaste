@@ -90,6 +90,11 @@ panel_version() {
   api_get "health" 2>/dev/null | jq -r '.version // "down"' 2>/dev/null || echo "down"
 }
 
+# version_before <a> <b> — whether release <a> is older than <b> (x.y.z)
+version_before() {
+  [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1" ]
+}
+
 # ---------------------------------------------------------------------------
 log_section "Pre-flight: the previous release, onboarded; the candidate on the registry"
 # ---------------------------------------------------------------------------
@@ -138,9 +143,17 @@ assert_json_field "$RESP" '.tunnel.enabled' 'false' "…disabled" || true
 LEGACY_ON="lamalibre-lamaste-app-${SUB_ON}"
 LEGACY_OFF="lamalibre-lamaste-app-${SUB_OFF}"
 LEGACY_AUTH="lamalibre-lamaste-auth"
-assert_eq "$(link_state "${LEGACY_ON}") $(link_state "${LEGACY_OFF}") $(link_state "${LEGACY_AUTH}")" \
-  "available linked available unlinked available linked" \
-  "${BEFORE_VERSION} names the vhosts by subdomain (the enabled tunnel linked, the disabled one not, the auth portal linked)" || true
+# A release before 4.7 named its vhosts by subdomain (and the one auth
+# portal `lamalibre-lamaste-auth`); from 4.7 they carry the full hostname.
+if version_before "${BEFORE_VERSION}" "4.7.0"; then
+  assert_eq "$(link_state "${LEGACY_ON}") $(link_state "${LEGACY_OFF}") $(link_state "${LEGACY_AUTH}")" \
+    "available linked available unlinked available linked" \
+    "${BEFORE_VERSION} names the vhosts by subdomain (the enabled tunnel linked, the disabled one not, the auth portal linked)" || true
+else
+  assert_eq "$(link_state "$(vhost_name app "${ON_FQDN}")") $(link_state "$(vhost_name app "${OFF_FQDN}")") $(link_state "$(vhost_name auth "${DOMAIN}")")" \
+    "available linked available unlinked available linked" \
+    "${BEFORE_VERSION} names the vhosts by full hostname (the enabled tunnel linked, the disabled one not, the auth portal linked)" || true
+fi
 
 # Signed in on the previous release: what the user reaches (an
 # authenticated tunnel — admitted, so nginx answers for its backend, which
@@ -183,36 +196,50 @@ for _ in $(seq 1 72); do
 done
 assert_eq "${AFTER_VERSION}" "${CANDIDATE}" "The panel is back on ${CANDIDATE}" || true
 
-# The panel answers /api/health before its start-up has rendered the domains
-# into Authelia, which restarts Authelia once more; compare the hosts only
-# after that rendering and once Authelia serves again.
-RENDERED="no"
+# The panel answers /api/health before its start-up has settled Authelia's
+# configuration — the domains rendered into it (a relay from before 4.7) or
+# the branded sign-in's base added (before 4.8) — which restarts Authelia
+# once more; compare the hosts only after that and once Authelia serves
+# again.
+SETTLED="no"
 for _ in $(seq 1 30); do
-  if sudo journalctl -u lamalibre-lamaste-serverd --since "${UPDATE_STARTED}" --no-pager -o cat 2>/dev/null | grep -q '"msg":"Authelia domain access updated"'; then
-    RENDERED="yes"
+  if sudo journalctl -u lamalibre-lamaste-serverd --since "${UPDATE_STARTED}" --no-pager -o cat 2>/dev/null | grep -qE '"msg":"(Authelia domain access updated|Authelia restarted for the branded sign-in[^"]*)"'; then
+    SETTLED="yes"
     break
   fi
   sleep 2
 done
-assert_eq "${RENDERED}" "yes" "The panel's start-up rendered the domains into Authelia" || true
+assert_eq "${SETTLED}" "yes" "The panel's start-up settled Authelia's configuration (domains rendered, or the branding base added)" || true
 if wait_for_http "http://127.0.0.1:9091/api/health" 60; then
   log_pass "Authelia serves again"
 else
   log_fail "Authelia does not answer its health check after the update"
 fi
 
-UNIT=$(systemctl list-units --all --no-legend --plain 'lamalibre-lamaste-update-*' 2>/dev/null | awk '{print $1}' | tail -1)
-if [ -n "${UNIT}" ]; then
-  RESULT=$(systemctl show -p Result --value "${UNIT}" 2>/dev/null || echo unknown)
-  assert_eq "${RESULT}" "success" "The update unit ${UNIT} ended in success" || true
-else
-  # A oneshot unit that succeeded is unloaded once it stopped; its journal stays.
-  if sudo journalctl --since "${UPDATE_STARTED}" --no-pager -o cat 2>/dev/null | grep -q "Finished.*Lamaste update to ${CANDIDATE}"; then
-    log_pass "The update unit finished (journal)"
-  else
-    log_fail "No trace of the update unit finishing"
+# The panel is back before the unit is done (it carries on with Gatekeeper,
+# the wrappers and the rest of the redeploy): give it up to two minutes.
+UNIT_DONE="no"
+for _ in $(seq 1 60); do
+  UNIT=$(systemctl list-units --all --no-legend --plain 'lamalibre-lamaste-update-*.service' 2>/dev/null | awk '{print $1}' | tail -1)
+  if [ -n "${UNIT}" ]; then
+    case "$(systemctl show -p ActiveState --value "${UNIT}" 2>/dev/null)" in
+      inactive | failed) UNIT_DONE="unit" ;;
+    esac
+  elif sudo journalctl --since "${UPDATE_STARTED}" --no-pager -o cat 2>/dev/null | grep -q "Finished.*Lamaste update to ${CANDIDATE}"; then
+    # A oneshot unit that succeeded is unloaded once it stopped; its journal stays.
+    UNIT_DONE="journal"
   fi
-fi
+  [ "${UNIT_DONE}" = "no" ] || break
+  sleep 2
+done
+case "${UNIT_DONE}" in
+  unit)
+    RESULT=$(systemctl show -p Result --value "${UNIT}" 2>/dev/null || echo unknown)
+    assert_eq "${RESULT}" "success" "The update unit ${UNIT} ended in success" || true
+    ;;
+  journal) log_pass "The update unit finished (journal)" ;;
+  *) log_fail "No trace of the update unit finishing within two minutes" ;;
+esac
 
 # ===========================================================================
 # 3. After the update
@@ -227,15 +254,15 @@ else
   log_fail "lamaste-priv is still the one ${BEFORE_VERSION} installed"
 fi
 OUT=$(printf 'server {\n listen 443 ssl;\n}\n' | sudo "${PRIV}" nginx-site write "lamalibre-lamaste-app-e2eup1legacy" 2>&1 > /dev/null || true)
-assert_contains "$OUT" "site name not allowed for write" "It refuses a vhost under a ${BEFORE_VERSION} name" || true
+assert_contains "$OUT" "site name not allowed for write" "It refuses a vhost under a pre-4.7 name" || true
 
 log_section "The vhosts under the candidate's names, link state kept"
 
-assert_eq "$(link_state "$(vhost_name app "${ON_FQDN}")")" "available linked" "${ON_FQDN}: renamed to its full hostname, still linked" || true
-assert_eq "$(link_state "$(vhost_name app "${OFF_FQDN}")")" "available unlinked" "${OFF_FQDN}: renamed, still not linked" || true
+assert_eq "$(link_state "$(vhost_name app "${ON_FQDN}")")" "available linked" "${ON_FQDN}: under its full hostname, still linked" || true
+assert_eq "$(link_state "$(vhost_name app "${OFF_FQDN}")")" "available unlinked" "${OFF_FQDN}: under its full hostname, still not linked" || true
 assert_eq "$(link_state "$(vhost_name auth "${DOMAIN}")")" "available linked" "The auth portal: lamalibre-lamaste-auth-${DOMAIN}, linked" || true
 assert_eq "$(link_state "${LEGACY_ON}") $(link_state "${LEGACY_OFF}") $(link_state "${LEGACY_AUTH}")" \
-  "gone unlinked gone unlinked gone unlinked" "No ${BEFORE_VERSION} name is left, as a file or a link" || true
+  "gone unlinked gone unlinked gone unlinked" "No pre-4.7 name is left, as a file or a link" || true
 if sudo nginx -t > /dev/null 2>&1; then
   log_pass "nginx -t passes"
 else

@@ -348,7 +348,14 @@ if entry_gone; then
 else
   log_fail "${WEB_ROOT}/${DOMAIN} is still there"
 fi
-RESP=$(auth_get /)
+# nginx's reload is asynchronous: a connection made right after it may still
+# reach a worker on the previous configuration — allow it a moment.
+RESP=""
+for _ in $(seq 1 30); do
+  RESP=$(auth_get /)
+  case "$(body_of "$RESP")" in *'data-logooverride="false"'*) break ;; esac
+  sleep 1
+done
 assert_contains "$(body_of "$RESP")" 'data-logooverride="false"' "https://auth.${DOMAIN}/ is the stock page again: data-logooverride=\"false\"" || true
 assert_not_contains "$(body_of "$RESP")" 'brand.css' "…no stylesheet" || true
 assert_eq "$(status_of "$(auth_get /brand.css)")" "404" "…/brand.css 404" || true
