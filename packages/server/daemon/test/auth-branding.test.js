@@ -810,3 +810,35 @@ test('the Authelia base: audited as a restart when the keys were added, silent o
     1,
   );
 });
+
+test('the Authelia base is checked once however many start-up callers overlap: one write, one restart, one audit', async () => {
+  lib.setAuthBrandingForTests(null);
+  let checks = 0;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  lib.setAuthBrandingForTests({
+    ...overrides(),
+    ensureBase: async () => {
+      checks += 1;
+      await gate;
+      return { logoWritten: true, restarted: true };
+    },
+  });
+  const before = (await audits('authelia.restarted')).length;
+  // The start's call and the first tick's reconcile, before either has returned.
+  const first = lib.ensureBrandingBase();
+  const second = lib.ensureBrandingBase();
+  const tick = lib.reconcileAuthBranding();
+  release();
+  assert.deepEqual(await first, { logoWritten: true, restarted: true });
+  assert.deepEqual(await second, { logoWritten: true, restarted: true });
+  assert.deepEqual(await tick, { rendered: [], removed: [], failed: [] });
+  assert.equal(checks, 1);
+  assert.equal((await audits('authelia.restarted')).length - before, 1);
+  // Once in place, nobody asks again.
+  await lib.ensureBrandingBase();
+  assert.equal(checks, 2);
+  base = { logoWritten: false, restarted: false };
+});
