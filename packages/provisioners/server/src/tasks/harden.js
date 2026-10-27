@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { assertNginxSubModule } from '../lib/nginx-modules.js';
 import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 
@@ -273,8 +274,10 @@ bantime = 3600
           );
         }
 
-        const { stdout: nginxVersion } = await execa('nginx', ['-v']);
-        subtask.output = `Installed: ${nginxVersion || 'nginx'}`;
+        // The auth portal's vhost needs the sub module compiled in
+        // (lib/nginx-modules.js): fatal here, before nginx is configured.
+        const nginxVersion = await assertNginxSubModule();
+        subtask.output = `Installed: ${nginxVersion}`;
 
         // Stop nginx for now (will be configured and started later)
         await execa('systemctl', ['stop', 'nginx']);
