@@ -9,8 +9,11 @@
  *
  * Browser-safe (no node built-ins): the panel's branding form validates
  * with the same rules the relay enforces, so no client keeps a copy of
- * one. The relay's side — the rendered directory, Authelia's locale
- * list — is `server/auth-branding-store.ts`.
+ * one — the panel UI imports this module as `@lamalibre/lamaste/branding`
+ * (the root entry carries the Fastify plugin host and node's file helpers,
+ * which a Vite build cannot take), as it imports `@lamalibre/lamaste/domains`.
+ * The relay's side — the rendered directory, Authelia's locale list — is
+ * `server/auth-branding-store.ts`.
  *
  * Nothing here is free-form. Every byte a visitor of `auth.<domain>` gets
  * from the brand is rendered from a validated field: a name that can carry
