@@ -681,6 +681,10 @@ GET /authz/refusal/:fqdn
 
 What an Authelia-protected static site answers a signed-in user Authelia refused with (the site asks Authelia directly, not Gatekeeper). Always 403 with the refusal page; reads no session and decides nothing.
 
+### Branded pages
+
+Every page Gatekeeper serves inline — the access-request page and the refusal pages (domain, static site) — carries the brand of the host's domain when the domain has one ([Domains API — Branding](domains.md#branding)). The domain is the one the panel's projection (`domains.json`) names for the host, never anything from the request; its brand is read from `brand.json` of the domain's rendering, `/var/www/lamaste/auth/<domain>/brand.json` (a symbolic link to the rendering that serves, switched by the panel at every change), through the link, at most 64 KiB, parsed with the same rules the record was validated with (`BrandJsonSchema` of `@lamalibre/lamaste`) and only when it names that domain. The answer is kept for 5 seconds per domain, so a change shows within seconds. **Fail open**: a missing, unreadable or invalid file means the stock page — never a refusal of the request, never a page with part of a brand; a transition (a brand appearing, going or turning unreadable) is logged once with the domain and a reason, never with the file's content. The page shows the brand's name in the title and in a header, the tagline under it when set, the logo — `https://auth.<domain>/static/media/logo.png`, the domain's own sign-in host, the one origin the page loads from; a host under none of the relay's domains gets no logo, as it gets no sign-in link — only when the brand serves one, the accent (checked against `#rrggbb` again before it enters the stylesheet) for the links and highlights, the brand's `supportEmail` as the `Admin:` contact in place of the settings' `adminEmail`, and its `supportUrl` (`https:` only, checked again) as a `Help:` link. The message templates stay addressed to the settings' `adminName`. Nothing else of the operator's reaches the page.
+
 ### Principals (Gatekeeper's own API)
 
 ```

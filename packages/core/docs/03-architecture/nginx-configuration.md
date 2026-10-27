@@ -252,10 +252,16 @@ server {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 
-    # Invitation page — static HTML
+    # Invitation page — the domain's own when it has a brand, else the stock page
     location /invite/ {
-        alias /var/www/lamaste/invite/;
-        try_files $uri /invite/index.html;
+        root /var/www/lamaste/auth/example.com;
+        try_files /invite/index.html @invite;
+        add_header X-Content-Type-Options nosniff;
+    }
+    location @invite {
+        root /var/www/lamaste/invite;
+        try_files /index.html =404;
+        add_header X-Content-Type-Options nosniff;
     }
 
     # Invitation API — proxied to panel server (no mTLS)
@@ -323,7 +329,7 @@ server {
 }
 ```
 
-No mTLS requirement — end users access this to authenticate. Protected by Authelia's own login form and TOTP. The auth vhost also serves the invitation page (static HTML at `/invite/`) and proxies invitation API requests (`/api/invite/`) to the panel server, allowing invited users to set up their accounts without needing mTLS credentials. The primary domain's portal besides serves `/api/user-access/authorize` (the desktop's user login) with its rate-limit zone; a second domain's does not (see [Vhosts on several domains](#vhosts-on-several-domains)).
+No mTLS requirement — end users access this to authenticate. Protected by Authelia's own login form and TOTP. The auth vhost also serves the invitation page (static HTML at `/invite/<token>`) and proxies invitation API requests (`/api/invite/`) to the panel server, allowing invited users to set up their accounts without needing mTLS credentials. The page is the domain's own when it has a brand — `invite/index.html` of its rendering, served through the same link as the overrides below (`try_files` with a fixed path resolves it against the location's `root`; the token stays in the URL for the page's script) — and otherwise the stock page from `/var/www/lamaste/invite/` (the `@invite` fallback), which the panel writes from `@lamalibre/lamaste/server`'s `renderInvitePage(null)` at provisioning and at every start once onboarding is complete, compared first so an identical file is left alone — a change to the page reaches a relay at its update. Both locations add `nosniff`. The primary domain's portal besides serves `/api/user-access/authorize` (the desktop's user login) with its rate-limit zone; a second domain's does not (see [Vhosts on several domains](#vhosts-on-several-domains)).
 
 **Why the brand lives in nginx.** One Authelia serves every domain's `auth.<domain>`, and Authelia 4.39 can brand only one instance: one `server.asset_path`, from which it serves a file in place of its own for exactly three routes — `/favicon.ico`, `/static/media/logo.png`, `/locales/<lang>/<namespace>.json` — never reading the `Host` header; one `theme`; and `data-logooverride` on the index HTML decided once at start by whether `asset_path/logo.png` exists. So the per-domain part is the vhost's ([Per-Domain Branding of the Auth Pages](../auth-branding-design.md)): the three overridable routes and the generated stylesheet are answered from the domain's rendered directory `/var/www/lamaste/auth/<domain>/` when the file is there (`try_files $uri @authelia`: a domain without a brand has no directory, so every request falls through to Authelia; `/brand.css` alone answers 404 instead), and the index HTML is rewritten on its way through with `ngx_http_sub_module`: `data-theme="light"` — Authelia's global theme, written explicitly into its configuration — becomes the domain's theme, `data-logooverride="true"` — true for every domain, because the panel keeps a placeholder `logo.png` in Authelia's asset directory — becomes `"false"` unless the domain has a logo, and the stylesheet link is added before `</head>`. `sub_filter` matches literal strings, ignoring case, in `text/html` responses only (the module's default), so Authelia's JSON, scripts and the per-request CSP nonce are untouched; `Accept-Encoding` is cleared towards Authelia so the filter reads plain text. The directory entry is a symbolic link to the rendering that serves, switched by one rename at every change, so the vhost never sets `disable_symlinks`. The static answers add `nosniff` and `Cache-Control: public, max-age=0, must-revalidate`; their content type comes from the extension, never from the bytes. The headers apply to a file served from the override location alone — the fallback is produced in `@authelia`, which adds none and, like `location /`, sets every proxy header itself (a location that sets any header inherits none of the server's).
 
