@@ -1983,7 +1983,7 @@
           }
         },
         {
-          "id": "step-127",
+          "id": "step-129",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2000,7 +2000,16 @@
           ]
         },
         {
-          "id": "step-128",
+          "id": "step-131",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-133",
           "label": "https://auth.${DOMAIN}/ is the stock page again: data-logooverride=\\",
           "target": "local",
           "continueOnError": true,
@@ -2021,7 +2030,7 @@
           }
         },
         {
-          "id": "step-129",
+          "id": "step-134",
           "label": "…no stylesheet",
           "target": "local",
           "continueOnError": true,
@@ -2042,7 +2051,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-135",
           "label": "…/brand.css 404",
           "target": "local",
           "continueOnError": true,
@@ -2063,7 +2072,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-136",
           "label": "Set SHOWN",
           "target": "local",
           "op": {
@@ -2080,7 +2089,7 @@
           ]
         },
         {
-          "id": "step-132",
+          "id": "step-137",
           "label": "branding ${DOMAIN}: says the domain has no brand",
           "target": "local",
           "continueOnError": true,
@@ -2101,14 +2110,14 @@
           }
         }
       ],
-      "bash": "log_section \"lamaste-server domains branding: show, set, logo, preview, remove\"\n\nSHOWN=$(cli_json)\nassert_json_field \"${SHOWN}\" '\"\\(.branding.name) \\(.branding.theme) \\(.branding.revision) \\(.branding.renderedCurrent)\"' \"${BRAND} dark 3 true\" \"branding ${DOMAIN} --json: the brand, revision 3, rendered\" || true\nPLAIN=$(cli_plain)\nassert_contains \"${PLAIN}\" \"${BRAND}\" \"branding ${DOMAIN}: names the brand\" || true\nassert_contains \"${PLAIN}\" \"current\" \"…and says the rendering is current\" || true\nOUT=$(cli_plain set --theme grey)\nassert_contains \"${OUT}\" \"revision 4\" \"set --theme grey: saved at revision 4\" || true\nassert_json_field \"$(branding_json)\" '\"\\(.branding.theme) \\(.branding.revision) \\(.branding.accent)\"' \"grey 4 ${ACCENT}\" \"…the theme is grey, the accent kept (set merges over the brand read)\" || true\nOUT=$(cli_plain logo --remove)\nassert_contains \"${OUT}\" \"logo of ${DOMAIN} removed\" \"logo --remove\" || true\nassert_json_field \"$(branding_json)\" '\"\\(.branding.logo) \\(.branding.revision)\"' \"null 5\" \"…no logo, revision 5\" || true\nSET=$(cli_json logo \"${WORK_DIR}/logo.png\")\nassert_json_field \"${SET}\" '\"\\(.event) \\(.changed) \\(.branding.logo.sha256) \\(.branding.revision)\"' \"complete true ${LOGO_SHA} 6\" \"logo <file> --json: the fixture's digest, revision 6\" || true\nOUT=$(cli_plain logo \"${WORK_DIR}/big.png\")\nassert_contains \"${OUT}\" \"512 KiB\" \"logo <a file over the limit>: refused before the request, the limit named\" || true\nassert_json_field \"$(branding_json)\" '.branding.revision' \"6\" \"…nothing sent\" || true\nPREVIEW=$(cli_json preview)\nassert_json_field \"${PREVIEW}\" '\"\\(.title) | \\(.footer) | \\(.theme) | \\(.logo)\"' \"Login - ${BRAND} | Powered by ${BRAND} | grey | true\" \"preview --json: the English title and footer, the theme, the logo served\" || true\nassert_contains \"$(cli_plain preview)\" \"Login - ${BRAND}\" \"preview: prints the title\" || true\nassert_contains \"$(cli_plain preview)\" \"display: none\" \"…and the generated brand.css\" || true\nOUT=$(cli_plain remove)\nassert_contains \"${OUT}\" \"removed\" \"remove\" || true\nassert_json_field \"$(branding_json)\" '.branding' \"null\" \"…GET says the domain has no brand\" || true\nif entry_gone; then\n  log_pass \"${WEB_ROOT}/${DOMAIN} is gone\"\nelse\n  log_fail \"${WEB_ROOT}/${DOMAIN} is still there\"\nfi\nRESP=$(auth_get /)\nassert_contains \"$(body_of \"$RESP\")\" 'data-logooverride=\"false\"' \"https://auth.${DOMAIN}/ is the stock page again: data-logooverride=\\\"false\\\"\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" 'brand.css' \"…no stylesheet\" || true\nassert_eq \"$(status_of \"$(auth_get /brand.css)\")\" \"404\" \"…/brand.css 404\" || true\nSHOWN=$(cli_plain)\nassert_contains \"${SHOWN}\" \"has no brand\" \"branding ${DOMAIN}: says the domain has no brand\" || true\n\n# ===========================================================================\n# 4. Authelia's base\n# ==========================================================================="
+      "bash": "log_section \"lamaste-server domains branding: show, set, logo, preview, remove\"\n\nSHOWN=$(cli_json)\nassert_json_field \"${SHOWN}\" '\"\\(.branding.name) \\(.branding.theme) \\(.branding.revision) \\(.branding.renderedCurrent)\"' \"${BRAND} dark 3 true\" \"branding ${DOMAIN} --json: the brand, revision 3, rendered\" || true\nPLAIN=$(cli_plain)\nassert_contains \"${PLAIN}\" \"${BRAND}\" \"branding ${DOMAIN}: names the brand\" || true\nassert_contains \"${PLAIN}\" \"current\" \"…and says the rendering is current\" || true\nOUT=$(cli_plain set --theme grey)\nassert_contains \"${OUT}\" \"revision 4\" \"set --theme grey: saved at revision 4\" || true\nassert_json_field \"$(branding_json)\" '\"\\(.branding.theme) \\(.branding.revision) \\(.branding.accent)\"' \"grey 4 ${ACCENT}\" \"…the theme is grey, the accent kept (set merges over the brand read)\" || true\nOUT=$(cli_plain logo --remove)\nassert_contains \"${OUT}\" \"logo of ${DOMAIN} removed\" \"logo --remove\" || true\nassert_json_field \"$(branding_json)\" '\"\\(.branding.logo) \\(.branding.revision)\"' \"null 5\" \"…no logo, revision 5\" || true\nSET=$(cli_json logo \"${WORK_DIR}/logo.png\")\nassert_json_field \"${SET}\" '\"\\(.event) \\(.changed) \\(.branding.logo.sha256) \\(.branding.revision)\"' \"complete true ${LOGO_SHA} 6\" \"logo <file> --json: the fixture's digest, revision 6\" || true\nOUT=$(cli_plain logo \"${WORK_DIR}/big.png\")\nassert_contains \"${OUT}\" \"512 KiB\" \"logo <a file over the limit>: refused before the request, the limit named\" || true\nassert_json_field \"$(branding_json)\" '.branding.revision' \"6\" \"…nothing sent\" || true\nPREVIEW=$(cli_json preview)\nassert_json_field \"${PREVIEW}\" '\"\\(.title) | \\(.footer) | \\(.theme) | \\(.logo)\"' \"Login - ${BRAND} | Powered by ${BRAND} | grey | true\" \"preview --json: the English title and footer, the theme, the logo served\" || true\nassert_contains \"$(cli_plain preview)\" \"Login - ${BRAND}\" \"preview: prints the title\" || true\nassert_contains \"$(cli_plain preview)\" \"display: none\" \"…and the generated brand.css\" || true\nOUT=$(cli_plain remove)\nassert_contains \"${OUT}\" \"removed\" \"remove\" || true\nassert_json_field \"$(branding_json)\" '.branding' \"null\" \"…GET says the domain has no brand\" || true\nif entry_gone; then\n  log_pass \"${WEB_ROOT}/${DOMAIN} is gone\"\nelse\n  log_fail \"${WEB_ROOT}/${DOMAIN} is still there\"\nfi\n# nginx's reload is asynchronous: a connection made right after it may still\n# reach a worker on the previous configuration — allow it a moment.\nRESP=\"\"\nfor _ in $(seq 1 30); do\n  RESP=$(auth_get /)\n  case \"$(body_of \"$RESP\")\" in *'data-logooverride=\"false\"'*) break ;; esac\n  sleep 1\ndone\nassert_contains \"$(body_of \"$RESP\")\" 'data-logooverride=\"false\"' \"https://auth.${DOMAIN}/ is the stock page again: data-logooverride=\\\"false\\\"\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" 'brand.css' \"…no stylesheet\" || true\nassert_eq \"$(status_of \"$(auth_get /brand.css)\")\" \"404\" \"…/brand.css 404\" || true\nSHOWN=$(cli_plain)\nassert_contains \"${SHOWN}\" \"has no brand\" \"branding ${DOMAIN}: says the domain has no brand\" || true\n\n# ===========================================================================\n# 4. Authelia's base\n# ==========================================================================="
     },
     {
       "id": "authelia-s-base-theme-light-the-asset-path-the-placeholder-one-restart-never-again",
       "label": "Authelia's base: theme light, the asset path, the placeholder — one restart, never again",
       "steps": [
         {
-          "id": "step-133",
+          "id": "step-138",
           "label": "Set CONFIG",
           "target": "local",
           "op": {
@@ -2125,7 +2134,7 @@
           ]
         },
         {
-          "id": "step-134",
+          "id": "step-139",
           "label": "configuration.yml: theme light, server.asset_path /etc/authelia/assets",
           "target": "local",
           "continueOnError": true,
@@ -2147,7 +2156,7 @@
           }
         },
         {
-          "id": "step-135",
+          "id": "step-140",
           "label": "/etc/authelia/assets/logo.png exists, group lamaste-authelia, 0640",
           "target": "local",
           "continueOnError": true,
@@ -2168,7 +2177,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-142",
           "label": "Set TOTAL_BASE_RESTARTS",
           "target": "local",
           "op": {
@@ -2185,7 +2194,7 @@
           ]
         },
         {
-          "id": "step-138",
+          "id": "step-143",
           "label": "GET /api/audit?limit=1",
           "target": "host",
           "op": {
@@ -2203,7 +2212,7 @@
           ]
         },
         {
-          "id": "step-141",
+          "id": "step-146",
           "label": "Two panel restarts later: no further authelia.restarted with reason branding-base",
           "target": "local",
           "continueOnError": true,
@@ -2224,7 +2233,7 @@
           }
         },
         {
-          "id": "step-142",
+          "id": "step-147",
           "label": "…at most one such restart in the whole audit (${TOTAL_BASE_RESTARTS})",
           "target": "local",
           "continueOnError": true,
@@ -2245,7 +2254,7 @@
           }
         },
         {
-          "id": "step-143",
+          "id": "step-148",
           "label": "Authelia is running",
           "target": "local",
           "continueOnError": true,

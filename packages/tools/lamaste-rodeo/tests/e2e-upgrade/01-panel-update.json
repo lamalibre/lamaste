@@ -429,7 +429,28 @@
           }
         },
         {
-          "id": "step-29",
+          "id": "step-27",
+          "label": "${BEFORE_VERSION} names the vhosts by full hostname (the enabled tunnel linked, the disabled one not, the auth portal linked)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(link_state \"$(vhost_name app \"${ON_FQDN}\")\") $(link_state \"$(vhost_name app \"${OFF_FQDN}\")\") $(link_state \"$(vhost_name auth \"${DOMAIN}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "available linked available unlinked available linked"
+              },
+              "message": "${BEFORE_VERSION} names the vhosts by full hostname (the enabled tunnel linked, the disabled one not, the auth portal linked)"
+            }
+          }
+        },
+        {
+          "id": "step-30",
           "label": "Set SECRET",
           "target": "local",
           "op": {
@@ -446,7 +467,7 @@
           ]
         },
         {
-          "id": "step-32",
+          "id": "step-33",
           "label": "${USERNAME} signed in at auth.${DOMAIN} on ${BEFORE_VERSION}",
           "target": "local",
           "continueOnError": true,
@@ -467,7 +488,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-34",
           "label": "Set REACH_BEFORE",
           "target": "local",
           "op": {
@@ -484,7 +505,7 @@
           ]
         },
         {
-          "id": "step-38",
+          "id": "step-39",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -502,7 +523,7 @@
           ]
         },
         {
-          "id": "step-40",
+          "id": "step-41",
           "label": "Users ${USERS_BEFORE//[$'\\n' ]/}; ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}",
           "target": "local",
           "op": {
@@ -512,7 +533,7 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-42",
           "label": "Set PRIV_BEFORE",
           "target": "local",
           "op": {
@@ -529,7 +550,7 @@
           ]
         },
         {
-          "id": "step-42",
+          "id": "step-43",
           "label": "GET /api/audit?limit=1",
           "target": "host",
           "op": {
@@ -547,14 +568,14 @@
           ]
         }
       ],
-      "bash": "log_section \"State written by ${BEFORE_VERSION}\"\n\nRESP=$(api_post \"users\" \"{\\\"username\\\":\\\"${USERNAME}\\\",\\\"displayname\\\":\\\"E2E Upgrade\\\",\\\"email\\\":\\\"${USERNAME}@example.test\\\",\\\"password\\\":\\\"${USER_PASSWORD}\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"User ${USERNAME} created beside the admin\" || true\n\nAGENT=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$AGENT\" '.ok' 'true' \"Agent ${AGENT_LABEL} enrolled (it carries the tunnels)\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_ON}\\\",\\\"port\\\":${PORT_ON},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nTUNNEL_ON=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${ON_FQDN}\" \"Tunnel ${ON_FQDN}\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_OFF}\\\",\\\"port\\\":${PORT_OFF},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nTUNNEL_OFF=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${OFF_FQDN}\" \"Tunnel ${OFF_FQDN}\" || true\nRESP=$(api_patch \"tunnels/${TUNNEL_OFF}\" '{\"enabled\":false}')\nassert_json_field \"$RESP\" '.tunnel.enabled' 'false' \"…disabled\" || true\n\nLEGACY_ON=\"lamalibre-lamaste-app-${SUB_ON}\"\nLEGACY_OFF=\"lamalibre-lamaste-app-${SUB_OFF}\"\nLEGACY_AUTH=\"lamalibre-lamaste-auth\"\nassert_eq \"$(link_state \"${LEGACY_ON}\") $(link_state \"${LEGACY_OFF}\") $(link_state \"${LEGACY_AUTH}\")\" \\\n  \"available linked available unlinked available linked\" \\\n  \"${BEFORE_VERSION} names the vhosts by subdomain (the enabled tunnel linked, the disabled one not, the auth portal linked)\" || true\n\n# Signed in on the previous release: what the user reaches (an\n# authenticated tunnel — admitted, so nginx answers for its backend, which\n# does not run here: 502).\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nSECRET=$(local_reset_totp \"${USERNAME}\")\nlocal_wait_authelia \"${DOMAIN}\"\nlocal_sign_in \"${USERNAME}\" \"${USER_PASSWORD}\" \"${SECRET}\" \"${WORK_DIR}/user-before.jar\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${USERNAME} signed in at auth.${DOMAIN} on ${BEFORE_VERSION}\" || true\nREACH_BEFORE=$(signed_status \"${WORK_DIR}/user-before.jar\" \"${ON_FQDN}\")\ncase \"${REACH_BEFORE}\" in\n  302 | 401 | 403 | 000) log_fail \"${USERNAME} is not admitted to ${ON_FQDN} on ${BEFORE_VERSION} (${REACH_BEFORE})\" ;;\n  *) log_pass \"${USERNAME} is admitted to ${ON_FQDN} on ${BEFORE_VERSION} (${REACH_BEFORE})\" ;;\nesac\n\nUSERS_BEFORE=$(api_get \"users\" 2>/dev/null | jq '[.users[]? | .username] | sort' 2>/dev/null || echo '[]')\nBEFORE=\"$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")\"\nlog_info \"Users ${USERS_BEFORE//[$'\\n' ]/}; ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}\"\nPRIV_BEFORE=$(sudo sha256sum \"${PRIV}\" | cut -d' ' -f1)\n# The last audit entry of the previous release: what the update adds comes after it\nAUDIT_BASE=$(api_get \"audit?limit=1\" 2>/dev/null | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 2. The Panel Update\n# ==========================================================================="
+      "bash": "log_section \"State written by ${BEFORE_VERSION}\"\n\nRESP=$(api_post \"users\" \"{\\\"username\\\":\\\"${USERNAME}\\\",\\\"displayname\\\":\\\"E2E Upgrade\\\",\\\"email\\\":\\\"${USERNAME}@example.test\\\",\\\"password\\\":\\\"${USER_PASSWORD}\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"User ${USERNAME} created beside the admin\" || true\n\nAGENT=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$AGENT\" '.ok' 'true' \"Agent ${AGENT_LABEL} enrolled (it carries the tunnels)\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_ON}\\\",\\\"port\\\":${PORT_ON},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nTUNNEL_ON=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${ON_FQDN}\" \"Tunnel ${ON_FQDN}\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_OFF}\\\",\\\"port\\\":${PORT_OFF},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nTUNNEL_OFF=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${OFF_FQDN}\" \"Tunnel ${OFF_FQDN}\" || true\nRESP=$(api_patch \"tunnels/${TUNNEL_OFF}\" '{\"enabled\":false}')\nassert_json_field \"$RESP\" '.tunnel.enabled' 'false' \"…disabled\" || true\n\nLEGACY_ON=\"lamalibre-lamaste-app-${SUB_ON}\"\nLEGACY_OFF=\"lamalibre-lamaste-app-${SUB_OFF}\"\nLEGACY_AUTH=\"lamalibre-lamaste-auth\"\n# A release before 4.7 named its vhosts by subdomain (and the one auth\n# portal `lamalibre-lamaste-auth`); from 4.7 they carry the full hostname.\nif version_before \"${BEFORE_VERSION}\" \"4.7.0\"; then\n  assert_eq \"$(link_state \"${LEGACY_ON}\") $(link_state \"${LEGACY_OFF}\") $(link_state \"${LEGACY_AUTH}\")\" \\\n    \"available linked available unlinked available linked\" \\\n    \"${BEFORE_VERSION} names the vhosts by subdomain (the enabled tunnel linked, the disabled one not, the auth portal linked)\" || true\nelse\n  assert_eq \"$(link_state \"$(vhost_name app \"${ON_FQDN}\")\") $(link_state \"$(vhost_name app \"${OFF_FQDN}\")\") $(link_state \"$(vhost_name auth \"${DOMAIN}\")\")\" \\\n    \"available linked available unlinked available linked\" \\\n    \"${BEFORE_VERSION} names the vhosts by full hostname (the enabled tunnel linked, the disabled one not, the auth portal linked)\" || true\nfi\n\n# Signed in on the previous release: what the user reaches (an\n# authenticated tunnel — admitted, so nginx answers for its backend, which\n# does not run here: 502).\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nSECRET=$(local_reset_totp \"${USERNAME}\")\nlocal_wait_authelia \"${DOMAIN}\"\nlocal_sign_in \"${USERNAME}\" \"${USER_PASSWORD}\" \"${SECRET}\" \"${WORK_DIR}/user-before.jar\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${USERNAME} signed in at auth.${DOMAIN} on ${BEFORE_VERSION}\" || true\nREACH_BEFORE=$(signed_status \"${WORK_DIR}/user-before.jar\" \"${ON_FQDN}\")\ncase \"${REACH_BEFORE}\" in\n  302 | 401 | 403 | 000) log_fail \"${USERNAME} is not admitted to ${ON_FQDN} on ${BEFORE_VERSION} (${REACH_BEFORE})\" ;;\n  *) log_pass \"${USERNAME} is admitted to ${ON_FQDN} on ${BEFORE_VERSION} (${REACH_BEFORE})\" ;;\nesac\n\nUSERS_BEFORE=$(api_get \"users\" 2>/dev/null | jq '[.users[]? | .username] | sort' 2>/dev/null || echo '[]')\nBEFORE=\"$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")\"\nlog_info \"Users ${USERS_BEFORE//[$'\\n' ]/}; ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}\"\nPRIV_BEFORE=$(sudo sha256sum \"${PRIV}\" | cut -d' ' -f1)\n# The last audit entry of the previous release: what the update adds comes after it\nAUDIT_BASE=$(api_get \"audit?limit=1\" 2>/dev/null | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 2. The Panel Update\n# ==========================================================================="
     },
     {
       "id": "post-api-system-update-to-candidate",
       "label": "POST /api/system/update to ${CANDIDATE}",
       "steps": [
         {
-          "id": "step-44",
+          "id": "step-45",
           "label": "POST /api/system/update",
           "target": "host",
           "op": {
@@ -573,7 +594,7 @@
           ]
         },
         {
-          "id": "step-45",
+          "id": "step-46",
           "label": "The update is accepted (202)",
           "target": "local",
           "continueOnError": true,
@@ -595,7 +616,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-49",
           "label": "Sleep 5s",
           "target": "local",
           "op": {
@@ -604,7 +625,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-50",
           "label": "Set AFTER_VERSION",
           "target": "local",
           "op": {
@@ -621,7 +642,7 @@
           ]
         },
         {
-          "id": "step-52",
+          "id": "step-53",
           "label": "The panel is back on ${CANDIDATE}",
           "target": "local",
           "continueOnError": true,
@@ -642,7 +663,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-58",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -651,8 +672,8 @@
           }
         },
         {
-          "id": "step-59",
-          "label": "The panel's start-up rendered the domains into Authelia",
+          "id": "step-60",
+          "label": "The panel's start-up settled Authelia's configuration (domains rendered, or the branding base added)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -661,18 +682,18 @@
               "kind": "eq",
               "actual": {
                 "kind": "var",
-                "name": "RENDERED"
+                "name": "SETTLED"
               },
               "expected": {
                 "kind": "literal",
                 "value": "yes"
               },
-              "message": "The panel's start-up rendered the domains into Authelia"
+              "message": "The panel's start-up settled Authelia's configuration (domains rendered, or the branding base added)"
             }
           }
         },
         {
-          "id": "step-60",
+          "id": "step-61",
           "label": "Authelia serves again",
           "target": "local",
           "op": {
@@ -682,7 +703,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-62",
           "label": "Authelia does not answer its health check after the update",
           "target": "local",
           "op": {
@@ -692,12 +713,12 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-65",
           "label": "Set UNIT",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "systemctl list-units --all --no-legend --plain 'lamalibre-lamaste-update-*' 2>/dev/null | awk '{print $1}' | tail -1"
+            "command": "systemctl list-units --all --no-legend --plain 'lamalibre-lamaste-update-*.service' 2>/dev/null | awk '{print $1}' | tail -1"
           },
           "capture": [
             {
@@ -709,7 +730,16 @@
           ]
         },
         {
-          "id": "step-63",
+          "id": "step-72",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-76",
           "label": "Set RESULT",
           "target": "local",
           "op": {
@@ -726,7 +756,7 @@
           ]
         },
         {
-          "id": "step-64",
+          "id": "step-77",
           "label": "The update unit ${UNIT} ended in success",
           "target": "local",
           "continueOnError": true,
@@ -745,36 +775,16 @@
               "message": "The update unit ${UNIT} ended in success"
             }
           }
-        },
-        {
-          "id": "step-65",
-          "label": "The update unit finished (journal)",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "The update unit finished (journal)"
-          }
-        },
-        {
-          "id": "step-66",
-          "label": "No trace of the update unit finishing",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "No trace of the update unit finishing"
-          }
         }
       ],
-      "bash": "log_section \"POST /api/system/update to ${CANDIDATE}\"\n\nUPDATE_STARTED=\"$(date '+%Y-%m-%d %H:%M:%S')\"\nRESP=$(api_post \"system/update\" \"{\\\"version\\\":\\\"${CANDIDATE}\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"The update is accepted (202)\" || true\n\n# Six minutes: a redeploy takes about two, and rodeo stops a spec at ten.\nAFTER_VERSION=\"down\"\nfor _ in $(seq 1 72); do\n  sleep 5\n  AFTER_VERSION=$(panel_version)\n  [ \"${AFTER_VERSION}\" = \"${CANDIDATE}\" ] && break\ndone\nassert_eq \"${AFTER_VERSION}\" \"${CANDIDATE}\" \"The panel is back on ${CANDIDATE}\" || true\n\n# The panel answers /api/health before its start-up has rendered the domains\n# into Authelia, which restarts Authelia once more; compare the hosts only\n# after that rendering and once Authelia serves again.\nRENDERED=\"no\"\nfor _ in $(seq 1 30); do\n  if sudo journalctl -u lamalibre-lamaste-serverd --since \"${UPDATE_STARTED}\" --no-pager -o cat 2>/dev/null | grep -q '\"msg\":\"Authelia domain access updated\"'; then\n    RENDERED=\"yes\"\n    break\n  fi\n  sleep 2\ndone\nassert_eq \"${RENDERED}\" \"yes\" \"The panel's start-up rendered the domains into Authelia\" || true\nif wait_for_http \"http://127.0.0.1:9091/api/health\" 60; then\n  log_pass \"Authelia serves again\"\nelse\n  log_fail \"Authelia does not answer its health check after the update\"\nfi\n\nUNIT=$(systemctl list-units --all --no-legend --plain 'lamalibre-lamaste-update-*' 2>/dev/null | awk '{print $1}' | tail -1)\nif [ -n \"${UNIT}\" ]; then\n  RESULT=$(systemctl show -p Result --value \"${UNIT}\" 2>/dev/null || echo unknown)\n  assert_eq \"${RESULT}\" \"success\" \"The update unit ${UNIT} ended in success\" || true\nelse\n  # A oneshot unit that succeeded is unloaded once it stopped; its journal stays.\n  if sudo journalctl --since \"${UPDATE_STARTED}\" --no-pager -o cat 2>/dev/null | grep -q \"Finished.*Lamaste update to ${CANDIDATE}\"; then\n    log_pass \"The update unit finished (journal)\"\n  else\n    log_fail \"No trace of the update unit finishing\"\n  fi\nfi\n\n# ===========================================================================\n# 3. After the update\n# ==========================================================================="
+      "bash": "log_section \"POST /api/system/update to ${CANDIDATE}\"\n\nUPDATE_STARTED=\"$(date '+%Y-%m-%d %H:%M:%S')\"\nRESP=$(api_post \"system/update\" \"{\\\"version\\\":\\\"${CANDIDATE}\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"The update is accepted (202)\" || true\n\n# Six minutes: a redeploy takes about two, and rodeo stops a spec at ten.\nAFTER_VERSION=\"down\"\nfor _ in $(seq 1 72); do\n  sleep 5\n  AFTER_VERSION=$(panel_version)\n  [ \"${AFTER_VERSION}\" = \"${CANDIDATE}\" ] && break\ndone\nassert_eq \"${AFTER_VERSION}\" \"${CANDIDATE}\" \"The panel is back on ${CANDIDATE}\" || true\n\n# The panel answers /api/health before its start-up has settled Authelia's\n# configuration — the domains rendered into it (a relay from before 4.7) or\n# the branded sign-in's base added (before 4.8) — which restarts Authelia\n# once more; compare the hosts only after that and once Authelia serves\n# again.\nSETTLED=\"no\"\nfor _ in $(seq 1 30); do\n  if sudo journalctl -u lamalibre-lamaste-serverd --since \"${UPDATE_STARTED}\" --no-pager -o cat 2>/dev/null | grep -qE '\"msg\":\"(Authelia domain access updated|Authelia restarted for the branded sign-in[^\"]*)\"'; then\n    SETTLED=\"yes\"\n    break\n  fi\n  sleep 2\ndone\nassert_eq \"${SETTLED}\" \"yes\" \"The panel's start-up settled Authelia's configuration (domains rendered, or the branding base added)\" || true\nif wait_for_http \"http://127.0.0.1:9091/api/health\" 60; then\n  log_pass \"Authelia serves again\"\nelse\n  log_fail \"Authelia does not answer its health check after the update\"\nfi\n\n# The panel is back before the unit is done (it carries on with Gatekeeper,\n# the wrappers and the rest of the redeploy): give it up to two minutes.\nUNIT_DONE=\"no\"\nfor _ in $(seq 1 60); do\n  UNIT=$(systemctl list-units --all --no-legend --plain 'lamalibre-lamaste-update-*.service' 2>/dev/null | awk '{print $1}' | tail -1)\n  if [ -n \"${UNIT}\" ]; then\n    case \"$(systemctl show -p ActiveState --value \"${UNIT}\" 2>/dev/null)\" in\n      inactive | failed) UNIT_DONE=\"unit\" ;;\n    esac\n  elif sudo journalctl --since \"${UPDATE_STARTED}\" --no-pager -o cat 2>/dev/null | grep -q \"Finished.*Lamaste update to ${CANDIDATE}\"; then\n    # A oneshot unit that succeeded is unloaded once it stopped; its journal stays.\n    UNIT_DONE=\"journal\"\n  fi\n  [ \"${UNIT_DONE}\" = \"no\" ] || break\n  sleep 2\ndone\ncase \"${UNIT_DONE}\" in\n  unit)\n    RESULT=$(systemctl show -p Result --value \"${UNIT}\" 2>/dev/null || echo unknown)\n    assert_eq \"${RESULT}\" \"success\" \"The update unit ${UNIT} ended in success\" || true\n    ;;\n  journal) log_pass \"The update unit finished (journal)\" ;;\n  *) log_fail \"No trace of the update unit finishing within two minutes\" ;;\nesac\n\n# ===========================================================================\n# 3. After the update\n# ==========================================================================="
     },
     {
       "id": "the-root-helper-is-the-candidate-s",
       "label": "The root helper is the candidate's",
       "steps": [
         {
-          "id": "step-67",
+          "id": "step-82",
           "label": "Set PRIV_AFTER",
           "target": "local",
           "op": {
@@ -791,7 +801,7 @@
           ]
         },
         {
-          "id": "step-68",
+          "id": "step-83",
           "label": "lamaste-priv was replaced by the update",
           "target": "local",
           "op": {
@@ -801,7 +811,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-84",
           "label": "lamaste-priv is still the one ${BEFORE_VERSION} installed",
           "target": "local",
           "op": {
@@ -811,7 +821,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-85",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -828,8 +838,8 @@
           ]
         },
         {
-          "id": "step-71",
-          "label": "It refuses a vhost under a ${BEFORE_VERSION} name",
+          "id": "step-86",
+          "label": "It refuses a vhost under a pre-4.7 name",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -844,20 +854,20 @@
                 "kind": "literal",
                 "value": "site name not allowed for write"
               },
-              "message": "It refuses a vhost under a ${BEFORE_VERSION} name"
+              "message": "It refuses a vhost under a pre-4.7 name"
             }
           }
         }
       ],
-      "bash": "log_section \"The root helper is the candidate's\"\n\nPRIV_AFTER=$(sudo sha256sum \"${PRIV}\" | cut -d' ' -f1)\nif [ \"${PRIV_AFTER}\" != \"${PRIV_BEFORE}\" ]; then\n  log_pass \"lamaste-priv was replaced by the update\"\nelse\n  log_fail \"lamaste-priv is still the one ${BEFORE_VERSION} installed\"\nfi\nOUT=$(printf 'server {\\n listen 443 ssl;\\n}\\n' | sudo \"${PRIV}\" nginx-site write \"lamalibre-lamaste-app-e2eup1legacy\" 2>&1 > /dev/null || true)\nassert_contains \"$OUT\" \"site name not allowed for write\" \"It refuses a vhost under a ${BEFORE_VERSION} name\" || true"
+      "bash": "log_section \"The root helper is the candidate's\"\n\nPRIV_AFTER=$(sudo sha256sum \"${PRIV}\" | cut -d' ' -f1)\nif [ \"${PRIV_AFTER}\" != \"${PRIV_BEFORE}\" ]; then\n  log_pass \"lamaste-priv was replaced by the update\"\nelse\n  log_fail \"lamaste-priv is still the one ${BEFORE_VERSION} installed\"\nfi\nOUT=$(printf 'server {\\n listen 443 ssl;\\n}\\n' | sudo \"${PRIV}\" nginx-site write \"lamalibre-lamaste-app-e2eup1legacy\" 2>&1 > /dev/null || true)\nassert_contains \"$OUT\" \"site name not allowed for write\" \"It refuses a vhost under a pre-4.7 name\" || true"
     },
     {
       "id": "the-vhosts-under-the-candidate-s-names-link-state-kept",
       "label": "The vhosts under the candidate's names, link state kept",
       "steps": [
         {
-          "id": "step-72",
-          "label": "${ON_FQDN}: renamed to its full hostname, still linked",
+          "id": "step-87",
+          "label": "${ON_FQDN}: under its full hostname, still linked",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -872,13 +882,13 @@
                 "kind": "literal",
                 "value": "available linked"
               },
-              "message": "${ON_FQDN}: renamed to its full hostname, still linked"
+              "message": "${ON_FQDN}: under its full hostname, still linked"
             }
           }
         },
         {
-          "id": "step-73",
-          "label": "${OFF_FQDN}: renamed, still not linked",
+          "id": "step-88",
+          "label": "${OFF_FQDN}: under its full hostname, still not linked",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -893,12 +903,12 @@
                 "kind": "literal",
                 "value": "available unlinked"
               },
-              "message": "${OFF_FQDN}: renamed, still not linked"
+              "message": "${OFF_FQDN}: under its full hostname, still not linked"
             }
           }
         },
         {
-          "id": "step-74",
+          "id": "step-89",
           "label": "The auth portal: lamalibre-lamaste-auth-${DOMAIN}, linked",
           "target": "local",
           "continueOnError": true,
@@ -919,8 +929,8 @@
           }
         },
         {
-          "id": "step-75",
-          "label": "No ${BEFORE_VERSION} name is left, as a file or a link",
+          "id": "step-90",
+          "label": "No pre-4.7 name is left, as a file or a link",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -935,12 +945,12 @@
                 "kind": "literal",
                 "value": "gone unlinked gone unlinked gone unlinked"
               },
-              "message": "No ${BEFORE_VERSION} name is left, as a file or a link"
+              "message": "No pre-4.7 name is left, as a file or a link"
             }
           }
         },
         {
-          "id": "step-76",
+          "id": "step-91",
           "label": "nginx -t passes",
           "target": "local",
           "op": {
@@ -950,7 +960,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-92",
           "label": "nginx -t fails after the update",
           "target": "local",
           "op": {
@@ -960,7 +970,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-93",
           "label": "Every host answers as before (${BEFORE})",
           "target": "local",
           "continueOnError": true,
@@ -981,14 +991,14 @@
           }
         }
       ],
-      "bash": "log_section \"The vhosts under the candidate's names, link state kept\"\n\nassert_eq \"$(link_state \"$(vhost_name app \"${ON_FQDN}\")\")\" \"available linked\" \"${ON_FQDN}: renamed to its full hostname, still linked\" || true\nassert_eq \"$(link_state \"$(vhost_name app \"${OFF_FQDN}\")\")\" \"available unlinked\" \"${OFF_FQDN}: renamed, still not linked\" || true\nassert_eq \"$(link_state \"$(vhost_name auth \"${DOMAIN}\")\")\" \"available linked\" \"The auth portal: lamalibre-lamaste-auth-${DOMAIN}, linked\" || true\nassert_eq \"$(link_state \"${LEGACY_ON}\") $(link_state \"${LEGACY_OFF}\") $(link_state \"${LEGACY_AUTH}\")\" \\\n  \"gone unlinked gone unlinked gone unlinked\" \"No ${BEFORE_VERSION} name is left, as a file or a link\" || true\nif sudo nginx -t > /dev/null 2>&1; then\n  log_pass \"nginx -t passes\"\nelse\n  log_fail \"nginx -t fails after the update\"\nfi\nassert_eq \"$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")\" \"${BEFORE}\" \"Every host answers as before (${BEFORE})\" || true"
+      "bash": "log_section \"The vhosts under the candidate's names, link state kept\"\n\nassert_eq \"$(link_state \"$(vhost_name app \"${ON_FQDN}\")\")\" \"available linked\" \"${ON_FQDN}: under its full hostname, still linked\" || true\nassert_eq \"$(link_state \"$(vhost_name app \"${OFF_FQDN}\")\")\" \"available unlinked\" \"${OFF_FQDN}: under its full hostname, still not linked\" || true\nassert_eq \"$(link_state \"$(vhost_name auth \"${DOMAIN}\")\")\" \"available linked\" \"The auth portal: lamalibre-lamaste-auth-${DOMAIN}, linked\" || true\nassert_eq \"$(link_state \"${LEGACY_ON}\") $(link_state \"${LEGACY_OFF}\") $(link_state \"${LEGACY_AUTH}\")\" \\\n  \"gone unlinked gone unlinked gone unlinked\" \"No pre-4.7 name is left, as a file or a link\" || true\nif sudo nginx -t > /dev/null 2>&1; then\n  log_pass \"nginx -t passes\"\nelse\n  log_fail \"nginx -t fails after the update\"\nfi\nassert_eq \"$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")\" \"${BEFORE}\" \"Every host answers as before (${BEFORE})\" || true"
     },
     {
       "id": "one-domain-every-user-of-before-version-its-member",
       "label": "One domain; every user of ${BEFORE_VERSION} its member",
       "steps": [
         {
-          "id": "step-79",
+          "id": "step-94",
           "label": "GET /api/domains",
           "target": "host",
           "op": {
@@ -1006,7 +1016,7 @@
           ]
         },
         {
-          "id": "step-80",
+          "id": "step-95",
           "label": "One domain",
           "target": "local",
           "continueOnError": true,
@@ -1028,7 +1038,7 @@
           }
         },
         {
-          "id": "step-81",
+          "id": "step-96",
           "label": "…the primary, ${DOMAIN}, active",
           "target": "local",
           "continueOnError": true,
@@ -1050,7 +1060,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-97",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -1068,7 +1078,7 @@
           ]
         },
         {
-          "id": "step-83",
+          "id": "step-98",
           "label": "The same users as before the update",
           "target": "local",
           "continueOnError": true,
@@ -1096,7 +1106,7 @@
       "label": "Authelia and Gatekeeper enforce membership",
       "steps": [
         {
-          "id": "step-85",
+          "id": "step-100",
           "label": "Set AUTHELIA_POLICY",
           "target": "local",
           "op": {
@@ -1113,7 +1123,7 @@
           ]
         },
         {
-          "id": "step-86",
+          "id": "step-101",
           "label": "Authelia's access_control denies by default",
           "target": "local",
           "continueOnError": true,
@@ -1134,7 +1144,7 @@
           }
         },
         {
-          "id": "step-87",
+          "id": "step-102",
           "label": "Gatekeeper's domains.json names ${DOMAIN}",
           "target": "local",
           "op": {
@@ -1144,7 +1154,7 @@
           }
         },
         {
-          "id": "step-88",
+          "id": "step-103",
           "label": "domains.json is missing or does not name ${DOMAIN}",
           "target": "local",
           "op": {
@@ -1154,7 +1164,7 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-104",
           "label": "Authelia and Gatekeeper are running",
           "target": "local",
           "continueOnError": true,
@@ -1175,7 +1185,7 @@
           }
         },
         {
-          "id": "step-90",
+          "id": "step-105",
           "label": "Set PROJECTION",
           "target": "local",
           "op": {
@@ -1192,7 +1202,7 @@
           ]
         },
         {
-          "id": "step-91",
+          "id": "step-106",
           "label": "…the projection is version 2, no external member",
           "target": "local",
           "continueOnError": true,
@@ -1221,7 +1231,7 @@
       "label": "Authelia reads who may pass from its users file",
       "steps": [
         {
-          "id": "step-92",
+          "id": "step-107",
           "label": "Set CONFIG",
           "target": "local",
           "op": {
@@ -1238,7 +1248,7 @@
           ]
         },
         {
-          "id": "step-93",
+          "id": "step-108",
           "label": "Authelia watches users.yml and reads a session's groups at every request",
           "target": "local",
           "continueOnError": true,
@@ -1260,7 +1270,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-109",
           "label": "…its own password change and reset are off (the panel is the file's one writer)",
           "target": "local",
           "continueOnError": true,
@@ -1282,7 +1292,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-110",
           "label": "Set KEY",
           "target": "local",
           "op": {
@@ -1299,7 +1309,7 @@
           ]
         },
         {
-          "id": "step-96",
+          "id": "step-111",
           "label": "The primary domain's rules name its member group (lamaste:m:<key>)",
           "target": "local",
           "continueOnError": true,
@@ -1320,7 +1330,7 @@
           }
         },
         {
-          "id": "step-97",
+          "id": "step-112",
           "label": "…and name no user",
           "target": "local",
           "continueOnError": true,
@@ -1341,7 +1351,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-113",
           "label": "Set USERS_GROUPS",
           "target": "local",
           "op": {
@@ -1358,7 +1368,7 @@
           ]
         },
         {
-          "id": "step-99",
+          "id": "step-114",
           "label": "Every user of users.yml holds the member group",
           "target": "local",
           "continueOnError": true,
@@ -1386,7 +1396,7 @@
       "label": "The branded sign-in's base is in place; the page is pixel-for-pixel stock",
       "steps": [
         {
-          "id": "step-100",
+          "id": "step-115",
           "label": "Set AUTH_VHOST",
           "target": "local",
           "op": {
@@ -1403,7 +1413,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-116",
           "label": "The auth vhost carries the brand-override locations (/brand.css)",
           "target": "local",
           "continueOnError": true,
@@ -1424,7 +1434,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-117",
           "label": "…/static/media/logo.png",
           "target": "local",
           "continueOnError": true,
@@ -1445,7 +1455,7 @@
           }
         },
         {
-          "id": "step-103",
+          "id": "step-118",
           "label": "…/locales/",
           "target": "local",
           "continueOnError": true,
@@ -1466,7 +1476,7 @@
           }
         },
         {
-          "id": "step-104",
+          "id": "step-119",
           "label": "…with @authelia as the fallback",
           "target": "local",
           "continueOnError": true,
@@ -1487,7 +1497,7 @@
           }
         },
         {
-          "id": "step-107",
+          "id": "step-122",
           "label": "Set AUTH_PAGE",
           "target": "local",
           "op": {
@@ -1504,7 +1514,7 @@
           ]
         },
         {
-          "id": "step-108",
+          "id": "step-123",
           "label": "https://${AUTH_FQDN}/ answers 200",
           "target": "local",
           "continueOnError": true,
@@ -1525,7 +1535,7 @@
           }
         },
         {
-          "id": "step-109",
+          "id": "step-124",
           "label": "…data-theme=\\",
           "target": "local",
           "continueOnError": true,
@@ -1546,7 +1556,7 @@
           }
         },
         {
-          "id": "step-110",
+          "id": "step-125",
           "label": "…data-logooverride=\\",
           "target": "local",
           "continueOnError": true,
@@ -1567,7 +1577,7 @@
           }
         },
         {
-          "id": "step-111",
+          "id": "step-126",
           "label": "…no stylesheet: the stock page until a brand is set",
           "target": "local",
           "continueOnError": true,
@@ -1588,7 +1598,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-127",
           "label": "Authelia's configuration gained theme light and server.asset_path /etc/authelia/assets",
           "target": "local",
           "continueOnError": true,
@@ -1610,7 +1620,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-128",
           "label": "The placeholder logo is in the asset directory, group lamaste-authelia",
           "target": "local",
           "continueOnError": true,
@@ -1631,7 +1641,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-129",
           "label": "GET /api/audit?action=authelia.restarted&limit=200",
           "target": "host",
           "op": {
@@ -1649,7 +1659,7 @@
           ]
         },
         {
-          "id": "step-115",
+          "id": "step-130",
           "label": "Exactly one authelia.restarted audited with reason branding-base since the update",
           "target": "local",
           "continueOnError": true,
@@ -1670,7 +1680,7 @@
           }
         },
         {
-          "id": "step-116",
+          "id": "step-131",
           "label": "GET /api/domains/${DOMAIN}/branding: no brand",
           "target": "local",
           "continueOnError": true,
@@ -1692,7 +1702,7 @@
           }
         },
         {
-          "id": "step-117",
+          "id": "step-132",
           "label": "nginx -V lists --with-http_sub_module (compiled in)",
           "target": "local",
           "continueOnError": true,
@@ -1713,7 +1723,7 @@
           }
         },
         {
-          "id": "step-118",
+          "id": "step-133",
           "label": "Set INVITE_PAGE",
           "target": "local",
           "op": {
@@ -1730,7 +1740,7 @@
           ]
         },
         {
-          "id": "step-119",
+          "id": "step-134",
           "label": "The stock invitation page is in place",
           "target": "local",
           "continueOnError": true,
@@ -1751,7 +1761,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-135",
           "label": "…rewritten by the candidate (its palette variables, which ${BEFORE_VERSION}'s page lacked)",
           "target": "local",
           "continueOnError": true,
@@ -1779,7 +1789,7 @@
       "label": "Signed in again: the user reaches what they reached",
       "steps": [
         {
-          "id": "step-122",
+          "id": "step-137",
           "label": "${USERNAME} signed in at auth.${DOMAIN} on ${CANDIDATE}",
           "target": "local",
           "continueOnError": true,
@@ -1800,7 +1810,7 @@
           }
         },
         {
-          "id": "step-123",
+          "id": "step-138",
           "label": "…and is answered on ${ON_FQDN} as before (${REACH_BEFORE})",
           "target": "local",
           "continueOnError": true,
@@ -1828,7 +1838,7 @@
       "label": "The panel logged no error since the update",
       "steps": [
         {
-          "id": "step-124",
+          "id": "step-139",
           "label": "Set ERRORS",
           "target": "local",
           "op": {
@@ -1845,7 +1855,7 @@
           ]
         },
         {
-          "id": "step-125",
+          "id": "step-140",
           "label": "No level ≥ 50 line in the panel's journal since ${UPDATE_STARTED}",
           "target": "local",
           "continueOnError": true,
@@ -1871,7 +1881,7 @@
   ],
   "apiHelpers": [],
   "headerRaw": "# ============================================================================\n# 01 — A relay on the previous release takes the Panel Update to the candidate\n# ============================================================================\n# The relay was installed from the registry while the release before the\n# candidate was the latest (tier installed-previous); the campaign then\n# published the candidate, now the registry's latest create-lamaste. Here,\n# the path a live relay takes:\n#\n# 1. State written by the previous release: a user beside the admin, two\n#    tunnels (one enabled, one disabled), their vhosts under that release's\n#    names, how every host answers, the root helper as installed.\n# 2. POST /api/system/update { version: <candidate> }: lamaste-priv starts\n#    create-lamaste@<candidate> --yes in a transient unit; the panel comes\n#    back on the candidate.\n# 3. After: the unit succeeded; lamaste-priv is the candidate's (it refuses\n#    what only the old one allowed); the panel's migrations ran on the old\n#    state; the vhosts carry the candidate's names with their link state;\n#    every host answers as before; one domain, every user its member (kind\n#    member); Authelia denies by default, watches its users file (refresh\n#    always, its own password change and reset off — external-members-\n#    design.md) and every user holds the domain's member group there;\n#    Gatekeeper has its member file (v2); the branded sign-in's base is in\n#    place with the page pixel-for-pixel stock (auth-branding-design.md,\n#    \"Upgrade and reconcile\": the override locations in the auth vhost,\n#    data-theme=\"light\", data-logooverride=\"false\", no stylesheet; theme\n#    and server.asset_path in Authelia's configuration — one restart,\n#    audited; no brand; nginx built with the sub module; the stock\n#    invitation page rewritten); the user signed in before the update,\n#    signed in again after it, reaches what they reached; the panel logged\n#    no error since the update.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq nginx npm sha256sum oathtool python3\n\nbegin_test \"01 — Panel Update from the previous release to the candidate\"\n\nRUN_ID=\"$(date +%s)\"\nAGENT_LABEL=\"upgrade-e2e-${RUN_ID}\"\nSUB_ON=\"e2eup1on\"\nSUB_OFF=\"e2eup1off\"\nPORT_ON=19941\nPORT_OFF=19942\nUSERNAME=\"e2eupgrade\"\n# Test credentials for this run only, never printed\nUSER_PASSWORD=\"Upgrade-${RUN_ID}-pass\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-upgrade-01\"\nTUNNEL_ON=\"\"\nTUNNEL_OFF=\"\"\nAVAILABLE=\"/etc/nginx/sites-available\"\nENABLED=\"/etc/nginx/sites-enabled\"\nPRIV=/usr/local/sbin/lamaste-priv\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${TUNNEL_ON} ${TUNNEL_OFF}; do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"users/${USERNAME}\" > /dev/null 2>&1 || true\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# host_status <hostname> — how nginx answers https://<hostname>/ on this VM\nhost_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve \"$1:443:127.0.0.1\" \"https://$1/\" 2>/dev/null || echo \"000\"\n}\n\n# link_state <site name> — \"available linked\" / \"available unlinked\" / \"gone …\"\nlink_state() {\n  local a=gone e=unlinked\n  if sudo test -e \"${AVAILABLE}/$1\"; then a=available; fi\n  if sudo test -L \"${ENABLED}/$1\"; then e=linked; fi\n  echo \"$a $e\"\n}\n\n# signed_status <jar> <hostname> — how nginx answers https://<hostname>/ to the session in <jar>\nsigned_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 -b \"$1\" --resolve \"$2:443:127.0.0.1\" \"https://$2/\" 2>/dev/null || echo \"000\"\n}\n\n# panel_version — the version the panel reports, or \"down\"\npanel_version() {\n  api_get \"health\" 2>/dev/null | jq -r '.version // \"down\"' 2>/dev/null || echo \"down\"\n}\n",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq nginx npm sha256sum oathtool python3\n\nbegin_test \"01 — Panel Update from the previous release to the candidate\"\n\nRUN_ID=\"$(date +%s)\"\nAGENT_LABEL=\"upgrade-e2e-${RUN_ID}\"\nSUB_ON=\"e2eup1on\"\nSUB_OFF=\"e2eup1off\"\nPORT_ON=19941\nPORT_OFF=19942\nUSERNAME=\"e2eupgrade\"\n# Test credentials for this run only, never printed\nUSER_PASSWORD=\"Upgrade-${RUN_ID}-pass\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-upgrade-01\"\nTUNNEL_ON=\"\"\nTUNNEL_OFF=\"\"\nAVAILABLE=\"/etc/nginx/sites-available\"\nENABLED=\"/etc/nginx/sites-enabled\"\nPRIV=/usr/local/sbin/lamaste-priv\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${TUNNEL_ON} ${TUNNEL_OFF}; do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"users/${USERNAME}\" > /dev/null 2>&1 || true\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# host_status <hostname> — how nginx answers https://<hostname>/ on this VM\nhost_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve \"$1:443:127.0.0.1\" \"https://$1/\" 2>/dev/null || echo \"000\"\n}\n\n# link_state <site name> — \"available linked\" / \"available unlinked\" / \"gone …\"\nlink_state() {\n  local a=gone e=unlinked\n  if sudo test -e \"${AVAILABLE}/$1\"; then a=available; fi\n  if sudo test -L \"${ENABLED}/$1\"; then e=linked; fi\n  echo \"$a $e\"\n}\n\n# signed_status <jar> <hostname> — how nginx answers https://<hostname>/ to the session in <jar>\nsigned_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 -b \"$1\" --resolve \"$2:443:127.0.0.1\" \"https://$2/\" 2>/dev/null || echo \"000\"\n}\n\n# panel_version — the version the panel reports, or \"down\"\npanel_version() {\n  api_get \"health\" 2>/dev/null | jq -r '.version // \"down\"' 2>/dev/null || echo \"down\"\n}\n\n# version_before <a> <b> — whether release <a> is older than <b> (x.y.z)\nversion_before() {\n  [ \"$1\" != \"$2\" ] && [ \"$(printf '%s\\n%s\\n' \"$1\" \"$2\" | sort -V | head -n 1)\" = \"$1\" ]\n}\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }
