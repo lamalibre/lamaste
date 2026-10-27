@@ -452,7 +452,7 @@ assert_json_field "${AUDIT}" 'length' "5" "Five domain.branding.updated entries 
 assert_json_field "${AUDIT}" '[.[] | select(.details.fields != null) | .details.fields[]] | unique | contains(["name", "theme", "accent"])' "true" "…the field entries name the fields (name, theme, accent, …)" || true
 assert_json_field "${AUDIT}" '[.[] | select(.details.asset == "logo" and .details.removed != true) | .details.sha256] | first' "${LOGO_A_SHA}" "…the logo entry carries its digest" || true
 assert_json_field "${AUDIT}" '[.[] | select(.details.asset == "logo" and .details.removed == true)] | length' "1" "…and the removal is one entry" || true
-assert_json_field "${AUDIT}" '[.[] | .details.revision] | sort' "[1,2,3,4,5]" "…revisions 1 to 5" || true
+assert_json_field "${AUDIT}" '[.[] | .details.revision] | sort | tostring' "[1,2,3,4,5]" "…revisions 1 to 5" || true
 assert_not_contains "${AUDIT}" "${BRAND_A}" "…no entry carries the brand's name" || true
 assert_not_contains "${AUDIT}" "${LOGO_A_B64_HEAD}" "…nor the logo's bytes" || true
 assert_json_field "$(host_api_get "audit?action=domain.branding.removed&limit=50" 2>/dev/null | jq -c --arg d "${DOMAIN_2}" --argjson base "${AUDIT_BASE}" '[.entries[]? | select(.id > $base and .details.domain == $d)]' 2>/dev/null || echo "[]")" 'length' "1" "One domain.branding.removed entry for ${DOMAIN_2}" || true
