@@ -137,6 +137,20 @@ export const IdentityRoleSchema = z
       ),
     label: displayText(z.string().min(1).max(64)),
     description: displayText(z.string().max(200)).optional(),
+    /**
+     * The roles a holder of this role may give by a delegated invitation
+     * (`delegated-invitations-design.md`): role ids of the same block, none
+     * repeated; the role itself may be one of them. Absent: it invites
+     * nobody.
+     */
+    invites: z
+      .array(z.string().regex(IDENTITY_ROLE_ID_REGEX))
+      .min(1)
+      .max(IDENTITY_ROLES_MAX)
+      .refine((invites) => new Set(invites).size === invites.length, {
+        message: 'invites must not repeat',
+      })
+      .optional(),
   })
   .strict();
 
@@ -156,7 +170,14 @@ export const IdentityBlockSchema = z
       .max(IDENTITY_ROLES_MAX)
       .refine((roles) => new Set(roles.map((r) => r.id)).size === roles.length, {
         message: 'Role ids must be unique',
-      }),
+      })
+      .refine(
+        (roles) => {
+          const ids = new Set(roles.map((r) => r.id));
+          return roles.every((r) => (r.invites ?? []).every((id) => ids.has(id)));
+        },
+        { message: 'A role invites only roles the block declares' },
+      ),
     attributes: z
       .array(z.enum(IDENTITY_ATTRIBUTES))
       .max(IDENTITY_ATTRIBUTES.length)
@@ -183,9 +204,10 @@ export interface NormalizedIdentityBlock {
 
 /**
  * The canonical form of an identity block — what the approval digest and
- * the approval preview work from: roles sorted by id (a description only
- * where one is declared), attributes sorted, the default applied when the
- * block declares none. Throws when `block` is not a valid identity block —
+ * the approval preview work from: roles sorted by id (a description and
+ * `invites`, sorted, only where one is declared — a block without them
+ * keeps the digest it had before they existed), attributes sorted, the
+ * default applied when the block declares none. Throws when `block` is not a valid identity block —
  * such a block cannot be approved.
  */
 export function normalizeIdentityBlock(block: IdentityBlockInput): NormalizedIdentityBlock {
@@ -203,6 +225,7 @@ export function normalizeIdentityBlock(block: IdentityBlockInput): NormalizedIde
         id: role.id,
         label: role.label,
         ...(role.description !== undefined ? { description: role.description } : {}),
+        ...(role.invites !== undefined ? { invites: [...role.invites].sort() } : {}),
       }),
     )
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -218,6 +241,52 @@ export interface IdentityDiff {
   readonly attributesRemoved: readonly IdentityAttribute[];
   /** Ids of roles in both whose label or description changed. */
   readonly labelsChanged: readonly string[];
+  /**
+   * Per role of the new block, the roles it may now give by invitation that
+   * it could not before (a new role's whole `invites`); sorted by role.
+   */
+  readonly invitesAdded: readonly { readonly role: string; readonly roles: readonly string[] }[];
+  /** Per role of the old block, the roles it may no longer give; sorted by role. */
+  readonly invitesRemoved: readonly { readonly role: string; readonly roles: readonly string[] }[];
+}
+
+/**
+ * The roles each role of `block` may give by invitation, by role id (only
+ * roles that invite). Throws on a block that is not valid.
+ */
+export function invitingRoles(block: IdentityBlockInput): Map<string, readonly string[]> {
+  const normalized = normalizeIdentityBlock(block);
+  return new Map(
+    normalized.roles
+      .filter((role) => role.invites !== undefined)
+      .map((role) => [role.id, role.invites ?? []]),
+  );
+}
+
+/**
+ * The roles a holder of `held` may give by invitation under `block`: the
+ * union of their roles' `invites`, sorted. A role `held` names that the
+ * block does not declare gives nothing.
+ */
+export function grantableRoles(block: IdentityBlockInput, held: readonly string[]): string[] {
+  const inviting = invitingRoles(block);
+  const grantable = new Set<string>();
+  for (const role of held) for (const id of inviting.get(role) ?? []) grantable.add(id);
+  return [...grantable].sort();
+}
+
+function invitesDelta(
+  from: NormalizedIdentityBlock,
+  to: NormalizedIdentityBlock,
+): { role: string; roles: string[] }[] {
+  const before = new Map(from.roles.map((r) => [r.id, new Set(r.invites ?? [])]));
+  const delta: { role: string; roles: string[] }[] = [];
+  for (const role of to.roles) {
+    const had = before.get(role.id) ?? new Set<string>();
+    const roles = (role.invites ?? []).filter((id) => !had.has(id));
+    if (roles.length > 0) delta.push({ role: role.id, roles });
+  }
+  return delta;
 }
 
 /**
@@ -247,18 +316,25 @@ export function identityDiff(
     attributesAdded: b.attributes.filter((x) => !a.attributes.includes(x)),
     attributesRemoved: a.attributes.filter((x) => !b.attributes.includes(x)),
     labelsChanged,
+    invitesAdded: invitesDelta(a, b),
+    invitesRemoved: invitesDelta(b, a),
   };
 }
 
 /**
  * Whether an identity change waits for an admin's approval: a role added
- * or removed, or an attribute added (the plugin would receive more about
- * its users). Narrowing the attributes and editing labels do not — they
- * only change the digest. Auto-approve never covers it.
+ * or removed, an attribute added (the plugin would receive more about its
+ * users), or a role allowed to give one more role by invitation (its
+ * holders could make more of the relay's users). Narrowing the attributes
+ * or the invitations and editing labels do not — they only change the
+ * digest. Auto-approve never covers it.
  */
 export function identityChangeNeedsApproval(diff: IdentityDiff): boolean {
   return (
-    diff.rolesAdded.length > 0 || diff.rolesRemoved.length > 0 || diff.attributesAdded.length > 0
+    diff.rolesAdded.length > 0 ||
+    diff.rolesRemoved.length > 0 ||
+    diff.attributesAdded.length > 0 ||
+    diff.invitesAdded.length > 0
   );
 }
 

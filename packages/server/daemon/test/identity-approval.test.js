@@ -156,6 +156,8 @@ test('a role added waits with identity.changed, which auto-approve never covers'
     attributesAdded: [],
     attributesRemoved: [],
     labelsChanged: [],
+    invitesAdded: [],
+    invitesRemoved: [],
   });
   assert.equal((await lib.findPlugin('ax')).version, '1.0.0');
   const [withheld] = await lib.listAudit({ plugin: 'ax', action: 'hooks.auto-approve.withheld' });
@@ -244,6 +246,58 @@ test('narrowing the attributes or editing a label only changes the digest: auto-
   );
   assert.deepEqual(waiting.pendingUpdate.identity.labelsChanged, ['editor']);
   await lib.setPendingUpdate('ax', null);
+});
+
+test('a role allowed to invite into one more role waits with identity.changed; narrowing it does not', async () => {
+  const COORDINATOR = { id: 'coordinator', label: 'Coordinator' };
+  await publish('cx', '1.0.0', { roles: [VIEWER, COORDINATOR] });
+  await lib.installPlugin('@lamalibre/cx-server', logger);
+  const cx = await lib.findPlugin('cx');
+  await lib.approveHookSet(cx, lib.installedApproval(cx).digest, actor);
+  await lib.setAutoApprove('cx', true, actor);
+
+  await publish('cx', '1.1.0', { roles: [VIEWER, { ...COORDINATOR, invites: ['viewer'] }] });
+  const staged = await update('cx', '1.1.0');
+  assert.ok(staged.pendingUpdate, 'waits despite auto-approve');
+  assert.deepEqual(
+    staged.pendingUpdate.approvalRequired.map((r) => r.code),
+    ['digest.unapproved', 'identity.changed'],
+  );
+  assert.match(
+    staged.pendingUpdate.approvalRequired[1].reason,
+    /lets coordinator invite people as viewer/,
+  );
+  assert.deepEqual(staged.pendingUpdate.identity.invitesAdded, [
+    { role: 'coordinator', roles: ['viewer'] },
+  ]);
+  const approved = await lib.approveHookSet(
+    await lib.findPlugin('cx'),
+    staged.pendingUpdate.digest,
+    {
+      ...actor,
+      version: '1.1.0',
+    },
+  );
+  await lib.updatePlugin('cx', approved.version, {
+    ...actor,
+    sourceIp: '127.0.0.1',
+    approvedUpdate: approved,
+  });
+  assert.equal((await lib.waitForPluginOperation('cx')).status, 'succeeded');
+  assert.deepEqual(
+    (await lib.findPlugin('cx')).identity.roles.find((r) => r.id === 'coordinator').invites,
+    ['viewer'],
+  );
+
+  // Taking the invitation away only changes the digest: auto-approve covers it.
+  await publish('cx', '1.2.0', { roles: [VIEWER, COORDINATOR] });
+  const narrowed = await update('cx', '1.2.0');
+  assert.ok(narrowed.operation, 'auto-approved');
+  assert.equal((await lib.waitForPluginOperation('cx')).status, 'succeeded');
+  assert.equal(
+    (await lib.findPlugin('cx')).identity.roles.find((r) => r.id === 'coordinator').invites,
+    undefined,
+  );
 });
 
 test('a version that brings identity where there was none waits, auto-approve or not', async () => {

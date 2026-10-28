@@ -231,6 +231,8 @@ export {
   normalizeIdentityBlock,
   identityDiff,
   identityChangeNeedsApproval,
+  invitingRoles,
+  grantableRoles,
   AudienceMemberSchema,
   AudienceLastKnownSchema,
   AudienceChangeSchema,

@@ -16,8 +16,10 @@ import {
   USERNAME_REGEX,
   approvalDigest,
   hookEntrySha256,
+  grantableRoles,
   identityChangeNeedsApproval,
   identityDiff,
+  invitingRoles,
   isLamasteUsername,
   normalizeIdentityBlock,
   parseIdentityChangesAnswer,
@@ -198,6 +200,8 @@ test('identityDiff: roles and attributes added and removed, labels changed; what
     attributesAdded: [],
     attributesRemoved: ['displayName'],
     labelsChanged: ['manager', 'viewer'],
+    invitesAdded: [],
+    invitesRemoved: [],
   });
   assert.equal(identityChangeNeedsApproval(narrowed), false);
 
@@ -234,7 +238,85 @@ test('identityDiff: roles and attributes added and removed, labels changed; what
     attributesAdded: [],
     attributesRemoved: [],
     labelsChanged: [],
+    invitesAdded: [],
+    invitesRemoved: [],
   });
+});
+
+test('invites: roles of the same block, none repeated; canonical, diffed, and widening waits for approval', () => {
+  const inviting = {
+    roles: [
+      { id: 'viewer', label: 'V' },
+      { id: 'coordinator', label: 'C', invites: ['viewer', 'coordinator'] },
+      { id: 'editor', label: 'E' },
+    ],
+  };
+  assert.equal(manifestError({ ...base, identity: inviting }), null);
+  for (const [roles, pattern] of [
+    [[{ id: 'viewer', label: 'V', invites: ['nobody'] }], /invites only roles the block declares/],
+    [[{ id: 'viewer', label: 'V', invites: ['viewer', 'viewer'] }], /invites must not repeat/],
+    [[{ id: 'viewer', label: 'V', invites: [] }], /invites/],
+    [[{ id: 'viewer', label: 'V', invites: ['Viewer'] }], /invites/],
+  ]) {
+    const error = manifestError({ ...base, identity: { roles } });
+    assert.ok(error, JSON.stringify(roles));
+    assert.match(error, pattern);
+  }
+
+  // Sorted where declared; absent where not — so a block without it keeps its digest.
+  const normalized = normalizeIdentityBlock(inviting);
+  assert.deepEqual(normalized.roles, [
+    { id: 'coordinator', label: 'C', invites: ['coordinator', 'viewer'] },
+    { id: 'editor', label: 'E' },
+    { id: 'viewer', label: 'V' },
+  ]);
+  assert.deepEqual(
+    normalizeIdentityBlock(identity).roles.map((r) => Object.keys(r)),
+    [
+      ['id', 'label', 'description'],
+      ['id', 'label'],
+    ],
+  );
+  assert.notEqual(
+    approvalDigest({ relay: null, agentHalf: null, identity: normalized }),
+    approvalDigest({
+      relay: null,
+      agentHalf: null,
+      identity: normalizeIdentityBlock({
+        roles: inviting.roles.map(({ invites: _invites, ...role }) => role),
+      }),
+    }),
+  );
+
+  // What a holder may give: the union of their roles' invites.
+  assert.deepEqual(grantableRoles(inviting, ['coordinator']), ['coordinator', 'viewer']);
+  assert.deepEqual(grantableRoles(inviting, ['viewer', 'editor']), []);
+  assert.deepEqual(grantableRoles(inviting, ['undeclared']), []);
+  assert.deepEqual([...invitingRoles(inviting).keys()], ['coordinator']);
+
+  // A role gaining an invitation waits for approval; losing one does not.
+  const before = {
+    roles: [inviting.roles[0], { id: 'coordinator', label: 'C', invites: ['viewer'] }],
+  };
+  const widened = identityDiff(before, {
+    roles: [
+      inviting.roles[0],
+      { id: 'coordinator', label: 'C', invites: ['viewer', 'coordinator'] },
+    ],
+  });
+  assert.deepEqual(widened.invitesAdded, [{ role: 'coordinator', roles: ['coordinator'] }]);
+  assert.deepEqual(widened.invitesRemoved, []);
+  assert.equal(identityChangeNeedsApproval(widened), true);
+  const narrowed = identityDiff(before, {
+    roles: [inviting.roles[0], { id: 'coordinator', label: 'C' }],
+  });
+  assert.deepEqual(narrowed.invitesAdded, []);
+  assert.deepEqual(narrowed.invitesRemoved, [{ role: 'coordinator', roles: ['viewer'] }]);
+  assert.equal(identityChangeNeedsApproval(narrowed), false);
+  // A new inviting role: its whole list is added.
+  assert.deepEqual(identityDiff(null, before).invitesAdded, [
+    { role: 'coordinator', roles: ['viewer'] },
+  ]);
 });
 
 test('approvalDigest: unchanged without identity (4.4.1 vectors); identity changes it, canonically', () => {
