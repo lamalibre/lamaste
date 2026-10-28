@@ -931,7 +931,7 @@ export async function getDomainBrandingPreview(name) {
   const strings = en ? renderBrandLocale(en.messages, row.name) : {};
   return {
     locale: 'en',
-    css: renderBrandCss({ accent: row.accent }),
+    css: renderBrandCss({ accent: row.accent, theme: row.theme }),
     title: strings['Login - {{authelia}}'] ?? `Login - ${row.name}`,
     footer: strings['Powered by {{authelia}}'] ?? `Powered by ${row.name}`,
     theme: row.theme,

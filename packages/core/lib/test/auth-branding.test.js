@@ -9,6 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   lstat,
   mkdir,
@@ -59,7 +60,14 @@ import {
   removeAuthBranding,
   renderAuthBranding,
   renderInvitePage,
+  renderInvitationsPage,
   writeAutheliaConfig,
+  INVITE_PAGE_HEADERS,
+  INVITE_PAGE_SCRIPT,
+  INVITATIONS_PAGE_HEADERS,
+  INVITATIONS_PAGE_SCRIPT,
+  AUTH_PAGE_STYLE,
+  cspHashSource,
 } from '../dist/server/index.js';
 
 const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url);
@@ -511,20 +519,26 @@ test('brand.json as rendered parses with BrandJsonSchema; a tampered file does n
 
 // --- the invitation page ----------------------------------------------------
 
-test('the stock invitation page carries no brand; a branded one its name, tagline, logo, accent and palette — escaped, re-validated', () => {
+test('the stock invitation page carries no brand; a branded one its name, tagline and logo in markup, its colours in /brand.css', () => {
   const stock = renderInvitePage(null);
   assert.match(stock, /<title>Lamaste — Accept Invitation<\/title>/);
   assert.doesNotMatch(stock, /class="brand/);
   assert.doesNotMatch(stock, /static\/media\/logo\.png/);
-  assert.ok(stock.includes(`--accent: ${INVITE_PAGE_DEFAULT_ACCENT};`));
-  assert.ok(stock.includes('background: #09090b; color: #a1a1aa;'), 'the dark palette');
-  // The script and its API calls, as before.
-  assert.ok(stock.includes("fetch('/api/invite/' + encodeURIComponent(token))"));
-  assert.ok(stock.includes("fetch('/api/invite/' + encodeURIComponent(token) + '/accept'"));
-  assert.ok(stock.includes('<h1>You\\u2019ve Been Invited</h1>'));
-  // No external URL but the QR library the success view always loaded.
-  const urls = stock.match(/https?:\/\/[^'"\s]+/g);
-  assert.deepEqual(urls, ['https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js']);
+  assert.doesNotMatch(stock, /brand\.css/, 'no brand stylesheet without a brand');
+  // The colours are custom properties with the dark palette as fallback.
+  assert.ok(stock.includes(`var(--lamaste-page-accent, ${INVITE_PAGE_DEFAULT_ACCENT})`));
+  assert.ok(stock.includes('var(--lamaste-page-background, #09090b)'));
+  // The token goes in POST bodies, never in a URL.
+  assert.ok(stock.includes("post('/api/invite/lookup', { token: token })"));
+  assert.ok(stock.includes("post('/api/invite/accept', body)"));
+  assert.doesNotMatch(stock, /\/api\/invite\/' \+/);
+  assert.ok(stock.includes('window.location.hash.slice(1)'));
+  assert.doesNotMatch(stock, /location\.search|URLSearchParams/, 'nothing from the query');
+  // No external URL, no script but the inline one.
+  assert.equal(stock.match(/https?:\/\/[^'"\s]+/g), null);
+  assert.equal(stock.match(/<script/g).length, 1);
+  assert.doesNotMatch(stock, /<script[^>]*src=/);
+  assert.doesNotMatch(stock, / on[a-z]+="/, 'no inline event handlers');
 
   const branded = renderInvitePage({
     name: "Code Lama & Co's",
@@ -537,16 +551,8 @@ test('the stock invitation page carries no brand; a branded one its name, taglin
   assert.ok(branded.includes('<div class="brand-name">Code Lama &amp; Co&#039;s</div>'));
   assert.ok(branded.includes('<div class="brand-tagline">Software, &quot;crafted&quot;</div>'));
   assert.ok(branded.includes(`<img class="brand-logo" src="${INVITE_PAGE_LOGO_PATH}" alt="">`));
-  assert.ok(branded.includes('--accent: #1d4ed8;'));
-  assert.ok(branded.includes('--accent-foreground: #ffffff;'));
-  assert.ok(branded.includes('background: #fafafa; color: #52525b;'), 'the light palette');
-  assert.doesNotMatch(branded, /Lamaste/);
-  // The same script: only the head and the header differ.
-  const script = (html) => html.slice(html.indexOf('<script>'));
-  assert.equal(script(branded), script(stock));
-  // No logo, no tagline, a dark theme: no image, no tagline line, the dark
-  // palette; an accent that is not a colour (never from a validated record)
-  // is the default, never in the stylesheet.
+  assert.ok(branded.includes('<link rel="stylesheet" href="/brand.css">'));
+  assert.doesNotMatch(branded, /Lamaste|#1d4ed8/, 'the accent is the stylesheet’s, not the page’s');
   const dark = renderInvitePage({
     name: 'Sample Park',
     tagline: null,
@@ -555,22 +561,108 @@ test('the stock invitation page carries no brand; a branded one its name, taglin
     logo: false,
   });
   assert.doesNotMatch(dark, /static\/media\/logo\.png|<div class="brand-tagline">|evil/);
-  assert.ok(dark.includes(`--accent: ${INVITE_PAGE_DEFAULT_ACCENT};`));
-  assert.ok(dark.includes('background: #09090b; color: #a1a1aa;'));
-  assert.ok(
-    renderInvitePage({
-      name: 'S',
-      tagline: null,
-      theme: 'light',
-      accent: null,
-      logo: false,
-    }).includes(`--accent: ${INVITE_PAGE_DEFAULT_ACCENT_LIGHT};`),
-  );
   for (const theme of AUTH_BRANDING_THEMES) {
     renderInvitePage({ name: 'S', tagline: null, theme, accent: null, logo: false });
   }
   assert.throws(() =>
     renderInvitePage({ name: 'S', tagline: null, theme: 'neon', accent: null, logo: false }),
+  );
+});
+
+/** The text of every inline `<tag>` element of `html`. */
+function inline(html, tag) {
+  return [...html.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'g'))].map((m) => m[1]);
+}
+
+function sha256Source(text) {
+  return `'sha256-${createHash('sha256').update(text, 'utf-8').digest('base64')}'`;
+}
+
+test('both pages: one script and one style for every brand, named by hash in the headers nginx sends', () => {
+  const brands = [
+    null,
+    { name: 'Code Lama', tagline: 'x', theme: 'light', accent: '#1d4ed8', logo: true },
+    { name: 'Sample Park', tagline: null, theme: 'dark', accent: null, logo: false },
+  ];
+  for (const [render, headers, script] of [
+    [renderInvitePage, INVITE_PAGE_HEADERS, INVITE_PAGE_SCRIPT],
+    [renderInvitationsPage, INVITATIONS_PAGE_HEADERS, INVITATIONS_PAGE_SCRIPT],
+  ]) {
+    const csp = headers['Content-Security-Policy'];
+    for (const brand of brands) {
+      const html = render(brand);
+      assert.deepEqual(inline(html, 'script'), [script]);
+      assert.deepEqual(inline(html, 'style'), [AUTH_PAGE_STYLE]);
+      assert.ok(csp.includes(`script-src ${sha256Source(script)};`), 'the script by hash');
+      assert.ok(csp.includes(`style-src 'self' ${sha256Source(AUTH_PAGE_STYLE)};`));
+      assert.doesNotMatch(html, / style="/, 'no style attributes: the CSP allows none');
+    }
+    for (const directive of [
+      "default-src 'none'",
+      "frame-ancestors 'none'",
+      "form-action 'none'",
+      "base-uri 'none'",
+      "connect-src 'self'",
+      "img-src 'self' data:",
+    ]) {
+      assert.ok(csp.includes(directive), directive);
+    }
+    assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval|https?:/);
+    assert.equal(headers['X-Frame-Options'], 'DENY');
+    assert.equal(headers['Cross-Origin-Opener-Policy'], 'same-origin');
+    // no-referrer would make a same-origin fetch POST send `Origin: null`.
+    assert.equal(headers['Referrer-Policy'], 'same-origin');
+    assert.equal(headers['Cache-Control'], 'no-store');
+    assert.equal(cspHashSource(script), sha256Source(script));
+  }
+  assert.notEqual(INVITE_PAGE_SCRIPT, INVITATIONS_PAGE_SCRIPT);
+});
+
+test("the inviter's page: the route from its path alone, its own host's API, the sign-in back to itself", () => {
+  const page = renderInvitationsPage(null);
+  assert.match(page, /<title>Lamaste — Invite People<\/title>/);
+  assert.ok(INVITATIONS_PAGE_SCRIPT.includes("var api = '/api/delegated-invitations/' + route;"));
+  assert.ok(
+    INVITATIONS_PAGE_SCRIPT.includes(
+      "encodeURIComponent(window.location.origin + '/invitations/' + route)",
+    ),
+  );
+  assert.ok(INVITATIONS_PAGE_SCRIPT.includes("request('DELETE', api + '/' + inv.id)"));
+  // Nothing from the query or the fragment; fetch's default mode (it sends Origin).
+  assert.doesNotMatch(INVITATIONS_PAGE_SCRIPT, /location\.(search|hash)|URLSearchParams/);
+  assert.doesNotMatch(INVITATIONS_PAGE_SCRIPT, /mode:|credentials:/);
+  // Links it builds are https only, set as properties, never written into markup.
+  assert.ok(INVITATIONS_PAGE_SCRIPT.includes("indexOf('https://') === 0"));
+  assert.equal(page.match(/https?:\/\/[^'"\s]+/g), null);
+  // The cookie loop is explained.
+  assert.match(INVITATIONS_PAGE_SCRIPT, /clear this ' \+\s*'site(?:\\u2019|’)s cookies/);
+  const branded = renderInvitationsPage({
+    name: 'Code Lama',
+    tagline: null,
+    theme: 'dark',
+    accent: '#22d3ee',
+    logo: true,
+  });
+  assert.ok(branded.includes('<div class="brand-name">Code Lama</div>'));
+  assert.throws(() =>
+    renderInvitationsPage({ name: 'S', tagline: null, theme: 'neon', accent: null, logo: false }),
+  );
+});
+
+test("brand.css themes Lamaste's own pages: the accent, and the light palette for a light theme", () => {
+  const dark = renderBrandCss({ accent: '#1d4ed8', theme: 'dark' });
+  assert.ok(dark.includes(':root {'));
+  assert.ok(dark.includes('  --lamaste-page-accent: #1d4ed8;'));
+  assert.ok(dark.includes('  --lamaste-page-accent-foreground: #ffffff;'));
+  assert.doesNotMatch(dark, /--lamaste-page-background/, 'the dark palette is the fallback');
+  const light = renderBrandCss({ accent: null, theme: 'light' });
+  assert.ok(light.includes(`  --lamaste-page-accent: ${INVITE_PAGE_DEFAULT_ACCENT_LIGHT};`));
+  assert.ok(light.includes('  --lamaste-page-background: #fafafa;'));
+  assert.ok(light.includes('  --lamaste-page-error-text: #b91c1c;'));
+  assert.ok(
+    renderBrandCss({ accent: null }).includes(
+      `--lamaste-page-accent: ${INVITE_PAGE_DEFAULT_ACCENT};`,
+    ),
   );
 });
 
@@ -643,6 +735,7 @@ test('a brand is rendered into a directory of its own and served through its dom
       AUTH_BRANDING_FILES.logo,
       AUTH_BRANDING_FILES.css,
       AUTH_BRANDING_FILES.invite,
+      AUTH_BRANDING_FILES.invitations,
       AUTH_BRANDING_FILES.brand,
       AUTH_BRANDING_FILES.rendered,
       'locales/en/portal.json',
@@ -719,6 +812,7 @@ test('a brand is rendered into a directory of its own and served through its dom
     assert.deepEqual((await readdir(link)).sort(), [
       'brand.css',
       'brand.json',
+      'invitations',
       'invite',
       'locales',
       'rendered.json',
@@ -728,8 +822,8 @@ test('a brand is rendered into a directory of its own and served through its dom
     assert.equal(brand2.favicon, null);
     assert.equal(brand2.accent, null);
     assert.ok(
-      (await readFile(path.join(link, AUTH_BRANDING_FILES.invite), 'utf-8')).includes(
-        `--accent: ${INVITE_PAGE_DEFAULT_ACCENT};`,
+      (await readFile(path.join(link, AUTH_BRANDING_FILES.css), 'utf-8')).includes(
+        `--lamaste-page-accent: ${INVITE_PAGE_DEFAULT_ACCENT};`,
       ),
       'no accent: the default',
     );

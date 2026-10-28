@@ -682,6 +682,12 @@ export {
   renderBrandCss,
   renderBrandJson,
   BrandJsonSchema,
+  AUTH_PAGE_DARK_PALETTE,
+  AUTH_PAGE_LIGHT_PALETTE,
+  AUTH_PAGE_DEFAULT_ACCENT,
+  AUTH_PAGE_DEFAULT_ACCENT_LIGHT,
+  AUTH_PAGE_PROPERTY_PREFIX,
+  renderAuthPageThemeCss,
 } from './auth-branding.js';
 
 export type {
@@ -694,6 +700,7 @@ export type {
   BrandImageRefusal,
   RenderedBrand,
   BrandJson,
+  AuthPagePalette,
 } from './auth-branding.js';
 
 // Delegated invitations: a plugin user with an inviting role invites
@@ -701,8 +708,10 @@ export type {
 export {
   DEFAULT_INVITATION_POLICY,
   DELEGATED_INVITATIONS_BODY_LIMIT,
+  AdminAcceptanceSchema,
   DelegatedAcceptanceSchema,
   DelegatedInvitationRequestSchema,
+  InvitationLookupSchema,
   INVITATIONS_PER_INVITER_PER_HOUR,
   INVITATION_ACCEPTING_STALE_MS,
   INVITATION_GRANT_RESERVE,
@@ -722,8 +731,15 @@ export {
   suggestedUsername,
 } from './invitations.js';
 export type {
+  AdminAcceptance,
   DelegatedAcceptance,
   DelegatedInvitationRequest,
+  InvitationAdminView,
+  InvitationInviterView,
+  InvitationListFilter,
+  InvitationLookup,
+  InvitationPolicyView,
+  InviterOverview,
   InvitationKind,
   InvitationPolicy,
   InvitationPolicyInput,

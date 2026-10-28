@@ -429,6 +429,8 @@ export const AUTH_BRANDING_FILES = Object.freeze({
   brand: 'brand.json',
   /** The domain's invitation page (`server/invite-page.ts`), served by the auth vhost for `/invite/`. */
   invite: 'invite/index.html',
+  /** The domain's inviter page (`server/invitations-page.ts`), served for `/invitations/<route>`. */
+  invitations: 'invitations/index.html',
   /** What was rendered: revision and Authelia version ({@link RenderedBrand}). */
   rendered: 'rendered.json',
 });
@@ -539,13 +541,125 @@ export function accentForeground(accent: string): '#000000' | '#ffffff' {
   return 1.05 / (l + 0.05) >= (l + 0.05) / 0.05 ? '#ffffff' : '#000000';
 }
 
+// ---------------------------------------------------------------------------
+// Lamaste's own auth pages (the invitation page, the inviter's page)
+// ---------------------------------------------------------------------------
+
+/**
+ * The colours of Lamaste's own pages on a sign-in host — the invitation
+ * page and the inviter's page. Their inline style reads each as
+ * `var(--lamaste-page-<name>, <the dark value>)`, so it is one text for
+ * every brand (its hash in the pages' Content-Security-Policy is fixed per
+ * release); a brand's values come from `/brand.css` ({@link renderBrandCss}).
+ */
+export interface AuthPagePalette {
+  readonly background: string;
+  readonly card: string;
+  readonly border: string;
+  readonly text: string;
+  readonly heading: string;
+  readonly muted: string;
+  readonly hint: string;
+  readonly input: string;
+  readonly disabled: string;
+  readonly 'error-background': string;
+  readonly 'error-border': string;
+  readonly 'error-text': string;
+  readonly 'note-background': string;
+  readonly 'note-border': string;
+  readonly 'note-text': string;
+  readonly success: string;
+}
+
+/** The pages' dark terminal palette (zinc-950 background, zinc-900 card) — their look without a brand. */
+export const AUTH_PAGE_DARK_PALETTE: AuthPagePalette = Object.freeze({
+  background: '#09090b',
+  card: '#18181b',
+  border: '#27272a',
+  text: '#a1a1aa',
+  heading: '#f4f4f5',
+  muted: '#71717a',
+  hint: '#52525b',
+  input: '#09090b',
+  disabled: '#71717a',
+  'error-background': '#1c0f0f',
+  'error-border': '#7f1d1d',
+  'error-text': '#fca5a5',
+  'note-background': '#0f1c1c',
+  'note-border': '#134e4a',
+  'note-text': '#5eead4',
+  success: '#4ade80',
+});
+
+/** The light palette (zinc-50 background, white card) a brand with theme `light` gets. */
+export const AUTH_PAGE_LIGHT_PALETTE: AuthPagePalette = Object.freeze({
+  background: '#fafafa',
+  card: '#ffffff',
+  border: '#e4e4e7',
+  text: '#52525b',
+  heading: '#18181b',
+  muted: '#71717a',
+  hint: '#a1a1aa',
+  input: '#fafafa',
+  disabled: '#a1a1aa',
+  'error-background': '#fef2f2',
+  'error-border': '#fecaca',
+  'error-text': '#b91c1c',
+  'note-background': '#f0fdfa',
+  'note-border': '#99f6e4',
+  'note-text': '#0f766e',
+  success: '#15803d',
+});
+
+/** The pages' accent without a brand's (cyan-400) on the dark palette … */
+export const AUTH_PAGE_DEFAULT_ACCENT = '#22d3ee';
+/** … and on the light one (cyan-600: readable on white). */
+export const AUTH_PAGE_DEFAULT_ACCENT_LIGHT = '#0891b2';
+
+/** The prefix of the pages' custom properties. */
+export const AUTH_PAGE_PROPERTY_PREFIX = '--lamaste-page-';
+
+/**
+ * The `:root` block of `/brand.css` that themes Lamaste's own pages: the
+ * accent (the brand's, or the palette's default) with its foreground, and
+ * the light palette for a brand whose theme is `light` (every other theme
+ * keeps the dark one). Authelia's own page ignores these properties.
+ */
+export function renderAuthPageThemeCss(brand: {
+  readonly accent: string | null;
+  readonly theme?: BrandTheme | undefined;
+}): string {
+  const light = brand.theme === 'light';
+  let accent = light ? AUTH_PAGE_DEFAULT_ACCENT_LIGHT : AUTH_PAGE_DEFAULT_ACCENT;
+  if (brand.accent !== null) {
+    if (!AUTH_BRANDING_ACCENT_RE.test(brand.accent)) {
+      throw new Error('An accent is a colour as #rrggbb');
+    }
+    accent = brand.accent;
+  }
+  const lines = [':root {'];
+  lines.push(`  ${AUTH_PAGE_PROPERTY_PREFIX}accent: ${accent};`);
+  lines.push(`  ${AUTH_PAGE_PROPERTY_PREFIX}accent-foreground: ${accentForeground(accent)};`);
+  if (light) {
+    for (const [name, value] of Object.entries(AUTH_PAGE_LIGHT_PALETTE)) {
+      lines.push(`  ${AUTH_PAGE_PROPERTY_PREFIX}${name}: ${value};`);
+    }
+  }
+  lines.push('}');
+  return lines.join('\n');
+}
+
 /**
  * The stylesheet of a brand, generated from its validated fields alone
  * (never authored): the accent's custom properties on `[data-theme]` when
- * an accent is set, and the hidden footer. Served as `/brand.css` on the
- * domain's sign-in; Authelia's CSP allows a same-origin stylesheet.
+ * an accent is set, the hidden footer, and the theme of Lamaste's own pages
+ * on the sign-in host ({@link renderAuthPageThemeCss}). Served as
+ * `/brand.css` on the domain's sign-in; Authelia's CSP allows a same-origin
+ * stylesheet.
  */
-export function renderBrandCss(brand: Pick<BrandFields, 'accent'>): string {
+export function renderBrandCss(
+  brand: Pick<BrandFields, 'accent'> & { readonly theme?: BrandTheme | undefined },
+): string {
   const lines = ['/* Generated by Lamaste from the domain’s brand. Not edited by hand. */'];
   if (brand.accent !== null) {
     if (!AUTH_BRANDING_ACCENT_RE.test(brand.accent)) {
@@ -566,6 +680,7 @@ export function renderBrandCss(brand: Pick<BrandFields, 'accent'>): string {
     lines.push('}');
   }
   lines.push(`${BRAND_CSS_FOOTER_SELECTOR} { display: none !important; }`);
+  lines.push(renderAuthPageThemeCss(brand));
   return `${lines.join('\n')}\n`;
 }
 

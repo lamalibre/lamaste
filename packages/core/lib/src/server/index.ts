@@ -668,7 +668,16 @@ export type {
 export {
   INVITE_PAGE_DEFAULT_ACCENT,
   INVITE_PAGE_DEFAULT_ACCENT_LIGHT,
+  INVITE_PAGE_HEADERS,
   INVITE_PAGE_LOGO_PATH,
+  INVITE_PAGE_SCRIPT,
   renderInvitePage,
 } from './invite-page.js';
 export type { InviteBrand } from './invite-page.js';
+// The inviter's page of delegated invitations, and what the two pages share
+export {
+  INVITATIONS_PAGE_HEADERS,
+  INVITATIONS_PAGE_SCRIPT,
+  renderInvitationsPage,
+} from './invitations-page.js';
+export { AUTH_PAGE_BRAND_CSS_PATH, AUTH_PAGE_STYLE, cspHashSource } from './auth-pages.js';
