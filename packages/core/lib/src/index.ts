@@ -295,6 +295,10 @@ export {
   isUnderAgentHalfApp,
   isUserSurfaceRoute,
   isUserSurfaceUrl,
+  DELEGATED_INVITATIONS_API_PREFIX,
+  DELEGATED_INVITATIONS_PAGE_PREFIX,
+  delegatedInvitationsApiPath,
+  isDelegatedInvitationsUrl,
   siteUserSurfaceRoute,
   tunnelUserSurfaceRoutes,
   tunnelServedUserSurfaceRoutes,
@@ -603,6 +607,8 @@ export {
   signRelayAssertion,
   verifyRelayAssertion,
   urlIsUnderRoute,
+  isRelayInvitationsTarget,
+  isRelayUserSurfaceTarget,
 } from './relay-assertion.js';
 
 export type {
@@ -610,6 +616,8 @@ export type {
   RelaySessionUser,
   RelayPanelUser,
   RelayTarget,
+  RelayUserSurfaceTarget,
+  RelayInvitationsTarget,
   RelayAssertionPayload,
   RelaySigningKey,
   RelayVerifyKey,
