@@ -1,6 +1,6 @@
 # Delegated Invitations — Design Document
 
-> **Status:** agreed 2026-10-28 — decisions D1–D12 (D1, D3–D8, D10–D12 put to the founders, each as recommended; D2 and D9 technical, taken as recommended); revised after the independent review of 2026-10-28 (13 findings, two blockers, all folded in — table at the end). Not built beyond wave 1's manifest field.
+> **Status:** agreed 2026-10-28 — decisions D1–D12 (D1, D3–D8, D10–D12 put to the founders, each as recommended; D2 and D9 technical, taken as recommended); revised after two independent reviews of 2026-10-28 (24 findings, three blockers, all folded in — tables at the end). Not built beyond wave 1's manifest field.
 > **Target:** Lamaste 4.9.0, on top of 4.8.0 (multi-domain relay, external members, per-domain branding).
 > **Pilot:** corral (`corral.codelama.com.tr`): the client's coordinator invites colleagues into corral, as external members of `codelama.com.tr`, with a corral role, without the relay admin.
 > **Companions:** `herd/docs/r730-workload-plan.md` §15.2 (scope), §15.2a, §15.4, §15.5;
@@ -152,11 +152,16 @@ CREATE TABLE invitations (
   failed_attempts   INTEGER NOT NULL DEFAULT 0,
   revoked_by        TEXT, revoked_reason TEXT,
   accepted_user_id  TEXT,
+  claim_id          TEXT,                        -- the acceptance under way ('accepting')
+  revoke_pending_reason TEXT,                    -- a sweep found it unacceptable while accepting
   role_granted_at   TEXT, site_granted_at TEXT, rendered_at TEXT,   -- delegated: what acceptance completed
   CHECK (kind = 'admin' OR (plugin IS NOT NULL AND role IS NOT NULL AND site_id IS NOT NULL
          AND inviter_user_id IS NOT NULL AND groups_json = '[]'))
 );
 CREATE INDEX invitations_open ON invitations (status, plugin, inviter_user_id);
+CREATE UNIQUE INDEX invitations_open_username ON invitations (username)
+  WHERE username IS NOT NULL AND status IN ('pending', 'accepting');
+ALTER TABLE directory_users ADD COLUMN invitation_id TEXT;   -- the acceptance that created the user
 CREATE TABLE plugin_invitation_policies (...);
 ```
 
@@ -258,95 +263,148 @@ username)` (active, entitled, identity ready); the policy enabled and the
      else — another's is not told apart from none); `accepting` → 409.
      Logs metadata only (`user:<userId>`, plugin, outcome), never an address.
 
-The link is `https://auth.<plugin's domain>/invite/<token>`. Audited
+The link is `https://auth.<plugin's domain>/invite#<token>` (§7). Audited
 `invitation.created` (actor `user:<userId>`, plugin, `{ invitationId, role,
 emailDomain, expiresAt }`).
 
 ### 6. Locks
 
-One `KeyedPromiseChainMutex` per plugin, **the invitations lock**, held by
-create, revoke, the acceptance's claim and checks (§7 steps 1–2) and its
-recording (step 6), policy changes and sweeps, uninstall, web-surface
-create/delete/move/access-mode changes and plugin-domain changes. Never held
-across `changeUsers` or `setEntitlement` (each takes the users lock; the
-claim keeps the row from changing meanwhile). Order where both are needed:
-invitations lock, released, then the users lock.
+The total order (review 2.3): the tunnel lock → the sites lock → the
+domains rendering → the users lock → the entitlements lock (per plugin) →
+**the invitations lock**, a leaf. The invitations lock (one
+`KeyedPromiseChainMutex`, per plugin; the administrator's invitations share
+one key) is held only around state.db work and plain reads (the plugin row,
+`sites.json`, `tunnels.json`, the directory, the audience) — never across a
+Gatekeeper or nginx call, another lock, `changeUsers`, `setEntitlement` or an
+audience recomputation, and it is not re-entrant, so code holding it calls
+the `…Unlocked` forms of the sweeps. The sweep that follows an audience
+recomputation is queued after it, never awaited inside it. Everything that
+must not interleave with an acceptance under way is kept off by the claim
+(an `accepting` row, its `claim_id`), not by holding a lock across it.
 
 ### 7. Acceptance
 
-`GET /api/invite/:token` → for a delegated one: `{ kind: 'delegated',
+**The token never travels in a URL path** (review 2.10): the link is
+`https://auth.<domain>/invite#<token>` — a fragment reaches no server log —
+and the page posts it: `POST /api/invite/lookup { token }`, `POST
+/api/invite/accept { token, … }`. A 4.8 link (`/invite/<token>`) still opens
+the page, which reads the token from its path the same way; the path-token
+API routes go. The lookup of a delegated one answers `{ kind: 'delegated',
 email, displayName, plugin: <displayName>, role: <label>, invitedBy:
 <inviter's display name, or nothing>, expiresAt, suggestedUsername }` (never
-the inviter's username). A delegated token is answered only on
-`auth.<its domain>` (the `Host` the vhost passes; elsewhere 404) — not under
-another domain's brand, not on the panel vhost. The page (`renderInvitePage`,
-stock and branded) asks for a **username** (suggested from the local part
-when valid), the display name (prefilled) and a password; `POST
-/api/invite/:token/accept` takes `{ username, displayName, password }`
-(admin invitations: `{ password }`, as today).
+the inviter's username). A delegated token is answered only by
+`auth.<its domain>`: every auth vhost passes `Host auth.<d>` as a literal and
+clears `X-Forwarded-Host`, and the panel reads `request.headers.host`, never
+`request.host` (the panel trusts the loopback hop, so `request.host` would be
+a client's `X-Forwarded-Host` — review 2.5); elsewhere 404, the panel vhost
+included. The page (`renderInvitePage`, stock and branded) asks for a
+**username** (suggested from the local part when valid), the display name
+(prefilled) and a password; the accept takes `{ token, username,
+displayName, password }` (admin invitations: `{ token, password }`).
 
-The invitation page itself (review 11): the QR code is rendered by the panel
-as an SVG data URI in the accept answer (`qrcode` package) — no foreign
-script; CSP with hashed inline script/style, `frame-ancestors 'none'`,
-`Referrer-Policy: no-referrer`, `Cache-Control: no-store` on `/invite/`.
+The panel and IP vhosts' `location /api/invite` (no slash) also matched
+`/api/invitations*` and cleared the client-certificate headers, so the admin
+invitations API answered 403 through nginx; both become `/api/invite/`
+(review 2.5, a 4.8 defect fixed here).
+
+**Both pages' CSP** (review 2.6): their inline script and style are the same
+for every brand — the brand's values live only in `/brand.css` — so one pair
+of hashes per release goes into nginx's header (`script-src 'sha256-…';
+style-src 'self' 'sha256-…'`), with `frame-ancestors 'none'`,
+`X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`,
+`Referrer-Policy: same-origin` (`no-referrer` would make a same-origin
+`fetch` POST send `Origin: null`) and `Cache-Control: no-store`. Their
+requests use `fetch`'s default `cors` mode. The QR code is the panel's: an SVG
+data URI in the accept answer (`qrcode` package) — no foreign script.
 
 In order, failing closed:
 
-1. **Claim** (invitations lock, one transaction): the row `pending`,
-   unexpired, `failed_attempts < 5` — else `404`/`410`. The username checks
-   of step 3 that need no lock run first, and a refusal counts a failed
-   attempt (5 locks the link: `revoked` / `attempts_exhausted`, the inviter
-   sees it). Then `status = 'accepting'`, `username`, `status_at` written.
-   `accepting` counts as open and its username as taken.
-2. **Still allowed now** (same lock): the plugin installed, identity approved,
-   the role declared; the policy enabled, the address's domain still
-   allowed; the web surface restricted and served, its site id the one
-   recorded, on the domain recorded; the inviter **active and still able to
-   grant the role** (D1); the grant reserve; Gatekeeper reachable. A
-   failure puts the row back to `pending` (or `revoked` with the reason when
-   it can never pass — §8) and answers `410` (the reason in the log only).
+1. **Claim** (the invitations lock, one transaction): the row `pending`,
+   unexpired, `failed_attempts < 5` — else `404`/`410`. The checks of step 3
+   that need no lock run first; a refusal there puts nothing in `accepting`
+   and counts a failed attempt (the fifth locks the link: `revoked` /
+   `attempts_exhausted`, the inviter sees it). Then `status = 'accepting'`,
+   `username`, a fresh random `claim_id`, `status_at`. A partial `UNIQUE`
+   index on `invitations (username)` over `pending` and `accepting` rows
+   (expired pending ones naming the username are first closed as
+   `superseded`) makes two claims of one username impossible, across
+   plugins and kinds.
+2. **Still allowed now** (same lock): `whyNotAcceptable` (§8) — the plugin,
+   identity approval, the role; the policy and the address's domain; the web
+   surface (restricted, served, the recorded site and domain); the inviter
+   active and still able to grant the role (D1) — and the grant reserve. A
+   failure releases the claim (`pending`, or `revoked` with the reason when
+   it can never pass) and answers `410` (the reason in the log only).
 3. **The username** (review B1) — under the users lock, inside
-   `changeUsers`, before anything is prepared (a `vetCreates` hook): refused,
-   all with one answer `409 username_unavailable`, when it is held by a
-   directory row (active, disabled or removed — an erased row no longer
-   names one, and its principal was cleared at erasure); claimed by another
-   `accepting` invitation or named by a pending admin invitation; holds
-   anything in Gatekeeper (a new `POST /api/principals/user/inspect
-{ username }` → whether any grant or group membership names it); is in a
-   site's `allowedUsers` or a `user-plugin-access.json` grant; or Authelia
-   holds an OIDC identifier for it. A stranger's acceptance therefore never
-   triggers a principal cleanup and never inherits anything. Password hashed
-   only after these checks pass.
-4. **The user**: `changeUsers` (`creates`, `domains: { <username>: [{ name,
-kind: 'external' }] }`, groups `[]`, display name validated as display
-   text ≤ 100 and passed to `createUserFromInvitation`). `persisted: false`
-   is a failure of this step. TOTP is generated as soon as the user exists,
-   whatever follows.
-5. **The grants** (outside every lock but the users lock they take
-   themselves): the role (`setEntitlement`, actor `invitation:<id>`), then the
-   `site` grant (under `withUsernamesForGrants`, `requireUser`), then
-   `syncDomainAccess` (it throws on a partial failure: not yet rendered).
-   Each recorded as it completes (`role_granted_at`, `site_granted_at`,
-   `rendered_at`).
-6. **Recorded**: `accepted`, `accepted_user_id`; `email`/`display_name`
-   nulled; audited `invitation.accepted` (actor `invitation`, plugin, `{
-invitationId, userId, inviterUserId, role }`); admins notified (D10).
-   The answer's `loginUrl` is the plugin's site.
+   `changeUsers`, before anything is prepared (its `vetCreates` hook), which
+   first checks that the invitation still holds **this `claim_id`** (else it
+   aborts: recovery or a revocation took the claim): refused, with one
+   answer `409 username_unavailable`, when it is held by a directory row
+   (active, disabled or removed — an erased row names none, and its principal
+   was cleared at erasure); named by another open invitation; holds anything
+   in Gatekeeper (`POST /api/principals/user/inspect`); is in a site's
+   `allowedUsers` or a `user-plugin-access.json` grant; or Authelia holds an
+   OIDC identifier for it. The claim is then released at once and the
+   refusal counts a failed attempt. Separately, **`changeUsers` refuses in
+   every path** a username an open invitation names unless the call is that
+   invitation's own acceptance (`invitationId`), so an administrator's
+   creation cannot take a claimed name. The password is hashed only after
+   these checks pass.
+4. **The user**: `changeUsers` (`creates`, `invitationId`, `domains: {
+<username>: <the invitation's memberships> }`, groups `[]`, the display
+   name validated and passed to `createUserFromInvitation`). A `directory`
+   warning or `persisted: false` is a failure of this step: the claim stays
+   for recovery. **The reconcile, whenever it adopts a username an
+   `accepting` or accepted invitation names** (a crash between the users.yml
+   write and the directory, a failed read), takes that invitation's
+   memberships — never the relay's default, which on a one-domain relay is
+   `member` (review 2.1, also a 4.7 defect for an admin invitation naming
+   `external`) — and stamps the new directory row's `invitation_id`
+   (migration 0020 adds the column). Until then the user holds no owned
+   group, so Authelia admits them nowhere. TOTP is generated as soon as the
+   user exists.
+5. **The grants** (outside every lock but the ones they take): the role
+   (`setEntitlement`, actor `invitation:<id>`), then the `site` grant (under
+   `withUsernamesForGrants`, `requireUser`), then `syncDomainAccess` (a
+   partial failure: not yet rendered). Each grant runs a **precondition
+   inside the users lock** just before it is made — the invitation still
+   holds the claim, has no `revoke_pending_reason`, and `whyNotAcceptable`
+   finds nothing but the inviter's standing (that held at step 2; D1 keeps
+   invitees whose inviter goes later) — and each is recorded as it
+   completes (`role_granted_at`, `site_granted_at`, `rendered_at`).
+6. **Recorded** (the invitations lock): `accepted`, `accepted_user_id`;
+   `email`/`display_name` nulled; audited `invitation.accepted` (actor
+   `invitation`, plugin, `{ invitationId, userId, inviterUserId, role }`);
+   admins notified (D10). The answer's `loginUrl` is the plugin's site. When
+   a sweep marked the claim `revoke_pending_reason` meanwhile, or a step-5
+   precondition failed, the invitation is `revoked` with that reason instead,
+   the account exists reaching nothing, and the admins are notified to keep
+   or delete it.
 
-**Recovering** (review 6). At start and on the identity tick, an `accepting`
-row older than 10 minutes is resolved: the directory holds its username,
-created after `status_at` → it is accepted (steps 5–6 follow); otherwise →
-`pending` again (or expired). A crash can therefore never let one link make
-two accounts, nor leave a link claimed forever.
+**Sweeps and `accepting` rows** (review 2.4). A sweep never revokes an
+`accepting` row: it sets `revoke_pending_reason`, which step 5 and step 6
+read. An administrator's `DELETE` of one does the same (answering 202).
 
-**Repairing** (review 7). An accepted invitation with a step-5 completion
-missing is completed on the identity tick for 24 hours, only while the user
-is active and the plugin, role and site are as recorded — and only by
-**creating what is missing**: the role grant only when the user holds no role
-grant on the plugin, the site grant only when none exists. It never replaces
-a grant, so an administrator's change made meanwhile stands. After 24 hours,
-or when a precondition fails, it stops (`repair_abandoned`, admins
-notified). The invitee's answer says when access is still being completed.
+**Recovering** (review 6, 2.2). At start and on the identity tick, under the
+users lock, an `accepting` row older than 10 minutes is resolved by what
+exists, not by timing: a directory row stamped with its `invitation_id` → it
+is accepted (steps 5–6 follow); its username in users.yml but not yet in the
+directory → the reconcile adopts it (with the invitation's memberships and
+stamp) and it is accepted; neither → a new `claim_id` is not issued, the row
+goes back to `pending` (or ends as expired). An acceptance still queued
+behind the users lock finds its `claim_id` gone at step 3 and stops, so one
+link never makes two accounts and no other user is ever credited.
+
+**Repairing** (review 7, 2.4). An accepted invitation with a step-5
+completion missing is completed on the identity tick for 24 hours — while
+`whyNotAcceptable` finds nothing but the inviter's standing, the user is
+active, and the audit holds no entitlement or site-grant change for that user
+on the plugin since the acceptance by any actor but `invitation:<id>` — and
+only by **creating what is missing**: the role grant only when the user holds
+no role grant on the plugin, the site grant only when none exists. It never
+replaces a grant. Otherwise, or after 24 hours, it stops (`repair_abandoned`,
+admins notified). The invitee's answer says when access is still being
+completed.
 
 The plugin learns of the new member through the feed: the role grant puts
 them in the audience (`upsert`, role, declared attributes). Protocol 1 is
@@ -367,13 +425,14 @@ Reasons: `inviter`, `admin`, `inviter_disabled`, `inviter_removed`,
 `email_domain_removed`, `plugin_removed`, `role_undeclared`,
 `surface_removed` (web surface deleted or recreated under a new id — needed
 before any plugin domain change), `surface_not_restricted`,
-`attempts_exhausted`, `repair_abandoned`. Swept under the invitations lock
+`attempts_exhausted`, `repair_abandoned`, `superseded` (an expired
+administrator's invitation closed when another is made for its username). Swept under the invitations lock
 on: policy changes; uninstall; an update or approval that drops a role or an
 `invites`; web-surface create/delete/move and access-mode changes; and on
 every audience recomputation for the inviter checks. A revocation keeps the
 row, audited `invitation.revoked`. Admin `DELETE /api/invitations/:id`
-revokes a pending one, deletes an ended one, and answers 409 for an
-`accepting` one.
+revokes a pending one, deletes an ended one, and marks an `accepting` one
+`revoke_pending_reason` (202; §7).
 
 **The inviter disabled, removed or unentitled (D1).** Their open
 invitations are revoked; the people they invited keep their access. For the
@@ -584,3 +643,22 @@ folded in above.
 | 11  | should-fix | The invitation page: CDN script without SRI, no CSP; `invitedBy` username; tokens accepted under any domain's brand.    | Server-rendered QR, CSP, display name only, `auth.<its domain>` only.                                          |
 | 12  | note       | The import: idempotent, whenever the file exists; `purgeInvitations`; `accepted_user_id`.                               | §4.                                                                                                            |
 | 13  | note       | Display name, unverified e-mail, nulled copies, TOTP on step-5 failure, hourly rate from the table, 4.8 relays.         | §1, §7, §2.                                                                                                    |
+
+## Second review (2026-10-28)
+
+An independent review of the revised §5–§7 against the code; every finding
+folded in above.
+
+| #    | Severity   | Finding                                                                                                                                               | Resolution                                                                                                                                |
+| ---- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 2.1  | blocker    | A crash or failed reconcile after the users.yml write lets the reconcile adopt the invitee with the default domains — `member` on a one-domain relay. | The reconcile takes an open invitation's memberships for its username; a `directory` warning is a step-4 failure.                         |
+| 2.2  | should-fix | Recovery by timing could reopen a link an acceptance still queued would use, or credit another user created under the name.                           | `claim_id`, checked under the users lock; recovery by `invitation_id` on the directory row; `changeUsers` honours claims; a unique index. |
+| 2.3  | should-fix | Lock order unstated; the invitations lock could deadlock with tunnel/sites/domains locks and the audience chain.                                      | §6: a total order, the invitations lock a leaf, sweeps after a recomputation queued.                                                      |
+| 2.4  | should-fix | After step 2 a revocation could not stop the grants; the repair could recreate a role an admin removed.                                               | `revoke_pending_reason`; preconditions inside the users lock before each grant; the repair reads the audit.                               |
+| 2.5  | should-fix | `request.host` follows a client's `X-Forwarded-Host`; `location /api/invite` also caught `/api/invitations*` (4.8 defect).                            | Literal `Host`, `X-Forwarded-Host` cleared, `request.headers.host`; `/api/invite/` on the panel and IP vhosts.                            |
+| 2.6  | should-fix | A hashed CSP goes stale on a brand change; `frame-ancestors` cannot be a meta tag; `no-referrer` makes a same-origin POST send `Origin: null`.        | Brand values only in `/brand.css`, one hash pair per release, in nginx's header; `Referrer-Policy: same-origin`.                          |
+| 2.7  | note       | Gatekeeper's session cache; `X-Original-Method: GET`; asking Authelia about the portal.                                                               | Cache bypassed; noted; spec 53 covers the portal and `rd`.                                                                                |
+| 2.8  | note       | The opener handle.                                                                                                                                    | COOP and `X-Frame-Options` on both pages; `rd` from origin + path.                                                                        |
+| 2.9  | note       | Cookie tossing from a same-site host.                                                                                                                 | `presentedSession`'s 401 (a loop, not a wrong user), explained on the page.                                                               |
+| 2.10 | note       | The token in nginx's access logs.                                                                                                                     | The link's token in its fragment; lookup and accept by POST body.                                                                         |
+| 2.11 | note       | A step-3 refusal must release the claim at once.                                                                                                      | It does, and counts a failed attempt.                                                                                                     |

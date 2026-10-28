@@ -335,6 +335,43 @@ export async function removeUserPrincipal(username) {
 }
 
 /**
+ * What Gatekeeper holds under `username`: how many grants name it and how
+ * many groups hold it. The username goes in the body.
+ *
+ * @param {string} username
+ * @returns {Promise<{ ok: true, grants: number, groups: number } | Extract<GatekeeperResult, { ok: false }>>}
+ */
+export async function inspectUserPrincipal(username) {
+  const result = await gatekeeperRequest('POST', '/api/principals/user/inspect', { username });
+  if (!result.ok) return result;
+  const data = isRecord(result.data) ? result.data : {};
+  if (
+    !Number.isSafeInteger(data.grants) ||
+    data.grants < 0 ||
+    !Number.isSafeInteger(data.groups) ||
+    data.groups < 0
+  ) {
+    return malformed('the principal inspection');
+  }
+  return { ok: true, grants: data.grants, groups: data.groups };
+}
+
+/**
+ * How many grants Gatekeeper holds and the most it keeps.
+ *
+ * @returns {Promise<{ ok: true, held: number, max: number } | Extract<GatekeeperResult, { ok: false }>>}
+ */
+export async function gatekeeperGrantCapacity() {
+  const result = await gatekeeperRequest('GET', '/api/grants/capacity');
+  if (!result.ok) return result;
+  const data = isRecord(result.data) ? result.data : {};
+  if (!Number.isSafeInteger(data.held) || !Number.isSafeInteger(data.max) || data.held < 0) {
+    return malformed('the grant capacity');
+  }
+  return { ok: true, held: data.held, max: data.max };
+}
+
+/**
  * Drop Gatekeeper's cached session verdicts. Authelia ends every session
  * when users.yml changes; without this a cached verdict would keep a
  * disabled or deleted user in for up to the cache lifetime (30 s).

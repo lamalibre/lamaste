@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   createGrant,
+  grantCapacity,
   listGrants,
   getGrant,
   revokeGrant,
@@ -62,6 +63,16 @@ export async function grantRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       const grants = await listGrants(Object.keys(filter).length > 0 ? filter : undefined);
       return { grants };
+    } catch (err) {
+      return reply.code(500).send({ error: (err as Error).message });
+    }
+  });
+
+  // GET /api/grants/capacity — { held, max }: how many grants exist and the
+  // most Gatekeeper keeps (static: it wins over /grants/:grantId)
+  fastify.get('/grants/capacity', async (_request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      return await grantCapacity();
     } catch (err) {
       return reply.code(500).send({ error: (err as Error).message });
     }
