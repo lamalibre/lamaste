@@ -129,9 +129,14 @@ export const webAdminClient = {
   getDomainBrandingPreview: (name) => apiFetch(domainPath(name, '/branding/preview')),
 
   // --- Invitations ---
-  getInvitations: () => apiFetch('/api/invitations'),
+  getInvitations: (filter = {}) => apiFetch(`/api/invitations${toQuery(filter)}`),
   createInvitation: (data) => jsonPost('/api/invitations', data),
   revokeInvitation: (id) => jsonDelete(`/api/invitations/${encodeURIComponent(id)}`),
+  disableInvitees: (inviterUserId, { transitive = false } = {}) =>
+    jsonPost('/api/invitations/disable-invitees', { inviterUserId, transitive }),
+  getPluginInvitationPolicy: (name) => apiFetch(pluginPath(name, 'invitation-policy')),
+  setPluginInvitationPolicy: (name, policy) =>
+    jsonPut(pluginPath(name, 'invitation-policy'), policy),
 
   // --- Sites ---
   getSites: () => apiFetch('/api/sites'),

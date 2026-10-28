@@ -10,6 +10,12 @@ import type { PluginHosting, PluginMode } from './constants.js';
 import type { MembershipKind } from './domains.js';
 import type { HostEligibility } from './host-eligibility.js';
 import type { AudienceChange, NormalizedIdentityBlock } from './identity.js';
+import type {
+  InvitationAdminView,
+  InvitationListFilter,
+  InvitationPolicyInput,
+  InvitationPolicyView,
+} from './invitations.js';
 import type { SettingsField, SettingsValue } from './plugin-settings.js';
 import type { AgentBlock } from './schemas.js';
 
@@ -715,8 +721,9 @@ export interface AdminClient {
   /** The rendered stylesheet and the English title and footer (404 `no_branding`, 503 `authelia_unavailable`). */
   getDomainBrandingPreview(name: string): Promise<DomainBrandingPreview>;
 
-  // Invitations
-  getInvitations(): Promise<{ invitations: unknown[] }>;
+  // Invitations — the administrator's and delegated ones (delegated-invitations-design.md)
+  /** Every invitation, both kinds, optionally of one plugin, one inviter (user id) or one kind. */
+  getInvitations(filter?: InvitationListFilter): Promise<{ invitations: InvitationAdminView[] }>;
   createInvitation(data: {
     username: string;
     email: string;
@@ -729,7 +736,33 @@ export interface AdminClient {
      */
     domains?: DomainMembershipInput[];
   }): Promise<{ ok: boolean; invitation: unknown; token: string }>;
-  revokeInvitation(id: string): Promise<{ ok: boolean }>;
+  /**
+   * Revoke a pending invitation, delete one that ended; one being accepted
+   * is marked to be revoked (`action: 'revoke_pending'`, 202).
+   */
+  revokeInvitation(
+    id: string,
+  ): Promise<{ ok: boolean; action?: 'revoked' | 'deleted' | 'revoke_pending' }>;
+  /**
+   * Disable everyone the user `inviterUserId` invited by delegated
+   * invitation — and, `transitive`, everyone those invited — through the
+   * usual offboarding. Returns the user ids disabled.
+   */
+  disableInvitees(
+    inviterUserId: string,
+    options?: { transitive?: boolean },
+  ): Promise<{ disabled: string[]; warnings?: AdminWarning[] }>;
+  /** A plugin's delegated-invitation policy (off when none was set), and whether it can be invited into. */
+  getPluginInvitationPolicy(name: string): Promise<{ policy: InvitationPolicyView }>;
+  /**
+   * Set a plugin's whole policy: 400 `invalid_policy`, 409
+   * `invitations_unavailable` when enabling a plugin that cannot be invited
+   * into (no inviting role approved, no restricted web surface).
+   */
+  setPluginInvitationPolicy(
+    name: string,
+    policy: InvitationPolicyInput,
+  ): Promise<{ policy: InvitationPolicyView }>;
 
   // Sites
   getSites(): Promise<{ sites: unknown[] }>;

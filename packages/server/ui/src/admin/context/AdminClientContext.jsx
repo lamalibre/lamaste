@@ -36,9 +36,12 @@ const AdminClientContext = createContext(null);
  * @property {(userId: string) => Promise<{ok, userId, erasedAt, invitationsPurged, accessLogPurged}>} eraseDirectoryUser — a removed user; refused with `code` user_not_removed, already_erased, gatekeeper_unavailable or user_not_found
  *
  * Invitations:
- * @property {() => Promise<{invitations: Array}>} getInvitations
+ * @property {(filter?: {plugin?, inviter?, kind?}) => Promise<{invitations: Array}>} getInvitations — both kinds; a delegated one names its plugin, role and inviter `{userId, username}`
  * @property {(data: {username, email, groups?, expiresInDays?}) => Promise<{ok, invitation, token}>} createInvitation
- * @property {(id: string) => Promise<{ok}>} revokeInvitation
+ * @property {(id: string) => Promise<{ok, action}>} revokeInvitation — `action`: revoked (pending), deleted (ended), revoke_pending (being accepted)
+ * @property {(inviterUserId: string, options?: {transitive?: boolean}) => Promise<{disabled: string[], warnings?}>} disableInvitees
+ * @property {(name: string) => Promise<{policy}>} getPluginInvitationPolicy — off when none was set; `available`, `unavailableReason`, `invitingRoles`
+ * @property {(name: string, policy: {enabled, emailDomains, maxOpenPerInviter?, maxJoined?, lifetimeDays?}) => Promise<{policy}>} setPluginInvitationPolicy — 400 invalid_policy, 409 invitations_unavailable
  *
  * Sites:
  * @property {() => Promise<{sites: Array}>} getSites — sites a plugin owns (its web surface) carry `owner: {plugin: <route>}` and `accessMode`; the sites API refuses to manage them (409, `code` plugin_owned_site)
