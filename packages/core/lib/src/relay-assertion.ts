@@ -39,6 +39,14 @@
  * daemon's audience is its label, and a verifier built before the panel
  * audience existed refuses it as `malformed`.
  *
+ * And for an inviter on the sign-in host of a plugin's domain
+ * (`auth.<domain>/api/delegated-invitations/<route>…`, delegated
+ * invitations): the same audience and caller, and a target of its own
+ * kind — the plugin route as `invitations`, the domain whose sign-in host
+ * it is, and the raw request path, which must be that route's inviter API
+ * ({@link isDelegatedInvitationsUrl}). The two kinds never stand in for one
+ * another: each admits only paths of its own.
+ *
  * Shared between the server side (signing) and the agent side (verifying);
  * depends on nothing but `node:crypto`, `node:fs` and the shared path rules.
  */
@@ -47,8 +55,8 @@ import crypto from 'node:crypto';
 import { link, open, stat, unlink } from 'node:fs/promises';
 
 import { NonceStore } from './caller-assertion.js';
-import { AGENT_LABEL_REGEX } from './constants.js';
-import { isUserSurfaceUrl } from './user-surface.js';
+import { AGENT_LABEL_REGEX, HOSTNAME_REGEX } from './constants.js';
+import { isDelegatedInvitationsUrl, isUserSurfaceUrl } from './user-surface.js';
 
 /** The request header that carries the assertion (lower case, as Node reports headers). */
 export const RELAY_ASSERTION_HEADER = 'x-lamalibre-relay-assertion';
@@ -87,6 +95,7 @@ const NONCE_RE = /^[a-f0-9]{32}$/;
 const KID_RE = /^[a-f0-9]{32}$/;
 const METHOD_RE = /^[A-Z]{1,16}$/;
 const ROUTE_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const MAX_DOMAIN_LENGTH = 253;
 const USERNAME_RE = /^[A-Za-z0-9_.-]{1,128}$/;
 // A group is anything Authelia may name one, except a comma: agentd joins
 // them back into `Remote-Groups`, which is comma separated.
@@ -138,12 +147,41 @@ export type RelayCaller =
  * normalized and cannot be compared byte for byte. A user on a plugin's
  * user surface gets both — the route, and the raw request target (`path`,
  * with the query string), which must lie on that route's user surface and
- * equal the target the panel received.
+ * equal the target the panel received. An inviter on a domain's sign-in
+ * host gets {@link RelayInvitationsTarget}.
  */
 export type RelayTarget =
   | { readonly path: string }
   | { readonly route: string }
-  | { readonly route: string; readonly path: string };
+  | RelayUserSurfaceTarget
+  | RelayInvitationsTarget;
+
+/** A user on a plugin's user surface: the route and the raw request target on it. */
+export interface RelayUserSurfaceTarget {
+  readonly route: string;
+  readonly path: string;
+}
+
+/**
+ * An inviter on the sign-in host of a plugin's domain: the plugin route
+ * (`invitations`), that domain, and the raw request target — the route's
+ * inviter API ({@link isDelegatedInvitationsUrl}).
+ */
+export interface RelayInvitationsTarget {
+  readonly invitations: string;
+  readonly domain: string;
+  readonly path: string;
+}
+
+/** Whether a verified target is an inviter's ({@link RelayInvitationsTarget}). */
+export function isRelayInvitationsTarget(target: RelayTarget): target is RelayInvitationsTarget {
+  return 'invitations' in target;
+}
+
+/** Whether a verified target is a user surface's ({@link RelayUserSurfaceTarget}). */
+export function isRelayUserSurfaceTarget(target: RelayTarget): target is RelayUserSurfaceTarget {
+  return 'route' in target && 'path' in target && !('invitations' in target);
+}
 
 export interface RelayAssertionPayload {
   readonly v: typeof RELAY_ASSERTION_VERSION;
@@ -438,6 +476,12 @@ function hasControl(value: string): boolean {
   return CONTROL_RE.test(value);
 }
 
+function isDomain(value: unknown): value is string {
+  return (
+    typeof value === 'string' && value.length <= MAX_DOMAIN_LENGTH && HOSTNAME_REGEX.test(value)
+  );
+}
+
 function isTargetPath(path: unknown): path is string {
   return str(path, MAX_PATH_LENGTH) && path.startsWith('/') && !path.includes(' ');
 }
@@ -465,6 +509,9 @@ function assertAgentCaller(caller: RelayCaller): void {
 
 /** A target for an agent: a path for a certificate caller, a route for a session user. */
 function assertAgentTarget(caller: RelayCaller, target: RelayTarget): void {
+  if ('invitations' in target) {
+    throw new Error("An inviter's target is only for the panel audience");
+  }
   if ('route' in target && 'path' in target) {
     throw new Error('A user-surface target (route and path) is only for the panel audience');
   }
@@ -478,16 +525,28 @@ function assertAgentTarget(caller: RelayCaller, target: RelayTarget): void {
 }
 
 /**
- * The caller and target of an assertion for the panel, in the only form it
- * takes: a username, and a route with the raw request target on its user
- * surface. Throws on anything else.
+ * The caller and target of an assertion for the panel, in the only forms it
+ * takes: a username, and either a route with the raw request target on its
+ * user surface or an inviter's target. Throws on anything else.
  */
 function panelCallerAndTarget(
   caller: RelayCaller,
   target: RelayTarget,
-): { caller: RelayPanelUser; target: { route: string; path: string } } {
+): { caller: RelayPanelUser; target: RelayUserSurfaceTarget | RelayInvitationsTarget } {
   if (caller.type !== 'user') throw new Error('The panel audience vouches for a user only');
   if (!USERNAME_RE.test(caller.username)) throw new Error('Invalid username in caller');
+  if ('invitations' in target) {
+    if ('route' in target) throw new Error("An inviter's target names no user-surface route");
+    if (!ROUTE_RE.test(target.invitations)) throw new Error('Invalid target route');
+    if (!isDomain(target.domain)) throw new Error('Invalid target domain');
+    if (!isTargetPath(target.path) || !isDelegatedInvitationsUrl(target.path, target.invitations)) {
+      throw new Error("The target path is not the route's inviter API");
+    }
+    return {
+      caller: { type: 'user', username: caller.username },
+      target: { invitations: target.invitations, domain: target.domain, path: target.path },
+    };
+  }
   if (!('route' in target) || !('path' in target)) {
     throw new Error('A user on the user surface is bound to a route and a path');
   }
@@ -608,6 +667,7 @@ function parseCaller(raw: unknown): RelayCaller | null {
 function parseTarget(raw: unknown, caller: RelayCaller): RelayTarget | null {
   if (!raw || typeof raw !== 'object') return null;
   const t = raw as Record<string, unknown>;
+  if ('invitations' in t) return null;
   const path = t['path'];
   const route = t['route'];
   if (caller.type === 'user') {
@@ -618,27 +678,40 @@ function parseTarget(raw: unknown, caller: RelayCaller): RelayTarget | null {
   return route === undefined && isTargetPath(path) ? { path } : null;
 }
 
-/** The caller and target of an assertion for the panel: a username, a route and a path. */
+/**
+ * The caller and target of an assertion for the panel: a username, and a
+ * route and a path — or an inviter's route, domain and path.
+ */
 function parsePanelCallerAndTarget(
   rawCaller: unknown,
   rawTarget: unknown,
-): { caller: RelayPanelUser; target: { route: string; path: string } } | null {
+): { caller: RelayPanelUser; target: RelayUserSurfaceTarget | RelayInvitationsTarget } | null {
   if (!rawCaller || typeof rawCaller !== 'object' || !rawTarget || typeof rawTarget !== 'object') {
     return null;
   }
   const c = rawCaller as Record<string, unknown>;
   const t = rawTarget as Record<string, unknown>;
   const username = c['username'];
-  const route = t['route'];
   const path = t['path'];
-  if (
-    c['type'] !== 'user' ||
-    typeof username !== 'string' ||
-    !USERNAME_RE.test(username) ||
-    typeof route !== 'string' ||
-    !ROUTE_RE.test(route) ||
-    !isTargetPath(path)
-  ) {
+  if (c['type'] !== 'user' || typeof username !== 'string' || !USERNAME_RE.test(username)) {
+    return null;
+  }
+  if ('invitations' in t) {
+    const invitations = t['invitations'];
+    const domain = t['domain'];
+    if (
+      'route' in t ||
+      typeof invitations !== 'string' ||
+      !ROUTE_RE.test(invitations) ||
+      !isDomain(domain) ||
+      !isTargetPath(path)
+    ) {
+      return null;
+    }
+    return { caller: { type: 'user', username }, target: { invitations, domain, path } };
+  }
+  const route = t['route'];
+  if (typeof route !== 'string' || !ROUTE_RE.test(route) || !isTargetPath(path)) {
     return null;
   }
   return { caller: { type: 'user', username }, target: { route, path } };
@@ -679,6 +752,9 @@ function parsePayload(raw: Record<string, unknown>): RelayAssertionPayload | nul
 
 /** Whether a verified target admits the request target `url`. */
 function targetAdmits(target: RelayTarget, url: string): boolean {
+  if ('invitations' in target) {
+    return target.path === url && isDelegatedInvitationsUrl(target.path, target.invitations);
+  }
   if (!('route' in target)) return target.path === url;
   if (!('path' in target)) return urlIsUnderRoute(url, target.route);
   return target.path === url && isUserSurfaceUrl(target.path, target.route);
@@ -696,7 +772,10 @@ export function urlIsUnderRoute(url: string, route: string): boolean {
  * age, and replay. The nonce is recorded only when everything else passed,
  * so a forged assertion cannot poison the store. A user-surface target
  * (route and path, the panel's) admits only its own path, and only while
- * that path lies on the route's user surface (`isUserSurfaceUrl`).
+ * that path lies on the route's user surface (`isUserSurfaceUrl`); an
+ * inviter's target only its own path on the route's inviter API
+ * (`isDelegatedInvitationsUrl`). The caller tells the two apart with
+ * {@link isRelayInvitationsTarget}.
  *
  * `unknown_key` carries the key id so the caller can fetch the relay's keys
  * again (the relay may have rotated) — the id is unauthenticated input, so

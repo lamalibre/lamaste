@@ -35,6 +35,7 @@ export const RESERVED_API_PREFIXES = [
   'audit',
   'notifications',
   'domains',
+  'delegated-invitations',
 ] as const;
 
 export type ReservedApiPrefix = (typeof RESERVED_API_PREFIXES)[number];

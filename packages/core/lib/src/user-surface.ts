@@ -194,6 +194,49 @@ export function isUserSurfaceUrl(url: string, route: string): boolean {
   return ROUTE_RE.test(route) && isSafelyUnder(url, userSurfaceApiPath(route));
 }
 
+// ---------------------------------------------------------------------------
+// Delegated invitations: the inviter's page and API on the sign-in host
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the panel answers an inviter, on `auth.<the plugin's domain>`:
+ * `/api/delegated-invitations/<route>` and `…/<route>/<invitation id>`
+ * (`delegated-invitations-design.md` §5). Gatekeeper vouches for the
+ * session's user there as on a user surface, with a target of its own
+ * kind (`relay-assertion.ts`).
+ */
+export const DELEGATED_INVITATIONS_API_PREFIX = '/api/delegated-invitations';
+
+/** The inviter's page, on the same host: `/invitations/<route>`. */
+export const DELEGATED_INVITATIONS_PAGE_PREFIX = '/invitations';
+
+/** A delegated invitation's id: a lower-case UUID. */
+const INVITATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** `/api/delegated-invitations/<route>`. Throws on a route no user surface can have. */
+export function delegatedInvitationsApiPath(route: string): string {
+  if (!isUserSurfaceRoute(route)) throw new Error(`Invalid plugin route: "${route}"`);
+  return `${DELEGATED_INVITATIONS_API_PREFIX}/${route}`;
+}
+
+/**
+ * Whether `url` (the raw request target, with its query string) is the
+ * inviter's API of `route`: exactly `/api/delegated-invitations/<route>` or
+ * `/api/delegated-invitations/<route>/<invitation id>`, read literally —
+ * nothing longer, no trailing `/`, no unsafe segment
+ * ({@link hasUnsafePathSegments}). False for a route no user surface can
+ * have.
+ */
+export function isDelegatedInvitationsUrl(url: string, route: string): boolean {
+  if (!isUserSurfaceRoute(route)) return false;
+  const pathPart = pathPartOf(url);
+  if (hasUnsafePathSegments(pathPart)) return false;
+  const base = `${DELEGATED_INVITATIONS_API_PREFIX}/${route}`;
+  if (pathPart === base) return true;
+  if (!pathPart.startsWith(`${base}/`)) return false;
+  return INVITATION_ID_RE.test(pathPart.slice(base.length + 1));
+}
+
 /**
  * Whether `route` is a plugin route a host can be bound to serve the user
  * surface of: a route the forwarder accepts, short enough for a relay
