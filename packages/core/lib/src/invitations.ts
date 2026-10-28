@@ -95,6 +95,7 @@ export const INVITATION_REVOKE_REASONS = [
   'surface_not_restricted',
   'attempts_exhausted',
   'repair_abandoned',
+  'superseded',
 ] as const;
 export type InvitationRevokeReason = (typeof INVITATION_REVOKE_REASONS)[number];
 
@@ -203,9 +204,25 @@ export const DelegatedInvitationRequestSchema = z
 
 export type DelegatedInvitationRequest = z.output<typeof DelegatedInvitationRequestSchema>;
 
-/** `POST /api/invite/:token/accept` for a delegated invitation. */
+const TokenSchema = z.string().regex(INVITATION_TOKEN_RE);
+
+/**
+ * `POST /api/invite/lookup` — the token travels in the body, never in a
+ * URL a log keeps (the link carries it in its fragment).
+ */
+export const InvitationLookupSchema = z.object({ token: TokenSchema }).strict();
+
+/** `POST /api/invite/accept` for an administrator's invitation: the username was chosen for them. */
+export const AdminAcceptanceSchema = z
+  .object({ token: TokenSchema, password: z.string().min(8).max(128) })
+  .strict();
+
+export type AdminAcceptance = z.output<typeof AdminAcceptanceSchema>;
+
+/** `POST /api/invite/accept` for a delegated invitation: the invitee picks their username. */
 export const DelegatedAcceptanceSchema = z
   .object({
+    token: TokenSchema,
     username: UsernameSchema,
     displayName: DisplayNameSchema,
     password: z.string().min(8).max(128),
@@ -222,4 +239,104 @@ export function refusedField(error: z.ZodError): string | null {
   const first = error.issues[0];
   const key = first?.path[0];
   return typeof key === 'string' ? key : null;
+}
+
+// ---------------------------------------------------------------------------
+// Views
+// ---------------------------------------------------------------------------
+
+/** What `POST /api/invite/lookup` tells whoever holds a link. */
+export type InvitationLookup =
+  | {
+      readonly kind: 'admin';
+      readonly username: string;
+      readonly email: string;
+      readonly expiresAt: string;
+    }
+  | {
+      readonly kind: 'delegated';
+      readonly email: string;
+      readonly displayName: string | null;
+      /** The plugin's display name. */
+      readonly plugin: string;
+      /** The role's label. */
+      readonly role: string;
+      /** The inviter's display name, or null — never their username. */
+      readonly invitedBy: string | null;
+      readonly expiresAt: string;
+      readonly suggestedUsername: string | null;
+    };
+
+/** An invitation as the administrator lists it (`GET /api/invitations`). */
+export interface InvitationAdminView {
+  readonly id: string;
+  readonly kind: InvitationKind;
+  /** An admin invitation's; a delegated one's once its invitee claimed one. */
+  readonly username: string | null;
+  /** Null once accepted (the directory holds it). */
+  readonly email: string | null;
+  readonly displayName: string | null;
+  readonly emailDomain: string;
+  readonly groups: readonly string[];
+  readonly domains: readonly { readonly name: string; readonly kind: 'member' | 'external' }[];
+  /** Delegated: the plugin, the role, the inviter. */
+  readonly plugin: string | null;
+  readonly role: string | null;
+  readonly inviter: { readonly userId: string; readonly username: string | null } | null;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  readonly status: InvitationStatus;
+  readonly revokedReason: InvitationRevokeReason | null;
+  readonly acceptedAt: string | null;
+  readonly acceptedUserId: string | null;
+  /** Accepted, and (delegated) every grant made. */
+  readonly fulfilled: boolean;
+  /** 4.8's field: accepted. */
+  readonly used: boolean;
+}
+
+/** Filters of `GET /api/invitations`. */
+export interface InvitationListFilter {
+  readonly plugin?: string;
+  /** The inviter's user id. */
+  readonly inviter?: string;
+  readonly kind?: InvitationKind;
+}
+
+/** An invitation as its inviter sees it on the inviter's page. */
+export interface InvitationInviterView {
+  readonly id: string;
+  readonly email: string | null;
+  readonly displayName: string | null;
+  readonly role: string;
+  readonly roleLabel: string;
+  readonly status: InvitationStatus;
+  readonly revokedReason: InvitationRevokeReason | null;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  readonly acceptedAt: string | null;
+}
+
+/** `GET /api/delegated-invitations/<route>` — what the inviter's page shows. */
+export interface InviterOverview {
+  readonly plugin: { readonly displayName: string; readonly siteUrl: string };
+  readonly policy: {
+    readonly grantableRoles: readonly { readonly id: string; readonly label: string }[];
+    readonly emailDomains: readonly string[];
+    readonly lifetimeDays: number;
+    readonly maxOpen: number;
+    readonly open: number;
+  };
+  readonly invitations: readonly InvitationInviterView[];
+}
+
+/** A plugin's policy as the administrator reads it (`GET /api/plugins/:name/invitation-policy`). */
+export interface InvitationPolicyView extends InvitationPolicy {
+  readonly updatedAt: string | null;
+  readonly updatedBy: string | null;
+  /** Whether the plugin can be invited into now, and why not. */
+  readonly available: boolean;
+  readonly unavailableReason: string | null;
+  /** Its roles that may invite, with the roles each may give. */
+  readonly invitingRoles: readonly { readonly role: string; readonly invites: readonly string[] }[];
 }
