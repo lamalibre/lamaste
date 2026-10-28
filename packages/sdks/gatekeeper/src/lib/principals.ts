@@ -25,7 +25,16 @@ export interface RemovedUserPrincipal {
   readonly groupsLeft: number;
 }
 
+/** What Gatekeeper holds under a username. */
+export interface UserPrincipalHoldings {
+  /** Grants whose principal is the user. */
+  readonly grants: number;
+  /** Groups the user is a member of. */
+  readonly groups: number;
+}
+
 interface PrincipalStmts {
+  countUserGrants: StatementSync;
   deleteUserGrants: StatementSync;
   selectGroups: StatementSync;
   updateMembers: StatementSync;
@@ -40,6 +49,9 @@ async function getStmts(): Promise<PrincipalStmts> {
   if (stmts) return stmts;
   const db = await getGatekeeperDb();
   stmts = {
+    countUserGrants: db.prepare(
+      "SELECT COUNT(*) AS n FROM access_grants WHERE principal_type = 'user' AND principal_id = ?",
+    ),
     deleteUserGrants: db.prepare(
       "DELETE FROM access_grants WHERE principal_type = 'user' AND principal_id = ?",
     ),
@@ -83,6 +95,27 @@ export function removeUserPrincipal(username: string): Promise<RemovedUserPrinci
       }
       if (grantsRemoved > 0 || groupsLeft > 0) notifyCacheInvalidated();
       return { grantsRemoved, groupsLeft };
+    }),
+  );
+}
+
+/**
+ * What Gatekeeper holds under `username` — its grants and group
+ * memberships — read in one hold of the groups lock and then the grants
+ * lock, as a removal takes them. The panel asks before an invitee takes a
+ * username: one anything here names is refused, so nobody inherits it.
+ *
+ * @param username - The Authelia username
+ */
+export function inspectUserPrincipal(username: string): Promise<UserPrincipalHoldings> {
+  return withGroupLock(() =>
+    withGrantLock(async () => {
+      const s = await getStmts();
+      const grants = Number((s.countUserGrants.get(username) as { n: number }).n);
+      const rows = s.selectGroups.all() as unknown as { members: string }[];
+      const groups = rows.filter((g) => (JSON.parse(g.members) as string[]).includes(username))
+        .length;
+      return { grants, groups };
     }),
   );
 }

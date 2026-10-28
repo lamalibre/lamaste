@@ -90,7 +90,7 @@ import {
 } from './gatekeeper-client.js';
 import { revokeUserRegistryTokens } from './registry-credential.js';
 import { getStateDb } from './state-db.js';
-import { readInvitations, withInvitationsLock, writeInvitations } from './state.js';
+import { purgeInvitationsOf } from './invitations.js';
 import { removeGrantsForUser } from './user-access.js';
 import { withUsersLock } from './users-lock.js';
 
@@ -969,31 +969,6 @@ export async function changeUsers(
 // Erasure
 // ---------------------------------------------------------------------------
 
-/** Whether an invitation was made at or before `time` (or says nothing usable about when). */
-function madeBy(invitation, time) {
-  const made = Date.parse(invitation?.createdAt);
-  return !Number.isFinite(made) || made <= Date.parse(time);
-}
-
-/**
- * Delete the invitations of `username` made at or before `removedAt` — the
- * removed user's, accepted or not; a later invitation for the same
- * username is someone else's.
- *
- * @returns {Promise<number>} how many went
- */
-function purgeInvitations(username, removedAt) {
-  return withInvitationsLock(async () => {
-    const invitations = await readInvitations();
-    const kept = invitations.filter(
-      (inv) => !(inv?.username === username && madeBy(inv, removedAt)),
-    );
-    if (kept.length === invitations.length) return 0;
-    await writeInvitations(kept);
-    return invitations.length - kept.length;
-  });
-}
-
 /**
  * Erase removed user `userId`: with the username the tombstone still holds,
  * clear their Gatekeeper principal if that is still pending, delete
@@ -1072,8 +1047,14 @@ export async function eraseDirectoryUser(userId, { actor, logger }) {
           { code: 'authelia_storage_unavailable' },
         );
       }
-      invitationsPurged = await purgeInvitations(row.username, row.removed_at);
     }
+    // The invitations they accepted, and the administrator's naming their
+    // username from before they were removed (lib/invitations.js).
+    invitationsPurged = await purgeInvitationsOf({
+      userId,
+      username: row.username,
+      removedAt: row.removed_at,
+    });
 
     const now = new Date().toISOString();
     db.exec('BEGIN IMMEDIATE');

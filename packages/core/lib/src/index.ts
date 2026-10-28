@@ -687,3 +687,38 @@ export type {
   RenderedBrand,
   BrandJson,
 } from './auth-branding.js';
+
+// Delegated invitations: a plugin user with an inviting role invites
+// colleagues into that plugin (delegated-invitations-design.md)
+export {
+  DEFAULT_INVITATION_POLICY,
+  DELEGATED_INVITATIONS_BODY_LIMIT,
+  DelegatedAcceptanceSchema,
+  DelegatedInvitationRequestSchema,
+  INVITATIONS_PER_INVITER_PER_HOUR,
+  INVITATION_ACCEPTING_STALE_MS,
+  INVITATION_GRANT_RESERVE,
+  INVITATION_KINDS,
+  INVITATION_MAX_FAILED_ATTEMPTS,
+  INVITATION_POLICY_LIMITS,
+  INVITATION_POLICY_MAX_EMAIL_DOMAINS,
+  INVITATION_REPAIR_WINDOW_MS,
+  INVITATION_RETENTION_DAYS,
+  INVITATION_REVOKE_REASONS,
+  INVITATION_STATUSES,
+  INVITATION_TOKEN_BYTES,
+  INVITATION_TOKEN_RE,
+  InvitationPolicyInputSchema,
+  emailDomainOf,
+  refusedField,
+  suggestedUsername,
+} from './invitations.js';
+export type {
+  DelegatedAcceptance,
+  DelegatedInvitationRequest,
+  InvitationKind,
+  InvitationPolicy,
+  InvitationPolicyInput,
+  InvitationRevokeReason,
+  InvitationStatus,
+} from './invitations.js';

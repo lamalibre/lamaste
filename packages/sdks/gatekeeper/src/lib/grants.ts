@@ -226,6 +226,20 @@ export async function createGrant(
   });
 }
 
+/**
+ * How many grants Gatekeeper holds and how many it may ({@link MAX_GRANTS}),
+ * stale ones pruned first as a creation prunes them. The panel keeps a
+ * reserve: no delegated invitation is made or accepted while the free
+ * grants run low (every invitee costs two).
+ */
+export async function grantCapacity(): Promise<{ held: number; max: number }> {
+  return withGrantLock(async () => {
+    const s = await getStmts();
+    pruneStaleGrants(s);
+    return { held: Number((s.countAll.get() as { n: number }).n), max: MAX_GRANTS };
+  });
+}
+
 export async function listGrants(filter?: GrantFilter): Promise<readonly Grant[]> {
   const s = await getStmts();
   const rows = s.selectAll.all() as unknown as GrantRow[];

@@ -1,8 +1,13 @@
-import crypto from 'node:crypto';
 import { z } from 'zod';
 import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamalibre/lamaste';
-import { readInvitations, withInvitationsLock, writeInvitations } from '../../lib/state.js';
 import { readUsersRaw } from '../../lib/authelia.js';
+import { listDirectoryUsers } from '../../lib/directory.js';
+import {
+  createAdminInvitation,
+  isFulfilled,
+  listInvitations,
+  revokeOrDeleteInvitation,
+} from '../../lib/invitations.js';
 import {
   MembershipInputSchema,
   assertAssignableGroups,
@@ -12,8 +17,53 @@ import {
   invitationSignInDomain,
 } from '../../lib/domains.js';
 import { sendFailure } from '../../lib/app-error.js';
+import { recordAuditBestEffort } from '../../lib/audit.js';
+import { actorFromRequest } from '../../lib/actor.js';
 
-const IdParamSchema = z.object({ id: z.string().uuid() });
+// Ids imported from invitations.json are whatever 4.8 wrote (UUIDs in practice).
+const IdParamSchema = z.object({ id: z.string().min(1).max(64) });
+
+const ListQuerySchema = z
+  .object({
+    plugin: z.string().min(1).max(214).optional(),
+    inviter: z.string().uuid().optional(),
+    kind: z.enum(['admin', 'delegated']).optional(),
+  })
+  .strict();
+
+/**
+ * An invitation as the administrator sees it: never its token; the inviter
+ * of a delegated one by id and current username.
+ */
+function adminView(invitation, usernames) {
+  return {
+    id: invitation.id,
+    kind: invitation.kind,
+    username: invitation.username,
+    email: invitation.email,
+    displayName: invitation.displayName,
+    emailDomain: invitation.emailDomain,
+    groups: invitation.groups,
+    domains: invitationMemberships(invitation),
+    plugin: invitation.plugin,
+    role: invitation.role,
+    inviter: invitation.inviterUserId
+      ? {
+          userId: invitation.inviterUserId,
+          username: usernames.get(invitation.inviterUserId) ?? null,
+        }
+      : null,
+    createdAt: invitation.createdAt,
+    expiresAt: invitation.expiresAt,
+    status: invitation.shownStatus,
+    revokedReason: invitation.revokedReason,
+    acceptedAt: invitation.acceptedAt,
+    acceptedUserId: invitation.acceptedUserId,
+    fulfilled: isFulfilled(invitation),
+    // 4.8's field, kept for its clients
+    used: invitation.status === 'accepted',
+  };
+}
 
 const CreateInvitationSchema = z.object({
   // Same rule as the users API (core's USERNAME_REGEX). A leading "-" would
@@ -39,23 +89,26 @@ const CreateInvitationSchema = z.object({
 });
 
 export default async function invitationRoutes(fastify, _opts) {
-  // GET /api/invitations — list all invitations
+  // GET /api/invitations — every invitation, both kinds, optionally of one
+  // plugin, one inviter or one kind; tokens are never stored, so never shown
   fastify.get(
     '/invitations',
     {
       preHandler: fastify.requireRole(['admin']),
     },
     async (request, reply) => {
+      const filter = ListQuerySchema.parse(request.query ?? {});
       try {
-        const invitations = await readInvitations();
-        const now = new Date();
-        const enriched = invitations.map((inv) => ({
-          ...inv,
-          token: undefined,
-          domains: invitationMemberships(inv),
-          status: inv.used ? 'accepted' : new Date(inv.expiresAt) < now ? 'expired' : 'pending',
-        }));
-        return { invitations: enriched };
+        const [invitations, users] = await Promise.all([
+          listInvitations({
+            ...(filter.plugin ? { plugin: filter.plugin } : {}),
+            ...(filter.inviter ? { inviterUserId: filter.inviter } : {}),
+            ...(filter.kind ? { kind: filter.kind } : {}),
+          }),
+          listDirectoryUsers(),
+        ]);
+        const usernames = new Map(users.map((u) => [u.userId, u.username]));
+        return { invitations: invitations.map((inv) => adminView(inv, usernames)) };
       } catch (err) {
         request.log.error(err, 'Failed to read invitations');
         return reply.code(500).send({ error: 'Failed to read invitations' });
@@ -94,55 +147,32 @@ export default async function invitationRoutes(fastify, _opts) {
         return reply.code(409).send({ error: 'Username already exists as an Authelia user' });
       }
 
-      // The pending-invitation check and the write hold the invitations
-      // lock: nothing else may rewrite the file between them.
-      const outcome = await withInvitationsLock(async () => {
-        let invitations;
-        try {
-          invitations = await readInvitations();
-        } catch (err) {
-          request.log.error(err, 'Failed to read invitations');
-          return { status: 500, body: { error: 'Failed to read invitations' } };
-        }
-
-        const now = new Date();
-        const existingPending = invitations.find(
-          (inv) => inv.username === body.username && !inv.used && new Date(inv.expiresAt) > now,
-        );
-        if (existingPending) {
-          return {
-            status: 409,
-            body: { error: 'A pending invitation already exists for this username' },
-          };
-        }
-
-        const expiresAt = new Date(now.getTime() + body.expiresInDays * 24 * 60 * 60 * 1000);
-        const invitation = {
-          id: crypto.randomUUID(),
-          token: crypto.randomBytes(32).toString('hex'),
+      let created;
+      try {
+        created = await createAdminInvitation({
           username: body.username,
           email: body.email,
           groups: body.groups,
           domains,
-          createdAt: now.toISOString(),
-          expiresAt: expiresAt.toISOString(),
-          used: false,
-          acceptedAt: null,
-        };
-        invitations.push(invitation);
-
-        try {
-          await writeInvitations(invitations);
-        } catch (err) {
-          request.log.error(err, 'Failed to write invitations');
-          return { status: 500, body: { error: 'Failed to save invitation' } };
-        }
-        return { status: 201, invitation };
-      });
-      if (outcome.status !== 201) return reply.code(outcome.status).send(outcome.body);
-
-      const { invitation } = outcome;
-      const { token } = invitation;
+          expiresInDays: body.expiresInDays,
+        });
+      } catch (err) {
+        return sendFailure(request, reply, err, 'Failed to save invitation');
+      }
+      const { invitation, token } = created;
+      await recordAuditBestEffort(
+        {
+          actor: actorFromRequest(request),
+          action: 'invitation.created',
+          details: {
+            invitationId: invitation.id,
+            kind: 'admin',
+            emailDomain: invitation.emailDomain,
+            expiresAt: invitation.expiresAt,
+          },
+        },
+        request.log,
+      );
       // On the sign-in page of the first domain it names (the invitation
       // page is served on every domain's auth portal).
       const inviteDomain = await invitationSignInDomain(invitation);
@@ -164,7 +194,8 @@ export default async function invitationRoutes(fastify, _opts) {
     },
   );
 
-  // DELETE /api/invitations/:id — revoke an invitation
+  // DELETE /api/invitations/:id — revoke a pending invitation; delete one
+  // that ended (accepted, revoked, expired)
   fastify.delete(
     '/invitations/:id',
     {
@@ -172,34 +203,24 @@ export default async function invitationRoutes(fastify, _opts) {
     },
     async (request, reply) => {
       const { id } = IdParamSchema.parse(request.params);
-
-      const outcome = await withInvitationsLock(async () => {
-        let invitations;
-        try {
-          invitations = await readInvitations();
-        } catch (err) {
-          request.log.error(err, 'Failed to read invitations');
-          return { status: 500, body: { error: 'Failed to read invitations' } };
-        }
-
-        const index = invitations.findIndex((inv) => inv.id === id);
-        if (index === -1) {
-          return { status: 404, body: { error: 'Invitation not found' } };
-        }
-
-        invitations.splice(index, 1);
-
-        try {
-          await writeInvitations(invitations);
-        } catch (err) {
-          request.log.error(err, 'Failed to write invitations');
-          return { status: 500, body: { error: 'Failed to revoke invitation' } };
-        }
-        return { status: 200 };
-      });
-      if (outcome.status !== 200) return reply.code(outcome.status).send(outcome.body);
-
-      return { ok: true };
+      let outcome;
+      try {
+        outcome = await revokeOrDeleteInvitation(id);
+      } catch (err) {
+        return sendFailure(request, reply, err, 'Failed to revoke invitation');
+      }
+      if (outcome.action === 'revoked') {
+        await recordAuditBestEffort(
+          {
+            actor: actorFromRequest(request),
+            action: 'invitation.revoked',
+            plugin: outcome.invitation.plugin,
+            details: { invitationId: id, kind: outcome.invitation.kind, reason: 'admin' },
+          },
+          request.log,
+        );
+      }
+      return { ok: true, action: outcome.action };
     },
   );
 }

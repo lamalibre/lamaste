@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename, open } from 'node:fs/promises';
+import { readFile, writeFile, rename, open, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { PromiseChainMutex } from '@lamalibre/lamaste';
 
@@ -129,59 +129,29 @@ function invitationsPath() {
 }
 
 /**
- * Read the invitations array from invitations.json.
- * Returns an empty array if the file does not exist.
+ * The invitations 4.8 kept in invitations.json — read once more by the
+ * import into state.db (lib/invitations.js), which then deletes the file.
+ * Null when there is no file; a file that is not an array reads as none.
+ *
+ * @returns {Promise<unknown[] | null>}
  */
-export async function readInvitations() {
+export async function readLegacyInvitations() {
+  let raw;
   try {
-    const raw = await readFile(invitationsPath(), 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed;
+    raw = await readFile(invitationsPath(), 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') {
-      return [];
-    }
-    throw new Error(`Failed to read invitations state: ${err.message}`);
+    if (err.code === 'ENOENT') return null;
+    throw new Error(`Failed to read invitations.json: ${err.message}`);
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
 
-/**
- * Write the invitations array to invitations.json atomically.
- *
- * 1. Write to a temp file in the same directory.
- * 2. fsync the temp file.
- * 3. Rename temp → invitations.json (atomic on POSIX).
- */
-export async function writeInvitations(invitations) {
-  const filePath = invitationsPath();
-  const tmpPath = `${filePath}.tmp`;
-
-  const content = JSON.stringify(invitations, null, 2) + '\n';
-  await writeFile(tmpPath, content, { encoding: 'utf-8', mode: 0o600 });
-
-  const fd = await open(tmpPath, 'r');
-  await fd.sync();
-  await fd.close();
-
-  await rename(tmpPath, filePath);
-}
-
-/** Serializes every read-modify-write of invitations.json in this process. */
-const invitationsMutex = new PromiseChainMutex();
-
-/**
- * Run `fn` holding the invitations lock: a read of invitations.json, the
- * decisions made on it and the write that follows must not interleave with
- * another — creating, revoking, accepting an invitation, and purging a
- * removed user's.
- *
- * @template T
- * @param {() => Promise<T>} fn
- * @returns {Promise<T>}
- */
-export function withInvitationsLock(fn) {
-  return invitationsMutex.run(fn);
+/** Delete invitations.json (its rows are in state.db); absent is fine. */
+export async function removeLegacyInvitations() {
+  await rm(invitationsPath(), { force: true });
 }
