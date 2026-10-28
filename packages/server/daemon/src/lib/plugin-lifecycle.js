@@ -304,6 +304,9 @@ function identityApprovalRequired(identity) {
   if (identity.attributesAdded.length > 0) {
     changes.push(`receives more about its users (${identity.attributesAdded.join(', ')})`);
   }
+  for (const { role, roles } of identity.invitesAdded ?? []) {
+    changes.push(`lets ${role} invite people as ${roles.join(', ')}`);
+  }
   return [{ code: IDENTITY_CHANGED, reason: `it ${changes.join(' and ')}` }];
 }
 
