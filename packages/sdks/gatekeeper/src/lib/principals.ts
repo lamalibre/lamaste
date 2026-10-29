@@ -113,8 +113,9 @@ export function inspectUserPrincipal(username: string): Promise<UserPrincipalHol
       const s = await getStmts();
       const grants = Number((s.countUserGrants.get(username) as { n: number }).n);
       const rows = s.selectGroups.all() as unknown as { members: string }[];
-      const groups = rows.filter((g) => (JSON.parse(g.members) as string[]).includes(username))
-        .length;
+      const groups = rows.filter((g) =>
+        (JSON.parse(g.members) as string[]).includes(username),
+      ).length;
       return { grants, groups };
     }),
   );

@@ -9,6 +9,8 @@ import {
   autheliaSessionCookies,
   domainMembership,
   domainOfHost,
+  DELEGATED_INVITATIONS_API_PREFIX,
+  isDelegatedInvitationsUrl,
   isLamasteOwnedGroup,
   isUserSurfaceUrl,
   signRelayAssertion,
@@ -321,6 +323,33 @@ export async function authzRoutes(
     { config: authzRateLimit },
     async (request, reply) =>
       authorizeUserSurfaceShellRequest(fastify, request, reply, request.params.fqdn),
+  );
+
+  /**
+   * GET /authz/delegated-invitations/:domain — the nginx auth_request target
+   * of the inviter's API on a domain's sign-in host
+   * (`auth.<domain>/api/delegated-invitations/<route>[/<id>]`, delegated
+   * invitations). The vhost names its domain in the path; `X-Original-URL`
+   * and `Host` must be `auth.<domain>`, and the raw target the route's
+   * inviter API.
+   *
+   * Gatekeeper asks Authelia about the session for exactly that URL — its
+   * portal rule admits the domain's members and external members, nobody
+   * else — never from its session cache, refuses two session cookies (a
+   * same-site host can toss one: a sign-in loop, never a wrong user), checks
+   * the panel's projection (member or external member of the domain, fail
+   * closed), and vouches for the user to the panel: an assertion with an
+   * inviter's target (`{ invitations, domain, path }`), bound to the method
+   * and the raw target. Whether the user may invite into the plugin is the
+   * panel's to decide (its audience and the manifest). 200 with the
+   * assertion, 401 without a session, 403 otherwise (`X-Lamalibre-Refusal:
+   * forbidden`), 503 while the relay signing key is unusable.
+   */
+  fastify.get<{ Params: { domain: string } }>(
+    '/authz/delegated-invitations/:domain',
+    { config: authzRateLimit },
+    async (request, reply) =>
+      authorizeDelegatedInvitationsRequest(fastify, request, reply, request.params.domain),
   );
 
   /**
@@ -825,6 +854,101 @@ async function authorizeUserSurfaceRequest(
   } catch (err: unknown) {
     // A username, method or target an assertion cannot carry.
     return refuse('not_assertable', { detail: err instanceof Error ? err.message : String(err) });
+  }
+  reply.header(RELAY_ASSERTION_HEADER, assertion);
+  return reply.code(200).send();
+}
+
+/** The route of an inviter's API path (`/api/delegated-invitations/<route>…`), or null. */
+function invitationsRouteOf(target: string): string | null {
+  const prefix = `${DELEGATED_INVITATIONS_API_PREFIX}/`;
+  if (!target.startsWith(prefix)) return null;
+  const rest = target.slice(prefix.length);
+  const end = rest.search(/[/?]/);
+  const route = end === -1 ? rest : rest.slice(0, end);
+  return isDelegatedInvitationsUrl(target, route) ? route : null;
+}
+
+/**
+ * Authorize one inviter's request on the sign-in host of `domain` (see the
+ * `/authz/delegated-invitations/:domain` route).
+ */
+async function authorizeDelegatedInvitationsRequest(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  domain: string,
+): Promise<FastifyReply> {
+  const requestId = request.id;
+  reply.header('Cache-Control', 'no-store');
+  const refuse = (reason: string): FastifyReply => {
+    request.log.info({ requestId, reason, domain }, 'delegated-invitations authz denied');
+    return reply.code(403).header(USER_SURFACE_REFUSAL_HEADER, 'forbidden').send();
+  };
+
+  const index = fastify.getDomains();
+  const wanted = domain.toLowerCase();
+  if (!index || !index.names.includes(wanted)) return refuse('unknown_domain');
+  const portal = `auth.${wanted}`;
+  const originalUrl = request.headers['x-original-url'];
+  const originalMethod = request.headers['x-original-method'];
+  if (typeof originalUrl !== 'string' || typeof originalMethod !== 'string') {
+    return refuse('missing_original_request');
+  }
+  const parsed = parseOriginalUrl(originalUrl);
+  if (!parsed) return refuse('invalid_original_url');
+  const mismatch = hostnameMismatch(request, portal, parsed.hostname);
+  if (mismatch) return refuse(mismatch.reason);
+  const prefix = `https://${portal}`;
+  if (originalUrl.slice(0, prefix.length).toLowerCase() !== prefix) {
+    return refuse('invalid_original_url');
+  }
+  const target = originalUrl.slice(prefix.length);
+  const route = invitationsRouteOf(target);
+  if (!route) return refuse('not_an_inviter_path');
+
+  // Never from the cache: the inviter's standing is the panel's to check on
+  // every request, and Authelia's answer for its own portal costs one call.
+  const presented = presentedSession(request.headers['cookie']);
+  if (presented.kind !== 'one') {
+    request.log.info(
+      {
+        requestId,
+        reason: presented.kind === 'none' ? 'missing_authelia_cookie' : 'duplicate_authelia_cookie',
+        domain,
+      },
+      'delegated-invitations authz denied',
+    );
+    return reply.code(401).send();
+  }
+  const validated = await validateWithAuthelia(presented.value, originalUrl, requestId);
+  if (validated === FORBIDDEN) return refuse('authelia_forbidden');
+  if (!validated) return reply.code(401).send();
+  const { kind } = domainMembership(index, portal, validated.username);
+  if (kind !== 'member' && kind !== 'external') return refuse('not_a_member');
+
+  const key = await currentRelayKey(fastify, request);
+  if (!key) {
+    request.log.error(
+      { requestId, reason: 'relay_signing_key_unavailable', domain },
+      'delegated-invitations authz failed',
+    );
+    return reply.code(503).send();
+  }
+  let assertion: string;
+  try {
+    assertion = signRelayAssertion(
+      {
+        aud: RELAY_PANEL_AUDIENCE,
+        port: RELAY_PANEL_PORT,
+        caller: { type: 'user', username: validated.username },
+        method: originalMethod,
+        target: { invitations: route, domain: wanted, path: target },
+      },
+      key,
+    );
+  } catch {
+    return refuse('not_assertable');
   }
   reply.header(RELAY_ASSERTION_HEADER, assertion);
   return reply.code(200).send();
