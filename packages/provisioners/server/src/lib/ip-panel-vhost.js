@@ -107,7 +107,10 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    location /api/invite {
+    # \`/api/invite/\`, with its slash: a prefix without one would also take
+    # \`/api/invitations*\` (the administrator's invitations API) and clear
+    # the client-certificate headers it needs.
+    location /api/invite/ {
         proxy_pass http://127.0.0.1:3100;
         proxy_http_version 1.1;
 

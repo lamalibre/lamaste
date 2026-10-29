@@ -3,6 +3,12 @@ import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamal
 import { readUsersRaw } from '../../lib/authelia.js';
 import { listDirectoryUsers } from '../../lib/directory.js';
 import {
+  disableInvitees,
+  invitationPolicyView,
+  scheduleInvitationSweep,
+  setInvitationPolicy,
+} from '../../lib/delegated-invitations.js';
+import {
   createAdminInvitation,
   isFulfilled,
   listInvitations,
@@ -23,9 +29,24 @@ import { actorFromRequest } from '../../lib/actor.js';
 // Ids imported from invitations.json are whatever 4.8 wrote (UUIDs in practice).
 const IdParamSchema = z.object({ id: z.string().min(1).max(64) });
 
+const PluginNameParamSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9-]+$/, 'Plugin name must contain only lowercase letters, numbers, and hyphens'),
+});
+
+const DisableInviteesSchema = z
+  .object({ inviterUserId: z.string().uuid(), transitive: z.boolean().optional().default(false) })
+  .strict();
+
 const ListQuerySchema = z
   .object({
-    plugin: z.string().min(1).max(214).optional(),
+    plugin: z
+      .string()
+      .regex(/^[a-z0-9-]{1,100}$/)
+      .optional(),
     inviter: z.string().uuid().optional(),
     kind: z.enum(['admin', 'delegated']).optional(),
   })
@@ -176,7 +197,8 @@ export default async function invitationRoutes(fastify, _opts) {
       // On the sign-in page of the first domain it names (the invitation
       // page is served on every domain's auth portal).
       const inviteDomain = await invitationSignInDomain(invitation);
-      const inviteUrl = inviteDomain ? `https://auth.${inviteDomain}/invite/${token}` : null;
+      // The token in the fragment: no server log keeps it (the page posts it).
+      const inviteUrl = inviteDomain ? `https://auth.${inviteDomain}/invite#${token}` : null;
 
       return reply.code(201).send({
         ok: true,
@@ -209,6 +231,10 @@ export default async function invitationRoutes(fastify, _opts) {
       } catch (err) {
         return sendFailure(request, reply, err, 'Failed to revoke invitation');
       }
+      if (outcome.action === 'marked') {
+        // Being accepted: it ends revoked, with no grant (its acceptance reads the mark).
+        return reply.code(202).send({ ok: true, action: 'marked' });
+      }
       if (outcome.action === 'revoked') {
         await recordAuditBestEffort(
           {
@@ -221,6 +247,73 @@ export default async function invitationRoutes(fastify, _opts) {
         );
       }
       return { ok: true, action: outcome.action };
+    },
+  );
+
+  // POST /api/invitations/disable-invitees { inviterUserId, transitive } —
+  // disable everyone a person invited (with `transitive`, everyone those
+  // invited too), through the usual offboarding
+  fastify.post(
+    '/invitations/disable-invitees',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const body = DisableInviteesSchema.parse(request.body);
+      try {
+        const outcome = await disableInvitees(body.inviterUserId, {
+          transitive: body.transitive,
+          actor: actorFromRequest(request),
+          logger: request.log,
+        });
+        scheduleInvitationSweep(request.log);
+        return {
+          ok: true,
+          disabled: outcome.disabled,
+          ...(outcome.warnings.length > 0 ? { warnings: outcome.warnings } : {}),
+        };
+      } catch (err) {
+        return sendFailure(request, reply, err, 'Failed to disable the invitees');
+      }
+    },
+  );
+
+  // GET /api/plugins/:name/invitation-policy — the policy of a plugin's
+  // delegated invitations, whether it can be invited into now, its inviting roles
+  fastify.get(
+    '/plugins/:name/invitation-policy',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const { name } = PluginNameParamSchema.parse(request.params);
+      try {
+        return await invitationPolicyView(name);
+      } catch (err) {
+        return sendFailure(request, reply, err, 'Failed to read the invitation policy');
+      }
+    },
+  );
+
+  // PUT /api/plugins/:name/invitation-policy { enabled, emailDomains,
+  // maxOpenPerInviter?, maxJoined?, lifetimeDays? } — the whole policy; its
+  // open invitations are swept against it
+  fastify.put(
+    '/plugins/:name/invitation-policy',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const { name } = PluginNameParamSchema.parse(request.params);
+      try {
+        await setInvitationPolicy(name, request.body, {
+          actor: actorFromRequest(request),
+          logger: request.log,
+        });
+        return await invitationPolicyView(name);
+      } catch (err) {
+        return sendFailure(request, reply, err, 'Failed to save the invitation policy');
+      }
     },
   );
 }

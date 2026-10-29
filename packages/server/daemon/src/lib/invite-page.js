@@ -18,10 +18,16 @@ import { constants } from 'node:fs';
 import { mkdir, open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
-import { renderInvitePage } from '@lamalibre/lamaste/server';
+import { renderInvitationsPage, renderInvitePage } from '@lamalibre/lamaste/server';
 
 /** Where the stock page lives: the auth vhost's `@invite` fallback root. */
 export const INVITE_DIR = '/var/www/lamaste/invite';
+/**
+ * Where the stock inviter's page of delegated invitations lives — what
+ * `auth.<domain>/invitations/<route>` serves for a domain without a brand
+ * (the auth vhost's `@invitations` fallback root), written the same way.
+ */
+export const INVITATIONS_DIR = '/var/www/lamaste/invitations';
 const INVITE_FILE = 'index.html';
 
 /**
@@ -49,15 +55,11 @@ async function readInstalled(file) {
 }
 
 /**
- * Write the stock invitation page unless the installed one is already it.
- * A write goes through a temporary file beside it (exclusive, 0640,
+ * Write `html` as `<dir>/index.html` unless the installed file is already
+ * it. A write goes through a temporary file beside it (exclusive, 0640,
  * fsynced) and one rename: nginx serves the old page or the new one.
- *
- * @param {{ dir?: string, logger?: { info: (obj: object, msg: string) => void } }} [opts]
- * @returns {Promise<{ written: boolean }>}
  */
-export async function writeInvitePage({ dir = INVITE_DIR, logger } = {}) {
-  const html = renderInvitePage(null);
+async function writeStockPage(html, dir, what, logger) {
   const dest = path.join(dir, INVITE_FILE);
   if ((await readInstalled(dest)) === html) return { written: false };
 
@@ -77,6 +79,26 @@ export async function writeInvitePage({ dir = INVITE_DIR, logger } = {}) {
     await rm(tmp, { force: true }).catch(() => {});
     throw err;
   }
-  logger?.info({ file: dest }, 'Stock invitation page written');
+  logger?.info({ file: dest }, `${what} written`);
   return { written: true };
+}
+
+/**
+ * Write the stock invitation page unless the installed one is already it.
+ *
+ * @param {{ dir?: string, logger?: { info: (obj: object, msg: string) => void } }} [opts]
+ * @returns {Promise<{ written: boolean }>}
+ */
+export function writeInvitePage({ dir = INVITE_DIR, logger } = {}) {
+  return writeStockPage(renderInvitePage(null), dir, 'Stock invitation page', logger);
+}
+
+/**
+ * Write the stock inviter's page unless the installed one is already it.
+ *
+ * @param {{ dir?: string, logger?: { info: (obj: object, msg: string) => void } }} [opts]
+ * @returns {Promise<{ written: boolean }>}
+ */
+export function writeInvitationsPage({ dir = INVITATIONS_DIR, logger } = {}) {
+  return writeStockPage(renderInvitationsPage(null), dir, 'Stock inviter page', logger);
 }

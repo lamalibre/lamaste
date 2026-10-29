@@ -165,6 +165,7 @@ before(async () => {
     ...(await import('../src/lib/audit.js')),
     ...(await import('../src/lib/plugins.js')),
     ...(await import('../src/lib/state.js')),
+    ...(await import('../src/lib/invitations.js')),
     ...(await import('../src/lib/identity-sync.js')),
   };
   await lib.loadConfig();
@@ -231,6 +232,15 @@ after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+/** Invitations as 4.8 kept them, imported into state.db as the start does. */
+async function seedInvitations(rows) {
+  await writeFile(
+    path.join(process.env.LAMALIBRE_LAMASTE_STATE_DIR, 'invitations.json'),
+    JSON.stringify(rows),
+  );
+  await lib.importLegacyInvitations();
+}
+
 test('deleting a user removes every grant and group membership Gatekeeper holds under the username', async () => {
   assert.equal((await createUser('ayse')).statusCode, 201);
   entitle('ayse', ['viewer']);
@@ -294,7 +304,7 @@ test('Gatekeeper down at a deletion: pending, nothing created under the username
   assert.equal(recreated.json().code, 'gatekeeper_unavailable');
   assert.equal((await readUsersFile()).zeynep, undefined, 'users.yml untouched');
   const token = 'f'.repeat(64);
-  await lib.writeInvitations([
+  await seedInvitations([
     {
       id: 'z1',
       token,
@@ -309,13 +319,13 @@ test('Gatekeeper down at a deletion: pending, nothing created under the username
   ]);
   const accepted = await app.inject({
     method: 'POST',
-    url: `/api/invite/${token}/accept`,
+    url: '/api/invite/accept',
     headers: { 'content-type': 'application/json' },
-    payload: JSON.stringify({ password: PASSWORD }),
+    payload: JSON.stringify({ token, password: PASSWORD }),
   });
   assert.equal(accepted.statusCode, 503);
   assert.equal(accepted.json().code, 'gatekeeper_unavailable');
-  assert.equal((await lib.readInvitations())[0].used, false);
+  assert.equal((await lib.getInvitation('z1')).status, 'pending', 'the claim was given back');
   // Nor a grant or a membership through the proxy: nobody holds the
   // username, and whatever it was given would pass to its next holder.
   const proxied = await call('POST', '/api/gatekeeper/grants', {
@@ -348,6 +358,12 @@ test('Gatekeeper down at a deletion: pending, nothing created under the username
   assert.ok((await lib.getDirectoryUser(tomb.userId)).principalClearedAt);
   assert.equal(await lib.principalCleanupPending('zeynep'), false);
   assert.deepEqual(await lib.clearPendingPrincipals({ logger }), { cleared: 0, pending: 0 });
+
+  // Not while an open invitation names it: that invitation's to take.
+  const invited = await createUser('zeynep');
+  assert.equal(invited.statusCode, 409);
+  assert.equal(invited.json().code, 'username_invited');
+  assert.equal((await lib.revokeOrDeleteInvitation('z1')).action, 'revoked');
 
   // Now the username can be given again — to a user holding nothing.
   const fresh = await createUser('zeynep');

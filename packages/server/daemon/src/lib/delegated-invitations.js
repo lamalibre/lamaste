@@ -163,11 +163,9 @@ export async function setInvitationPolicy(name, input, { actor, logger }) {
   if (policy.enabled) {
     const surface = await invitationSurface(plugin);
     if (!surface.ok) {
-      throw httpError(
-        `Invitations cannot be enabled: ${unavailableText(surface.reason)}`,
-        409,
-        { code: 'invitations_unavailable' },
-      );
+      throw httpError(`Invitations cannot be enabled: ${unavailableText(surface.reason)}`, 409, {
+        code: 'invitations_unavailable',
+      });
     }
   }
   await withInvitationsLock(name, async () => {
@@ -287,29 +285,38 @@ export async function whyNotAcceptable(inv, known = {}) {
  *
  * @param {string} name
  * @param {{ logger?: import('pino').Logger }} [opts]
- * @returns {Promise<{ revoked: number, shortened: number }>}
+ * @returns {Promise<{ revoked: number, marked: number, shortened: number }>}
  */
 export function sweepPluginInvitations(name, { logger } = {}) {
   return withInvitationsLock(name, async () => {
     const db = await getStateDb();
+    // Pending ones are revoked; one being accepted is marked, and its
+    // acceptance makes no grant and ends revoked (§7).
     const rows = db
-      .prepare(`SELECT id FROM invitations WHERE kind = 'delegated' AND plugin = ? AND status = 'pending'`)
+      .prepare(
+        `SELECT id FROM invitations WHERE kind = 'delegated' AND plugin = ?
+           AND status IN ('pending', 'accepting')`,
+      )
       .all(name);
-    if (rows.length === 0) return { revoked: 0, shortened: 0 };
+    if (rows.length === 0) return { revoked: 0, marked: 0, shortened: 0 };
     const plugin = await findPlugin(name);
     const policy = await getInvitationPolicy(name);
-    const surface = plugin ? await invitationSurface(plugin) : { ok: false, reason: 'not_installed' };
+    const surface = plugin
+      ? await invitationSurface(plugin)
+      : { ok: false, reason: 'not_installed' };
     const known = { plugin, policy, surface };
     const revocations = [];
     let shortened = 0;
     for (const { id } of rows) {
       const inv = await getInvitation(id);
-      if (!inv || inv.status !== 'pending') continue;
+      if (!inv || (inv.status !== 'pending' && inv.status !== 'accepting')) continue;
       const reason = await whyNotAcceptable(inv, known);
       if (reason !== null && reason !== 'surface_unavailable') {
+        // Its inviter's standing counts until it is accepted (D1).
         revocations.push({ inv, reason });
         continue;
       }
+      if (inv.status !== 'pending') continue;
       const latest = Date.parse(inv.createdAt) + policy.lifetimeDays * 24 * 60 * 60 * 1000;
       if (Date.parse(inv.expiresAt) > latest) {
         db.prepare('UPDATE invitations SET expires_at = ? WHERE id = ?').run(
@@ -319,14 +326,16 @@ export function sweepPluginInvitations(name, { logger } = {}) {
         shortened += 1;
       }
     }
+    const done = [];
     if (revocations.length > 0) {
       inTransaction(db, () => {
         for (const { inv, reason } of revocations) {
-          revokeInvitationSync(db, inv.id, { by: 'lamaste', reason });
+          const outcome = revokeInvitationSync(db, inv.id, { by: 'lamaste', reason });
+          if (outcome === 'revoked') done.push({ inv, reason });
         }
       });
     }
-    for (const { inv, reason } of revocations) {
+    for (const { inv, reason } of done) {
       await recordAuditBestEffort(
         {
           actor: 'lamaste',
@@ -337,7 +346,7 @@ export function sweepPluginInvitations(name, { logger } = {}) {
         logger,
       );
     }
-    return { revoked: revocations.length, shortened };
+    return { revoked: done.length, marked: revocations.length - done.length, shortened };
   });
 }
 
@@ -351,7 +360,8 @@ export async function sweepAllInvitations({ logger } = {}) {
   const db = await getStateDb();
   const plugins = db
     .prepare(
-      `SELECT DISTINCT plugin FROM invitations WHERE kind = 'delegated' AND status = 'pending'`,
+      `SELECT DISTINCT plugin FROM invitations WHERE kind = 'delegated'
+         AND status IN ('pending', 'accepting')`,
     )
     .all()
     .map((r) => r.plugin);
@@ -447,18 +457,29 @@ export async function inviterView(plugin, caller) {
       maxOpen: policy.maxOpenPerInviter,
       open: counts.openOfInviter,
     },
-    invitations: own.map((inv) => ({
-      id: inv.id,
-      email: inv.email,
-      displayName: inv.displayName,
-      role: inv.role,
-      roleLabel: labels.get(inv.role) ?? inv.role,
-      status: inv.shownStatus,
-      revokedReason: inv.revokedReason,
-      createdAt: inv.createdAt,
-      expiresAt: inv.expiresAt,
-      acceptedAt: inv.acceptedAt,
-    })),
+    invitations: own.map((inv) => inviterItem(inv, labels)),
+  };
+}
+
+/**
+ * An invitation as its inviter sees it — never the token, never who
+ * accepted it (the plugin learns that from its feed).
+ *
+ * @param {object} inv lib/invitations.js's invitation
+ * @param {Map<string, string>} labels role id → label
+ */
+export function inviterItem(inv, labels) {
+  return {
+    id: inv.id,
+    email: inv.email,
+    displayName: inv.displayName,
+    role: inv.role,
+    roleLabel: labels.get(inv.role) ?? inv.role,
+    status: inv.shownStatus,
+    revokedReason: inv.revokedReason,
+    createdAt: inv.createdAt,
+    expiresAt: inv.expiresAt,
+    acceptedAt: inv.acceptedAt,
   };
 }
 
@@ -576,7 +597,8 @@ export async function createDelegatedInvitation(plugin, caller, request, { logge
   return {
     invitation,
     token,
-    inviteUrl: `https://auth.${surface.domain}/invite/${token}`,
+    // The token in the fragment: no server's log keeps it.
+    inviteUrl: `https://auth.${surface.domain}/invite#${token}`,
   };
 }
 
@@ -601,7 +623,7 @@ export async function revokeOwnInvitation(plugin, caller, id, { logger } = {}) {
       return revokeInvitationSync(db, id, { by: `user:${caller.userId}`, reason: 'inviter' });
     });
   });
-  if (!revoked) throw httpError('Invitation not found', 404);
+  if (revoked === null) throw httpError('Invitation not found', 404);
   await recordAuditBestEffort(
     {
       actor: `user:${caller.userId}`,
@@ -611,4 +633,151 @@ export async function revokeOwnInvitation(plugin, caller, id, { logger } = {}) {
     },
     logger,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Queued sweeps
+// ---------------------------------------------------------------------------
+
+let sweepTimer = null;
+let sweepLogger = null;
+let sweeping = Promise.resolve();
+
+/**
+ * Sweep every plugin's open invitations soon — coalesced, never awaited by
+ * the caller: what changes a plugin, its web surface, its policy holder's
+ * standing or an audience asks for it after it is done (the invitations
+ * lock is a leaf: nothing holding another lock takes it; §6).
+ *
+ * @param {import('pino').Logger} [logger]
+ */
+export function scheduleInvitationSweep(logger) {
+  if (logger) sweepLogger = logger;
+  if (sweepTimer) return;
+  sweepTimer = setTimeout(() => {
+    sweepTimer = null;
+    sweeping = sweeping
+      .then(() => sweepAllInvitations({ logger: sweepLogger ?? undefined }))
+      .catch((err) => sweepLogger?.error({ err: err.message }, 'Sweeping invitations failed'));
+  }, 100);
+  sweepTimer.unref?.();
+}
+
+/** Resolves once no queued sweep is waiting or running (tests). */
+export async function invitationSweepsIdle() {
+  while (sweepTimer) await new Promise((resolve) => setTimeout(resolve, 20));
+  await sweeping;
+}
+
+// ---------------------------------------------------------------------------
+// The administrator's views and actions
+// ---------------------------------------------------------------------------
+
+/**
+ * Plugin `name`'s policy as the administrator reads it: the policy, whether
+ * the plugin can be invited into now (and why not), and its inviting roles.
+ *
+ * @param {string} name
+ */
+export async function invitationPolicyView(name) {
+  const plugin = await findPlugin(name);
+  if (!plugin) throw httpError(`Plugin "${name}" is not installed`, 404);
+  const [policy, surface] = await Promise.all([
+    getInvitationPolicy(name),
+    invitationSurface(plugin),
+  ]);
+  const inviting = plugin.identity ? invitingRoles(plugin.identity) : new Map();
+  return {
+    ...policy,
+    available: surface.ok,
+    unavailableReason: surface.ok ? null : unavailableText(surface.reason),
+    invitingRoles: [...inviting].map(([role, invites]) => ({ role, invites: [...invites] })),
+  };
+}
+
+/**
+ * The users who joined by an invitation of `inviterUserId` — and, with
+ * `transitive`, everyone those invited, and so on.
+ *
+ * @param {string} inviterUserId
+ * @param {{ transitive?: boolean }} [opts]
+ * @returns {Promise<string[]>} user ids
+ */
+export async function inviteesOf(inviterUserId, { transitive = false } = {}) {
+  const db = await getStateDb();
+  const stmt = db.prepare(
+    `SELECT DISTINCT accepted_user_id AS id FROM invitations
+     WHERE kind = 'delegated' AND inviter_user_id = ? AND accepted_user_id IS NOT NULL`,
+  );
+  const found = new Set();
+  let frontier = [inviterUserId];
+  while (frontier.length > 0) {
+    const next = [];
+    for (const inviter of frontier) {
+      for (const { id } of stmt.all(inviter)) {
+        if (id === inviterUserId || found.has(id)) continue;
+        found.add(id);
+        next.push(id);
+      }
+    }
+    frontier = transitive ? next : [];
+  }
+  return [...found];
+}
+
+/**
+ * Disable everyone `inviterUserId` invited (with `transitive`, everyone
+ * those invited too) — one users.yml write through `changeUsers`, so each
+ * is offboarded as any disabled user is (sessions ended, registry tokens
+ * revoked, the plugins told). Users already disabled or removed are left
+ * as they are; an administrator is never disabled this way. Audited.
+ *
+ * @param {string} inviterUserId
+ * @param {{ transitive?: boolean, actor: string, logger?: import('pino').Logger }} opts
+ * @returns {Promise<{ disabled: string[], warnings: Array<{ step: string, message: string }> }>}
+ */
+export async function disableInvitees(inviterUserId, { transitive = false, actor, logger }) {
+  const { changeUsers } = await import('./directory.js');
+  const { readUsersRaw, writeUsers } = await import('./authelia.js');
+  const ids = await inviteesOf(inviterUserId, { transitive });
+  const targets = [];
+  for (const id of ids) {
+    const user = await getDirectoryUser(id);
+    if (user?.status === 'active' && user.username) targets.push(user);
+  }
+  if (targets.length === 0) return { disabled: [], warnings: [] };
+  const usernames = new Set(targets.map((u) => u.username));
+  const outcome = await changeUsers(
+    async () => {
+      const usersData = await readUsersRaw();
+      const done = [];
+      for (const [username, entry] of Object.entries(usersData.users ?? {})) {
+        if (!usernames.has(username) || entry?.disabled === true) continue;
+        if (Array.isArray(entry?.groups) && entry.groups.includes('admins')) continue;
+        entry.disabled = true;
+        done.push(username);
+      }
+      if (done.length > 0) await writeUsers(usersData);
+      return done;
+    },
+    {
+      actor,
+      logger,
+      expect: (users) =>
+        [...usernames].every(
+          (u) =>
+            !users[u] || users[u].disabled === true || (users[u].groups ?? []).includes('admins'),
+        ),
+    },
+  );
+  const disabled = targets.filter((u) => outcome.result.includes(u.username)).map((u) => u.userId);
+  await recordAuditBestEffort(
+    {
+      actor,
+      action: 'invitation.invitees.disabled',
+      details: { inviterUserId, transitive, userIds: disabled },
+    },
+    logger,
+  );
+  return { disabled, warnings: outcome.warnings };
 }

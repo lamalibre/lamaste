@@ -16,6 +16,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { SITE_UPLOAD_MAX_REQUEST_MIB } from '@lamalibre/lamaste';
+import { INVITATIONS_PAGE_HEADERS, INVITE_PAGE_HEADERS } from '@lamalibre/lamaste/server';
 
 const require = createRequire(import.meta.url);
 const { validateVhost, PANEL_SITE_RE } = require(
@@ -476,14 +477,17 @@ test('a user surface is never rendered on a public vhost, for an invalid route o
 });
 
 test('every location that proxies a browser to the panel clears a client’s relay assertion', async () => {
-  // Only a user-surface location sets one — from Gatekeeper's answer.
+  // Only a user-surface location and an auth portal's inviter API set one —
+  // from Gatekeeper's answer.
   let checked = 0;
   for (const name of await readdir(captured)) {
     const text = await readFile(path.join(captured, name), 'utf8');
     for (const { matcher, body } of locations(text)) {
       if (!/proxy_pass http:\/\/127\.0\.0\.1:3100[/;]/.test(body)) continue;
       checked += 1;
-      const userSurface = /^(= |\^~ )?\/api\/[a-z0-9-]+\/app\/?$/.test(matcher);
+      const userSurface =
+        /^(= |\^~ )?\/api\/[a-z0-9-]+\/app\/?$/.test(matcher) ||
+        matcher === '^~ /api/delegated-invitations/';
       assert.ok(
         body.includes(
           userSurface
@@ -495,10 +499,10 @@ test('every location that proxies a browser to the panel clears a client’s rel
       if (!userSurface) assert.doesNotMatch(body, /relay_assertion/, `${name} ${matcher}`);
     }
   }
-  // panel (8: the site upload location too) + primary auth (2) + second
-  // and branded domains' auth (1 each: the invitation API) + agent-panel
-  // authz (1) + user surfaces (2 × 3)
-  assert.equal(checked, 19);
+  // panel (8: the site upload location too) + primary auth (3) + second
+  // and branded domains' auth (2 each: the invitation API, the inviter's
+  // API) + agent-panel authz (1) + user surfaces (2 × 3)
+  assert.equal(checked, 22);
 });
 
 test('no location proxying to a tunnel or agent backend passes Authelia’s session cookie on', async () => {
@@ -582,10 +586,67 @@ test('a second domain’s auth portal serves Authelia and invitations — never 
   // The rate-limit zone is an http-level name: declared once, by the primary's portal.
   assert.doesNotMatch(text, /limit_req_zone/);
   assert.doesNotMatch(text, /user-access/);
-  assert.doesNotMatch(text, /auth_request/);
+  // Authelia's forward auth only ever for the desktop's sign-in (primary);
+  // the one auth request here is the inviter API's, to Gatekeeper.
+  assert.doesNotMatch(text, /\/internal\/authelia\/authz/);
+  assert.deepEqual(text.match(/auth_request \S+;/g), [
+    'auth_request off;',
+    'auth_request /internal/lamaste/delegated-invitations-authz;',
+  ]);
   const primary = await readFile(path.join(captured, 'lamalibre-lamaste-auth-example.com'), 'utf8');
   assert.match(primary, /limit_req_zone \$binary_remote_addr zone=user_access_auth/);
   assert.match(primary, /location \/api\/user-access\/authorize \{/);
+});
+
+test('every auth portal serves the inviter API through Gatekeeper, and the invitation API under its own Host', async () => {
+  for (const domain of ['example.com', 'codelama.com.tr', 'samplepark.tr']) {
+    const text = await readFile(path.join(captured, `lamalibre-lamaste-auth-${domain}`), 'utf8');
+    const fqdn = `auth.${domain}`;
+    const api = locationBody(text, '^~ /api/delegated-invitations/');
+    for (const line of [
+      'auth_request /internal/lamaste/delegated-invitations-authz;',
+      'proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;',
+      'proxy_set_header Cookie "";',
+      'proxy_set_header Authorization "";',
+      'proxy_set_header Remote-User "";',
+      'proxy_set_header X-SSL-Client-Verify "";',
+      'proxy_set_header X-Forwarded-Host "";',
+      `proxy_set_header Host ${fqdn};`,
+      'proxy_pass http://127.0.0.1:3100;',
+      'client_max_body_size 16k;',
+      'error_page 401 = /internal/lamaste/delegated-invitations-401;',
+      'error_page 403 = /internal/lamaste/delegated-invitations-403;',
+    ]) {
+      assert.ok(api.includes(line), `${domain}: ${line}`);
+    }
+    assert.doesNotMatch(api, /\$host\b|\$http_host/, domain);
+    const authz = locationBody(text, '= /internal/lamaste/delegated-invitations-authz');
+    for (const line of [
+      'internal;',
+      `proxy_pass http://127.0.0.1:9294/authz/delegated-invitations/${domain};`,
+      `proxy_set_header X-Original-URL https://${fqdn}$request_uri;`,
+      `proxy_set_header Host ${fqdn};`,
+      'proxy_set_header Cookie $http_cookie;',
+      'proxy_pass_request_body off;',
+    ]) {
+      assert.ok(authz.includes(line), `${domain}: ${line}`);
+    }
+    // The invitation API: the panel tells a delegated token's domain by
+    // this literal Host, never one a client named.
+    const invite = locationBody(text, '/api/invite/');
+    assert.ok(invite.includes(`proxy_set_header Host ${fqdn};`), domain);
+    assert.ok(invite.includes('proxy_set_header X-Forwarded-Host "";'), domain);
+    assert.ok(invite.includes('client_max_body_size 16k;'), domain);
+    assert.doesNotMatch(invite, /proxy_set_header Host \$host/, domain);
+  }
+});
+
+test('the panel vhost’s public invitation API never takes the administrator’s invitations API', async () => {
+  const text = await readFile(path.join(captured, 'lamalibre-lamaste-panel-domain'), 'utf8');
+  // `location /api/invite` without its slash would also match
+  // `/api/invitations*` and clear the client certificate it needs.
+  assert.doesNotMatch(text, /location \/api\/invite \{/);
+  assert.match(text, /location \/api\/invite\/ \{/);
 });
 
 test('every auth portal serves the domain’s brand overrides and rewrites Authelia’s index for it; an unbranded domain gets the stock page', async () => {
@@ -642,15 +703,33 @@ test('every auth portal serves the domain’s brand overrides and rewrites Authe
     assert.doesNotMatch(text, /^\s*disable_symlinks/m);
     // The invitation page: the domain's own from its rendering when it has
     // one, else the stock page — the token left in the URL for the script.
-    const invite = locationBody(text, '/invite/');
-    assert.ok(invite.includes(`root /var/www/lamaste/auth/${domain};`), domain);
-    assert.ok(invite.includes('try_files /invite/index.html @invite;'), domain);
-    assert.ok(invite.includes('add_header X-Content-Type-Options nosniff;'), domain);
-    assert.doesNotMatch(invite, /alias|\$uri|proxy_pass/);
+    // A link's token in its fragment (`/invite`) or, from 4.8, its path (`/invite/`).
+    for (const matcher of ['= /invite', '/invite/']) {
+      const invite = locationBody(text, matcher);
+      assert.ok(invite.includes(`root /var/www/lamaste/auth/${domain};`), domain);
+      assert.ok(invite.includes('try_files /invite/index.html @invite;'), domain);
+      assert.ok(invite.includes('add_header X-Content-Type-Options "nosniff" always;'), domain);
+      assert.ok(
+        invite.includes(
+          `add_header Content-Security-Policy "${INVITE_PAGE_HEADERS['Content-Security-Policy']}" always;`,
+        ),
+        domain,
+      );
+      assert.doesNotMatch(invite, /alias|\$uri|proxy_pass/);
+    }
     const stockInvite = locationBody(text, '@invite');
     assert.ok(stockInvite.includes('root /var/www/lamaste/invite;'));
     assert.ok(stockInvite.includes('try_files /index.html =404;'));
-    assert.ok(stockInvite.includes('add_header X-Content-Type-Options nosniff;'));
+    assert.ok(stockInvite.includes('add_header X-Frame-Options "DENY" always;'));
+    const invitations = locationBody(text, '/invitations/');
+    assert.ok(invitations.includes('try_files /invitations/index.html @invitations;'), domain);
+    assert.ok(
+      invitations.includes(
+        `add_header Content-Security-Policy "${INVITATIONS_PAGE_HEADERS['Content-Security-Policy']}" always;`,
+      ),
+      domain,
+    );
+    assert.ok(locationBody(text, '@invitations').includes('root /var/www/lamaste/invitations;'));
     assert.doesNotMatch(text, /alias \/var\/www\/lamaste\/invite/);
   }
 

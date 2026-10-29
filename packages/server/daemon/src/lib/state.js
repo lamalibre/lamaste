@@ -58,6 +58,11 @@ export async function writeTunnels(tunnels) {
 async function hostsChanged() {
   const { scheduleHostRender } = await import('./domains.js');
   scheduleHostRender();
+  // A web surface created, deleted, moved or made authenticated changes
+  // what an open delegated invitation can still grant (queued: the caller
+  // may hold the tunnel or sites lock, and the invitations lock is a leaf).
+  const { scheduleInvitationSweep } = await import('./delegated-invitations.js');
+  scheduleInvitationSweep();
 }
 
 function sitesPath() {

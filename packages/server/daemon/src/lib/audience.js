@@ -572,9 +572,15 @@ export async function audiencesIdle() {
 export function recomputeAudiences({ logger } = {}) {
   if (logger) lastLogger = logger;
   if (queued) return queued;
-  const run = tail.then(() => {
+  const run = tail.then(async () => {
     queued = null;
-    return recomputeOnce(lastLogger);
+    const result = await recomputeOnce(lastLogger);
+    // An inviter disabled, removed or no longer entitled: their open
+    // invitations are swept — queued, never awaited here (a sweep reads
+    // audiences, and whoever awaits this may hold a lock).
+    const { scheduleInvitationSweep } = await import('./delegated-invitations.js');
+    scheduleInvitationSweep(lastLogger ?? undefined);
+    return result;
   });
   queued = run;
   tail = run.then(

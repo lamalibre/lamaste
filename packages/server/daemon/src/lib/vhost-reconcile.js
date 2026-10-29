@@ -370,6 +370,10 @@ export async function reconcileSiteVhosts(log, domains, deps = defaultSiteDeps) 
         render: (certDir) =>
           renderAuthVhost(domain.name, certDir, { primary: domain.primary, branding }),
         enabled: () => deps.isSiteEnabled(name),
+        // A portal's authentication is the generator's, never a setting a
+        // drifted file could disagree with: its inviter API (4.9) asks
+        // Gatekeeper on every domain, and an upgrade must write it.
+        keepAuthentication: false,
       },
       result,
       deps,

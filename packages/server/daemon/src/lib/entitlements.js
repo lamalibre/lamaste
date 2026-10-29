@@ -182,7 +182,14 @@ export async function listEntitlements(plugin) {
  *
  * @param {{ name: string, route: string, identity: { roles: Array<{ id: string }> } }} plugin
  * @param {{ principalType: 'user' | 'group', principalId: string, roles: string[] }} entitlement
- * @param {{ actor: string, logger?: import('pino').Logger }} opts
+ * With `precondition`, it runs inside the users lock (a user principal)
+ * and the plugin's lock, before anything is read or granted: whatever it
+ * throws refuses the change — a delegated invitation's acceptance checks
+ * there that it may still grant. With `onlyIfNone`, a principal already
+ * holding a role grant on the plugin keeps it untouched (`changed: false`)
+ * — what the invitations' repair needs: it never replaces a grant.
+ *
+ * @param {{ actor: string, logger?: import('pino').Logger, precondition?: () => Promise<void>, onlyIfNone?: boolean }} opts
  * @returns {Promise<{ entitlement: Entitlement, changed: boolean, warnings: Array<{ step: string, message: string }> }>}
  */
 export async function setEntitlement(plugin, { principalType, principalId, roles }, opts) {
@@ -199,7 +206,11 @@ export async function setEntitlement(plugin, { principalType, principalId, roles
 
   const replace = () =>
     pluginMutex.run(plugin.name, async () => {
+      if (opts.precondition) await opts.precondition();
       const current = await roleGrantsOf(plugin, principalType, principalId);
+      if (opts.onlyIfNone && current.length > 0) {
+        return { grant: current[0], changed: false, warnings: [], kept: true };
+      }
       const same = current.find(
         (g) => JSON.stringify(g.context) === JSON.stringify({ roles: wanted }),
       );
@@ -256,7 +267,7 @@ export async function setEntitlement(plugin, { principalType, principalId, roles
       principalType,
       principalId,
       userId: principal.userId ?? null,
-      roles: wanted,
+      roles: outcome.kept ? (grantRoles(outcome.grant) ?? wanted) : wanted,
       unknownRoles: [],
       createdAt: outcome.grant.createdAt,
     },
