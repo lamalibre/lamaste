@@ -576,7 +576,9 @@ export async function removeAuthVhost(domain) {
 function pageHeaderLines(headers) {
   return Object.entries(headers)
     .map(([name, value]) => {
-      if (!/^[A-Za-z0-9-]+$/.test(name) || /["\\$\u0000-\u001f\u007f]/.test(value)) {
+      // Printable ASCII only, and none of the characters nginx reads into.
+      const literal = [...value].every((c) => c >= ' ' && c <= '~' && !'"\\$'.includes(c));
+      if (!/^[A-Za-z0-9-]+$/.test(name) || !literal) {
         throw new Error(`Page header unfit for nginx: ${name}`);
       }
       return `

@@ -112,3 +112,36 @@ test('a body that is not { username } is refused; the URL form is gone', async (
   assert.equal(old.statusCode, 404);
   assert.equal((await lib.listGrants()).length, 3);
 });
+
+test('inspecting a username says how many grants and groups name it, and changes nothing', async () => {
+  const inspect = (body) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/principals/user/inspect',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify(body),
+    });
+  await lib.createGrant({
+    principalType: 'user',
+    principalId: 'tocome',
+    resourceType: 'tunnel',
+    resourceId: 't-1',
+  });
+  await lib.addMembers('qa', ['tocome']);
+  const grantsBefore = (await lib.listGrants()).length;
+  assert.deepEqual((await inspect({ username: 'tocome' })).json(), {
+    ok: true,
+    grants: 1,
+    groups: 1,
+  });
+  assert.deepEqual((await inspect({ username: 'nobody' })).json(), {
+    ok: true,
+    grants: 0,
+    groups: 0,
+  });
+  assert.equal((await lib.listGrants()).length, grantsBefore);
+  assert.equal((await inspect({ username: '' })).statusCode, 400);
+  // How many grants are held, and the most kept: the panel's reserve.
+  const capacity = await lib.grantCapacity();
+  assert.deepEqual(capacity, { held: grantsBefore, max: 1000 });
+});

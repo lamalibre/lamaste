@@ -45,7 +45,7 @@ test('every location proxying to the panel clears a client’s relay assertion',
   );
   assert.deepEqual(
     proxied.map((l) => l.matcher),
-    ['/', '/api/enroll', '/api/invite', '~ ^/api/sites/[^/]+/files$', '/api'],
+    ['/', '/api/enroll', '/api/invite/', '~ ^/api/sites/[^/]+/files$', '/api'],
   );
   for (const { matcher, body } of proxied) {
     assert.ok(body.includes('proxy_set_header X-Lamalibre-Relay-Assertion "";'), matcher);
@@ -62,6 +62,14 @@ test('every location proxying to the panel clears a client’s relay assertion',
       assert.match(body, line, `${matcher}: ${header}`);
     }
   }
+});
+
+test('the public invitation API never takes the administrator’s invitations API', () => {
+  const text = generateIpPanelVhost(PKI);
+  // Without its slash the prefix would also match `/api/invitations*` and
+  // clear the client certificate the administrator's API needs.
+  assert.doesNotMatch(text, /location \/api\/invite \{/);
+  assert.match(text, /location \/api\/invite\/ \{/);
 });
 
 test('only the site upload location admits a body over nginx’s 1 MiB default', () => {
