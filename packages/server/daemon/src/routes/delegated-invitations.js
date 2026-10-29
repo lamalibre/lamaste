@@ -66,13 +66,13 @@ function fetchSiteAllowed(request) {
  *
  * @returns {Promise<{ plugin: object, caller: { userId: string, username: string, roles: string[] }, domain: string } | null>}
  */
-async function inviterOf(request, reply) {
+async function inviterOf(request, reply, deps) {
   const { route } = request.params;
   if (!fetchSiteAllowed(request)) {
     reply.code(403).send({ error: 'cross-site request refused' });
     return null;
   }
-  const relay = await verifyInvitationsRelay(request);
+  const relay = await deps.verifyRelay(request);
   if (!relay.ok || relay.route !== route) {
     reply.code(401).send({ error: 'unauthenticated' });
     return null;
@@ -91,7 +91,7 @@ async function inviterOf(request, reply) {
     reply.code(403).send({ error: 'cross-origin request refused' });
     return null;
   }
-  const resolution = await resolveUserCaller(route, relay.username);
+  const resolution = await deps.resolveUserCaller(route, relay.username);
   if (!resolution.ok) {
     reply.code(resolution.status).send({ error: resolution.error });
     return null;
@@ -113,7 +113,7 @@ async function available(request, plugin) {
   return null;
 }
 
-async function inviterRoutes(fastify) {
+async function inviterRoutes(fastify, { deps }) {
   const routeOptions = {
     bodyLimit: DELEGATED_INVITATIONS_BODY_LIMIT,
     config: { rateLimit: INVITER_RATE_LIMIT, cors: false },
@@ -125,7 +125,7 @@ async function inviterRoutes(fastify) {
 
   // GET /<route> — the roles the inviter may give, the bounds, their own invitations
   fastify.get('/:route', routeOptions, async (request, reply) => {
-    const who = await inviterOf(request, reply);
+    const who = await inviterOf(request, reply, deps);
     if (!who) return reply;
     const surface = await available(request, who.plugin);
     if (!surface) return unavailable(reply);
@@ -141,7 +141,7 @@ async function inviterRoutes(fastify) {
 
   // POST /<route> { email, displayName?, role } — a new invitation; its link once
   fastify.post('/:route', routeOptions, async (request, reply) => {
-    const who = await inviterOf(request, reply);
+    const who = await inviterOf(request, reply, deps);
     if (!who) return reply;
     if (!(await available(request, who.plugin))) return unavailable(reply);
     const parsed = DelegatedInvitationRequestSchema.safeParse(request.body);
@@ -175,7 +175,7 @@ async function inviterRoutes(fastify) {
 
   // DELETE /<route>/<id> — the caller's own pending invitation
   fastify.delete('/:route/:id', routeOptions, async (request, reply) => {
-    const who = await inviterOf(request, reply);
+    const who = await inviterOf(request, reply, deps);
     if (!who) return reply;
     if (!ID_RE.test(request.params.id)) return reply.code(404).send({ error: 'Not found' });
     try {
@@ -196,11 +196,16 @@ async function inviterRoutes(fastify) {
  *
  * @param {import('fastify').FastifyInstance} app
  */
-export default async function delegatedInvitationsContext(app) {
+export default async function delegatedInvitationsContext(app, opts = {}) {
+  // Tests replace the relay check and the caller's resolution.
+  const deps = {
+    verifyRelay: opts.verifyRelay ?? verifyInvitationsRelay,
+    resolveUserCaller: opts.resolveUserCaller ?? resolveUserCaller,
+  };
   app.addHook('onRequest', async (_request, reply) => {
     reply.headers(RESPONSE_HEADERS);
   });
   app.addHook('onRequest', managementOnly());
   await app.register(errorHandler);
-  await app.register(inviterRoutes, { prefix: DELEGATED_INVITATIONS_API_PREFIX });
+  await app.register(inviterRoutes, { prefix: DELEGATED_INVITATIONS_API_PREFIX, deps });
 }

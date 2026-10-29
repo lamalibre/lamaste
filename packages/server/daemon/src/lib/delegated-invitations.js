@@ -105,6 +105,7 @@ export async function getInvitationPolicy(name) {
  * @returns {Promise<{ ok: true, site: { id: string, fqdn: string }, domain: string } | { ok: false, reason: string }>}
  */
 export async function invitationSurface(plugin) {
+  if (surfaceForTests) return surfaceForTests(plugin);
   if (!plugin) return { ok: false, reason: 'not_installed' };
   if (!plugin.identity) return { ok: false, reason: 'no_identity' };
   if (invitingRoles(plugin.identity).size === 0) return { ok: false, reason: 'no_inviting_role' };
@@ -123,6 +124,14 @@ export async function invitationSurface(plugin) {
     site: { id: site.id, fqdn: site.fqdn },
     domain: await pluginDomainName(plugin),
   };
+}
+
+/** Tests only: what {@link invitationSurface} answers instead of reading the web surface. */
+let surfaceForTests = null;
+
+/** @param {((plugin: object | null) => Promise<object> | object) | null} fn */
+export function setInvitationSurfaceForTests(fn) {
+  surfaceForTests = fn;
 }
 
 /** The text of an availability refusal, for the administrator. */

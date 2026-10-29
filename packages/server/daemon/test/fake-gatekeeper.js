@@ -44,6 +44,9 @@ function createFakeGatekeeper({ maxGrants = 1000 } = {}) {
     const q = Object.fromEntries(url.searchParams);
 
     if (parts[1] === 'grants') {
+      if (method === 'GET' && parts[2] === 'capacity' && parts.length === 3) {
+        return ok(200, { held: grants.length, max: state.maxGrants });
+      }
       if (method === 'GET' && parts.length === 2) {
         return ok(200, {
           grants: grants.filter(
@@ -170,6 +173,17 @@ function createFakeGatekeeper({ maxGrants = 1000 } = {}) {
         }
       }
       return ok(200, { ok: true, grantsRemoved, groupsLeft });
+    }
+
+    if (parts[1] === 'principals' && parts[2] === 'user' && parts[3] === 'inspect') {
+      if (method !== 'POST') return refuse(405, 'Method not allowed');
+      const username = body?.username;
+      return ok(200, {
+        ok: true,
+        grants: grants.filter((g) => g.principalType === 'user' && g.principalId === username)
+          .length,
+        groups: [...groups.values()].filter((g) => g.members.includes(username)).length,
+      });
     }
 
     if (parts[1] === 'cache' && parts[2] === 'bust' && method === 'POST') {
