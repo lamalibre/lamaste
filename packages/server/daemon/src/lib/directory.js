@@ -81,6 +81,7 @@ import {
   deleteMembershipsSync,
   domainsForNewUser,
   insertMembershipsSync,
+  invitationMemberships,
   syncDomainAccess,
 } from './domains.js';
 import {
@@ -90,7 +91,11 @@ import {
 } from './gatekeeper-client.js';
 import { revokeUserRegistryTokens } from './registry-credential.js';
 import { getStateDb } from './state-db.js';
-import { purgeInvitationsOf } from './invitations.js';
+import {
+  invitationCreatingSync,
+  purgeInvitationsOf,
+  reservedInvitationUsernames,
+} from './invitations.js';
 import { removeGrantsForUser } from './user-access.js';
 import { withUsersLock } from './users-lock.js';
 
@@ -582,9 +587,28 @@ async function reconcileUnlocked({
   );
   const insert = db.prepare(
     `INSERT INTO directory_users
-       (user_id, username, display_name, email, status, version, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+       (user_id, username, display_name, email, status, version, created_at, updated_at,
+        invitation_id)
+     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
   );
+  const domainExistedBy = db.prepare('SELECT 1 FROM domains WHERE name = ? AND created_at <= ?');
+  /**
+   * The memberships of a user this reconcile creates under `username`: the
+   * ones the caller named; else, when an acceptance under way claims the
+   * username (its users.yml write landed but its directory step did not —
+   * a crash, a failed read), that invitation's own — on domains that still
+   * are the ones it named — never the relay's default, which on a
+   * one-domain relay makes everyone a member; else the default.
+   */
+  const membershipsOf = (username, claim) => {
+    if (Object.hasOwn(domains, username)) return domains[username];
+    if (claim && Array.isArray(claim.domains)) {
+      return invitationMemberships(claim).filter(
+        (m) => domainExistedBy.get(m.name, claim.createdAt) !== undefined,
+      );
+    }
+    return defaultDomains;
+  };
   const update = db.prepare(
     `UPDATE directory_users
        SET display_name = ?, email = ?, status = ?, version = version + 1, updated_at = ?
@@ -603,14 +627,25 @@ async function reconcileUnlocked({
       const row = selectLive.get(username);
       if (!row) {
         const userId = crypto.randomUUID();
-        insert.run(userId, username, attrs.displayName, attrs.email, attrs.status, now, now);
+        const claim = invitationCreatingSync(db, username);
+        insert.run(
+          userId,
+          username,
+          attrs.displayName,
+          attrs.email,
+          attrs.status,
+          now,
+          now,
+          claim?.id ?? null,
+        );
         result.created += 1;
         events.push({
           action: 'directory.user.created',
-          details: { userId, status: attrs.status },
+          details: { userId, status: attrs.status, ...(claim ? { invitationId: claim.id } : {}) },
         });
-        const memberOf = Object.hasOwn(domains, username) ? domains[username] : defaultDomains;
-        events.push(...insertMembershipsSync(db, userId, memberOf, { actor, now }));
+        events.push(
+          ...insertMembershipsSync(db, userId, membershipsOf(username, claim), { actor, now }),
+        );
         continue;
       }
       const changed = [];
@@ -784,6 +819,41 @@ export function reconcileDirectory({ actor = 'lamaste', logger, confirmDelayMs }
   });
 }
 
+/**
+ * Reconcile the directory and run `fn` with the users lock still held —
+ * nothing can create or delete a user in between. What the invitations'
+ * recovery needs: a user an interrupted acceptance wrote to users.yml is in
+ * the directory (with its invitation's memberships and stamp) by the time
+ * `fn` reads it.
+ *
+ * @template T
+ * @param {() => Promise<T>} fn
+ * @param {{ actor?: string, logger?: import('pino').Logger }} [opts]
+ * @returns {Promise<T>}
+ */
+export function withReconciledDirectory(fn, { actor = 'lamaste', logger } = {}) {
+  return withUsersLock(async () => {
+    const reconciled = await reconcileUnlocked({ actor, logger });
+    await offboardTransitionsUnlocked(reconciled, { actor, logger, bustSessions: true });
+    return fn();
+  });
+}
+
+/**
+ * The directory user an invitation's acceptance created (stamped
+ * `invitation_id`), or null.
+ *
+ * @param {string} invitationId
+ * @returns {Promise<DirectoryUser | null>}
+ */
+export async function directoryUserOfInvitation(invitationId) {
+  const db = await getStateDb();
+  const row = db
+    .prepare('SELECT * FROM directory_users WHERE invitation_id = ? ORDER BY created_at LIMIT 1')
+    .get(invitationId);
+  return row ? rowToUser(row) : null;
+}
+
 // ---------------------------------------------------------------------------
 // Writing users.yml
 // ---------------------------------------------------------------------------
@@ -796,7 +866,11 @@ export function reconcileDirectory({ actor = 'lamaste', logger, confirmDelayMs }
  *    outside Lamaste a moment ago is tombstoned before a namesake is
  *    created; a user about to be deleted must be in the directory to leave
  *    a tombstone), offboarding whatever that reconcile saw change;
- * 2. for every username `creates` names, {@link prepareUsernameUnlocked}:
+ * 2. for every username `creates` names: `vetCreates(username)` first,
+ *    when given (an invitee's acceptance checks its claim and the username
+ *    there, under this lock); refused (409 `username_invited`) while an
+ *    open invitation names it — unless it is `invitationId`, the one being
+ *    accepted; then {@link prepareUsernameUnlocked}:
  *    refused when Authelia holds an OpenID Connect identity for it (409
  *    `username_has_oidc_identity`); when a removed user held it, Gatekeeper
  *    drops everything under it and Authelia its second factors — always
@@ -829,7 +903,7 @@ export function reconcileDirectory({ actor = 'lamaste', logger, confirmDelayMs }
  *
  * @template T
  * @param {() => Promise<T>} mutate
- * @param {{ actor: string, logger?: import('pino').Logger, creates?: string[], deleted?: string[], domains?: Readonly<Record<string, ReadonlyArray<string | { name: string, kind: 'member' | 'external' }>>>, renderDomains?: boolean, autheliaStorage?: boolean, confirmDelayMs?: number, expect?: (users: Record<string, unknown>) => boolean }} opts
+ * @param {{ actor: string, logger?: import('pino').Logger, creates?: string[], deleted?: string[], domains?: Readonly<Record<string, ReadonlyArray<string | { name: string, kind: 'member' | 'external' }>>>, renderDomains?: boolean, autheliaStorage?: boolean, confirmDelayMs?: number, expect?: (users: Record<string, unknown>) => boolean, invitationId?: string | null, vetCreates?: (username: string) => Promise<void> }} opts
  * @returns {Promise<{ result: T, directory: DirectoryReconcileResult | null, warnings: Array<{ step: string, message: string }>, persisted: boolean }>}
  */
 export async function changeUsers(
@@ -844,6 +918,8 @@ export async function changeUsers(
     autheliaStorage = true,
     confirmDelayMs,
     expect,
+    invitationId = null,
+    vetCreates,
   },
 ) {
   const warnings = [];
@@ -914,6 +990,20 @@ export async function changeUsers(
         logger?.warn(
           { err: err.message },
           'Could not reconcile the directory before a users change',
+        );
+      }
+    }
+    if (creates.length > 0) {
+      for (const username of creates) {
+        if (vetCreates) await vetCreates(username);
+      }
+      const invited = await reservedInvitationUsernames({ except: invitationId });
+      const named = creates.find((username) => invited.has(username));
+      if (named !== undefined) {
+        throw httpError(
+          'An open invitation names this username — revoke it first, or let it be accepted',
+          409,
+          { code: 'username_invited' },
         );
       }
     }

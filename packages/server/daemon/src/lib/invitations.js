@@ -139,6 +139,8 @@ function rowToInvitation(row) {
     shownStatus: shownStatus(row),
     statusAt: row.status_at,
     failedAttempts: row.failed_attempts,
+    claimId: row.claim_id,
+    revokePendingReason: row.revoke_pending_reason,
     revokedBy: row.revoked_by,
     revokedReason: row.revoked_reason,
     acceptedUserId: row.accepted_user_id,
@@ -146,6 +148,7 @@ function rowToInvitation(row) {
     roleGrantedAt: row.role_granted_at,
     siteGrantedAt: row.site_granted_at,
     renderedAt: row.rendered_at,
+    siteAttemptedAt: row.site_attempted_at,
   };
 }
 
@@ -236,6 +239,7 @@ export function createAdminInvitation({ username, email, groups, domains, expire
       if (open) {
         throw httpError('A pending invitation already exists for this username', 409);
       }
+      supersedeExpiredSync(db, username, nowIso);
       db.prepare(
         `INSERT INTO invitations (id, token_sha256, kind, username, email, email_domain,
            groups_json, domains_json, created_by, created_at, expires_at, status, status_at)
@@ -262,11 +266,27 @@ export function createAdminInvitation({ username, email, groups, domains, expire
 // ---------------------------------------------------------------------------
 
 /**
- * Count a refused acceptance against the invitation behind `token`; the
- * fifth locks it (`revoked`, `attempts_exhausted`). Silent on a token that
- * opens nothing pending.
+ * Inside a transaction: close every pending invitation naming `username`
+ * that has expired (`revoked`, `superseded`) — the one open invitation a
+ * username may have (a unique index) is then free for another.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ */
+function supersedeExpiredSync(db, username, nowIso) {
+  db.prepare(
+    `UPDATE invitations SET status = 'revoked', status_at = ?, revoked_by = 'lamaste',
+       revoked_reason = 'superseded'
+     WHERE username = ? AND status = 'pending' AND expires_at <= ?`,
+  ).run(nowIso, username, nowIso);
+}
+
+/**
+ * Count a refused acceptance against pending invitation `id`; the fifth
+ * locks it (`revoked`, `attempts_exhausted`). Nothing for an invitation
+ * that is not pending.
  *
  * @param {string} id
+ * @param {string | null} plugin
  * @returns {Promise<{ locked: boolean }>}
  */
 export function recordFailedAttempt(id, plugin) {
@@ -293,84 +313,256 @@ export function recordFailedAttempt(id, plugin) {
   });
 }
 
+/** Whether an error is SQLite refusing a unique constraint (the open-username index). */
+function isUniqueViolation(err) {
+  return /UNIQUE constraint failed/.test(String(err?.message));
+}
+
 /**
  * Inside the invitations lock of the invitation's plugin and a
  * transaction: claim pending, unexpired, unlocked invitation `id` for
- * `username` (`accepting`). Throws 410 when it cannot be claimed any more.
- * The caller holds the lock (it checks the invitation's preconditions in
- * the same hold).
+ * `username` — `accepting`, a fresh `claim_id` — and return the claim id.
+ * Expired invitations naming the username are superseded first. Throws 410
+ * when the invitation can no longer be claimed, and 409
+ * `username_unavailable` when another open invitation names the username.
  *
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {string} id
  * @param {string} username
+ * @returns {string} the claim id
  */
 export function claimInvitationSync(db, id, username) {
   const now = new Date().toISOString();
-  const claimed = db
-    .prepare(
-      `UPDATE invitations SET status = 'accepting', username = ?, status_at = ?
-       WHERE id = ? AND status = 'pending' AND expires_at > ? AND failed_attempts < ?`,
-    )
-    .run(username, now, id, now, INVITATION_MAX_FAILED_ATTEMPTS);
+  const claimId = crypto.randomBytes(16).toString('hex');
+  supersedeExpiredSync(db, username, now);
+  let claimed;
+  try {
+    claimed = db
+      .prepare(
+        `UPDATE invitations SET status = 'accepting', username = ?, claim_id = ?, status_at = ?
+         WHERE id = ? AND status = 'pending' AND expires_at > ? AND failed_attempts < ?`,
+      )
+      .run(username, claimId, now, id, now, INVITATION_MAX_FAILED_ATTEMPTS);
+  } catch (err) {
+    if (isUniqueViolation(err)) throw usernameUnavailableError();
+    throw err;
+  }
   if (claimed.changes !== 1) throw httpError('This invitation can no longer be accepted', 410);
+  return claimId;
 }
 
 /**
- * Give a claim up: the invitation is pending again (an administrator's keeps
- * its username; a delegated one's is cleared).
+ * Claim invitation `id` for `username` (see {@link claimInvitationSync})
+ * holding its plugin's invitations lock, after `check()` — run in the same
+ * hold, so nothing changes the invitation between them: it returns null to
+ * go on, or a revocation reason to end the invitation (`revoked`, and 410)
+ * or `'unavailable'` to refuse for now (503) without touching it.
+ *
+ * @param {string} id
+ * @param {string | null} plugin
+ * @param {string} username
+ * @param {{ check?: () => Promise<string | null> }} [opts]
+ * @returns {Promise<string>} the claim id
+ */
+export function claimInvitation(id, plugin, username, { check } = {}) {
+  return withInvitationsLock(plugin, async () => {
+    const reason = check ? await check() : null;
+    const db = await getStateDb();
+    if (reason === 'unavailable') {
+      throw httpError('This invitation cannot be accepted right now — try again later', 503, {
+        code: 'invitation_unavailable',
+      });
+    }
+    if (reason !== null) {
+      inTransaction(db, () => revokeInvitationSync(db, id, { by: 'lamaste', reason }));
+      throw Object.assign(httpError('This invitation can no longer be accepted', 410), {
+        revokedReason: reason,
+      });
+    }
+    return inTransaction(db, () => claimInvitationSync(db, id, username));
+  });
+}
+
+/**
+ * Stop completing the grants of accepted invitation `id` (its repair ran
+ * out of time, or its preconditions failed): `revoked`, `repair_abandoned`.
+ * The user it made stays, reaching what was granted so far.
  *
  * @param {string} id
  * @param {string | null} plugin
  */
-export function releaseClaim(id, plugin) {
+export function abandonRepair(id, plugin) {
   return withInvitationsLock(plugin, async () => {
     const db = await getStateDb();
     db.prepare(
-      `UPDATE invitations SET status = 'pending', status_at = ?,
-         username = CASE kind WHEN 'delegated' THEN NULL ELSE username END
-       WHERE id = ? AND status = 'accepting'`,
+      `UPDATE invitations SET status = 'revoked', status_at = ?, revoked_by = 'lamaste',
+         revoked_reason = 'repair_abandoned'
+       WHERE id = ? AND status = 'accepted'`,
     ).run(new Date().toISOString(), id);
   });
 }
 
 /**
- * Record a claimed invitation accepted by user `userId`: the copies of the
- * address and name go (the directory holds them).
+ * Accepted delegated invitations whose grants are not all made yet.
+ *
+ * @returns {Promise<object[]>}
+ */
+export async function unfulfilledAcceptances() {
+  const db = await getStateDb();
+  return db
+    .prepare(
+      `SELECT * FROM invitations WHERE kind = 'delegated' AND status = 'accepted'
+         AND accepted_user_id IS NOT NULL
+         AND (role_granted_at IS NULL OR site_granted_at IS NULL OR rendered_at IS NULL)`,
+    )
+    .all()
+    .map(rowToInvitation);
+}
+
+/** 409 `username_unavailable` — one answer whatever made the username unavailable. */
+export function usernameUnavailableError() {
+  return httpError('This username is not available — choose another', 409, {
+    code: 'username_unavailable',
+  });
+}
+
+/**
+ * Give claim `claimId` of invitation `id` up: the invitation is pending
+ * again (an administrator's keeps its username; a delegated one's is
+ * cleared). A claim another took or ended is left alone.
  *
  * @param {string} id
  * @param {string | null} plugin
- * @param {string} userId
+ * @param {string} claimId
  */
-export function markAccepted(id, plugin, userId) {
+export function releaseClaim(id, plugin, claimId) {
   return withInvitationsLock(plugin, async () => {
     const db = await getStateDb();
     db.prepare(
-      `UPDATE invitations SET status = 'accepted', status_at = ?, accepted_user_id = ?,
-         email = NULL, display_name = NULL
-       WHERE id = ? AND status = 'accepting'`,
-    ).run(new Date().toISOString(), userId, id);
+      `UPDATE invitations SET status = 'pending', status_at = ?, claim_id = NULL,
+         revoke_pending_reason = NULL,
+         username = CASE kind WHEN 'delegated' THEN NULL ELSE username END
+       WHERE id = ? AND status = 'accepting' AND claim_id = ?`,
+    ).run(new Date().toISOString(), id, claimId);
+  });
+}
+
+/**
+ * Whether invitation `id` is still claimed by `claimId` and nothing marked
+ * it for revocation meanwhile — read, never locked: an acceptance checks it
+ * under the users lock before each thing it writes.
+ *
+ * @param {string} id
+ * @param {string} claimId
+ * @returns {Promise<{ held: boolean, revokePendingReason: string | null }>}
+ */
+export async function claimState(id, claimId) {
+  const db = await getStateDb();
+  const row = db
+    .prepare('SELECT status, claim_id, revoke_pending_reason FROM invitations WHERE id = ?')
+    .get(id);
+  const held = row?.status === 'accepting' && row.claim_id === claimId;
+  return { held, revokePendingReason: held ? row.revoke_pending_reason : null };
+}
+
+/**
+ * End claim `claimId` of invitation `id` with its acceptance by user
+ * `userId`: `accepted` — or `revoked` with the reason a sweep or the
+ * administrator marked meanwhile (`revoke_pending_reason`), or `reason`
+ * when the caller found one; either way the user exists. The copies of the
+ * address and name go (the directory holds them). Returns the invitation
+ * as recorded, or null when the claim was not this one any more.
+ *
+ * @param {string} id
+ * @param {string | null} plugin
+ * @param {string} claimId
+ * @param {string} userId
+ * @param {{ revokeReason?: string | null }} [opts]
+ */
+export function finishClaim(id, plugin, claimId, userId, { revokeReason = null } = {}) {
+  return withInvitationsLock(plugin, async () => {
+    const db = await getStateDb();
+    const now = new Date().toISOString();
+    const row = db
+      .prepare(
+        `SELECT revoke_pending_reason FROM invitations WHERE id = ? AND status = 'accepting' AND claim_id = ?`,
+      )
+      .get(id, claimId);
+    if (!row) return null;
+    const reason = row.revoke_pending_reason ?? revokeReason;
+    db.prepare(
+      `UPDATE invitations SET status = ?, status_at = ?, accepted_user_id = ?, claim_id = NULL,
+         revoke_pending_reason = NULL, email = NULL, display_name = NULL,
+         revoked_by = ?, revoked_reason = ?
+       WHERE id = ?`,
+    ).run(reason ? 'revoked' : 'accepted', now, userId, reason ? 'lamaste' : null, reason, id);
     return getInvitation(id);
   });
 }
 
 /**
- * Usernames an acceptance under way has claimed, or an open administrator's
- * invitation names — a delegated invitee may not take one.
+ * Record what a delegated acceptance completed: `role_granted_at`,
+ * `site_granted_at` or `rendered_at`, now.
  *
+ * @param {string} id
+ * @param {'role_granted_at' | 'site_attempted_at' | 'site_granted_at' | 'rendered_at'} column
+ */
+export async function recordCompletion(id, column) {
+  if (
+    !['role_granted_at', 'site_attempted_at', 'site_granted_at', 'rendered_at'].includes(column)
+  ) {
+    throw new Error(`Not a completion: ${column}`);
+  }
+  const db = await getStateDb();
+  db.prepare(`UPDATE invitations SET ${column} = ? WHERE id = ? AND ${column} IS NULL`).run(
+    new Date().toISOString(),
+    id,
+  );
+}
+
+/**
+ * Usernames an open invitation names — an acceptance under way, or a
+ * pending, unexpired administrator's invitation. Nobody else may take one
+ * (`changeUsers` refuses it), and a delegated invitee may not claim one.
+ *
+ * @param {{ except?: string | null }} [opts] an invitation whose own name does not count
  * @returns {Promise<Set<string>>}
  */
-export async function reservedInvitationUsernames() {
+export async function reservedInvitationUsernames({ except = null } = {}) {
   const db = await getStateDb();
   const now = new Date().toISOString();
   return new Set(
     db
       .prepare(
-        `SELECT username FROM invitations WHERE username IS NOT NULL
+        `SELECT username FROM invitations WHERE username IS NOT NULL AND id IS NOT ?
            AND (status = 'accepting' OR (status = 'pending' AND expires_at > ?))`,
       )
-      .all(now)
+      .all(except, now)
       .map((r) => r.username),
   );
+}
+
+/**
+ * The invitation whose acceptance a user created under `username` belongs
+ * to, if any: the one claiming it (`accepting` — an acceptance ends its
+ * claim only once the directory holds the user). The reconcile gives such a
+ * user that invitation's memberships — never the relay's default — and
+ * stamps the directory row with it.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} username
+ * @returns {{ id: string, domains: unknown, createdAt: string } | null}
+ */
+export function invitationCreatingSync(db, username) {
+  const row = db
+    .prepare(
+      `SELECT id, domains_json, created_at FROM invitations
+       WHERE username = ? AND status = 'accepting'`,
+    )
+    .get(username);
+  return row
+    ? { id: row.id, domains: parseJson(row.domains_json, null), createdAt: row.created_at }
+    : null;
 }
 
 /**
@@ -386,40 +578,59 @@ export async function staleClaims(now = Date.now()) {
     .map(rowToInvitation);
 }
 
+/**
+ * Settle stale claim `claimId` of `id` by what exists: `userId` (a
+ * directory row stamped with the invitation) → it ends as
+ * {@link finishClaim} ends one; null → pending again.
+ */
+export async function settleStaleClaim(id, plugin, claimId, userId) {
+  if (userId) return finishClaim(id, plugin, claimId, userId);
+  await releaseClaim(id, plugin, claimId);
+  return getInvitation(id);
+}
+
 // ---------------------------------------------------------------------------
 // Revocation, deletion, retention, erasure
 // ---------------------------------------------------------------------------
 
 /**
- * Inside the plugin's invitations lock: revoke open invitation `id`
- * (pending, expired or not). Returns whether it was revoked; an `accepting`
- * one is refused (409) — its acceptance is under way.
+ * Inside the plugin's invitations lock and a transaction: revoke open
+ * invitation `id`. A pending one (expired or not) is `revoked`; an
+ * `accepting` one is marked `revoke_pending_reason` — its acceptance makes
+ * no grant and ends revoked. Returns `'revoked'`, `'marked'` or null (not
+ * open).
  *
  * @param {import('node:sqlite').DatabaseSync} db
+ * @returns {'revoked' | 'marked' | null}
  */
 export function revokeInvitationSync(db, id, { by, reason }) {
-  const row = db.prepare('SELECT status FROM invitations WHERE id = ?').get(id);
-  if (!row) return false;
+  const row = db
+    .prepare('SELECT status, revoke_pending_reason FROM invitations WHERE id = ?')
+    .get(id);
+  if (!row) return null;
   if (row.status === 'accepting') {
-    throw httpError('This invitation is being accepted right now — try again shortly', 409, {
-      code: 'invitation_accepting',
-    });
+    if (row.revoke_pending_reason === null) {
+      db.prepare(
+        `UPDATE invitations SET revoke_pending_reason = ? WHERE id = ? AND status = 'accepting'`,
+      ).run(reason, id);
+    }
+    return 'marked';
   }
-  if (row.status !== 'pending') return false;
+  if (row.status !== 'pending') return null;
   db.prepare(
     `UPDATE invitations SET status = 'revoked', status_at = ?, revoked_by = ?, revoked_reason = ?
      WHERE id = ? AND status = 'pending'`,
   ).run(new Date().toISOString(), by, reason, id);
-  return true;
+  return 'revoked';
 }
 
 /**
  * The administrator's `DELETE /api/invitations/:id`: a pending invitation is
- * revoked, an ended one deleted. 404 when there is none; 409 while it is
- * being accepted.
+ * revoked, one being accepted marked to end revoked, an ended one deleted.
+ * 404 when there is none.
  *
  * @param {string} id
- * @returns {Promise<{ action: 'revoked' | 'deleted', invitation: object }>}
+ * @returns {Promise<{ action: 'revoked' | 'marked' | 'deleted', invitation: object }>}
  */
 export async function revokeOrDeleteInvitation(id) {
   const found = await getInvitation(id);
@@ -429,9 +640,8 @@ export async function revokeOrDeleteInvitation(id) {
     return inTransaction(db, () => {
       const current = db.prepare('SELECT * FROM invitations WHERE id = ?').get(id);
       if (!current) throw httpError('Invitation not found', 404);
-      if (revokeInvitationSync(db, id, { by: 'admin', reason: 'admin' })) {
-        return { action: 'revoked', invitation: rowToInvitation(current) };
-      }
+      const done = revokeInvitationSync(db, id, { by: 'admin', reason: 'admin' });
+      if (done) return { action: done, invitation: rowToInvitation(current) };
       db.prepare('DELETE FROM invitations WHERE id = ?').run(id);
       return { action: 'deleted', invitation: rowToInvitation(current) };
     });
@@ -514,23 +724,46 @@ export async function importLegacyInvitations({ logger } = {}) {
       `SELECT user_id FROM directory_users WHERE username = ? ORDER BY created_at DESC LIMIT 1`,
     );
     const insert = db.prepare(
-      `INSERT OR IGNORE INTO invitations (id, token_sha256, kind, username, email, email_domain,
+      `INSERT INTO invitations (id, token_sha256, kind, username, email, email_domain,
          groups_json, domains_json, created_by, created_at, expires_at, status, status_at,
-         accepted_user_id)
-       VALUES (?, ?, 'admin', ?, ?, ?, ?, ?, 'admin', ?, ?, ?, ?, ?)`,
+         revoked_by, revoked_reason, accepted_user_id)
+       VALUES (?, ?, 'admin', ?, ?, ?, ?, ?, 'admin', ?, ?, ?, ?, ?, ?, ?)`,
     );
-    const nowIso = new Date().toISOString();
+    const known = db.prepare('SELECT 1 FROM invitations WHERE id = ? OR token_sha256 = ?');
+    const openNamed = db.prepare(
+      `SELECT 1 FROM invitations WHERE username = ? AND status IN ('pending', 'accepting')`,
+    );
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    // The usable ones first: of two pending invitations for one username the
+    // newest unexpired stays open, the others are closed as superseded.
+    const ordered = legacy
+      .filter((inv) => inv && typeof inv === 'object')
+      .map((inv) => ({ inv, createdAt: isoOr(inv.createdAt, nowIso) }))
+      .map(({ inv, createdAt }) => ({
+        inv,
+        createdAt,
+        expiresAt: isoOr(inv.expiresAt, createdAt),
+      }))
+      .sort((a, b) => {
+        const live = (x) => (x.inv.used !== true && Date.parse(x.expiresAt) > now ? 1 : 0);
+        return (
+          live(b) - live(a) || (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)
+        );
+      });
     return inTransaction(db, () => {
       let count = 0;
-      for (const inv of legacy) {
-        if (!inv || typeof inv !== 'object') continue;
+      for (const { inv, createdAt, expiresAt } of ordered) {
         const sha = hashInvitationToken(inv.token);
         if (typeof inv.id !== 'string' || inv.id.length === 0 || inv.id.length > 64) continue;
         if (!sha || typeof inv.username !== 'string' || typeof inv.email !== 'string') continue;
-        const createdAt = isoOr(inv.createdAt, nowIso);
+        // A row state.db holds is never touched (a restored backup brought
+        // the file back).
+        if (known.get(inv.id, sha)) continue;
         const accepted = inv.used === true;
-        const acceptedAt = isoOr(inv.acceptedAt, createdAt);
-        const result = insert.run(
+        const superseded = !accepted && openNamed.get(inv.username) !== undefined;
+        const status = accepted ? 'accepted' : superseded ? 'revoked' : 'pending';
+        insert.run(
           inv.id,
           sha,
           inv.username,
@@ -539,12 +772,14 @@ export async function importLegacyInvitations({ logger } = {}) {
           JSON.stringify(Array.isArray(inv.groups) ? inv.groups : []),
           JSON.stringify(Array.isArray(inv.domains) ? inv.domains : null),
           createdAt,
-          isoOr(inv.expiresAt, createdAt),
-          accepted ? 'accepted' : 'pending',
-          accepted ? acceptedAt : createdAt,
+          expiresAt,
+          status,
+          accepted ? isoOr(inv.acceptedAt, createdAt) : superseded ? nowIso : createdAt,
+          superseded ? 'lamaste' : null,
+          superseded ? 'superseded' : null,
           accepted ? (userIdOf.get(inv.username)?.user_id ?? null) : null,
         );
-        count += Number(result.changes);
+        count += 1;
       }
       return count;
     });

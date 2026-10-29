@@ -866,7 +866,8 @@ let lastOidcSyncError = null;
 
 /**
  * One tick: reconcile the directory with users.yml (once onboarding is
- * done), clear the Gatekeeper principals of removed users still pending,
+ * done), the invitations' upkeep, clear the Gatekeeper principals of
+ * removed users still pending,
  * recompute the audiences (catching Gatekeeper CLI edits), then start the
  * syncs that are due. Never throws.
  */
@@ -914,6 +915,11 @@ export async function identityTick(logger) {
       // The brands' renderings, as their records now say: a rendering a
       // failure left behind is tried again (compare-first; never throws).
       await reconcileAuthBranding({ logger });
+      // Invitations: a restored invitations.json imported, acceptances a
+      // crash left claimed settled, delegated acceptances whose grants did
+      // not all land completed, ended invitations pruned (never throws).
+      const { invitationsTick } = await import('./invitation-acceptance.js');
+      await invitationsTick({ logger });
     }
     await clearPendingPrincipals({ logger });
     await recomputeAudiences({ logger });

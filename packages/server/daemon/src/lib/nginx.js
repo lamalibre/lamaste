@@ -6,6 +6,8 @@ import {
   AUTH_BRANDING_LOCALES_DIR,
   AUTH_BRANDING_THEMES,
   BACKEND_COOKIE_VARIABLE,
+  DELEGATED_INVITATIONS_API_PREFIX,
+  DELEGATED_INVITATIONS_PAGE_PREFIX,
   RELAY_PANEL_PORT,
   SITE_UPLOAD_MAX_REQUEST_MIB,
   USER_SURFACE_MAX_RESPONSE_SECONDS,
@@ -14,8 +16,12 @@ import {
   userSurfaceApiPath,
   WEB_TREE_CONTENT_TYPES,
 } from '@lamalibre/lamaste';
-import { authBrandingDir } from '@lamalibre/lamaste/server';
-import { INVITE_DIR } from './invite-page.js';
+import {
+  INVITATIONS_PAGE_HEADERS,
+  INVITE_PAGE_HEADERS,
+  authBrandingDir,
+} from '@lamalibre/lamaste/server';
+import { INVITATIONS_DIR, INVITE_DIR } from './invite-page.js';
 
 const SITES_AVAILABLE = '/etc/nginx/sites-available';
 const SITES_ENABLED = '/etc/nginx/sites-enabled';
@@ -179,7 +185,10 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    location /api/invite {
+    # \`/api/invite/\`, with its slash: a prefix without one would also take
+    # \`/api/invitations*\` (the administrator's invitations API) and clear
+    # the client-certificate headers it needs.
+    location /api/invite/ {
         proxy_pass http://127.0.0.1:3100;
         proxy_http_version 1.1;
 
@@ -557,6 +566,136 @@ export async function removeAuthVhost(domain) {
 }
 
 /**
+ * `add_header` lines for one of core's page header sets (the invitation
+ * page's, the inviter page's): each value double-quoted — a value with a
+ * `"`, `\\`, `$` or a control character is refused, nginx would read it as
+ * more than a literal.
+ *
+ * @param {Readonly<Record<string, string>>} headers
+ */
+function pageHeaderLines(headers) {
+  return Object.entries(headers)
+    .map(([name, value]) => {
+      if (!/^[A-Za-z0-9-]+$/.test(name) || /["\\$\u0000-\u001f\u007f]/.test(value)) {
+        throw new Error(`Page header unfit for nginx: ${name}`);
+      }
+      return `
+        add_header ${name} "${value}" always;`;
+    })
+    .join('');
+}
+
+/**
+ * A static page of the auth portal served from the domain's rendering when
+ * it has one, else the stock copy: `location <matcher>` tries the
+ * rendering's file, then `@<fallback>` serves the stock one; both carry the
+ * page's headers (an internal redirect to a named location keeps none of
+ * the first location's).
+ */
+function authPageLocations(domain, matchers, file, fallback, stockDir, headers) {
+  const lines = pageHeaderLines(headers);
+  const blocks = matchers.map(
+    (matcher) => `
+    location ${matcher} {
+        root ${authBrandingDir(domain)};
+        try_files /${file} @${fallback};${lines}
+    }`,
+  );
+  return `${blocks.join('')}
+    location @${fallback} {
+        root ${stockDir};
+        try_files /index.html =404;${lines}
+    }`;
+}
+
+/**
+ * The inviter's API of delegated invitations on a domain's sign-in host
+ * (`/api/delegated-invitations/<route>[/<id>]`): Gatekeeper
+ * (`/authz/delegated-invitations/<domain>`, the portal named in the path,
+ * in `X-Original-URL` and in `Host`) authenticates the session for this
+ * very URL — Authelia's portal rule admits the domain's members and
+ * external members — and vouches for the user to the panel with an
+ * inviter's relay assertion bound to the method and the raw target. The
+ * panel decides whether they may invite. Nothing of the browser's
+ * credentials reaches the panel; `Host` is the portal's literal name and
+ * `X-Forwarded-Host` cleared, so the panel's view of the host is never a
+ * client's. JSON 401/403 for the page's script, never a redirect; a small
+ * body (an address, a name, a role).
+ */
+function delegatedInvitationsLocations(domain, fqdn) {
+  return `
+    # The inviter's API of delegated invitations (delegated-invitations-design.md)
+    location = /internal/lamaste/delegated-invitations-authz {
+        internal;
+        auth_request off;
+
+        proxy_pass http://127.0.0.1:9294/authz/delegated-invitations/${domain};
+        proxy_pass_request_body off;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Connection "";
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Original-URL ${originalUrl(fqdn)};
+        proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
+        proxy_set_header Host ${fqdn};
+        proxy_set_header Cookie $http_cookie;
+
+        proxy_http_version 1.1;
+    }
+
+    location = /internal/lamaste/delegated-invitations-401 {
+        internal;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        return 401 '{"error":"unauthenticated"}';
+    }
+
+    location = /internal/lamaste/delegated-invitations-403 {
+        internal;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        return 403 '{"error":"forbidden"}';
+    }
+
+    location ^~ ${DELEGATED_INVITATIONS_API_PREFIX}/ {
+        auth_request /internal/lamaste/delegated-invitations-authz;
+        auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;
+
+        # The inviter, vouched for by Gatekeeper to the panel for this one request
+        proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;
+
+        # Nothing else that any part of the panel trusts
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Groups "";
+        proxy_set_header Remote-Name "";
+        proxy_set_header Remote-Email "";
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
+        proxy_set_header X-Forwarded-Host "";
+
+        proxy_set_header Host ${fqdn};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Connection "";
+
+        # No URI: the request target reaches the panel as the browser sent it
+        proxy_pass http://127.0.0.1:${RELAY_PANEL_PORT};
+        proxy_http_version 1.1;
+        client_max_body_size 16k;
+
+        error_page 401 = /internal/lamaste/delegated-invitations-401;
+        error_page 403 = /internal/lamaste/delegated-invitations-403;
+    }
+`;
+}
+
+/**
  * Render the Authelia auth portal vhost of one domain. Pure; the startup
  * reconcile renders it on the certificate directory the installed vhost
  * names. Every domain's portal serves Authelia and the invitation page (the
@@ -649,28 +788,41 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
 
     # Invitation page — the domain's own when it has a brand (its rendering
     # holds one, served through the same link as the overrides below), else
-    # the stock page. A fixed path in try_files resolves against the
-    # location's root; the token stays in the URL for the page's script.
-    location /invite/ {
-        root ${authBrandingDir(domain)};
-        try_files /${AUTH_BRANDING_FILES.invite} @invite;
-        add_header X-Content-Type-Options nosniff;
-    }
-    location @invite {
-        root ${INVITE_DIR};
-        try_files /index.html =404;
-        add_header X-Content-Type-Options nosniff;
-    }
+    # the stock page. A link carries its token in the fragment
+    # (\`/invite#<token>\`, nothing for a log to keep); a 4.8 link's token is
+    # in the path (\`/invite/<token>\`). Core's headers: the page's CSP by
+    # hash, no framing, no caching.${authPageLocations(
+      domain,
+      ['= /invite', '/invite/'],
+      AUTH_BRANDING_FILES.invite,
+      'invite',
+      INVITE_DIR,
+      INVITE_PAGE_HEADERS,
+    )}
 
-    # Invitation API — proxied to panel server (no mTLS)
+    # The inviter's page of delegated invitations
+    # (\`/invitations/<route>\`), the same way.${authPageLocations(
+      domain,
+      [`${DELEGATED_INVITATIONS_PAGE_PREFIX}/`],
+      AUTH_BRANDING_FILES.invitations,
+      'invitations',
+      INVITATIONS_DIR,
+      INVITATIONS_PAGE_HEADERS,
+    )}
+
+    # Invitation API — proxied to panel server (no mTLS). Host is this
+    # portal's literal name and X-Forwarded-Host cleared: the panel answers
+    # a delegated invitation's token only on its own domain's portal.
     location /api/invite/ {
         proxy_pass http://127.0.0.1:3100/api/invite/;
-        proxy_set_header Host $host;
+        proxy_set_header Host ${fqdn};
+        proxy_set_header X-Forwarded-Host "";
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
+        client_max_body_size 16k;
     }
-${userAccess}${authBrandLocations(domain, fqdn)}
+${delegatedInvitationsLocations(domain, fqdn)}${userAccess}${authBrandLocations(domain, fqdn)}
     # Default — proxy to Authelia. Authelia takes the OIDC issuer and the
     # session cookie's domain from X-Forwarded-Host / -Proto: this portal's
     # own name, never what the client sent. (A location that sets any

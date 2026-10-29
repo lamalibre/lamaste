@@ -162,6 +162,7 @@ before(async () => {
     ...(await import('../src/lib/domains.js')),
     ...(await import('../src/lib/audit.js')),
     ...(await import('../src/lib/state.js')),
+    ...(await import('../src/lib/invitations.js')),
     ...(await import('../src/lib/plugins.js')),
     ...(await import('../src/lib/plugin-oidc.js')),
   };
@@ -362,7 +363,7 @@ test('Authelia groups and external memberships exclude each other', async () => 
   assert.deepEqual(listed.find((i) => i.username === 'client2').domains, [
     { name: D, kind: 'external' },
   ]);
-  assert.deepEqual(await lib.invitationDomainsNow((await lib.readInvitations()).at(-1)), [
+  assert.deepEqual(await lib.invitationDomainsNow((await lib.listInvitations())[0]), [
     { name: D, kind: 'external' },
   ]);
   // Made a member and back: only narrowing restarts — ext turned external

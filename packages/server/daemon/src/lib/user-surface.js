@@ -45,6 +45,8 @@ import {
   RELAY_PANEL_AUDIENCE,
   RELAY_PANEL_PORT,
   isAgentHostedPlugin,
+  isRelayInvitationsTarget,
+  isRelayUserSurfaceTarget,
   siteUserSurfaceRoute,
   tunnelUserSurfaceRoutes,
   userSurfaceHostServing,
@@ -598,9 +600,60 @@ export async function verifyUserSurfaceRelay(request) {
     return { ok: false, reason: result.reason };
   }
   const { caller, target } = result.payload;
-  // A panel-audience payload is a username and a route with its path.
-  if (caller.type !== 'user' || !('route' in target)) return { ok: false, reason: 'malformed' };
+  // A user surface's payload is a username and a route with its path — an
+  // inviter's (delegated invitations) is never one.
+  if (caller.type !== 'user' || !isRelayUserSurfaceTarget(target)) {
+    return { ok: false, reason: 'malformed' };
+  }
   return { ok: true, username: caller.username, route: target.route };
+}
+
+/**
+ * The relay check of an inviter's request on a domain's sign-in host
+ * (delegated invitations, routes/delegated-invitations.js): an assertion
+ * Gatekeeper signed for the panel with an inviter's target — the plugin
+ * route, the domain whose sign-in host it is, the raw request target —
+ * bound to this request's method and target, not expired, never seen
+ * before (the user surfaces' nonce store: one assertion, one use).
+ *
+ * @param {import('fastify').FastifyRequest} request
+ * @returns {Promise<{ ok: true, username: string, route: string, domain: string } | { ok: false, reason: string }>}
+ */
+export async function verifyInvitationsRelay(request) {
+  let keys;
+  try {
+    keys = await panelVerifyKeys();
+  } catch (err) {
+    request.log.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      'Relay signing key unusable — inviter requests are refused',
+    );
+    return { ok: false, reason: 'relay_key_unusable' };
+  }
+  if (!keys) return { ok: false, reason: 'relay_key_missing' };
+  const header = request.headers[RELAY_ASSERTION_HEADER];
+  const result = verifyRelayAssertion(typeof header === 'string' ? header : undefined, {
+    keys,
+    aud: RELAY_PANEL_AUDIENCE,
+    port: RELAY_PANEL_PORT,
+    method: request.method,
+    url: request.raw.url ?? '',
+    nonces: relayNonces,
+  });
+  if (!result.ok) {
+    request.log.info({ reason: result.reason }, 'Inviter request without a valid assertion');
+    return { ok: false, reason: result.reason };
+  }
+  const { caller, target } = result.payload;
+  if (caller.type !== 'user' || !isRelayInvitationsTarget(target)) {
+    return { ok: false, reason: 'malformed' };
+  }
+  return {
+    ok: true,
+    username: caller.username,
+    route: target.invitations,
+    domain: target.domain,
+  };
 }
 
 /**

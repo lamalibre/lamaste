@@ -138,6 +138,7 @@ before(async () => {
     ...(await import('../src/lib/domains.js')),
     ...(await import('../src/lib/audit.js')),
     ...(await import('../src/lib/state.js')),
+    ...(await import('../src/lib/invitations.js')),
     ...(await import('../src/lib/plugins.js')),
     ...(await import('../src/lib/auth-branding.js')),
   };
@@ -421,8 +422,11 @@ test('with two domains a new user is created with theirs: required, checked, hon
     domains: ['codelama.com.tr', 'samplepark.tr'],
   });
   assert.equal(invited.statusCode, 201, invited.body);
-  assert.match(invited.json().inviteUrl, /^https:\/\/auth\.codelama\.com\.tr\/invite\//);
-  const stored = (await lib.readInvitations()).find((i) => i.username === 'deniz');
+  assert.match(
+    invited.json().inviteUrl,
+    /^https:\/\/auth\.codelama\.com\.tr\/invite#[a-f0-9]{64}$/,
+  );
+  const stored = (await lib.listInvitations()).find((i) => i.username === 'deniz');
   assert.deepEqual(stored.domains, [
     { name: 'codelama.com.tr', kind: 'member' },
     { name: 'samplepark.tr', kind: 'member' },

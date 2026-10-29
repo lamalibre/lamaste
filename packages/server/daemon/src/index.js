@@ -21,6 +21,7 @@ import managementRoutes from './routes/management.js';
 import pluginRouter from './routes/plugin-router.js';
 import agentForwarderRoutes from './routes/agent-forwarder.js';
 import userSurfaceContext from './routes/user-surface.js';
+import delegatedInvitationsContext from './routes/delegated-invitations.js';
 import inviteRoutes from './routes/invite.js';
 import enrollmentRoutes from './routes/enrollment.js';
 import {
@@ -51,7 +52,7 @@ import {
 } from './lib/vhost-reconcile.js';
 import { activeDomains, ensurePrimaryDomain, syncDomainAccess } from './lib/domains.js';
 import { ensureBrandingBase, reconcileAuthBranding } from './lib/auth-branding.js';
-import { writeInvitePage } from './lib/invite-page.js';
+import { writeInvitationsPage, writeInvitePage } from './lib/invite-page.js';
 import { touchUsersFile } from './lib/authelia.js';
 import { reconcileWebSurfaces } from './lib/web-surface.js';
 import {
@@ -196,6 +197,11 @@ async function start() {
   // signed for the panel admits a request (routes/user-surface.js) ---
   server.register(userSurfaceContext);
 
+  // --- The inviter's API of delegated invitations, on a domain's sign-in
+  // host: Gatekeeper vouches for the session's user with an inviter's
+  // assertion (routes/delegated-invitations.js) ---
+  server.register(delegatedInvitationsContext);
+
   // --- User-access session-protected routes (Bearer token, no mTLS) ---
   server.register(async function userAccessContext(app) {
     app.register(userAccessSessionMiddleware);
@@ -245,6 +251,10 @@ async function start() {
       // differs, so a change to the page reaches a relay at its update.
       await writeInvitePage({ logger: server.log }).catch((err) => {
         server.log.warn({ err: err.message }, 'Startup write of the invitation page failed');
+      });
+      // The stock inviter's page of delegated invitations, the same way.
+      await writeInvitationsPage({ logger: server.log }).catch((err) => {
+        server.log.warn({ err: err.message }, 'Startup write of the inviter page failed');
       });
       // First what the branded sign-in needs from Authelia — its asset
       // path, the placeholder logo and an explicit theme: the one

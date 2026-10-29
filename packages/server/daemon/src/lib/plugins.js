@@ -84,6 +84,9 @@ async function getStmts() {
     // The relay's cache of the plugin's settings (lib/plugin-settings.js)
     // goes with its row, and follows its settings schema.
     deleteSettingsByName: db.prepare('DELETE FROM plugin_settings WHERE plugin = ?'),
+    deleteInvitationPolicyByName: db.prepare(
+      'DELETE FROM plugin_invitation_policies WHERE plugin = ?',
+    ),
     selectSettingsByName: db.prepare('SELECT * FROM plugin_settings WHERE plugin = ?'),
     updatePrunedSettings: db.prepare(`
       UPDATE plugin_settings
@@ -656,11 +659,16 @@ export function uninstallPlugin(name, logger) {
     try {
       s.deleteByName.run(name);
       s.deleteSettingsByName.run(name);
+      // Its delegated invitations' policy: a later install starts off. Its
+      // open invitations are revoked by the sweep below (`plugin_removed`).
+      s.deleteInvitationPolicyByName.run(name);
       s.commit.run();
     } catch (err) {
       s.rollback.run();
       throw err;
     }
+    const { scheduleInvitationSweep } = await import('./delegated-invitations.js');
+    scheduleInvitationSweep(logger);
 
     // Its identity ledger — everyone its agent halves were sent, and the
     // erasures it owes — stays while an agent keeps its data (an uninstall
@@ -808,6 +816,10 @@ export async function writePluginRow(
     s.rollback.run();
     throw err;
   }
+  // A version that drops a role or an `invites` changes what its open
+  // delegated invitations can still grant.
+  const { scheduleInvitationSweep } = await import('./delegated-invitations.js');
+  scheduleInvitationSweep();
 }
 
 /**

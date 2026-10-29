@@ -125,6 +125,7 @@ before(async () => {
     ...(await import('../src/lib/directory.js')),
     ...(await import('../src/lib/audit.js')),
     ...(await import('../src/lib/state.js')),
+    ...(await import('../src/lib/invitations.js')),
     ...(await import('../src/lib/user-access.js')),
   };
   await lib.loadConfig();
@@ -498,7 +499,7 @@ test('erase: a live user is refused; a tombstone is scrubbed with its invitation
   const removedAt = (await lib.getDirectoryUser(ali.user_id)).removedAt;
   const earlier = new Date(Date.parse(removedAt) - 60_000).toISOString();
   const later = new Date(Date.parse(removedAt) + 60_000).toISOString();
-  await lib.writeInvitations([
+  await seedInvitations([
     {
       id: 'i1',
       token: 'a'.repeat(64),
@@ -549,10 +550,7 @@ test('erase: a live user is refused; a tombstone is scrubbed with its invitation
     path: '/api/access-log/purge',
     body: { username: 'ali', before: removedAt },
   });
-  assert.deepEqual(
-    (await lib.readInvitations()).map((inv) => inv.id),
-    ['i2', 'i3'],
-  );
+  assert.deepEqual((await lib.listInvitations()).map((inv) => inv.id).sort(), ['i2', 'i3']);
   assert.deepEqual(gatekeeper.accessLog, [
     { username: 'ali', timestamp: later },
     { username: 'ayse', timestamp: earlier },
@@ -598,9 +596,7 @@ test('delete with erase=true scrubs the tombstone at once', async () => {
 
 test('an accepted invitation creates the user through the lock: an id at once, the invitation used', async () => {
   const token = 'd'.repeat(64);
-  const invitations = await lib.readInvitations();
-  await lib.writeInvitations([
-    ...invitations,
+  await seedInvitations([
     {
       id: 'i4',
       token,
@@ -616,22 +612,34 @@ test('an accepted invitation creates the user through the lock: an id at once, t
   const restartsBefore = restarts;
   const res = await app.inject({
     method: 'POST',
-    url: `/api/invite/${token}/accept`,
+    url: '/api/invite/accept',
     headers: { 'content-type': 'application/json' },
-    payload: JSON.stringify({ password: 'correct-horse-battery' }),
+    payload: JSON.stringify({ token, password: 'correct-horse-battery' }),
   });
   assert.equal(res.statusCode, 200, res.body);
   assert.equal(restarts, restartsBefore, 'Authelia is not restarted: it watches users.yml');
   const can = await directoryRow('can');
   assert.ok(isIdentityUuid(can.user_id));
   assert.equal(can.email, 'can@relay.test');
-  const accepted = (await lib.readInvitations()).find((inv) => inv.id === 'i4');
-  assert.equal(accepted.used, true);
+  const accepted = await lib.getInvitation('i4');
+  assert.equal(accepted.status, 'accepted');
+  assert.equal(accepted.acceptedUserId, can.user_id);
   assert.ok(accepted.acceptedAt);
+  assert.equal(accepted.email, null, 'the directory holds the address now');
+  assert.equal(can.invitation_id, 'i4', 'the directory row names its invitation');
   const [created] = await lib.listAudit({ action: 'directory.user.created' });
   assert.equal(created.actor, 'invitation');
-  assert.deepEqual(created.details, { userId: can.user_id, status: 'active' });
+  assert.deepEqual(created.details, { userId: can.user_id, status: 'active', invitationId: 'i4' });
 });
+
+/** Invitations as 4.8 kept them, imported into state.db as the start does. */
+async function seedInvitations(rows) {
+  await writeFile(
+    path.join(process.env.LAMALIBRE_LAMASTE_STATE_DIR, 'invitations.json'),
+    JSON.stringify(rows),
+  );
+  await lib.importLegacyInvitations();
+}
 
 const newUser = (username, extra = {}) =>
   call('POST', '/api/users', {
@@ -908,8 +916,7 @@ test('an unreadable users file is never written over, and its content never logg
   const disabled = await call('PUT', '/api/users/admin', { disabled: true });
   assert.equal(disabled.statusCode, 500);
   const token = 'e'.repeat(64);
-  await lib.writeInvitations([
-    ...(await lib.readInvitations()),
+  await seedInvitations([
     {
       id: 'i5',
       token,
@@ -924,9 +931,9 @@ test('an unreadable users file is never written over, and its content never logg
   ]);
   const accepted = await app.inject({
     method: 'POST',
-    url: `/api/invite/${token}/accept`,
+    url: '/api/invite/accept',
     headers: { 'content-type': 'application/json' },
-    payload: JSON.stringify({ password: 'correct-horse-battery' }),
+    payload: JSON.stringify({ token, password: 'correct-horse-battery' }),
   });
   assert.equal(accepted.statusCode, 500);
   await assert.rejects(lib.reconcileDirectory({ confirmDelayMs: 0 }), /not valid YAML at line/);

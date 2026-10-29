@@ -457,10 +457,16 @@ export function updateOidcProvider(domains, clients, options = {}) {
  * Add an invited user to users.yml — inside `changeUsers`, which brings the
  * directory and the domains' rendering in line with it.
  */
-export async function createUserFromInvitation(username, email, groups, hashedPassword) {
+export async function createUserFromInvitation(
+  username,
+  email,
+  groups,
+  hashedPassword,
+  displayName = username,
+) {
   const usersData = await readUsersForWrite();
   if (usersData.users[username]) throw new Error(`User '${username}' already exists`);
-  usersData.users[username] = { displayname: username, email, password: hashedPassword, groups };
+  usersData.users[username] = { displayname: displayName, email, password: hashedPassword, groups };
   await writeUsers(usersData);
   return { username, created: true };
 }
