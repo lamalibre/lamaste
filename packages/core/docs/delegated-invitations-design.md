@@ -1,6 +1,6 @@
 # Delegated Invitations — Design Document
 
-> **Status:** agreed 2026-10-28 — decisions D1–D12 (D1, D3–D8, D10–D12 put to the founders, each as recommended; D2 and D9 technical, taken as recommended); revised after two independent reviews of 2026-10-28 (24 findings, three blockers, all folded in — tables at the end; one, the `/api/invite` half of 2.5, turned out false and is marked so). Waves 1 to 4 built (core, serverd + Gatekeeper, UI + desktop + CLI + docs, the code's security review of 2026-11-02 with its fixes: see Waves); rodeo is next.
+> **Status:** agreed 2026-10-28 — decisions D1–D12 (D1, D3–D8, D10–D12 put to the founders, each as recommended; D2 and D9 technical, taken as recommended); revised after two independent reviews of 2026-10-28 (24 findings, three blockers, all folded in — tables at the end; one, the `/api/invite` half of 2.5, turned out false and is marked so). Waves 1 to 4 built (core, serverd + Gatekeeper, UI + desktop + CLI + docs, the code's security review of 2026-11-02 with its fixes: see Waves); rodeo on fresh VMs on 2026-11-02: three-VM 55 of 55, single-VM 37 of 37, upgrade 88 of 88 assertions from the npmjs 4.8.0 release (wave 5). Not released.
 > **Target:** Lamaste 4.9.0, on top of 4.8.0 (multi-domain relay, external members, per-domain branding).
 > **Pilot:** corral (`corral.codelama.com.tr`): the client's coordinator invites colleagues into corral, as external members of `codelama.com.tr`, with a corral role, without the relay admin.
 > **Companions:** `herd/docs/r730-workload-plan.md` §15.2 (scope), §15.2a, §15.4, §15.5;
@@ -657,7 +657,47 @@ web surface on B; an authenticated tunnel and a second plugin on B):
    matrix), each given the code, not this document; every finding fixed
    (`7bede9a`, `2874b54`, `a91b51b`, `beef152`, `bdf1ee9`; table below). Each
    fix was checked by putting the bug back: its test failed.
-5. **Rodeo** — 53, 54, single-VM 38, upgrade 01 on fresh VMs.
+5. **Rodeo** — done, 2026-11-02, on fresh Multipass VMs, the candidate
+   (`939793c`, version 4.9.0) on the dev Feria only:
+
+   | Suite     | Result                                                                                                                                                                          |
+   | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | three-VM  | 55 of 55 specs, 2928 assertions, none failed (53: 159, 54: 95, 55: 141)                                                                                                         |
+   | single-VM | 37 of 37 specs, 1764 assertions (38: 142). Spec 11 passed on a rerun after a spec fix below. Spec 20 runs nothing on one VM (`lamaste-agent` is not there): it counts as passed |
+   | upgrade   | 01 Panel Update from the npmjs 4.8.0 tarballs, byte for byte: 88 of 88                                                                                                          |
+
+   **As built:** three specs rather than two: 53 (an inviter grants only what
+   it may), 54 (an invitee reaches only that plugin's site: a second plugin,
+   tunnels on B, a tunnel on A, an OIDC client of B through Authelia's own
+   answer, the admin panel), 55 (revocation ends access), on
+   `invitation-harness.sh`; `identity_block_json` gained `inviting`,
+   `invnarrow`, `invplain`, `badinvite`, `badinviterepeat`. The rule of spec
+   38 for what a relay can show on one VM: acceptance by a delegated invitee,
+   caps and sweeps need a hosted web surface, so they are 53–55's.
+
+   **What the runs found.** No product defect. Every failure was a spec's:
+   the fixture's display name; a removed path answers the panel's 403, not
+   404 (it opens nothing either way); `lamaste-priv` is byte-identical in 4.8.0
+   and 4.9.0, so the upgrade spec now compares it with the candidate's tarball
+   rather than with what was there; 54's backends were checked before their
+   tunnels existed; a username that reached an OIDC client can never be given
+   out again (Authelia's identifier, `username_has_oidc_identity`), so 54's
+   usernames are per run; an audit entry of no one plugin read with a plugin
+   filter; spec 11 lost text to a careless edit of the spec. Specs 08, 11, 12
+   moved to the POST routes, and 52 and upgrade 01 to the colours in
+   `/brand.css`. Spec 01 meets a relay on 4.8 or later: no base to add, no
+   domains to render.
+
+   **The race on a real relay:** spec 55 starts an acceptance from the
+   visitor and revokes as soon as the row reads `accepting`. Both tries of the
+   final run hit the window (`202 marked`), ended revoked by the administrator
+   with the link dead and no account. An account already made and then
+   disabled was not reached: that case stays unit-tested
+   (`delegated-invitations-review.test.js`, items 1 and 2).
+
+   **Not proven by rodeo:** rodeo runs curl, so neither page's script runs
+   against a real panel; they ran in a browser against mocks (wave 3), and
+   their CSP hashes are checked here against what a relay serves.
 
 ## Decisions (agreed 2026-10-28)
 
