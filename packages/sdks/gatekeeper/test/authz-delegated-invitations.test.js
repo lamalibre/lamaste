@@ -6,7 +6,9 @@
  * the raw target being a route's inviter API (nothing longer, no unsafe
  * segment), the Authelia session for that very URL — never from the session
  * cache, two session cookies a 401 — and the domain's projection (a member
- * or an external member, fail closed); then signs an inviter's assertion for
+ * or an external member, fail closed); that the route is served by its
+ * plugin's own site, and on a restricted one that the inviter holds its
+ * grant — a role alone invites nobody; then signs an inviter's assertion for
  * the panel bound to the method and target, which a user-surface
  * verification never accepts. Runs against the build (`npm run build`).
  */
@@ -26,6 +28,7 @@ import {
   isRelayInvitationsTarget,
   parseRelayVerifyKey,
   relayVerifyKeyOf,
+  userSurfaceHosts,
   verifyRelayAssertion,
 } from '@lamalibre/lamaste';
 
@@ -40,6 +43,17 @@ let previousDispatcher;
 const sessions = new Map();
 let domainsProjection;
 const askedAuthelia = [];
+/** The plugin's own site, as the panel writes it. */
+const CORRAL_SITE = {
+  id: 'site-corral',
+  name: 'corral',
+  fqdn: 'corral.example.com',
+  type: 'managed',
+  owner: { plugin: 'corral' },
+  accessMode: 'restricted',
+};
+let sites;
+let grants;
 
 before(async () => {
   dir = await mkdtemp(path.join(tmpdir(), 'lamaste-gatekeeper-inviter-'));
@@ -86,9 +100,15 @@ before(async () => {
     .persist();
 
   const { authzRoutes } = await import('../dist/server/routes/authz.js');
+  grants = await import('../dist/lib/grants.js');
   app = Fastify({ logger: false });
   app.decorate('getTunnels', () => []);
-  app.decorate('getUserSurfaceHosts', () => []);
+  app.decorate('getUserSurfaceHosts', () =>
+    userSurfaceHosts(
+      [{ id: 'internal', exposure: 'internal', pluginRoute: 'corral', agentLabel: 'vm1' }],
+      sites,
+    ),
+  );
   app.decorate('getDomains', () => domainsProjection);
   app.decorate('getSessionCache', () => sessions);
   app.decorate('getCacheVersion', () => 1);
@@ -105,9 +125,20 @@ after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   sessions.clear();
   askedAuthelia.length = 0;
+  sites = [CORRAL_SITE];
+  for (const grant of await grants.listGrants()) await grants.revokeGrant(grant.grantId);
+  for (const principalId of ['alice', 'ext']) {
+    await grants.createGrant({
+      principalType: 'user',
+      principalId,
+      resourceType: 'site',
+      resourceId: CORRAL_SITE.id,
+      context: {},
+    });
+  }
   domainsProjection = domainsIndex([
     { name: 'example.com', members: ['alice'], externals: ['ext'] },
     { name: 'other.test', members: ['stranger'] },
@@ -229,4 +260,43 @@ test('refused: anything but this portal and a route’s inviter API', async () =
     403,
   );
   assert.equal((await check(target, { url: `https://auth.other.test${target}` })).statusCode, 403);
+});
+
+test('an inviter must reach the plugin’s site: a role left on them invites nobody', async () => {
+  const target = '/api/delegated-invitations/corral';
+  const [own] = (await grants.listGrants()).filter((g) => g.principalId === 'alice');
+  await grants.revokeGrant(own.grantId);
+  const res = await check(target, { method: 'GET' });
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.headers['x-lamalibre-refusal'], 'forbidden');
+  assert.equal(res.headers['x-lamalibre-relay-assertion'], undefined);
+
+  // Through a Lamaste group it counts, as on the site itself.
+  const { addMembers, createGroup } = await import('../dist/lib/groups.js');
+  await createGroup('team');
+  await addMembers('team', ['alice']);
+  await grants.createGrant({
+    principalType: 'group',
+    principalId: 'team',
+    resourceType: 'site',
+    resourceId: CORRAL_SITE.id,
+    context: {},
+  });
+  assert.equal((await check(target, { method: 'GET' })).statusCode, 200);
+});
+
+test('fail closed: no plugin-owned site serving the route, no assertion', async () => {
+  sites = [];
+  const res = await check('/api/delegated-invitations/corral', { method: 'GET' });
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.headers['x-lamalibre-relay-assertion'], undefined);
+  // An `authenticated` site asks no grant here: the panel refuses it (an
+  // external member cannot be invited to one).
+  sites = [{ ...CORRAL_SITE, accessMode: 'authenticated' }];
+  const [own] = (await grants.listGrants()).filter((g) => g.principalId === 'alice');
+  await grants.revokeGrant(own.grantId);
+  assert.equal(
+    (await check('/api/delegated-invitations/corral', { method: 'GET' })).statusCode,
+    200,
+  );
 });
