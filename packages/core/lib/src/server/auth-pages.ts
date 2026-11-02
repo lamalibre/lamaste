@@ -137,9 +137,11 @@ export const AUTH_PAGE_STYLE = `
       background: #fff; border-radius: 0.5rem; padding: 1rem; max-width: 220px;
     }
     .qr img { width: 100%; height: auto; }
-    .manual { font-size: 0.75rem; color: ${v('hint')}; margin-bottom: 1rem; word-break: break-all; }
+    .manual { font-size: 0.75rem; color: ${v('muted')}; margin-bottom: 1rem; word-break: break-all; }
     .manual strong { color: ${v('text')}; }
     .muted { color: ${v('muted')}; font-size: 0.75rem; }
+    #bounds { margin-bottom: 1rem; }
+    #result:not(:empty) { margin-top: 1rem; }
     .back { display: inline-block; margin-top: 1.5rem; font-size: 0.8125rem; color: ${v('accent')}; }
   `;
 
