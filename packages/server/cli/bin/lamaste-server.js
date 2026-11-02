@@ -16,6 +16,7 @@
  *   plugins       Manage server-side plugins
  *   push-install  Push install: the switch, the default policy, agents' windows
  *   users         Users and the user directory: disable, delete, erase
+ *   invitations   Invitations, both kinds: list, revoke, disable invitees
  *   domains       The relay's base domains, their members and their brands
  *   tunnels       Manage tunnels
  *   sites         Manage static sites
@@ -66,6 +67,7 @@ ${b('COMMANDS')}
   ${c('push-install')}    Push install: on/off, default policy, open/close an agent's window
   ${c('audit')}           The panel's audit log (approvals, hostings, updates, hook events)
   ${c('users')}           Users and the user directory (list, disable, enable, delete, erase, directory)
+  ${c('invitations')}     Invitations, the administrator's and delegated (list, revoke, disable-invitees)
   ${c('domains')}         The relay's base domains (list, add, verify-dns, activate, remove, members, branding)
   ${c('tunnels')}         Manage tunnels (list, create, delete, toggle, bind a plugin's user surface)
   ${c('sites')}           Manage static sites (list, create, delete)
@@ -184,6 +186,11 @@ async function main() {
     case 'users': {
       const { runUsers } = await import('../src/commands/users.js');
       await runUsers(args.slice(1), { json });
+      break;
+    }
+    case 'invitations': {
+      const { runInvitations } = await import('../src/commands/invitations.js');
+      await runInvitations(args.slice(1), { json });
       break;
     }
     case 'domains': {

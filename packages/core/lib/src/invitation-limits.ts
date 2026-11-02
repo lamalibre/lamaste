@@ -46,3 +46,21 @@ export const INVITATION_REVOKE_REASONS = [
   'superseded',
 ] as const;
 export type InvitationRevokeReason = (typeof INVITATION_REVOKE_REASONS)[number];
+
+/** Why an invitation was revoked, in words — what the panel and the CLI show. */
+export const INVITATION_REVOKE_REASON_TEXT: Readonly<Record<InvitationRevokeReason, string>> = {
+  inviter: 'revoked by the inviter',
+  admin: 'revoked by an administrator',
+  inviter_disabled: 'the inviter was disabled',
+  inviter_removed: 'the inviter was removed',
+  inviter_unentitled: 'the inviter lost the role that could give it',
+  policy_disabled: "the plugin's invitations were turned off",
+  email_domain_removed: 'its e-mail domain is no longer allowed',
+  plugin_removed: 'the plugin was uninstalled',
+  role_undeclared: 'the plugin no longer has this role',
+  surface_removed: "the plugin's web surface was removed",
+  surface_not_restricted: "the plugin's web surface is no longer restricted",
+  attempts_exhausted: 'too many failed attempts locked the link',
+  repair_abandoned: 'access could not be completed',
+  superseded: 'replaced by a newer invitation',
+};

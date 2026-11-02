@@ -13,7 +13,7 @@ const DIGEST_RE = /^[a-f0-9]{64}$/;
 const VERSION_RE = /^[0-9A-Za-z.+-]{1,64}$/;
 /** The reason an update turns secret settings into plain ones. */
 const SETTINGS_SECRET_TO_PLAIN = 'settings.secret-to-plain';
-/** The reason an update adds or removes roles, or widens the attributes its users' records carry. */
+/** The reason an update adds or removes roles, widens the attributes its users' records carry, or lets a role invite into one more role. */
 const IDENTITY_CHANGED = 'identity.changed';
 
 /** How `approve-hooks` is called. */
@@ -72,8 +72,12 @@ export function identityBlockLines(block) {
     .filter((role) => role !== null && typeof role === 'object')
     .map((role) => `${role.id} (${role.label}${role.description ? ` — ${role.description}` : ''})`);
   const attributes = Array.isArray(block.attributes) ? block.attributes.map(attributeWords) : [];
+  const inviting = block.roles
+    .filter((role) => Array.isArray(role?.invites) && role.invites.length > 0)
+    .map((role) => `${role.id} → ${role.invites.join(', ')}`);
   return [
     terminalText(`roles:    ${roles.length > 0 ? roles.join(', ') : 'none'}`),
+    ...(inviting.length > 0 ? [terminalText(`invites:  ${inviting.join('; ')}`)] : []),
     terminalText(
       `receives: ${['user id', 'username', 'roles', 'status', ...attributes].join(', ')} — of the users entitled to it`,
     ),
@@ -117,6 +121,12 @@ export function identityDiffLines(diff) {
   add('roles removed', list(diff.rolesRemoved).map(role(diff.before)), true);
   add('receives more about its users', list(diff.attributesAdded).map(attributeWords), true);
   add('receives less about its users', list(diff.attributesRemoved).map(attributeWords), false);
+  const invites = (block, value) =>
+    (Array.isArray(value) ? value : []).map(
+      (entry) => `${role(block)(entry.role)} → ${list(entry.roles).map(role(block)).join(', ')}`,
+    );
+  add('may invite more', invites(diff.after, diff.invitesAdded), true);
+  add('may invite less', invites(diff.before, diff.invitesRemoved), false);
   add('role labels changed', list(diff.labelsChanged).map(role(diff.after)), false);
   // A removed role stays removed: approving revokes it from the grants that hold it.
   if (list(diff.rolesRemoved).length > 0 && 'grantsAffected' in diff) {
