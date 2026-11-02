@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.9.0] - 2026-11-02
 
 Delegated invitations: a person holding a plugin role the manifest marks as inviting invites colleagues into that plugin, with a role that role may give, without the relay's administrator. Each invitee becomes an external member of the plugin's domain, with the role and the grant on the plugin's own site, and reaches nothing else. Corral is the pilot. Design: `packages/core/docs/delegated-invitations-design.md`; reference: `04-api-reference/invitations.md`.
 
