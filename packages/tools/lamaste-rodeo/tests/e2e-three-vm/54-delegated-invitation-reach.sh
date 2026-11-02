@@ -69,8 +69,10 @@ CLEAN_PLUGINS="${PLUGIN} ${OTHER} ${OIDC_PLUGIN}"
 CLEAN_ROUTES="${PLUGIN} ${OTHER}"
 PURGE_PACKAGES=""
 COORD="e2e54-coord"
-MEM="e2e54-member"
-INVITEE="e2e54-invitee"
+# Both meet the OIDC client: Authelia keeps an opaque identifier for a username
+# that asked, and such a name is never given out again. A new one each run.
+MEM="e2e54-member-$(date +%s)"
+INVITEE="e2e54-invitee-$(date +%s)"
 # Test credentials for this run only, never printed
 PASSWORD="E2e-$(openssl rand -hex 12)"
 INVITEE_PASSWORD="E2e-$(openssl rand -hex 12)"
@@ -197,11 +199,10 @@ assert_eq "$(status_of "$RESP")" "200" "…enabled: B has an OIDC client" || tru
 
 log_section "Tunnels on B (authenticated, restricted) and on A (authenticated)"
 
-md_backends "${PORT_T}:E2E54_B_AUTH" "${PORT_R}:E2E54_B_RESTRICTED" "${PORT_A}:E2E54_A_AUTH"
 md_tunnel TUNNEL_T "${SUB_T}" "${DOMAIN_2}" "${PORT_T}" authenticated
 md_tunnel TUNNEL_R "${SUB_R}" "${DOMAIN_2}" "${PORT_R}" restricted
 md_tunnel TUNNEL_A "${SUB_A}" "${DOMAIN}" "${PORT_A}" authenticated
-nudge_sync
+md_backends "${PORT_T}:E2E54_B_AUTH" "${PORT_R}:E2E54_B_RESTRICTED" "${PORT_A}:E2E54_A_AUTH"
 
 # ===========================================================================
 # 2. The invitation

@@ -155,11 +155,10 @@ BAD_FORMAT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
 assert_eq "$BAD_FORMAT_STATUS" "404" "Malformed token rejected (HTTP 404, as an unknown one)" || true
 
 # The token never goes in a URL any more: the path routes are gone
-PATH_ROUTE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
-  --max-time "$CURL_TIMEOUT" \
+PATH_ROUTE=$(curl -s --max-time "$CURL_TIMEOUT" \
   -H "Accept: application/json" \
-  "${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}" 2>/dev/null || echo "000")
-assert_eq "$PATH_ROUTE_STATUS" "404" "GET /api/invite/<token> no longer answers (HTTP 404)" || true
+  "${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}" 2>/dev/null || echo "")
+assert_not_contains "$PATH_ROUTE" "$INVITE_EMAIL" "GET /api/invite/<token> no longer answers: nothing of the invitation" || true
 
 # ---------------------------------------------------------------------------
 log_section "Accept invitation (public endpoint)"

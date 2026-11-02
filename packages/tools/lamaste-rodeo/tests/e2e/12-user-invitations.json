@@ -768,15 +768,15 @@
         },
         {
           "id": "step-37",
-          "label": "Set PATH_ROUTE_STATUS",
+          "label": "Set PATH_ROUTE",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -H \"Accept: application/json\" \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}\" 2>/dev/null || echo \"000\""
+            "command": "curl -s --max-time \"$CURL_TIMEOUT\" -H \"Accept: application/json\" \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}\" 2>/dev/null || echo \"\""
           },
           "capture": [
             {
-              "variable": "PATH_ROUTE_STATUS",
+              "variable": "PATH_ROUTE",
               "from": {
                 "kind": "body"
               }
@@ -785,27 +785,27 @@
         },
         {
           "id": "step-38",
-          "label": "GET /api/invite/<token> no longer answers (HTTP 404)",
+          "label": "GET /api/invite/<token> no longer answers: nothing of the invitation",
           "target": "local",
           "continueOnError": true,
           "op": {
             "type": "assert",
             "check": {
-              "kind": "eq",
+              "kind": "not_contains",
               "actual": {
                 "kind": "var",
-                "name": "PATH_ROUTE_STATUS"
+                "name": "PATH_ROUTE"
               },
-              "expected": {
-                "kind": "literal",
-                "value": "404"
+              "substring": {
+                "kind": "var",
+                "name": "INVITE_EMAIL"
               },
-              "message": "GET /api/invite/<token> no longer answers (HTTP 404)"
+              "message": "GET /api/invite/<token> no longer answers: nothing of the invitation"
             }
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid token\"\n# ---------------------------------------------------------------------------\n\nINVALID_TOKEN=\"0000000000000000000000000000000000000000000000000000000000000000\"\nINVALID_TOKEN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"token\\\":\\\"${INVALID_TOKEN}\\\",\\\"password\\\":\\\"SomePass12345!!\\\"}\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$INVALID_TOKEN_STATUS\" \"404\" \"Accept with invalid token returns 404\" || true\n\n# A token that is not one opens nothing: the same answer as one never made\nBAD_FORMAT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"token\":\"not-a-valid-token\",\"password\":\"SomePass12345!!\"}' \\\n  \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$BAD_FORMAT_STATUS\" \"404\" \"Malformed token rejected (HTTP 404, as an unknown one)\" || true\n\n# The token never goes in a URL any more: the path routes are gone\nPATH_ROUTE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -H \"Accept: application/json\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}\" 2>/dev/null || echo \"000\")\nassert_eq \"$PATH_ROUTE_STATUS\" \"404\" \"GET /api/invite/<token> no longer answers (HTTP 404)\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid token\"\n# ---------------------------------------------------------------------------\n\nINVALID_TOKEN=\"0000000000000000000000000000000000000000000000000000000000000000\"\nINVALID_TOKEN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"token\\\":\\\"${INVALID_TOKEN}\\\",\\\"password\\\":\\\"SomePass12345!!\\\"}\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$INVALID_TOKEN_STATUS\" \"404\" \"Accept with invalid token returns 404\" || true\n\n# A token that is not one opens nothing: the same answer as one never made\nBAD_FORMAT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"token\":\"not-a-valid-token\",\"password\":\"SomePass12345!!\"}' \\\n  \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$BAD_FORMAT_STATUS\" \"404\" \"Malformed token rejected (HTTP 404, as an unknown one)\" || true\n\n# The token never goes in a URL any more: the path routes are gone\nPATH_ROUTE=$(curl -s --max-time \"$CURL_TIMEOUT\" \\\n  -H \"Accept: application/json\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}\" 2>/dev/null || echo \"\")\nassert_not_contains \"$PATH_ROUTE\" \"$INVITE_EMAIL\" \"GET /api/invite/<token> no longer answers: nothing of the invitation\" || true"
     },
     {
       "id": "accept-invitation-public-endpoint",

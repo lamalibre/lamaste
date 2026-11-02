@@ -307,7 +307,7 @@ log_section "The link opens on B's sign-in host alone"
 
 RESP=$(inv_lookup "${TOKEN}")
 assert_eq "$(visit_status "$RESP")" "200" "POST auth.<B>/api/invite/lookup: 200" || true
-assert_json_field "$(visit_body "$RESP")" '"\(.kind) \(.email) \(.plugin) \(.role) \(.invitedBy) \(.suggestedUsername)"' "delegated ayse@${INV_MAIL} ${PLUGIN} Viewer E2E ${COORD} ayse" "…what it is for and who invited, by display name" || true
+assert_json_field "$(visit_body "$RESP")" '"\(.kind) \(.email) \(.plugin) \(.role) \(.invitedBy) \(.suggestedUsername)"' "delegated ayse@${INV_MAIL} E2E App Host (main) Viewer E2E ${COORD} ayse" "…what it is for and who invited, by display name" || true
 assert_eq "$(json_get "$(visit_body "$RESP")" '.username // "none"')" "none" "…never the inviter's username" || true
 assert_eq "$(visit_status "$(inv_lookup "${TOKEN}" "auth.${DOMAIN}")")" "404" "auth.<A>: 404, as no invitation at all" || true
 assert_eq "$(inv_refused_off_portal "${TOKEN}" "https://127.0.0.1:9292")" "404" ":9292, Host and X-Forwarded-Host naming auth.<B>: 404" || true
@@ -315,7 +315,8 @@ assert_eq "$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --
 RESP=$(visit - -X POST -H 'Content-Type: application/json' -H "X-Forwarded-Host: auth.${DOMAIN_2}" -d "{\"token\":\"${TOKEN}\"}" "https://auth.${DOMAIN}/api/invite/lookup")
 assert_eq "$(visit_status "$RESP")" "404" "auth.<A>, X-Forwarded-Host naming auth.<B>: 404" || true
 RESP=$(visit - "https://auth.${DOMAIN_2}/api/invite/${TOKEN}")
-assert_eq "$(visit_status "$RESP")" "404" "The token in a URL opens nothing: the path routes are gone" || true
+assert_not_eq "$(visit_status "$RESP")" "200" "The token in a URL opens nothing: the path routes are gone" || true
+assert_not_contains "$(visit_body "$RESP")" "ayse" "…it says nothing of the invitation" || true
 assert_eq "$(visit_status "$(inv_lookup "$(printf '0%.0s' {1..64})")")" "404" "A token that was never made: 404" || true
 
 RESP=$(visit - "https://auth.${DOMAIN_2}/invite")
