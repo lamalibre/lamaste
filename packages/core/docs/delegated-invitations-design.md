@@ -662,7 +662,7 @@ web surface on B; an authenticated tunnel and a second plugin on B):
 
    | Suite     | Result                                                                                                                                                                          |
    | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | three-VM  | 55 of 55 specs, 2928 assertions, none failed (53: 159, 54: 95, 55: 141)                                                                                                         |
+   | three-VM  | 55 of 55 specs, 2928 assertions, none failed (53: 159, 54: 97, 55: 141)                                                                                                         |
    | single-VM | 37 of 37 specs, 1764 assertions (38: 142). Spec 11 passed on a rerun after a spec fix below. Spec 20 runs nothing on one VM (`lamaste-agent` is not there): it counts as passed |
    | upgrade   | 01 Panel Update from the npmjs 4.8.0 tarballs, byte for byte: 88 of 88                                                                                                          |
 
