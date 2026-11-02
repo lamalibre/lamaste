@@ -185,9 +185,9 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # \`/api/invite/\`, with its slash: a prefix without one would also take
-    # \`/api/invitations*\` (the administrator's invitations API) and clear
-    # the client-certificate headers it needs.
+    # Public, and for an administrator's invitations: a delegated one is
+    # answered only by the sign-in host of its domain, so its \`Host\` is
+    # written here, never the client's.
     location /api/invite/ {
         proxy_pass http://127.0.0.1:3100;
         proxy_http_version 1.1;
@@ -202,7 +202,7 @@ server {
         proxy_set_header Remote-Name "";
         proxy_set_header Remote-Email "";${PANEL_ASSERTION_CLEARED}
 
-        proxy_set_header Host $host;
+        proxy_set_header Host 127.0.0.1;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;

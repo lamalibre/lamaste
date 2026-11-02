@@ -641,12 +641,14 @@ test('every auth portal serves the inviter API through Gatekeeper, and the invit
   }
 });
 
-test('the panel vhost’s public invitation API never takes the administrator’s invitations API', async () => {
+test('the panel vhost’s public invitation API writes a Host no invitation names', async () => {
   const text = await readFile(path.join(captured, 'lamalibre-lamaste-panel-domain'), 'utf8');
-  // `location /api/invite` without its slash would also match
-  // `/api/invitations*` and clear the client certificate it needs.
-  assert.doesNotMatch(text, /location \/api\/invite \{/);
-  assert.match(text, /location \/api\/invite\/ \{/);
+  const location = text.slice(text.indexOf('location /api/invite/ {'));
+  const body = location.slice(0, location.indexOf('\n    }'));
+  // A delegated token is answered only with `Host: auth.<its domain>`: a
+  // client's own Host here would serve it off the portal.
+  assert.match(body, /proxy_set_header Host 127\.0\.0\.1;/);
+  assert.doesNotMatch(body, /proxy_set_header Host \$host/);
 });
 
 test('every auth portal serves the domain’s brand overrides and rewrites Authelia’s index for it; an unbranded domain gets the stock page', async () => {
