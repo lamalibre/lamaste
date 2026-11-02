@@ -1161,27 +1161,55 @@
           ]
         },
         {
-          "id": "step-107",
-          "label": "lamaste-priv was replaced by the update",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "lamaste-priv was replaced by the update"
-          }
-        },
-        {
-          "id": "step-108",
-          "label": "lamaste-priv is still the one ${BEFORE_VERSION} installed",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "lamaste-priv is still the one ${BEFORE_VERSION} installed"
-          }
-        },
-        {
           "id": "step-109",
+          "label": "Set PRIV_CANDIDATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "tar -xzOf \"${WORK_DIR}/pack/lamalibre-create-lamaste-${CANDIDATE}.tgz\" package/scripts/lamaste-priv 2>/dev/null | sha256sum | cut -d' ' -f1"
+          },
+          "capture": [
+            {
+              "variable": "PRIV_CANDIDATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-110",
+          "label": "lamaste-priv in place is the one ${CANDIDATE} ships",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PRIV_AFTER"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PRIV_CANDIDATE"
+              },
+              "message": "lamaste-priv in place is the one ${CANDIDATE} ships"
+            }
+          }
+        },
+        {
+          "id": "step-111",
+          "label": "${BEFORE_VERSION} and ${CANDIDATE} ship the same lamaste-priv",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "${BEFORE_VERSION} and ${CANDIDATE} ship the same lamaste-priv"
+          }
+        },
+        {
+          "id": "step-112",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1198,7 +1226,7 @@
           ]
         },
         {
-          "id": "step-110",
+          "id": "step-113",
           "label": "It refuses a vhost under a pre-4.7 name",
           "target": "local",
           "continueOnError": true,
@@ -1219,14 +1247,14 @@
           }
         }
       ],
-      "bash": "log_section \"The root helper is the candidate's\"\n\nPRIV_AFTER=$(sudo sha256sum \"${PRIV}\" | cut -d' ' -f1)\nif [ \"${PRIV_AFTER}\" != \"${PRIV_BEFORE}\" ]; then\n  log_pass \"lamaste-priv was replaced by the update\"\nelse\n  log_fail \"lamaste-priv is still the one ${BEFORE_VERSION} installed\"\nfi\nOUT=$(printf 'server {\\n listen 443 ssl;\\n}\\n' | sudo \"${PRIV}\" nginx-site write \"lamalibre-lamaste-app-e2eup1legacy\" 2>&1 > /dev/null || true)\nassert_contains \"$OUT\" \"site name not allowed for write\" \"It refuses a vhost under a pre-4.7 name\" || true"
+      "bash": "log_section \"The root helper is the candidate's\"\n\nPRIV_AFTER=$(sudo sha256sum \"${PRIV}\" | cut -d' ' -f1)\n# Two releases may ship the same script: what counts is that the one in place\n# is the candidate's own.\nmkdir -p \"${WORK_DIR}/pack\"\n(cd \"${WORK_DIR}/pack\" && npm pack \"@lamalibre/create-lamaste@${CANDIDATE}\" --silent > /dev/null 2>&1) || true\nPRIV_CANDIDATE=$(tar -xzOf \"${WORK_DIR}/pack/lamalibre-create-lamaste-${CANDIDATE}.tgz\" package/scripts/lamaste-priv 2>/dev/null | sha256sum | cut -d' ' -f1)\nassert_eq \"${PRIV_AFTER}\" \"${PRIV_CANDIDATE}\" \"lamaste-priv in place is the one ${CANDIDATE} ships\" || true\nif [ \"${PRIV_AFTER}\" = \"${PRIV_BEFORE}\" ]; then\n  log_info \"${BEFORE_VERSION} and ${CANDIDATE} ship the same lamaste-priv\"\nfi\nOUT=$(printf 'server {\\n listen 443 ssl;\\n}\\n' | sudo \"${PRIV}\" nginx-site write \"lamalibre-lamaste-app-e2eup1legacy\" 2>&1 > /dev/null || true)\nassert_contains \"$OUT\" \"site name not allowed for write\" \"It refuses a vhost under a pre-4.7 name\" || true"
     },
     {
       "id": "the-vhosts-under-the-candidate-s-names-link-state-kept",
       "label": "The vhosts under the candidate's names, link state kept",
       "steps": [
         {
-          "id": "step-111",
+          "id": "step-114",
           "label": "${ON_FQDN}: under its full hostname, still linked",
           "target": "local",
           "continueOnError": true,
@@ -1247,7 +1275,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-115",
           "label": "${OFF_FQDN}: under its full hostname, still not linked",
           "target": "local",
           "continueOnError": true,
@@ -1268,7 +1296,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-116",
           "label": "The auth portal: lamalibre-lamaste-auth-${DOMAIN}, linked",
           "target": "local",
           "continueOnError": true,
@@ -1289,7 +1317,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-117",
           "label": "No pre-4.7 name is left, as a file or a link",
           "target": "local",
           "continueOnError": true,
@@ -1310,7 +1338,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-118",
           "label": "nginx -t passes",
           "target": "local",
           "op": {
@@ -1320,7 +1348,7 @@
           }
         },
         {
-          "id": "step-116",
+          "id": "step-119",
           "label": "nginx -t fails after the update",
           "target": "local",
           "op": {
@@ -1330,7 +1358,7 @@
           }
         },
         {
-          "id": "step-117",
+          "id": "step-120",
           "label": "Every host answers as before (${BEFORE})",
           "target": "local",
           "continueOnError": true,
@@ -1358,7 +1386,7 @@
       "label": "The primary domain; every user of ${BEFORE_VERSION} its member",
       "steps": [
         {
-          "id": "step-118",
+          "id": "step-121",
           "label": "GET /api/domains",
           "target": "host",
           "op": {
@@ -1376,7 +1404,7 @@
           ]
         },
         {
-          "id": "step-119",
+          "id": "step-122",
           "label": "One primary domain",
           "target": "local",
           "continueOnError": true,
@@ -1398,7 +1426,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-123",
           "label": "…${DOMAIN}, active",
           "target": "local",
           "continueOnError": true,
@@ -1420,7 +1448,7 @@
           }
         },
         {
-          "id": "step-122",
+          "id": "step-125",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -1438,7 +1466,7 @@
           ]
         },
         {
-          "id": "step-123",
+          "id": "step-126",
           "label": "The same users as before the update",
           "target": "local",
           "continueOnError": true,
@@ -1466,7 +1494,7 @@
       "label": "Authelia and Gatekeeper enforce membership",
       "steps": [
         {
-          "id": "step-125",
+          "id": "step-128",
           "label": "Set AUTHELIA_POLICY",
           "target": "local",
           "op": {
@@ -1483,7 +1511,7 @@
           ]
         },
         {
-          "id": "step-126",
+          "id": "step-129",
           "label": "Authelia's access_control denies by default",
           "target": "local",
           "continueOnError": true,
@@ -1504,7 +1532,7 @@
           }
         },
         {
-          "id": "step-127",
+          "id": "step-130",
           "label": "Gatekeeper's domains.json names ${DOMAIN}",
           "target": "local",
           "op": {
@@ -1514,7 +1542,7 @@
           }
         },
         {
-          "id": "step-128",
+          "id": "step-131",
           "label": "domains.json is missing or does not name ${DOMAIN}",
           "target": "local",
           "op": {
@@ -1524,7 +1552,7 @@
           }
         },
         {
-          "id": "step-129",
+          "id": "step-132",
           "label": "Authelia and Gatekeeper are running",
           "target": "local",
           "continueOnError": true,
@@ -1545,7 +1573,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-133",
           "label": "Set PROJECTION",
           "target": "local",
           "op": {
@@ -1562,7 +1590,7 @@
           ]
         },
         {
-          "id": "step-131",
+          "id": "step-134",
           "label": "…the projection is version 2, no external member",
           "target": "local",
           "continueOnError": true,
@@ -1591,7 +1619,7 @@
       "label": "Authelia reads who may pass from its users file",
       "steps": [
         {
-          "id": "step-132",
+          "id": "step-135",
           "label": "Set CONFIG",
           "target": "local",
           "op": {
@@ -1608,7 +1636,7 @@
           ]
         },
         {
-          "id": "step-133",
+          "id": "step-136",
           "label": "Authelia watches users.yml and reads a session's groups at every request",
           "target": "local",
           "continueOnError": true,
@@ -1630,7 +1658,7 @@
           }
         },
         {
-          "id": "step-134",
+          "id": "step-137",
           "label": "…its own password change and reset are off (the panel is the file's one writer)",
           "target": "local",
           "continueOnError": true,
@@ -1652,7 +1680,7 @@
           }
         },
         {
-          "id": "step-135",
+          "id": "step-138",
           "label": "Set KEY",
           "target": "local",
           "op": {
@@ -1669,7 +1697,7 @@
           ]
         },
         {
-          "id": "step-136",
+          "id": "step-139",
           "label": "The primary domain's rules name its member group (lamaste:m:<key>)",
           "target": "local",
           "continueOnError": true,
@@ -1690,7 +1718,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-140",
           "label": "…and name no user",
           "target": "local",
           "continueOnError": true,
@@ -1711,7 +1739,7 @@
           }
         },
         {
-          "id": "step-138",
+          "id": "step-141",
           "label": "Set USERS_GROUPS",
           "target": "local",
           "op": {
@@ -1728,7 +1756,7 @@
           ]
         },
         {
-          "id": "step-139",
+          "id": "step-142",
           "label": "Every user of users.yml holds the member group",
           "target": "local",
           "continueOnError": true,
@@ -1756,7 +1784,7 @@
       "label": "The branded sign-in's base is in place; the page is pixel-for-pixel stock",
       "steps": [
         {
-          "id": "step-140",
+          "id": "step-143",
           "label": "Set AUTH_VHOST",
           "target": "local",
           "op": {
@@ -1773,7 +1801,7 @@
           ]
         },
         {
-          "id": "step-141",
+          "id": "step-144",
           "label": "The auth vhost carries the brand-override locations (/brand.css)",
           "target": "local",
           "continueOnError": true,
@@ -1794,7 +1822,7 @@
           }
         },
         {
-          "id": "step-142",
+          "id": "step-145",
           "label": "…/static/media/logo.png",
           "target": "local",
           "continueOnError": true,
@@ -1815,7 +1843,7 @@
           }
         },
         {
-          "id": "step-143",
+          "id": "step-146",
           "label": "…/locales/",
           "target": "local",
           "continueOnError": true,
@@ -1836,7 +1864,7 @@
           }
         },
         {
-          "id": "step-144",
+          "id": "step-147",
           "label": "…with @authelia as the fallback",
           "target": "local",
           "continueOnError": true,
@@ -1857,7 +1885,7 @@
           }
         },
         {
-          "id": "step-147",
+          "id": "step-150",
           "label": "Set AUTH_PAGE",
           "target": "local",
           "op": {
@@ -1874,7 +1902,7 @@
           ]
         },
         {
-          "id": "step-148",
+          "id": "step-151",
           "label": "https://${AUTH_FQDN}/ answers 200",
           "target": "local",
           "continueOnError": true,
@@ -1895,7 +1923,7 @@
           }
         },
         {
-          "id": "step-149",
+          "id": "step-152",
           "label": "…data-theme=\\",
           "target": "local",
           "continueOnError": true,
@@ -1916,7 +1944,7 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-153",
           "label": "…data-logooverride=\\",
           "target": "local",
           "continueOnError": true,
@@ -1937,7 +1965,7 @@
           }
         },
         {
-          "id": "step-151",
+          "id": "step-154",
           "label": "…no stylesheet: the stock page until a brand is set",
           "target": "local",
           "continueOnError": true,
@@ -1958,7 +1986,7 @@
           }
         },
         {
-          "id": "step-152",
+          "id": "step-155",
           "label": "Authelia's configuration gained theme light and server.asset_path /etc/authelia/assets",
           "target": "local",
           "continueOnError": true,
@@ -1980,7 +2008,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-156",
           "label": "The placeholder logo is in the asset directory, group lamaste-authelia",
           "target": "local",
           "continueOnError": true,
@@ -2001,7 +2029,7 @@
           }
         },
         {
-          "id": "step-154",
+          "id": "step-157",
           "label": "GET /api/audit?action=authelia.restarted&limit=200",
           "target": "host",
           "op": {
@@ -2019,7 +2047,7 @@
           ]
         },
         {
-          "id": "step-155",
+          "id": "step-158",
           "label": "Exactly one authelia.restarted audited with reason branding-base since the update",
           "target": "local",
           "continueOnError": true,
@@ -2040,7 +2068,7 @@
           }
         },
         {
-          "id": "step-156",
+          "id": "step-159",
           "label": "No authelia.restarted for the base: ${BEFORE_VERSION} had it",
           "target": "local",
           "continueOnError": true,
@@ -2061,7 +2089,7 @@
           }
         },
         {
-          "id": "step-157",
+          "id": "step-160",
           "label": "GET /api/domains/${DOMAIN}/branding: no brand",
           "target": "local",
           "continueOnError": true,
@@ -2083,7 +2111,7 @@
           }
         },
         {
-          "id": "step-158",
+          "id": "step-161",
           "label": "nginx -V lists --with-http_sub_module (compiled in)",
           "target": "local",
           "continueOnError": true,
@@ -2104,7 +2132,7 @@
           }
         },
         {
-          "id": "step-159",
+          "id": "step-162",
           "label": "Set INVITE_PAGE",
           "target": "local",
           "op": {
@@ -2121,7 +2149,7 @@
           ]
         },
         {
-          "id": "step-160",
+          "id": "step-163",
           "label": "The stock invitation page is in place",
           "target": "local",
           "continueOnError": true,
@@ -2142,7 +2170,7 @@
           }
         },
         {
-          "id": "step-161",
+          "id": "step-164",
           "label": "…rewritten by the candidate (its colours are custom properties a brand sets from /brand.css)",
           "target": "local",
           "continueOnError": true,
@@ -2170,7 +2198,7 @@
       "label": "Signed in again: the user reaches what they reached",
       "steps": [
         {
-          "id": "step-163",
+          "id": "step-166",
           "label": "${USERNAME} signed in at auth.${DOMAIN} on ${CANDIDATE}",
           "target": "local",
           "continueOnError": true,
@@ -2191,7 +2219,7 @@
           }
         },
         {
-          "id": "step-164",
+          "id": "step-167",
           "label": "…and is answered on ${ON_FQDN} as before (${REACH_BEFORE})",
           "target": "local",
           "continueOnError": true,
@@ -2219,7 +2247,7 @@
       "label": "The pages under the candidate's CSP: the script served is the one it names",
       "steps": [
         {
-          "id": "step-167",
+          "id": "step-170",
           "label": "Set BRANDED_BODY",
           "target": "local",
           "op": {
@@ -2236,7 +2264,7 @@
           ]
         },
         {
-          "id": "step-168",
+          "id": "step-171",
           "label": "…still the brand's page",
           "target": "local",
           "continueOnError": true,
@@ -2257,7 +2285,7 @@
           }
         },
         {
-          "id": "step-169",
+          "id": "step-172",
           "label": "…its colours from /brand.css",
           "target": "local",
           "continueOnError": true,
@@ -2278,7 +2306,7 @@
           }
         },
         {
-          "id": "step-170",
+          "id": "step-173",
           "label": "…which carries the accent",
           "target": "local",
           "continueOnError": true,
@@ -2299,7 +2327,7 @@
           }
         },
         {
-          "id": "step-172",
+          "id": "step-175",
           "label": "The branded page was rendered again by the candidate",
           "target": "local",
           "continueOnError": true,
@@ -2327,7 +2355,7 @@
       "label": "The invitations moved into state.db",
       "steps": [
         {
-          "id": "step-174",
+          "id": "step-177",
           "label": "invitations.json is still there",
           "target": "local",
           "op": {
@@ -2337,7 +2365,7 @@
           }
         },
         {
-          "id": "step-175",
+          "id": "step-178",
           "label": "invitations.json is gone",
           "target": "local",
           "op": {
@@ -2347,7 +2375,7 @@
           }
         },
         {
-          "id": "step-176",
+          "id": "step-179",
           "label": "GET /api/invitations",
           "target": "host",
           "op": {
@@ -2365,7 +2393,7 @@
           ]
         },
         {
-          "id": "step-178",
+          "id": "step-181",
           "label": "No clear token in state.db or its log",
           "target": "local",
           "continueOnError": true,
@@ -2386,7 +2414,7 @@
           }
         },
         {
-          "id": "step-179",
+          "id": "step-182",
           "label": "It holds the token's SHA-256",
           "target": "local",
           "continueOnError": true,
@@ -2414,7 +2442,7 @@
       "label": "The invitation of ${BEFORE_VERSION} accepts by POST",
       "steps": [
         {
-          "id": "step-183",
+          "id": "step-186",
           "label": "POST /api/invite/lookup finds it",
           "target": "local",
           "continueOnError": true,
@@ -2436,7 +2464,7 @@
           }
         },
         {
-          "id": "step-184",
+          "id": "step-187",
           "label": "Set ACCEPT",
           "target": "local",
           "op": {
@@ -2453,7 +2481,7 @@
           ]
         },
         {
-          "id": "step-185",
+          "id": "step-188",
           "label": "POST /api/invite/accept: the user is made",
           "target": "local",
           "continueOnError": true,
@@ -2475,7 +2503,7 @@
           }
         },
         {
-          "id": "step-186",
+          "id": "step-189",
           "label": "…with the panel's QR",
           "target": "local",
           "continueOnError": true,
@@ -2503,7 +2531,7 @@
       "label": "The panel logged no error since the update",
       "steps": [
         {
-          "id": "step-188",
+          "id": "step-191",
           "label": "Set ERRORS",
           "target": "local",
           "op": {
@@ -2520,7 +2548,7 @@
           ]
         },
         {
-          "id": "step-189",
+          "id": "step-192",
           "label": "No level ≥ 50 line in the panel's journal since ${UPDATE_STARTED}",
           "target": "local",
           "continueOnError": true,
