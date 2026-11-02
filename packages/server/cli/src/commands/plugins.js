@@ -10,6 +10,7 @@
  *                        Remove a plugin (must be disabled first); a hosted one
  *                        through its uninstall pipeline (an operation); --purge also
  *                        deletes the data of the agent half Lamaste installed
+ *   invitations <name> [set …]    Delegated invitations: its policy and invitations
  *   oidc-clients <name> [grants]
  *                        The OIDC clients a plugin declares on Authelia, and who is
  *                        granted each user-facing one
@@ -89,6 +90,7 @@ import { configureCmd, settingsCmd } from './plugin-settings.js';
 import { audienceCmd, entitlementsCmd, identityCmd, identitySyncCmd } from './plugin-identity.js';
 import { webSurfaceCmd } from './plugin-web-surface.js';
 import { pluginDomainCmd } from './domains.js';
+import { pluginInvitationsCmd } from './invitations.js';
 import { fail as failPanel } from '../fail.js';
 import {
   OIDC_CLIENT_RESOURCE,
@@ -129,6 +131,8 @@ export async function runPlugins(args, { json }) {
       return disablePluginCmd(args[1], { json });
     case 'uninstall':
       return uninstallPluginCmd(args[1], args.slice(2), { json });
+    case 'invitations':
+      return pluginInvitationsCmd(args[1], args.slice(2), { json });
     case 'oidc-clients':
       return oidcClientsCmd(args[1], args.slice(2), { json });
     case 'rotate-secret':
@@ -202,6 +206,10 @@ ${b('Subcommands:')}
   ${c('oidc-clients <name> grant|revoke <clientId> --user <u>|--group <g>')}
                        Admit (or no longer) an external member to a client's sign-in —
                        members of the plugin's domain need no grant
+  ${c('invitations <name>')}   Who may invite (its policy) and its invitations
+  ${c('invitations <name> set [--enable|--disable] [--email-domains a,b] [--max-open n]')}
+  ${c('                       [--max-joined n] [--lifetime-days d]')}
+                       Change the policy; the flags not given keep their values
   ${c('rotate-secret <name> <clientId>')}
                        Replace a confidential client's secret — printed once
   ${c('hosting <name>')}       Which agent hosts the plugin's agent half, port, health

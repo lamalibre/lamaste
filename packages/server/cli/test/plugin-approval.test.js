@@ -304,3 +304,32 @@ test("an update's web tree: first declared, changed, kept, dropped", () => {
   assert.deepEqual(dropped.lines, ['tree:     aaaaaaaaaaaa → none']);
   assert.equal(dropped.changed, true);
 });
+
+test('a role allowed to invite: shown with the block; a wider one waits, a narrower one does not', () => {
+  const after = {
+    roles: [
+      { id: 'coordinator', label: 'Coordinator', invites: ['viewer'] },
+      { id: 'viewer', label: 'Viewer' },
+    ],
+    attributes: [],
+  };
+  assert.ok(identityBlockLines(after).includes('invites:  coordinator → viewer'));
+  const shown = identityDiffLines({
+    before: after,
+    after,
+    rolesAdded: [],
+    rolesRemoved: [],
+    attributesAdded: [],
+    attributesRemoved: [],
+    labelsChanged: [],
+    invitesAdded: [{ role: 'coordinator', roles: ['viewer'] }],
+    invitesRemoved: [{ role: 'viewer', roles: ['viewer'] }],
+  });
+  assert.deepEqual(shown.lines, [
+    {
+      text: 'may invite more: coordinator (Coordinator) → viewer (Viewer) — waits for approval',
+      approval: true,
+    },
+    { text: 'may invite less: viewer (Viewer) → viewer (Viewer)', approval: false },
+  ]);
+});

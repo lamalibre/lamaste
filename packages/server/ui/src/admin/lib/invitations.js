@@ -1,7 +1,7 @@
 /**
  * Invitations in the panel's words: why one was revoked, who invited whom,
  * the filters of the list, a plugin's policy as a form, and the people who
- * joined by invitation. The bounds are core's
+ * joined by invitation. The bounds and the reasons' words are core's
  * (`@lamalibre/lamaste/invitation-limits`), never copied here. Nothing here
  * calls the panel.
  */
@@ -9,25 +9,8 @@
 import {
   INVITATION_POLICY_LIMITS,
   INVITATION_POLICY_MAX_EMAIL_DOMAINS,
+  INVITATION_REVOKE_REASON_TEXT,
 } from '@lamalibre/lamaste/invitation-limits';
-
-/** Why an invitation was revoked, in words. */
-const REVOKE_REASONS = {
-  inviter: 'revoked by the inviter',
-  admin: 'revoked by an administrator',
-  inviter_disabled: 'the inviter was disabled',
-  inviter_removed: 'the inviter was removed',
-  inviter_unentitled: 'the inviter lost the role that could give it',
-  policy_disabled: "the plugin's invitations were turned off",
-  email_domain_removed: 'its e-mail domain is no longer allowed',
-  plugin_removed: 'the plugin was uninstalled',
-  role_undeclared: 'the plugin no longer has this role',
-  surface_removed: "the plugin's web surface was removed",
-  surface_not_restricted: "the plugin's web surface is no longer restricted",
-  attempts_exhausted: 'too many failed attempts locked the link',
-  repair_abandoned: 'access could not be completed',
-  superseded: 'replaced by a newer invitation',
-};
 
 /**
  * Why an invitation was revoked, in words; the reason itself when it is
@@ -38,7 +21,7 @@ const REVOKE_REASONS = {
  */
 export function revokeReasonText(reason) {
   if (!reason) return null;
-  return REVOKE_REASONS[reason] ?? reason;
+  return INVITATION_REVOKE_REASON_TEXT[reason] ?? reason;
 }
 
 /** The Tailwind classes of a status badge. */
