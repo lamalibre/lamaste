@@ -246,6 +246,28 @@ Gatekeeper attests the session; the panel issues the identity. Gatekeeper never 
 
 **What remains.** Plain `authenticated` and `restricted` app tunnels still pass the user to their backend as **unsigned** `Remote-User`, `Remote-Groups`, `Remote-Name` and `Remote-Email` headers set from Gatekeeper's answer: nginx replaces whatever the client sent, but the backend's port is reachable on the relay's and the agent's loopback by any local process, which can send any `Remote-*` it likes. Only plugin tunnels (a relay assertion for lamaste-agentd, 5c) and plugin user surfaces carry a signed identity; Gatekeeper-signed identity for plain tunnels is future work. A backend never receives the session cookie (5a), but it answers on a host under the relay's domain and can set cookies there — a second `authelia_session` with another path, which Gatekeeper refuses rather than guess. Until the hosting is marked down, a forwarded request — a user's or an administrator's — can reach a relay-loopback squatter (5e). The relay's loopback stays the relay's trust boundary: a process on the relay that can read the relay signing key can mint assertions for the panel, as it could for agents before.
 
+#### 5g. Delegated invitations
+
+A person holding a plugin role the manifest marks as inviting may invite colleagues into that plugin, without the administrator ([Invitations API](../04-api-reference/invitations.md)). An administrator approves the manifest and turns it on per installation, with the e-mail domains invitees' addresses must be under.
+
+**What can be granted is closed.** Lamaste fixes it: a new user with no Authelia group, an `external` membership of the plugin's domain, the one role the request names — checked against the approved manifest and the inviter's roles at that moment —, and the grant on the plugin's own `restricted` web surface. No request field reaches admin, another plugin, another domain, a Lamaste group, a tunnel or a static site.
+
+**The plugin is not in the path.** A plugin's shell reaches everything on its own host (`connect-src 'self'`) with its user's session, so an endpoint there would let the plugin invite in the inviter's name and read the link. The inviter's page and API are therefore on `auth.<domain>`, an origin the plugin cannot script: it can only link there. `frame-ancestors 'none'`, `X-Frame-Options`, Cross-Origin-Opener-Policy, and an exact `Origin` check on changes (`auth.<d>` and the plugin's site are same-site, so nothing weaker tells them apart); the page reads nothing from its URL but the route. The agent half never says who an inviter is: Gatekeeper attests the session with a relay assertion of a kind of its own, never accepted on a user surface, and the panel reads the roles from its own audience.
+
+**An invitee inherits nothing.** A username is refused if a directory row holds it, removed ones included; an open invitation names it; Gatekeeper holds anything under it (grants may name "a user still to come"); a site's `allowedUsers` or a desktop plugin grant names it; or Authelia holds an OpenID Connect identifier for it. So a stranger's acceptance never starts a principal cleanup and never receives what was meant for someone else.
+
+**Acceptance fails closed.** The invitation is claimed atomically, every condition is read again, and again before each grant; a crash between the users file and the directory cannot make the invitee a full member (the reconcile takes the claimed invitation's memberships, never the relay's default); a revocation during an acceptance stops its grants. Recovery goes by what exists, never by timing, and a repair only creates what is missing, so one link never makes two accounts and no administrator's change is undone.
+
+**Bounds.** Open invitations per inviter, people by invitation per plugin, 30 invitations an hour per inviter, none while Gatekeeper's free grants run low; five refused acceptances lock a link; rate limits on both APIs; a password is hashed only after every check.
+
+**What remains:**
+
+- **The link is a bearer secret.** Lamaste sends no mail and verifies no address: whoever opens the link first becomes the account. The e-mail allow-list bounds what an inviter records, not who accepts. The token is 256 bits, stored only as its SHA-256, shown once, single use, and expires; the inviter is accountable (audited, listed).
+- **An unverified address.** A plugin declaring the `email` attribute receives, for an invitee, what the inviter typed.
+- **Inviters are trusted with their cap.** An inviter can accept their own links and make up to the plugin's cap of accounts; each is external, reaches only that plugin, is listed under them, and the administrator can disable them all, transitively.
+- **Invitees outlive their inviter** (decided): their access is the administrator's to review.
+- **A same-site cookie.** A plugin's shell can toss a second `authelia_session` for the parent domain: Gatekeeper refuses two (`401`), so the worst is a sign-in loop on the inviter's page, which explains it — never a wrong user.
+
 #### 6. TOTP 2FA for app access
 
 Visitors to your tunneled apps authenticate through Authelia with a password and a TOTP code from their phone. See [Authentication](authentication.md) for full details.

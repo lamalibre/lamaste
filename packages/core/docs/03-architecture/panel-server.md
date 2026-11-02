@@ -196,8 +196,8 @@ Used in library code to signal expected error conditions (e.g., "DNS is not poin
 ```
 publicContext (no mTLS):
   server.register(inviteRoutes, { prefix: '/api/invite' })
-    ├── GET  /api/invite/:token           ← Get invitation details
-    └── POST /api/invite/:token/accept    ← Accept invitation, set password
+    ├── POST /api/invite/lookup           ← What an invitation link opens
+    └── POST /api/invite/accept           ← Accept invitation, set password
   server.register(enrollmentRoutes, { prefix: '/api/enroll' })
     └── POST /api/enroll                  ← Enroll agent with token + CSR
 
@@ -257,6 +257,9 @@ protectedContext (mTLS + role-guard):
         ├── GET    /api/invitations
         ├── POST   /api/invitations
         ├── DELETE  /api/invitations/:id
+        ├── POST   /api/invitations/disable-invitees
+        ├── GET    /api/plugins/:name/invitation-policy
+        ├── PUT    /api/plugins/:name/invitation-policy
         ├── GET    /api/plugins
         ├── GET    /api/plugins/:name
         ├── POST   /api/plugins/install

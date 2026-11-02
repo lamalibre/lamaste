@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Delegated invitations: a person holding a plugin role the manifest marks as inviting invites colleagues into that plugin, with a role that role may give, without the relay's administrator. Each invitee becomes an external member of the plugin's domain, with the role and the grant on the plugin's own site, and reaches nothing else. Corral is the pilot. Design: `packages/core/docs/delegated-invitations-design.md`; reference: `04-api-reference/invitations.md`.
+
+### Upgrade notes
+
+- **Invitations move to `state.db`** (migration `0020`). `invitations.json` is imported at the first start, its tokens hashed, and deleted; pending invitations keep working. A **downgrade to 4.8 loses every invitation pending at the upgrade**.
+- **Invitation links are `https://auth.<domain>/invite#<token>`**: the token is in the fragment, which no server log keeps. A link made before the update (`/invite/<token>`) still opens the page. The public API's path-token routes are gone: `GET /api/invite/:token` and `POST /api/invite/:token/accept` become `POST /api/invite/lookup` and `POST /api/invite/accept`, with the token in the body. The stock pages are rewritten at start.
+- **The IP panel vhost needs a redeploy** to take the `location /api/invite/` fix below: the panel rewrites `panel.<domain>` and every `auth.<domain>` at start, the vhost on 9292 changes only through the panel's Update action or `create-lamaste --yes`.
+- **A username an open invitation names can no longer be created any other way** (409 `username_invited`): revoke the invitation, or wait for it to expire. Two open invitations for one username, should an old file hold them, keep the newest.
+- **`@lamalibre/lamaste-gatekeeper` and the panel ship together**: the inviter's relay assertion and Gatekeeper's new routes need both.
+- **A plugin declaring `identity.roles[].invites` needs a 4.9 relay**: the identity block is strict, and an older one refuses it.
+
+### Added
+
+- **Inviting roles.** Manifest `identity.roles[].invites`: the roles of the same block a holder may give by invitation. In the approval digest where declared, so every earlier digest is unchanged. An update that adds an inviting role, or lets a role give one more, waits for an administrator as `identity.changed` and is never auto-approved; the approval preview says what a role may newly invite.
+- **The installation's policy** — `GET|PUT /api/plugins/:name/invitation-policy`: off until an administrator enables it; the e-mail domains invitees' addresses must be under (required to enable); open invitations per inviter (1–100, default 10), people by invitation (1–500, default 50), lifetime (1–30 days, default 7). Enabling needs an approved inviting role and the plugin's own `restricted`, served web surface. A change revokes what no longer fits.
+- **The inviter's page**, `auth.<domain>/invitations/<route>`, a Lamaste page per domain brand, which the plugin only links to, with `GET|POST /api/delegated-invitations/<route>` and `DELETE /api/delegated-invitations/<route>/<id>`. Gatekeeper authenticates the session on the new `/authz/delegated-invitations/:domain` and signs a relay assertion of a target kind of its own; the plugin's code cannot make, see or accept an invitation.
+- **Delegated acceptance.** The invitee picks a username on the invitation page; one anything already names — a directory row of any status, an open invitation, a Gatekeeper grant or group, a site's list, a desktop grant, an OIDC identifier — is refused with one answer, so nobody inherits anything. Five refused acceptances lock a link. A crash or a Gatekeeper failure midway is recovered from what exists; one link never makes two accounts, and a repair only creates what is missing.
+- **Oversight.** `GET /api/invitations` lists both kinds with the inviter, plugin, role, status and reason, filtered by `plugin`, `inviter` and `kind`. `POST /api/invitations/disable-invitees` disables everyone a person invited, optionally transitively. An inviter disabled, removed or no longer able to give the role loses their open invitations; the people they invited keep their access. Every invitation and acceptance is audited (`invitation.created|accepted|revoked|policy.updated|invitees.disabled`); admins are notified of every delegated acceptance.
+- **Panel:** Users → Invitations shows the kind, inviter, role, status and reason, with filters; a plugin with an inviting role gains an **Invitations** section (policy, invitations, people by inviter, Disable invitees). **CLI:** `lamaste-server invitations list|revoke|disable-invitees`, `plugins invitations <name> [set …]`. **Desktop:** the same through `admin_*` commands. Gatekeeper `POST /api/principals/user/inspect`, `GET /api/grants/capacity`; core `@lamalibre/lamaste/invitation-limits`, browser-safe.
+
+### Changed
+
+- **Tokens are stored only as their SHA-256** and shown once, for administrators' invitations too; an acceptance claims its invitation atomically, closing the race two acceptances of one link ran.
+- **`DELETE /api/invitations/:id`** revokes a pending invitation (kept, with its reason) and deletes one that ended; one being accepted is marked and ends revoked (`202`, `action: "marked"`).
+- **The invitation page** gets its QR code from the panel (`totpQr`) instead of `cdn.jsdelivr.net`, and carries a CSP by hash, `frame-ancestors 'none'`, `X-Frame-Options`, Cross-Origin-Opener-Policy and `no-store`. Its inline script and style are one for every brand; a brand's colours are in `brand.css`.
+- **Ended invitations are deleted after 90 days**; an accepted invitation's copies of the address and name go at acceptance.
+
+### Fixed
+
+- **`location /api/invite` on the panel and IP panel vhosts also took `/api/invitations*`** and cleared the client-certificate headers, so the administrators' invitations API answered 403 through nginx. Both are `/api/invite/` now.
+- **A reconcile could make an invited external member a full member.** A crash or failed read right after `users.yml` was written let the next reconcile adopt the user with the relay's default membership, `member` on a one-domain relay, also for an administrator's invitation naming `external`. It takes the invitation's memberships now.
+- **Non-primary sign-in hosts were never rewritten at start** when a vhost's `auth_request` presence changed: the portals' reconcile compares them whole now.
+
 ## [4.8.0] - 2026-10-27
 
 All lockstep packages, the desktop crate and its Tauri config move to 4.8.0; internal `@lamalibre/*` ranges become `^4.8.0`. Per-domain branding of the auth pages: each of the relay's domains may carry its own name, logo, favicon, theme and colours on its sign-in, its invitation page and Gatekeeper's refusal pages; a domain without a brand keeps the stock page. Design: `packages/core/docs/auth-branding-design.md`.

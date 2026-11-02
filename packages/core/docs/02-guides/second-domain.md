@@ -57,7 +57,7 @@ sudo lamaste-server domains branding codelama.com.tr favicon ./favicon.ico
 sudo lamaste-server domains branding codelama.com.tr preview
 ```
 
-The brand reaches every page a visitor of the domain can meet: the sign-in (its title "Login - Code Lama" in every language Authelia has, the logo, the favicon, the theme, the accent on buttons and focus rings; the "Powered by" footer is hidden), the invitation page at `auth.codelama.com.tr/invite/<token>`, and the access-request and refusal pages on the domain's hosts, where the support e-mail is the contact. A brand may be set while the domain is still pending; it is served from the activation. Nothing an operator types reaches the sign-in as code: the name cannot carry `<`, `>`, `{` or `}`, the colour is a regex, the images are parsed — no CSS, HTML or SVG. **Remove brand** puts the stock pages back.
+The brand reaches every page a visitor of the domain can meet: the sign-in (its title "Login - Code Lama" in every language Authelia has, the logo, the favicon, the theme, the accent on buttons and focus rings; the "Powered by" footer is hidden), the invitation page (`auth.codelama.com.tr/invite#…`), and the access-request and refusal pages on the domain's hosts, where the support e-mail is the contact. A brand may be set while the domain is still pending; it is served from the activation. Nothing an operator types reaches the sign-in as code: the name cannot carry `<`, `>`, `{` or `}`, the colour is a regex, the images are parsed — no CSS, HTML or SVG. **Remove brand** puts the stock pages back.
 
 ## What members see
 
@@ -83,6 +83,18 @@ lamaste-server domains members codelama.com.tr kind onur external
 ```
 
 None of this restarts Authelia or signs anyone out: a change applies at the person's next request.
+
+### Letting a client invite their own colleagues
+
+A plugin may mark a role as inviting — corral's coordinator, say — so its holder invites colleagues without you. They get a page on `auth.<domain>`, which the plugin links to; each person they invite becomes an external member of the plugin's domain, with a role of that plugin and the plugin's site, and nothing else.
+
+It stays off until you turn it on. It needs the plugin's own web surface, `restricted`. On the plugin's card, **Invitations**: tick the box, list the e-mail domains invitees' addresses must be under, and adjust the caps and the lifetime if you like. Or:
+
+```
+lamaste-server plugins invitations corral set --enable --email-domains client.example
+```
+
+Lamaste sends no mail: the inviter copies the link and sends it themselves, and whoever opens it first becomes the account, so the e-mail domains limit what an inviter may write down, not who accepts. Users → **Invitations** lists every invitation with its inviter, and you can revoke any of them. When an inviter leaves, their open invitations are revoked and the people they invited stay: on the plugin's card, **Disable invitees** ends their access too. See the [Invitations API](../04-api-reference/invitations.md).
 
 ## Removing a domain
 

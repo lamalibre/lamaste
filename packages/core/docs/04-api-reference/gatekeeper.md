@@ -659,6 +659,23 @@ The `auth_request` target of every path of a plugin-owned site but its user surf
 
 Every answer is `Cache-Control: no-store`. A refusal for want of an entitlement or a grant is logged with the resource and the reason only, and recorded in the access-request log when it is on.
 
+### Delegated-Invitations Authorization (nginx auth_request)
+
+```
+GET /authz/delegated-invitations/:domain
+```
+
+**Host:** `127.0.0.1:9294`
+
+The `auth_request` target of an inviter's API on a domain's sign-in host, `auth.<domain>/api/delegated-invitations/<route>[/<id>]` ([Invitations API](invitations.md#the-inviters-api)). The vhost names the portal in the path, `X-Original-URL` and `Host`, which must agree. Gatekeeper checks, in order: the raw request target is that route's inviter API (core `isDelegatedInvitationsUrl`: exactly `/<route>` or `/<route>/<uuid>`, with the unsafe-segment rule of user surfaces); the Authelia session **for this very URL**, never from its session cache, one `authelia_session` only — Authelia's portal rule admits the domain's members and external members and nobody else, and Gatekeeper asks with `X-Original-Method: GET`, which that rule does not depend on; the projection lists the user as a member or external member of the domain (fail closed). Then it signs a relay assertion for the panel — audience `@panel`, port 3100, caller `{ type: "user", username }`, target `{ invitations: <route>, domain, path }`, a kind of its own: it is never accepted on a user surface, nor a user surface's on this API. Whether the user may invite into the plugin is the panel's to decide, from its audience and the manifest.
+
+| Status | Meaning                                                                                                      |
+| ------ | ------------------------------------------------------------------------------------------------------------ |
+| 200    | `X-Lamalibre-Relay-Assertion` for this one request; `Cache-Control: no-store`                                |
+| 401    | No valid session, or more than one session cookie — nginx answers JSON `401 { "error": "unauthenticated" }`  |
+| 403    | Anything else refused (`X-Lamalibre-Refusal: forbidden`) — nginx answers JSON `403 { "error": "forbidden" }` |
+| 503    | The relay signing key is unusable                                                                            |
+
 ### Domain membership
 
 Every authorization route (tunnel, user surface, shell) checks the user's membership of the host's domain after Authelia, from `/etc/lamalibre/lamaste/domains.json` (written by the panel, watched like `tunnels.json`): `{ "v": 2, "domains": [{ "name", "members": [username…], "externals": [username…] }] }`, active domains and active people only. A missing or unreadable projection, one of another version, or a host under no domain, refuses (fail closed). Authelia's own 403 — it renders the same membership — is no longer taken for "not signed in": a signed-in non-member gets **403** with the domain refusal page (the domain, the admin contact, a sign-out link to `https://auth.<domain>/logout`; no username), or JSON `{ "error": "not_a_member" }` on a user surface, instead of a 401 that sent the browser back to the sign-in page in a loop. Refusals are never cached; a membership change busts the session cache.
@@ -695,5 +712,24 @@ POST /api/principals/user/remove
 **Host:** `127.0.0.1:9294`, with the panel's secret. Not proxied.
 
 Removes a user principal everywhere — every grant naming the username, of any resource type, and its membership of every group — in one transaction, holding the groups lock and then the grants lock. Idempotent. `{ "ok": true, "grantsRemoved": 2, "groupsLeft": 1 }`; `400` for a body that is not `{ username }` (1–100 characters), never echoing it. The username travels in the body, never in a URL that request logs keep (the `DELETE /api/principals/user/:username` of earlier 4.5 builds is gone). The panel calls it when a user is removed, retries it every minute while it is pending, and calls it before it creates a user under a username a removed user held — always then — and before it gives a grant or a membership to a username whose cleanup is pending ([Usernames and Gatekeeper](users.md#usernames-and-gatekeeper)).
+
+```
+POST /api/principals/user/inspect
+{ "username": "alice" }
+```
+
+**Host:** `127.0.0.1:9294`, with the panel's secret. Not proxied.
+
+What Gatekeeper holds under a username: `{ "ok": true, "grants": 2, "groups": 1 }`, read holding the groups lock and then the grants lock. The panel asks before a delegated invitee takes a username: one anything here names is refused, so nobody inherits it ([Invitations API](invitations.md#post-apiinviteaccept)).
+
+### Grant capacity (Gatekeeper's own API)
+
+```
+GET /api/grants/capacity
+```
+
+**Host:** `127.0.0.1:9294`, with the panel's secret.
+
+`{ "held": 240, "max": 1000 }`, stale grants pruned first as a creation prunes them. No delegated invitation is made or accepted while fewer than 100 grants are free (`grant_reserve`): every invitee costs two.
 
 **Request logging.** Gatekeeper logs one metadata line per request — method, route pattern (`/authz/tunnel/:fqdn`, never the URL), status, duration — and no client address; Fastify's own request lines are off.
