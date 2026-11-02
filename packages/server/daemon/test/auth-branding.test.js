@@ -22,7 +22,7 @@ import path from 'node:path';
 import yaml from 'js-yaml';
 
 import { AUTH_BRANDING_LOGO_MAX_BYTES } from '@lamalibre/lamaste';
-import { renderAuthBranding } from '@lamalibre/lamaste/server';
+import { authPagesDigest, renderAuthBranding } from '@lamalibre/lamaste/server';
 
 import { renderAuthVhost } from '../src/lib/nginx.js';
 
@@ -740,6 +740,22 @@ test('the reconcile: a stale revision or Authelia release re-rendered, a directo
   });
   assert.equal(JSON.parse(await readFile(renderedFile, 'utf-8')).autheliaVersion, '4.39.29');
   assert.equal(localeFetches, before);
+  assert.deepEqual(await lib.reconcileAuthBranding(), { rendered: [], removed: [], failed: [] });
+});
+
+test('a rendering from before its pages were recorded is rendered again: nginx sends this release’s CSP hashes', async () => {
+  const renderedFile = path.join(renderedDir(PRIMARY), 'rendered.json');
+  const pageFile = path.join(renderedDir(PRIMARY), 'invite', 'index.html');
+  const { pagesDigest, ...before49 } = JSON.parse(await readFile(renderedFile, 'utf-8'));
+  assert.equal(pagesDigest, authPagesDigest());
+  // What a 4.8 relay left: the old page, under a rendering of the same
+  // revision and the same Authelia release.
+  await writeFile(renderedFile, JSON.stringify(before49));
+  await writeFile(pageFile, '<!doctype html><title>4.8</title>');
+  const reconciled = await lib.reconcileAuthBranding();
+  assert.deepEqual(reconciled.rendered, [PRIMARY]);
+  assert.equal(JSON.parse(await readFile(renderedFile, 'utf-8')).pagesDigest, authPagesDigest());
+  assert.doesNotMatch(await readFile(pageFile, 'utf-8'), /<title>4\.8/);
   assert.deepEqual(await lib.reconcileAuthBranding(), { rendered: [], removed: [], failed: [] });
 });
 

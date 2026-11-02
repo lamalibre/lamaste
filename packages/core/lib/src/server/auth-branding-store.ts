@@ -282,6 +282,15 @@ export interface AuthBrandingRenderInput {
   readonly now?: Date;
 }
 
+/**
+ * The digest of this release's auth pages, whatever the brand: nginx sends
+ * their CSP hashes, so a domain's rendering must hold exactly these pages.
+ * The stock pages stand for every brand: only their markup differs.
+ */
+export function authPagesDigest(): string {
+  return sha256Hex(Buffer.from(`${renderInvitePage(null)}\n${renderInvitationsPage(null)}`));
+}
+
 /** Write `content` to a new 0640 file at `to` (exclusively), fsynced. */
 async function writeNewFile(to: string, content: Uint8Array | string): Promise<void> {
   await mkdir(path.dirname(to), { recursive: true, mode: DIR_MODE });
@@ -338,6 +347,7 @@ export async function renderAuthBranding(input: AuthBrandingRenderInput): Promis
     v: 1,
     revision: input.revision,
     autheliaVersion: input.autheliaVersion,
+    pagesDigest: authPagesDigest(),
     renderedAt: (input.now ?? new Date()).toISOString(),
   };
   try {
@@ -469,6 +479,7 @@ export async function readRenderedBrand(
         v: 1,
         revision: parsed.revision as number,
         autheliaVersion: parsed.autheliaVersion,
+        pagesDigest: typeof parsed.pagesDigest === 'string' ? parsed.pagesDigest : null,
         renderedAt: parsed.renderedAt,
       };
     }

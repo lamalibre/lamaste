@@ -464,6 +464,13 @@ export interface RenderedBrand {
   readonly revision: number;
   /** The Authelia release the locale files came from — a pin bump re-renders. */
   readonly autheliaVersion: string;
+  /**
+   * The digest of the release's auth pages it holds (`authPagesDigest`), or
+   * null for a rendering from before it was recorded. nginx sends the
+   * running release's CSP hashes, so a page of another release would be
+   * blocked by the browser: a different digest re-renders.
+   */
+  readonly pagesDigest: string | null;
   readonly renderedAt: string;
 }
 

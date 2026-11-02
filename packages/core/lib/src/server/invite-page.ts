@@ -28,6 +28,7 @@
 
 import { AUTH_PAGE_DEFAULT_ACCENT, AUTH_PAGE_DEFAULT_ACCENT_LIGHT } from '../auth-branding.js';
 import { AUTH_BRANDING_THEMES } from '../auth-branding.js';
+import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH } from '../constants.js';
 import { authPageHeaders, authPageShell } from './auth-pages.js';
 import type { InviteBrand } from './auth-pages.js';
 
@@ -156,15 +157,15 @@ export const INVITE_PAGE_SCRIPT = String.raw`
         var username = document.getElementById('username');
         username.value = data.suggestedUsername || '';
         username.setAttribute('autocomplete', 'username');
-        username.setAttribute('maxlength', '64');
+        username.setAttribute('maxlength', '${USERNAME_MAX_LENGTH}');
         var name = document.getElementById('display-name');
         name.value = data.displayName || '';
         name.setAttribute('maxlength', '100');
         bindForm(function () {
           var chosen = username.value.trim();
           var shown = name.value.trim();
-          if (!USERNAME_RE.test(chosen) || chosen.length < 2 || chosen.length > 64) {
-            throw new Error('A username has 2 to 64 lower-case letters, digits, - and _, and starts with a letter or digit.');
+          if (!USERNAME_RE.test(chosen) || chosen.length < ${USERNAME_MIN_LENGTH} || chosen.length > ${USERNAME_MAX_LENGTH}) {
+            throw new Error('A username has ${USERNAME_MIN_LENGTH} to ${USERNAME_MAX_LENGTH} lower-case letters, digits, - and _, and starts with a letter or digit.');
           }
           if (shown.length === 0) throw new Error('Enter your name.');
           return { username: chosen, displayName: shown };

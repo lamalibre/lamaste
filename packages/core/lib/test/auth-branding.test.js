@@ -42,6 +42,7 @@ import {
   renderBrandJson,
   renderBrandLocale,
   validateBrandFields,
+  USERNAME_MAX_LENGTH,
 } from '../dist/index.js';
 import {
   AUTHELIA_ASSET_PATH,
@@ -68,6 +69,7 @@ import {
   INVITATIONS_PAGE_SCRIPT,
   AUTH_PAGE_STYLE,
   cspHashSource,
+  authPagesDigest,
 } from '../dist/server/index.js';
 
 const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url);
@@ -627,6 +629,10 @@ test("the inviter's page: the route from its path alone, its own host's API, the
       "encodeURIComponent(window.location.origin + '/invitations/' + route)",
     ),
   );
+  // The page's bound is the schema's.
+  assert.ok(INVITE_PAGE_SCRIPT.includes(`chosen.length > ${USERNAME_MAX_LENGTH}`));
+  assert.ok(INVITE_PAGE_SCRIPT.includes(`'maxlength', '${USERNAME_MAX_LENGTH}'`));
+  assert.doesNotMatch(INVITE_PAGE_SCRIPT, /2 to 64/);
   assert.ok(INVITATIONS_PAGE_SCRIPT.includes("request('DELETE', api + '/' + inv.id)"));
   // A revocation takes two clicks, and the link of a revoked invitation goes.
   assert.ok(INVITATIONS_PAGE_SCRIPT.includes("revoke.textContent = 'Really revoke?'"));
@@ -719,6 +725,7 @@ test('a brand is rendered into a directory of its own and served through its dom
       v: 1,
       revision: 1,
       autheliaVersion: PINNED,
+      pagesDigest: authPagesDigest(),
       renderedAt: '2026-10-27T10:00:00.000Z',
     });
     const link = path.join(root, domain);
