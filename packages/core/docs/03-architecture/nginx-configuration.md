@@ -252,26 +252,62 @@ server {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 
-    # Invitation page — the domain's own when it has a brand, else the stock page
-    location /invite/ {
+    # Invitation page — the domain's own when it has a brand, else the stock
+    # page; `= /invite` too, since a link carries its token in the fragment.
+    # Core's page headers (INVITE_PAGE_HEADERS) on each location.
+    location = /invite {
         root /var/www/lamaste/auth/example.com;
         try_files /invite/index.html @invite;
-        add_header X-Content-Type-Options nosniff;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'sha256-…'; …" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Referrer-Policy "same-origin" always;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
     }
+    location /invite/ { … the same … }
     location @invite {
         root /var/www/lamaste/invite;
         try_files /index.html =404;
-        add_header X-Content-Type-Options nosniff;
+        # the same headers
     }
 
-    # Invitation API — proxied to panel server (no mTLS)
+    # The inviter's page of delegated invitations, the same way, with
+    # INVITATIONS_PAGE_HEADERS and /var/www/lamaste/invitations as the fallback
+    location /invitations/ { … }
+    location @invitations { … }
+
+    # Invitation API — proxied to panel server (no mTLS). A literal Host and
+    # no X-Forwarded-Host: the panel answers a delegated token only for its
+    # own domain's portal
     location /api/invite/ {
         proxy_pass http://127.0.0.1:3100/api/invite/;
-        proxy_set_header Host $host;
+        proxy_set_header Host auth.example.com;
+        proxy_set_header X-Forwarded-Host "";
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Lamalibre-Relay-Assertion "";
+    }
+
+    # The inviter's API: Gatekeeper vouches for the user to the panel
+    location = /internal/lamaste/delegated-invitations-authz {
+        internal;
+        auth_request off;
+        proxy_pass http://127.0.0.1:9294/authz/delegated-invitations/example.com;
+        proxy_pass_request_body off;
+        # X-Original-URL, X-Original-Method, Host auth.example.com, the cookie
+    }
+    location ^~ /api/delegated-invitations/ {
+        auth_request /internal/lamaste/delegated-invitations-authz;
+        auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;
+        proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;
+        # Cookie, Authorization, Remote-*, X-SSL-Client-*, X-Forwarded-Host cleared
+        proxy_set_header Host auth.example.com;
+        proxy_pass http://127.0.0.1:3100;   # no URI: the raw target the assertion is bound to
+        client_max_body_size 16k;
+        error_page 401 = /internal/lamaste/delegated-invitations-401;   # JSON
+        error_page 403 = /internal/lamaste/delegated-invitations-403;   # JSON
     }
 
     # Brand overrides: the domain's file when it has one, else Authelia's own
@@ -329,7 +365,7 @@ server {
 }
 ```
 
-No mTLS requirement — end users access this to authenticate. Protected by Authelia's own login form and TOTP. The auth vhost also serves the invitation page (static HTML at `/invite/<token>`) and proxies invitation API requests (`/api/invite/`) to the panel server, allowing invited users to set up their accounts without needing mTLS credentials. The page is the domain's own when it has a brand — `invite/index.html` of its rendering, served through the same link as the overrides below (`try_files` with a fixed path resolves it against the location's `root`; the token stays in the URL for the page's script) — and otherwise the stock page from `/var/www/lamaste/invite/` (the `@invite` fallback), which the panel writes from `@lamalibre/lamaste/server`'s `renderInvitePage(null)` at provisioning and at every start once onboarding is complete, compared first so an identical file is left alone — a change to the page reaches a relay at its update. Both locations add `nosniff`. The primary domain's portal besides serves `/api/user-access/authorize` (the desktop's user login) with its rate-limit zone; a second domain's does not (see [Vhosts on several domains](#vhosts-on-several-domains)).
+No mTLS requirement — end users access this to authenticate. Protected by Authelia's own login form and TOTP. The auth vhost also serves the invitation page (static HTML at `/invite`; a link carries its token in the fragment, `/invite#<token>`, so no log keeps it, and a 4.8 link's `/invite/<token>` opens the same page) and proxies invitation API requests (`/api/invite/`) to the panel server, allowing invited users to set up their accounts without needing mTLS credentials. The page is the domain's own when it has a brand — `invite/index.html` of its rendering, served through the same link as the overrides below (`try_files` with a fixed path resolves it against the location's `root`) — and otherwise the stock page from `/var/www/lamaste/invite/` (the `@invite` fallback), which the panel writes from `@lamalibre/lamaste/server`'s `renderInvitePage(null)` at provisioning and at every start once onboarding is complete, compared first so an identical file is left alone — a change to the page reaches a relay at its update. Every location of both pages sends core's headers: a CSP by hash — their inline script and style are the same for every brand (a brand's colours are in `/brand.css`), so one pair of hashes per release holds —, `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`, `Referrer-Policy: same-origin` (`no-referrer` would make a same-origin `fetch` POST send `Origin: null`), `Cache-Control: no-store` and `nosniff`. Delegated invitations add the inviter's page (`/invitations/`, the same way) and its API (`/api/delegated-invitations/`): Gatekeeper authenticates the session for that URL and signs a relay assertion, nothing of the browser's credentials reaches the panel, and the body limit is 16 KiB ([Invitations API](../04-api-reference/invitations.md#the-inviters-api)). They live here, not on the plugin's site, because the plugin's code must not be able to script them. A portal vhost from before 4.9 is rewritten at start. The primary domain's portal besides serves `/api/user-access/authorize` (the desktop's user login) with its rate-limit zone; a second domain's does not (see [Vhosts on several domains](#vhosts-on-several-domains)).
 
 **Why the brand lives in nginx.** One Authelia serves every domain's `auth.<domain>`, and Authelia 4.39 can brand only one instance: one `server.asset_path`, from which it serves a file in place of its own for exactly three routes — `/favicon.ico`, `/static/media/logo.png`, `/locales/<lang>/<namespace>.json` — never reading the `Host` header; one `theme`; and `data-logooverride` on the index HTML decided once at start by whether `asset_path/logo.png` exists. So the per-domain part is the vhost's ([Per-Domain Branding of the Auth Pages](../auth-branding-design.md)): the three overridable routes and the generated stylesheet are answered from the domain's rendered directory `/var/www/lamaste/auth/<domain>/` when the file is there (`try_files $uri @authelia`: a domain without a brand has no directory, so every request falls through to Authelia; `/brand.css` alone answers 404 instead), and the index HTML is rewritten on its way through with `ngx_http_sub_module`: `data-theme="light"` — Authelia's global theme, written explicitly into its configuration — becomes the domain's theme, `data-logooverride="true"` — true for every domain, because the panel keeps a placeholder `logo.png` in Authelia's asset directory — becomes `"false"` unless the domain has a logo, and the stylesheet link is added before `</head>`. `sub_filter` matches literal strings, ignoring case, in `text/html` responses only (the module's default), so Authelia's JSON, scripts and the per-request CSP nonce are untouched; `Accept-Encoding` is cleared towards Authelia so the filter reads plain text. The directory entry is a symbolic link to the rendering that serves, switched by one rename at every change, so the vhost never sets `disable_symlinks`. The static answers add `nosniff` and `Cache-Control: public, max-age=0, must-revalidate`; their content type comes from the extension, never from the bytes. The headers apply to a file served from the override location alone — the fallback is produced in `@authelia`, which adds none and, like `location /`, sets every proxy header itself (a location that sets any header inherits none of the server's).
 
@@ -849,7 +885,7 @@ Authelia evaluates the raw `$request_uri`, while nginx serves the normalized `$u
 
 A relay may serve several base domains ([Domains API](../04-api-reference/domains.md)). Vhost files are therefore named by full hostname — `lamalibre-lamaste-app-<fqdn>`, `lamalibre-lamaste-agent-panel-<fqdn>`, `lamalibre-lamaste-auth-<domain>` — so the same subdomain on two domains never shares a file. At start the panel renames vhosts written under the earlier names (`lamalibre-lamaste-app-<subdomain>`, `lamalibre-lamaste-agent-panel-<subdomain>`, `lamalibre-lamaste-auth`): the new file is written with the old one's link state, the old file and link removed, then one `nginx -t` and reload, with the old files restored if the test fails. `lamaste-priv` accepts the hostname names for every action and the legacy names for everything but `write`.
 
-- **One auth vhost per active domain** (`auth.<domain>`, its own certificate). Only the primary's carries `/api/user-access/authorize` and the `user_access_auth` rate-limit zone (desktop user access is primary-only); every domain's serves `/`, `/invite/` and `/api/invite/`.
+- **One auth vhost per active domain** (`auth.<domain>`, its own certificate). Only the primary's carries `/api/user-access/authorize` and the `user_access_auth` rate-limit zone (desktop user access is primary-only); every domain's serves `/`, `/invite`, `/invitations/`, `/api/invite/` and `/api/delegated-invitations/`.
 - **The 401 redirect** of tunnel and web-surface vhosts goes to `https://auth.<the host's domain>/?rd=…`; static sites follow Authelia's `$redirection_url`, which Authelia builds for the host's cookie domain.
 - **A 403** from Gatekeeper (a signed-in non-member, or a missing grant) is served inline; Authelia-protected static sites route `error_page 403` to Gatekeeper's `/authz/refusal/<fqdn>`.
 - **Authenticated and restricted tunnels share one vhost** (`writeGatekeeperVhost`): Gatekeeper decides by the access mode in `tunnels.json`.
@@ -947,7 +983,7 @@ Protected locations (`/`, `/api`) enforce mTLS explicitly:
 if ($ssl_client_verify != SUCCESS) { return 496; }
 ```
 
-Public locations (`/api/enroll`, `/api/invite`) skip the mTLS check and clear cert headers to prevent spoofing:
+Public locations (`/api/enroll`, `/api/invite/` — with its slash: `/api/invite` would also take `/api/invitations*` and clear the certificate headers its routes need) skip the mTLS check and clear cert headers to prevent spoofing:
 
 ```nginx
 location /api/enroll {

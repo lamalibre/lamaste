@@ -1,6 +1,6 @@
 # Delegated Invitations — Design Document
 
-> **Status:** agreed 2026-10-28 — decisions D1–D12 (D1, D3–D8, D10–D12 put to the founders, each as recommended; D2 and D9 technical, taken as recommended); revised after two independent reviews of 2026-10-28 (24 findings, three blockers, all folded in — tables at the end). Not built beyond wave 1's manifest field.
+> **Status:** agreed 2026-10-28 — decisions D1–D12 (D1, D3–D8, D10–D12 put to the founders, each as recommended; D2 and D9 technical, taken as recommended); revised after two independent reviews of 2026-10-28 (24 findings, three blockers, all folded in — tables at the end). Waves 1 to 3 built (core, serverd + Gatekeeper, UI + desktop + CLI + docs: see Waves); the code's security review and rodeo are next.
 > **Target:** Lamaste 4.9.0, on top of 4.8.0 (multi-domain relay, external members, per-domain branding).
 > **Pilot:** corral (`corral.codelama.com.tr`): the client's coordinator invites colleagues into corral, as external members of `codelama.com.tr`, with a corral role, without the relay admin.
 > **Companions:** `herd/docs/r730-workload-plan.md` §15.2 (scope), §15.2a, §15.4, §15.5;
@@ -571,16 +571,49 @@ web surface on B; an authenticated tunnel and a second plugin on B):
 
 ## Waves
 
-1. **Core** — the manifest field (done: `5721607`); the policy schema; the
-   delegated-invitations path and the assertion's target kind; the token
-   hash; the two pages; `AdminClient` and types.
-2. **serverd + Gatekeeper** — migration 0020 and the import;
-   `lib/invitations.js` (store, policy, lock, create, revoke, claim, accept,
-   recover, repair, sweeps, disable-invitees); the admin routes moved; the
-   policy routes; the inviter context; acceptance; erasure; the auth vhost
-   locations and pages; Gatekeeper's authz route, principal inspection and
-   grant count. Unit tests for every refusal, bound, sweep and recovery.
-3. **UI, desktop, CLI, docs** — as §10.
+1. **Core** — done (`5721607`, `9dd42da`, `a76ec54`, `da1a3b6`). The manifest
+   field; `invitations.ts` (policy, request and acceptance schemas, views);
+   the inviter's API path and the assertion's target kind; both pages with
+   one CSP per release (`server/auth-pages.ts`, `invite-page.ts`,
+   `invitations-page.ts`); `AdminClient`.
+
+   **Deviation:** only a branded domain has `/brand.css`, so the stock page
+   links no stylesheet and uses the dark values in its style (the design
+   said brand values live only there — they do).
+
+2. **serverd + Gatekeeper** — done (`27b12de`, `6d0122f`, `67d4189`). As
+   §4–§8; acceptance is `lib/invitation-acceptance.js`, the inviter's context
+   `routes/delegated-invitations.js`, the rules `lib/delegated-invitations.js`.
+
+   **Deviations:**
+   - the QR code uses `qrcode-generator` 1.5.2 (MIT, no dependencies) rather
+     than `qrcode`;
+   - migration 0020 adds `site_attempted_at`: an attempted site grant whose
+     answer was lost is never repeated blindly, since an administrator may
+     have revoked what it made;
+   - `changeUsers`' refusal of a username an open invitation names is
+     `409 username_invited`, so an administrator's creation meets it too;
+   - found on the way: the auth portals' vhost reconcile skipped any vhost
+     whose `auth_request` presence changed, so a non-primary portal would
+     never have gained the inviter's API on an upgrade — it now compares
+     them with `keepAuthentication: false`;
+   - `POST /api/invite/accept` answers an administrator's invitation with
+     `totpQr` and `accessPending` too.
+
+3. **UI, desktop, CLI, docs** — done. As §8 and §10.
+
+   **Deviations:**
+   - the bounds, statuses, reasons and the reasons' words moved to a new
+     browser-safe core entry, `@lamalibre/lamaste/invitation-limits` (the root
+     entry takes `node:crypto` through `identity.ts`), so the panel and the
+     CLI share them instead of copying them;
+   - `AdminClient` now says what the panel answers: the policy routes the
+     view itself, and revocation `action: 'marked'`;
+   - `admin_revoke_invitation` rejects with the panel's refusal;
+   - Revoke is offered for `pending` and `accepting` only: the API's delete
+     of an ended invitation has no button, since an accepted row is the
+     record of who invited whom and counts toward `maxJoined`.
+
 4. **Security review** — independent, given the code.
 5. **Rodeo** — 53, 54, single-VM 38, upgrade 01 on fresh VMs.
 

@@ -750,13 +750,14 @@ A plugin with an agent half may have **users**: people who sign in to the relay'
 "identity": {
   "roles": [
     { "id": "viewer", "label": "Viewer", "description": "Sees the dashboard" },
-    { "id": "editor", "label": "Editor" }
+    { "id": "editor", "label": "Editor", "invites": ["viewer"] }
   ],
   "attributes": ["displayName", "email"]
 }
 ```
 
 - **`roles`** — 1 to 32, ids unique. `id`: a lower-case letter, then lower-case letters, digits and `-`, at most 32 characters; `label`: 1–64 characters; `description`: optional, at most 200. Labels and descriptions refuse control and bidirectional formatting characters.
+- **`invites`** — optional on a role: the roles a holder of it may give by [delegated invitation](#delegated-invitations), 1–32 role ids of the same block, no repeats; the role itself may be one of them. A role without it invites nobody. Lamaste before 4.9 refuses a role carrying it (the block is strict): a plugin that declares it needs a 4.9 relay.
 - **`attributes`** — what Lamaste tells the agent half about each user besides the `userId`, username, roles and status: a subset of `displayName` and `email`, no repeats; `["displayName"]` when omitted. The agent half receives nothing it did not declare.
 - Only a plugin with `hosting: "agent"` and an `agent` block may declare it (`400` at install otherwise): its users reach the agent half.
 
@@ -772,7 +773,9 @@ An update that **adds or removes a role**, or **widens the attributes**, waits f
   "rolesRemoved": [],
   "attributesAdded": ["email"],
   "attributesRemoved": [],
-  "labelsChanged": []
+  "labelsChanged": [],
+  "invitesAdded": [],
+  "invitesRemoved": []
 }
 ```
 
@@ -983,6 +986,24 @@ lamaste-server plugins identity-sync <name> [--reconcile]
 ```
 
 `plugins hooks` and `plugins update` print the identity block, an update's identity diff and the `identity.changed` reason. Binding the user surface: [Tunnels API](tunnels.md#user-surface-binding).
+
+## Delegated invitations
+
+A person holding an **inviting role** — a role with `invites` in the [identity block](#the-identity-block) — invites colleagues into the plugin, with a role that role may give, without the relay's administrator. Every part of it is in the [Invitations API](invitations.md); design: `packages/core/docs/delegated-invitations-design.md`.
+
+**What the plugin does.** Almost nothing, on purpose: the plugin's code — its web tree and its agent half — cannot make, list, revoke or accept an invitation, or learn a token.
+
+1. Declare `invites` on the inviting role. An update that adds an inviting role, or lets a role give one more role, waits for an administrator as `identity.changed`, reading "lets coordinator invite people as stakeholder"; auto-approve never covers it. Narrowing only changes the digest. Every digest without `invites` is unchanged.
+2. Link to Lamaste's page, by a top-level navigation: `https://auth.<the plugin's domain>/invitations/<route>`, with `rel="noopener"`. The domain is the site's hostname without its first label. Nothing passes in the URL: the page reads only the route from it.
+3. Learn of the new member from the [identity feed](#the-identity-feed): the role grant puts them in the audience, as any entitled user (`upsert`, the role, the declared attributes). Protocol 1 is unchanged, and the feed does not say who invited them.
+
+**What the administrator does.** Approves the manifest, then sets the installation's [policy](invitations.md#put-apipluginsnameinvitation-policy): off until enabled, required e-mail domains, the caps, the lifetime. It needs a [web surface](#web-surface) of the plugin's own, `restricted`: an invitation grants that site alone. A tunnel bound as a user surface cannot be granted — that would open the tunnel's own application — and an `authenticated` surface refuses external members. The plugin card's **Invitations** section shows the policy, the plugin's invitations and the people who joined, by inviter.
+
+**What an invitation grants** is fixed by Lamaste: a new user with no Authelia group, an `external` membership of the plugin's domain, one role, the `site` grant on the plugin's web surface. Nothing a request says reaches another plugin, another domain, a group or a tunnel.
+
+**The address is unverified.** Lamaste sends no mail and checks no address; the `email` attribute of someone who joined by invitation is what their inviter typed. The link is a bearer secret: whoever opens it first becomes the account. Do not treat the address as proof of who the person is.
+
+**When the inviter goes**, their open invitations are revoked and the people they invited keep their access; the administrator can [disable them all](invitations.md#post-apiinvitationsdisable-invitees). The plugin decides what its own data does about either.
 
 ## Web surface
 

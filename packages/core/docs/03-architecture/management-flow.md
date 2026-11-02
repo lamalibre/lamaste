@@ -210,18 +210,23 @@ Host static websites directly on the Lamaste server, served via nginx.
 
 ### Invitation Management
 
-| Method | Path                   | Description                            | Roles |
-| ------ | ---------------------- | -------------------------------------- | ----- |
-| GET    | `/api/invitations`     | List all invitations (tokens redacted) | admin |
-| POST   | `/api/invitations`     | Create a new invitation                | admin |
-| DELETE | `/api/invitations/:id` | Revoke an invitation                   | admin |
+| Method | Path                                   | Description                               | Roles |
+| ------ | -------------------------------------- | ----------------------------------------- | ----- |
+| GET    | `/api/invitations`                     | List all invitations (no token is stored) | admin |
+| POST   | `/api/invitations`                     | Create a new invitation                   | admin |
+| DELETE | `/api/invitations/:id`                 | Revoke an invitation                      | admin |
+| POST   | `/api/invitations/disable-invitees`    | Disable everyone a person invited         | admin |
+| GET    | `/api/plugins/:name/invitation-policy` | A plugin's delegated-invitation policy    | admin |
+| PUT    | `/api/plugins/:name/invitation-policy` | Set it                                    | admin |
 
 **Public invite routes** (no mTLS required):
 
-| Method | Path                        | Description                        |
-| ------ | --------------------------- | ---------------------------------- |
-| GET    | `/api/invite/:token`        | Get invitation details             |
-| POST   | `/api/invite/:token/accept` | Accept invitation and set password |
+| Method | Path                 | Description                        |
+| ------ | -------------------- | ---------------------------------- |
+| POST   | `/api/invite/lookup` | What an invitation link opens      |
+| POST   | `/api/invite/accept` | Accept invitation and set password |
+
+The token travels in the body. **Inviter routes** (`/api/delegated-invitations/:route[/:id]`) sit on `auth.<domain>`, admitted by a relay assertion Gatekeeper signs: [Invitations API](../04-api-reference/invitations.md).
 
 ### Static Sites Management
 

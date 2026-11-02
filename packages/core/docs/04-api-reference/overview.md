@@ -282,8 +282,8 @@ There are two exceptions:
 | POST   | `/api/onboarding/verify-dns`                              | Onboarding | Verify DNS records                          |
 | POST   | `/api/onboarding/provision`                               | Onboarding | Start provisioning                          |
 | WS     | `/api/onboarding/provision/stream`                        | Onboarding | Provisioning progress                       |
-| GET    | `/api/invite/:token`                                      | Public     | Get invitation details                      |
-| POST   | `/api/invite/:token/accept`                               | Public     | Accept invitation                           |
+| POST   | `/api/invite/lookup`                                      | Public     | What an invitation link opens               |
+| POST   | `/api/invite/accept`                                      | Public     | Accept invitation                           |
 | POST   | `/api/enroll`                                             | Public     | Enroll agent with token (hardware-bound)    |
 | GET    | `/api/system/stats`                                       | Management | System statistics                           |
 | POST   | `/api/system/update`                                      | Management | Trigger background server update            |
@@ -314,6 +314,12 @@ There are two exceptions:
 | GET    | `/api/invitations`                                        | Management | List invitations                            |
 | POST   | `/api/invitations`                                        | Management | Create invitation                           |
 | DELETE | `/api/invitations/:id`                                    | Management | Revoke invitation                           |
+| POST   | `/api/invitations/disable-invitees`                       | Management | Disable everyone a person invited           |
+| GET    | `/api/plugins/:name/invitation-policy`                    | Management | A plugin's delegated-invitation policy      |
+| PUT    | `/api/plugins/:name/invitation-policy`                    | Management | Set it                                      |
+| GET    | `/api/delegated-invitations/:route`                       | Inviter    | The inviter's roles, bounds and invitations |
+| POST   | `/api/delegated-invitations/:route`                       | Inviter    | Make a delegated invitation                 |
+| DELETE | `/api/delegated-invitations/:route/:id`                   | Inviter    | Revoke one's own pending invitation         |
 | GET    | `/api/users`                                              | Management | List users                                  |
 | POST   | `/api/users`                                              | Management | Create user                                 |
 | PUT    | `/api/users/:username`                                    | Management | Update user                                 |

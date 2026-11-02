@@ -219,6 +219,11 @@
           "file": "04-api-reference/users.md"
         },
         {
+          "title": "Invitations API",
+          "slug": "api-invitations",
+          "file": "04-api-reference/invitations.md"
+        },
+        {
           "title": "Domains API",
           "slug": "api-domains",
           "file": "04-api-reference/domains.md"
