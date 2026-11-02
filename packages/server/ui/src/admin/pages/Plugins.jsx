@@ -26,6 +26,8 @@ import PluginSettings, { NeedsConfigurationBadge } from '../components/PluginSet
 import PluginWebSurface from '../components/PluginWebSurface.jsx';
 import PluginDomain from '../components/PluginDomain.jsx';
 import PluginOidcClients from '../components/PluginOidcClients.jsx';
+import PluginInvitations from '../components/PluginInvitations.jsx';
+import { declaresInvitingRole } from '../lib/invitations.js';
 import PushInstallSection from '../components/PushInstallSection.jsx';
 import { PluginRetainedData, UninstalledRetainedData } from '../components/RetainedData.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
@@ -392,6 +394,7 @@ function PluginCard({
       <PluginDomain plugin={plugin} />
       <PluginOidcClients plugin={plugin} />
       {plugin.identity && <PluginIdentity plugin={plugin} />}
+      {declaresInvitingRole(plugin) && <PluginInvitations plugin={plugin} />}
 
       {showsWebSurface(plugin, ownedRoutes) && <PluginWebSurface plugin={plugin} />}
 
