@@ -1,0 +1,3149 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 38,
+    "name": "Delegated invitations: the store and the refusals (Single-VM)",
+    "suite": "e2e",
+    "description": "38 — Delegated invitations: the store and the refusals (Single-VM)",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq",
+      "node",
+      "npm",
+      "nginx",
+      "openssl",
+      "sqlite3",
+      "runuser",
+      "systemd-run",
+      "xxd",
+      "sha256sum"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE domains/${DOMAIN}/branding",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "domains/${DOMAIN}/branding"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "POST plugins/${PLUGIN}/disable",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "plugins/${PLUGIN}/disable"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE plugins/${PLUGIN}?force=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN}?force=true"
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "DELETE plugins/e2e-ident-badinvite?force=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/e2e-ident-badinvite?force=true"
+      }
+    },
+    {
+      "id": "cleanup-4",
+      "label": "DELETE plugins/e2e-ident-badinviterepeat?force=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/e2e-ident-badinviterepeat?force=true"
+      }
+    },
+    {
+      "id": "cleanup-5",
+      "label": "DELETE users/${u}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${u}?erase=true"
+      }
+    },
+    {
+      "id": "cleanup-6",
+      "label": "DELETE certs/agent/${AGENT_LABEL_38}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL_38}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-onboarding-complete",
+      "label": "Pre-flight: onboarding complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is not complete (provision the 'provisioned' tier)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Onboarding is not complete (provision the 'provisioned' tier)"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Set DOMAIN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$ONBOARDING\" '.domain'"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Onboarding is complete (${DOMAIN})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete (${DOMAIN})"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: onboarding complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(api_get \"onboarding/status\" 2>/dev/null || echo '{}')\nif [ \"$(json_get \"$ONBOARDING\" '.status')\" != \"COMPLETED\" ]; then\n  log_fail \"Onboarding is not complete (provision the 'provisioned' tier)\"\n  end_test\n  exit $?\nfi\nDOMAIN=$(json_get \"$ONBOARDING\" '.domain')\nlog_pass \"Onboarding is complete (${DOMAIN})\"\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\ncleanup\nmkdir -p \"${WORK_DIR}\" \"${AGENT_CERT_DIR}\"\nchmod 700 \"${AGENT_CERT_DIR}\"\nAUDIT_BASE=$(api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 1. The manifest\n# ==========================================================================="
+    },
+    {
+      "id": "stand-in-registry-with-the-fixtures",
+      "label": "Stand-in registry with the fixtures",
+      "steps": [
+        {
+          "id": "step-12",
+          "label": "Stand-in registry is up on ${STUB_URL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Stand-in registry is up on ${STUB_URL}"
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)"
+          }
+        }
+      ],
+      "bash": "log_section \"Stand-in registry with the fixtures\"\n\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_identity_fixture_plugins \"${WORK_DIR}/fixtures\"\nsystemctl stop \"${STUB_UNIT}\" > /dev/null 2>&1 || true\nsystemd-run --quiet --collect --unit \"${STUB_UNIT}\" --setenv=PATH=\"${PATH}\" --setenv=HOME=/root \\\n  \"$(command -v node)\" \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" \\\n  --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json \\\n  --package \"${WORK_DIR}/fixtures/inv1\" --package \"${WORK_DIR}/fixtures/inv2\" --package \"${WORK_DIR}/fixtures/inv3\" \\\n  --package \"${WORK_DIR}/fixtures/badinvite\" --package \"${WORK_DIR}/fixtures/badinviterepeat\"\nif wait_for_http \"${STUB_URL}/-/ping\" 60; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)\"\n  end_test\n  exit $?\nfi\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\""
+    },
+    {
+      "id": "a-role-s-invites-are-checked-at-install",
+      "label": "A role's invites are checked at install",
+      "steps": [
+        {
+          "id": "step-16",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"plugins/install\" '{\"packageName\":\"@lamalibre/e2e-ident-badinvite-server@1.0.0\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "A role inviting one the block lacks: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A role inviting one the block lacks: 400"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "…the issue named",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "invites only roles the block declares"
+              },
+              "message": "…the issue named"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "…nothing left",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(call GET \"plugins/e2e-ident-badinvite\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "…nothing left"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"plugins/install\" '{\"packageName\":\"@lamalibre/e2e-ident-badinviterepeat-server@1.0.0\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "A role inviting one twice: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A role inviting one twice: 400"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "…the issue named",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "invites must not repeat"
+              },
+              "message": "…the issue named"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A role's invites are checked at install\"\n\nRESP=$(call POST \"plugins/install\" '{\"packageName\":\"@lamalibre/e2e-ident-badinvite-server@1.0.0\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A role inviting one the block lacks: 400\" || true\nassert_contains \"$(body_of \"$RESP\")\" \"invites only roles the block declares\" \"…the issue named\" || true\nassert_eq \"$(status_of \"$(call GET \"plugins/e2e-ident-badinvite\")\")\" \"404\" \"…nothing left\" || true\nRESP=$(call POST \"plugins/install\" '{\"packageName\":\"@lamalibre/e2e-ident-badinviterepeat-server@1.0.0\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A role inviting one twice: 400\" || true\nassert_contains \"$(body_of \"$RESP\")\" \"invites must not repeat\" \"…the issue named\" || true"
+    },
+    {
+      "id": "an-update-that-lets-a-role-invite-waits-for-an-administrator",
+      "label": "An update that lets a role invite waits for an administrator",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "${PACKAGE}@1.0.0 installed: roles, no one invites",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "${PACKAGE}@1.0.0 installed: roles, no one invites"
+            }
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Set DIGEST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.approval.digest // empty'"
+          },
+          "capture": [
+            {
+              "variable": "DIGEST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "…approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPROVED"
+              },
+              "path": ".hooks.approval.state",
+              "expected": {
+                "kind": "literal",
+                "value": "approved"
+              },
+              "message": "…approved"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "POST /api/plugins/${PLUGIN}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/enable"
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Set AUTO",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"plugins/${PLUGIN}/hooks/auto-approve\" '{\"enabled\":true}'"
+          },
+          "capture": [
+            {
+              "variable": "AUTO",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Auto-approve is on",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$AUTO\")"
+              },
+              "path": ".autoApprove",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Auto-approve is on"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "No inviting role yet",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}/invitation-policy\" | jq -c '.invitingRoles')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "[]"
+              },
+              "message": "No inviting role yet"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "POST /api/plugins/${PLUGIN}/update",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/update",
+            "body": {
+              "version": "2.0.0"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPDATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "2.0.0 lets a role invite: it waits, auto-approve on",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": ".pendingUpdate.version",
+              "expected": {
+                "kind": "literal",
+                "value": "2.0.0"
+              },
+              "message": "2.0.0 lets a role invite: it waits, auto-approve on"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "…identity.changed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…identity.changed"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "…said in words",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.reason] | join(\"; \")')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "lets coordinator invite people as coordinator, viewer"
+              },
+              "message": "…said in words"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "The preview: what the role may now give",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": ".pendingUpdate.identity.invitesAdded | map(\"\\(.role):\\(.roles | join(\"+\"))\") | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "coordinator:coordinator+viewer"
+              },
+              "message": "The preview: what the role may now give"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Auto-approve withheld",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "(.pendingUpdate.autoApproveWithheld // []) | length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Auto-approve withheld"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "1.0.0 stays until it is approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}\")"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "1.0.0 stays until it is approved"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Approved, 2.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Approved, 2.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "The policy lists the inviting role",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}/invitation-policy\")"
+              },
+              "path": ".invitingRoles | map(\"\\(.role):\\(.invites | join(\"+\"))\") | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "coordinator:coordinator+viewer"
+              },
+              "message": "The policy lists the inviting role"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "POST /api/plugins/${PLUGIN}/update",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/update",
+            "body": {
+              "version": "3.0.0"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPDATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "3.0.0 narrows it: nothing waits",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$UPDATE\" '.pendingUpdate.version // \"none\"')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "none"
+              },
+              "message": "3.0.0 narrows it: nothing waits"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(json_get \"$UPDATE\" '.operation.id // empty')\" 120"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "…auto-approved, installed ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "…auto-approved, installed ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "The inviting role now gives one role",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}/invitation-policy\")"
+              },
+              "path": ".invitingRoles | map(\"\\(.role):\\(.invites | join(\"+\"))\") | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "coordinator:viewer"
+              },
+              "message": "The inviting role now gives one role"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An update that lets a role invite waits for an administrator\"\n\nINSTALL=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"${PACKAGE}@1.0.0 installed: roles, no one invites\" || true\nDIGEST=$(json_get \"$(api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.approval.digest // empty')\nAPPROVED=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"${DIGEST}\\\"}\")\nassert_json_field \"$APPROVED\" '.hooks.approval.state' 'approved' \"…approved\" || true\napi_post \"plugins/${PLUGIN}/enable\" > /dev/null\nAUTO=$(call PUT \"plugins/${PLUGIN}/hooks/auto-approve\" '{\"enabled\":true}')\nassert_json_field \"$(body_of \"$AUTO\")\" '.autoApprove' 'true' \"Auto-approve is on\" || true\nassert_eq \"$(api_get \"plugins/${PLUGIN}/invitation-policy\" | jq -c '.invitingRoles')\" \"[]\" \"No inviting role yet\" || true\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"2.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '2.0.0' \"2.0.0 lets a role invite: it waits, auto-approve on\" || true\nassert_json_field \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | index(\"identity.changed\") != null' 'true' \"…identity.changed\" || true\nassert_contains \"$(json_get \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.reason] | join(\"; \")')\" \"lets coordinator invite people as coordinator, viewer\" \"…said in words\" || true\nassert_json_field \"$UPDATE\" '.pendingUpdate.identity.invitesAdded | map(\"\\(.role):\\(.roles | join(\"+\"))\") | join(\",\")' 'coordinator:coordinator+viewer' \"The preview: what the role may now give\" || true\nassert_json_field \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | length > 0' 'true' \"Auto-approve withheld\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '1.0.0' \"1.0.0 stays until it is approved\" || true\nAPPROVED=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved, 2.0.0 is installed ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}/invitation-policy\")\" '.invitingRoles | map(\"\\(.role):\\(.invites | join(\"+\"))\") | join(\",\")' 'coordinator:coordinator+viewer' \"The policy lists the inviting role\" || true\n\nUPDATE=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"3.0.0\"}')\nassert_eq \"$(json_get \"$UPDATE\" '.pendingUpdate.version // \"none\"')\" \"none\" \"3.0.0 narrows it: nothing waits\" || true\nOP=$(wait_operation \"$(json_get \"$UPDATE\" '.operation.id // empty')\" 120)\nassert_json_field \"$OP\" '.status' 'succeeded' \"…auto-approved, installed ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}/invitation-policy\")\" '.invitingRoles | map(\"\\(.role):\\(.invites | join(\"+\"))\") | join(\",\")' 'coordinator:viewer' \"The inviting role now gives one role\" || true\n\n# ===========================================================================\n# 2. The policy\n# ==========================================================================="
+    },
+    {
+      "id": "the-policy-s-validation",
+      "label": "The policy's validation",
+      "steps": [
+        {
+          "id": "step-48",
+          "label": "GET /api/plugins/${PLUGIN}/invitation-policy",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/invitation-policy"
+          },
+          "capture": [
+            {
+              "variable": "VIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Off, the defaults",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": "\"\\(.enabled) \\(.maxOpenPerInviter) \\(.maxJoined) \\(.lifetimeDays) \\(.emailDomains | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "false 10 50 7 0"
+              },
+              "message": "Off, the defaults"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "…not available",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": ".available",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "…not available"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Enabled with no e-mail domain: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(policy_status '{\"enabled\":true,\"emailDomains\":[]}')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Enabled with no e-mail domain: 400"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "No emailDomains at all: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(policy_status '{\"enabled\":false}')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "No emailDomains at all: 400"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "{${bad}}: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(policy_status \"{\\\"enabled\\\":false,\\\"emailDomains\\\":[],${bad}}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "{${bad}}: 400"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "An e-mail domain that is not one: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(policy_status '{\"enabled\":false,\"emailDomains\":[\"not a domain\"]}')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "An e-mail domain that is not one: 400"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "A field it does not know: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(policy_status '{\"enabled\":false,\"emailDomains\":[],\"role\":\"admins\"}')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A field it does not know: 400"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "A plugin that is not there: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(policy_status '{\"enabled\":false,\"emailDomains\":[]}' e2e-not-installed)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "A plugin that is not there: 404"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"plugins/${PLUGIN}/invitation-policy\" '{\"enabled\":true,\"emailDomains\":[\"example.test\"]}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "Enabled with no web surface: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Enabled with no web surface: 409"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "…invitations_unavailable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "invitations_unavailable"
+              },
+              "message": "…invitations_unavailable"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "…it says why",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(body_of \"$RESP\")\" '.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "no web surface of its own"
+              },
+              "message": "…it says why"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"plugins/${PLUGIN}/invitation-policy\" '{\"enabled\":false,\"emailDomains\":[\"Example.TEST\",\"example.test\",\"client.example\"],\"maxOpenPerInviter\":3,\"maxJoined\":20,\"lifetimeDays\":5}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-64",
+          "label": "Saved off",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Saved off"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "…lower-cased, no repeats, sorted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.emailDomains | join(\",\")) \\(.maxOpenPerInviter) \\(.maxJoined) \\(.lifetimeDays)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "client.example,example.test 3 20 5"
+              },
+              "message": "…lower-cased, no repeats, sorted"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "Audited once: a refused change is not one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get \"audit?action=invitation.policy.updated&plugin=${PLUGIN}&limit=50\" | jq --argjson b \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $b)] | length')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Audited once: a refused change is not one"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "A throwaway agent enrolled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "A throwaway agent enrolled"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Extract P12_PASS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "Set AGENT_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" \"${BASE_URL}/api/${path}\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "AGENT_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "An agent certificate on GET /api/${path}: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "An agent certificate on GET /api/${path}: 403"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The policy's validation\"\n\nVIEW=$(api_get \"plugins/${PLUGIN}/invitation-policy\")\nassert_json_field \"$VIEW\" '\"\\(.enabled) \\(.maxOpenPerInviter) \\(.maxJoined) \\(.lifetimeDays) \\(.emailDomains | length)\"' 'false 10 50 7 0' \"Off, the defaults\" || true\nassert_json_field \"$VIEW\" '.available' 'false' \"…not available\" || true\nassert_eq \"$(policy_status '{\"enabled\":true,\"emailDomains\":[]}')\" \"400\" \"Enabled with no e-mail domain: 400\" || true\nassert_eq \"$(policy_status '{\"enabled\":false}')\" \"400\" \"No emailDomains at all: 400\" || true\nfor bad in '\"maxOpenPerInviter\":0' '\"maxOpenPerInviter\":101' '\"maxJoined\":0' '\"maxJoined\":501' '\"lifetimeDays\":0' '\"lifetimeDays\":31' '\"maxJoined\":2.5'; do\n  assert_eq \"$(policy_status \"{\\\"enabled\\\":false,\\\"emailDomains\\\":[],${bad}}\")\" \"400\" \"{${bad}}: 400\" || true\ndone\nassert_eq \"$(policy_status '{\"enabled\":false,\"emailDomains\":[\"not a domain\"]}')\" \"400\" \"An e-mail domain that is not one: 400\" || true\nassert_eq \"$(policy_status '{\"enabled\":false,\"emailDomains\":[],\"role\":\"admins\"}')\" \"400\" \"A field it does not know: 400\" || true\nassert_eq \"$(policy_status '{\"enabled\":false,\"emailDomains\":[]}' e2e-not-installed)\" \"404\" \"A plugin that is not there: 404\" || true\nRESP=$(call PUT \"plugins/${PLUGIN}/invitation-policy\" '{\"enabled\":true,\"emailDomains\":[\"example.test\"]}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Enabled with no web surface: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'invitations_unavailable' \"…invitations_unavailable\" || true\nassert_contains \"$(json_get \"$(body_of \"$RESP\")\" '.error')\" \"no web surface of its own\" \"…it says why\" || true\nRESP=$(call PUT \"plugins/${PLUGIN}/invitation-policy\" '{\"enabled\":false,\"emailDomains\":[\"Example.TEST\",\"example.test\",\"client.example\"],\"maxOpenPerInviter\":3,\"maxJoined\":20,\"lifetimeDays\":5}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Saved off\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.emailDomains | join(\",\")) \\(.maxOpenPerInviter) \\(.maxJoined) \\(.lifetimeDays)\"' 'client.example,example.test 3 20 5' \"…lower-cased, no repeats, sorted\" || true\nassert_eq \"$(api_get \"audit?action=invitation.policy.updated&plugin=${PLUGIN}&limit=50\" | jq --argjson b \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $b)] | length')\" \"1\" \"Audited once: a refused change is not one\" || true\n\nCERT_RESPONSE=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL_38}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"A throwaway agent enrolled\" || true\nP12_PASS=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nsudo openssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL_38}/client.p12\" -out \"${AGENT_CERT_DIR}/client.crt\" -clcerts -nokeys -passin pass:\"${P12_PASS}\" 2>/dev/null\nsudo openssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL_38}/client.p12\" -out \"${AGENT_CERT_DIR}/client.key\" -nocerts -nodes -passin pass:\"${P12_PASS}\" 2>/dev/null\nsudo chmod 600 \"${AGENT_CERT_DIR}/client.key\"\nunset P12_PASS\nfor path in \"plugins/${PLUGIN}/invitation-policy\" \"invitations\"; do\n  AGENT_STATUS=$(sudo curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" \"${BASE_URL}/api/${path}\" 2>/dev/null || echo \"000\")\n  assert_eq \"${AGENT_STATUS}\" \"403\" \"An agent certificate on GET /api/${path}: 403\" || true\ndone\n\n# ===========================================================================\n# 3. The store\n# ==========================================================================="
+    },
+    {
+      "id": "an-administrator-s-invitation-the-token-shown-once-its-digest-kept",
+      "label": "An administrator's invitation: the token shown once, its digest kept",
+      "steps": [
+        {
+          "id": "step-78",
+          "label": "POST /api/invitations",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-79",
+          "label": "Invitation for ${USER_ONE}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Invitation for ${USER_ONE}"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "Set TOKEN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.token // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TOKEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "Set ID_ONE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.invitation.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "ID_ONE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-82",
+          "label": "The link carries the token in its fragment",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$RESP\" '.inviteUrl')"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}/invite#${TOKEN}"
+              },
+              "message": "The link carries the token in its fragment"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "Nothing in state.db or its log holds the token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(clear_token_count \"${TOKEN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Nothing in state.db or its log holds the token"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "It holds the token's SHA-256",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo sqlite3 \"${STATE_DIR}/state.db\" \"SELECT token_sha256 FROM invitations WHERE id = '${ID_ONE}'\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(token_digest \"${TOKEN}\")"
+              },
+              "message": "It holds the token's SHA-256"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "GET /api/invitations?kind=admin",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "invitations?kind=admin"
+          },
+          "capture": [
+            {
+              "variable": "LISTED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-87",
+          "label": "…not among the delegated ones",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get \"invitations?kind=delegated\" | jq --arg id \"${ID_ONE}\" '[.invitations[] | select(.id == $id)] | length')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…not among the delegated ones"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "?limit past the most: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(call GET \"invitations?limit=2001\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "?limit past the most: 400"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "?limit=1: one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"invitations?limit=1\")"
+              },
+              "path": ".invitations | length",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "?limit=1: one"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An administrator's invitation: the token shown once, its digest kept\"\n\nRESP=$(api_post \"invitations\" \"{\\\"username\\\":\\\"${USER_ONE}\\\",\\\"email\\\":\\\"${USER_ONE}@example.test\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"Invitation for ${USER_ONE}\" || true\nTOKEN=$(json_get \"$RESP\" '.token // empty')\nID_ONE=$(json_get \"$RESP\" '.invitation.id // empty')\nassert_eq \"$(json_get \"$RESP\" '.inviteUrl')\" \"https://auth.${DOMAIN}/invite#${TOKEN}\" \"The link carries the token in its fragment\" || true\nassert_eq \"$(clear_token_count \"${TOKEN}\")\" \"0\" \"Nothing in state.db or its log holds the token\" || true\nassert_eq \"$(sudo sqlite3 \"${STATE_DIR}/state.db\" \"SELECT token_sha256 FROM invitations WHERE id = '${ID_ONE}'\")\" \"$(token_digest \"${TOKEN}\")\" \"It holds the token's SHA-256\" || true\nif sudo test -e \"${STATE_DIR}/invitations.json\"; then log_fail \"invitations.json was written\"; else log_pass \"invitations.json is not written\"; fi\nLISTED=$(api_get \"invitations?kind=admin\")\nassert_json_field \"$LISTED\" \"[.invitations[] | select(.id == \\\"${ID_ONE}\\\") | \\\"\\(.kind) \\(.status) \\(.token)\\\"] | first\" 'admin pending null' \"Listed: an administrator's, pending, no token\" || true\nassert_eq \"$(api_get \"invitations?kind=delegated\" | jq --arg id \"${ID_ONE}\" '[.invitations[] | select(.id == $id)] | length')\" \"0\" \"…not among the delegated ones\" || true\nassert_eq \"$(status_of \"$(call GET \"invitations?limit=2001\")\")\" \"400\" \"?limit past the most: 400\" || true\nassert_json_field \"$(api_get \"invitations?limit=1\")\" '.invitations | length' '1' \"?limit=1: one\" || true"
+    },
+    {
+      "id": "revoked-deleted-refused",
+      "label": "Revoked, deleted, refused",
+      "steps": [
+        {
+          "id": "step-90",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call DELETE \"invitations/${ID_ONE}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-91",
+          "label": "A pending one is revoked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".action",
+              "expected": {
+                "kind": "literal",
+                "value": "revoked"
+              },
+              "message": "A pending one is revoked"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "…the row kept, by the administrator",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(row \"${ID_ONE}\")"
+              },
+              "path": "\"\\(.status) \\(.revokedReason)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "revoked admin"
+              },
+              "message": "…the row kept, by the administrator"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "Its token: 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(invite_post lookup \"{\\\"token\\\":\\\"${TOKEN}\\\"}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "Its token: 410"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call DELETE \"invitations/${ID_ONE}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-95",
+          "label": "An ended one is deleted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".action",
+              "expected": {
+                "kind": "literal",
+                "value": "deleted"
+              },
+              "message": "An ended one is deleted"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "…gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(row \"${ID_ONE}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "…gone"
+            }
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "Its token: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(invite_post lookup \"{\\\"token\\\":\\\"${TOKEN}\\\"}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Its token: 404"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "POST /api/invitations",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "Set TOKEN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.token // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TOKEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-100",
+          "label": "Set ID_TWO",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.invitation.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "ID_TWO",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-101",
+          "label": "Set ACCEPT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "invite_post accept \"$(jq -c -n --arg t \"${TOKEN}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\""
+          },
+          "capture": [
+            {
+              "variable": "ACCEPT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-102",
+          "label": "Accepted by POST",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$ACCEPT\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Accepted by POST"
+            }
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "…the QR drawn by the panel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(body_of \"$ACCEPT\")\" '.totpQr')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data:image/svg+xml;base64,"
+              },
+              "message": "…the QR drawn by the panel"
+            }
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "…accepted, the address's copy gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(row \"${ID_TWO}\")"
+              },
+              "path": "\"\\(.status) \\(.email)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "accepted null"
+              },
+              "message": "…accepted, the address's copy gone"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call DELETE \"invitations/${ID_TWO}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "An accepted one is the record of who joined: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "An accepted one is the record of who joined: 409"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "…invitation_has_user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "invitation_has_user"
+              },
+              "message": "…invitation_has_user"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Revoked, deleted, refused\"\n\nRESP=$(call DELETE \"invitations/${ID_ONE}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.action' 'revoked' \"A pending one is revoked\" || true\nassert_json_field \"$(row \"${ID_ONE}\")\" '\"\\(.status) \\(.revokedReason)\"' 'revoked admin' \"…the row kept, by the administrator\" || true\nassert_eq \"$(status_of \"$(invite_post lookup \"{\\\"token\\\":\\\"${TOKEN}\\\"}\")\")\" \"410\" \"Its token: 410\" || true\nRESP=$(call DELETE \"invitations/${ID_ONE}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.action' 'deleted' \"An ended one is deleted\" || true\nassert_eq \"$(row \"${ID_ONE}\")\" \"null\" \"…gone\" || true\nassert_eq \"$(status_of \"$(invite_post lookup \"{\\\"token\\\":\\\"${TOKEN}\\\"}\")\")\" \"404\" \"Its token: 404\" || true\n\nRESP=$(api_post \"invitations\" \"{\\\"username\\\":\\\"${USER_TWO}\\\",\\\"email\\\":\\\"${USER_TWO}@example.test\\\"}\")\nTOKEN=$(json_get \"$RESP\" '.token // empty')\nID_TWO=$(json_get \"$RESP\" '.invitation.id // empty')\nACCEPT=$(invite_post accept \"$(jq -c -n --arg t \"${TOKEN}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\")\nassert_eq \"$(status_of \"$ACCEPT\")\" \"200\" \"Accepted by POST\" || true\nassert_contains \"$(json_get \"$(body_of \"$ACCEPT\")\" '.totpQr')\" \"data:image/svg+xml;base64,\" \"…the QR drawn by the panel\" || true\nassert_json_field \"$(row \"${ID_TWO}\")\" '\"\\(.status) \\(.email)\"' 'accepted null' \"…accepted, the address's copy gone\" || true\nRESP=$(call DELETE \"invitations/${ID_TWO}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"An accepted one is the record of who joined: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'invitation_has_user' \"…invitation_has_user\" || true"
+    },
+    {
+      "id": "a-username-an-open-invitation-names-is-held",
+      "label": "A username an open invitation names is held",
+      "steps": [
+        {
+          "id": "step-108",
+          "label": "POST /api/invitations",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-109",
+          "label": "Set ID_ONE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.invitation.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "ID_ONE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-110",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"users\" \"{\\\"username\\\":\\\"${USER_ONE}\\\",\\\"displayname\\\":\\\"E2E One\\\",\\\"email\\\":\\\"${USER_ONE}@example.test\\\",\\\"password\\\":\\\"${PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-111",
+          "label": "Creating a user under it: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Creating a user under it: 409"
+            }
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "…username_invited",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "username_invited"
+              },
+              "message": "…username_invited"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A username an open invitation names is held\"\n\nRESP=$(api_post \"invitations\" \"{\\\"username\\\":\\\"${USER_ONE}\\\",\\\"email\\\":\\\"${USER_ONE}@example.test\\\"}\")\nID_ONE=$(json_get \"$RESP\" '.invitation.id // empty')\nRESP=$(call POST \"users\" \"{\\\"username\\\":\\\"${USER_ONE}\\\",\\\"displayname\\\":\\\"E2E One\\\",\\\"email\\\":\\\"${USER_ONE}@example.test\\\",\\\"password\\\":\\\"${PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Creating a user under it: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'username_invited' \"…username_invited\" || true\ncall DELETE \"invitations/${ID_ONE}\" > /dev/null\n\n# ===========================================================================\n# 4. invitations.json\n# ==========================================================================="
+    },
+    {
+      "id": "invitations-json-imported-once-then-deleted",
+      "label": "invitations.json: imported once, then deleted",
+      "steps": [
+        {
+          "id": "step-114",
+          "label": "The first start recorded that nothing is left to import",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo sqlite3 \"${STATE_DIR}/state.db\" 'SELECT COUNT(*) FROM invitations_import')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The first start recorded that nothing is left to import"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "Set LEGACY_TOKEN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "openssl rand -hex 32"
+          },
+          "capture": [
+            {
+              "variable": "LEGACY_TOKEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-118",
+          "label": "Set LEGACY_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "node -e 'console.log(crypto.randomUUID())'"
+          },
+          "capture": [
+            {
+              "variable": "LEGACY_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-119",
+          "label": "Set NOW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "date -u +%Y-%m-%dT%H:%M:%S.000Z"
+          },
+          "capture": [
+            {
+              "variable": "NOW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-120",
+          "label": "Set LATER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "date -u -d '+3 days' +%Y-%m-%dT%H:%M:%S.000Z"
+          },
+          "capture": [
+            {
+              "variable": "LATER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-125",
+          "label": "The file is gone after the start",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The file is gone after the start"
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "invitations.json is still there",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "invitations.json is still there"
+          }
+        },
+        {
+          "id": "step-127",
+          "label": "Its invitation is in the store",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(row \"${LEGACY_ID}\")"
+              },
+              "path": "\"\\(.kind) \\(.username) \\(.status)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "admin ${USER_IMPORTED} pending"
+              },
+              "message": "Its invitation is in the store"
+            }
+          }
+        },
+        {
+          "id": "step-128",
+          "label": "…no clear token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(clear_token_count \"${LEGACY_TOKEN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…no clear token"
+            }
+          }
+        },
+        {
+          "id": "step-129",
+          "label": "…its SHA-256",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo sqlite3 \"${STATE_DIR}/state.db\" \"SELECT token_sha256 FROM invitations WHERE id = '${LEGACY_ID}'\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(token_digest \"${LEGACY_TOKEN}\")"
+              },
+              "message": "…its SHA-256"
+            }
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "The marker is written",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo sqlite3 \"${STATE_DIR}/state.db\" 'SELECT COUNT(*) FROM invitations_import')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The marker is written"
+            }
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "The old token opens it by POST",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(invite_post lookup \"{\\\"token\\\":\\\"${LEGACY_TOKEN}\\\"}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The old token opens it by POST"
+            }
+          }
+        },
+        {
+          "id": "step-132",
+          "label": "Set ACCEPT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "invite_post accept \"$(jq -c -n --arg t \"${LEGACY_TOKEN}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\""
+          },
+          "capture": [
+            {
+              "variable": "ACCEPT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-133",
+          "label": "…and accepts",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$ACCEPT\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…and accepts"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"invitations.json: imported once, then deleted\"\n\n# A relay that never imported: the marker of the first start taken away, the\n# panel stopped (its tick would write the marker again before the file is there).\nassert_eq \"$(sudo sqlite3 \"${STATE_DIR}/state.db\" 'SELECT COUNT(*) FROM invitations_import')\" \"1\" \"The first start recorded that nothing is left to import\" || true\nsudo systemctl stop lamalibre-lamaste-serverd\nsudo runuser -u lamaste -- sqlite3 \"${STATE_DIR}/state.db\" 'DELETE FROM invitations_import;'\nLEGACY_TOKEN=$(openssl rand -hex 32)\nLEGACY_ID=$(node -e 'console.log(crypto.randomUUID())')\nNOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\nLATER=$(date -u -d '+3 days' +%Y-%m-%dT%H:%M:%S.000Z)\njq -c -n --arg id \"${LEGACY_ID}\" --arg t \"${LEGACY_TOKEN}\" --arg u \"${USER_IMPORTED}\" --arg n \"${NOW}\" --arg l \"${LATER}\" --arg d \"${DOMAIN}\" \\\n  '[{id: $id, token: $t, username: $u, email: ($u + \"@example.test\"), groups: [], domains: [{name: $d, kind: \"member\"}], createdAt: $n, expiresAt: $l, used: false, acceptedAt: null}]' > \"${WORK_DIR}/invitations.json\"\nsudo install -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/invitations.json\" \"${STATE_DIR}/invitations.json\"\nsudo systemctl start lamalibre-lamaste-serverd\nwait_for_http \"${PANEL_DIRECT_URL}/api/health\" 60 || log_fail \"The panel does not answer after its start\"\nif wait_for 30 sudo test ! -e \"${STATE_DIR}/invitations.json\"; then\n  log_pass \"The file is gone after the start\"\nelse\n  log_fail \"invitations.json is still there\"\nfi\nassert_json_field \"$(row \"${LEGACY_ID}\")\" '\"\\(.kind) \\(.username) \\(.status)\"' \"admin ${USER_IMPORTED} pending\" \"Its invitation is in the store\" || true\nassert_eq \"$(clear_token_count \"${LEGACY_TOKEN}\")\" \"0\" \"…no clear token\" || true\nassert_eq \"$(sudo sqlite3 \"${STATE_DIR}/state.db\" \"SELECT token_sha256 FROM invitations WHERE id = '${LEGACY_ID}'\")\" \"$(token_digest \"${LEGACY_TOKEN}\")\" \"…its SHA-256\" || true\nassert_eq \"$(sudo sqlite3 \"${STATE_DIR}/state.db\" 'SELECT COUNT(*) FROM invitations_import')\" \"1\" \"The marker is written\" || true\nassert_eq \"$(status_of \"$(invite_post lookup \"{\\\"token\\\":\\\"${LEGACY_TOKEN}\\\"}\")\")\" \"200\" \"The old token opens it by POST\" || true\nACCEPT=$(invite_post accept \"$(jq -c -n --arg t \"${LEGACY_TOKEN}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\")\nassert_eq \"$(status_of \"$ACCEPT\")\" \"200\" \"…and accepts\" || true"
+    },
+    {
+      "id": "a-file-that-comes-back-is-deleted-unread",
+      "label": "A file that comes back is deleted unread",
+      "steps": [
+        {
+          "id": "step-134",
+          "label": "Set SECOND_TOKEN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "openssl rand -hex 32"
+          },
+          "capture": [
+            {
+              "variable": "SECOND_TOKEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-135",
+          "label": "Set SECOND_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "node -e 'console.log(crypto.randomUUID())'"
+          },
+          "capture": [
+            {
+              "variable": "SECOND_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-139",
+          "label": "The second file is gone",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The second file is gone"
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "The second invitations.json is still there",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The second invitations.json is still there"
+          }
+        },
+        {
+          "id": "step-141",
+          "label": "…nothing was imported from it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(row \"${SECOND_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "…nothing was imported from it"
+            }
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "…its token opens nothing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(invite_post lookup \"{\\\"token\\\":\\\"${SECOND_TOKEN}\\\"}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "…its token opens nothing"
+            }
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "Audited invitation.import.refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get \"audit?action=invitation.import.refused&limit=50\" | jq --argjson b \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $b)] | length')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Audited invitation.import.refused"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A file that comes back is deleted unread\"\n\nSECOND_TOKEN=$(openssl rand -hex 32)\nSECOND_ID=$(node -e 'console.log(crypto.randomUUID())')\njq -c -n --arg id \"${SECOND_ID}\" --arg t \"${SECOND_TOKEN}\" --arg n \"${NOW}\" --arg l \"${LATER}\" \\\n  '[{id: $id, token: $t, username: \"e2e38-revived\", email: \"e2e38-revived@example.test\", groups: [\"admins\"], domains: [], createdAt: $n, expiresAt: $l, used: false, acceptedAt: null}]' > \"${WORK_DIR}/invitations.json\"\nsudo install -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/invitations.json\" \"${STATE_DIR}/invitations.json\"\nrestart_panel\nif wait_for 30 sudo test ! -e \"${STATE_DIR}/invitations.json\"; then\n  log_pass \"The second file is gone\"\nelse\n  log_fail \"The second invitations.json is still there\"\nfi\nassert_eq \"$(row \"${SECOND_ID}\")\" \"null\" \"…nothing was imported from it\" || true\nassert_eq \"$(status_of \"$(invite_post lookup \"{\\\"token\\\":\\\"${SECOND_TOKEN}\\\"}\")\")\" \"404\" \"…its token opens nothing\" || true\nassert_eq \"$(api_get \"audit?action=invitation.import.refused&limit=50\" | jq --argjson b \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $b)] | length')\" \"1\" \"Audited invitation.import.refused\" || true\n\n# ===========================================================================\n# 5. Both pages\n# ==========================================================================="
+    },
+    {
+      "id": "branded-the-same-script-and-style-the-colours-in-brand-css",
+      "label": "Branded: the same script and style, the colours in /brand.css",
+      "steps": [
+        {
+          "id": "step-147",
+          "label": "Set STOCK_INVITE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/invite\""
+          },
+          "capture": [
+            {
+              "variable": "STOCK_INVITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-148",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"domains/${DOMAIN}/branding\" \"{\\\"name\\\":\\\"${BRAND}\\\",\\\"theme\\\":\\\"light\\\",\\\"accent\\\":\\\"${ACCENT}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-149",
+          "label": "A brand on ${DOMAIN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "A brand on ${DOMAIN}"
+            }
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "Set BRANDED_INVITE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/invite\""
+          },
+          "capture": [
+            {
+              "variable": "BRANDED_INVITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-154",
+          "label": "…the brand's title",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "BRANDED_INVITE"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "<title>${BRAND} — Accept Invitation</title>"
+              },
+              "message": "…the brand's title"
+            }
+          }
+        },
+        {
+          "id": "step-155",
+          "label": "…one script for every brand",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s' \"${BRANDED_INVITE}\" | inline_hash script)"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(printf '%s' \"${STOCK_INVITE}\" | inline_hash script)"
+              },
+              "message": "…one script for every brand"
+            }
+          }
+        },
+        {
+          "id": "step-156",
+          "label": "…one style",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s' \"${BRANDED_INVITE}\" | inline_hash style)"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(printf '%s' \"${STOCK_INVITE}\" | inline_hash style)"
+              },
+              "message": "…one style"
+            }
+          }
+        },
+        {
+          "id": "step-157",
+          "label": "/brand.css carries the accent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/brand.css\")"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "--lamaste-page-accent: ${ACCENT};"
+              },
+              "message": "/brand.css carries the accent"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Both pages, stock: the CSP names what is served\"\n\nassert_page_runs \"/invite\" \"The invitation page\"\nassert_page_runs \"/invite/$(printf 'a%.0s' {1..64})\" \"…at an old link's path\"\nassert_page_runs \"/invitations/${PLUGIN}\" \"The inviter's page\""
+    },
+    {
+      "id": "a-rendering-from-before-the-pages-digest-is-rendered-again",
+      "label": "A rendering from before the pages' digest is rendered again",
+      "steps": [
+        {
+          "id": "step-158",
+          "label": "Set DIGEST_NOW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo jq -r '.pagesDigest // \"none\"' \"${WEB_ROOT}/${DOMAIN}/rendered.json\""
+          },
+          "capture": [
+            {
+              "variable": "DIGEST_NOW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-159",
+          "label": "rendered.json holds the pages' digest",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s' \"${DIGEST_NOW}\" | grep -cE '^[0-9a-f]{64}$' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "rendered.json holds the pages' digest"
+            }
+          }
+        },
+        {
+          "id": "step-162",
+          "label": "The minute reconcile rendered it again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The minute reconcile rendered it again"
+          }
+        },
+        {
+          "id": "step-163",
+          "label": "rendered.json still has no digest",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "rendered.json still has no digest"
+          }
+        },
+        {
+          "id": "step-165",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call DELETE \"domains/${DOMAIN}/branding\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-166",
+          "label": "The brand removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The brand removed"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Branded: the same script and style, the colours in /brand.css\"\n\nSTOCK_INVITE=$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/invite\")\nRESP=$(call PUT \"domains/${DOMAIN}/branding\" \"{\\\"name\\\":\\\"${BRAND}\\\",\\\"theme\\\":\\\"light\\\",\\\"accent\\\":\\\"${ACCENT}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"A brand on ${DOMAIN}\" || true\nrendered_current() { [ \"$(api_get \"domains/${DOMAIN}/branding\" | jq -r '.branding.renderedCurrent' 2>/dev/null)\" = \"true\" ]; }\nif wait_for 30 rendered_current; then log_pass \"…rendered\"; else log_fail \"…not rendered\"; fi\nassert_page_runs \"/invite\" \"The branded invitation page\"\nassert_page_runs \"/invitations/${PLUGIN}\" \"The branded inviter's page\"\nBRANDED_INVITE=$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/invite\")\nassert_contains \"${BRANDED_INVITE}\" \"<title>${BRAND} — Accept Invitation</title>\" \"…the brand's title\" || true\nassert_eq \"$(printf '%s' \"${BRANDED_INVITE}\" | inline_hash script)\" \"$(printf '%s' \"${STOCK_INVITE}\" | inline_hash script)\" \"…one script for every brand\" || true\nassert_eq \"$(printf '%s' \"${BRANDED_INVITE}\" | inline_hash style)\" \"$(printf '%s' \"${STOCK_INVITE}\" | inline_hash style)\" \"…one style\" || true\nassert_contains \"$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/brand.css\")\" \"--lamaste-page-accent: ${ACCENT};\" \"/brand.css carries the accent\" || true"
+    },
+    {
+      "id": "the-vhosts-accepted-by-lamaste-priv-as-written",
+      "label": "The vhosts, accepted by lamaste-priv as written",
+      "steps": [
+        {
+          "id": "step-167",
+          "label": "Set AUTH_NAME",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "vhost_name auth \"${DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "AUTH_NAME",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-168",
+          "label": "Set AUTH_VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"${AVAILABLE}/${AUTH_NAME}\""
+          },
+          "capture": [
+            {
+              "variable": "AUTH_VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-169",
+          "label": "The auth vhost has the inviter's API",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location ^~ /api/delegated-invitations/"
+              },
+              "message": "The auth vhost has the inviter's API"
+            }
+          }
+        },
+        {
+          "id": "step-170",
+          "label": "…asking Gatekeeper, naming the domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_VHOST"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "/authz/delegated-invitations/${DOMAIN}"
+              },
+              "message": "…asking Gatekeeper, naming the domain"
+            }
+          }
+        },
+        {
+          "id": "step-171",
+          "label": "…a small body limit",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "client_max_body_size 16k"
+              },
+              "message": "…a small body limit"
+            }
+          }
+        },
+        {
+          "id": "step-172",
+          "label": "…a literal Host",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_VHOST"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "proxy_set_header Host auth.${DOMAIN};"
+              },
+              "message": "…a literal Host"
+            }
+          }
+        },
+        {
+          "id": "step-173",
+          "label": "…a client's X-Forwarded-Host cleared",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "proxy_set_header X-Forwarded-Host \"\";"
+              },
+              "message": "…a client's X-Forwarded-Host cleared"
+            }
+          }
+        },
+        {
+          "id": "step-174",
+          "label": "lamaste-priv nginx-site write accepts the auth vhost as installed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "lamaste-priv nginx-site write accepts the auth vhost as installed"
+          }
+        },
+        {
+          "id": "step-175",
+          "label": "lamaste-priv nginx-site write refused the auth vhost",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "lamaste-priv nginx-site write refused the auth vhost"
+          }
+        },
+        {
+          "id": "step-177",
+          "label": "${name} is not installed here",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "${name} is not installed here"
+          }
+        },
+        {
+          "id": "step-179",
+          "label": "Set VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"${AVAILABLE}/${name}\""
+          },
+          "capture": [
+            {
+              "variable": "VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-180",
+          "label": "${name}: /api/invite/",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location /api/invite/ {"
+              },
+              "message": "${name}: /api/invite/"
+            }
+          }
+        },
+        {
+          "id": "step-181",
+          "label": "…a literal Host no portal is",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n' \"${VHOST}\" | sed -n '/location \\/api\\/invite\\/ {/,/}/p')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "proxy_set_header Host 127.0.0.1;"
+              },
+              "message": "…a literal Host no portal is"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A rendering from before the pages' digest is rendered again\"\n\nDIGEST_NOW=$(sudo jq -r '.pagesDigest // \"none\"' \"${WEB_ROOT}/${DOMAIN}/rendered.json\")\nassert_eq \"$(printf '%s' \"${DIGEST_NOW}\" | grep -cE '^[0-9a-f]{64}$' || true)\" \"1\" \"rendered.json holds the pages' digest\" || true\nsudo bash -c \"jq 'del(.pagesDigest)' ${WEB_ROOT}/${DOMAIN}/rendered.json > ${WORK_DIR}/rendered.json && cat ${WORK_DIR}/rendered.json > ${WEB_ROOT}/${DOMAIN}/rendered.json\"\ndigest_back() { [ \"$(sudo jq -r '.pagesDigest // \"none\"' \"${WEB_ROOT}/${DOMAIN}/rendered.json\" 2>/dev/null)\" = \"${DIGEST_NOW}\" ]; }\nif wait_for 90 digest_back; then\n  log_pass \"The minute reconcile rendered it again\"\nelse\n  log_fail \"rendered.json still has no digest\"\nfi\nassert_page_runs \"/invite\" \"…and the page still runs\"\nRESP=$(call DELETE \"domains/${DOMAIN}/branding\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The brand removed\" || true\n\n# ===========================================================================\n# 6. The vhosts\n# ==========================================================================="
+    },
+    {
+      "id": "lamaste-server-invitations-and-plugins-invitations",
+      "label": "lamaste-server invitations and plugins invitations",
+      "steps": [
+        {
+          "id": "step-183",
+          "label": "plugins invitations ${PLUGIN}: the policy",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(cli_json plugins invitations \"${PLUGIN}\")"
+              },
+              "path": ".policy.maxOpenPerInviter // .maxOpenPerInviter",
+              "expected": {
+                "kind": "literal",
+                "value": "3"
+              },
+              "message": "plugins invitations ${PLUGIN}: the policy"
+            }
+          }
+        },
+        {
+          "id": "step-184",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json plugins invitations \"${PLUGIN}\" set --email-domains example.test --max-open 4 --max-joined 9 --lifetime-days 6"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-185",
+          "label": "…set: the fields it names",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "(.policy // .) | \"\\(.emailDomains | join(\",\")) \\(.maxOpenPerInviter) \\(.maxJoined) \\(.lifetimeDays)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "example.test 4 9 6"
+              },
+              "message": "…set: the fields it names"
+            }
+          }
+        },
+        {
+          "id": "step-186",
+          "label": "…through the panel; still off",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}/invitation-policy\")"
+              },
+              "path": "\"\\(.enabled) \\(.maxOpenPerInviter)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "false 4"
+              },
+              "message": "…through the panel; still off"
+            }
+          }
+        },
+        {
+          "id": "step-188",
+          "label": "--enable says why it is refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cat \"${WORK_DIR}/enable.out\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "no web surface of its own"
+              },
+              "message": "--enable says why it is refused"
+            }
+          }
+        },
+        {
+          "id": "step-189",
+          "label": "POST /api/invitations",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-190",
+          "label": "Set ID_ONE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.invitation.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "ID_ONE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-191",
+          "label": "Set LIST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json invitations list"
+          },
+          "capture": [
+            {
+              "variable": "LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-193",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json invitations revoke \"${ID_ONE}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-194",
+          "label": "invitations revoke: revoked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".action",
+              "expected": {
+                "kind": "literal",
+                "value": "revoked"
+              },
+              "message": "invitations revoke: revoked"
+            }
+          }
+        },
+        {
+          "id": "step-195",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json invitations disable-invitees \"$(sudo sqlite3 \"${STATE_DIR}/state.db\" \"SELECT user_id FROM directory_users WHERE username = '${USER_TWO}'\")\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-196",
+          "label": "invitations disable-invitees: someone who invited nobody disables nobody",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".disabled | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "invitations disable-invitees: someone who invited nobody disables nobody"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The vhosts, accepted by lamaste-priv as written\"\n\nAUTH_NAME=$(vhost_name auth \"${DOMAIN}\")\nAUTH_VHOST=$(sudo cat \"${AVAILABLE}/${AUTH_NAME}\")\nassert_contains \"${AUTH_VHOST}\" \"location ^~ /api/delegated-invitations/\" \"The auth vhost has the inviter's API\" || true\nassert_contains \"${AUTH_VHOST}\" \"/authz/delegated-invitations/${DOMAIN}\" \"…asking Gatekeeper, naming the domain\" || true\nassert_contains \"${AUTH_VHOST}\" \"client_max_body_size 16k\" \"…a small body limit\" || true\nassert_contains \"${AUTH_VHOST}\" \"proxy_set_header Host auth.${DOMAIN};\" \"…a literal Host\" || true\nassert_contains \"${AUTH_VHOST}\" 'proxy_set_header X-Forwarded-Host \"\";' \"…a client's X-Forwarded-Host cleared\" || true\nif sudo cat \"${AVAILABLE}/${AUTH_NAME}\" | sudo /usr/local/sbin/lamaste-priv nginx-site write \"${AUTH_NAME}\" > /dev/null 2>&1; then\n  log_pass \"lamaste-priv nginx-site write accepts the auth vhost as installed\"\nelse\n  log_fail \"lamaste-priv nginx-site write refused the auth vhost\"\nfi\nfor name in lamalibre-lamaste-panel-ip lamalibre-lamaste-panel-domain; do\n  if ! sudo test -e \"${AVAILABLE}/${name}\"; then\n    log_info \"${name} is not installed here\"\n    continue\n  fi\n  VHOST=$(sudo cat \"${AVAILABLE}/${name}\")\n  assert_contains \"${VHOST}\" \"location /api/invite/ {\" \"${name}: /api/invite/\" || true\n  assert_contains \"$(printf '%s\\n' \"${VHOST}\" | sed -n '/location \\/api\\/invite\\/ {/,/}/p')\" \"proxy_set_header Host 127.0.0.1;\" \"…a literal Host no portal is\" || true\ndone\nif sudo nginx -t > /dev/null 2>&1; then log_pass \"nginx -t passes\"; else log_fail \"nginx -t fails\"; fi\n\n# ===========================================================================\n# 7. The CLI\n# ==========================================================================="
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 38 — Delegated invitations: the store and the refusals (Single-VM)\n# ============================================================================\n# The relay's side of delegated invitations on one VM (design: packages/core/\n# docs/delegated-invitations-design.md, \"Proof\"); three-VM 53–55 are the\n# people. Fixtures served by a stand-in registry on the VM (helpers.sh,\n# write_identity_fixture_plugins).\n#\n# 1. The manifest: a role inviting one the block lacks, or one twice, is\n#    refused at install (400) and leaves nothing. An update that lets a role\n#    invite waits for an administrator (identity.changed, said in words) with\n#    auto-approve on; narrowing it only changes the digest: auto-approved.\n# 2. The policy's validation: every bound, an e-mail domain that is not one,\n#    a field it does not know; enabling without a web surface (409); off, it\n#    is kept lower-cased, without repeats; audited; a plugin that is not\n#    there 404; an agent certificate 403.\n# 3. The store: an administrator's invitation holds only the token's SHA-256,\n#    nothing in state.db or its log holds the token, it is listed without one,\n#    by kind; its link names the token in the fragment. A pending one is\n#    revoked and the row kept, an ended one deleted, an accepted one refused\n#    (409 invitation_has_user): it is the record of who joined.\n# 4. invitations.json: imported once (tokens hashed, a pending one accepted\n#    by POST, the marker written) and deleted; a second file is deleted\n#    unread, audited, and opens nothing.\n# 5. Both pages: their CSP names the script and the style served, stock and\n#    branded; a rendering from before the pages' digest (rendered.json without\n#    it) is rendered again.\n# 6. The vhosts: the auth vhost's inviter location, the panel vhost's and the\n#    IP vhost's literal Host on /api/invite/, accepted by lamaste-priv as\n#    written.\n# 7. lamaste-server invitations and plugins invitations.\n#\n# Sweeps, caps and acceptance need a hosted web surface: three-VM 53–55.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm nginx openssl sqlite3 runuser systemd-run xxd sha256sum\n\nbegin_test \"38 — Delegated invitations: the store and the refusals (Single-VM)\"\n\nRUN_ID=\"$(date +%s)\"\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-invitations-38\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nWEB_ROOT=\"/var/www/lamaste/auth\"\nAVAILABLE=\"/etc/nginx/sites-available\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_invitations_0000000000\"\nSTUB_UNIT=\"lamalibre-lamaste-e2e-38-stub\"\nPLUGIN=\"e2e-invr\"\nPACKAGE=\"@lamalibre/e2e-invr-server\"\nAGENT_LABEL_38=\"invitation-e2e-${RUN_ID}\"\nUSER_ONE=\"e2e38-one\"\nUSER_TWO=\"e2e38-two\"\nUSER_IMPORTED=\"e2e38-imported\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nBRAND=\"E2E Brand 38\"\nACCENT=\"#0f766e\"\nAUDIT_BASE=0\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  systemctl stop \"${STUB_UNIT}\" > /dev/null 2>&1 || true\n  api_delete \"domains/${DOMAIN}/branding\" > /dev/null 2>&1 || true\n  api_post \"plugins/${PLUGIN}/disable\" > /dev/null 2>&1 || true\n  api_delete \"plugins/${PLUGIN}?force=true\" > /dev/null 2>&1 || true\n  api_delete \"plugins/e2e-ident-badinvite?force=true\" > /dev/null 2>&1 || true\n  api_delete \"plugins/e2e-ident-badinviterepeat?force=true\" > /dev/null 2>&1 || true\n  local u\n  for u in \"${USER_ONE}\" \"${USER_TWO}\" \"${USER_IMPORTED}\"; do\n    api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${AGENT_LABEL_38}\" > /dev/null 2>&1 || true\n  sudo rm -f \"${STATE_DIR}/.npmrc\" \"${STATE_DIR}/invitations.json\"\n  sudo rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\n# call <method> <api path> [<json>] — one panel API call as the admin: the\n# body, then the HTTP status on a line of its own\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 2 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\n# wait_operation <operation id> <seconds> — prints the operation once it ended\nwait_operation() {\n  local id=\"$1\" deadline=$((SECONDS + $2)) op='{}'\n  if [ -z \"$id\" ]; then\n    echo '{}'\n    return 0\n  fi\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    op=$(api_get \"plugins/${PLUGIN}/operations/${id}\" | jq -c '.operation // {}' 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$op\" | jq -r '.status // \"running\"' 2>/dev/null)\" != \"running\" ]; then\n      echo \"$op\"\n      return 0\n    fi\n    sleep 2\n  done\n  echo \"$op\"\n}\n\n# restart_panel — the panel restarted, answering again\nrestart_panel() {\n  sudo systemctl restart lamalibre-lamaste-serverd\n  wait_for_http \"${PANEL_DIRECT_URL}/api/health\" 60 || log_fail \"The panel does not answer after a restart\"\n}\n\n# policy_status <json> [path] — the status of PUT …/invitation-policy\npolicy_status() { status_of \"$(call PUT \"plugins/${2:-${PLUGIN}}/invitation-policy\" \"$1\")\"; }\n\n# invite_post <lookup|accept> <json> — POST /api/invite/<…> on the panel's\n# loopback port (public): the body, then the status\ninvite_post() {\n  curl -s --max-time 15 -X POST -H 'Content-Type: application/json' -d \"$2\" -w '\\n%{http_code}' \"${PANEL_DIRECT_URL}/api/invite/$1\" 2>/dev/null || echo \"000\"\n}\n\n# clear_token_count <token> — how many bytes of state.db and its log hold the\n# token, as text\nclear_token_count() { sudo cat \"${STATE_DIR}\"/state.db* | grep -caF \"$1\" || true; }\n\n# token_digest <token> — hex SHA-256 of the token's 32 bytes\ntoken_digest() { printf '%s' \"$1\" | xxd -r -p | sha256sum | cut -d' ' -f1; }\n\n# row <invitation id> — the invitation as listed ('null' when gone)\nrow() { api_get \"invitations\" | jq -c --arg id \"$1\" '[.invitations[]? | select(.id == $id)] | first // null' 2>/dev/null || echo \"null\"; }\n\n# inline_hash <script|style> — the CSP source of a page's inline element, from stdin\ninline_hash() {\n  node -e 'const h=require(\"fs\").readFileSync(0,\"utf8\");const t=process.argv[1];const m=h.match(new RegExp(\"<\"+t+\">([\\\\s\\\\S]*?)</\"+t+\">\"));process.stdout.write(m?\"sha256-\"+require(\"crypto\").createHash(\"sha256\").update(m[1],\"utf8\").digest(\"base64\"):\"none\")' \"$1\"\n}\n\n# assert_page_runs <path> <what> — the page on auth.<DOMAIN> answers 200 and\n# its CSP names the served inline script and style\nassert_page_runs() {\n  local dir=\"${WORK_DIR}/page\" csp\n  mkdir -p \"$dir\"\n  curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -D \"$dir/headers\" -o \"$dir/body\" -w '%{http_code}' \"https://auth.${DOMAIN}$1\" > \"$dir/status\" 2>/dev/null || echo 000 > \"$dir/status\"\n  assert_eq \"$(cat \"$dir/status\")\" \"200\" \"$2: 200\" || true\n  csp=$(tr -d '\\r' < \"$dir/headers\" | sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p')\n  assert_contains \"${csp}\" \"script-src '$(inline_hash script < \"$dir/body\")'\" \"…its CSP names the script served\" || true\n  assert_contains \"${csp}\" \"'$(inline_hash style < \"$dir/body\")'\" \"…and the style served\" || true\n  assert_contains \"${csp}\" \"frame-ancestors 'none'\" \"…nothing frames it\" || true\n  assert_contains \"$(tr '[:upper:]' '[:lower:]' < \"$dir/headers\")\" \"x-frame-options: deny\" \"…X-Frame-Options: DENY\" || true\n  assert_not_contains \"$(cat \"$dir/body\")\" \"cdn.jsdelivr\" \"…no foreign script\" || true\n}\n\n# cli_json <args...> — lamaste-server <args> --json: its last JSON line\ncli_json() { sudo lamaste-server \"$@\" --json 2>/dev/null | grep -E '^\\{' | tail -n 1 || echo '{}'; }\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

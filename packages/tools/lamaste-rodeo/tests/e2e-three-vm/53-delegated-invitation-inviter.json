@@ -1,0 +1,3350 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 53,
+    "name": "Delegated invitations: an inviter grants only what it may",
+    "suite": "e2e-three-vm",
+    "description": "53 — Delegated invitations: an inviter grants only what it may (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-xinv"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-xinv-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-xinv-agent"
+    },
+    "APP": {
+      "value": "/api/${PLUGIN}/app",
+      "expression": true
+    },
+    "SUB_W": {
+      "value": "e2e53web"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-53"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-53-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "COORD": {
+      "value": "e2e53-coord"
+    },
+    "VIEWER": {
+      "value": "e2e53-viewer"
+    },
+    "OUTSIDER": {
+      "value": "e2e53-outsider"
+    },
+    "MEM_A": {
+      "value": "e2e53-mem-a"
+    },
+    "GONE": {
+      "value": "e2e53-gone"
+    },
+    "FUTURE": {
+      "value": "e2e53-future"
+    },
+    "INVITEE": {
+      "value": "e2e53-invitee"
+    },
+    "AUDIT_BASE": {
+      "value": "0"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE gatekeeper/grants/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "gatekeeper/grants/${id}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE plugins/${PLUGIN}/web-surface",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN}/web-surface"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "DELETE /api/plugins/${PLUGIN}/web-surface",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}/web-surface"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-6",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nmd_setup\nif agent_has_node_sqlite; then\n  log_pass \"The agent VM's Node.js has node:sqlite, which the agent half's projection needs\"\nelse\n  log_fail \"The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run\"\n  end_test\n  exit $?\nfi\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\nhost_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\ndrop_plugin_grants \"${PLUGIN}\"\nAUDIT_BASE=$(host_api_get \"audit?limit=1\" 2>/dev/null | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 1. B, the people, the plugin\n# ==========================================================================="
+    },
+    {
+      "id": "the-plugin-with-an-inviting-role-installed-approved-hosted-on-b",
+      "label": "The plugin, with an inviting role, installed, approved, hosted, on B",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-53-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Fixture built: ${SERVER_PACKAGE} (coordinator invites coordinator and viewer; web surface ${SUB_W})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixture built: ${SERVER_PACKAGE} (coordinator invites coordinator and viewer; web surface ${SUB_W})"
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "GET /api/plugins/${PLUGIN}/hooks",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/hooks"
+          },
+          "capture": [
+            {
+              "variable": "HOOKS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "The approved block names what the coordinator may give",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOOKS"
+              },
+              "path": ".hooks.identity.block.roles | map(select(.id == \"coordinator\")) | first | .invites | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "coordinator,viewer"
+              },
+              "message": "The approved block names what the coordinator may give"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Domain B; a coordinator, a viewer, an outsider (external members of B); a member of A alone\"\n\nmd_domain_active \"${DOMAIN_2}\"\nFQDN=\"${SUB_W}.${DOMAIN_2}\"\nEXTERNAL=\"[{\\\"name\\\":\\\"${DOMAIN_2}\\\",\\\"kind\\\":\\\"external\\\"}]\"\nmd_user COORD_ID \"${COORD}\" \"${PASSWORD}\" \"${EXTERNAL}\"\nmd_user VIEWER_ID \"${VIEWER}\" \"${PASSWORD}\" \"${EXTERNAL}\"\nmd_user OUTSIDER_ID \"${OUTSIDER}\" \"${PASSWORD}\" \"${EXTERNAL}\"\nmd_user MEM_A_ID \"${MEM_A}\" \"${PASSWORD}\" \"[\\\"${DOMAIN}\\\"]\""
+    },
+    {
+      "id": "the-policy-off-until-the-administrator-enables-it-and-only-with-a-restricted-web-surface",
+      "label": "The policy: off until the administrator enables it, and only with a restricted web surface",
+      "steps": [
+        {
+          "id": "step-24",
+          "label": "GET /api/plugins/${PLUGIN}/invitation-policy",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/invitation-policy"
+          },
+          "capture": [
+            {
+              "variable": "VIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "A plugin nobody set a policy for: off, the defaults",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": "\"\\(.enabled) \\(.maxOpenPerInviter) \\(.maxJoined) \\(.lifetimeDays)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "false 10 50 7"
+              },
+              "message": "A plugin nobody set a policy for: off, the defaults"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "…its inviting role listed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": ".invitingRoles | map(\"\\(.role):\\(.invites | join(\"+\"))\") | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "coordinator:coordinator+viewer"
+              },
+              "message": "…its inviting role listed"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy '{\"enabled\":true,\"emailDomains\":[]}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Enabling with no e-mail domain: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Enabling with no e-mail domain: 400"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"${ENABLE}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-31",
+          "label": "Enabling with no web surface: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Enabling with no web surface: 409"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "…invitations_unavailable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "invitations_unavailable"
+              },
+              "message": "…invitations_unavailable"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"${ENABLE}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Enabling on an authenticated web surface: 409 (it refuses external members)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Enabling on an authenticated web surface: 409 (it refuses external members)"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "…it says why",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(body_of \"$RESP\")\" '.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "not restricted"
+              },
+              "message": "…it says why"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The plugin, with an inviting role, installed, approved, hosted, on B\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-53-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/xinv\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none inviting v1 \"${SUB_W}\"; then\n  log_fail \"The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE} (coordinator invites coordinator and viewer; web surface ${SUB_W})\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/xinv/server fixtures/xinv/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\ninv_install \"${PLUGIN}\" \"${SERVER_PACKAGE}\" \"${AGENT_PACKAGE}\"\nHOOKS=$(host_api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '.hooks.identity.block.roles | map(select(.id == \"coordinator\")) | first | .invites | join(\",\")' 'coordinator,viewer' \"The approved block names what the coordinator may give\" || true\n\n# ===========================================================================\n# 2. The policy\n# ==========================================================================="
+    },
+    {
+      "id": "the-people-roles-and-the-site-s-grant-as-the-administrator-gives-them",
+      "label": "The people: roles and the site's grant, as the administrator gives them",
+      "steps": [
+        {
+          "id": "step-51",
+          "label": "Set AUTHELIA_PID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "authelia_pid"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_PID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"The policy: off until the administrator enables it, and only with a restricted web surface\"\n\nVIEW=$(host_api_get \"plugins/${PLUGIN}/invitation-policy\")\nassert_json_field \"$VIEW\" '\"\\(.enabled) \\(.maxOpenPerInviter) \\(.maxJoined) \\(.lifetimeDays)\"' 'false 10 50 7' \"A plugin nobody set a policy for: off, the defaults\" || true\nassert_json_field \"$VIEW\" '.invitingRoles | map(\"\\(.role):\\(.invites | join(\"+\"))\") | join(\",\")' 'coordinator:coordinator+viewer' \"…its inviting role listed\" || true\nENABLE=\"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"]}\"\nRESP=$(inv_policy '{\"enabled\":true,\"emailDomains\":[]}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"Enabling with no e-mail domain: 400\" || true\nRESP=$(inv_policy \"${ENABLE}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Enabling with no web surface: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'invitations_unavailable' \"…invitations_unavailable\" || true\ninv_web_surface SITE_ID \"${PLUGIN}\" \"${FQDN}\" authenticated\nRESP=$(inv_policy \"${ENABLE}\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Enabling on an authenticated web surface: 409 (it refuses external members)\" || true\nassert_contains \"$(json_get \"$(body_of \"$RESP\")\" '.error')\" \"not restricted\" \"…it says why\" || true\ninv_web_surface SITE_ID \"${PLUGIN}\" \"${FQDN}\" restricted\nmd_hosts \"${FQDN}\""
+    },
+    {
+      "id": "off-the-coordinator-is-refused-until-the-policy-is-enabled",
+      "label": "Off: the coordinator is refused until the policy is enabled",
+      "steps": [
+        {
+          "id": "step-52",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" GET"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "GET with the policy off: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "GET with the policy off: 403"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "…invitations_unavailable (never why)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "invitations_unavailable"
+              },
+              "message": "…invitations_unavailable (never why)"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"${ENABLE}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Enabled, for addresses under ${INV_MAIL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Enabled, for addresses under ${INV_MAIL}"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "…available",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.enabled) \\(.available) \\(.emailDomains | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "true true ${INV_MAIL}"
+              },
+              "message": "…available"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The people: roles and the site's grant, as the administrator gives them\"\n\ninv_entitle \"${COORD}\" coordinator\ninv_entitle \"${VIEWER}\" viewer\nmd_grant COORD_GRANT user \"${COORD}\" site \"${SITE_ID}\"\nmd_grant VIEWER_GRANT user \"${VIEWER}\" site \"${SITE_ID}\"\ninv_wait_audience \"${COORD_ID}\" coordinator \"The audience holds ${COORD} as coordinator\"\ninv_wait_audience \"${VIEWER_ID}\" viewer \"…and ${VIEWER} as viewer\"\nwait_group holds \"${COORD}\" \"${FQDN}\" \"users.yml gives ${COORD} the site's hostname as a group\"\n\nmd_wait_authelia \"${DOMAIN_2}\"\nmd_sign_in \"${COORD}\" \"${PASSWORD}\" \"$(reset_totp \"${COORD}\")\" \"${JAR_COORD}\" \"${FQDN}\"\nmd_sign_in \"${VIEWER}\" \"${PASSWORD}\" \"$(reset_totp \"${VIEWER}\")\" \"${JAR_VIEWER}\" \"${FQDN}\"\nmd_sign_in \"${OUTSIDER}\" \"${PASSWORD}\" \"$(reset_totp \"${OUTSIDER}\")\" \"${JAR_OUTSIDER}\" \"${FQDN}\"\n# A member of A alone signs in at B's portal (a password is relay-wide); only membership differs.\nmd_sign_in \"${MEM_A}\" \"${PASSWORD}\" \"$(reset_totp \"${MEM_A}\")\" \"${JAR_MEM_A}\" \"${FQDN}\"\nAUTHELIA_PID=$(authelia_pid)"
+    },
+    {
+      "id": "the-inviter-s-page-on-auth-b-its-own-origin-by-hash-unframed",
+      "label": "The inviter's page on auth.<B>: its own origin, by hash, unframed",
+      "steps": [
+        {
+          "id": "step-58",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"https://auth.${DOMAIN_2}/invitations/${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
+          "label": "GET auth.<B>/invitations/${PLUGIN}: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "GET auth.<B>/invitations/${PLUGIN}: 200"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Set HEADERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_headers \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "HEADERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "Set PAGE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "PAGE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "…the stock inviter's page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<title>Lamaste — Invite People</title>"
+              },
+              "message": "…the stock inviter's page"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "…nothing from a foreign host",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "https://cdn"
+              },
+              "message": "…nothing from a foreign host"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Set CSP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "printf '%s\\n' \"${HEADERS}\" | sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p'"
+          },
+          "capture": [
+            {
+              "variable": "CSP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "…the CSP names the served script's hash",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CSP"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "script-src '$(printf '%s' \"${PAGE}\" | inline_hash script)'"
+              },
+              "message": "…the CSP names the served script's hash"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "…and the served style's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CSP"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "'$(printf '%s' \"${PAGE}\" | inline_hash style)'"
+              },
+              "message": "…and the served style's"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "…nothing frames it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CSP"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "frame-ancestors 'none'"
+              },
+              "message": "…nothing frames it"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "…nothing else loads",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CSP"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "default-src 'none'"
+              },
+              "message": "…nothing else loads"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Set LOWER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "printf '%s\\n' \"${HEADERS}\" | tr '[:upper:]' '[:lower:]'"
+          },
+          "capture": [
+            {
+              "variable": "LOWER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "X-Frame-Options: DENY",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "LOWER"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "x-frame-options: deny"
+              },
+              "message": "X-Frame-Options: DENY"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "Cross-Origin-Opener-Policy: same-origin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "LOWER"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "cross-origin-opener-policy: same-origin"
+              },
+              "message": "Cross-Origin-Opener-Policy: same-origin"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "Referrer-Policy: same-origin (no-referrer would make a fetch POST send Origin: null)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "LOWER"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "referrer-policy: same-origin"
+              },
+              "message": "Referrer-Policy: same-origin (no-referrer would make a fetch POST send Origin: null)"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Cache-Control: no-store",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "LOWER"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "cache-control: no-store"
+              },
+              "message": "Cache-Control: no-store"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Off: the coordinator is refused until the policy is enabled\"\n\nRESP=$(inv_api \"${JAR_COORD}\" GET)\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"GET with the policy off: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.code' 'invitations_unavailable' \"…invitations_unavailable (never why)\" || true\n\nRESP=$(inv_policy \"${ENABLE}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Enabled, for addresses under ${INV_MAIL}\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.enabled) \\(.available) \\(.emailDomains | join(\",\"))\"' \"true true ${INV_MAIL}\" \"…available\" || true\n\n# ===========================================================================\n# 3. The page\n# ==========================================================================="
+    },
+    {
+      "id": "who-may-ask",
+      "label": "Who may ask",
+      "steps": [
+        {
+          "id": "step-74",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api - GET"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "No session: 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "No session: 401"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "…JSON, never a redirect (the page sends the browser to sign in)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location:"
+              },
+              "message": "…JSON, never a redirect (the page sends the browser to sign in)"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "${MEM_A}, a member of A alone: 403 at auth.<B>",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_api \"${JAR_MEM_A}\" GET)\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${MEM_A}, a member of A alone: 403 at auth.<B>"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "${OUTSIDER}, external on B with no role and no site: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_api \"${JAR_OUTSIDER}\" GET)\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${OUTSIDER}, external on B with no role and no site: 403"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The inviter's page on auth.<B>: its own origin, by hash, unframed\"\n\nRESP=$(visit - \"https://auth.${DOMAIN_2}/invitations/${PLUGIN}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"GET auth.<B>/invitations/${PLUGIN}: 200\" || true\nHEADERS=$(visit_headers \"$RESP\")\nPAGE=$(visit_body \"$RESP\")\nassert_contains \"${PAGE}\" \"<title>Lamaste — Invite People</title>\" \"…the stock inviter's page\" || true\nassert_not_contains \"${PAGE}\" \"https://cdn\" \"…nothing from a foreign host\" || true\nCSP=$(printf '%s\\n' \"${HEADERS}\" | sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p')\nassert_contains \"${CSP}\" \"script-src '$(printf '%s' \"${PAGE}\" | inline_hash script)'\" \"…the CSP names the served script's hash\" || true\nassert_contains \"${CSP}\" \"'$(printf '%s' \"${PAGE}\" | inline_hash style)'\" \"…and the served style's\" || true\nassert_contains \"${CSP}\" \"frame-ancestors 'none'\" \"…nothing frames it\" || true\nassert_contains \"${CSP}\" \"default-src 'none'\" \"…nothing else loads\" || true\nLOWER=$(printf '%s\\n' \"${HEADERS}\" | tr '[:upper:]' '[:lower:]')\nassert_contains \"${LOWER}\" \"x-frame-options: deny\" \"X-Frame-Options: DENY\" || true\nassert_contains \"${LOWER}\" \"cross-origin-opener-policy: same-origin\" \"Cross-Origin-Opener-Policy: same-origin\" || true\nassert_contains \"${LOWER}\" \"referrer-policy: same-origin\" \"Referrer-Policy: same-origin (no-referrer would make a fetch POST send Origin: null)\" || true\nassert_contains \"${LOWER}\" \"cache-control: no-store\" \"Cache-Control: no-store\" || true\n\n# ===========================================================================\n# 4. Who may ask, for what\n# ==========================================================================="
+    },
+    {
+      "id": "what-the-coordinator-may-give-and-what-the-viewer-may-not",
+      "label": "What the coordinator may give, and what the viewer may not",
+      "steps": [
+        {
+          "id": "step-79",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" GET"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "${COORD}: GET 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${COORD}: GET 200"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "Set BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-82",
+          "label": "…the roles they may give, editor not among them",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BODY"
+              },
+              "path": ".policy.grantableRoles | map(.id) | sort | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "coordinator,viewer"
+              },
+              "message": "…the roles they may give, editor not among them"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "…the bounds; none open",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BODY"
+              },
+              "path": "\"\\(.policy.emailDomains | join(\",\")) \\(.policy.lifetimeDays) \\(.policy.maxOpen) \\(.policy.open)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${INV_MAIL} 7 10 0"
+              },
+              "message": "…the bounds; none open"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "…the way back to the plugin's site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BODY"
+              },
+              "path": ".plugin.siteUrl",
+              "expected": {
+                "kind": "expr",
+                "template": "https://${FQDN}/"
+              },
+              "message": "…the way back to the plugin's site"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "…never cached",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "cache-control: no-store"
+              },
+              "message": "…never cached"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" POST \"\" \"$(MADE \"someone@${INV_MAIL}\" editor)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-88",
+          "label": "editor, which the coordinator may not give: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "editor, which the coordinator may not give: 403"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "…role_not_grantable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "role_not_grantable"
+              },
+              "message": "…role_not_grantable"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" POST \"\" \"$(MADE \"someone@${INV_MAIL}\" admins)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-91",
+          "label": "A role that does not exist: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "A role that does not exist: 403"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" POST \"\" \"$(MADE \"someone@other.example\" viewer)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "An address under another domain: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "An address under another domain: 400"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "…email_domain_not_allowed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "email_domain_not_allowed"
+              },
+              "message": "…email_domain_not_allowed"
+            }
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" POST \"\" \"{\\\"email\\\":\\\"someone@${INV_MAIL}\\\",\\\"role\\\":\\\"viewer\\\",\\\"groups\\\":[\\\"admins\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-96",
+          "label": "A body naming anything else (groups): 400, strict",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A body naming anything else (groups): 400, strict"
+            }
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_VIEWER}\" POST \"\" \"$(MADE \"someone@${INV_MAIL}\" viewer)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-98",
+          "label": "${VIEWER}, whose role invites nobody: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${VIEWER}, whose role invites nobody: 403"
+            }
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "…role_not_grantable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "role_not_grantable"
+              },
+              "message": "…role_not_grantable"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Who may ask\"\n\nRESP=$(inv_api - GET)\nassert_eq \"$(visit_status \"$RESP\")\" \"401\" \"No session: 401\" || true\nassert_not_contains \"$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\" \"location:\" \"…JSON, never a redirect (the page sends the browser to sign in)\" || true\nassert_eq \"$(visit_status \"$(inv_api \"${JAR_MEM_A}\" GET)\")\" \"403\" \"${MEM_A}, a member of A alone: 403 at auth.<B>\" || true\nassert_eq \"$(visit_status \"$(inv_api \"${JAR_OUTSIDER}\" GET)\")\" \"403\" \"${OUTSIDER}, external on B with no role and no site: 403\" || true"
+    },
+    {
+      "id": "from-nowhere-but-the-sign-in-host-s-page",
+      "label": "From nowhere but the sign-in host's page",
+      "steps": [
+        {
+          "id": "step-101",
+          "label": "A POST the plugin's own pages would send (Origin of its site, same-site): 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit \"${JAR_COORD}\" \"${REQ[@]}\" -H \"Origin: https://${FQDN}\" -H 'Sec-Fetch-Site: same-site' \"$(inv_url)\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "A POST the plugin's own pages would send (Origin of its site, same-site): 403"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "…its Origin alone: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit \"${JAR_COORD}\" \"${REQ[@]}\" -H \"Origin: https://${FQDN}\" -H 'Sec-Fetch-Site: same-origin' \"$(inv_url)\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "…its Origin alone: 403"
+            }
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "…a same-site fetch alone: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit \"${JAR_COORD}\" \"${REQ[@]}\" -H \"Origin: https://auth.${DOMAIN_2}\" -H 'Sec-Fetch-Site: same-site' \"$(inv_url)\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "…a same-site fetch alone: 403"
+            }
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "…no Origin at all: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit \"${JAR_COORD}\" \"${REQ[@]}\" -H 'Sec-Fetch-Site: same-origin' \"$(inv_url)\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "…no Origin at all: 403"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_COORD}\" \"${REQ[@]}\" -H \"Origin: https://${FQDN}\" -H 'Sec-Fetch-Site: same-origin' \"https://${FQDN}/api/delegated-invitations/${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "The same POST on the plugin's own host makes nothing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "The same POST on the plugin's own host makes nothing"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "…no link",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "inviteUrl"
+              },
+              "message": "…no link"
+            }
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_COORD}\" -H 'Sec-Fetch-Site: same-origin' \"https://${FQDN}/api/delegated-invitations/${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-109",
+          "label": "…and a GET there reads nothing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "grantableRoles"
+              },
+              "message": "…and a GET there reads nothing"
+            }
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "No invitation was made by any of those",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_get \"invitations?plugin=${PLUGIN}\")"
+              },
+              "path": ".invitations | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "No invitation was made by any of those"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"What the coordinator may give, and what the viewer may not\"\n\nRESP=$(inv_api \"${JAR_COORD}\" GET)\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"${COORD}: GET 200\" || true\nBODY=$(visit_body \"$RESP\")\nassert_json_field \"$BODY\" '.policy.grantableRoles | map(.id) | sort | join(\",\")' 'coordinator,viewer' \"…the roles they may give, editor not among them\" || true\nassert_json_field \"$BODY\" '\"\\(.policy.emailDomains | join(\",\")) \\(.policy.lifetimeDays) \\(.policy.maxOpen) \\(.policy.open)\"' \"${INV_MAIL} 7 10 0\" \"…the bounds; none open\" || true\nassert_json_field \"$BODY\" \".plugin.siteUrl\" \"https://${FQDN}/\" \"…the way back to the plugin's site\" || true\nassert_contains \"$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\" \"cache-control: no-store\" \"…never cached\" || true\n\nMADE() { jq -c -n --arg e \"$1\" --arg r \"$2\" '{email: $e, role: $r}'; }\nRESP=$(inv_api \"${JAR_COORD}\" POST \"\" \"$(MADE \"someone@${INV_MAIL}\" editor)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"editor, which the coordinator may not give: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.code' 'role_not_grantable' \"…role_not_grantable\" || true\nRESP=$(inv_api \"${JAR_COORD}\" POST \"\" \"$(MADE \"someone@${INV_MAIL}\" admins)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"A role that does not exist: 403\" || true\nRESP=$(inv_api \"${JAR_COORD}\" POST \"\" \"$(MADE \"someone@other.example\" viewer)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"400\" \"An address under another domain: 400\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.code' 'email_domain_not_allowed' \"…email_domain_not_allowed\" || true\nRESP=$(inv_api \"${JAR_COORD}\" POST \"\" \"{\\\"email\\\":\\\"someone@${INV_MAIL}\\\",\\\"role\\\":\\\"viewer\\\",\\\"groups\\\":[\\\"admins\\\"]}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"400\" \"A body naming anything else (groups): 400, strict\" || true\nRESP=$(inv_api \"${JAR_VIEWER}\" POST \"\" \"$(MADE \"someone@${INV_MAIL}\" viewer)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${VIEWER}, whose role invites nobody: 403\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.code' 'role_not_grantable' \"…role_not_grantable\" || true"
+    },
+    {
+      "id": "an-invitation-a-link-the-inviter-sends-themselves",
+      "label": "An invitation: a link the inviter sends themselves",
+      "steps": [
+        {
+          "id": "step-112",
+          "label": "The panel lists it with its inviter",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(inv_row \"${INV_ID}\")"
+              },
+              "path": "\"\\(.kind) \\(.inviter.username) \\(.plugin) \\(.role) \\(.status) \\(.email)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "delegated ${COORD} ${PLUGIN} viewer pending ayse@${INV_MAIL}"
+              },
+              "message": "The panel lists it with its inviter"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" GET"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
+          "label": "${COORD} sees their own, pending",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "[.invitations[] | \"\\(.email) \\(.status)\"] | join(\",\")",
+              "expected": {
+                "kind": "expr",
+                "template": "ayse@${INV_MAIL} pending"
+              },
+              "message": "${COORD} sees their own, pending"
+            }
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "…one open",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".policy.open",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…one open"
+            }
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "${VIEWER} sees none of it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(visit_body \"$(inv_api \"${JAR_VIEWER}\" GET)\")\" '.invitations | length')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "${VIEWER} sees none of it"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"From nowhere but the sign-in host's page\"\n\nREQ=(-X POST -H 'Content-Type: application/json' -d \"$(MADE \"someone@${INV_MAIL}\" viewer)\")\nassert_eq \"$(visit_status \"$(visit \"${JAR_COORD}\" \"${REQ[@]}\" -H \"Origin: https://${FQDN}\" -H 'Sec-Fetch-Site: same-site' \"$(inv_url)\")\")\" \"403\" \"A POST the plugin's own pages would send (Origin of its site, same-site): 403\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_COORD}\" \"${REQ[@]}\" -H \"Origin: https://${FQDN}\" -H 'Sec-Fetch-Site: same-origin' \"$(inv_url)\")\")\" \"403\" \"…its Origin alone: 403\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_COORD}\" \"${REQ[@]}\" -H \"Origin: https://auth.${DOMAIN_2}\" -H 'Sec-Fetch-Site: same-site' \"$(inv_url)\")\")\" \"403\" \"…a same-site fetch alone: 403\" || true\nassert_eq \"$(visit_status \"$(visit \"${JAR_COORD}\" \"${REQ[@]}\" -H 'Sec-Fetch-Site: same-origin' \"$(inv_url)\")\")\" \"403\" \"…no Origin at all: 403\" || true\n# The plugin's host has no such API: a tree's file, or nothing, never an invitation\nRESP=$(visit \"${JAR_COORD}\" \"${REQ[@]}\" -H \"Origin: https://${FQDN}\" -H 'Sec-Fetch-Site: same-origin' \"https://${FQDN}/api/delegated-invitations/${PLUGIN}\")\nassert_not_eq \"$(visit_status \"$RESP\")\" \"201\" \"The same POST on the plugin's own host makes nothing\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"inviteUrl\" \"…no link\" || true\nRESP=$(visit \"${JAR_COORD}\" -H 'Sec-Fetch-Site: same-origin' \"https://${FQDN}/api/delegated-invitations/${PLUGIN}\")\nassert_not_contains \"$(visit_body \"$RESP\")\" \"grantableRoles\" \"…and a GET there reads nothing\" || true\nassert_json_field \"$(host_api_get \"invitations?plugin=${PLUGIN}\")\" '.invitations | length' '0' \"No invitation was made by any of those\" || true\n\n# ===========================================================================\n# 5. The link\n# ==========================================================================="
+    },
+    {
+      "id": "the-link-opens-on-b-s-sign-in-host-alone",
+      "label": "The link opens on B's sign-in host alone",
+      "steps": [
+        {
+          "id": "step-117",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_lookup \"${TOKEN}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-118",
+          "label": "POST auth.<B>/api/invite/lookup: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "POST auth.<B>/api/invite/lookup: 200"
+            }
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "…what it is for and who invited, by display name",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "\"\\(.kind) \\(.email) \\(.plugin) \\(.role) \\(.invitedBy) \\(.suggestedUsername)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "delegated ayse@${INV_MAIL} ${PLUGIN} Viewer E2E ${COORD} ayse"
+              },
+              "message": "…what it is for and who invited, by display name"
+            }
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "…never the inviter's username",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(visit_body \"$RESP\")\" '.username // \"none\"')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "none"
+              },
+              "message": "…never the inviter's username"
+            }
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "auth.<A>: 404, as no invitation at all",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_lookup \"${TOKEN}\" \"auth.${DOMAIN}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "auth.<A>: 404, as no invitation at all"
+            }
+          }
+        },
+        {
+          "id": "step-122",
+          "label": ":9292, Host and X-Forwarded-Host naming auth.<B>: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(inv_refused_off_portal \"${TOKEN}\" \"https://127.0.0.1:9292\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": ":9292, Host and X-Forwarded-Host naming auth.<B>: 404"
+            }
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "The panel vhost, X-Forwarded-Host naming auth.<B>: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --resolve panel.${DOMAIN}:443:127.0.0.1 -X POST -H 'X-Forwarded-Host: auth.${DOMAIN_2}' -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${TOKEN}\\\"}' https://panel.${DOMAIN}/api/invite/lookup\" 2>/dev/null | tail -n 1 | tr -d '\\r')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The panel vhost, X-Forwarded-Host naming auth.<B>: 404"
+            }
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - -X POST -H 'Content-Type: application/json' -H \"X-Forwarded-Host: auth.${DOMAIN_2}\" -d \"{\\\"token\\\":\\\"${TOKEN}\\\"}\" \"https://auth.${DOMAIN}/api/invite/lookup\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-125",
+          "label": "auth.<A>, X-Forwarded-Host naming auth.<B>: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "auth.<A>, X-Forwarded-Host naming auth.<B>: 404"
+            }
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"https://auth.${DOMAIN_2}/api/invite/${TOKEN}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-127",
+          "label": "The token in a URL opens nothing: the path routes are gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The token in a URL opens nothing: the path routes are gone"
+            }
+          }
+        },
+        {
+          "id": "step-128",
+          "label": "A token that was never made: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_lookup \"$(printf '0%.0s' {1..64})\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "A token that was never made: 404"
+            }
+          }
+        },
+        {
+          "id": "step-129",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"https://auth.${DOMAIN_2}/invite\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-130",
+          "label": "The invitation page at /invite: 200 (the fragment never reaches the server)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The invitation page at /invite: 200 (the fragment never reaches the server)"
+            }
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "Set CSP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_headers \"$RESP\" | sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p'"
+          },
+          "capture": [
+            {
+              "variable": "CSP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-132",
+          "label": "…its CSP names the served script's hash",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CSP"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "script-src '$(visit_body \"$RESP\" | inline_hash script)'"
+              },
+              "message": "…its CSP names the served script's hash"
+            }
+          }
+        },
+        {
+          "id": "step-133",
+          "label": "…no foreign script: the QR is the panel's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "cdn.jsdelivr"
+              },
+              "message": "…no foreign script: the QR is the panel's"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An invitation: a link the inviter sends themselves\"\n\ninv_new TOKEN INV_ID \"${JAR_COORD}\" \"ayse@${INV_MAIL}\" viewer \"${COORD} invites ayse@${INV_MAIL} as viewer\"\nassert_json_field \"$(inv_row \"${INV_ID}\")\" '\"\\(.kind) \\(.inviter.username) \\(.plugin) \\(.role) \\(.status) \\(.email)\"' \"delegated ${COORD} ${PLUGIN} viewer pending ayse@${INV_MAIL}\" \"The panel lists it with its inviter\" || true\nRESP=$(inv_api \"${JAR_COORD}\" GET)\nassert_json_field \"$(visit_body \"$RESP\")\" '[.invitations[] | \"\\(.email) \\(.status)\"] | join(\",\")' \"ayse@${INV_MAIL} pending\" \"${COORD} sees their own, pending\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.policy.open' '1' \"…one open\" || true\nassert_eq \"$(json_get \"$(visit_body \"$(inv_api \"${JAR_VIEWER}\" GET)\")\" '.invitations | length')\" \"0\" \"${VIEWER} sees none of it\" || true"
+    },
+    {
+      "id": "a-username-anything-names-is-refused-with-one-answer",
+      "label": "A username anything names is refused, with one answer",
+      "steps": [
+        {
+          "id": "step-135",
+          "label": "DELETE /api/users/${GONE}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "users/${GONE}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-137",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_accept \"${TOKEN}\" \"${FUTURE}\" \"${INVITEE_PASSWORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-138",
+          "label": "${FUTURE}, which a Gatekeeper grant names for a user still to come: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "${FUTURE}, which a Gatekeeper grant names for a user still to come: 409"
+            }
+          }
+        },
+        {
+          "id": "step-139",
+          "label": "…username_unavailable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "username_unavailable"
+              },
+              "message": "…username_unavailable"
+            }
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "Set FIRST_ANSWER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "FIRST_ANSWER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-141",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_accept \"${TOKEN}\" \"${GONE}\" \"${INVITEE_PASSWORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-142",
+          "label": "${GONE}, a removed user's: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "${GONE}, a removed user's: 409"
+            }
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "…the same answer, whatever named it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "FIRST_ANSWER"
+              },
+              "message": "…the same answer, whatever named it"
+            }
+          }
+        },
+        {
+          "id": "step-144",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_accept \"${TOKEN}\" \"${COORD}\" \"${INVITEE_PASSWORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-145",
+          "label": "${COORD}, a living user's: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "${COORD}, a living user's: 409"
+            }
+          }
+        },
+        {
+          "id": "step-146",
+          "label": "…the same answer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "FIRST_ANSWER"
+              },
+              "message": "…the same answer"
+            }
+          }
+        },
+        {
+          "id": "step-147",
+          "label": "The invitation stays pending; no name is held",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(inv_row \"${INV_ID}\")"
+              },
+              "path": "\"\\(.status) \\(.username)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "pending null"
+              },
+              "message": "The invitation stays pending; no name is held"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The link opens on B's sign-in host alone\"\n\nRESP=$(inv_lookup \"${TOKEN}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"POST auth.<B>/api/invite/lookup: 200\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.kind) \\(.email) \\(.plugin) \\(.role) \\(.invitedBy) \\(.suggestedUsername)\"' \"delegated ayse@${INV_MAIL} ${PLUGIN} Viewer E2E ${COORD} ayse\" \"…what it is for and who invited, by display name\" || true\nassert_eq \"$(json_get \"$(visit_body \"$RESP\")\" '.username // \"none\"')\" \"none\" \"…never the inviter's username\" || true\nassert_eq \"$(visit_status \"$(inv_lookup \"${TOKEN}\" \"auth.${DOMAIN}\")\")\" \"404\" \"auth.<A>: 404, as no invitation at all\" || true\nassert_eq \"$(inv_refused_off_portal \"${TOKEN}\" \"https://127.0.0.1:9292\")\" \"404\" \":9292, Host and X-Forwarded-Host naming auth.<B>: 404\" || true\nassert_eq \"$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --resolve panel.${DOMAIN}:443:127.0.0.1 -X POST -H 'X-Forwarded-Host: auth.${DOMAIN_2}' -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${TOKEN}\\\"}' https://panel.${DOMAIN}/api/invite/lookup\" 2>/dev/null | tail -n 1 | tr -d '\\r')\" \"404\" \"The panel vhost, X-Forwarded-Host naming auth.<B>: 404\" || true\nRESP=$(visit - -X POST -H 'Content-Type: application/json' -H \"X-Forwarded-Host: auth.${DOMAIN_2}\" -d \"{\\\"token\\\":\\\"${TOKEN}\\\"}\" \"https://auth.${DOMAIN}/api/invite/lookup\")\nassert_eq \"$(visit_status \"$RESP\")\" \"404\" \"auth.<A>, X-Forwarded-Host naming auth.<B>: 404\" || true\nRESP=$(visit - \"https://auth.${DOMAIN_2}/api/invite/${TOKEN}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"404\" \"The token in a URL opens nothing: the path routes are gone\" || true\nassert_eq \"$(visit_status \"$(inv_lookup \"$(printf '0%.0s' {1..64})\")\")\" \"404\" \"A token that was never made: 404\" || true\n\nRESP=$(visit - \"https://auth.${DOMAIN_2}/invite\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"The invitation page at /invite: 200 (the fragment never reaches the server)\" || true\nCSP=$(visit_headers \"$RESP\" | sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p')\nassert_contains \"${CSP}\" \"script-src '$(visit_body \"$RESP\" | inline_hash script)'\" \"…its CSP names the served script's hash\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"cdn.jsdelivr\" \"…no foreign script: the QR is the panel's\" || true"
+    },
+    {
+      "id": "accepted-a-new-external-member-of-b-with-the-one-role-and-the-site",
+      "label": "Accepted: a new external member of B, with the one role and the site",
+      "steps": [
+        {
+          "id": "step-148",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_accept \"${TOKEN}\" \"${INVITEE}\" \"${INVITEE_PASSWORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-149",
+          "label": "POST auth.<B>/api/invite/accept: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "POST auth.<B>/api/invite/accept: 200"
+            }
+          }
+        },
+        {
+          "id": "step-151",
+          "label": "Set BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-152",
+          "label": "…${INVITEE}, access complete, sent to the plugin's site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BODY"
+              },
+              "path": "\"\\(.ok) \\(.username) \\(.accessPending) \\(.loginUrl)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "true ${INVITEE} false https://${FQDN}/"
+              },
+              "message": "…${INVITEE}, access complete, sent to the plugin's site"
+            }
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "…the QR, drawn by the panel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$BODY\" '.totpQr')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data:image/svg+xml;base64,"
+              },
+              "message": "…the QR, drawn by the panel"
+            }
+          }
+        },
+        {
+          "id": "step-154",
+          "label": "Set SECRET",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_secret \"${ACCEPTED}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-155",
+          "label": "…with its TOTP secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "SECRET"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "…with its TOTP secret"
+            }
+          }
+        },
+        {
+          "id": "step-156",
+          "label": "Set INVITEE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(inv_row \"${INV_ID}\")\" '.acceptedUserId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "INVITEE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-157",
+          "label": "The directory holds them by id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${INVITEE_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The directory holds them by id"
+            }
+          }
+        },
+        {
+          "id": "step-158",
+          "label": "The invitation is accepted, complete; its copy of the address gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(inv_row \"${INV_ID}\")"
+              },
+              "path": "\"\\(.status) \\(.fulfilled) \\(.email)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "accepted true null"
+              },
+              "message": "The invitation is accepted, complete; its copy of the address gone"
+            }
+          }
+        },
+        {
+          "id": "step-159",
+          "label": "${INVITEE} is an external member of B, of nothing else",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_kinds \"${INVITEE}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "${DOMAIN_2}:external"
+              },
+              "message": "${INVITEE} is an external member of B, of nothing else"
+            }
+          }
+        },
+        {
+          "id": "step-162",
+          "label": "…and holds nothing else in users.yml",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_groups \"${INVITEE}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n' \"${FQDN}\" \"lamaste:x:$(domain_group_key \"${DOMAIN_2}\")\" | sort | paste -sd, -)"
+              },
+              "message": "…and holds nothing else in users.yml"
+            }
+          }
+        },
+        {
+          "id": "step-163",
+          "label": "GET /api/gatekeeper/grants?principalType=user&principalId=${INVITEE}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "gatekeeper/grants?principalType=user&principalId=${INVITEE}"
+          },
+          "capture": [
+            {
+              "variable": "GRANTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-164",
+          "label": "Gatekeeper holds exactly the role and the site's grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "GRANTS"
+              },
+              "path": "[.grants[] | \"\\(.resourceType):\\(.resourceId)\"] | sort | join(\",\")",
+              "expected": {
+                "kind": "expr",
+                "template": "plugin:${PLUGIN},site:${SITE_ID}"
+              },
+              "message": "Gatekeeper holds exactly the role and the site's grant"
+            }
+          }
+        },
+        {
+          "id": "step-165",
+          "label": "…with the role asked for",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "GRANTS"
+              },
+              "path": "[.grants[] | select(.resourceType == \"plugin\") | .context.roles | join(\",\")] | first",
+              "expected": {
+                "kind": "literal",
+                "value": "viewer"
+              },
+              "message": "…with the role asked for"
+            }
+          }
+        },
+        {
+          "id": "step-167",
+          "label": "…and the agent half's projection: the plugin learned of them through the feed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…and the agent half's projection: the plugin learned of them through the feed"
+          }
+        },
+        {
+          "id": "step-168",
+          "label": "The projection: $(projected_user \"${PLUGIN}\" \"${INVITEE_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The projection: $(projected_user \"${PLUGIN}\" \"${INVITEE_ID}\")"
+          }
+        },
+        {
+          "id": "step-169",
+          "label": "…with the role and the declared attributes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(projected_user \"${PLUGIN}\" \"${INVITEE_ID}\")"
+              },
+              "path": "\"\\(.username) \\(.roles | join(\",\")) \\(.displayName) \\(.email)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${INVITEE} viewer E2E Invitee ayse@${INV_MAIL}"
+              },
+              "message": "…with the role and the declared attributes"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A username anything names is refused, with one answer\"\n\nmd_user GONE_ID \"${GONE}\" \"${PASSWORD}\" \"${EXTERNAL}\"\nhost_api_delete \"users/${GONE}\" > /dev/null 2>&1 || true\nmd_grant FUTURE_GRANT user \"${FUTURE}\" tunnel \"e2e53-a-restricted-tunnel\"\nRESP=$(inv_accept \"${TOKEN}\" \"${FUTURE}\" \"${INVITEE_PASSWORD}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"409\" \"${FUTURE}, which a Gatekeeper grant names for a user still to come: 409\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.code' 'username_unavailable' \"…username_unavailable\" || true\nFIRST_ANSWER=$(visit_body \"$RESP\")\nRESP=$(inv_accept \"${TOKEN}\" \"${GONE}\" \"${INVITEE_PASSWORD}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"409\" \"${GONE}, a removed user's: 409\" || true\nassert_eq \"$(visit_body \"$RESP\")\" \"${FIRST_ANSWER}\" \"…the same answer, whatever named it\" || true\nRESP=$(inv_accept \"${TOKEN}\" \"${COORD}\" \"${INVITEE_PASSWORD}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"409\" \"${COORD}, a living user's: 409\" || true\nassert_eq \"$(visit_body \"$RESP\")\" \"${FIRST_ANSWER}\" \"…the same answer\" || true\nassert_json_field \"$(inv_row \"${INV_ID}\")\" '\"\\(.status) \\(.username)\"' \"pending null\" \"The invitation stays pending; no name is held\" || true\n\n# ===========================================================================\n# 6. Accepted\n# ==========================================================================="
+    },
+    {
+      "id": "they-reach-the-plugin",
+      "label": "They reach the plugin",
+      "steps": [
+        {
+          "id": "step-171",
+          "label": "${INVITEE}: the shell, signed in with the factor the invitation gave",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${INVITEE}: the shell, signed in with the factor the invitation gave"
+          }
+        },
+        {
+          "id": "step-172",
+          "label": "${INVITEE} on the shell: $(page_status \"${JAR_INVITEE}\" /)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${INVITEE} on the shell: $(page_status \"${JAR_INVITEE}\" /)"
+          }
+        },
+        {
+          "id": "step-173",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "page \"${JAR_INVITEE}\" \"${APP}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-174",
+          "label": "…GET ${APP}/echo 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…GET ${APP}/echo 200"
+            }
+          }
+        },
+        {
+          "id": "step-175",
+          "label": "…the agent half sees the directory's user and their role",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "\"\\(.caller.type) \\(.caller.userId) \\(.caller.username) \\(.caller.roles | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "user ${INVITEE_ID} ${INVITEE} viewer"
+              },
+              "message": "…the agent half sees the directory's user and their role"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Accepted: a new external member of B, with the one role and the site\"\n\nRESP=$(inv_accept \"${TOKEN}\" \"${INVITEE}\" \"${INVITEE_PASSWORD}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"POST auth.<B>/api/invite/accept: 200\" || true\nACCEPTED=\"$RESP\"\nBODY=$(visit_body \"$RESP\")\nassert_json_field \"$BODY\" '\"\\(.ok) \\(.username) \\(.accessPending) \\(.loginUrl)\"' \"true ${INVITEE} false https://${FQDN}/\" \"…${INVITEE}, access complete, sent to the plugin's site\" || true\nassert_contains \"$(json_get \"$BODY\" '.totpQr')\" \"data:image/svg+xml;base64,\" \"…the QR, drawn by the panel\" || true\nSECRET=$(inv_secret \"${ACCEPTED}\")\nassert_not_eq \"${SECRET}\" \"\" \"…with its TOTP secret\" || true\nINVITEE_ID=$(json_get \"$(inv_row \"${INV_ID}\")\" '.acceptedUserId // empty')\nassert_eq \"$(is_uuid \"${INVITEE_ID}\")\" \"true\" \"The directory holds them by id\" || true\nassert_json_field \"$(inv_row \"${INV_ID}\")\" '\"\\(.status) \\(.fulfilled) \\(.email)\"' \"accepted true null\" \"The invitation is accepted, complete; its copy of the address gone\" || true\n\nassert_eq \"$(user_kinds \"${INVITEE}\")\" \"${DOMAIN_2}:external\" \"${INVITEE} is an external member of B, of nothing else\" || true\nassert_json_field \"$(host_api_get \"users\")\" \"[.users[] | select(.username == \\\"${INVITEE}\\\") | .groups | length] | first\" '0' \"…no Authelia group\" || true\nwait_group holds \"${INVITEE}\" \"${FQDN}\" \"users.yml gives them the site's hostname, as a grant does\"\nassert_eq \"$(user_groups \"${INVITEE}\")\" \"$(printf '%s\\n' \"${FQDN}\" \"lamaste:x:$(domain_group_key \"${DOMAIN_2}\")\" | sort | paste -sd, -)\" \"…and holds nothing else in users.yml\" || true\nGRANTS=$(host_api_get \"gatekeeper/grants?principalType=user&principalId=${INVITEE}\")\nassert_json_field \"$GRANTS\" '[.grants[] | \"\\(.resourceType):\\(.resourceId)\"] | sort | join(\",\")' \"plugin:${PLUGIN},site:${SITE_ID}\" \"Gatekeeper holds exactly the role and the site's grant\" || true\nassert_json_field \"$GRANTS\" '[.grants[] | select(.resourceType == \"plugin\") | .context.roles | join(\",\")] | first' 'viewer' \"…with the role asked for\" || true\ninv_wait_audience \"${INVITEE_ID}\" viewer \"The audience holds them as viewer\"\nif wait_for 60 projection_has \"${PLUGIN}\" \"[.users[] | select(.userId == \\\"${INVITEE_ID}\\\" and .status == \\\"active\\\")] | length == 1\"; then\n  log_pass \"…and the agent half's projection: the plugin learned of them through the feed\"\nelse\n  log_fail \"The projection: $(projected_user \"${PLUGIN}\" \"${INVITEE_ID}\")\"\nfi\nassert_json_field \"$(projected_user \"${PLUGIN}\" \"${INVITEE_ID}\")\" '\"\\(.username) \\(.roles | join(\",\")) \\(.displayName) \\(.email)\"' \"${INVITEE} viewer E2E Invitee ayse@${INV_MAIL}\" \"…with the role and the declared attributes\" || true"
+    },
+    {
+      "id": "one-use",
+      "label": "One use",
+      "steps": [
+        {
+          "id": "step-176",
+          "label": "The link again: lookup 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_lookup \"${TOKEN}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "The link again: lookup 410"
+            }
+          }
+        },
+        {
+          "id": "step-177",
+          "label": "…accept 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_accept \"${TOKEN}\" e2e53-second \"${INVITEE_PASSWORD}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "…accept 410"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"They reach the plugin\"\n\nmd_sign_in \"${INVITEE}\" \"${INVITEE_PASSWORD}\" \"${SECRET}\" \"${JAR_INVITEE}\" \"${FQDN}\"\nif wait_for \"${AUTHZ_SETTLE_SECONDS}\" shell_for \"${JAR_INVITEE}\"; then\n  log_pass \"${INVITEE}: the shell, signed in with the factor the invitation gave\"\nelse\n  log_fail \"${INVITEE} on the shell: $(page_status \"${JAR_INVITEE}\" /)\"\nfi\nRESP=$(page \"${JAR_INVITEE}\" \"${APP}/echo\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"…GET ${APP}/echo 200\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.caller.type) \\(.caller.userId) \\(.caller.username) \\(.caller.roles | join(\",\"))\"' \"user ${INVITEE_ID} ${INVITEE} viewer\" \"…the agent half sees the directory's user and their role\" || true"
+    },
+    {
+      "id": "the-cap",
+      "label": "The cap",
+      "steps": [
+        {
+          "id": "step-178",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"],\\\"maxOpenPerInviter\\\":1}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-179",
+          "label": "The administrator lowers the cap to one open invitation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The administrator lowers the cap to one open invitation"
+            }
+          }
+        },
+        {
+          "id": "step-181",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" POST \"\" \"$(MADE \"cem@${INV_MAIL}\" viewer)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-182",
+          "label": "The next: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "The next: 409"
+            }
+          }
+        },
+        {
+          "id": "step-183",
+          "label": "…invitation_cap, the inviter's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "\"\\(.code) \\(.cap)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "invitation_cap inviter"
+              },
+              "message": "…invitation_cap, the inviter's"
+            }
+          }
+        },
+        {
+          "id": "step-184",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"],\\\"maxOpenPerInviter\\\":5,\\\"maxJoined\\\":2}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-185",
+          "label": "People by invitation capped at 2 (one joined, one open)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "People by invitation capped at 2 (one joined, one open)"
+            }
+          }
+        },
+        {
+          "id": "step-186",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" POST \"\" \"$(MADE \"cem@${INV_MAIL}\" viewer)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-187",
+          "label": "The next: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "The next: 409"
+            }
+          }
+        },
+        {
+          "id": "step-188",
+          "label": "…invitation_cap, the plugin's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "\"\\(.code) \\(.cap)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "invitation_cap plugin"
+              },
+              "message": "…invitation_cap, the plugin's"
+            }
+          }
+        },
+        {
+          "id": "step-189",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" DELETE \"/${INV_B}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-190",
+          "label": "${COORD} revokes their own pending one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${COORD} revokes their own pending one"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"One use\"\n\nassert_eq \"$(visit_status \"$(inv_lookup \"${TOKEN}\")\")\" \"410\" \"The link again: lookup 410\" || true\nassert_eq \"$(visit_status \"$(inv_accept \"${TOKEN}\" e2e53-second \"${INVITEE_PASSWORD}\")\")\" \"410\" \"…accept 410\" || true"
+    },
+    {
+      "id": "oversight-audited-with-no-address-the-administrators-notified",
+      "label": "Oversight: audited with no address, the administrators notified",
+      "steps": [
+        {
+          "id": "step-191",
+          "label": "Set CREATED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_audit invitation.created"
+          },
+          "capture": [
+            {
+              "variable": "CREATED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-193",
+          "label": "Set ACCEPT_AUDIT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_audit invitation.accepted"
+          },
+          "capture": [
+            {
+              "variable": "ACCEPT_AUDIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-196",
+          "label": "No audit entry holds an address",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s' \"${ALL_AUDIT}\" | jq -c '[.. | strings]' 2>/dev/null | tr -d '\\n' | sed 's/\",\"/ /g')"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "@${INV_MAIL}"
+              },
+              "message": "No audit entry holds an address"
+            }
+          }
+        },
+        {
+          "id": "step-197",
+          "label": "GET /api/notifications?limit=50",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "notifications?limit=50"
+          },
+          "capture": [
+            {
+              "variable": "NOTIFIED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-198",
+          "label": "The administrators were told someone joined, once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOTIFIED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The administrators were told someone joined, once"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The cap\"\n\nRESP=$(inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"],\\\"maxOpenPerInviter\\\":1}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The administrator lowers the cap to one open invitation\" || true\ninv_new TOKEN_B INV_B \"${JAR_COORD}\" \"bora@${INV_MAIL}\" viewer \"One more for ${COORD}\"\nRESP=$(inv_api \"${JAR_COORD}\" POST \"\" \"$(MADE \"cem@${INV_MAIL}\" viewer)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"409\" \"The next: 409\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.code) \\(.cap)\"' 'invitation_cap inviter' \"…invitation_cap, the inviter's\" || true\nRESP=$(inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"],\\\"maxOpenPerInviter\\\":5,\\\"maxJoined\\\":2}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"People by invitation capped at 2 (one joined, one open)\" || true\nRESP=$(inv_api \"${JAR_COORD}\" POST \"\" \"$(MADE \"cem@${INV_MAIL}\" viewer)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"409\" \"The next: 409\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.code) \\(.cap)\"' 'invitation_cap plugin' \"…invitation_cap, the plugin's\" || true\nRESP=$(inv_api \"${JAR_COORD}\" DELETE \"/${INV_B}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"${COORD} revokes their own pending one\" || true\n\n# ===========================================================================\n# 7. What it left behind\n# ==========================================================================="
+    },
+    {
+      "id": "no-token-at-rest-or-in-a-log",
+      "label": "No token at rest or in a log",
+      "steps": [
+        {
+          "id": "step-199",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "journalctl -u lamalibre-lamaste-serverd -u lamalibre-lamaste-gatekeeper --since '-20 min' --no-pager -o cat 2>/dev/null | grep -cF $(printf %q "
+          },
+          "capture": [
+            {
+              "variable": "SINCE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-200",
+          "label": "The token is in no journal of the panel or Gatekeeper",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SINCE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The token is in no journal of the panel or Gatekeeper"
+            }
+          }
+        },
+        {
+          "id": "step-201",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /var/log/nginx/*.log 2>/dev/null | grep -F $(printf %q "
+          },
+          "capture": [
+            {
+              "variable": "NGINX",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-202",
+          "label": "…in no nginx log line but the one this spec's GET of the removed path made",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…in no nginx log line but the one this spec's GET of the removed path made"
+            }
+          }
+        },
+        {
+          "id": "step-203",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "sqlite3 /etc/lamalibre/lamaste/state.db \\"
+          },
+          "capture": [
+            {
+              "variable": "HASHED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-204",
+          "label": "…and state.db does not hold it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "HASHED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…and state.db does not hold it"
+            }
+          }
+        },
+        {
+          "id": "step-205",
+          "label": "…anywhere in its bytes, its write-ahead log included",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_exec \"cat /etc/lamalibre/lamaste/state.db* | grep -caF $(printf %q \"${TOKEN}\") || true\" 2>/dev/null | tail -n 1 | tr -d '\\r')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…anywhere in its bytes, its write-ahead log included"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Oversight: audited with no address, the administrators notified\"\n\nCREATED=$(inv_audit invitation.created)\nassert_json_field \"$CREATED\" \"[.[] | select(.details.invitationId == \\\"${INV_ID}\\\") | \\\"\\(.actor) \\(.details.role) \\(.details.emailDomain)\\\"] | first\" \"user:${COORD_ID} viewer ${INV_MAIL}\" \"invitation.created by the inviter's id, the address's domain alone\" || true\nACCEPT_AUDIT=$(inv_audit invitation.accepted)\nassert_json_field \"$ACCEPT_AUDIT\" \"[.[] | select(.details.invitationId == \\\"${INV_ID}\\\") | \\\"\\(.details.userId) \\(.details.inviterUserId) \\(.details.role)\\\"] | first\" \"${INVITEE_ID} ${COORD_ID} viewer\" \"invitation.accepted by id, with its inviter\" || true\nALL_AUDIT=\"$CREATED $ACCEPT_AUDIT $(inv_audit invitation.revoked) $(inv_audit invitation.policy.updated)\"\nassert_not_contains \"$(printf '%s' \"${ALL_AUDIT}\" | jq -c '[.. | strings]' 2>/dev/null | tr -d '\\n' | sed 's/\",\"/ /g')\" \"@${INV_MAIL}\" \"No audit entry holds an address\" || true\nNOTIFIED=$(host_api_get \"notifications?limit=50\" | jq -r --arg p \"${PLUGIN}\" '[.notifications[]? | select(.message | contains(\"joined plugin \\\"\" + $p + \"\\\"\"))] | length' 2>/dev/null || echo \"0\")\nassert_eq \"${NOTIFIED}\" \"1\" \"The administrators were told someone joined, once\" || true"
+    },
+    {
+      "id": "nothing-restarted-authelia",
+      "label": "Nothing restarted Authelia",
+      "steps": [
+        {
+          "id": "step-206",
+          "label": "An invitation, its acceptance and a new user: Authelia's MainPID unchanged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "AUTHELIA_PID"
+              },
+              "message": "An invitation, its acceptance and a new user: Authelia's MainPID unchanged"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"No token at rest or in a log\"\n\nSINCE=$(host_exec \"journalctl -u lamalibre-lamaste-serverd -u lamalibre-lamaste-gatekeeper --since '-20 min' --no-pager -o cat 2>/dev/null | grep -cF $(printf %q \"${TOKEN}\") || true\" 2>/dev/null | tail -n 1 | tr -d '\\r')\nassert_eq \"${SINCE}\" \"0\" \"The token is in no journal of the panel or Gatekeeper\" || true\n# One request above asked for the old path on purpose (the route is gone): only it may be logged.\nNGINX=$(host_exec \"cat /var/log/nginx/*.log 2>/dev/null | grep -F $(printf %q \"${TOKEN}\") | grep -vcF '/api/invite/${TOKEN}' || true\" 2>/dev/null | tail -n 1 | tr -d '\\r')\nassert_eq \"${NGINX}\" \"0\" \"…in no nginx log line but the one this spec's GET of the removed path made\" || true\nHASHED=$(host_exec \"sqlite3 /etc/lamalibre/lamaste/state.db \\\"SELECT COUNT(*) FROM invitations WHERE token_sha256 = '${TOKEN}'\\\" 2>/dev/null || echo error\" 2>/dev/null | tail -n 1 | tr -d '\\r')\nassert_eq \"${HASHED}\" \"0\" \"…and state.db does not hold it\" || true\nassert_eq \"$(host_exec \"cat /etc/lamalibre/lamaste/state.db* | grep -caF $(printf %q \"${TOKEN}\") || true\" 2>/dev/null | tail -n 1 | tr -d '\\r')\" \"0\" \"…anywhere in its bytes, its write-ahead log included\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 53 — Delegated invitations: an inviter grants only what it may (Three-VM)\n# ============================================================================\n# The first proof of delegated invitations (design: packages/core/docs/\n# delegated-invitations-design.md, \"Proof\"), the corral case: a client's\n# coordinator, an external member of B, invites a colleague into the plugin\n# with one role, without the relay's administrator.\n#\n# 1. The policy: invitations are off until the administrator enables them;\n#    enabling is refused without the plugin's own web surface, and on an\n#    authenticated one (external members never reach it).\n# 2. The inviter's page on auth.<B>: its headers (CSP by hash, against the\n#    served script and style; no framing); the API refuses a session of no\n#    one, a viewer, a member of A alone, an external member with no role; it\n#    lists exactly the roles the coordinator may give; a role it may not give\n#    (403 role_not_grantable), an address under another domain (400), the\n#    plugin's own site as Origin or a same-site fetch (403); the API does not\n#    exist on the plugin's own host; the cap (409).\n# 3. The invitee: a link with the token in its fragment; lookup and accept by\n#    POST, the token in no URL, nginx log or journal; the token answered only\n#    by auth.<B>, never by auth.<A>, the panel vhost or :9292, whatever Host a\n#    client sends; a username a grant already names, and a removed user's,\n#    are refused alike (409 username_unavailable).\n# 4. Accepted: an external member of B holding no Authelia group, the role\n#    and the site grant, in the agent half's projection with that role; the\n#    shell and the API answer them as the directory's user; the link again is\n#    410; audited with no address, listed with its inviter, the administrators\n#    notified.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=53\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=invitation-harness.sh\nsource \"${SCRIPT_DIR}/invitation-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-xinv\"\nSERVER_PACKAGE=\"@lamalibre/e2e-xinv-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-xinv-agent\"\nAPP=\"/api/${PLUGIN}/app\"\nSUB_W=\"e2e53web\"\nPOLICY_ID=\"e2e-apphost-53\"\nREMOTE_DIR=\"/var/tmp/e2e-53-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nCOORD=\"e2e53-coord\"\nVIEWER=\"e2e53-viewer\"\nOUTSIDER=\"e2e53-outsider\"\nMEM_A=\"e2e53-mem-a\"\nGONE=\"e2e53-gone\"\nFUTURE=\"e2e53-future\"\nINVITEE=\"e2e53-invitee\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nINVITEE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCOORD_ID=\"\"\nVIEWER_ID=\"\"\nOUTSIDER_ID=\"\"\nMEM_A_ID=\"\"\nGONE_ID=\"\"\nINVITEE_ID=\"\"\nJAR_COORD=$(md_jar coord)\nJAR_VIEWER=$(md_jar viewer)\nJAR_OUTSIDER=$(md_jar outsider)\nJAR_MEM_A=$(md_jar mem-a)\nJAR_INVITEE=$(md_jar invitee)\nFQDN=\"\"\nCOORD_GRANT=\"\"\nVIEWER_GRANT=\"\"\nFUTURE_GRANT=\"\"\nAUDIT_BASE=0\nTOKEN=\"\"\nINV_ID=\"\"\nTOKEN_B=\"\"\nINV_B=\"\"\n\n# shell_for <jar> — the session gets the shell (index.html of tree v1)\nshell_for() { [[ \"$(visit_body \"$(page \"$1\" /)\")\" == *\"E2E_WEB_v1\"* ]]; }\n\n# inline_hash <script|style> — the CSP source of the page's inline element, from stdin\ninline_hash() {\n  node -e 'const h=require(\"fs\").readFileSync(0,\"utf8\");const t=process.argv[1];const m=h.match(new RegExp(\"<\"+t+\">([\\\\s\\\\S]*?)</\"+t+\">\"));process.stdout.write(m?\"sha256-\"+require(\"crypto\").createHash(\"sha256\").update(m[1],\"utf8\").digest(\"base64\"):\"none\")' \"$1\"\n}\n\nbegin_test \"53 — Delegated invitations: an inviter grants only what it may (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${COORD_GRANT} ${VIEWER_GRANT} ${FUTURE_GRANT}; do\n    host_api_delete \"gatekeeper/grants/${id}\" > /dev/null 2>&1 || true\n  done\n  if [ -n \"${SITE_ID}\" ]; then inv_drop_site_grants \"${SITE_ID}\"; fi\n  host_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\n  drop_plugin_grants \"${PLUGIN}\"\n  inv_cleanup_users \"${COORD}\" \"${VIEWER}\" \"${OUTSIDER}\" \"${MEM_A}\" \"${GONE}\" \"${INVITEE}\"\n  inv_cleanup_ids ${COORD_ID} ${VIEWER_ID} ${OUTSIDER_ID} ${MEM_A_ID} ${GONE_ID} ${INVITEE_ID}\n  nudge_sync\n  app_plugin_cleanup\n  md_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

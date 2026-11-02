@@ -2028,6 +2028,21 @@ identity_block_json() {
     narrow)
       echo '{ "roles": [{ "id": "viewer", "label": "Reader", "description": "Reads the dashboards" }, { "id": "editor", "label": "Editor" }], "attributes": ["displayName"] }'
       ;;
+    inviting)
+      echo '{ "roles": [{ "id": "coordinator", "label": "Coordinator", "invites": ["coordinator", "viewer"] }, { "id": "viewer", "label": "Viewer", "description": "Reads the dashboards" }, { "id": "editor", "label": "Editor" }], "attributes": ["displayName", "email"] }'
+      ;;
+    invnarrow)
+      echo '{ "roles": [{ "id": "coordinator", "label": "Coordinator", "invites": ["viewer"] }, { "id": "viewer", "label": "Viewer", "description": "Reads the dashboards" }, { "id": "editor", "label": "Editor" }], "attributes": ["displayName", "email"] }'
+      ;;
+    invplain)
+      echo '{ "roles": [{ "id": "coordinator", "label": "Coordinator" }, { "id": "viewer", "label": "Viewer", "description": "Reads the dashboards" }, { "id": "editor", "label": "Editor" }], "attributes": ["displayName", "email"] }'
+      ;;
+    badinvite)
+      echo '{ "roles": [{ "id": "coordinator", "label": "Coordinator", "invites": ["stranger"] }, { "id": "viewer", "label": "Viewer" }] }'
+      ;;
+    badinviterepeat)
+      echo '{ "roles": [{ "id": "coordinator", "label": "Coordinator", "invites": ["viewer", "viewer"] }, { "id": "viewer", "label": "Viewer" }] }'
+      ;;
     badrole)
       echo '{ "roles": [{ "id": "Viewer!", "label": "Viewer" }] }'
       ;;
@@ -2055,11 +2070,17 @@ identity_block_json() {
 #   noagent        e2e-ident-noagent — agent-hosted without an agent block
 #   badrole        e2e-ident-badrole — a role id that is not one
 #   badattr        e2e-ident-badattr — an attribute outside displayName/email
-# Every variant but v1 … v5 is refused at install.
+#   inv1 … inv3    @lamalibre/e2e-invr-server 1.0.0 … 3.0.0 (e2e-invr), for
+#                  single-VM spec 38: invplain, then inviting (a role may
+#                  invite: waits for approval), then invnarrow (one role
+#                  fewer: only the digest changes)
+#   badinvite      e2e-ident-badinvite — a role invites one the block lacks
+#   badinviterepeat e2e-ident-badinviterepeat — a role invites one twice
+# Every variant but v1 … v5 and inv1 … inv3 is refused at install.
 write_identity_fixture_plugins() {
   local dir="$1"
   local variant name pkg version hosting agent identity n
-  for variant in v1 v2 v3 v4 v5 serverhosted noagent badrole badattr; do
+  for variant in v1 v2 v3 v4 v5 serverhosted noagent badrole badattr inv1 inv2 inv3 badinvite badinviterepeat; do
     name="e2e-ident-${variant}"
     version="1.0.0"
     hosting='
@@ -2088,7 +2109,17 @@ write_identity_fixture_plugins() {
         agent=''
         identity="$(identity_block_json viewer)"
         ;;
-      badrole | badattr)
+      inv1 | inv2 | inv3)
+        name="e2e-invr"
+        n="${variant#inv}"
+        version="${n}.0.0"
+        case "$n" in
+          1) identity="$(identity_block_json invplain)" ;;
+          2) identity="$(identity_block_json inviting)" ;;
+          3) identity="$(identity_block_json invnarrow)" ;;
+        esac
+        ;;
+      badrole | badattr | badinvite | badinviterepeat)
         identity="$(identity_block_json "$variant")"
         ;;
     esac

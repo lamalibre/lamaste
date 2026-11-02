@@ -1764,7 +1764,7 @@
         },
         {
           "id": "step-89",
-          "label": "…the accent",
+          "label": "…its colours from /brand.css (the inline style is one text for every brand: one CSP hash a release)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1776,15 +1776,36 @@
                 "name": "INVITE_A"
               },
               "substring": {
-                "kind": "expr",
-                "template": "--accent: ${ACCENT_A};"
+                "kind": "literal",
+                "value": "<link rel=\"stylesheet\" href=\"/brand.css\""
               },
-              "message": "…the accent"
+              "message": "…its colours from /brand.css (the inline style is one text for every brand: one CSP hash a release)"
             }
           }
         },
         {
           "id": "step-90",
+          "label": "…which carries the accent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN}\" /brand.css)\")\")"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "--lamaste-page-accent: ${ACCENT_A};"
+              },
+              "message": "…which carries the accent"
+            }
+          }
+        },
+        {
+          "id": "step-91",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1801,7 +1822,7 @@
           ]
         },
         {
-          "id": "step-91",
+          "id": "step-92",
           "label": "auth.${DOMAIN_3}/invite/x: 200",
           "target": "local",
           "continueOnError": true,
@@ -1822,7 +1843,7 @@
           }
         },
         {
-          "id": "step-92",
+          "id": "step-93",
           "label": "Set INVITE_C",
           "target": "local",
           "op": {
@@ -1839,7 +1860,7 @@
           ]
         },
         {
-          "id": "step-93",
+          "id": "step-94",
           "label": "…the stock page",
           "target": "local",
           "continueOnError": true,
@@ -1860,7 +1881,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-95",
           "label": "…no brand header",
           "target": "local",
           "continueOnError": true,
@@ -1881,7 +1902,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-96",
           "label": "Both pages carry a script of the same length",
           "target": "local",
           "continueOnError": true,
@@ -1902,8 +1923,8 @@
           }
         },
         {
-          "id": "step-96",
-          "label": "…byte for byte the same script (the API calls are unchanged)",
+          "id": "step-97",
+          "label": "…byte for byte the same script (the API calls, and the CSP hash, are one)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1918,19 +1939,19 @@
                 "kind": "expr",
                 "template": "$(script_of \"${INVITE_C}\")"
               },
-              "message": "…byte for byte the same script (the API calls are unchanged)"
+              "message": "…byte for byte the same script (the API calls, and the CSP hash, are one)"
             }
           }
         }
       ],
-      "bash": "log_section \"The invitation page: A's branded, C's the stock page, the same script\"\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN}\" /invite/x)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN}/invite/x: 200\" || true\nINVITE_A=$(visit_body \"$RESP\")\nassert_contains \"${INVITE_A}\" \"<title>${BRAND_A} — Accept Invitation</title>\" \"…titled ${BRAND_A} — Accept Invitation\" || true\nassert_contains \"${INVITE_A}\" \"<div class=\\\"brand-name\\\">${BRAND_A}</div>\" \"…the brand's name in the header\" || true\nassert_contains \"${INVITE_A}\" \"<div class=\\\"brand-tagline\\\">${TAGLINE_A}</div>\" \"…and its tagline\" || true\nassert_contains \"${INVITE_A}\" '<img class=\"brand-logo\" src=\"/static/media/logo.png\"' \"…the logo from the same origin\" || true\nassert_contains \"${INVITE_A}\" \"--accent: ${ACCENT_A};\" \"…the accent\" || true\nRESP=$(visit - \"$(auth_url \"${DOMAIN_3}\" /invite/x)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN_3}/invite/x: 200\" || true\nINVITE_C=$(visit_body \"$RESP\")\nassert_contains \"${INVITE_C}\" \"<title>Lamaste — Accept Invitation</title>\" \"…the stock page\" || true\nassert_not_contains \"${INVITE_C}\" 'class=\"brand' \"…no brand header\" || true\nassert_eq \"$(script_of \"${INVITE_A}\" | wc -l | tr -d ' ')\" \"$(script_of \"${INVITE_C}\" | wc -l | tr -d ' ')\" \"Both pages carry a script of the same length\" || true\nassert_eq \"$(script_of \"${INVITE_A}\")\" \"$(script_of \"${INVITE_C}\")\" \"…byte for byte the same script (the API calls are unchanged)\" || true\n\n# ===========================================================================\n# 4. Gatekeeper's pages\n# ==========================================================================="
+      "bash": "log_section \"The invitation page: A's branded, C's the stock page, the same script\"\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN}\" /invite/x)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN}/invite/x: 200\" || true\nINVITE_A=$(visit_body \"$RESP\")\nassert_contains \"${INVITE_A}\" \"<title>${BRAND_A} — Accept Invitation</title>\" \"…titled ${BRAND_A} — Accept Invitation\" || true\nassert_contains \"${INVITE_A}\" \"<div class=\\\"brand-name\\\">${BRAND_A}</div>\" \"…the brand's name in the header\" || true\nassert_contains \"${INVITE_A}\" \"<div class=\\\"brand-tagline\\\">${TAGLINE_A}</div>\" \"…and its tagline\" || true\nassert_contains \"${INVITE_A}\" '<img class=\"brand-logo\" src=\"/static/media/logo.png\"' \"…the logo from the same origin\" || true\nassert_contains \"${INVITE_A}\" '<link rel=\"stylesheet\" href=\"/brand.css\"' \"…its colours from /brand.css (the inline style is one text for every brand: one CSP hash a release)\" || true\nassert_contains \"$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN}\" /brand.css)\")\")\" \"--lamaste-page-accent: ${ACCENT_A};\" \"…which carries the accent\" || true\nRESP=$(visit - \"$(auth_url \"${DOMAIN_3}\" /invite/x)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN_3}/invite/x: 200\" || true\nINVITE_C=$(visit_body \"$RESP\")\nassert_contains \"${INVITE_C}\" \"<title>Lamaste — Accept Invitation</title>\" \"…the stock page\" || true\nassert_not_contains \"${INVITE_C}\" 'class=\"brand' \"…no brand header\" || true\nassert_eq \"$(script_of \"${INVITE_A}\" | wc -l | tr -d ' ')\" \"$(script_of \"${INVITE_C}\" | wc -l | tr -d ' ')\" \"Both pages carry a script of the same length\" || true\nassert_eq \"$(script_of \"${INVITE_A}\")\" \"$(script_of \"${INVITE_C}\")\" \"…byte for byte the same script (the API calls, and the CSP hash, are one)\" || true\n\n# ===========================================================================\n# 4. Gatekeeper's pages\n# ==========================================================================="
     },
     {
       "id": "a-member-of-a-a-tunnel-on-each-domain-b-and-c-authenticated-a-restricted",
       "label": "A member of A; a tunnel on each domain (B and C authenticated, A restricted)",
       "steps": [
         {
-          "id": "step-98",
+          "id": "step-99",
           "label": "${USER_A} has a directory id",
           "target": "local",
           "continueOnError": true,
@@ -1951,7 +1972,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-103",
           "label": "Set SECRET_A",
           "target": "local",
           "op": {
@@ -1975,7 +1996,7 @@
       "label": "The domain refusal on B's tunnel carries brand B",
       "steps": [
         {
-          "id": "step-107",
+          "id": "step-108",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1992,7 +2013,7 @@
           ]
         },
         {
-          "id": "step-109",
+          "id": "step-110",
           "label": "Set REFUSAL_B",
           "target": "local",
           "op": {
@@ -2009,7 +2030,7 @@
           ]
         },
         {
-          "id": "step-110",
+          "id": "step-111",
           "label": "…titled with ${BRAND_B}",
           "target": "local",
           "continueOnError": true,
@@ -2030,7 +2051,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-114",
           "label": "…B's accent",
           "target": "local",
           "continueOnError": true,
@@ -2051,7 +2072,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-115",
           "label": "…no Help link (B names no support URL)",
           "target": "local",
           "continueOnError": true,
@@ -2072,7 +2093,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-116",
           "label": "…nothing of brand A",
           "target": "local",
           "continueOnError": true,
@@ -2100,7 +2121,7 @@
       "label": "The access-request page on A's restricted tunnel carries brand A and its support contact",
       "steps": [
         {
-          "id": "step-116",
+          "id": "step-117",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2117,7 +2138,7 @@
           ]
         },
         {
-          "id": "step-118",
+          "id": "step-119",
           "label": "Set REQUEST_A",
           "target": "local",
           "op": {
@@ -2134,7 +2155,7 @@
           ]
         },
         {
-          "id": "step-119",
+          "id": "step-120",
           "label": "…titled with ${BRAND_A}",
           "target": "local",
           "continueOnError": true,
@@ -2155,7 +2176,7 @@
           }
         },
         {
-          "id": "step-123",
+          "id": "step-124",
           "label": "…A's accent",
           "target": "local",
           "continueOnError": true,
@@ -2183,7 +2204,7 @@
       "label": "On C's tunnel the refusal is the stock page",
       "steps": [
         {
-          "id": "step-126",
+          "id": "step-127",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2200,7 +2221,7 @@
           ]
         },
         {
-          "id": "step-128",
+          "id": "step-129",
           "label": "Set REFUSAL_C",
           "target": "local",
           "op": {
@@ -2217,7 +2238,7 @@
           ]
         },
         {
-          "id": "step-129",
+          "id": "step-130",
           "label": "…titled without a brand",
           "target": "local",
           "continueOnError": true,
@@ -2238,7 +2259,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-131",
           "label": "…no brand header",
           "target": "local",
           "continueOnError": true,
@@ -2259,7 +2280,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-132",
           "label": "…the pages' own accent",
           "target": "local",
           "continueOnError": true,
@@ -2287,7 +2308,7 @@
       "label": "A's theme changed to oled: the page and its vhost follow",
       "steps": [
         {
-          "id": "step-132",
+          "id": "step-133",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2304,7 +2325,7 @@
           ]
         },
         {
-          "id": "step-133",
+          "id": "step-134",
           "label": "PUT …/branding with theme oled: revision 4, no warning",
           "target": "local",
           "continueOnError": true,
@@ -2326,7 +2347,7 @@
           }
         },
         {
-          "id": "step-134",
+          "id": "step-135",
           "label": "auth.${DOMAIN}/ says data-theme=\\\"oled\\\"",
           "target": "local",
           "op": {
@@ -2336,7 +2357,7 @@
           }
         },
         {
-          "id": "step-135",
+          "id": "step-136",
           "label": "auth.${DOMAIN}/ does not say data-theme=\\\"oled\\\" within 90 s",
           "target": "local",
           "op": {
@@ -2346,7 +2367,7 @@
           }
         },
         {
-          "id": "step-136",
+          "id": "step-137",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -2363,7 +2384,7 @@
           ]
         },
         {
-          "id": "step-139",
+          "id": "step-140",
           "label": "nginx -t passes",
           "target": "local",
           "op": {
@@ -2373,7 +2394,7 @@
           }
         },
         {
-          "id": "step-140",
+          "id": "step-141",
           "label": "nginx -t fails with the rewritten auth vhost",
           "target": "local",
           "op": {
@@ -2390,7 +2411,7 @@
       "label": "A's logo removed: the logo switch off, the placeholder back",
       "steps": [
         {
-          "id": "step-141",
+          "id": "step-142",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2407,7 +2428,7 @@
           ]
         },
         {
-          "id": "step-142",
+          "id": "step-143",
           "label": "DELETE …/branding/logo: removed, revision 5, no warning",
           "target": "local",
           "continueOnError": true,
@@ -2429,7 +2450,7 @@
           }
         },
         {
-          "id": "step-143",
+          "id": "step-144",
           "label": "auth.${DOMAIN}/ says data-logooverride=\\\"false\\\"",
           "target": "local",
           "op": {
@@ -2439,7 +2460,7 @@
           }
         },
         {
-          "id": "step-144",
+          "id": "step-145",
           "label": "auth.${DOMAIN}/ still says the logo is served, 90 s after its removal",
           "target": "local",
           "op": {
@@ -2449,7 +2470,7 @@
           }
         },
         {
-          "id": "step-145",
+          "id": "step-146",
           "label": "auth.${DOMAIN}/static/media/logo.png is Authelia's placeholder again",
           "target": "local",
           "continueOnError": true,
@@ -2470,7 +2491,7 @@
           }
         },
         {
-          "id": "step-146",
+          "id": "step-147",
           "label": "…the stylesheet stays (the brand does)",
           "target": "local",
           "continueOnError": true,
@@ -2498,7 +2519,7 @@
       "label": "B's brand removed: the stock page, its rendering gone",
       "steps": [
         {
-          "id": "step-147",
+          "id": "step-148",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2515,7 +2536,7 @@
           ]
         },
         {
-          "id": "step-148",
+          "id": "step-149",
           "label": "DELETE /api/domains/${DOMAIN_2}/branding: removed, no warning",
           "target": "local",
           "continueOnError": true,
@@ -2537,7 +2558,7 @@
           }
         },
         {
-          "id": "step-149",
+          "id": "step-150",
           "label": "GET says ${DOMAIN_2} has no brand",
           "target": "local",
           "continueOnError": true,
@@ -2559,7 +2580,7 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-151",
           "label": "auth.${DOMAIN_2}/ is the stock page: data-logooverride=\\\"false\\\", no stylesheet",
           "target": "local",
           "op": {
@@ -2569,7 +2590,7 @@
           }
         },
         {
-          "id": "step-151",
+          "id": "step-152",
           "label": "auth.${DOMAIN_2}/ is not the stock page 90 s after the removal",
           "target": "local",
           "op": {
@@ -2579,7 +2600,7 @@
           }
         },
         {
-          "id": "step-152",
+          "id": "step-153",
           "label": "…data-theme=\\",
           "target": "local",
           "continueOnError": true,
@@ -2600,7 +2621,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-154",
           "label": "auth.${DOMAIN_2}/brand.css: 404",
           "target": "local",
           "continueOnError": true,
@@ -2621,7 +2642,7 @@
           }
         },
         {
-          "id": "step-154",
+          "id": "step-155",
           "label": "auth.${DOMAIN_2}/static/media/logo.png: the placeholder",
           "target": "local",
           "continueOnError": true,
@@ -2642,7 +2663,7 @@
           }
         },
         {
-          "id": "step-155",
+          "id": "step-156",
           "label": "${WEB_ROOT}/${DOMAIN_2} is gone",
           "target": "local",
           "op": {
@@ -2652,7 +2673,7 @@
           }
         },
         {
-          "id": "step-156",
+          "id": "step-157",
           "label": "${WEB_ROOT}/${DOMAIN_2} is still there",
           "target": "local",
           "op": {
@@ -2662,7 +2683,7 @@
           }
         },
         {
-          "id": "step-157",
+          "id": "step-158",
           "label": "No rendering of ${DOMAIN_2} is left under .renders/",
           "target": "local",
           "op": {
@@ -2672,7 +2693,7 @@
           }
         },
         {
-          "id": "step-158",
+          "id": "step-159",
           "label": "A rendering of ${DOMAIN_2} is left under .renders/ ($(renders_of \"${DOMAIN_2}\"))",
           "target": "local",
           "op": {
@@ -2682,7 +2703,7 @@
           }
         },
         {
-          "id": "step-159",
+          "id": "step-160",
           "label": "Exactly one rendering of ${DOMAIN} serves (the previous ones removed)",
           "target": "local",
           "continueOnError": true,
@@ -2710,7 +2731,7 @@
       "label": "The audit names fields and digests, never the name or the bytes",
       "steps": [
         {
-          "id": "step-160",
+          "id": "step-161",
           "label": "GET /api/audit?action=domain.branding.updated&limit=200",
           "target": "host",
           "op": {
@@ -2728,7 +2749,7 @@
           ]
         },
         {
-          "id": "step-161",
+          "id": "step-162",
           "label": "Five domain.branding.updated entries for ${DOMAIN}: fields, logo, favicon, fields, logo removed",
           "target": "local",
           "continueOnError": true,
@@ -2750,7 +2771,7 @@
           }
         },
         {
-          "id": "step-162",
+          "id": "step-163",
           "label": "…the field entries name the fields (name, theme, accent, …)",
           "target": "local",
           "continueOnError": true,
@@ -2772,7 +2793,7 @@
           }
         },
         {
-          "id": "step-163",
+          "id": "step-164",
           "label": "…the logo entry carries its digest",
           "target": "local",
           "continueOnError": true,
@@ -2794,7 +2815,7 @@
           }
         },
         {
-          "id": "step-164",
+          "id": "step-165",
           "label": "…and the removal is one entry",
           "target": "local",
           "continueOnError": true,
@@ -2816,7 +2837,7 @@
           }
         },
         {
-          "id": "step-165",
+          "id": "step-166",
           "label": "…revisions 1 to 5",
           "target": "local",
           "continueOnError": true,
@@ -2838,7 +2859,7 @@
           }
         },
         {
-          "id": "step-166",
+          "id": "step-167",
           "label": "…no entry carries the brand's name",
           "target": "local",
           "continueOnError": true,
@@ -2859,7 +2880,7 @@
           }
         },
         {
-          "id": "step-167",
+          "id": "step-168",
           "label": "…nor the logo's bytes",
           "target": "local",
           "continueOnError": true,

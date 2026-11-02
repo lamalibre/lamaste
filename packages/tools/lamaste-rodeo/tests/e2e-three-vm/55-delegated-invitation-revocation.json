@@ -1,0 +1,1975 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 55,
+    "name": "Delegated invitations: revocation ends access",
+    "suite": "e2e-three-vm",
+    "description": "55 — Delegated invitations: revocation ends access (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-xinv"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-xinv-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-xinv-agent"
+    },
+    "APP": {
+      "value": "/api/${PLUGIN}/app",
+      "expression": true
+    },
+    "SUB_W": {
+      "value": "e2e55web"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-55"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-55-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "COORD": {
+      "value": "e2e55-coord"
+    },
+    "COORD2": {
+      "value": "e2e55-coord2"
+    },
+    "FIRST": {
+      "value": "e2e55-first"
+    },
+    "CHAIN": {
+      "value": "e2e55-chain"
+    },
+    "LEAF": {
+      "value": "e2e55-leaf"
+    },
+    "AUDIT_BASE": {
+      "value": "0"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE gatekeeper/grants/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "gatekeeper/grants/${id}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE plugins/${PLUGIN}/web-surface",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN}/web-surface"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "DELETE /api/plugins/${PLUGIN}/web-surface",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}/web-surface"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-6",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nmd_setup\nif agent_has_node_sqlite; then\n  log_pass \"The agent VM's Node.js has node:sqlite, which the agent half's projection needs\"\nelse\n  log_fail \"The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run\"\n  end_test\n  exit $?\nfi\nhost_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\ndrop_plugin_grants \"${PLUGIN}\"\nAUDIT_BASE=$(host_api_get \"audit?limit=1\" 2>/dev/null | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")"
+    },
+    {
+      "id": "domain-b-two-coordinators-the-plugin-its-restricted-web-surface-invitations-on",
+      "label": "Domain B; two coordinators; the plugin, its restricted web surface, invitations on",
+      "steps": [
+        {
+          "id": "step-12",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-55-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Fixture built: ${SERVER_PACKAGE}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixture built: ${SERVER_PACKAGE}"
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\",\\\"client.example\\\"],\\\"lifetimeDays\\\":14}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Invitations enabled: two e-mail domains, 14 days",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Invitations enabled: two e-mail domains, 14 days"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Set AUTHELIA_PID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "authelia_pid"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_PID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"Domain B; two coordinators; the plugin, its restricted web surface, invitations on\"\n\nmd_domain_active \"${DOMAIN_2}\"\nFQDN=\"${SUB_W}.${DOMAIN_2}\"\nEXTERNAL=\"[{\\\"name\\\":\\\"${DOMAIN_2}\\\",\\\"kind\\\":\\\"external\\\"}]\"\nmd_user COORD_ID \"${COORD}\" \"${PASSWORD}\" \"${EXTERNAL}\"\nmd_user COORD2_ID \"${COORD2}\" \"${PASSWORD}\" \"${EXTERNAL}\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-55-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/xinv\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none inviting v1 \"${SUB_W}\"; then\n  log_fail \"The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE}\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/xinv/server fixtures/xinv/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\ninv_install \"${PLUGIN}\" \"${SERVER_PACKAGE}\" \"${AGENT_PACKAGE}\"\ninv_web_surface SITE_ID \"${PLUGIN}\" \"${FQDN}\" restricted\nmd_hosts \"${FQDN}\"\ninv_entitle \"${COORD}\" coordinator\ninv_entitle \"${COORD2}\" coordinator\nmd_grant COORD_GRANT user \"${COORD}\" site \"${SITE_ID}\"\nmd_grant COORD2_GRANT user \"${COORD2}\" site \"${SITE_ID}\"\ninv_wait_audience \"${COORD_ID}\" coordinator \"The audience holds ${COORD}\"\ninv_wait_audience \"${COORD2_ID}\" coordinator \"…and ${COORD2}\"\nRESP=$(inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\",\\\"client.example\\\"],\\\"lifetimeDays\\\":14}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Invitations enabled: two e-mail domains, 14 days\" || true\nmd_wait_authelia \"${DOMAIN_2}\"\nmd_sign_in \"${COORD}\" \"${PASSWORD}\" \"$(reset_totp \"${COORD}\")\" \"${JAR_COORD}\" \"${FQDN}\"\nmd_sign_in \"${COORD2}\" \"${PASSWORD}\" \"$(reset_totp \"${COORD2}\")\" \"${JAR_COORD2}\" \"${FQDN}\"\nAUTHELIA_PID=$(authelia_pid)\n\n# ===========================================================================\n# 1. A link stops working\n# ==========================================================================="
+    },
+    {
+      "id": "the-inviter-revokes-their-own-another-inviter-cannot",
+      "label": "The inviter revokes their own; another inviter cannot",
+      "steps": [
+        {
+          "id": "step-35",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD2}\" DELETE \"/${I1}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "${COORD2} revokes ${COORD}'s: 404, as none at all",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "${COORD2} revokes ${COORD}'s: 404, as none at all"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "…it stays pending",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(inv_row \"${I1}\")"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "pending"
+              },
+              "message": "…it stays pending"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" DELETE \"/${I1}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "${COORD} revokes their own: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${COORD} revokes their own: 200"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "The link: lookup 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_lookup \"${T1}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "The link: lookup 410"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "…accept 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_accept \"${T1}\" e2e55-late \"${PASSWORD}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "…accept 410"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "…no account",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_kinds e2e55-late)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "…no account"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The inviter revokes their own; another inviter cannot\"\n\ninv_new T1 I1 \"${JAR_COORD}\" \"a1@${INV_MAIL}\" viewer \"${COORD} invites a1\"\nRESP=$(inv_api \"${JAR_COORD2}\" DELETE \"/${I1}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"404\" \"${COORD2} revokes ${COORD}'s: 404, as none at all\" || true\nassert_json_field \"$(inv_row \"${I1}\")\" '.status' 'pending' \"…it stays pending\" || true\nRESP=$(inv_api \"${JAR_COORD}\" DELETE \"/${I1}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"${COORD} revokes their own: 200\" || true\ninv_wait_ended \"${I1}\" revoked inviter \"…revoked, by the inviter\"\nassert_eq \"$(visit_status \"$(inv_lookup \"${T1}\")\")\" \"410\" \"The link: lookup 410\" || true\nassert_eq \"$(visit_status \"$(inv_accept \"${T1}\" e2e55-late \"${PASSWORD}\")\")\" \"410\" \"…accept 410\" || true\nassert_eq \"$(user_kinds e2e55-late)\" \"\" \"…no account\" || true"
+    },
+    {
+      "id": "the-administrator-revokes-any",
+      "label": "The administrator revokes any",
+      "steps": [
+        {
+          "id": "step-45",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"invitations/${I2}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "DELETE /api/invitations/<id>: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "DELETE /api/invitations/<id>: 200"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "…revoked, the row kept",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".action",
+              "expected": {
+                "kind": "literal",
+                "value": "revoked"
+              },
+              "message": "…revoked, the row kept"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "The link: 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_lookup \"${T2}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "The link: 410"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The administrator revokes any\"\n\ninv_new T2 I2 \"${JAR_COORD}\" \"a2@${INV_MAIL}\" viewer \"${COORD} invites a2\"\nRESP=$(host_api_call DELETE \"invitations/${I2}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"DELETE /api/invitations/<id>: 200\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.action' 'revoked' \"…revoked, the row kept\" || true\ninv_wait_ended \"${I2}\" revoked admin \"…by the administrator\"\nassert_eq \"$(visit_status \"$(inv_lookup \"${T2}\")\")\" \"410\" \"The link: 410\" || true"
+    },
+    {
+      "id": "five-refused-acceptances-lock-a-link",
+      "label": "Five refused acceptances lock a link",
+      "steps": [
+        {
+          "id": "step-52",
+          "label": "Refused username ${n}: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_accept \"${T3}\" \"${COORD}\" \"${PASSWORD}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Refused username ${n}: 409"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Four: still pending",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(inv_row \"${I3}\")"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "pending"
+              },
+              "message": "Four: still pending"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "The fifth: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_accept \"${T3}\" \"${COORD}\" \"${PASSWORD}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "The fifth: 409"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "A free username now: 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_accept \"${T3}\" e2e55-free \"${PASSWORD}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "A free username now: 410"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Five refused acceptances lock a link\"\n\ninv_new T3 I3 \"${JAR_COORD}\" \"a3@${INV_MAIL}\" viewer \"${COORD} invites a3\"\nfor n in 1 2 3 4; do\n  assert_eq \"$(visit_status \"$(inv_accept \"${T3}\" \"${COORD}\" \"${PASSWORD}\")\")\" \"409\" \"Refused username ${n}: 409\" || true\ndone\nassert_json_field \"$(inv_row \"${I3}\")\" '.status' 'pending' \"Four: still pending\" || true\nassert_eq \"$(visit_status \"$(inv_accept \"${T3}\" \"${COORD}\" \"${PASSWORD}\")\")\" \"409\" \"The fifth: 409\" || true\ninv_wait_ended \"${I3}\" revoked attempts_exhausted \"…the link is locked\"\nassert_eq \"$(visit_status \"$(inv_accept \"${T3}\" e2e55-free \"${PASSWORD}\")\")\" \"410\" \"A free username now: 410\" || true\nassert_json_field \"$(visit_body \"$(inv_api \"${JAR_COORD}\" GET)\")\" \"[.invitations[] | select(.id == \\\"${I3}\\\") | \\\"\\(.status) \\(.revokedReason)\\\"] | first\" 'revoked attempts_exhausted' \"The inviter sees why\" || true\n\n# ===========================================================================\n# 2. The policy reaches open invitations\n# ==========================================================================="
+    },
+    {
+      "id": "the-policy-a-domain-removed-a-shorter-lifetime-turned-off",
+      "label": "The policy: a domain removed, a shorter lifetime, turned off",
+      "steps": [
+        {
+          "id": "step-61",
+          "label": "Set EXPIRES_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(inv_row \"${I5}\")\" '.expiresAt'"
+          },
+          "capture": [
+            {
+              "variable": "EXPIRES_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"],\\\"lifetimeDays\\\":2}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-63",
+          "label": "The administrator removes client.example and shortens the lifetime to 2 days",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The administrator removes client.example and shortens the lifetime to 2 days"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "…its link 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_accept \"${T4}\" e2e55-removed \"${PASSWORD}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "…its link 410"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "The other stays pending",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(inv_row \"${I5}\")"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "pending"
+              },
+              "message": "The other stays pending"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Set EXPIRES_AFTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(inv_row \"${I5}\")\" '.expiresAt'"
+          },
+          "capture": [
+            {
+              "variable": "EXPIRES_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "…its expiry brought within the two days",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$([ \"$(iso_epoch \"${EXPIRES_AFTER}\")\" -lt \"$(iso_epoch \"${EXPIRES_BEFORE}\")\" ] && [ $(($(iso_epoch \"${EXPIRES_AFTER}\") - $(date +%s))) -le 172800 ] && echo shorter)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "shorter"
+              },
+              "message": "…its expiry brought within the two days"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"{\\\"enabled\\\":false,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "The policy turned off",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The policy turned off"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "…its link 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_lookup \"${T5}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "…its link 410"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "The inviter's API: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_api \"${JAR_COORD}\" GET)\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "The inviter's API: 403"
+            }
+          }
+        },
+        {
+          "id": "step-74",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "On again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "On again"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The policy: a domain removed, a shorter lifetime, turned off\"\n\ninv_new T4 I4 \"${JAR_COORD}\" \"b1@client.example\" viewer \"${COORD} invites an address under the second domain\"\ninv_new T5 I5 \"${JAR_COORD}\" \"b2@${INV_MAIL}\" viewer \"…and one under the first\"\nEXPIRES_BEFORE=$(json_get \"$(inv_row \"${I5}\")\" '.expiresAt')\nRESP=$(inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"],\\\"lifetimeDays\\\":2}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The administrator removes client.example and shortens the lifetime to 2 days\" || true\ninv_wait_ended \"${I4}\" revoked email_domain_removed \"The invitation under the removed domain is revoked\"\nassert_eq \"$(visit_status \"$(inv_accept \"${T4}\" e2e55-removed \"${PASSWORD}\")\")\" \"410\" \"…its link 410\" || true\nassert_json_field \"$(inv_row \"${I5}\")\" '.status' 'pending' \"The other stays pending\" || true\nEXPIRES_AFTER=$(json_get \"$(inv_row \"${I5}\")\" '.expiresAt')\nassert_eq \"$([ \"$(iso_epoch \"${EXPIRES_AFTER}\")\" -lt \"$(iso_epoch \"${EXPIRES_BEFORE}\")\" ] && [ $(($(iso_epoch \"${EXPIRES_AFTER}\") - $(date +%s))) -le 172800 ] && echo shorter)\" \"shorter\" \"…its expiry brought within the two days\" || true\nRESP=$(inv_policy \"{\\\"enabled\\\":false,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The policy turned off\" || true\ninv_wait_ended \"${I5}\" revoked policy_disabled \"The open invitation is revoked\"\nassert_eq \"$(visit_status \"$(inv_lookup \"${T5}\")\")\" \"410\" \"…its link 410\" || true\nassert_eq \"$(visit_status \"$(inv_api \"${JAR_COORD}\" GET)\")\" \"403\" \"The inviter's API: 403\" || true\nRESP=$(inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"On again\" || true\n\n# ===========================================================================\n# 3. The people: one joined, whose inviter then loses the role\n# ==========================================================================="
+    },
+    {
+      "id": "an-invitee-joins-their-inviter-loses-the-role",
+      "label": "An invitee joins; their inviter loses the role",
+      "steps": [
+        {
+          "id": "step-77",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_accept \"${T6}\" \"${FIRST}\" \"${PASSWORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-78",
+          "label": "${FIRST} accepts",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${FIRST} accepts"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "Set SECRET_FIRST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_secret \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_FIRST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "Set FIRST_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(inv_row \"${I6}\")\" '.acceptedUserId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "FIRST_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"An invitee joins; their inviter loses the role\"\n\ninv_new T6 I6 \"${JAR_COORD2}\" \"c1@${INV_MAIL}\" viewer \"${COORD2} invites c1\"\nRESP=$(inv_accept \"${T6}\" \"${FIRST}\" \"${PASSWORD}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"${FIRST} accepts\" || true\nSECRET_FIRST=$(inv_secret \"$RESP\")\nFIRST_ID=$(json_get \"$(inv_row \"${I6}\")\" '.acceptedUserId // empty')\nwait_group holds \"${FIRST}\" \"${FQDN}\" \"users.yml gives ${FIRST} the site's hostname\"\nmd_sign_in \"${FIRST}\" \"${PASSWORD}\" \"${SECRET_FIRST}\" \"${JAR_FIRST}\" \"${FQDN}\"\nif wait_for \"${AUTHZ_SETTLE_SECONDS}\" shell_for \"${JAR_FIRST}\"; then log_pass \"${FIRST}: the shell\"; else log_fail \"${FIRST} on the shell: $(page_status \"${JAR_FIRST}\" /)\"; fi"
+    },
+    {
+      "id": "the-inviter-s-site-grant-goes-the-role-alone-no-longer-invites",
+      "label": "The inviter's site grant goes: the role alone no longer invites",
+      "steps": [
+        {
+          "id": "step-84",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"gatekeeper/grants/${COORD2_GRANT}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-85",
+          "label": "${COORD2}'s site grant revoked, the role left in place",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${COORD2}'s site grant revoked, the role left in place"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "${COORD2} on the inviter's API: 403",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${COORD2} on the inviter's API: 403"
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "${COORD2} on the inviter's API: $(visit_status \"$(visit \"${JAR_COORD2}\" \"$(inv_url)\")\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${COORD2} on the inviter's API: $(visit_status \"$(visit \"${JAR_COORD2}\" \"$(inv_url)\")\")"
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_accept \"${T7}\" e2e55-noreach \"${PASSWORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-90",
+          "label": "Their open invitation cannot be accepted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "Their open invitation cannot be accepted"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "…no account",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_kinds e2e55-noreach)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "…no account"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The inviter's site grant goes: the role alone no longer invites\"\n\ninv_new T7 I7 \"${JAR_COORD2}\" \"c2@${INV_MAIL}\" viewer \"${COORD2} invites c2, pending\"\nRESP=$(host_api_call DELETE \"gatekeeper/grants/${COORD2_GRANT}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${COORD2}'s site grant revoked, the role left in place\" || true\nCOORD2_GRANT=\"\"\nif wait_for \"${AUTHZ_SETTLE_SECONDS}\" status_is \"${JAR_COORD2}\" \"$(inv_url)\" 403; then\n  log_pass \"${COORD2} on the inviter's API: 403\"\nelse\n  log_fail \"${COORD2} on the inviter's API: $(visit_status \"$(visit \"${JAR_COORD2}\" \"$(inv_url)\")\")\"\nfi\nRESP=$(inv_accept \"${T7}\" e2e55-noreach \"${PASSWORD}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"410\" \"Their open invitation cannot be accepted\" || true\ninv_wait_ended \"${I7}\" revoked inviter_unentitled \"…revoked at the claim\"\nassert_eq \"$(user_kinds e2e55-noreach)\" \"\" \"…no account\" || true"
+    },
+    {
+      "id": "the-inviter-s-role-goes-their-pending-ones-end-the-person-they-invited-stays-d1",
+      "label": "The inviter's role goes: their pending ones end; the person they invited stays (D1)",
+      "steps": [
+        {
+          "id": "step-94",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"plugins/${PLUGIN}/entitlements?principalType=user&principalId=${COORD2}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-95",
+          "label": "${COORD2}'s role removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${COORD2}'s role removed"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "${FIRST}, whom ${COORD2} invited, stays in the audience",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(audience_row \"${PLUGIN}\" \"${FIRST_ID}\")"
+              },
+              "path": "\"\\(.change.kind) \\(.change.member.status)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "upsert active"
+              },
+              "message": "${FIRST}, whom ${COORD2} invited, stays in the audience"
+            }
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "…and reaches the API",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(page_status \"${JAR_FIRST}\" \"${APP}/echo\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…and reaches the API"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"plugins/${PLUGIN}/entitlements?principalType=user&principalId=${COORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "${COORD}'s role removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${COORD}'s role removed"
+            }
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "…its link 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_lookup \"${T8}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "…its link 410"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The inviter's role goes: their pending ones end; the person they invited stays (D1)\"\n\ninv_new T8 I8 \"${JAR_COORD}\" \"d1@${INV_MAIL}\" viewer \"${COORD} invites d1, pending\"\nRESP=$(host_api_call DELETE \"plugins/${PLUGIN}/entitlements?principalType=user&principalId=${COORD2}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${COORD2}'s role removed\" || true\nassert_json_field \"$(audience_row \"${PLUGIN}\" \"${FIRST_ID}\")\" '\"\\(.change.kind) \\(.change.member.status)\"' 'upsert active' \"${FIRST}, whom ${COORD2} invited, stays in the audience\" || true\nassert_eq \"$(page_status \"${JAR_FIRST}\" \"${APP}/echo\")\" \"200\" \"…and reaches the API\" || true\nif shell_for \"${JAR_FIRST}\"; then log_pass \"…and the shell\"; else log_fail \"${FIRST} lost the shell\"; fi\nRESP=$(host_api_call DELETE \"plugins/${PLUGIN}/entitlements?principalType=user&principalId=${COORD}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${COORD}'s role removed\" || true\ninv_wait_ended \"${I8}\" revoked inviter_unentitled \"Their pending invitation ends revoked (inviter_unentitled)\"\nassert_eq \"$(visit_status \"$(inv_lookup \"${T8}\")\")\" \"410\" \"…its link 410\" || true\ninv_entitle \"${COORD}\" coordinator\ninv_wait_audience \"${COORD_ID}\" coordinator \"${COORD} is a coordinator again\"\n\n# ===========================================================================\n# 4. disable-invitees\n# ==========================================================================="
+    },
+    {
+      "id": "a-chain-a-coordinator-invites-a-coordinator-who-invites-a-viewer",
+      "label": "A chain: a coordinator invites a coordinator, who invites a viewer",
+      "steps": [
+        {
+          "id": "step-105",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_accept \"${T9}\" \"${CHAIN}\" \"${PASSWORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "${CHAIN} accepts",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${CHAIN} accepts"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "Set SECRET_CHAIN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_secret \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_CHAIN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-108",
+          "label": "Set CHAIN_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(inv_row \"${I9}\")\" '.acceptedUserId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "CHAIN_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-113",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_accept \"${T10}\" \"${LEAF}\" \"${PASSWORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
+          "label": "${LEAF} accepts",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${LEAF} accepts"
+            }
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "Set SECRET_LEAF",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_secret \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_LEAF",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-116",
+          "label": "Set LEAF_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(inv_row \"${I10}\")\" '.acceptedUserId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "LEAF_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-119",
+          "label": "${CHAIN}: the API",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(page_status \"${JAR_CHAIN}\" \"${APP}/echo\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${CHAIN}: the API"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A chain: a coordinator invites a coordinator, who invites a viewer\"\n\ninv_new T9 I9 \"${JAR_COORD}\" \"e1@${INV_MAIL}\" coordinator \"${COORD} invites a coordinator\"\nRESP=$(inv_accept \"${T9}\" \"${CHAIN}\" \"${PASSWORD}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"${CHAIN} accepts\" || true\nSECRET_CHAIN=$(inv_secret \"$RESP\")\nCHAIN_ID=$(json_get \"$(inv_row \"${I9}\")\" '.acceptedUserId // empty')\ninv_wait_audience \"${CHAIN_ID}\" coordinator \"${CHAIN} is a coordinator\"\nwait_group holds \"${CHAIN}\" \"${FQDN}\" \"users.yml gives ${CHAIN} the site's hostname\"\nmd_sign_in \"${CHAIN}\" \"${PASSWORD}\" \"${SECRET_CHAIN}\" \"${JAR_CHAIN}\" \"${FQDN}\"\ninv_new T10 I10 \"${JAR_CHAIN}\" \"e2@${INV_MAIL}\" viewer \"${CHAIN} invites a viewer\"\nRESP=$(inv_accept \"${T10}\" \"${LEAF}\" \"${PASSWORD}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"${LEAF} accepts\" || true\nSECRET_LEAF=$(inv_secret \"$RESP\")\nLEAF_ID=$(json_get \"$(inv_row \"${I10}\")\" '.acceptedUserId // empty')\nwait_group holds \"${LEAF}\" \"${FQDN}\" \"users.yml gives ${LEAF} the site's hostname\"\nmd_sign_in \"${LEAF}\" \"${PASSWORD}\" \"${SECRET_LEAF}\" \"${JAR_LEAF}\" \"${FQDN}\"\nif wait_for \"${AUTHZ_SETTLE_SECONDS}\" api_says \"${JAR_LEAF}\" 200; then log_pass \"${LEAF}: the API\"; else log_fail \"${LEAF} on the API: $(page_status \"${JAR_LEAF}\" \"${APP}/echo\")\"; fi\nassert_eq \"$(page_status \"${JAR_CHAIN}\" \"${APP}/echo\")\" \"200\" \"${CHAIN}: the API\" || true"
+    },
+    {
+      "id": "disable-invitees-transitive-both-sessions-end-at-once",
+      "label": "disable-invitees, transitive: both sessions end at once",
+      "steps": [
+        {
+          "id": "step-120",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"invitations/disable-invitees\" \"{\\\"inviterUserId\\\":\\\"${COORD_ID}\\\",\\\"transitive\\\":true}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-121",
+          "label": "POST /api/invitations/disable-invitees {transitive}: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "POST /api/invitations/disable-invitees {transitive}: 200"
+            }
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "…the coordinator's invitee and theirs",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".disabled | sort | join(\",\")",
+              "expected": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n' \"${CHAIN_ID}\" \"${LEAF_ID}\" | sort | paste -sd, -)"
+              },
+              "message": "…the coordinator's invitee and theirs"
+            }
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "${LEAF}'s session: 401 at once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(page_status \"${JAR_LEAF}\" \"${APP}/echo\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "${LEAF}'s session: 401 at once"
+            }
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "${CHAIN}'s session: 401 at once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(page_status \"${JAR_CHAIN}\" \"${APP}/echo\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "${CHAIN}'s session: 401 at once"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "${COORD} is untouched",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(page_status \"${JAR_COORD}\" \"${APP}/echo\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${COORD} is untouched"
+            }
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "The directory holds ${LEAF} disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(directory_user \"${LEAF_ID}\")"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "disabled"
+              },
+              "message": "The directory holds ${LEAF} disabled"
+            }
+          }
+        },
+        {
+          "id": "step-127",
+          "label": "Audited invitation.invitees.disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(inv_audit invitation.invitees.disabled)\" 'length')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Audited invitation.invitees.disabled"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"disable-invitees, transitive: both sessions end at once\"\n\nRESP=$(host_api_call POST \"invitations/disable-invitees\" \"{\\\"inviterUserId\\\":\\\"${COORD_ID}\\\",\\\"transitive\\\":true}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"POST /api/invitations/disable-invitees {transitive}: 200\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.disabled | sort | join(\",\")' \"$(printf '%s\\n' \"${CHAIN_ID}\" \"${LEAF_ID}\" | sort | paste -sd, -)\" \"…the coordinator's invitee and theirs\" || true\nassert_eq \"$(page_status \"${JAR_LEAF}\" \"${APP}/echo\")\" \"401\" \"${LEAF}'s session: 401 at once\" || true\nassert_eq \"$(page_status \"${JAR_CHAIN}\" \"${APP}/echo\")\" \"401\" \"${CHAIN}'s session: 401 at once\" || true\nassert_eq \"$(page_status \"${JAR_COORD}\" \"${APP}/echo\")\" \"200\" \"${COORD} is untouched\" || true\nassert_json_field \"$(directory_user \"${LEAF_ID}\")\" '.status' 'disabled' \"The directory holds ${LEAF} disabled\" || true\nassert_eq \"$(json_get \"$(inv_audit invitation.invitees.disabled)\" 'length')\" \"1\" \"Audited invitation.invitees.disabled\" || true\n\n# ===========================================================================\n# 5. A revocation racing an acceptance\n# ==========================================================================="
+    },
+    {
+      "id": "a-revocation-racing-an-acceptance-marked-never-leaves-a-working-link",
+      "label": "A revocation racing an acceptance: 'marked' never leaves a working link",
+      "steps": [
+        {
+          "id": "step-133",
+          "label": "Set BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -c -n --arg t \"${TR}\" --arg u \"${USERNAME}\" --arg p \"${PASSWORD}\" '{token: $t, username: $u, displayName: \"E2E Race\", password: $p}'"
+          },
+          "capture": [
+            {
+              "variable": "BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-135",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "for _ in \\$(seq 1 200); do s=\\$(sqlite3 /etc/lamalibre/lamaste/state.db \\"
+          },
+          "capture": [
+            {
+              "variable": "ANSWER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-136",
+          "label": "Set STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "status_of \"$ANSWER\""
+          },
+          "capture": [
+            {
+              "variable": "STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-137",
+          "label": "Set ACTION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$ANSWER\")\" '.action // .code // \"none\"'"
+          },
+          "capture": [
+            {
+              "variable": "ACTION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-138",
+          "label": "Race ${n}: DELETE answered ${STATUS} ${ACTION}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Race ${n}: DELETE answered ${STATUS} ${ACTION}"
+          }
+        },
+        {
+          "id": "step-139",
+          "label": "Sleep 4s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 4
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "Set MARKED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(MARKED + 1)"
+          },
+          "capture": [
+            {
+              "variable": "MARKED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-141",
+          "label": "Race ${n}: marked, and it ended revoked by the administrator",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Race ${n}: marked, and it ended revoked by the administrator"
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "Race ${n}: marked, and it ended $(inv_row \"${IR}\" | jq -c '{status, revokedReason}')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Race ${n}: marked, and it ended $(inv_row \"${IR}\" | jq -c '{status, revokedReason}')"
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "…the link stays dead",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_lookup \"${TR}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "…the link stays dead"
+            }
+          }
+        },
+        {
+          "id": "step-144",
+          "label": "Set UID_RACED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(inv_row \"${IR}\")\" '.acceptedUserId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "UID_RACED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-146",
+          "label": "…the account it made is disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(directory_user \"${UID_RACED}\")"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "disabled"
+              },
+              "message": "…the account it made is disabled"
+            }
+          }
+        },
+        {
+          "id": "step-147",
+          "label": "…it made no account",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_kinds \"${USERNAME}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "…it made no account"
+            }
+          }
+        },
+        {
+          "id": "step-148",
+          "label": "Set UID_RACED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(inv_row \"${IR}\")\" '.acceptedUserId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "UID_RACED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-149",
+          "label": "Race ${n}: no mark (${STATUS} ${ACTION}): it ended $(inv_row \"${IR}\" | jq -r '.status')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Race ${n}: no mark (${STATUS} ${ACTION}): it ended $(inv_row \"${IR}\" | jq -r '.status')"
+          }
+        },
+        {
+          "id": "step-151",
+          "label": "A revocation landed on an acceptance under way ${MARKED} time(s)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "A revocation landed on an acceptance under way ${MARKED} time(s)"
+          }
+        },
+        {
+          "id": "step-152",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"invitations/disable-invitees\" \"{\\\"inviterUserId\\\":\\\"${COORD_ID}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-153",
+          "label": "The races' invitees disabled (cleanup of who joined)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The races' invitees disabled (cleanup of who joined)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A revocation racing an acceptance: 'marked' never leaves a working link\"\n\nMARKED=0\nfor n in 1 2 3 4 5 6; do\n  inv_new TR IR \"${JAR_COORD}\" \"r${n}@${INV_MAIL}\" viewer \"Race ${n}: an invitation\"\n  USERNAME=\"e2e55-race${n}\"\n  RACED_USERS=\"${RACED_USERS} ${USERNAME}\"\n  BODY=$(jq -c -n --arg t \"${TR}\" --arg u \"${USERNAME}\" --arg p \"${PASSWORD}\" '{token: $t, username: $u, displayName: \"E2E Race\", password: $p}')\n  # The acceptance from the visitor, in the background there; the revocation\n  # as soon as the row says it is being accepted, read on the host VM.\n  visitor_exec \"nohup curl -sk --max-time 30 -o /tmp/e2e-55-race.out -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d $(printf %q \"${BODY}\") https://auth.${DOMAIN_2}/api/invite/accept &>/dev/null & exit\" > /dev/null 2>&1 || true\n  ANSWER=$(host_exec \"for _ in \\$(seq 1 200); do s=\\$(sqlite3 /etc/lamalibre/lamaste/state.db \\\"SELECT status FROM invitations WHERE id = '${IR}'\\\" 2>/dev/null); [ \\\"\\$s\\\" = accepting ] && break; [ \\\"\\$s\\\" = accepted ] && break; sleep 0.02; done; ${CURL_MTLS} --max-time 20 -X DELETE -w '\\n%{http_code}' '${PANEL}/invitations/${IR}' || true\" 2>/dev/null)\n  STATUS=$(status_of \"$ANSWER\")\n  ACTION=$(json_get \"$(body_of \"$ANSWER\")\" '.action // .code // \"none\"')\n  log_info \"Race ${n}: DELETE answered ${STATUS} ${ACTION}\"\n  sleep 4\n  if [ \"${STATUS}\" = \"202\" ]; then\n    MARKED=$((MARKED + 1))\n    if wait_for 75 inv_ended_as \"${IR}\" revoked admin; then\n      log_pass \"Race ${n}: marked, and it ended revoked by the administrator\"\n    else\n      log_fail \"Race ${n}: marked, and it ended $(inv_row \"${IR}\" | jq -c '{status, revokedReason}')\"\n    fi\n    assert_eq \"$(visit_status \"$(inv_lookup \"${TR}\")\")\" \"410\" \"…the link stays dead\" || true\n    UID_RACED=$(json_get \"$(inv_row \"${IR}\")\" '.acceptedUserId // empty')\n    if [ -n \"${UID_RACED}\" ]; then\n      RACED_IDS=\"${RACED_IDS} ${UID_RACED}\"\n      assert_json_field \"$(directory_user \"${UID_RACED}\")\" '.status' 'disabled' \"…the account it made is disabled\" || true\n    else\n      assert_eq \"$(user_kinds \"${USERNAME}\")\" \"\" \"…it made no account\" || true\n    fi\n  else\n    # Too late, or too early: the revocation and the acceptance each stand alone.\n    UID_RACED=$(json_get \"$(inv_row \"${IR}\")\" '.acceptedUserId // empty')\n    if [ -n \"${UID_RACED}\" ]; then RACED_IDS=\"${RACED_IDS} ${UID_RACED}\"; fi\n    log_pass \"Race ${n}: no mark (${STATUS} ${ACTION}): it ended $(inv_row \"${IR}\" | jq -r '.status')\"\n  fi\n  if [ \"${MARKED}\" -ge 2 ]; then break; fi\ndone\nlog_info \"A revocation landed on an acceptance under way ${MARKED} time(s)\"\nRESP=$(host_api_call POST \"invitations/disable-invitees\" \"{\\\"inviterUserId\\\":\\\"${COORD_ID}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The races' invitees disabled (cleanup of who joined)\" || true"
+    },
+    {
+      "id": "the-web-surface-deleted-what-named-it-ends",
+      "label": "The web surface deleted: what named it ends",
+      "steps": [
+        {
+          "id": "step-155",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"plugins/${PLUGIN}/web-surface\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-156",
+          "label": "The web surface deleted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The web surface deleted"
+            }
+          }
+        },
+        {
+          "id": "step-158",
+          "label": "…its link 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_lookup \"${T11}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "…its link 410"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The web surface deleted: what named it ends\"\n\ninv_new T11 I11 \"${JAR_COORD}\" \"f1@${INV_MAIL}\" viewer \"${COORD} invites f1\"\nRESP=$(host_api_call DELETE \"plugins/${PLUGIN}/web-surface\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The web surface deleted\" || true\ninv_wait_ended \"${I11}\" revoked surface_removed \"The open invitation is revoked (surface_removed)\"\nassert_eq \"$(visit_status \"$(inv_lookup \"${T11}\")\")\" \"410\" \"…its link 410\" || true"
+    },
+    {
+      "id": "audited-nothing-restarted-authelia",
+      "label": "Audited; nothing restarted Authelia",
+      "steps": [
+        {
+          "id": "step-160",
+          "label": "…with no address",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(inv_audit invitation.revoked)"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "@${INV_MAIL}"
+              },
+              "message": "…with no address"
+            }
+          }
+        },
+        {
+          "id": "step-161",
+          "label": "invitation.created holds no address",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(inv_audit invitation.created)"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "@${INV_MAIL}"
+              },
+              "message": "invitation.created holds no address"
+            }
+          }
+        },
+        {
+          "id": "step-162",
+          "label": "Authelia's MainPID unchanged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "AUTHELIA_PID"
+              },
+              "message": "Authelia's MainPID unchanged"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Audited; nothing restarted Authelia\"\n\nassert_eq \"$(json_get \"$(inv_audit invitation.revoked)\" \"[.[] | select(.details.invitationId == \\\"${I1}\\\")] | length\")\" \"1\" \"A revocation is audited once\" || true\nassert_not_contains \"$(inv_audit invitation.revoked)\" \"@${INV_MAIL}\" \"…with no address\" || true\nassert_not_contains \"$(inv_audit invitation.created)\" \"@${INV_MAIL}\" \"invitation.created holds no address\" || true\nassert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"Authelia's MainPID unchanged\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 55 — Delegated invitations: revocation ends access (Three-VM)\n# ============================================================================\n# The third proof of delegated invitations (design: packages/core/docs/\n# delegated-invitations-design.md, \"Proof\").\n#\n# 1. A link stops working: the inviter revokes their own pending invitation\n#    (410 on lookup and accept); another inviter cannot touch it (404, as\n#    none at all); the administrator revokes one; five refused acceptances\n#    lock a link, the inviter told so.\n# 2. The policy reaches open invitations: an e-mail domain removed, a shorter\n#    lifetime, the policy turned off.\n# 3. The surface: an inviter whose site grant is gone is refused on the API\n#    though they keep the role; their open invitation still cannot be\n#    accepted, and is revoked. The web surface deleted revokes what named it.\n# 4. The inviter's role taken away: their pending invitation ends revoked\n#    (inviter_unentitled), and the person they invited keeps the site (the\n#    founders' decision D1).\n# 5. disable-invitees, transitive: a coordinator invited a coordinator who\n#    invited a viewer; disabling the first's invitees ends both sessions at\n#    once (401), without touching the first.\n# 6. A revocation racing an acceptance, tried a few times: a `marked` answer\n#    is never followed by a link that works, and an account made anyway ends\n#    disabled, as audited. Hitting the window depends on timing: the spec says\n#    when it did not, and the deterministic proof stays in\n#    packages/server/daemon/test/delegated-invitations-review.test.js.\n# Nothing here restarts Authelia.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=55\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=invitation-harness.sh\nsource \"${SCRIPT_DIR}/invitation-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-xinv\"\nSERVER_PACKAGE=\"@lamalibre/e2e-xinv-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-xinv-agent\"\nAPP=\"/api/${PLUGIN}/app\"\nSUB_W=\"e2e55web\"\nPOLICY_ID=\"e2e-apphost-55\"\nREMOTE_DIR=\"/var/tmp/e2e-55-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nCOORD=\"e2e55-coord\"\nCOORD2=\"e2e55-coord2\"\nFIRST=\"e2e55-first\"\nCHAIN=\"e2e55-chain\"\nLEAF=\"e2e55-leaf\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCOORD_ID=\"\"\nCOORD2_ID=\"\"\nFIRST_ID=\"\"\nCHAIN_ID=\"\"\nLEAF_ID=\"\"\nRACED_IDS=\"\"\nRACED_USERS=\"\"\nJAR_COORD=$(md_jar coord)\nJAR_COORD2=$(md_jar coord2)\nJAR_FIRST=$(md_jar first)\nJAR_CHAIN=$(md_jar chain)\nJAR_LEAF=$(md_jar leaf)\nFQDN=\"\"\nCOORD_GRANT=\"\"\nCOORD2_GRANT=\"\"\nAUDIT_BASE=0\n\n# site_status <jar> — how the shell answers the session\nshell_for() { [[ \"$(visit_body \"$(page \"$1\" /)\")\" == *\"E2E_WEB_v1\"* ]]; }\n# api_says <jar> <status> — the user surface's API answers <status>\napi_says() { [ \"$(page_status \"$1\" \"${APP}/echo\")\" = \"$2\" ]; }\n\nbegin_test \"55 — Delegated invitations: revocation ends access (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${COORD_GRANT} ${COORD2_GRANT}; do\n    host_api_delete \"gatekeeper/grants/${id}\" > /dev/null 2>&1 || true\n  done\n  if [ -n \"${SITE_ID}\" ]; then inv_drop_site_grants \"${SITE_ID}\"; fi\n  host_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\n  drop_plugin_grants \"${PLUGIN}\"\n  # shellcheck disable=SC2086 # a list of usernames\n  inv_cleanup_users \"${COORD}\" \"${COORD2}\" \"${FIRST}\" \"${CHAIN}\" \"${LEAF}\" ${RACED_USERS}\n  # shellcheck disable=SC2086 # lists of ids\n  inv_cleanup_ids ${COORD_ID} ${COORD2_ID} ${FIRST_ID} ${CHAIN_ID} ${LEAF_ID} ${RACED_IDS}\n  nudge_sync\n  app_plugin_cleanup\n  md_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

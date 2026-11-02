@@ -6,8 +6,8 @@
 # public-facing steps executed from an external visitor VM:
 #
 # 1. Admin creates an invitation via POST /api/invitations
-# 2. Visitor GETs /api/invite/:token (public, no mTLS)
-# 3. Visitor POSTs /api/invite/:token/accept (public, no mTLS)
+# 2. Visitor POSTs /api/invite/lookup (public, no mTLS; the token in the body)
+# 3. Visitor POSTs /api/invite/accept (public, no mTLS; the token in the body)
 # 4. Verify invited user appears in admin's user list
 # 5. New user authenticates from visitor VM (firstfactor + secondfactor TOTP)
 # 6. Visitor re-uses invitation token — should get 410 Gone
@@ -118,7 +118,7 @@ log_section "Visit invitation page from visitor VM (public, no mTLS)"
 
 # The invite routes are public endpoints proxied through the auth vhost.
 # No mTLS required — accessed from the external visitor VM.
-INVITE_DETAILS=$(visitor_exec "curl -sk --max-time 15 -H 'Accept: application/json' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN} 2>/dev/null" || echo '{}')
+INVITE_DETAILS=$(visitor_exec "curl -sk --max-time 15 -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"token\":\"${INVITE_TOKEN}\"}' https://auth.${TEST_DOMAIN}/api/invite/lookup 2>/dev/null" || echo '{}')
 
 INVITE_USERNAME=$(echo "$INVITE_DETAILS" | jq -r '.username' 2>/dev/null || echo "")
 INVITE_EMAIL_RESP=$(echo "$INVITE_DETAILS" | jq -r '.email' 2>/dev/null || echo "")
@@ -132,7 +132,7 @@ assert_json_field_not_empty "$INVITE_DETAILS" '.expiresAt' "Invite page returns 
 log_section "Accept invitation from visitor VM (public, no mTLS)"
 # ---------------------------------------------------------------------------
 
-ACCEPT_RESPONSE=$(visitor_exec "curl -sk --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\"password\":\"${INVITED_PASSWORD}\"}' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN}/accept 2>/dev/null" || echo '{}')
+ACCEPT_RESPONSE=$(visitor_exec "curl -sk --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\"token\":\"${INVITE_TOKEN}\",\"password\":\"${INVITED_PASSWORD}\"}' https://auth.${TEST_DOMAIN}/api/invite/accept 2>/dev/null" || echo '{}')
 
 assert_json_field "$ACCEPT_RESPONSE" '.ok' 'true' "Invitation acceptance returned ok: true" || true
 assert_json_field "$ACCEPT_RESPONSE" '.username' "$INVITED_USERNAME" "Acceptance response returns correct username" || true
@@ -218,10 +218,10 @@ fi
 log_section "Used invitation token is rejected (from visitor VM)"
 # ---------------------------------------------------------------------------
 
-REUSE_STATUS=$(visitor_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -H 'Accept: application/json' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN} 2>/dev/null" || echo "000")
+REUSE_STATUS=$(visitor_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\"token\":\"${INVITE_TOKEN}\"}' https://auth.${TEST_DOMAIN}/api/invite/lookup 2>/dev/null" || echo "000")
 assert_eq "$REUSE_STATUS" "410" "Used invitation token returns 410 Gone" || true
 
-REUSE_ACCEPT_STATUS=$(visitor_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\"password\":\"AnotherPass456!!\"}' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN}/accept 2>/dev/null" || echo "000")
+REUSE_ACCEPT_STATUS=$(visitor_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\"token\":\"${INVITE_TOKEN}\",\"password\":\"AnotherPass456!!\"}' https://auth.${TEST_DOMAIN}/api/invite/accept 2>/dev/null" || echo "000")
 assert_eq "$REUSE_ACCEPT_STATUS" "410" "Used invitation token acceptance returns 410 Gone" || true
 
 # ---------------------------------------------------------------------------
