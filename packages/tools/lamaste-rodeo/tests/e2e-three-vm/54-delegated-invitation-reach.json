@@ -1,0 +1,947 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 54,
+    "name": "Delegated invitations: an invitee reaches only that plugin's site",
+    "suite": "e2e-three-vm",
+    "description": "54 — Delegated invitations: an invitee reaches only that plugin's site (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-xinv"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-xinv-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-xinv-agent"
+    },
+    "OTHER": {
+      "value": "e2e-xoth"
+    },
+    "OTHER_SERVER": {
+      "value": "@lamalibre/e2e-xoth-server"
+    },
+    "OTHER_AGENT": {
+      "value": "@lamalibre/e2e-xoth-agent"
+    },
+    "OIDC_PLUGIN": {
+      "value": "e2e-emoidc"
+    },
+    "OIDC_PACKAGE": {
+      "value": "@lamalibre/e2e-emoidc-server"
+    },
+    "WEB_ID": {
+      "value": "e2e-emoidc-web"
+    },
+    "REDIRECT_URI": {
+      "value": "https://e2e-emoidc.example.test/callback"
+    },
+    "APP": {
+      "value": "/api/${PLUGIN}/app",
+      "expression": true
+    },
+    "OTHER_APP": {
+      "value": "/api/${OTHER}/app",
+      "expression": true
+    },
+    "SUB_W": {
+      "value": "e2e54web"
+    },
+    "SUB_OTHER": {
+      "value": "e2e54oth"
+    },
+    "SUB_T": {
+      "value": "e2e54auth"
+    },
+    "SUB_R": {
+      "value": "e2e54res"
+    },
+    "SUB_A": {
+      "value": "e2e54a"
+    },
+    "PORT_T": {
+      "value": "19954"
+    },
+    "PORT_R": {
+      "value": "19955"
+    },
+    "PORT_A": {
+      "value": "19956"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-54"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-54-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN} ${OTHER} ${OIDC_PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN} ${OTHER}",
+      "expression": true
+    },
+    "COORD": {
+      "value": "e2e54-coord"
+    },
+    "MEM": {
+      "value": "e2e54-member"
+    },
+    "INVITEE": {
+      "value": "e2e54-invitee"
+    },
+    "AUDIT_BASE": {
+      "value": "0"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE tunnels/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${id}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE plugins/${PLUGIN}/web-surface",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN}/web-surface"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE plugins/${OTHER}/web-surface",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${OTHER}/web-surface"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "DELETE /api/plugins/${PLUGIN}/web-surface",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}/web-surface"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-5",
+          "label": "DELETE /api/plugins/${OTHER}/web-surface",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${OTHER}/web-surface"
+          },
+          "continueOnError": true
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nmd_setup\nif agent_has_node_sqlite; then\n  log_pass \"The agent VM's Node.js has node:sqlite, which the agent half's projection needs\"\nelse\n  log_fail \"The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run\"\n  end_test\n  exit $?\nfi\nhost_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\nhost_api_delete \"plugins/${OTHER}/web-surface\" > /dev/null 2>&1 || true\ndrop_plugin_grants \"${PLUGIN}\"\ndrop_plugin_grants \"${OTHER}\"\n\n# ===========================================================================\n# 1. What is on the relay\n# ==========================================================================="
+    },
+    {
+      "id": "two-app-plugins-on-b-each-with-its-restricted-web-surface-an-oidc-client-of-b",
+      "label": "Two app plugins on B, each with its restricted web surface; an OIDC client of B",
+      "steps": [
+        {
+          "id": "step-13",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-54-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Fixtures built: ${SERVER_PACKAGE}, ${OTHER_SERVER}, ${OIDC_PACKAGE}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixtures built: ${SERVER_PACKAGE}, ${OTHER_SERVER}, ${OIDC_PACKAGE}"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Installed ${OIDC_PACKAGE}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "0.1.0"
+              },
+              "message": "Installed ${OIDC_PACKAGE}"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "API_TIMEOUT=90 host_api_call PUT \"plugins/${OIDC_PLUGIN}/domain\" \"{\\\"domain\\\":\\\"${DOMAIN_2}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "…on B",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…on B"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "API_TIMEOUT=90 host_api_call POST \"plugins/${OIDC_PLUGIN}/enable\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "…enabled: B has an OIDC client",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…enabled: B has an OIDC client"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Domain B; a coordinator (external) and a member\"\n\nmd_domain_active \"${DOMAIN_2}\"\nFQDN=\"${SUB_W}.${DOMAIN_2}\"\nFQDN_OTHER=\"${SUB_OTHER}.${DOMAIN_2}\"\nmd_user COORD_ID \"${COORD}\" \"${PASSWORD}\" \"[{\\\"name\\\":\\\"${DOMAIN_2}\\\",\\\"kind\\\":\\\"external\\\"}]\"\nmd_user MEM_ID \"${MEM}\" \"${PASSWORD}\" \"[\\\"${DOMAIN_2}\\\"]\""
+    },
+    {
+      "id": "the-coordinator-invites-a-colleague-they-accept",
+      "label": "The coordinator invites a colleague; they accept",
+      "steps": [
+        {
+          "id": "step-41",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "Invitations enabled for ${PLUGIN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Invitations enabled for ${PLUGIN}"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_accept \"${TOKEN}\" \"${INVITEE}\" \"${INVITEE_PASSWORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Accepted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Accepted"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "…access complete",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".accessPending",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "…access complete"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Set SECRET",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_secret \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Set INVITEE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(inv_row \"${INV_ID}\")\" '.acceptedUserId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "INVITEE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "…a directory user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(is_uuid \"${INVITEE_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…a directory user"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Set AUTHELIA_PID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "authelia_pid"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_PID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"Two app plugins on B, each with its restricted web surface; an OIDC client of B\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-54-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/xinv\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none inviting v1 \"${SUB_W}\" ||\n  ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/xoth\" \"${OTHER}\" 1.0.0 main \"o$(date +%s)-$$\" '[]' none inviting v2 \"${SUB_OTHER}\"; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nwrite_oidc_grant_fixture_plugin \"${LOCAL_TMP}/ship/fixtures/emoidc\"\nlog_pass \"Fixtures built: ${SERVER_PACKAGE}, ${OTHER_SERVER}, ${OIDC_PACKAGE}\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/xinv/server fixtures/xinv/agent fixtures/xoth/server fixtures/xoth/agent fixtures/emoidc\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\",\\\"${OTHER_AGENT}\\\"]\" '[\"install\",\"uninstall\"]'\ninv_install \"${PLUGIN}\" \"${SERVER_PACKAGE}\" \"${AGENT_PACKAGE}\"\ninv_install \"${OTHER}\" \"${OTHER_SERVER}\" \"${OTHER_AGENT}\"\ninv_web_surface SITE_ID \"${PLUGIN}\" \"${FQDN}\" restricted\ninv_web_surface OTHER_SITE \"${OTHER}\" \"${FQDN_OTHER}\" restricted\nmd_hosts \"${FQDN}\" \"${FQDN_OTHER}\"\n\nRESP=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${OIDC_PACKAGE}@0.1.0\\\"}\")\nassert_json_field \"$RESP\" '.plugin.version' '0.1.0' \"Installed ${OIDC_PACKAGE}\" || true\nRESP=$(API_TIMEOUT=90 host_api_call PUT \"plugins/${OIDC_PLUGIN}/domain\" \"{\\\"domain\\\":\\\"${DOMAIN_2}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"…on B\" || true\nRESP=$(API_TIMEOUT=90 host_api_call POST \"plugins/${OIDC_PLUGIN}/enable\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"…enabled: B has an OIDC client\" || true"
+    },
+    {
+      "id": "that-plugin-s-site-the-shell-and-the-api",
+      "label": "That plugin's site: the shell and the API",
+      "steps": [
+        {
+          "id": "step-57",
+          "label": "${INVITEE}: the shell",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${INVITEE}: the shell"
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "${INVITEE} on the shell: $(page_status \"${JAR_INV}\" /)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${INVITEE} on the shell: $(page_status \"${JAR_INV}\" /)"
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "…the API, as a viewer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(page \"${JAR_INV}\" \"${APP}/echo\")\")"
+              },
+              "path": "\"\\(.caller.type) \\(.caller.username) \\(.caller.roles | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "user ${INVITEE} viewer"
+              },
+              "message": "…the API, as a viewer"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Tunnels on B (authenticated, restricted) and on A (authenticated)\"\n\nmd_backends \"${PORT_T}:E2E54_B_AUTH\" \"${PORT_R}:E2E54_B_RESTRICTED\" \"${PORT_A}:E2E54_A_AUTH\"\nmd_tunnel TUNNEL_T \"${SUB_T}\" \"${DOMAIN_2}\" \"${PORT_T}\" authenticated\nmd_tunnel TUNNEL_R \"${SUB_R}\" \"${DOMAIN_2}\" \"${PORT_R}\" restricted\nmd_tunnel TUNNEL_A \"${SUB_A}\" \"${DOMAIN}\" \"${PORT_A}\" authenticated\nnudge_sync\n\n# ===========================================================================\n# 2. The invitation\n# ==========================================================================="
+    },
+    {
+      "id": "nothing-else-on-b-the-other-plugin",
+      "label": "Nothing else on B: the other plugin",
+      "steps": [
+        {
+          "id": "step-61",
+          "label": "…never its tree",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(visit \"${JAR_INV}\" \"https://${FQDN_OTHER}/\")\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "E2E_WEB_"
+              },
+              "message": "…never its tree"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "The other plugin's audience does not hold them",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audience_row \"${OTHER}\" \"${INVITEE_ID}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "The other plugin's audience does not hold them"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The coordinator invites a colleague; they accept\"\n\ninv_entitle \"${COORD}\" coordinator\nmd_grant COORD_GRANT user \"${COORD}\" site \"${SITE_ID}\"\ninv_wait_audience \"${COORD_ID}\" coordinator \"The audience holds ${COORD} as coordinator\"\nRESP=$(inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Invitations enabled for ${PLUGIN}\" || true\nmd_wait_authelia \"${DOMAIN_2}\"\nmd_wait_authelia \"${DOMAIN}\"\nmd_sign_in \"${COORD}\" \"${PASSWORD}\" \"$(reset_totp \"${COORD}\")\" \"${JAR_COORD}\" \"${FQDN}\"\nmd_sign_in \"${MEM}\" \"${PASSWORD}\" \"$(reset_totp \"${MEM}\")\" \"${JAR_MEM}\" \"${FQDN}\"\ninv_new TOKEN INV_ID \"${JAR_COORD}\" \"deniz@${INV_MAIL}\" viewer \"${COORD} invites deniz@${INV_MAIL} as viewer\"\nRESP=$(inv_accept \"${TOKEN}\" \"${INVITEE}\" \"${INVITEE_PASSWORD}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"Accepted\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.accessPending' 'false' \"…access complete\" || true\nSECRET=$(inv_secret \"$RESP\")\nINVITEE_ID=$(json_get \"$(inv_row \"${INV_ID}\")\" '.acceptedUserId // empty')\nassert_eq \"$(is_uuid \"${INVITEE_ID}\")\" \"true\" \"…a directory user\" || true\nwait_group holds \"${INVITEE}\" \"${FQDN}\" \"users.yml gives them the site's hostname\"\nmd_sign_in \"${INVITEE}\" \"${INVITEE_PASSWORD}\" \"${SECRET}\" \"${JAR_INV}\" \"${FQDN}\"\nAUTHELIA_PID=$(authelia_pid)\n\n# ===========================================================================\n# 3. That plugin's site\n# ==========================================================================="
+    },
+    {
+      "id": "nothing-else-on-b-its-tunnels",
+      "label": "Nothing else on B: its tunnels",
+      "steps": [
+        {
+          "id": "step-66",
+          "label": "…never its backend",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(visit \"${JAR_INV}\" \"https://${SUB_T}.${DOMAIN_2}/\")\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "E2E54_B_AUTH"
+              },
+              "message": "…never its backend"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "…never its backend",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(visit \"${JAR_INV}\" \"https://${SUB_R}.${DOMAIN_2}/\")\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "E2E54_B_RESTRICTED"
+              },
+              "message": "…never its backend"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"That plugin's site: the shell and the API\"\n\nif wait_for \"${AUTHZ_SETTLE_SECONDS}\" shell_for \"${JAR_INV}\"; then\n  log_pass \"${INVITEE}: the shell\"\nelse\n  log_fail \"${INVITEE} on the shell: $(page_status \"${JAR_INV}\" /)\"\nfi\nassert_json_field \"$(visit_body \"$(page \"${JAR_INV}\" \"${APP}/echo\")\")\" '\"\\(.caller.type) \\(.caller.username) \\(.caller.roles | join(\",\"))\"' \"user ${INVITEE} viewer\" \"…the API, as a viewer\" || true\n\n# ===========================================================================\n# 4. Nothing else\n# ==========================================================================="
+    },
+    {
+      "id": "nothing-on-a",
+      "label": "Nothing on A",
+      "steps": [
+        {
+          "id": "step-72",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_INV_A}\" \"https://${SUB_A}.${DOMAIN}/\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "…never its backend",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "E2E54_A_AUTH"
+              },
+              "message": "…never its backend"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Nothing else on B: the other plugin\"\n\nassert_access_request \"$(visit \"${JAR_INV}\" \"https://${FQDN_OTHER}/\")\" \"${INVITEE} on the other plugin's shell\"\nassert_not_contains \"$(visit_body \"$(visit \"${JAR_INV}\" \"https://${FQDN_OTHER}/\")\")\" \"E2E_WEB_\" \"…never its tree\" || true\nassert_forbidden \"https://${FQDN_OTHER}${OTHER_APP}/echo\" \"${INVITEE} on the other plugin's API\"\nassert_eq \"$(audience_row \"${OTHER}\" \"${INVITEE_ID}\")\" \"null\" \"The other plugin's audience does not hold them\" || true\nassert_json_field \"$(projection \"${OTHER}\")\" \"[.users[]? | select(.userId == \\\"${INVITEE_ID}\\\")] | length\" '0' \"…nor its agent half\" || true"
+    },
+    {
+      "id": "nothing-through-oidc-no-client-of-the-domain-admits-them",
+      "label": "Nothing through OIDC: no client of the domain admits them",
+      "steps": [
+        {
+          "id": "step-75",
+          "label": "Set LOCATION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "authorize \"${JAR_MEM}\""
+          },
+          "capture": [
+            {
+              "variable": "LOCATION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "${MEM}, a member of B: the client's authorization request goes on",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${MEM}, a member of B: the client's authorization request goes on"
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "${MEM}: ${LOCATION}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${MEM}: ${LOCATION}"
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "${INVITEE}: refused (access_denied)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authorize \"${JAR_INV}\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "error=access_denied"
+              },
+              "message": "${INVITEE}: refused (access_denied)"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "users.yml gives them the site's hostname and the external group, no client",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(user_groups \"${INVITEE}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n' \"${FQDN}\" \"lamaste:x:$(domain_group_key \"${DOMAIN_2}\")\" | sort | paste -sd, -)"
+              },
+              "message": "users.yml gives them the site's hostname and the external group, no client"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Nothing else on B: its tunnels\"\n\nassert_access_request \"$(visit \"${JAR_INV}\" \"https://${SUB_T}.${DOMAIN_2}/\")\" \"${INVITEE} on B's authenticated tunnel\"\nassert_not_contains \"$(visit_body \"$(visit \"${JAR_INV}\" \"https://${SUB_T}.${DOMAIN_2}/\")\")\" \"E2E54_B_AUTH\" \"…never its backend\" || true\nassert_served \"${JAR_MEM}\" \"https://${SUB_T}.${DOMAIN_2}/\" \"E2E54_B_AUTH\" \"${MEM}, a member of B, on the same tunnel\"\nassert_access_request \"$(visit \"${JAR_INV}\" \"https://${SUB_R}.${DOMAIN_2}/\")\" \"${INVITEE} on B's restricted tunnel\"\nassert_not_contains \"$(visit_body \"$(visit \"${JAR_INV}\" \"https://${SUB_R}.${DOMAIN_2}/\")\")\" \"E2E54_B_RESTRICTED\" \"…never its backend\" || true"
+    },
+    {
+      "id": "they-invite-no-one-and-the-panel-is-not-theirs",
+      "label": "They invite no one, and the panel is not theirs",
+      "steps": [
+        {
+          "id": "step-80",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_INV}\" POST \"\" \"{\\\"email\\\":\\\"someone@${INV_MAIL}\\\",\\\"role\\\":\\\"viewer\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "${INVITEE}, a viewer, on the inviter's API: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${INVITEE}, a viewer, on the inviter's API: 403"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "…role_not_grantable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "role_not_grantable"
+              },
+              "message": "…role_not_grantable"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "…and sees nothing of ${COORD}'s invitations",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(inv_api \"${JAR_INV}\" GET)\")"
+              },
+              "path": ".invitations | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…and sees nothing of ${COORD}'s invitations"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "The admin panel's API, their session cookie and no certificate: not 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit \"${JAR_INV}\" \"https://panel.${DOMAIN}/api/users\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The admin panel's API, their session cookie and no certificate: not 200"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Nothing on A\"\n\nmd_hosts \"${SUB_A}.${DOMAIN}\"\nmd_sign_in \"${INVITEE}\" \"${INVITEE_PASSWORD}\" \"${SECRET}\" \"${JAR_INV_A}\" \"${SUB_A}.${DOMAIN}\"\nRESP=$(visit \"${JAR_INV_A}\" \"https://${SUB_A}.${DOMAIN}/\")\nassert_domain_refusal \"$RESP\" \"${DOMAIN}\" \"${INVITEE}, signed in at A's portal, on A's tunnel\"\nassert_not_contains \"$(visit_body \"$RESP\")\" \"E2E54_A_AUTH\" \"…never its backend\" || true"
+    },
+    {
+      "id": "nothing-restarted-authelia",
+      "label": "Nothing restarted Authelia",
+      "steps": [
+        {
+          "id": "step-85",
+          "label": "Authelia's MainPID unchanged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "AUTHELIA_PID"
+              },
+              "message": "Authelia's MainPID unchanged"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Nothing through OIDC: no client of the domain admits them\"\n\nLOCATION=$(authorize \"${JAR_MEM}\")\nif [ -n \"${LOCATION}\" ] && [[ \"${LOCATION}\" != *\"error=\"* ]]; then\n  log_pass \"${MEM}, a member of B: the client's authorization request goes on\"\nelse\n  log_fail \"${MEM}: ${LOCATION}\"\nfi\nassert_contains \"$(authorize \"${JAR_INV}\")\" \"error=access_denied\" \"${INVITEE}: refused (access_denied)\" || true\nassert_eq \"$(user_groups \"${INVITEE}\")\" \"$(printf '%s\\n' \"${FQDN}\" \"lamaste:x:$(domain_group_key \"${DOMAIN_2}\")\" | sort | paste -sd, -)\" \"users.yml gives them the site's hostname and the external group, no client\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 54 — Delegated invitations: an invitee reaches only that plugin's site (Three-VM)\n# ============================================================================\n# The second proof of delegated invitations (design: packages/core/docs/\n# delegated-invitations-design.md, \"Proof\"). What an invitation grants is a\n# plugin's site and one role, and nothing else on the relay. On B: two app\n# plugins, each with its own restricted web surface; an authenticated tunnel\n# and a restricted one; an OIDC client of the domain. On A: an authenticated\n# tunnel.\n#\n# A coordinator of the first plugin invites a colleague, who accepts. The\n# invitee then reaches that plugin's shell and API, and:\n# - the second plugin's surface: the access-request page and 403 forbidden —\n#   on the shell, and on its API, whose grant they do not hold;\n# - B's authenticated tunnel: the access-request page; B's restricted tunnel\n#   the same, with no grant on it;\n# - A's tunnel: the domain refusal, signed in at A's portal;\n# - the OIDC client of B: Authelia refuses their authorization (access_denied)\n#   where a member of B is admitted, and users.yml gives them no client group;\n# - the inviter's API: they are no inviter (403 role_not_grantable) and\n#   cannot see anything of it;\n# - the admin panel: no certificate, nothing.\n# Nothing here restarts Authelia.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=54\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=invitation-harness.sh\nsource \"${SCRIPT_DIR}/invitation-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-xinv\"\nSERVER_PACKAGE=\"@lamalibre/e2e-xinv-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-xinv-agent\"\nOTHER=\"e2e-xoth\"\nOTHER_SERVER=\"@lamalibre/e2e-xoth-server\"\nOTHER_AGENT=\"@lamalibre/e2e-xoth-agent\"\nOIDC_PLUGIN=\"e2e-emoidc\"\nOIDC_PACKAGE=\"@lamalibre/e2e-emoidc-server\"\nWEB_ID=\"e2e-emoidc-web\"\nREDIRECT_URI=\"https://e2e-emoidc.example.test/callback\"\nAPP=\"/api/${PLUGIN}/app\"\nOTHER_APP=\"/api/${OTHER}/app\"\nSUB_W=\"e2e54web\"\nSUB_OTHER=\"e2e54oth\"\nSUB_T=\"e2e54auth\"\nSUB_R=\"e2e54res\"\nSUB_A=\"e2e54a\"\nPORT_T=19954\nPORT_R=19955\nPORT_A=19956\nPOLICY_ID=\"e2e-apphost-54\"\nREMOTE_DIR=\"/var/tmp/e2e-54-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN} ${OTHER} ${OIDC_PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN} ${OTHER}\"\nPURGE_PACKAGES=\"\"\nCOORD=\"e2e54-coord\"\nMEM=\"e2e54-member\"\nINVITEE=\"e2e54-invitee\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nINVITEE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCOORD_ID=\"\"\nMEM_ID=\"\"\nINVITEE_ID=\"\"\nJAR_COORD=$(md_jar coord)\nJAR_MEM=$(md_jar member)\nJAR_INV=$(md_jar invitee)\nJAR_INV_A=$(md_jar invitee-a)\nFQDN=\"\"\nFQDN_OTHER=\"\"\nOTHER_SITE=\"\"\nTUNNEL_T=\"\"\nTUNNEL_R=\"\"\nTUNNEL_A=\"\"\nCOORD_GRANT=\"\"\nAUDIT_BASE=0\nTOKEN=\"\"\nINV_ID=\"\"\n\n# shell_for <jar> — the session gets the first plugin's shell (index.html of tree v1)\nshell_for() { [[ \"$(visit_body \"$(page \"$1\" /)\")\" == *\"E2E_WEB_v1\"* ]]; }\n\n# assert_forbidden <url> <what> — as the invitee: 403, JSON {error: forbidden}, no redirect\nassert_forbidden() {\n  local resp\n  resp=$(visit \"${JAR_INV}\" \"$1\")\n  assert_eq \"$(visit_status \"$resp\")\" \"403\" \"$2: 403\" || true\n  assert_json_field \"$(visit_body \"$resp\")\" '.error' 'forbidden' \"…JSON {error: forbidden}, not 'not a member': they are on the domain\" || true\n  assert_not_contains \"$(visit_headers \"$resp\" | tr '[:upper:]' '[:lower:]')\" \"location:\" \"…never a redirect\" || true\n}\n\n# authorize <jar> — an authorization request of the web client at auth.<B>\n# with the session in <jar>; prints Authelia's Location\nauthorize() {\n  local verifier challenge state\n  verifier=$(openssl rand -hex 32)\n  challenge=$(printf '%s' \"$verifier\" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')\n  state=$(openssl rand -hex 16)\n  visitor_exec \"curl -sk --max-time 15 -b $(printf %q \"$1\") -o /dev/null -w '%{redirect_url}' -G --data-urlencode $(printf %q \"client_id=${WEB_ID}\") --data-urlencode $(printf %q \"redirect_uri=${REDIRECT_URI}\") --data-urlencode response_type=code --data-urlencode $(printf %q 'scope=openid profile') --data-urlencode $(printf %q \"state=${state}\") --data-urlencode $(printf %q \"code_challenge=${challenge}\") --data-urlencode code_challenge_method=S256 https://auth.${DOMAIN_2}/api/oidc/authorization 2>/dev/null || true\" 2>/dev/null | tail -n 1\n}\n\nbegin_test \"54 — Delegated invitations: an invitee reaches only that plugin's site (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  if [ -n \"${COORD_GRANT}\" ]; then host_api_delete \"gatekeeper/grants/${COORD_GRANT}\" > /dev/null 2>&1 || true; fi\n  if [ -n \"${SITE_ID}\" ]; then inv_drop_site_grants \"${SITE_ID}\"; fi\n  for id in ${TUNNEL_T} ${TUNNEL_R} ${TUNNEL_A}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  md_backend_stop \"${PORT_T}\" \"${PORT_R}\" \"${PORT_A}\"\n  host_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\n  host_api_delete \"plugins/${OTHER}/web-surface\" > /dev/null 2>&1 || true\n  drop_plugin_grants \"${PLUGIN}\"\n  drop_plugin_grants \"${OTHER}\"\n  inv_cleanup_users \"${COORD}\" \"${MEM}\" \"${INVITEE}\"\n  inv_cleanup_ids ${COORD_ID} ${MEM_ID} ${INVITEE_ID}\n  nudge_sync\n  app_plugin_cleanup\n  md_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

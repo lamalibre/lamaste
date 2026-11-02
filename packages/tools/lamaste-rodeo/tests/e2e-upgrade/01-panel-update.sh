@@ -29,13 +29,21 @@
 #    invitation page rewritten); the user signed in before the update,
 #    signed in again after it, reaches what they reached; the panel logged
 #    no error since the update.
+# 4. The invitations of the release before (delegated-invitations-design.md
+#    §11): a pending invitation made there, its link naming the token in its
+#    path, and a domain with a brand. After the update the old link's page
+#    opens and runs — on the stock page and the branded one the script served
+#    is the one the served CSP names, because the rendering was rebuilt
+#    (`pagesDigest` in rendered.json); the invitation was imported from
+#    invitations.json, which is gone, with no clear token left in state.db;
+#    it is looked up and accepted by POST.
 # ============================================================================
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/helpers.sh"
 
-require_commands curl jq nginx npm sha256sum oathtool python3
+require_commands curl jq nginx npm sha256sum oathtool python3 node sqlite3
 
 begin_test "01 — Panel Update from the previous release to the candidate"
 
@@ -54,6 +62,17 @@ TUNNEL_OFF=""
 AVAILABLE="/etc/nginx/sites-available"
 ENABLED="/etc/nginx/sites-enabled"
 PRIV=/usr/local/sbin/lamaste-priv
+STATE_DIR="/etc/lamalibre/lamaste"
+WEB_ROOT="/var/www/lamaste/auth"
+INVITEE="e2eupinvited"
+# Test credentials for this run only, never printed
+INVITEE_PASSWORD="Upgrade-${RUN_ID}-invitee"
+BRAND="E2E Upgrade Brand"
+ACCENT="#0f766e"
+DOMAIN_2=""
+INVITE_TOKEN=""
+INVITE_ID=""
+BRANDED_TOKEN=""
 
 cleanup() {
   log_info "Cleaning up test resources..."
@@ -62,10 +81,29 @@ cleanup() {
     api_delete "tunnels/${id}" > /dev/null 2>&1 || true
   done
   api_delete "users/${USERNAME}" > /dev/null 2>&1 || true
+  api_delete "users/${INVITEE}" > /dev/null 2>&1 || true
   api_delete "certs/agent/${AGENT_LABEL}" > /dev/null 2>&1 || true
   rm -rf "${WORK_DIR}"
 }
 trap cleanup EXIT
+
+# inline_hash <script|style> — the CSP source of a page's inline element, from stdin
+inline_hash() {
+  node -e 'const h=require("fs").readFileSync(0,"utf8");const t=process.argv[1];const m=h.match(new RegExp("<"+t+">([\\s\\S]*?)</"+t+">"));process.stdout.write(m?"sha256-"+require("crypto").createHash("sha256").update(m[1],"utf8").digest("base64"):"none")' "$1"
+}
+
+# assert_page_runs <host> <path> <what> — the page answers 200 and its CSP names
+# the served inline script and style: a browser runs it
+assert_page_runs() {
+  local dir="${WORK_DIR}/page" csp
+  mkdir -p "$dir"
+  curl -sk --max-time 15 --resolve "$1:443:127.0.0.1" -D "$dir/headers" -o "$dir/body" -w '%{http_code}' "https://$1$2" > "$dir/status" 2>/dev/null || echo 000 > "$dir/status"
+  assert_eq "$(cat "$dir/status")" "200" "$3: 200" || true
+  csp=$(tr -d '\r' < "$dir/headers" | sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p')
+  assert_contains "${csp}" "script-src '$(inline_hash script < "$dir/body")'" "…its CSP names the script served" || true
+  assert_contains "${csp}" "'$(inline_hash style < "$dir/body")'" "…and the style served" || true
+  assert_contains "${csp}" "frame-ancestors 'none'" "…nothing frames it" || true
+}
 
 # host_status <hostname> — how nginx answers https://<hostname>/ on this VM
 host_status() {
@@ -140,6 +178,35 @@ assert_json_field "$RESP" '.tunnel.fqdn' "${OFF_FQDN}" "Tunnel ${OFF_FQDN}" || t
 RESP=$(api_patch "tunnels/${TUNNEL_OFF}" '{"enabled":false}')
 assert_json_field "$RESP" '.tunnel.enabled' 'false' "…disabled" || true
 
+# A second domain, with a brand: its pages are in a rendering the update must
+# rebuild. (The primary stays without one: its stock pages are checked below.)
+DOMAIN_2=$(test_domain_n "${DOMAIN}" second)
+local_domain_dns "${DOMAIN_2}"
+RESP=$(api_post "domains" "{\"name\":\"${DOMAIN_2}\"}")
+assert_json_field "$RESP" '.domain.status' 'pending' "Domain ${DOMAIN_2} added" || true
+RESP=$(CURL_TIMEOUT=150 api_post "domains/${DOMAIN_2}/activate")
+assert_json_field "$RESP" '.domain.status' 'active' "…active" || true
+local_wait_authelia "${DOMAIN_2}"
+RESP=$(api_put "domains/${DOMAIN_2}/branding" "{\"name\":\"${BRAND}\",\"theme\":\"dark\",\"accent\":\"${ACCENT}\"}")
+assert_json_field "$RESP" '.branding.name' "${BRAND}" "…branded ${BRAND}" || true
+for _ in $(seq 1 30); do
+  sudo test -f "${WEB_ROOT}/${DOMAIN_2}/rendered.json" && break
+  sleep 2
+done
+assert_eq "$(sudo jq -r '.pagesDigest // "none"' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null || echo "missing")" "none" "${BEFORE_VERSION}'s rendering records no pages digest" || true
+BRANDED_PAGE_BEFORE=$(sudo sha256sum "${WEB_ROOT}/${DOMAIN_2}/invite/index.html" | cut -d' ' -f1)
+
+# Pending invitations made on the release before: one on each domain.
+RESP=$(api_post "invitations" "{\"username\":\"${INVITEE}\",\"email\":\"${INVITEE}@example.test\",\"domains\":[\"${DOMAIN}\"]}")
+assert_json_field "$RESP" '.ok' 'true' "A pending invitation on ${BEFORE_VERSION}" || true
+INVITE_TOKEN=$(echo "$RESP" | jq -r '.token // empty')
+INVITE_ID=$(echo "$RESP" | jq -r '.invitation.id // empty')
+assert_eq "$(echo "$RESP" | jq -r '.inviteUrl // empty')" "https://auth.${DOMAIN}/invite/${INVITE_TOKEN}" "…its link names the token in the path" || true
+RESP=$(api_post "invitations" "{\"username\":\"e2eupbranded\",\"email\":\"e2eupbranded@example.test\",\"domains\":[\"${DOMAIN_2}\"]}")
+assert_json_field "$RESP" '.ok' 'true' "…and one on ${DOMAIN_2}" || true
+BRANDED_TOKEN=$(echo "$RESP" | jq -r '.token // empty')
+assert_eq "$(sudo jq -r --arg t "${INVITE_TOKEN}" '[.[] | select(.token == $t)] | length' "${STATE_DIR}/invitations.json" 2>/dev/null || echo 0)" "1" "invitations.json holds it, its token in clear" || true
+
 LEGACY_ON="lamalibre-lamaste-app-${SUB_ON}"
 LEGACY_OFF="lamalibre-lamaste-app-${SUB_OFF}"
 LEGACY_AUTH="lamalibre-lamaste-auth"
@@ -200,16 +267,18 @@ assert_eq "${AFTER_VERSION}" "${CANDIDATE}" "The panel is back on ${CANDIDATE}" 
 # configuration — the domains rendered into it (a relay from before 4.7) or
 # the branded sign-in's base added (before 4.8) — which restarts Authelia
 # once more; compare the hosts only after that and once Authelia serves
-# again.
-SETTLED="no"
-for _ in $(seq 1 30); do
-  if sudo journalctl -u lamalibre-lamaste-serverd --since "${UPDATE_STARTED}" --no-pager -o cat 2>/dev/null | grep -qE '"msg":"(Authelia domain access updated|Authelia restarted for the branded sign-in[^"]*)"'; then
-    SETTLED="yes"
-    break
-  fi
-  sleep 2
-done
-assert_eq "${SETTLED}" "yes" "The panel's start-up settled Authelia's configuration (domains rendered, or the branding base added)" || true
+# again. A relay on 4.8 or later has both already.
+if version_before "${BEFORE_VERSION}" "4.8.0"; then
+  SETTLED="no"
+  for _ in $(seq 1 30); do
+    if sudo journalctl -u lamalibre-lamaste-serverd --since "${UPDATE_STARTED}" --no-pager -o cat 2>/dev/null | grep -qE '"msg":"(Authelia domain access updated|Authelia restarted for the branded sign-in[^"]*)"'; then
+      SETTLED="yes"
+      break
+    fi
+    sleep 2
+  done
+  assert_eq "${SETTLED}" "yes" "The panel's start-up settled Authelia's configuration (domains rendered, or the branding base added)" || true
+fi
 if wait_for_http "http://127.0.0.1:9091/api/health" 60; then
   log_pass "Authelia serves again"
 else
@@ -270,11 +339,12 @@ else
 fi
 assert_eq "$(host_status "${ON_FQDN}") $(host_status "${OFF_FQDN}") $(host_status "${AUTH_FQDN}")" "${BEFORE}" "Every host answers as before (${BEFORE})" || true
 
-log_section "One domain; every user of ${BEFORE_VERSION} its member"
+log_section "The primary domain; every user of ${BEFORE_VERSION} its member"
 
 DOMAINS=$(api_get "domains" 2>/dev/null || echo '{}')
-assert_json_field "$DOMAINS" '.domains | length' '1' "One domain" || true
-assert_json_field "$DOMAINS" '.domains[0] | "\(.name) \(.primary) \(.status)"' "${DOMAIN} true active" "…the primary, ${DOMAIN}, active" || true
+assert_json_field "$DOMAINS" '[.domains[] | select(.primary)] | length' '1' "One primary domain" || true
+assert_json_field "$DOMAINS" '[.domains[] | select(.primary)] | first | "\(.name) \(.status)"' "${DOMAIN} active" "…${DOMAIN}, active" || true
+assert_json_field "$DOMAINS" "[.domains[] | select(.name == \"${DOMAIN_2}\")] | first | .status" 'active' "…and ${DOMAIN_2}, active" || true
 USERS=$(api_get "users" 2>/dev/null || echo '{}')
 assert_eq "$(echo "$USERS" | jq -c '[.users[]? | .username] | sort')" "$(echo "${USERS_BEFORE}" | jq -c .)" "The same users as before the update" || true
 assert_eq "$(echo "$USERS" | jq --arg d "${DOMAIN}" '[.users[]? | select([(.domains // [])[] | "\(.name):\(.kind)"] != ["\($d):member"])] | length')" "0" "…each a member of ${DOMAIN} (kind member, never external), and of nothing else" || true
@@ -320,12 +390,16 @@ assert_not_contains "${AUTH_PAGE}" 'brand.css' "…no stylesheet: the stock page
 assert_json_field "$CONFIG" '"\(.theme) \(.server.asset_path)"' "light /etc/authelia/assets" "Authelia's configuration gained theme light and server.asset_path /etc/authelia/assets" || true
 assert_eq "$(sudo stat -c '%G' /etc/authelia/assets/logo.png 2>/dev/null || echo "missing")" "lamaste-authelia" "The placeholder logo is in the asset directory, group lamaste-authelia" || true
 BASE_RESTARTS=$(api_get "audit?action=authelia.restarted&limit=200" 2>/dev/null | jq --argjson base "${AUDIT_BASE}" '[.entries[]? | select(.id > $base and .details.reason == "branding-base")] | length' 2>/dev/null || echo "?")
-assert_eq "${BASE_RESTARTS}" "1" "Exactly one authelia.restarted audited with reason branding-base since the update" || true
+if version_before "${BEFORE_VERSION}" "4.8.0"; then
+  assert_eq "${BASE_RESTARTS}" "1" "Exactly one authelia.restarted audited with reason branding-base since the update" || true
+else
+  assert_eq "${BASE_RESTARTS}" "0" "No authelia.restarted for the base: ${BEFORE_VERSION} had it" || true
+fi
 assert_json_field "$(api_get "domains/${DOMAIN}/branding" 2>/dev/null || echo '{}')" '.branding' "null" "GET /api/domains/${DOMAIN}/branding: no brand" || true
 assert_eq "$(nginx -V 2>&1 | grep '^configure arguments:' | tr ' ' '\n' | grep -cx -- '--with-http_sub_module' || true)" "1" "nginx -V lists --with-http_sub_module (compiled in)" || true
 INVITE_PAGE=$(sudo cat /var/www/lamaste/invite/index.html 2>/dev/null || echo "")
 assert_contains "${INVITE_PAGE}" "<title>Lamaste — Accept Invitation</title>" "The stock invitation page is in place" || true
-assert_contains "${INVITE_PAGE}" "--accent-foreground:" "…rewritten by the candidate (its palette variables, which ${BEFORE_VERSION}'s page lacked)" || true
+assert_contains "${INVITE_PAGE}" "--lamaste-page-accent" "…rewritten by the candidate (its colours are custom properties a brand sets from /brand.css)" || true
 
 log_section "Signed in again: the user reaches what they reached"
 
@@ -333,6 +407,45 @@ log_section "Signed in again: the user reaches what they reached"
 local_sign_in "${USERNAME}" "${USER_PASSWORD}" "${SECRET}" "${WORK_DIR}/user-after.jar" "${DOMAIN}"
 assert_eq "${SIGN_IN_RESULT}" "OK OK" "${USERNAME} signed in at auth.${DOMAIN} on ${CANDIDATE}" || true
 assert_eq "$(signed_status "${WORK_DIR}/user-after.jar" "${ON_FQDN}")" "${REACH_BEFORE}" "…and is answered on ${ON_FQDN} as before (${REACH_BEFORE})" || true
+
+# ===========================================================================
+# 4. The invitations of the release before
+# ===========================================================================
+
+log_section "The pages under the candidate's CSP: the script served is the one it names"
+
+assert_page_runs "${AUTH_FQDN}" "/invite/${INVITE_TOKEN}" "The old link's page on ${DOMAIN}, stock"
+assert_page_runs "auth.${DOMAIN_2}" "/invite/${BRANDED_TOKEN}" "The old link's page on ${DOMAIN_2}, branded"
+BRANDED_BODY=$(curl -sk --max-time 15 --resolve "auth.${DOMAIN_2}:443:127.0.0.1" "https://auth.${DOMAIN_2}/invite")
+assert_contains "${BRANDED_BODY}" "<title>${BRAND} — Accept Invitation</title>" "…still the brand's page" || true
+assert_contains "${BRANDED_BODY}" 'href="/brand.css"' "…its colours from /brand.css" || true
+assert_contains "$(curl -sk --max-time 15 --resolve "auth.${DOMAIN_2}:443:127.0.0.1" "https://auth.${DOMAIN_2}/brand.css")" "--lamaste-page-accent: ${ACCENT};" "…which carries the accent" || true
+assert_page_runs "auth.${DOMAIN_2}" "/invitations/e2e" "The new inviter's page on ${DOMAIN_2}, branded"
+assert_not_eq "$(sudo sha256sum "${WEB_ROOT}/${DOMAIN_2}/invite/index.html" | cut -d' ' -f1)" "${BRANDED_PAGE_BEFORE}" "The branded page was rendered again by the candidate" || true
+assert_eq "$(sudo jq -r '.pagesDigest // "none" | test("^[0-9a-f]{64}$")' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null || echo "false")" "true" "rendered.json holds the pages' digest" || true
+
+log_section "The invitations moved into state.db"
+
+if sudo test -e "${STATE_DIR}/invitations.json"; then
+  log_fail "invitations.json is still there"
+else
+  log_pass "invitations.json is gone"
+fi
+LISTED=$(api_get "invitations" 2>/dev/null || echo '{}')
+assert_json_field "$LISTED" "[.invitations[] | select(.id == \"${INVITE_ID}\") | \"\(.kind) \(.username) \(.status)\"] | first" "admin ${INVITEE} pending" "The invitation is listed: an administrator's, pending" || true
+assert_eq "$(sudo cat "${STATE_DIR}"/state.db* | grep -caF "${INVITE_TOKEN}" || true)" "0" "No clear token in state.db or its log" || true
+assert_eq "$(sudo sqlite3 "${STATE_DIR}/state.db" "SELECT token_sha256 FROM invitations WHERE id = '${INVITE_ID}'")" "$(printf '%s' "${INVITE_TOKEN}" | xxd -r -p | sha256sum | cut -d' ' -f1)" "It holds the token's SHA-256" || true
+
+log_section "The invitation of ${BEFORE_VERSION} accepts by POST"
+
+invite_post() {
+  curl -sk --max-time 15 --resolve "${AUTH_FQDN}:443:127.0.0.1" -X POST -H 'Content-Type: application/json' -d "$2" "https://${AUTH_FQDN}/api/invite/$1" 2>/dev/null || echo '{}'
+}
+assert_json_field "$(invite_post lookup "{\"token\":\"${INVITE_TOKEN}\"}")" '"\(.kind) \(.username)"' "admin ${INVITEE}" "POST /api/invite/lookup finds it" || true
+ACCEPT=$(invite_post accept "$(jq -c -n --arg t "${INVITE_TOKEN}" --arg p "${INVITEE_PASSWORD}" '{token: $t, password: $p}')")
+assert_json_field "$ACCEPT" '"\(.ok) \(.username)"' "true ${INVITEE}" "POST /api/invite/accept: the user is made" || true
+assert_contains "$(echo "$ACCEPT" | jq -r '.totpQr // empty')" "data:image/svg+xml;base64," "…with the panel's QR" || true
+assert_json_field "$(api_get "users" 2>/dev/null || echo '{}')" "[.users[] | select(.username == \"${INVITEE}\") | [.domains[] | \"\(.name):\(.kind)\"] | join(\",\")] | first" "${DOMAIN}:member" "…a member of ${DOMAIN}, as the invitation named" || true
 
 log_section "The panel logged no error since the update"
 

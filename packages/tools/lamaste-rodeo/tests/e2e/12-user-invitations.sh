@@ -5,7 +5,7 @@
 # Verifies user invitation flow:
 # - Create invitation via POST /api/invitations
 # - List invitations
-# - Accept invitation via POST /api/invite/:token/accept
+# - Accept invitation via POST /api/invite/accept, the token in the body
 # - Verify invited user created
 # - Validate invitation token format
 # - Test expired/used tokens
@@ -122,8 +122,11 @@ log_section "Get invitation details (public endpoint)"
 # The invite details endpoint is public — hit Fastify directly (no nginx mTLS)
 DETAILS_RESPONSE=$(curl -s \
   --max-time "$CURL_TIMEOUT" \
+  -X POST \
+  -H "Content-Type: application/json" \
   -H "Accept: application/json" \
-  "${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}" 2>/dev/null || echo "{}")
+  -d "{\"token\":\"${INVITE_TOKEN}\"}" \
+  "${PANEL_DIRECT_URL}/api/invite/lookup" 2>/dev/null || echo "{}")
 
 assert_json_field "$DETAILS_RESPONSE" '.username' "$INVITE_USERNAME" "Public invite details show username" || true
 assert_json_field "$DETAILS_RESPONSE" '.email' "$INVITE_EMAIL" "Public invite details show email" || true
@@ -138,22 +141,25 @@ INVALID_TOKEN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
   --max-time "$CURL_TIMEOUT" \
   -X POST \
   -H "Content-Type: application/json" \
-  -d '{"password":"SomePass12345!!"}' \
-  "${PANEL_DIRECT_URL}/api/invite/${INVALID_TOKEN}/accept" 2>/dev/null || echo "000")
+  -d "{\"token\":\"${INVALID_TOKEN}\",\"password\":\"SomePass12345!!\"}" \
+  "${PANEL_DIRECT_URL}/api/invite/accept" 2>/dev/null || echo "000")
 assert_eq "$INVALID_TOKEN_STATUS" "404" "Accept with invalid token returns 404" || true
 
-# Non-hex token should fail validation (400)
+# A token that is not one opens nothing: the same answer as one never made
 BAD_FORMAT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
   --max-time "$CURL_TIMEOUT" \
   -X POST \
   -H "Content-Type: application/json" \
-  -d '{"password":"SomePass12345!!"}' \
-  "${PANEL_DIRECT_URL}/api/invite/not-a-valid-token/accept" 2>/dev/null || echo "000")
-if [ "$BAD_FORMAT_STATUS" = "400" ] || [ "$BAD_FORMAT_STATUS" = "422" ]; then
-  log_pass "Malformed token rejected (HTTP $BAD_FORMAT_STATUS)"
-else
-  log_fail "Malformed token should be rejected (got HTTP $BAD_FORMAT_STATUS)"
-fi
+  -d '{"token":"not-a-valid-token","password":"SomePass12345!!"}' \
+  "${PANEL_DIRECT_URL}/api/invite/accept" 2>/dev/null || echo "000")
+assert_eq "$BAD_FORMAT_STATUS" "404" "Malformed token rejected (HTTP 404, as an unknown one)" || true
+
+# The token never goes in a URL any more: the path routes are gone
+PATH_ROUTE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+  --max-time "$CURL_TIMEOUT" \
+  -H "Accept: application/json" \
+  "${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}" 2>/dev/null || echo "000")
+assert_eq "$PATH_ROUTE_STATUS" "404" "GET /api/invite/<token> no longer answers (HTTP 404)" || true
 
 # ---------------------------------------------------------------------------
 log_section "Accept invitation (public endpoint)"
@@ -161,6 +167,7 @@ log_section "Accept invitation (public endpoint)"
 
 ACCEPT_BODY=$(cat <<EOF
 {
+  "token": "$INVITE_TOKEN",
   "password": "$INVITE_PASSWORD"
 }
 EOF
@@ -173,7 +180,7 @@ ACCEPT_RESPONSE=$(curl -s \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -d "$ACCEPT_BODY" \
-  "${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}/accept" 2>/dev/null || echo "{}")
+  "${PANEL_DIRECT_URL}/api/invite/accept" 2>/dev/null || echo "{}")
 
 assert_json_field "$ACCEPT_RESPONSE" '.ok' 'true' "Invitation acceptance returned ok: true" || true
 assert_json_field "$ACCEPT_RESPONSE" '.username' "$INVITE_USERNAME" "Accepted username matches" || true
@@ -211,15 +218,17 @@ REUSE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
   -X POST \
   -H "Content-Type: application/json" \
   -d "$ACCEPT_BODY" \
-  "${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}/accept" 2>/dev/null || echo "000")
+  "${PANEL_DIRECT_URL}/api/invite/accept" 2>/dev/null || echo "000")
 assert_eq "$REUSE_STATUS" "410" "Reusing accepted token returns 410 Gone" || true
 
-# GET on used token should also return 410
+# Looking a used token up should also return 410
 REUSE_GET_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
   --max-time "$CURL_TIMEOUT" \
-  -H "Accept: application/json" \
-  "${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}" 2>/dev/null || echo "000")
-assert_eq "$REUSE_GET_STATUS" "410" "GET on used token returns 410 Gone" || true
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"token\":\"${INVITE_TOKEN}\"}" \
+  "${PANEL_DIRECT_URL}/api/invite/lookup" 2>/dev/null || echo "000")
+assert_eq "$REUSE_GET_STATUS" "410" "Lookup of a used token returns 410 Gone" || true
 
 # ---------------------------------------------------------------------------
 log_section "Accept with short password"
@@ -244,8 +253,8 @@ if [ -n "$INVITE2_TOKEN" ] && [ "$INVITE2_TOKEN" != "null" ]; then
     --max-time "$CURL_TIMEOUT" \
     -X POST \
     -H "Content-Type: application/json" \
-    -d '{"password":"short"}' \
-    "${PANEL_DIRECT_URL}/api/invite/${INVITE2_TOKEN}/accept" 2>/dev/null || echo "000")
+    -d "{\"token\":\"${INVITE2_TOKEN}\",\"password\":\"short\"}" \
+    "${PANEL_DIRECT_URL}/api/invite/accept" 2>/dev/null || echo "000")
   if [ "$SHORT_PW_STATUS" = "400" ] || [ "$SHORT_PW_STATUS" = "422" ]; then
     log_pass "Short password rejected on invite accept (HTTP $SHORT_PW_STATUS)"
   else

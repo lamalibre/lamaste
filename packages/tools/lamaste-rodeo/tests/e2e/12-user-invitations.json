@@ -610,7 +610,7 @@
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "curl -s --max-time \"$CURL_TIMEOUT\" -H \"Accept: application/json\" \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}\" 2>/dev/null || echo \"{}\""
+            "command": "curl -s --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -H \"Accept: application/json\" -d \"{\\\"token\\\":\\\"${INVITE_TOKEN}\\\"}\" \"${PANEL_DIRECT_URL}/api/invite/lookup\" 2>/dev/null || echo \"{}\""
           },
           "capture": [
             {
@@ -684,7 +684,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Get invitation details (public endpoint)\"\n# ---------------------------------------------------------------------------\n\n# The invite details endpoint is public — hit Fastify directly (no nginx mTLS)\nDETAILS_RESPONSE=$(curl -s \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -H \"Accept: application/json\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}\" 2>/dev/null || echo \"{}\")\n\nassert_json_field \"$DETAILS_RESPONSE\" '.username' \"$INVITE_USERNAME\" \"Public invite details show username\" || true\nassert_json_field \"$DETAILS_RESPONSE\" '.email' \"$INVITE_EMAIL\" \"Public invite details show email\" || true\nassert_json_field_not_empty \"$DETAILS_RESPONSE\" '.expiresAt' \"Public invite details show expiresAt\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Get invitation details (public endpoint)\"\n# ---------------------------------------------------------------------------\n\n# The invite details endpoint is public — hit Fastify directly (no nginx mTLS)\nDETAILS_RESPONSE=$(curl -s \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -H \"Accept: application/json\" \\\n  -d \"{\\\"token\\\":\\\"${INVITE_TOKEN}\\\"}\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/lookup\" 2>/dev/null || echo \"{}\")\n\nassert_json_field \"$DETAILS_RESPONSE\" '.username' \"$INVITE_USERNAME\" \"Public invite details show username\" || true\nassert_json_field \"$DETAILS_RESPONSE\" '.email' \"$INVITE_EMAIL\" \"Public invite details show email\" || true\nassert_json_field_not_empty \"$DETAILS_RESPONSE\" '.expiresAt' \"Public invite details show expiresAt\" || true"
     },
     {
       "id": "invalid-token",
@@ -696,7 +696,7 @@
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -d '{\"password\":\"SomePass12345!!\"}' \"${PANEL_DIRECT_URL}/api/invite/${INVALID_TOKEN}/accept\" 2>/dev/null || echo \"000\""
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -d \"{\\\"token\\\":\\\"${INVALID_TOKEN}\\\",\\\"password\\\":\\\"SomePass12345!!\\\"}\" \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\""
           },
           "capture": [
             {
@@ -734,7 +734,7 @@
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -d '{\"password\":\"SomePass12345!!\"}' \"${PANEL_DIRECT_URL}/api/invite/not-a-valid-token/accept\" 2>/dev/null || echo \"000\""
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -d '{\"token\":\"not-a-valid-token\",\"password\":\"SomePass12345!!\"}' \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\""
           },
           "capture": [
             {
@@ -747,68 +747,77 @@
         },
         {
           "id": "step-36",
-          "label": "Malformed token rejected (HTTP $BAD_FORMAT_STATUS)",
+          "label": "Malformed token rejected (HTTP 404, as an unknown one)",
           "target": "local",
+          "continueOnError": true,
           "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "Malformed token rejected (HTTP $BAD_FORMAT_STATUS)"
-          },
-          "when": {
-            "kind": "or",
-            "conditions": [
-              {
-                "kind": "var_eq",
-                "variable": "BAD_FORMAT_STATUS",
-                "value": "400"
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BAD_FORMAT_STATUS"
               },
-              {
-                "kind": "var_eq",
-                "variable": "BAD_FORMAT_STATUS",
-                "value": "422"
-              }
-            ]
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Malformed token rejected (HTTP 404, as an unknown one)"
+            }
           }
         },
         {
           "id": "step-37",
-          "label": "Malformed token should be rejected (got HTTP $BAD_FORMAT_STATUS)",
+          "label": "Set PATH_ROUTE_STATUS",
           "target": "local",
           "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "Malformed token should be rejected (got HTTP $BAD_FORMAT_STATUS)"
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -H \"Accept: application/json\" \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}\" 2>/dev/null || echo \"000\""
           },
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_eq",
-                "variable": "BAD_FORMAT_STATUS",
-                "value": "400"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "BAD_FORMAT_STATUS",
-                "value": "422"
+          "capture": [
+            {
+              "variable": "PATH_ROUTE_STATUS",
+              "from": {
+                "kind": "body"
               }
-            ]
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "GET /api/invite/<token> no longer answers (HTTP 404)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PATH_ROUTE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "GET /api/invite/<token> no longer answers (HTTP 404)"
+            }
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid token\"\n# ---------------------------------------------------------------------------\n\nINVALID_TOKEN=\"0000000000000000000000000000000000000000000000000000000000000000\"\nINVALID_TOKEN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"password\":\"SomePass12345!!\"}' \\\n  \"${PANEL_DIRECT_URL}/api/invite/${INVALID_TOKEN}/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$INVALID_TOKEN_STATUS\" \"404\" \"Accept with invalid token returns 404\" || true\n\n# Non-hex token should fail validation (400)\nBAD_FORMAT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"password\":\"SomePass12345!!\"}' \\\n  \"${PANEL_DIRECT_URL}/api/invite/not-a-valid-token/accept\" 2>/dev/null || echo \"000\")\nif [ \"$BAD_FORMAT_STATUS\" = \"400\" ] || [ \"$BAD_FORMAT_STATUS\" = \"422\" ]; then\n  log_pass \"Malformed token rejected (HTTP $BAD_FORMAT_STATUS)\"\nelse\n  log_fail \"Malformed token should be rejected (got HTTP $BAD_FORMAT_STATUS)\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid token\"\n# ---------------------------------------------------------------------------\n\nINVALID_TOKEN=\"0000000000000000000000000000000000000000000000000000000000000000\"\nINVALID_TOKEN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"token\\\":\\\"${INVALID_TOKEN}\\\",\\\"password\\\":\\\"SomePass12345!!\\\"}\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$INVALID_TOKEN_STATUS\" \"404\" \"Accept with invalid token returns 404\" || true\n\n# A token that is not one opens nothing: the same answer as one never made\nBAD_FORMAT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"token\":\"not-a-valid-token\",\"password\":\"SomePass12345!!\"}' \\\n  \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$BAD_FORMAT_STATUS\" \"404\" \"Malformed token rejected (HTTP 404, as an unknown one)\" || true\n\n# The token never goes in a URL any more: the path routes are gone\nPATH_ROUTE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -H \"Accept: application/json\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}\" 2>/dev/null || echo \"000\")\nassert_eq \"$PATH_ROUTE_STATUS\" \"404\" \"GET /api/invite/<token> no longer answers (HTTP 404)\" || true"
     },
     {
       "id": "accept-invitation-public-endpoint",
       "label": "Accept invitation (public endpoint)",
       "steps": [
         {
-          "id": "step-38",
+          "id": "step-39",
           "label": "Set ACCEPT_BODY",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "cat <<EOF { \"password\": \"$INVITE_PASSWORD\" } EOF "
+            "command": "cat <<EOF { \"token\": \"$INVITE_TOKEN\", \"password\": \"$INVITE_PASSWORD\" } EOF "
           },
           "capture": [
             {
@@ -820,12 +829,12 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-40",
           "label": "Set ACCEPT_RESPONSE",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "curl -s --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -H \"Accept: application/json\" -d \"$ACCEPT_BODY\" \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}/accept\" 2>/dev/null || echo \"{}\""
+            "command": "curl -s --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -H \"Accept: application/json\" -d \"$ACCEPT_BODY\" \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"{}\""
           },
           "capture": [
             {
@@ -837,7 +846,7 @@
           ]
         },
         {
-          "id": "step-40",
+          "id": "step-41",
           "label": "Invitation acceptance returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -859,7 +868,7 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-42",
           "label": "Accepted username matches",
           "target": "local",
           "continueOnError": true,
@@ -881,14 +890,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Accept invitation (public endpoint)\"\n# ---------------------------------------------------------------------------\n\nACCEPT_BODY=$(cat <<EOF\n{\n  \"password\": \"$INVITE_PASSWORD\"\n}\nEOF\n)\n\n# The accept endpoint is public — hit Fastify directly (no nginx mTLS)\nACCEPT_RESPONSE=$(curl -s \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -H \"Accept: application/json\" \\\n  -d \"$ACCEPT_BODY\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}/accept\" 2>/dev/null || echo \"{}\")\n\nassert_json_field \"$ACCEPT_RESPONSE\" '.ok' 'true' \"Invitation acceptance returned ok: true\" || true\nassert_json_field \"$ACCEPT_RESPONSE\" '.username' \"$INVITE_USERNAME\" \"Accepted username matches\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Accept invitation (public endpoint)\"\n# ---------------------------------------------------------------------------\n\nACCEPT_BODY=$(cat <<EOF\n{\n  \"token\": \"$INVITE_TOKEN\",\n  \"password\": \"$INVITE_PASSWORD\"\n}\nEOF\n)\n\n# The accept endpoint is public — hit Fastify directly (no nginx mTLS)\nACCEPT_RESPONSE=$(curl -s \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -H \"Accept: application/json\" \\\n  -d \"$ACCEPT_BODY\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"{}\")\n\nassert_json_field \"$ACCEPT_RESPONSE\" '.ok' 'true' \"Invitation acceptance returned ok: true\" || true\nassert_json_field \"$ACCEPT_RESPONSE\" '.username' \"$INVITE_USERNAME\" \"Accepted username matches\" || true"
     },
     {
       "id": "verify-invited-user-exists",
       "label": "Verify invited user exists",
       "steps": [
         {
-          "id": "step-42",
+          "id": "step-43",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -906,7 +915,7 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-44",
           "label": "Set FOUND_USER",
           "target": "local",
           "op": {
@@ -923,7 +932,7 @@
           ]
         },
         {
-          "id": "step-44",
+          "id": "step-45",
           "label": "Invited user appears in GET /api/users",
           "target": "local",
           "continueOnError": true,
@@ -944,7 +953,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-46",
           "label": "Set FOUND_EMAIL",
           "target": "local",
           "op": {
@@ -961,7 +970,7 @@
           ]
         },
         {
-          "id": "step-46",
+          "id": "step-47",
           "label": "Invited user email matches",
           "target": "local",
           "continueOnError": true,
@@ -989,7 +998,7 @@
       "label": "Invitation marked as accepted",
       "steps": [
         {
-          "id": "step-47",
+          "id": "step-48",
           "label": "GET /api/invitations",
           "target": "host",
           "op": {
@@ -1007,7 +1016,7 @@
           ]
         },
         {
-          "id": "step-48",
+          "id": "step-49",
           "label": "Set AFTER_STATUS",
           "target": "local",
           "op": {
@@ -1024,7 +1033,7 @@
           ]
         },
         {
-          "id": "step-49",
+          "id": "step-50",
           "label": "Invitation status changed to accepted",
           "target": "local",
           "continueOnError": true,
@@ -1052,12 +1061,12 @@
       "label": "Used token rejection",
       "steps": [
         {
-          "id": "step-50",
+          "id": "step-51",
           "label": "Set REUSE_STATUS",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -d \"$ACCEPT_BODY\" \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}/accept\" 2>/dev/null || echo \"000\""
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -d \"$ACCEPT_BODY\" \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\""
           },
           "capture": [
             {
@@ -1069,7 +1078,7 @@
           ]
         },
         {
-          "id": "step-51",
+          "id": "step-52",
           "label": "Reusing accepted token returns 410 Gone",
           "target": "local",
           "continueOnError": true,
@@ -1090,12 +1099,12 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-53",
           "label": "Set REUSE_GET_STATUS",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -H \"Accept: application/json\" \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}\" 2>/dev/null || echo \"000\""
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -d \"{\\\"token\\\":\\\"${INVITE_TOKEN}\\\"}\" \"${PANEL_DIRECT_URL}/api/invite/lookup\" 2>/dev/null || echo \"000\""
           },
           "capture": [
             {
@@ -1107,8 +1116,8 @@
           ]
         },
         {
-          "id": "step-53",
-          "label": "GET on used token returns 410 Gone",
+          "id": "step-54",
+          "label": "Lookup of a used token returns 410 Gone",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1123,19 +1132,19 @@
                 "kind": "literal",
                 "value": "410"
               },
-              "message": "GET on used token returns 410 Gone"
+              "message": "Lookup of a used token returns 410 Gone"
             }
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Used token rejection\"\n# ---------------------------------------------------------------------------\n\n# Attempting to accept the same token again should fail with 410 Gone\nREUSE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"$ACCEPT_BODY\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$REUSE_STATUS\" \"410\" \"Reusing accepted token returns 410 Gone\" || true\n\n# GET on used token should also return 410\nREUSE_GET_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -H \"Accept: application/json\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/${INVITE_TOKEN}\" 2>/dev/null || echo \"000\")\nassert_eq \"$REUSE_GET_STATUS\" \"410\" \"GET on used token returns 410 Gone\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Used token rejection\"\n# ---------------------------------------------------------------------------\n\n# Attempting to accept the same token again should fail with 410 Gone\nREUSE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"$ACCEPT_BODY\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$REUSE_STATUS\" \"410\" \"Reusing accepted token returns 410 Gone\" || true\n\n# Looking a used token up should also return 410\nREUSE_GET_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"token\\\":\\\"${INVITE_TOKEN}\\\"}\" \\\n  \"${PANEL_DIRECT_URL}/api/invite/lookup\" 2>/dev/null || echo \"000\")\nassert_eq \"$REUSE_GET_STATUS\" \"410\" \"Lookup of a used token returns 410 Gone\" || true"
     },
     {
       "id": "accept-with-short-password",
       "label": "Accept with short password",
       "steps": [
         {
-          "id": "step-55",
+          "id": "step-56",
           "label": "Set INVITE2_BODY",
           "target": "local",
           "op": {
@@ -1152,7 +1161,7 @@
           ]
         },
         {
-          "id": "step-56",
+          "id": "step-57",
           "label": "POST /api/invitations",
           "target": "host",
           "op": {
@@ -1171,7 +1180,7 @@
           ]
         },
         {
-          "id": "step-57",
+          "id": "step-58",
           "label": "Extract INVITE2_TOKEN",
           "target": "local",
           "op": {
@@ -1188,12 +1197,12 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-59",
           "label": "Set SHORT_PW_STATUS",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -d '{\"password\":\"short\"}' \"${PANEL_DIRECT_URL}/api/invite/${INVITE2_TOKEN}/accept\" 2>/dev/null || echo \"000\""
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" -X POST -H \"Content-Type: application/json\" -d \"{\\\"token\\\":\\\"${INVITE2_TOKEN}\\\",\\\"password\\\":\\\"short\\\"}\" \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\""
           },
           "capture": [
             {
@@ -1219,7 +1228,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-60",
           "label": "Short password rejected on invite accept (HTTP $SHORT_PW_STATUS)",
           "target": "local",
           "op": {
@@ -1244,7 +1253,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-61",
           "label": "Short password should be rejected on invite accept (got HTTP $SHORT_PW_STATUS)",
           "target": "local",
           "op": {
@@ -1269,7 +1278,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-62",
           "label": "Extract INVITE2_ID",
           "target": "local",
           "op": {
@@ -1286,7 +1295,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-63",
           "label": "DELETE /api/invitations/$INVITE2_ID",
           "target": "host",
           "op": {
@@ -1311,7 +1320,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-64",
           "label": "Could not create second invitation for password validation test",
           "target": "local",
           "op": {
@@ -1321,14 +1330,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Accept with short password\"\n# ---------------------------------------------------------------------------\n\n# Create a second invitation to test password validation\nINVITE2_USERNAME=\"e2einvite2-$(date +%s)\"\nINVITE2_BODY=$(cat <<EOF\n{\n  \"username\": \"$INVITE2_USERNAME\",\n  \"email\": \"e2einvite2@example.com\",\n  \"groups\": []\n}\nEOF\n)\n\nINVITE2_RESPONSE=$(api_post \"invitations\" \"$INVITE2_BODY\")\nINVITE2_TOKEN=$(echo \"$INVITE2_RESPONSE\" | jq -r '.token' 2>/dev/null || echo \"\")\n\nif [ -n \"$INVITE2_TOKEN\" ] && [ \"$INVITE2_TOKEN\" != \"null\" ]; then\n  SHORT_PW_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n    --max-time \"$CURL_TIMEOUT\" \\\n    -X POST \\\n    -H \"Content-Type: application/json\" \\\n    -d '{\"password\":\"short\"}' \\\n    \"${PANEL_DIRECT_URL}/api/invite/${INVITE2_TOKEN}/accept\" 2>/dev/null || echo \"000\")\n  if [ \"$SHORT_PW_STATUS\" = \"400\" ] || [ \"$SHORT_PW_STATUS\" = \"422\" ]; then\n    log_pass \"Short password rejected on invite accept (HTTP $SHORT_PW_STATUS)\"\n  else\n    log_fail \"Short password should be rejected on invite accept (got HTTP $SHORT_PW_STATUS)\"\n  fi\n\n  # Clean up: revoke the second invitation\n  INVITE2_ID=$(echo \"$INVITE2_RESPONSE\" | jq -r '.invitation.id' 2>/dev/null || echo \"\")\n  if [ -n \"$INVITE2_ID\" ] && [ \"$INVITE2_ID\" != \"null\" ]; then\n    api_delete \"invitations/$INVITE2_ID\" > /dev/null 2>&1 || true\n  fi\nelse\n  log_skip \"Could not create second invitation for password validation test\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Accept with short password\"\n# ---------------------------------------------------------------------------\n\n# Create a second invitation to test password validation\nINVITE2_USERNAME=\"e2einvite2-$(date +%s)\"\nINVITE2_BODY=$(cat <<EOF\n{\n  \"username\": \"$INVITE2_USERNAME\",\n  \"email\": \"e2einvite2@example.com\",\n  \"groups\": []\n}\nEOF\n)\n\nINVITE2_RESPONSE=$(api_post \"invitations\" \"$INVITE2_BODY\")\nINVITE2_TOKEN=$(echo \"$INVITE2_RESPONSE\" | jq -r '.token' 2>/dev/null || echo \"\")\n\nif [ -n \"$INVITE2_TOKEN\" ] && [ \"$INVITE2_TOKEN\" != \"null\" ]; then\n  SHORT_PW_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n    --max-time \"$CURL_TIMEOUT\" \\\n    -X POST \\\n    -H \"Content-Type: application/json\" \\\n    -d \"{\\\"token\\\":\\\"${INVITE2_TOKEN}\\\",\\\"password\\\":\\\"short\\\"}\" \\\n    \"${PANEL_DIRECT_URL}/api/invite/accept\" 2>/dev/null || echo \"000\")\n  if [ \"$SHORT_PW_STATUS\" = \"400\" ] || [ \"$SHORT_PW_STATUS\" = \"422\" ]; then\n    log_pass \"Short password rejected on invite accept (HTTP $SHORT_PW_STATUS)\"\n  else\n    log_fail \"Short password should be rejected on invite accept (got HTTP $SHORT_PW_STATUS)\"\n  fi\n\n  # Clean up: revoke the second invitation\n  INVITE2_ID=$(echo \"$INVITE2_RESPONSE\" | jq -r '.invitation.id' 2>/dev/null || echo \"\")\n  if [ -n \"$INVITE2_ID\" ] && [ \"$INVITE2_ID\" != \"null\" ]; then\n    api_delete \"invitations/$INVITE2_ID\" > /dev/null 2>&1 || true\n  fi\nelse\n  log_skip \"Could not create second invitation for password validation test\"\nfi"
     },
     {
       "id": "cleanup-delete-invited-user",
       "label": "Cleanup: delete invited user",
       "steps": [
         {
-          "id": "step-64",
+          "id": "step-65",
           "label": "DELETE /api/users/$INVITE_USERNAME",
           "target": "host",
           "op": {
@@ -1346,7 +1355,7 @@
           ]
         },
         {
-          "id": "step-65",
+          "id": "step-66",
           "label": "Invited user deletion returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -1368,7 +1377,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-67",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -1386,7 +1395,7 @@
           ]
         },
         {
-          "id": "step-67",
+          "id": "step-68",
           "label": "Set FOUND_FINAL",
           "target": "local",
           "op": {
@@ -1403,7 +1412,7 @@
           ]
         },
         {
-          "id": "step-68",
+          "id": "step-69",
           "label": "Invited user no longer in list after deletion",
           "target": "local",
           "continueOnError": true,
@@ -1428,7 +1437,7 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 12 — User Invitations\n# ============================================================================\n# Verifies user invitation flow:\n# - Create invitation via POST /api/invitations\n# - List invitations\n# - Accept invitation via POST /api/invite/:token/accept\n# - Verify invited user created\n# - Validate invitation token format\n# - Test expired/used tokens\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 12 — User Invitations\n# ============================================================================\n# Verifies user invitation flow:\n# - Create invitation via POST /api/invitations\n# - List invitations\n# - Accept invitation via POST /api/invite/accept, the token in the body\n# - Verify invited user created\n# - Validate invitation token format\n# - Test expired/used tokens\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nINVITE_USERNAME=\"e2einvite-$(date +%s)\"\nINVITE_EMAIL=\"e2einvite@example.com\"\nINVITE_PASSWORD=\"InvitePass123!!\"\nINVITE_TOKEN=\"\"\nINVITE_ID=\"\"\n\nbegin_test \"12 — User Invitations\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

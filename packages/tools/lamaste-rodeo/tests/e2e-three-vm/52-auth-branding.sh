@@ -326,14 +326,15 @@ assert_contains "${INVITE_A}" "<title>${BRAND_A} — Accept Invitation</title>" 
 assert_contains "${INVITE_A}" "<div class=\"brand-name\">${BRAND_A}</div>" "…the brand's name in the header" || true
 assert_contains "${INVITE_A}" "<div class=\"brand-tagline\">${TAGLINE_A}</div>" "…and its tagline" || true
 assert_contains "${INVITE_A}" '<img class="brand-logo" src="/static/media/logo.png"' "…the logo from the same origin" || true
-assert_contains "${INVITE_A}" "--accent: ${ACCENT_A};" "…the accent" || true
+assert_contains "${INVITE_A}" '<link rel="stylesheet" href="/brand.css"' "…its colours from /brand.css (the inline style is one text for every brand: one CSP hash a release)" || true
+assert_contains "$(visit_body "$(visit - "$(auth_url "${DOMAIN}" /brand.css)")")" "--lamaste-page-accent: ${ACCENT_A};" "…which carries the accent" || true
 RESP=$(visit - "$(auth_url "${DOMAIN_3}" /invite/x)")
 assert_eq "$(visit_status "$RESP")" "200" "auth.${DOMAIN_3}/invite/x: 200" || true
 INVITE_C=$(visit_body "$RESP")
 assert_contains "${INVITE_C}" "<title>Lamaste — Accept Invitation</title>" "…the stock page" || true
 assert_not_contains "${INVITE_C}" 'class="brand' "…no brand header" || true
 assert_eq "$(script_of "${INVITE_A}" | wc -l | tr -d ' ')" "$(script_of "${INVITE_C}" | wc -l | tr -d ' ')" "Both pages carry a script of the same length" || true
-assert_eq "$(script_of "${INVITE_A}")" "$(script_of "${INVITE_C}")" "…byte for byte the same script (the API calls are unchanged)" || true
+assert_eq "$(script_of "${INVITE_A}")" "$(script_of "${INVITE_C}")" "…byte for byte the same script (the API calls, and the CSP hash, are one)" || true
 
 # ===========================================================================
 # 4. Gatekeeper's pages

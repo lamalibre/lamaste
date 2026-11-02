@@ -353,10 +353,13 @@
           "target": "visitor",
           "op": {
             "type": "http",
-            "method": "GET",
-            "url": "https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN}",
+            "method": "POST",
+            "url": "",
             "tlsVerify": false,
-            "timeout": 15
+            "timeout": 15,
+            "headers": {
+              "Content-Type": "application/json"
+            }
           },
           "capture": [
             {
@@ -479,7 +482,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Visit invitation page from visitor VM (public, no mTLS)\"\n# ---------------------------------------------------------------------------\n\n# The invite routes are public endpoints proxied through the auth vhost.\n# No mTLS required — accessed from the external visitor VM.\nINVITE_DETAILS=$(visitor_exec \"curl -sk --max-time 15 -H 'Accept: application/json' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN} 2>/dev/null\" || echo '{}')\n\nINVITE_USERNAME=$(echo \"$INVITE_DETAILS\" | jq -r '.username' 2>/dev/null || echo \"\")\nINVITE_EMAIL_RESP=$(echo \"$INVITE_DETAILS\" | jq -r '.email' 2>/dev/null || echo \"\")\nINVITE_EXPIRES=$(echo \"$INVITE_DETAILS\" | jq -r '.expiresAt' 2>/dev/null || echo \"\")\n\nassert_eq \"$INVITE_USERNAME\" \"$INVITED_USERNAME\" \"Invite page returns correct username\" || true\nassert_eq \"$INVITE_EMAIL_RESP\" \"$INVITED_EMAIL\" \"Invite page returns correct email\" || true\nassert_json_field_not_empty \"$INVITE_DETAILS\" '.expiresAt' \"Invite page returns expiresAt\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Visit invitation page from visitor VM (public, no mTLS)\"\n# ---------------------------------------------------------------------------\n\n# The invite routes are public endpoints proxied through the auth vhost.\n# No mTLS required — accessed from the external visitor VM.\nINVITE_DETAILS=$(visitor_exec \"curl -sk --max-time 15 -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"token\\\":\\\"${INVITE_TOKEN}\\\"}' https://auth.${TEST_DOMAIN}/api/invite/lookup 2>/dev/null\" || echo '{}')\n\nINVITE_USERNAME=$(echo \"$INVITE_DETAILS\" | jq -r '.username' 2>/dev/null || echo \"\")\nINVITE_EMAIL_RESP=$(echo \"$INVITE_DETAILS\" | jq -r '.email' 2>/dev/null || echo \"\")\nINVITE_EXPIRES=$(echo \"$INVITE_DETAILS\" | jq -r '.expiresAt' 2>/dev/null || echo \"\")\n\nassert_eq \"$INVITE_USERNAME\" \"$INVITED_USERNAME\" \"Invite page returns correct username\" || true\nassert_eq \"$INVITE_EMAIL_RESP\" \"$INVITED_EMAIL\" \"Invite page returns correct email\" || true\nassert_json_field_not_empty \"$INVITE_DETAILS\" '.expiresAt' \"Invite page returns expiresAt\" || true"
     },
     {
       "id": "accept-invitation-from-visitor-vm-public-no-mtls",
@@ -563,7 +566,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Accept invitation from visitor VM (public, no mTLS)\"\n# ---------------------------------------------------------------------------\n\nACCEPT_RESPONSE=$(visitor_exec \"curl -sk --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\\\"password\\\":\\\"${INVITED_PASSWORD}\\\"}' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN}/accept 2>/dev/null\" || echo '{}')\n\nassert_json_field \"$ACCEPT_RESPONSE\" '.ok' 'true' \"Invitation acceptance returned ok: true\" || true\nassert_json_field \"$ACCEPT_RESPONSE\" '.username' \"$INVITED_USERNAME\" \"Acceptance response returns correct username\" || true\nlog_info \"User ${INVITED_USERNAME} created via invitation\""
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Accept invitation from visitor VM (public, no mTLS)\"\n# ---------------------------------------------------------------------------\n\nACCEPT_RESPONSE=$(visitor_exec \"curl -sk --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${INVITE_TOKEN}\\\",\\\"password\\\":\\\"${INVITED_PASSWORD}\\\"}' https://auth.${TEST_DOMAIN}/api/invite/accept 2>/dev/null\" || echo '{}')\n\nassert_json_field \"$ACCEPT_RESPONSE\" '.ok' 'true' \"Invitation acceptance returned ok: true\" || true\nassert_json_field \"$ACCEPT_RESPONSE\" '.username' \"$INVITED_USERNAME\" \"Acceptance response returns correct username\" || true\nlog_info \"User ${INVITED_USERNAME} created via invitation\""
     },
     {
       "id": "verify-user-appears-in-admin-s-user-list",
@@ -1011,11 +1014,14 @@
           "target": "visitor",
           "op": {
             "type": "http",
-            "method": "GET",
-            "url": "https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN}",
+            "method": "POST",
+            "url": "",
             "tlsVerify": false,
             "statusOnly": true,
-            "timeout": 15
+            "timeout": 15,
+            "headers": {
+              "Content-Type": "application/json"
+            }
           },
           "capture": [
             {
@@ -1093,7 +1099,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Used invitation token is rejected (from visitor VM)\"\n# ---------------------------------------------------------------------------\n\nREUSE_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -H 'Accept: application/json' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN} 2>/dev/null\" || echo \"000\")\nassert_eq \"$REUSE_STATUS\" \"410\" \"Used invitation token returns 410 Gone\" || true\n\nREUSE_ACCEPT_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\\\"password\\\":\\\"AnotherPass456!!\\\"}' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN}/accept 2>/dev/null\" || echo \"000\")\nassert_eq \"$REUSE_ACCEPT_STATUS\" \"410\" \"Used invitation token acceptance returns 410 Gone\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Used invitation token is rejected (from visitor VM)\"\n# ---------------------------------------------------------------------------\n\nREUSE_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${INVITE_TOKEN}\\\"}' https://auth.${TEST_DOMAIN}/api/invite/lookup 2>/dev/null\" || echo \"000\")\nassert_eq \"$REUSE_STATUS\" \"410\" \"Used invitation token returns 410 Gone\" || true\n\nREUSE_ACCEPT_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${INVITE_TOKEN}\\\",\\\"password\\\":\\\"AnotherPass456!!\\\"}' https://auth.${TEST_DOMAIN}/api/invite/accept 2>/dev/null\" || echo \"000\")\nassert_eq \"$REUSE_ACCEPT_STATUS\" \"410\" \"Used invitation token acceptance returns 410 Gone\" || true"
     },
     {
       "id": "cleanup-delete-invited-user",
@@ -1200,7 +1206,7 @@
     }
   ],
   "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
-  "headerRaw": "# ============================================================================\n# 08 — Invitation Journey (Three-VM)\n# ============================================================================\n# Tests the full invitation flow for a new user invited by an admin, with\n# public-facing steps executed from an external visitor VM:\n#\n# 1. Admin creates an invitation via POST /api/invitations\n# 2. Visitor GETs /api/invite/:token (public, no mTLS)\n# 3. Visitor POSTs /api/invite/:token/accept (public, no mTLS)\n# 4. Verify invited user appears in admin's user list\n# 5. New user authenticates from visitor VM (firstfactor + secondfactor TOTP)\n# 6. Visitor re-uses invitation token — should get 410 Gone\n# 7. Cleanup: delete invited user\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 08 — Invitation Journey (Three-VM)\n# ============================================================================\n# Tests the full invitation flow for a new user invited by an admin, with\n# public-facing steps executed from an external visitor VM:\n#\n# 1. Admin creates an invitation via POST /api/invitations\n# 2. Visitor POSTs /api/invite/lookup (public, no mTLS; the token in the body)\n# 3. Visitor POSTs /api/invite/accept (public, no mTLS; the token in the body)\n# 4. Verify invited user appears in admin's user list\n# 5. New user authenticates from visitor VM (firstfactor + secondfactor TOTP)\n# 6. Visitor re-uses invitation token — should get 410 Gone\n# 7. Cleanup: delete invited user\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nINVITED_USERNAME=\"inviteduser\"\nINVITED_EMAIL=\"invited@test.local\"\nINVITED_PASSWORD=\"InvitedPass123!!\"\nINVITE_TOKEN=\"\"\nINVITATION_ID=\"\"\n\nbegin_test \"08 — Invitation Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  visitor_exec \"rm -f /tmp/authelia-invite-cookies.txt 2>/dev/null || true\" 2>/dev/null || true\n  # Delete the invited user if they were created\n  host_api_delete \"users/${INVITED_USERNAME}\" 2>/dev/null || true\n  # Delete the invitation if it was created\n  if [ -n \"$INVITATION_ID\" ] && [ \"$INVITATION_ID\" != \"null\" ]; then\n    host_api_delete \"invitations/${INVITATION_ID}\" 2>/dev/null || true\n  fi\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
