@@ -76,8 +76,12 @@ async function loadSecret() {
  * Result envelope.
  *
  * @typedef {{ ok: true, statusCode: number, data: unknown }
- *          | { ok: false, statusCode: number, error: string, reason: 'unreachable' | 'no-secret' | 'http-error' }
+ *          | { ok: false, statusCode: number, error: string, reason: 'unreachable' | 'no-secret' | 'http-error', outcomeUnknown?: boolean }
  *          } GatekeeperResult
+ *
+ * `outcomeUnknown`: the request may have reached Gatekeeper and only its
+ * answer was lost — anything but a refused connection. Every other failure
+ * says that Gatekeeper did not do what was asked.
  */
 
 /**
@@ -125,6 +129,7 @@ export async function gatekeeperRequest(method, apiPath, body) {
       statusCode: 503,
       error: `gatekeeper unreachable: ${err.message}`,
       reason: 'unreachable',
+      ...(err?.cause?.code === 'ECONNREFUSED' ? {} : { outcomeUnknown: true }),
     };
   }
 
@@ -284,6 +289,34 @@ export async function listGatekeeperGroups() {
   const groups = result.data.groups.map(groupOf);
   if (groups.some((g) => g === null)) return malformed('its groups');
   return { ok: true, groups };
+}
+
+/**
+ * Whether `username` holds a grant on a resource — directly or through a
+ * Lamaste group — as Gatekeeper's `checkAccess` reads it.
+ *
+ * @param {string} username
+ * @param {string} resourceType
+ * @param {string} resourceId
+ * @returns {Promise<{ ok: true, held: boolean } | Extract<GatekeeperResult, { ok: false }>>}
+ */
+export async function holdsResourceGrant(username, resourceType, resourceId) {
+  const listed = await listResourceGrants(resourceType, resourceId);
+  if (!listed.ok) return listed;
+  const direct = listed.grants.some(
+    (g) => g.principalType === 'user' && g.principalId === username,
+  );
+  if (direct) return { ok: true, held: true };
+  const granted = new Set(
+    listed.grants.filter((g) => g.principalType === 'group').map((g) => g.principalId),
+  );
+  if (granted.size === 0) return { ok: true, held: false };
+  const groups = await listGatekeeperGroups();
+  if (!groups.ok) return groups;
+  return {
+    ok: true,
+    held: groups.groups.some((g) => granted.has(g.name) && g.members.includes(username)),
+  };
 }
 
 /**

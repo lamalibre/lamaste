@@ -41,6 +41,10 @@ const DisableInviteesSchema = z
   .object({ inviterUserId: z.string().uuid(), transitive: z.boolean().optional().default(false) })
   .strict();
 
+/** The list's default and largest length. */
+const INVITATIONS_LIST_DEFAULT = 500;
+const INVITATIONS_LIST_MAX = 2000;
+
 const ListQuerySchema = z
   .object({
     plugin: z
@@ -49,6 +53,7 @@ const ListQuerySchema = z
       .optional(),
     inviter: z.string().uuid().optional(),
     kind: z.enum(['admin', 'delegated']).optional(),
+    limit: z.coerce.number().int().min(1).max(INVITATIONS_LIST_MAX).optional(),
   })
   .strict();
 
@@ -110,8 +115,9 @@ const CreateInvitationSchema = z.object({
 });
 
 export default async function invitationRoutes(fastify, _opts) {
-  // GET /api/invitations — every invitation, both kinds, optionally of one
-  // plugin, one inviter or one kind; tokens are never stored, so never shown
+  // GET /api/invitations — the newest invitations, both kinds, optionally of
+  // one plugin, one inviter or one kind, at most `limit` (`truncated` says
+  // there are more); tokens are never stored, so never shown
   fastify.get(
     '/invitations',
     {
@@ -119,17 +125,22 @@ export default async function invitationRoutes(fastify, _opts) {
     },
     async (request, reply) => {
       const filter = ListQuerySchema.parse(request.query ?? {});
+      const limit = filter.limit ?? INVITATIONS_LIST_DEFAULT;
       try {
         const [invitations, users] = await Promise.all([
           listInvitations({
             ...(filter.plugin ? { plugin: filter.plugin } : {}),
             ...(filter.inviter ? { inviterUserId: filter.inviter } : {}),
             ...(filter.kind ? { kind: filter.kind } : {}),
+            limit: limit + 1,
           }),
           listDirectoryUsers(),
         ]);
         const usernames = new Map(users.map((u) => [u.userId, u.username]));
-        return { invitations: invitations.map((inv) => adminView(inv, usernames)) };
+        return {
+          invitations: invitations.slice(0, limit).map((inv) => adminView(inv, usernames)),
+          truncated: invitations.length > limit,
+        };
       } catch (err) {
         request.log.error(err, 'Failed to read invitations');
         return reply.code(500).send({ error: 'Failed to read invitations' });
@@ -217,7 +228,8 @@ export default async function invitationRoutes(fastify, _opts) {
   );
 
   // DELETE /api/invitations/:id — revoke a pending invitation; delete one
-  // that ended (accepted, revoked, expired)
+  // that ended without making an account (revoked, expired): one that made
+  // an account stays on record (409 `invitation_has_user`)
   fastify.delete(
     '/invitations/:id',
     {
@@ -231,22 +243,30 @@ export default async function invitationRoutes(fastify, _opts) {
       } catch (err) {
         return sendFailure(request, reply, err, 'Failed to revoke invitation');
       }
-      if (outcome.action === 'marked') {
-        // Being accepted: it ends revoked, with no grant (its acceptance reads the mark).
-        return reply.code(202).send({ ok: true, action: 'marked' });
-      }
-      if (outcome.action === 'revoked') {
+      const { action, invitation } = outcome;
+      // Being accepted, it ends revoked; an account made by then is disabled.
+      const firstMark = action === 'marked' && invitation.revokePendingReason === null;
+      if (action !== 'marked' || firstMark) {
         await recordAuditBestEffort(
           {
             actor: actorFromRequest(request),
-            action: 'invitation.revoked',
-            plugin: outcome.invitation.plugin,
-            details: { invitationId: id, kind: outcome.invitation.kind, reason: 'admin' },
+            action: {
+              marked: 'invitation.revoke.marked',
+              revoked: 'invitation.revoked',
+              deleted: 'invitation.deleted',
+            }[action],
+            plugin: invitation.plugin,
+            details: {
+              invitationId: id,
+              kind: invitation.kind,
+              ...(action === 'deleted' ? {} : { reason: 'admin' }),
+            },
           },
           request.log,
         );
       }
-      return { ok: true, action: outcome.action };
+      if (action === 'marked') return reply.code(202).send({ ok: true, action });
+      return { ok: true, action };
     },
   );
 
@@ -306,11 +326,14 @@ export default async function invitationRoutes(fastify, _opts) {
     async (request, reply) => {
       const { name } = PluginNameParamSchema.parse(request.params);
       try {
-        await setInvitationPolicy(name, request.body, {
+        const { warnings } = await setInvitationPolicy(name, request.body, {
           actor: actorFromRequest(request),
           logger: request.log,
         });
-        return await invitationPolicyView(name);
+        return {
+          ...(await invitationPolicyView(name)),
+          ...(warnings.length > 0 ? { warnings } : {}),
+        };
       } catch (err) {
         return sendFailure(request, reply, err, 'Failed to save the invitation policy');
       }

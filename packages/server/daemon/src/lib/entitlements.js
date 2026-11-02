@@ -193,7 +193,9 @@ export async function listEntitlements(plugin) {
  * @returns {Promise<{ entitlement: Entitlement, changed: boolean, warnings: Array<{ step: string, message: string }> }>}
  */
 export async function setEntitlement(plugin, { principalType, principalId, roles }, opts) {
-  const wanted = checkedRoles(plugin.identity, roles);
+  // A precondition speaks first: what it refuses (a role that went while an
+  // invitation was being accepted) is its refusal, not a bad request.
+  let wanted = opts.precondition ? null : checkedRoles(plugin.identity, roles);
   if (principalType === 'group') {
     const group = await gatekeeperRequest('GET', `/api/groups/${encodeURIComponent(principalId)}`);
     if (!group.ok) {
@@ -207,6 +209,7 @@ export async function setEntitlement(plugin, { principalType, principalId, roles
   const replace = () =>
     pluginMutex.run(plugin.name, async () => {
       if (opts.precondition) await opts.precondition();
+      wanted ??= checkedRoles(plugin.identity, roles);
       const current = await roleGrantsOf(plugin, principalType, principalId);
       if (opts.onlyIfNone && current.length > 0) {
         return { grant: current[0], changed: false, warnings: [], kept: true };

@@ -634,6 +634,7 @@ test('an accepted invitation creates the user through the lock: an id at once, t
 
 /** Invitations as 4.8 kept them, imported into state.db as the start does. */
 async function seedInvitations(rows) {
+  await lib.forgetInvitationsImportForTests();
   await writeFile(
     path.join(process.env.LAMALIBRE_LAMASTE_STATE_DIR, 'invitations.json'),
     JSON.stringify(rows),

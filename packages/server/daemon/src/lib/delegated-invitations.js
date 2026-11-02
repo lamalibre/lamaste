@@ -28,7 +28,7 @@ import { readAudienceRow } from './audience.js';
 import { recordAuditBestEffort } from './audit.js';
 import { getDirectoryUser } from './directory.js';
 import { declaredRoleIds } from './entitlements.js';
-import { gatekeeperGrantCapacity } from './gatekeeper-client.js';
+import { gatekeeperGrantCapacity, holdsResourceGrant } from './gatekeeper-client.js';
 import {
   getInvitation,
   listInvitations,
@@ -38,6 +38,7 @@ import {
 } from './invitations.js';
 import { pluginDomainName } from './domains.js';
 import { installedVersionApproved } from './plugin-hooks.js';
+import { isPluginOperationRunning } from './plugin-operations.js';
 import { findPlugin } from './plugins.js';
 import { readSites, readTunnels } from './state.js';
 import { getStateDb } from './state-db.js';
@@ -97,7 +98,7 @@ export async function getInvitationPolicy(name) {
 
 /**
  * Whether installed plugin `plugin` can be invited into now, and where:
- * its approved version declares an inviting role, and it has its own web
+ * it is enabled, its approved version declares an inviting role, and it has its own web
  * surface — a site it owns, `restricted`, served. A tunnel bound as a user
  * surface is never granted (it would open the tunnel's own application),
  * and an `authenticated` surface refuses external members.
@@ -105,6 +106,7 @@ export async function getInvitationPolicy(name) {
  * @returns {Promise<{ ok: true, site: { id: string, fqdn: string }, domain: string } | { ok: false, reason: string }>}
  */
 export async function invitationSurface(plugin) {
+  if (plugin && plugin.status !== 'enabled') return { ok: false, reason: 'plugin_disabled' };
   if (surfaceForTests) return surfaceForTests(plugin);
   if (!plugin) return { ok: false, reason: 'not_installed' };
   if (!plugin.identity) return { ok: false, reason: 'no_identity' };
@@ -137,6 +139,7 @@ export function setInvitationSurfaceForTests(fn) {
 /** The text of an availability refusal, for the administrator. */
 const UNAVAILABLE_TEXT = {
   not_installed: 'the plugin is not installed',
+  plugin_disabled: 'the plugin is disabled',
   no_identity: 'the plugin declares no identity',
   no_inviting_role: 'no role of the plugin may invite (identity.roles[].invites)',
   not_approved: 'the installed version is not approved',
@@ -153,10 +156,13 @@ function unavailableText(reason) {
  * Set plugin `name`'s policy (the whole of it). Enabling is refused (409
  * `invitations_unavailable`) unless {@link invitationSurface} allows it.
  * Then the plugin's open invitations are swept against it. Audited.
+ * Returns the `warnings` an administrator should read
+ * ({@link grantTableWarnings}).
  *
  * @param {string} name
  * @param {unknown} input
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
+ * @returns {Promise<{ warnings: Array<{ step: string, message: string }> }>}
  */
 export async function setInvitationPolicy(name, input, { actor, logger }) {
   const plugin = await findPlugin(name);
@@ -204,7 +210,35 @@ export async function setInvitationPolicy(name, input, { actor, logger }) {
     logger,
   );
   await sweepPluginInvitations(name, { logger });
-  return getInvitationPolicy(name);
+  return { warnings: await grantTableWarnings() };
+}
+
+/**
+ * A warning when the enabled policies together could outgrow Gatekeeper's
+ * free grants: its table is the relay's, every invitee costs two grants, and
+ * below the reserve invitations stop on every domain.
+ *
+ * @returns {Promise<Array<{ step: string, message: string }>>}
+ */
+async function grantTableWarnings() {
+  const db = await getStateDb();
+  const { people } = db
+    .prepare(
+      `SELECT COALESCE(SUM(max_joined), 0) AS people FROM plugin_invitation_policies
+       WHERE enabled = 1`,
+    )
+    .get();
+  const capacity = await gatekeeperGrantCapacity();
+  if (!capacity.ok) return [];
+  const needed = Number(people) * 2;
+  const free = capacity.max - capacity.held;
+  if (needed <= free) return [];
+  return [
+    {
+      step: 'grants',
+      message: `The enabled policies allow ${people} people by invitation, ${needed} grants; Gatekeeper has ${free} free. Invitations stop on every domain when fewer than ${INVITATION_GRANT_RESERVE} are left.`,
+    },
+  ];
 }
 
 /** Forget plugin `name`'s policy (its uninstall), after its invitations were swept. */
@@ -248,6 +282,16 @@ export async function inviterGrantableRoles(plugin, userId) {
  *   on the domain the invitation recorded;
  * - its inviter active, and still able to give the role.
  *
+ * `surface_unavailable` is a reason that may pass again: a plugin disabled
+ * for now, its surface not served, or an operation running on it — an
+ * update that reverts must not end anything for what it wrote meanwhile.
+ *
+ * Whether the inviter still holds the site's grant is not here: that is
+ * Gatekeeper's to say, and every sweep runs under the invitations lock,
+ * which is held across no Gatekeeper call. Gatekeeper checks it on every
+ * request of the inviter's, and an acceptance before its claim
+ * ({@link inviterHoldsSite}).
+ *
  * @param {object} inv lib/invitations.js's invitation
  * @param {{ plugin?: object | null, policy?: object, surface?: object }} [known] what the caller already read
  * @returns {Promise<import('@lamalibre/lamaste').InvitationRevokeReason | 'surface_unavailable' | null>}
@@ -255,6 +299,7 @@ export async function inviterGrantableRoles(plugin, userId) {
 export async function whyNotAcceptable(inv, known = {}) {
   const plugin = known.plugin !== undefined ? known.plugin : await findPlugin(inv.plugin);
   if (!plugin) return 'plugin_removed';
+  if (isPluginOperationRunning(plugin.name)) return 'surface_unavailable';
   if (!plugin.identity || !declaredRoleIds(plugin.identity).has(inv.role)) {
     return 'role_undeclared';
   }
@@ -286,11 +331,32 @@ export async function whyNotAcceptable(inv, known = {}) {
 }
 
 /**
+ * Whether the inviter of invitation `inv` still holds the grant on the
+ * plugin's site. 503 when Gatekeeper cannot say: never call it under the
+ * invitations lock.
+ *
+ * @param {object} inv lib/invitations.js's invitation
+ * @returns {Promise<boolean>}
+ */
+export async function inviterHoldsSite(inv) {
+  const inviter = await getDirectoryUser(inv.inviterUserId);
+  if (!inviter?.username) return false;
+  const held = await holdsResourceGrant(inviter.username, 'site', inv.siteId);
+  if (!held.ok) {
+    throw httpError('Gatekeeper is not reachable — try again shortly', 503, {
+      code: 'gatekeeper_unavailable',
+    });
+  }
+  return held.held;
+}
+
+/**
  * Sweep plugin `name`'s open invitations: revoke every pending one that can
- * no longer be accepted (a reason that may pass again — the surface not
- * served for a moment — revokes nothing), and bring each one's expiry
- * within the policy's lifetime. Holds the plugin's invitations lock.
- * Audits each revocation.
+ * no longer be accepted, mark one being accepted (its inviter's standing
+ * counts until it is accepted), and bring each pending one's expiry within
+ * the policy's lifetime; a reason that may pass again revokes nothing.
+ * Holds the plugin's invitations lock. Audits each revocation and each
+ * first mark.
  *
  * @param {string} name
  * @param {{ logger?: import('pino').Logger }} [opts]
@@ -299,8 +365,7 @@ export async function whyNotAcceptable(inv, known = {}) {
 export function sweepPluginInvitations(name, { logger } = {}) {
   return withInvitationsLock(name, async () => {
     const db = await getStateDb();
-    // Pending ones are revoked; one being accepted is marked, and its
-    // acceptance makes no grant and ends revoked (§7).
+    // Pending ones are revoked; one being accepted is marked (§7).
     const rows = db
       .prepare(
         `SELECT id FROM invitations WHERE kind = 'delegated' AND plugin = ?
@@ -321,7 +386,6 @@ export function sweepPluginInvitations(name, { logger } = {}) {
       if (!inv || (inv.status !== 'pending' && inv.status !== 'accepting')) continue;
       const reason = await whyNotAcceptable(inv, known);
       if (reason !== null && reason !== 'surface_unavailable') {
-        // Its inviter's standing counts until it is accepted (D1).
         revocations.push({ inv, reason });
         continue;
       }
@@ -340,22 +404,24 @@ export function sweepPluginInvitations(name, { logger } = {}) {
       inTransaction(db, () => {
         for (const { inv, reason } of revocations) {
           const outcome = revokeInvitationSync(db, inv.id, { by: 'lamaste', reason });
-          if (outcome === 'revoked') done.push({ inv, reason });
+          done.push({ inv, reason, outcome });
         }
       });
     }
-    for (const { inv, reason } of done) {
+    for (const { inv, reason, outcome } of done) {
+      if (outcome === 'marked' && inv.revokePendingReason !== null) continue;
       await recordAuditBestEffort(
         {
           actor: 'lamaste',
-          action: 'invitation.revoked',
+          action: outcome === 'marked' ? 'invitation.revoke.marked' : 'invitation.revoked',
           plugin: name,
           details: { invitationId: inv.id, kind: 'delegated', reason },
         },
         logger,
       );
     }
-    return { revoked: done.length, marked: revocations.length - done.length, shortened };
+    const revoked = done.filter((d) => d.outcome === 'revoked').length;
+    return { revoked, marked: done.length - revoked, shortened };
   });
 }
 
@@ -427,7 +493,7 @@ function countsSync(db, plugin, inviterUserId, now) {
   const joined = db
     .prepare(
       `SELECT COUNT(*) AS n FROM invitations i JOIN directory_users u ON u.user_id = i.accepted_user_id
-       WHERE i.kind = 'delegated' AND i.plugin = ? AND i.status = 'accepted' AND u.status <> 'removed'`,
+       WHERE i.kind = 'delegated' AND i.plugin = ? AND u.status <> 'removed'`,
     )
     .get(plugin).n;
   const lastHour = db
@@ -444,9 +510,12 @@ function countsSync(db, plugin, inviterUserId, now) {
   };
 }
 
+/** The inviter's page lists at most this many of their invitations, the newest. */
+const INVITER_VIEW_LIMIT = 200;
+
 /**
  * The inviter's view of plugin `plugin`: the roles they may give, the
- * policy's bounds as they apply to them, and their own invitations.
+ * policy's bounds as they apply to them, and their newest invitations.
  *
  * @param {object} plugin
  * @param {{ userId: string }} caller
@@ -457,7 +526,11 @@ export async function inviterView(plugin, caller) {
   const labels = new Map(plugin.identity.roles.map((r) => [r.id, r.label]));
   const db = await getStateDb();
   const counts = countsSync(db, plugin.name, caller.userId, Date.now());
-  const own = await listInvitations({ plugin: plugin.name, inviterUserId: caller.userId });
+  const own = await listInvitations({
+    plugin: plugin.name,
+    inviterUserId: caller.userId,
+    limit: INVITER_VIEW_LIMIT,
+  });
   return {
     policy: {
       grantableRoles: grantable.map((id) => ({ id, label: labels.get(id) ?? id })),
@@ -612,9 +685,10 @@ export async function createDelegatedInvitation(plugin, caller, request, { logge
 }
 
 /**
- * Revoke the caller's own pending invitation `id` of `plugin`: 404 for
- * anything else (another's invitation is not told apart from none), 409
- * while it is being accepted.
+ * Revoke the caller's own open invitation `id` of `plugin`: 404 for
+ * anything else (another's invitation is not told apart from none). One
+ * being accepted is marked, and audited as such: what ends its claim records
+ * the revocation.
  */
 export async function revokeOwnInvitation(plugin, caller, id, { logger } = {}) {
   const revoked = await withInvitationsLock(plugin.name, async () => {
@@ -636,7 +710,7 @@ export async function revokeOwnInvitation(plugin, caller, id, { logger } = {}) {
   await recordAuditBestEffort(
     {
       actor: `user:${caller.userId}`,
-      action: 'invitation.revoked',
+      action: revoked === 'marked' ? 'invitation.revoke.marked' : 'invitation.revoked',
       plugin: plugin.name,
       details: { invitationId: id, kind: 'delegated', reason: 'inviter' },
     },
