@@ -299,6 +299,9 @@ fn main() {
             admin_commands::admin_get_invitations,
             admin_commands::admin_create_invitation,
             admin_commands::admin_revoke_invitation,
+            admin_commands::admin_disable_invitees,
+            admin_commands::admin_get_plugin_invitation_policy,
+            admin_commands::admin_set_plugin_invitation_policy,
             // Admin: Sites
             admin_commands::admin_get_sites,
             admin_commands::admin_create_site,

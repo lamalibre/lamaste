@@ -15,8 +15,8 @@ import { fieldErrorsIn } from '@lamalibre/lamaste-server-ui/lib/errorMessage.js'
  * (forgetting retained data), reads or changes a plugin's settings or its
  * people (identity, audience, entitlements, sync), disables, enables,
  * deletes or erases a user, binds a tunnel as a user surface, reads,
- * creates, moves or deletes a plugin's web surface, or reads or changes a
- * domain's brand. It rejects with the panel's refusal — `{ error, status?,
+ * creates, moves or deletes a plugin's web surface, reads or changes a
+ * domain's brand, or lists, revokes or sets the policy of invitations. It rejects with the panel's refusal — `{ error, status?,
  * code?, reasons?, operationId?, errors?, reason?, revision? }` — which is
  * rethrown as the Error the web client throws for it,
  * so the panel UI can explain it (an ineligible agent's reasons, closed push
@@ -119,9 +119,16 @@ export const desktopAdminClient = {
     invokeRefusable('admin_get_domain_branding_preview', { name }),
 
   // --- Invitations ---
-  getInvitations: () => invoke('admin_get_invitations'),
+  getInvitations: ({ plugin = null, inviter = null, kind = null } = {}) =>
+    invokeRefusable('admin_get_invitations', { plugin, inviter, kind }),
   createInvitation: (data) => invokeRefusable('admin_create_invitation', { data }),
-  revokeInvitation: (id) => invoke('admin_revoke_invitation', { id }),
+  revokeInvitation: (id) => invokeRefusable('admin_revoke_invitation', { id }),
+  disableInvitees: (inviterUserId, { transitive = false } = {}) =>
+    invokeRefusable('admin_disable_invitees', { inviterUserId, transitive }),
+  getPluginInvitationPolicy: (name) =>
+    invokeRefusable('admin_get_plugin_invitation_policy', { name }),
+  setPluginInvitationPolicy: (name, policy) =>
+    invokeRefusable('admin_set_plugin_invitation_policy', { name, policy }),
 
   // --- Sites ---
   getSites: () => invoke('admin_get_sites'),
