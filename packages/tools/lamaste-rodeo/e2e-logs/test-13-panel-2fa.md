@@ -1,42 +1,42 @@
 # Lamaste E2E: 13 — Panel Built-in TOTP 2FA (Three-VM)
 
-> Started at `2026-10-13 11:47:43 UTC`
+> Started at `2026-11-02 15:48:23 UTC`
 
 
 ## Pre-flight: check onboarding is complete
 
-✅ `11:47:43` Onboarding complete, domain: test.lamaste.local  
+✅ `15:48:23` Onboarding complete, domain: test.lamaste.local  
 
 ## Default state: 2FA disabled
 
-✅ `11:47:43` 2FA is disabled by default  
+✅ `15:48:23` 2FA is disabled by default  
 
 ## Enable 2FA on host
 
-✅ `11:47:43` Setup returns manual key  
-✅ `11:47:43` 2FA enabled after confirm  
+✅ `15:48:23` Setup returns manual key  
+✅ `15:48:23` 2FA enabled after confirm  
 
 ## Agent API calls still work without 2FA session
 
-ℹ️ `11:47:46` Agent cannot reach panel — agent cert may not be enrolled yet  
+ℹ️ `15:48:25` Agent cannot reach panel — agent cert may not be enrolled yet  
 
 ## Admin request without cookie returns 401
 
-✅ `11:47:46` Admin request without session cookie returns 401  
+✅ `15:48:26` Admin request without session cookie returns 401  
 
 ## Admin verifies and gets session cookie
 
-ℹ️ `11:47:46` Waiting 15s for next TOTP window...  
-✅ `11:48:02` Admin verified with TOTP code  
-✅ `11:48:02` Session cookie received  
-✅ `11:48:02` Authenticated request with cookie returns 200  
+ℹ️ `15:48:26` Waiting 5s for next TOTP window...  
+✅ `15:48:31` Admin verified with TOTP code  
+✅ `15:48:31` Session cookie received  
+✅ `15:48:31` Authenticated request with cookie returns 200  
 
 ## Disable 2FA and verify IP restored
 
-ℹ️ `11:48:02` Waiting 29s for next TOTP window...  
-✅ `11:48:32` 2FA disabled successfully  
-✅ `11:48:34` IP:9292 access restored after disabling 2FA  
-✅ `11:48:34` 2FA is disabled at end of test  
+ℹ️ `15:48:31` Waiting 30s for next TOTP window...  
+✅ `15:49:01` 2FA disabled successfully  
+✅ `15:49:03` IP:9292 access restored after disabling 2FA  
+✅ `15:49:04` 2FA is disabled at end of test  
 
 ---
 

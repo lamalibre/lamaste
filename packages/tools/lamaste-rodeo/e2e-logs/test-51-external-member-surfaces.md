@@ -1,0 +1,106 @@
+# Lamaste E2E: 51 — External members: a plugin's web surface and audience (Three-VM)
+
+> Started at `2026-11-02 16:53:14 UTC`
+
+
+## Pre-flight
+
+✅ `16:53:14` Onboarding is complete  
+✅ `16:53:14` Agent test-agent is enrolled on the host  
+✅ `16:53:14` Sync timer lamalibre-lamaste-sync-e2e-agent.timer is active on the agent VM  
+✅ `16:53:14` The agent VM's lamaste-agent has the apphost command  
+✅ `16:53:14` Base domains: A = test.lamaste.local (primary), B = lamaste-second.local, C = lamaste-third.local  
+✅ `16:53:15` The agent VM's Node.js has node:sqlite, which the agent half's projection needs  
+
+## Domain B; a member and an external member of B
+
+✅ `16:53:15` Domain lamaste-second.local added (201)  
+✅ `16:53:15` …pending until activated  
+✅ `16:53:15` DNS of lamaste-second.local: auth.lamaste-second.local resolves to the relay  
+✅ `16:53:15` …the one required record is auth.lamaste-second.local  
+✅ `16:53:17` lamaste-second.local is active  
+✅ `16:53:18` User e2e51-member created, member of lamaste-second.local  
+✅ `16:53:18` User e2e51-ext created, member of lamaste-second.local (external)  
+✅ `16:53:18` e2e51-ext is an external member of B  
+
+## The plugin installed, approved, hosted, moved to B
+
+✅ `16:53:19` Fixture built: @lamalibre/e2e-xsurf-server (identity: viewer, editor; web surface e2e51web, tree v1)  
+✅ `16:53:25` Stand-in Feria is up on the host VM (stub-registry listening on 0.0.0.0:4874 as http://10.13.37.1:4874 with @lamalibre/e2e-xsurf-server, @lamalibre/e2e-xsurf-agent )  
+✅ `16:53:25` The agent VM reaches it at http://10.13.37.1:4874  
+✅ `16:53:26` The panel holds the stand-in Feria's credential (a","registryUrl":"http://10.13.37.1:4874","scope":"@lamalibre","auth":"oidc","clientId":"lamaste-server","owner":"ci:auth.test.lamaste.local/lamaste-server","configuredAt":"2026-11-02T16:53:26.933Z"})  
+✅ `16:53:26` …through its own OIDC client  
+✅ `16:53:30` The app host helper is enabled, the relay's key pinned, and the relay knows both from the agent's host facts  
+✅ `16:53:33` Installed @lamalibre/e2e-xsurf-server@1.0.0  
+✅ `16:53:33` Approved  
+✅ `16:53:33` PUT /api/plugins/e2e-xsurf/domain {domain: B} (before any surface)  
+✅ `16:53:33` …it belongs to B  
+✅ `16:53:44` Hosted on test-agent ()  
+✅ `16:53:57` The relay's health of the hosting is up  
+✅ `16:53:57` Ready: its agent half's first complete sync ended at the head  
+
+## Both entitled as viewers: an external member counts toward the audience
+
+✅ `16:53:57` e2e51-member entitled as viewer  
+✅ `16:53:57` e2e51-ext entitled as viewer  
+✅ `16:53:58` The audience holds both, active, as viewers — e2e51-ext too  
+✅ `16:53:58` …and the agent half's projection, pushed through the tunnel: the plugin knows e2e51-ext and their role  
+✅ `16:53:58` …e2e51-ext: viewer  
+
+## An authenticated web surface: the member, not the external member
+
+✅ `16:54:00` POST /api/plugins/e2e-xsurf/web-surface {accessMode: authenticated}  
+✅ `16:54:00` …the site e2e51web.lamaste-second.local, authenticated, on B  
+✅ `16:54:00` …served  
+✅ `16:54:02` e2e51-member signed in at auth.lamaste-second.local (password, TOTP)  
+✅ `16:54:04` e2e51-ext signed in at auth.lamaste-second.local (password, TOTP)  
+✅ `16:54:05` e2e51-member: the shell (tree v1)  
+✅ `16:54:05` e2e51-member: the API, as the directory's user with the viewer role  
+✅ `16:54:05` e2e51-ext, entitled, on the authenticated shell: 403  
+✅ `16:54:05` …the access-request page  
+✅ `16:54:05` …not the domain refusal  
+✅ `16:54:05` …never a redirect to a sign-in page  
+✅ `16:54:05` …never the shell  
+✅ `16:54:05` e2e51-ext, entitled, on the authenticated surface: GET /api/e2e-xsurf/app/echo 403  
+✅ `16:54:05` …JSON {error: forbidden} — granted access only, not 'not a member'  
+✅ `16:54:05` …never a redirect  
+✅ `16:54:05` users.yml names no host for e2e51-ext  
+
+## A restricted web surface: the external member by the site's grant
+
+✅ `16:54:07` POST /api/plugins/e2e-xsurf/web-surface {accessMode: restricted}  
+✅ `16:54:07` …the site e2e51web.lamaste-second.local, restricted, on B  
+✅ `16:54:07` …served  
+✅ `16:54:08` e2e51-ext, without the site's grant, on the restricted shell: 403  
+✅ `16:54:08` …the access-request page  
+✅ `16:54:08` …not the domain refusal  
+✅ `16:54:08` …never a redirect to a sign-in page  
+✅ `16:54:08` e2e51-ext, without the site's grant: GET /api/e2e-xsurf/app/echo 403  
+✅ `16:54:08` …JSON {error: forbidden} — granted access only, not 'not a member'  
+✅ `16:54:08` …never a redirect  
+✅ `16:54:08` e2e51-member, a member without the site's grant, on the restricted shell: 403 (restricted names everyone)  
+✅ `16:54:08` Granted site a69ecd67-b1fd-4878-8849-7b03302677e4 to user e2e51-ext  
+✅ `16:54:08` users.yml gives e2e51-ext the site's hostname as a group  
+✅ `16:54:08` e2e51-ext, granted: the shell — the same session  
+✅ `16:54:08` e2e51-ext, granted: GET /api/e2e-xsurf/app/echo 200  
+✅ `16:54:08` …the agent half sees the directory's user and their role  
+✅ `16:54:09` The site's grant revoked  
+✅ `16:54:09` users.yml takes the site's group from e2e51-ext  
+✅ `16:54:09` e2e51-ext, the grant revoked: 403 on the shell  
+✅ `16:54:09` e2e51-ext, the grant revoked: GET /api/e2e-xsurf/app/echo 403  
+✅ `16:54:09` …JSON {error: forbidden} — granted access only, not 'not a member'  
+✅ `16:54:09` …never a redirect  
+✅ `16:54:09` Authelia was not restarted by the grant or its revocation  
+
+---
+
+## Results
+
+| Metric | Count |
+|--------|-------|
+| **Passed** | `71` |
+| **Failed** | `0` |
+| **Skipped** | `0` |
+| **Total** | `71` |
+
+ℹ️ `16:54:09` Cleaning up test resources...  
