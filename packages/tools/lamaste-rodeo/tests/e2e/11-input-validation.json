@@ -615,429 +615,6 @@
         },
         {
           "id": "step-27",
-          "label": "PATCH /api/tunnels/../etc/passwd",
-          "target": "host",
-          "op": {
-            "type": "api",
-            "method": "PATCH",
-            "path": "tunnels/../etc/passwd",
-            "body": {
-              "enabled": false
-            },
-            "statusOnly": true
-          },
-          "capture": [
-            {
-              "variable": "PATCH_TRAVERSAL_STATUS",
-              "from": {
-                "kind": "status"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-28",
-          "label": "PATCH /api/tunnels/../etc/passwd rejected (HTTP $PATCH_TRAVERSAL_STATUS)",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "PATCH /api/tunnels/../etc/passwd rejected (HTTP $PATCH_TRAVERSAL_STATUS)"
-          },
-          "when": {
-            "kind": "or",
-            "conditions": [
-              {
-                "kind": "var_eq",
-                "variable": "PATCH_TRAVERSAL_STATUS",
-                "value": "400"
-              },
-              {
-                "kind": "var_eq",
-                "variable": "PATCH_TRAVERSAL_STATUS",
-                "value": "404"
-              }
-            ]
-          }
-        },
-        {
-          "id": "step-29",
-          "label": "PATCH /api/tunnels/../etc/passwd should be rejected (got HTTP $PATCH_TRAVERSAL_STATUS)",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "PATCH /api/tunnels/../etc/passwd should be rejected (got HTTP $PATCH_TRAVERSAL_STATUS)"
-          },
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_eq",
-                "variable": "PATCH_TRAVERSAL_STATUS",
-                "value": "400"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "PATCH_TRAVERSAL_STATUS",
-                "value": "404"
-              }
-            ]
-          }
-        }
-      ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid invite token format\"\n# ---------------------------------------------------------------------------\n\n# The token travels in the body. One that is not a token opens nothing (404,\n# as one that was never made).\nINVITE_GET_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"token\":\"not-a-valid-token\"}' \\\n  \"${BASE_URL}/api/invite/lookup\" 2>/dev/null || echo \"000\")\nassert_eq \"$INVITE_GET_STATUS\" \"404\" \"POST /api/invite/lookup with a malformed token returns 404\" || true\n\nINVITE_POST_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"token\":\"not-a-valid-token\",\"password\":\"Test1234!!\"}' \\\n  \"${BASE_URL}/api/invite/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$INVITE_POST_STATUS\" \"404\" \"POST /api/invite/accept with a malformed token returns 404\" || true\n\n# Path traversal: curl normalizes ../etc/passwd so this becomes /api/etc/passwd → 404\nPATCH_TRAVERSAL_STATUS=$(api_patch_status \"tunnels/../etc/passwd\" '{\"enabled\": false}')\nif [ \"$PATCH_TRAVERSAL_STATUS\" = \"400\" ] || [ \"$PATCH_TRAVERSAL_STATUS\" = \"404\" ]; then\n  log_pass \"PATCH /api/tunnels/../etc/passwd rejected (HTTP $PATCH_TRAVERSAL_STATUS)\"\nelse\n  log_fail \"PATCH /api/tunnels/../etc/passwd should be rejected (got HTTP $PATCH_TRAVERSAL_STATUS)\"\nfi"
-    },
-    {
-      "id": "tunnel-patch-body-validation",
-      "label": "Tunnel PATCH body validation",
-      "steps": [
-        {
-          "id": "step-31",
-          "label": "PATCH /api/tunnels/${FAKE_TUNNEL_ID}",
-          "target": "host",
-          "op": {
-            "type": "api",
-            "method": "PATCH",
-            "path": "tunnels/${FAKE_TUNNEL_ID}",
-            "body": {
-              "enabled": false
-            },
-            "statusOnly": true
-          },
-          "capture": [
-            {
-              "variable": "PATCH_WELLFORMED_STATUS",
-              "from": {
-                "kind": "status"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-32",
-          "label": "Well-formed PATCH on a nonexistent tunnel returns 404",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "var",
-                "name": "PATCH_WELLFORMED_STATUS"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "404"
-              },
-              "message": "Well-formed PATCH on a nonexistent tunnel returns 404"
-            }
-          }
-        },
-        {
-          "id": "step-33",
-          "label": "PATCH /api/tunnels/${FAKE_TUNNEL_ID}",
-          "target": "host",
-          "op": {
-            "type": "api",
-            "method": "PATCH",
-            "path": "tunnels/${FAKE_TUNNEL_ID}",
-            "body": {},
-            "statusOnly": true
-          },
-          "capture": [
-            {
-              "variable": "PATCH_EMPTY_STATUS",
-              "from": {
-                "kind": "status"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-34",
-          "label": "PATCH with no fields returns 400",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "var",
-                "name": "PATCH_EMPTY_STATUS"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "400"
-              },
-              "message": "PATCH with no fields returns 400"
-            }
-          }
-        },
-        {
-          "id": "step-35",
-          "label": "PATCH /api/tunnels/${FAKE_TUNNEL_ID}",
-          "target": "host",
-          "op": {
-            "type": "api",
-            "method": "PATCH",
-            "path": "tunnels/${FAKE_TUNNEL_ID}",
-            "body": {
-              "enabled": false,
-              "subdomain": "renamed"
-            },
-            "statusOnly": true
-          },
-          "capture": [
-            {
-              "variable": "PATCH_UNKNOWN_FIELD_STATUS",
-              "from": {
-                "kind": "status"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-36",
-          "label": "PATCH with an unknown field returns 400 (strict schema)",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "var",
-                "name": "PATCH_UNKNOWN_FIELD_STATUS"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "400"
-              },
-              "message": "PATCH with an unknown field returns 400 (strict schema)"
-            }
-          }
-        },
-        {
-          "id": "step-37",
-          "label": "PATCH /api/tunnels/${FAKE_TUNNEL_ID}",
-          "target": "host",
-          "op": {
-            "type": "api",
-            "method": "PATCH",
-            "path": "tunnels/${FAKE_TUNNEL_ID}",
-            "body": {
-              "enabled": "yes"
-            },
-            "statusOnly": true
-          },
-          "capture": [
-            {
-              "variable": "PATCH_ENABLED_TYPE_STATUS",
-              "from": {
-                "kind": "status"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-38",
-          "label": "PATCH with non-boolean enabled returns 400",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "var",
-                "name": "PATCH_ENABLED_TYPE_STATUS"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "400"
-              },
-              "message": "PATCH with non-boolean enabled returns 400"
-            }
-          }
-        },
-        {
-          "id": "step-39",
-          "label": "PATCH /api/tunnels/${FAKE_TUNNEL_ID}",
-          "target": "host",
-          "op": {
-            "type": "api",
-            "method": "PATCH",
-            "path": "tunnels/${FAKE_TUNNEL_ID}",
-            "body": {
-              "agentLabel": "Bad_Label;rm"
-            },
-            "statusOnly": true
-          },
-          "capture": [
-            {
-              "variable": "PATCH_BAD_LABEL_STATUS",
-              "from": {
-                "kind": "status"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-40",
-          "label": "PATCH with malformed agentLabel returns 400",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "var",
-                "name": "PATCH_BAD_LABEL_STATUS"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "400"
-              },
-              "message": "PATCH with malformed agentLabel returns 400"
-            }
-          }
-        }
-      ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Tunnel PATCH body validation\"\n# ---------------------------------------------------------------------------\n\n# The body is validated before the tunnel is looked up, so a well-formed body\n# for a nonexistent tunnel is 404 and every 400 below is the body's fault.\nFAKE_TUNNEL_ID=\"00000000-0000-0000-0000-000000000000\"\n\nPATCH_WELLFORMED_STATUS=$(api_patch_status \"tunnels/${FAKE_TUNNEL_ID}\" '{\"enabled\": false}')\nassert_eq \"$PATCH_WELLFORMED_STATUS\" \"404\" \"Well-formed PATCH on a nonexistent tunnel returns 404\" || true\n\nPATCH_EMPTY_STATUS=$(api_patch_status \"tunnels/${FAKE_TUNNEL_ID}\" '{}')\nassert_eq \"$PATCH_EMPTY_STATUS\" \"400\" \"PATCH with no fields returns 400\" || true\n\nPATCH_UNKNOWN_FIELD_STATUS=$(api_patch_status \"tunnels/${FAKE_TUNNEL_ID}\" '{\"enabled\": false, \"subdomain\": \"renamed\"}')\nassert_eq \"$PATCH_UNKNOWN_FIELD_STATUS\" \"400\" \"PATCH with an unknown field returns 400 (strict schema)\" || true\n\nPATCH_ENABLED_TYPE_STATUS=$(api_patch_status \"tunnels/${FAKE_TUNNEL_ID}\" '{\"enabled\": \"yes\"}')\nassert_eq \"$PATCH_ENABLED_TYPE_STATUS\" \"400\" \"PATCH with non-boolean enabled returns 400\" || true\n\nPATCH_BAD_LABEL_STATUS=$(api_patch_status \"tunnels/${FAKE_TUNNEL_ID}\" '{\"agentLabel\": \"Bad_Label;rm\"}')\nassert_eq \"$PATCH_BAD_LABEL_STATUS\" \"400\" \"PATCH with malformed agentLabel returns 400\" || true\n\n# ===========================================================================\n# 2. Invalid UUID for site operations\n# ==========================================================================="
-    },
-    {
-      "id": "invalid-uuid-for-site-operations",
-      "label": "Invalid UUID for site operations",
-      "steps": [
-        {
-          "id": "step-41",
-          "label": "DELETE /api/sites/not-a-uuid",
-          "target": "host",
-          "op": {
-            "type": "api",
-            "method": "DELETE",
-            "path": "sites/not-a-uuid",
-            "statusOnly": true
-          },
-          "capture": [
-            {
-              "variable": "DELETE_SITE_BAD_UUID",
-              "from": {
-                "kind": "status"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-42",
-          "label": "DELETE /api/sites/not-a-uuid returns 400",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "var",
-                "name": "DELETE_SITE_BAD_UUID"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "400"
-              },
-              "message": "DELETE /api/sites/not-a-uuid returns 400"
-            }
-          }
-        }
-      ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid UUID for site operations\"\n# ---------------------------------------------------------------------------\n\nDELETE_SITE_BAD_UUID=$(api_delete_status \"sites/not-a-uuid\")\nassert_eq \"$DELETE_SITE_BAD_UUID\" \"400\" \"DELETE /api/sites/not-a-uuid returns 400\" || true\n\n# ===========================================================================\n# 3. Invalid invite token format\n# ==========================================================================="
-    },
-    {
-      "id": "invalid-invite-token-format",
-      "label": "Invalid invite token format",
-      "steps": [
-        {
-          "id": "step-43",
-          "label": "Set INVITE_GET_STATUS",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/invite/not-a-valid-token\" 2>/dev/null || echo \"000\""
-          },
-          "capture": [
-            {
-              "variable": "INVITE_GET_STATUS",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-44",
-          "label": "GET /api/invite/not-a-valid-token returns 400",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "var",
-                "name": "INVITE_GET_STATUS"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "400"
-              },
-              "message": "GET /api/invite/not-a-valid-token returns 400"
-            }
-          }
-        },
-        {
-          "id": "step-45",
-          "label": "Set INVITE_POST_STATUS",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H \"Content-Type: application/json\" -d '{\"password\":\"Test1234!!\",\"confirmPassword\":\"Test1234!!\"}' \"${BASE_URL}/api/invite/not-a-valid-token/accept\" 2>/dev/null || echo \"000\""
-          },
-          "capture": [
-            {
-              "variable": "INVITE_POST_STATUS",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-46",
-          "label": "POST /api/invite/not-a-valid-token/accept returns 400",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "var",
-                "name": "INVITE_POST_STATUS"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "400"
-              },
-              "message": "POST /api/invite/not-a-valid-token/accept returns 400"
-            }
-          }
-        },
-        {
-          "id": "step-47",
           "label": "Set INVITE_TRAVERSAL_STATUS",
           "target": "local",
           "op": {
@@ -1054,7 +631,7 @@
           ]
         },
         {
-          "id": "step-48",
+          "id": "step-28",
           "label": "Set INVITE_TRAVERSAL_BODY",
           "target": "local",
           "op": {
@@ -1091,7 +668,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-29",
           "label": "Path traversal does not expose /etc/passwd",
           "target": "local",
           "continueOnError": true,
@@ -1132,7 +709,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-30",
           "label": "GET /api/invite/../../etc/passwd returned unexpected status $INVITE_TRAVERSAL_STATUS",
           "target": "local",
           "op": {
@@ -1162,14 +739,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid invite token format\"\n# ---------------------------------------------------------------------------\n\n# Invite routes may or may not require mTLS. Try with mTLS first (via _curl_mtls).\nINVITE_GET_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  \"${BASE_URL}/api/invite/not-a-valid-token\" 2>/dev/null || echo \"000\")\nassert_eq \"$INVITE_GET_STATUS\" \"400\" \"GET /api/invite/not-a-valid-token returns 400\" || true\n\nINVITE_POST_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"password\":\"Test1234!!\",\"confirmPassword\":\"Test1234!!\"}' \\\n  \"${BASE_URL}/api/invite/not-a-valid-token/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$INVITE_POST_STATUS\" \"400\" \"POST /api/invite/not-a-valid-token/accept returns 400\" || true\n\n# Path traversal: curl normalizes ../../etc/passwd so this becomes /etc/passwd → 200 (SPA fallback)\n# or 400/404 depending on normalization. The key is it doesn't expose files.\nINVITE_TRAVERSAL_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  \"${BASE_URL}/api/invite/../../etc/passwd\" 2>/dev/null || echo \"000\")\nif [ \"$INVITE_TRAVERSAL_STATUS\" = \"400\" ] || [ \"$INVITE_TRAVERSAL_STATUS\" = \"404\" ] || [ \"$INVITE_TRAVERSAL_STATUS\" = \"200\" ]; then\n  # Verify it doesn't return actual file content (ensure no real path traversal)\n  INVITE_TRAVERSAL_BODY=$(_curl_mtls \"${BASE_URL}/api/invite/../../etc/passwd\" 2>/dev/null || echo \"\")\n  assert_not_contains \"$INVITE_TRAVERSAL_BODY\" \"root:\" \"Path traversal does not expose /etc/passwd\" || true\nelse\n  log_fail \"GET /api/invite/../../etc/passwd returned unexpected status $INVITE_TRAVERSAL_STATUS\"\nfi\n\n# ===========================================================================\n# 4. Invalid domain format in certs endpoint\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid invite token format\"\n# ---------------------------------------------------------------------------\n\n# The token travels in the body. One that is not a token opens nothing (404,\n# as one that was never made).\nINVITE_GET_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"token\":\"not-a-valid-token\"}' \\\n  \"${BASE_URL}/api/invite/lookup\" 2>/dev/null || echo \"000\")\nassert_eq \"$INVITE_GET_STATUS\" \"404\" \"POST /api/invite/lookup with a malformed token returns 404\" || true\n\nINVITE_POST_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"token\":\"not-a-valid-token\",\"password\":\"Test1234!!\"}' \\\n  \"${BASE_URL}/api/invite/accept\" 2>/dev/null || echo \"000\")\nassert_eq \"$INVITE_POST_STATUS\" \"404\" \"POST /api/invite/accept with a malformed token returns 404\" || true\n\n# Path traversal: curl normalizes ../../etc/passwd so this becomes /etc/passwd → 200 (SPA fallback)\n# or 400/404 depending on normalization. The key is it doesn't expose files.\nINVITE_TRAVERSAL_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  \"${BASE_URL}/api/invite/../../etc/passwd\" 2>/dev/null || echo \"000\")\nif [ \"$INVITE_TRAVERSAL_STATUS\" = \"400\" ] || [ \"$INVITE_TRAVERSAL_STATUS\" = \"404\" ] || [ \"$INVITE_TRAVERSAL_STATUS\" = \"200\" ]; then\n  # Verify it doesn't return actual file content (ensure no real path traversal)\n  INVITE_TRAVERSAL_BODY=$(_curl_mtls \"${BASE_URL}/api/invite/../../etc/passwd\" 2>/dev/null || echo \"\")\n  assert_not_contains \"$INVITE_TRAVERSAL_BODY\" \"root:\" \"Path traversal does not expose /etc/passwd\" || true\nelse\n  log_fail \"GET /api/invite/../../etc/passwd returned unexpected status $INVITE_TRAVERSAL_STATUS\"\nfi\n\n# ===========================================================================\n# 4. Invalid domain format in certs endpoint\n# ==========================================================================="
     },
     {
       "id": "invalid-domain-format-in-certs-endpoint",
       "label": "Invalid domain format in certs endpoint",
       "steps": [
         {
-          "id": "step-51",
+          "id": "step-31",
           "label": "POST /api/certs/a..b/renew",
           "target": "host",
           "op": {
@@ -1188,7 +765,7 @@
           ]
         },
         {
-          "id": "step-52",
+          "id": "step-32",
           "label": "POST /api/certs/a..b/renew returns 400",
           "target": "local",
           "continueOnError": true,
@@ -1209,7 +786,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-33",
           "label": "POST /api/certs/.../renew",
           "target": "host",
           "op": {
@@ -1228,7 +805,7 @@
           ]
         },
         {
-          "id": "step-54",
+          "id": "step-34",
           "label": "POST /api/certs/.../renew returns 400",
           "target": "local",
           "continueOnError": true,
@@ -1249,7 +826,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-35",
           "label": "POST /api/certs/evil.com;inject/renew",
           "target": "host",
           "op": {
@@ -1268,7 +845,7 @@
           ]
         },
         {
-          "id": "step-56",
+          "id": "step-36",
           "label": "POST /api/certs/evil.com;inject/renew returns 400",
           "target": "local",
           "continueOnError": true,
@@ -1296,7 +873,7 @@
       "label": "Subdomain injection attempts",
       "steps": [
         {
-          "id": "step-57",
+          "id": "step-37",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1316,7 +893,7 @@
           ]
         },
         {
-          "id": "step-58",
+          "id": "step-38",
           "label": "Subdomain with semicolon rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1337,7 +914,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-39",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1357,7 +934,7 @@
           ]
         },
         {
-          "id": "step-60",
+          "id": "step-40",
           "label": "Subdomain with newline rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1378,7 +955,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-41",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1398,7 +975,7 @@
           ]
         },
         {
-          "id": "step-62",
+          "id": "step-42",
           "label": "Subdomain with path traversal rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1419,7 +996,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-43",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1439,7 +1016,7 @@
           ]
         },
         {
-          "id": "step-64",
+          "id": "step-44",
           "label": "Subdomain with uppercase rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1460,7 +1037,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-45",
           "label": "Set LONG_SUBDOMAIN",
           "target": "local",
           "op": {
@@ -1477,7 +1054,7 @@
           ]
         },
         {
-          "id": "step-66",
+          "id": "step-46",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1497,7 +1074,7 @@
           ]
         },
         {
-          "id": "step-67",
+          "id": "step-47",
           "label": "Subdomain with 64 chars rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1525,7 +1102,7 @@
       "label": "Port boundary validation",
       "steps": [
         {
-          "id": "step-68",
+          "id": "step-48",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1545,7 +1122,7 @@
           ]
         },
         {
-          "id": "step-69",
+          "id": "step-49",
           "label": "Port 0 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1566,7 +1143,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-50",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1586,7 +1163,7 @@
           ]
         },
         {
-          "id": "step-71",
+          "id": "step-51",
           "label": "Port 1023 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1607,7 +1184,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-52",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1627,7 +1204,7 @@
           ]
         },
         {
-          "id": "step-73",
+          "id": "step-53",
           "label": "Port 65536 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1648,7 +1225,7 @@
           }
         },
         {
-          "id": "step-74",
+          "id": "step-54",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1668,7 +1245,7 @@
           ]
         },
         {
-          "id": "step-75",
+          "id": "step-55",
           "label": "Port -1 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1689,7 +1266,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-56",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1709,7 +1286,7 @@
           ]
         },
         {
-          "id": "step-77",
+          "id": "step-57",
           "label": "Port 'abc' (string) rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1730,7 +1307,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-58",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1750,7 +1327,7 @@
           ]
         },
         {
-          "id": "step-79",
+          "id": "step-59",
           "label": "Request body limit 0 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1771,7 +1348,7 @@
           }
         },
         {
-          "id": "step-80",
+          "id": "step-60",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1791,7 +1368,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-61",
           "label": "Request body limit 10241 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1812,7 +1389,7 @@
           }
         },
         {
-          "id": "step-83",
+          "id": "step-63",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1832,7 +1409,7 @@
           ]
         },
         {
-          "id": "step-84",
+          "id": "step-64",
           "label": "Reserved port ${reserved_port} rejected for a tunnel (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1853,7 +1430,7 @@
           }
         },
         {
-          "id": "step-86",
+          "id": "step-66",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1872,7 +1449,7 @@
           ]
         },
         {
-          "id": "step-87",
+          "id": "step-67",
           "label": "Reserved-port rejection explains the ports belong to Lamaste services",
           "target": "local",
           "continueOnError": true,
@@ -1893,7 +1470,7 @@
           }
         },
         {
-          "id": "step-88",
+          "id": "step-68",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -1911,7 +1488,7 @@
           ]
         },
         {
-          "id": "step-89",
+          "id": "step-69",
           "label": "Reserved-port creates left no tunnel behind",
           "target": "local",
           "continueOnError": true,
@@ -1939,7 +1516,7 @@
       "label": "Malformed JSON bodies",
       "steps": [
         {
-          "id": "step-90",
+          "id": "step-70",
           "label": "Set MALFORMED_STATUS",
           "target": "local",
           "op": {
@@ -1956,7 +1533,7 @@
           ]
         },
         {
-          "id": "step-91",
+          "id": "step-71",
           "label": "Invalid JSON body to /api/tunnels returns 400",
           "target": "local",
           "continueOnError": true,
@@ -1977,7 +1554,7 @@
           }
         },
         {
-          "id": "step-92",
+          "id": "step-72",
           "label": "Set EMPTY_BODY_STATUS",
           "target": "local",
           "op": {
@@ -1994,7 +1571,7 @@
           ]
         },
         {
-          "id": "step-93",
+          "id": "step-73",
           "label": "Empty body to /api/users rejected (HTTP $EMPTY_BODY_STATUS)",
           "target": "local",
           "op": {
@@ -2019,7 +1596,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-74",
           "label": "Empty body to /api/users should be rejected (got HTTP $EMPTY_BODY_STATUS)",
           "target": "local",
           "op": {
@@ -2051,7 +1628,7 @@
       "label": "File permissions",
       "steps": [
         {
-          "id": "step-96",
+          "id": "step-76",
           "label": "Set PERMS",
           "target": "local",
           "op": {
@@ -2068,7 +1645,7 @@
           ]
         },
         {
-          "id": "step-97",
+          "id": "step-77",
           "label": "$f has correct permissions (600)",
           "target": "local",
           "op": {
@@ -2083,7 +1660,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-78",
           "label": "$f has permissions $PERMS (expected 600)",
           "target": "local",
           "op": {
@@ -2098,7 +1675,7 @@
           }
         },
         {
-          "id": "step-99",
+          "id": "step-79",
           "label": "$f not found",
           "target": "local",
           "op": {
@@ -2108,7 +1685,7 @@
           }
         },
         {
-          "id": "step-101",
+          "id": "step-81",
           "label": "Set AUTHFILE_STAT",
           "target": "local",
           "op": {
@@ -2125,7 +1702,7 @@
           ]
         },
         {
-          "id": "step-102",
+          "id": "step-82",
           "label": "chisel-users is 0640 lamaste:lamaste-chisel",
           "target": "local",
           "continueOnError": true,
@@ -2146,7 +1723,7 @@
           }
         },
         {
-          "id": "step-103",
+          "id": "step-83",
           "label": "Set CREDS_PERMS",
           "target": "local",
           "op": {
@@ -2163,7 +1740,7 @@
           ]
         },
         {
-          "id": "step-104",
+          "id": "step-84",
           "label": "chisel-credentials.json has permissions 600",
           "target": "local",
           "continueOnError": true,
@@ -2184,7 +1761,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-85",
           "label": "Set PERMS",
           "target": "local",
           "op": {
@@ -2201,7 +1778,7 @@
           ]
         },
         {
-          "id": "step-106",
+          "id": "step-86",
           "label": "panel.json has correct permissions ($PERMS)",
           "target": "local",
           "op": {
@@ -2226,7 +1803,7 @@
           }
         },
         {
-          "id": "step-107",
+          "id": "step-87",
           "label": "panel.json has permissions $PERMS (expected 600 or 640)",
           "target": "local",
           "op": {

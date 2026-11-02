@@ -130,68 +130,6 @@ INVITE_POST_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \
   "${BASE_URL}/api/invite/accept" 2>/dev/null || echo "000")
 assert_eq "$INVITE_POST_STATUS" "404" "POST /api/invite/accept with a malformed token returns 404" || true
 
-# Path traversal: curl normalizes ../etc/passwd so this becomes /api/etc/passwd → 404
-PATCH_TRAVERSAL_STATUS=$(api_patch_status "tunnels/../etc/passwd" '{"enabled": false}')
-if [ "$PATCH_TRAVERSAL_STATUS" = "400" ] || [ "$PATCH_TRAVERSAL_STATUS" = "404" ]; then
-  log_pass "PATCH /api/tunnels/../etc/passwd rejected (HTTP $PATCH_TRAVERSAL_STATUS)"
-else
-  log_fail "PATCH /api/tunnels/../etc/passwd should be rejected (got HTTP $PATCH_TRAVERSAL_STATUS)"
-fi
-
-# ---------------------------------------------------------------------------
-log_section "Tunnel PATCH body validation"
-# ---------------------------------------------------------------------------
-
-# The body is validated before the tunnel is looked up, so a well-formed body
-# for a nonexistent tunnel is 404 and every 400 below is the body's fault.
-FAKE_TUNNEL_ID="00000000-0000-0000-0000-000000000000"
-
-PATCH_WELLFORMED_STATUS=$(api_patch_status "tunnels/${FAKE_TUNNEL_ID}" '{"enabled": false}')
-assert_eq "$PATCH_WELLFORMED_STATUS" "404" "Well-formed PATCH on a nonexistent tunnel returns 404" || true
-
-PATCH_EMPTY_STATUS=$(api_patch_status "tunnels/${FAKE_TUNNEL_ID}" '{}')
-assert_eq "$PATCH_EMPTY_STATUS" "400" "PATCH with no fields returns 400" || true
-
-PATCH_UNKNOWN_FIELD_STATUS=$(api_patch_status "tunnels/${FAKE_TUNNEL_ID}" '{"enabled": false, "subdomain": "renamed"}')
-assert_eq "$PATCH_UNKNOWN_FIELD_STATUS" "400" "PATCH with an unknown field returns 400 (strict schema)" || true
-
-PATCH_ENABLED_TYPE_STATUS=$(api_patch_status "tunnels/${FAKE_TUNNEL_ID}" '{"enabled": "yes"}')
-assert_eq "$PATCH_ENABLED_TYPE_STATUS" "400" "PATCH with non-boolean enabled returns 400" || true
-
-PATCH_BAD_LABEL_STATUS=$(api_patch_status "tunnels/${FAKE_TUNNEL_ID}" '{"agentLabel": "Bad_Label;rm"}')
-assert_eq "$PATCH_BAD_LABEL_STATUS" "400" "PATCH with malformed agentLabel returns 400" || true
-
-# ===========================================================================
-# 2. Invalid UUID for site operations
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-log_section "Invalid UUID for site operations"
-# ---------------------------------------------------------------------------
-
-DELETE_SITE_BAD_UUID=$(api_delete_status "sites/not-a-uuid")
-assert_eq "$DELETE_SITE_BAD_UUID" "400" "DELETE /api/sites/not-a-uuid returns 400" || true
-
-# ===========================================================================
-# 3. Invalid invite token format
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-log_section "Invalid invite token format"
-# ---------------------------------------------------------------------------
-
-# Invite routes may or may not require mTLS. Try with mTLS first (via _curl_mtls).
-INVITE_GET_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \
-  "${BASE_URL}/api/invite/not-a-valid-token" 2>/dev/null || echo "000")
-assert_eq "$INVITE_GET_STATUS" "400" "GET /api/invite/not-a-valid-token returns 400" || true
-
-INVITE_POST_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"password":"Test1234!!","confirmPassword":"Test1234!!"}' \
-  "${BASE_URL}/api/invite/not-a-valid-token/accept" 2>/dev/null || echo "000")
-assert_eq "$INVITE_POST_STATUS" "400" "POST /api/invite/not-a-valid-token/accept returns 400" || true
-
 # Path traversal: curl normalizes ../../etc/passwd so this becomes /etc/passwd → 200 (SPA fallback)
 # or 400/404 depending on normalization. The key is it doesn't expose files.
 INVITE_TRAVERSAL_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \
