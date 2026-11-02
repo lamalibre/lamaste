@@ -15,6 +15,7 @@ import {
   isUserSurfaceUrl,
   signRelayAssertion,
   userSurfaceHostByFqdn,
+  userSurfaceHostServing,
 } from '@lamalibre/lamaste';
 import type { MembershipKind, RelaySigningKey, UserSurfaceHost } from '@lamalibre/lamaste';
 import { AUTHELIA_VERIFY_URL, SESSION_CACHE_TTL_MS } from '../../lib/constants.js';
@@ -926,6 +927,17 @@ async function authorizeDelegatedInvitationsRequest(
   if (!validated) return reply.code(401).send();
   const { kind } = domainMembership(index, portal, validated.username);
   if (kind !== 'member' && kind !== 'external') return refuse('not_a_member');
+
+  // Whoever invites must reach the plugin's site: a role left on someone
+  // whose site grant was revoked invites nobody. Only a plugin's own site
+  // can be invited into, and the fail-closed answer for anything else is
+  // this one.
+  const host = userSurfaceHostServing(fastify.getUserSurfaceHosts(), route);
+  if (host?.kind !== 'site') return refuse('no_web_surface');
+  if (host.accessMode !== 'authenticated') {
+    const access = await checkAccess(validated.username, 'site', host.id);
+    if (!access.allowed) return refuse('no_matching_grant');
+  }
 
   const key = await currentRelayKey(fastify, request);
   if (!key) {
