@@ -317,10 +317,14 @@ esac
 log_section "The root helper is the candidate's"
 
 PRIV_AFTER=$(sudo sha256sum "${PRIV}" | cut -d' ' -f1)
-if [ "${PRIV_AFTER}" != "${PRIV_BEFORE}" ]; then
-  log_pass "lamaste-priv was replaced by the update"
-else
-  log_fail "lamaste-priv is still the one ${BEFORE_VERSION} installed"
+# Two releases may ship the same script: what counts is that the one in place
+# is the candidate's own.
+mkdir -p "${WORK_DIR}/pack"
+(cd "${WORK_DIR}/pack" && npm pack "@lamalibre/create-lamaste@${CANDIDATE}" --silent > /dev/null 2>&1) || true
+PRIV_CANDIDATE=$(tar -xzOf "${WORK_DIR}/pack/lamalibre-create-lamaste-${CANDIDATE}.tgz" package/scripts/lamaste-priv 2>/dev/null | sha256sum | cut -d' ' -f1)
+assert_eq "${PRIV_AFTER}" "${PRIV_CANDIDATE}" "lamaste-priv in place is the one ${CANDIDATE} ships" || true
+if [ "${PRIV_AFTER}" = "${PRIV_BEFORE}" ]; then
+  log_info "${BEFORE_VERSION} and ${CANDIDATE} ship the same lamaste-priv"
 fi
 OUT=$(printf 'server {\n listen 443 ssl;\n}\n' | sudo "${PRIV}" nginx-site write "lamalibre-lamaste-app-e2eup1legacy" 2>&1 > /dev/null || true)
 assert_contains "$OUT" "site name not allowed for write" "It refuses a vhost under a pre-4.7 name" || true
