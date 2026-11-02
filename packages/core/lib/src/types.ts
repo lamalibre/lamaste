@@ -722,8 +722,14 @@ export interface AdminClient {
   getDomainBrandingPreview(name: string): Promise<DomainBrandingPreview>;
 
   // Invitations — the administrator's and delegated ones (delegated-invitations-design.md)
-  /** Every invitation, both kinds, optionally of one plugin, one inviter (user id) or one kind. */
-  getInvitations(filter?: InvitationListFilter): Promise<{ invitations: InvitationAdminView[] }>;
+  /**
+   * The newest invitations, both kinds, optionally of one plugin, one
+   * inviter (user id) or one kind; `truncated` when there are more than
+   * `filter.limit` (default 500).
+   */
+  getInvitations(
+    filter?: InvitationListFilter,
+  ): Promise<{ invitations: InvitationAdminView[]; truncated: boolean }>;
   createInvitation(data: {
     username: string;
     email: string;
@@ -738,11 +744,11 @@ export interface AdminClient {
   }): Promise<{ ok: boolean; invitation: unknown; token: string }>;
   /**
    * Revoke a pending invitation, delete one that ended; one being accepted
-   * is marked: it ends revoked, with no grant (`action: 'marked'`, 202).
+   * is marked (`action: 'marked'`, 202): it ends revoked, and an account its
+   * acceptance had already made is disabled. 409 `invitation_has_user` for
+   * one that made an account: it is the record of who invited whom.
    */
-  revokeInvitation(
-    id: string,
-  ): Promise<{ ok: boolean; action?: 'revoked' | 'deleted' | 'marked' }>;
+  revokeInvitation(id: string): Promise<{ ok: boolean; action?: 'revoked' | 'deleted' | 'marked' }>;
   /**
    * Disable everyone the user `inviterUserId` invited by delegated
    * invitation — and, `transitive`, everyone those invited — through the
@@ -757,7 +763,8 @@ export interface AdminClient {
   /**
    * Set a plugin's whole policy: 400 `invalid_policy`, 409
    * `invitations_unavailable` when enabling a plugin that cannot be invited
-   * into (no inviting role approved, no restricted web surface).
+   * into (no inviting role approved, no restricted web surface); `warnings`
+   * when the enabled policies could outgrow Gatekeeper's free grants.
    */
   setPluginInvitationPolicy(
     name: string,

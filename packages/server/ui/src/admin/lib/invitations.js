@@ -63,7 +63,9 @@ export function invitedByText(invitation) {
 
 /** What the toast says after a revocation, by the panel's `action`. */
 export function revokeResultText(action) {
-  if (action === 'marked') return 'It is being accepted — it will end revoked, with no access';
+  if (action === 'marked') {
+    return 'It is being accepted — it will end revoked, and an account made by then disabled';
+  }
   return action === 'deleted' ? 'Invitation deleted' : 'Invitation revoked';
 }
 

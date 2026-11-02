@@ -6,7 +6,7 @@
  * Subcommands:
  *   list [--plugin <n>] [--inviter <user>]
  *                                 Every invitation: who for, who invited, role, status
- *   revoke <id>                   Revoke a pending one (delete one that ended)
+ *   revoke <id>                   Revoke a pending one (delete one that ended with no account)
  *   disable-invitees <user> [--transitive]
  *                                 Disable everyone a person invited (and those they invited)
  *
@@ -59,6 +59,7 @@ ${b('Subcommands:')}
   ${c('list [--plugin <name>] [--inviter <user>]')}
                                     Every invitation: who for, who invited, role, status
   ${c('revoke <id>')}                       Revoke a pending invitation; delete one that ended
+                                    without making an account (one that made one stays on record)
   ${c('disable-invitees <user> [--transitive]')}
                                     Disable everyone a person invited — with --transitive,
                                     everyone those people invited too
@@ -86,12 +87,13 @@ async function listCmd(rest, { json }) {
     ...(filter.plugin ? { plugin: filter.plugin } : {}),
     ...(filter.inviter ? { inviter: await userIdOf(filter.inviter, { json }) } : {}),
   };
-  const { invitations } = await call(json, 'GET', invitationsPath(query));
+  const { invitations, truncated } = await call(json, 'GET', invitationsPath(query));
   if (json) {
-    emit({ invitations });
+    emit({ invitations, truncated });
     return;
   }
   printInvitations(invitations);
+  if (truncated) console.log(chalk.yellow('  Only the newest invitations are shown.\n'));
 }
 
 function printInvitations(invitations) {
@@ -157,20 +159,24 @@ export async function pluginInvitationsCmd(name, rest, { json }) {
     }
     console.log(`\n  ${chalk.green('✓')} Invitation policy saved`);
     for (const line of policyLines(saved)) console.log(`    ${line}`);
+    for (const warning of saved.warnings ?? []) {
+      console.log(`  ${chalk.yellow('!')} ${warningLine(warning)}`);
+    }
     console.log('');
     return;
   }
   if (action !== undefined) fail(usageText, json);
-  const [policy, { invitations }] = await Promise.all([
+  const [policy, { invitations, truncated }] = await Promise.all([
     call(json, 'GET', path),
     call(json, 'GET', invitationsPath({ plugin: name })),
   ]);
   if (json) {
-    emit({ policy, invitations });
+    emit({ policy, invitations, truncated });
     return;
   }
   console.log('');
   console.log(chalk.bold(`  Invitations of ${terminalText(name)}`));
   for (const line of policyLines(policy)) console.log(`    ${line}`);
   printInvitations(invitations);
+  if (truncated) console.log(chalk.yellow('  Only the newest invitations are shown.\n'));
 }
