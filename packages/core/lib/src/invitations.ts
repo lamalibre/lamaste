@@ -280,6 +280,8 @@ export interface InvitationListFilter {
   /** The inviter's user id. */
   readonly inviter?: string;
   readonly kind?: InvitationKind;
+  /** At most this many, newest first (default 500, at most 2000). */
+  readonly limit?: number;
 }
 
 /** An invitation as its inviter sees it on the inviter's page. */
@@ -318,4 +320,6 @@ export interface InvitationPolicyView extends InvitationPolicy {
   readonly unavailableReason: string | null;
   /** Its roles that may invite, with the roles each may give. */
   readonly invitingRoles: readonly { readonly role: string; readonly invites: readonly string[] }[];
+  /** On a change: what the administrator should know (the grant table's room). */
+  readonly warnings?: readonly { readonly step: string; readonly message: string }[];
 }

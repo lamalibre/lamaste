@@ -1223,6 +1223,11 @@ export default function Users() {
           </div>
         )}
       </div>
+      {invitationsQuery.data?.truncated && (
+        <p className="text-xs text-amber-300 mb-2">
+          Only the newest invitations are shown; a plugin’s card lists its own.
+        </p>
+      )}
       <div className="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900">
         {invitationsQuery.isLoading ? (
           <div className="p-8 text-center">

@@ -96,7 +96,7 @@ export function invitationRows(invitations) {
 export function revokeText(id, action) {
   const who = terminalText(id);
   if (action === 'marked') {
-    return `${who} is being accepted: it will end revoked, with no access`;
+    return `${who} is being accepted: it will end revoked, and an account made by then disabled`;
   }
   return action === 'deleted' ? `${who} deleted` : `${who} revoked`;
 }

@@ -34,10 +34,11 @@ function PolicyForm({ plugin, policy }) {
   const [error, setError] = useState('');
   const save = useMutation({
     mutationFn: (input) => client.setPluginInvitationPolicy(plugin.name, input),
-    onSuccess: () => {
+    onSuccess: (saved) => {
       queryClient.invalidateQueries({ queryKey: ['plugin-invitation-policy', plugin.name] });
       queryClient.invalidateQueries({ queryKey: ['invitations'] });
       addToast('Invitation policy saved');
+      for (const warning of saved?.warnings ?? []) addToast(warningText(warning), 'warning');
     },
     onError: (err) => setError(errorMessage(err)),
   });
@@ -210,6 +211,9 @@ export default function PluginInvitations({ plugin }) {
       )}
       {policy && <PolicyForm key={policy.updatedAt ?? 'unset'} plugin={plugin} policy={policy} />}
 
+      {invitationsQuery.data?.truncated && (
+        <p className="text-amber-300">Only the newest invitations are shown here.</p>
+      )}
       {open.length > 0 && (
         <div>
           <p className="mb-1 text-zinc-300">Open</p>
