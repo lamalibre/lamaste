@@ -4,6 +4,21 @@
  * nothing here reads the clock or calls the panel.
  */
 
+/**
+ * Refetch what a users change touches: the users, the directory (ids,
+ * tombstones), and the plugins' people (audiences follow users).
+ *
+ * @param {import('@tanstack/react-query').QueryClient} queryClient
+ */
+export function invalidateUsers(queryClient) {
+  queryClient.invalidateQueries({ queryKey: ['users'] });
+  queryClient.invalidateQueries({ queryKey: ['user-directory'] });
+  queryClient.invalidateQueries({ queryKey: ['plugin-identity'] });
+  queryClient.invalidateQueries({ queryKey: ['plugin-audience'] });
+  queryClient.invalidateQueries({ queryKey: ['domains'] });
+  queryClient.invalidateQueries({ queryKey: ['domain-members'] });
+}
+
 /** The reason an update waits because it adds or removes roles, or widens the attributes. */
 export const IDENTITY_CHANGED = 'identity.changed';
 
@@ -274,8 +289,9 @@ function grantsAffectedEntries(diff) {
 /**
  * What an update changes in a plugin's identity block (`pendingUpdate.
  * identity`: `{ before, after, rolesAdded, rolesRemoved, attributesAdded,
- * attributesRemoved, labelsChanged, grantsAffected? }`), as rows — roles
- * added and removed and attributes widened wait for an administrator
+ * attributesRemoved, labelsChanged, invitesAdded, invitesRemoved,
+ * grantsAffected? }`), as rows — roles added and removed, attributes widened
+ * and a role allowed to invite into one more role wait for an administrator
  * (`approval`), narrowing and label edits only change the digest. When it
  * removes roles, `grantsAffected` (`{ rewritten, revoked }`, null when
  * Gatekeeper could not be read) says how many role grants approving it
@@ -292,6 +308,10 @@ export function identityDiffRows(diff) {
     const label = labelOf(block, id);
     return label ? `${id} (${label})` : id;
   };
+  const invites = (block, value) =>
+    (Array.isArray(value) ? value : []).map(
+      (entry) => `${role(block)(entry.role)} → ${list(entry.roles).map(role(block)).join(', ')}`,
+    );
   const rows = [
     { label: 'roles added', entries: list(diff.rolesAdded).map(role(diff.after)), approval: true },
     {
@@ -307,6 +327,12 @@ export function identityDiffRows(diff) {
     {
       label: 'receives less about its users',
       entries: list(diff.attributesRemoved).map(attributeLabel),
+      approval: false,
+    },
+    { label: 'may invite more', entries: invites(diff.after, diff.invitesAdded), approval: true },
+    {
+      label: 'may invite less',
+      entries: invites(diff.before, diff.invitesRemoved),
       approval: false,
     },
     {

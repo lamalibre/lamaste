@@ -14,6 +14,15 @@
 import { z } from 'zod';
 
 import { DomainNameSchema } from './domains.js';
+import {
+  INVITATION_POLICY_LIMITS,
+  INVITATION_POLICY_MAX_EMAIL_DOMAINS,
+} from './invitation-limits.js';
+import type {
+  InvitationKind,
+  InvitationRevokeReason,
+  InvitationStatus,
+} from './invitation-limits.js';
 import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from './constants.js';
 import {
   IDENTITY_DISPLAY_NAME_MAX_LENGTH,
@@ -31,16 +40,6 @@ export const INVITATION_TOKEN_BYTES = 32;
 
 /** An invitation token as a link carries it: 64 lower-case hex characters. */
 export const INVITATION_TOKEN_RE = /^[a-f0-9]{64}$/;
-
-/** At most this many e-mail domains in one plugin's policy. */
-export const INVITATION_POLICY_MAX_EMAIL_DOMAINS = 20;
-
-/** The policy's bounds and defaults. */
-export const INVITATION_POLICY_LIMITS = {
-  maxOpenPerInviter: { min: 1, max: 100, default: 10 },
-  maxJoined: { min: 1, max: 500, default: 50 },
-  lifetimeDays: { min: 1, max: 30, default: 7 },
-} as const;
 
 /** Delegated invitations one inviter may make in an hour, revoked ones included. */
 export const INVITATIONS_PER_INVITER_PER_HOUR = 30;
@@ -63,41 +62,20 @@ export const INVITATION_RETENTION_DAYS = 90;
 /** The largest request body of the inviter's API. */
 export const DELEGATED_INVITATIONS_BODY_LIMIT = 8 * 1024;
 
-// ---------------------------------------------------------------------------
-// Statuses and reasons
-// ---------------------------------------------------------------------------
-
-export const INVITATION_KINDS = ['admin', 'delegated'] as const;
-export type InvitationKind = (typeof INVITATION_KINDS)[number];
-
-/** What an invitation shows: `expired` is a pending one past its expiry. */
-export const INVITATION_STATUSES = [
-  'pending',
-  'expired',
-  'accepting',
-  'accepted',
-  'revoked',
-] as const;
-export type InvitationStatus = (typeof INVITATION_STATUSES)[number];
-
-/** Why an invitation was revoked. */
-export const INVITATION_REVOKE_REASONS = [
-  'inviter',
-  'admin',
-  'inviter_disabled',
-  'inviter_removed',
-  'inviter_unentitled',
-  'policy_disabled',
-  'email_domain_removed',
-  'plugin_removed',
-  'role_undeclared',
-  'surface_removed',
-  'surface_not_restricted',
-  'attempts_exhausted',
-  'repair_abandoned',
-  'superseded',
-] as const;
-export type InvitationRevokeReason = (typeof INVITATION_REVOKE_REASONS)[number];
+// The policy's bounds, the statuses and the reasons: invitation-limits.ts,
+// which the panel's UI imports on its own.
+export {
+  INVITATION_KINDS,
+  INVITATION_POLICY_LIMITS,
+  INVITATION_POLICY_MAX_EMAIL_DOMAINS,
+  INVITATION_REVOKE_REASONS,
+  INVITATION_STATUSES,
+} from './invitation-limits.js';
+export type {
+  InvitationKind,
+  InvitationRevokeReason,
+  InvitationStatus,
+} from './invitation-limits.js';
 
 // ---------------------------------------------------------------------------
 // Values

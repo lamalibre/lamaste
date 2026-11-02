@@ -29,6 +29,10 @@
     "./branding": {
       "types": "./dist/auth-branding.d.ts",
       "import": "./dist/auth-branding.js"
+    },
+    "./invitation-limits": {
+      "types": "./dist/invitation-limits.d.ts",
+      "import": "./dist/invitation-limits.js"
     }
   },
   "files": [

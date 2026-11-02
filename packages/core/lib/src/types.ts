@@ -738,11 +738,11 @@ export interface AdminClient {
   }): Promise<{ ok: boolean; invitation: unknown; token: string }>;
   /**
    * Revoke a pending invitation, delete one that ended; one being accepted
-   * is marked to be revoked (`action: 'revoke_pending'`, 202).
+   * is marked: it ends revoked, with no grant (`action: 'marked'`, 202).
    */
   revokeInvitation(
     id: string,
-  ): Promise<{ ok: boolean; action?: 'revoked' | 'deleted' | 'revoke_pending' }>;
+  ): Promise<{ ok: boolean; action?: 'revoked' | 'deleted' | 'marked' }>;
   /**
    * Disable everyone the user `inviterUserId` invited by delegated
    * invitation — and, `transitive`, everyone those invited — through the
@@ -751,9 +751,9 @@ export interface AdminClient {
   disableInvitees(
     inviterUserId: string,
     options?: { transitive?: boolean },
-  ): Promise<{ disabled: string[]; warnings?: AdminWarning[] }>;
+  ): Promise<{ ok: boolean; disabled: string[]; warnings?: AdminWarning[] }>;
   /** A plugin's delegated-invitation policy (off when none was set), and whether it can be invited into. */
-  getPluginInvitationPolicy(name: string): Promise<{ policy: InvitationPolicyView }>;
+  getPluginInvitationPolicy(name: string): Promise<InvitationPolicyView>;
   /**
    * Set a plugin's whole policy: 400 `invalid_policy`, 409
    * `invitations_unavailable` when enabling a plugin that cannot be invited
@@ -762,7 +762,7 @@ export interface AdminClient {
   setPluginInvitationPolicy(
     name: string,
     policy: InvitationPolicyInput,
-  ): Promise<{ policy: InvitationPolicyView }>;
+  ): Promise<InvitationPolicyView>;
 
   // Sites
   getSites(): Promise<{ sites: unknown[] }>;

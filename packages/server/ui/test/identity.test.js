@@ -202,6 +202,33 @@ test('an identity diff: what waits for approval, what only changes the digest', 
     declaredAfter: true,
   });
 
+  // A role allowed to invite into one more role waits; losing one does not.
+  assert.deepEqual(
+    identityDiffRows({
+      before,
+      after,
+      rolesAdded: [],
+      rolesRemoved: [],
+      attributesAdded: [],
+      attributesRemoved: [],
+      labelsChanged: [],
+      invitesAdded: [{ role: 'viewer', roles: ['auditor'] }],
+      invitesRemoved: [{ role: 'editor', roles: ['viewer', 'editor'] }],
+    }).rows,
+    [
+      {
+        label: 'may invite more',
+        entries: ['viewer (Reader) → auditor (Auditor)'],
+        approval: true,
+      },
+      {
+        label: 'may invite less',
+        entries: ['editor (Editor) → viewer (Viewer), editor (Editor)'],
+        approval: false,
+      },
+    ],
+  );
+
   // A removed role stays removed: how many grants approving it changes.
   const removing = {
     before,

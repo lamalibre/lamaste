@@ -26,8 +26,18 @@ import { useToast } from '../components/Toast.jsx';
 import CopyableId from '../components/CopyableId.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { relativeTime } from '../lib/formatters.js';
-import { isLastEnabledAdmin, warningText } from '../lib/identity.js';
+import { invalidateUsers, isLastEnabledAdmin, warningText } from '../lib/identity.js';
+import {
+  filterInvitations,
+  invitationFilters,
+  invitedByText,
+  inviteeText,
+  isRevocable,
+  revokeReasonText,
+  revokeResultText,
+} from '../lib/invitations.js';
 import { ConfirmDialog, DialogButtons, Modal } from '../components/Dialog.jsx';
+import InvitationStatus from '../components/InvitationStatus.jsx';
 import {
   DomainChips,
   DomainMembershipChoice,
@@ -36,19 +46,6 @@ import {
   useMembershipChoice,
 } from '../components/DomainChoice.jsx';
 import { isExternalAnywhere } from '../lib/domains.js';
-
-/**
- * Refetch what a users change touches: the users, the directory (ids,
- * tombstones), and the plugins' people (audiences follow users).
- */
-function invalidateUsers(queryClient) {
-  queryClient.invalidateQueries({ queryKey: ['users'] });
-  queryClient.invalidateQueries({ queryKey: ['user-directory'] });
-  queryClient.invalidateQueries({ queryKey: ['plugin-identity'] });
-  queryClient.invalidateQueries({ queryKey: ['plugin-audience'] });
-  queryClient.invalidateQueries({ queryKey: ['domains'] });
-  queryClient.invalidateQueries({ queryKey: ['domain-members'] });
-}
 
 /** Toast each warning a users change came back with: what the panel could not complete beside it. */
 function toastWarnings(toast, result) {
@@ -886,6 +883,7 @@ export default function Users() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteResult, setInviteResult] = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
+  const [invitationFilter, setInvitationFilter] = useState({ plugin: '', inviter: '' });
   const { newUsersNeedDomains: showDomains } = useDomains();
 
   const usersQuery = useQuery({
@@ -959,9 +957,9 @@ export default function Users() {
 
   const revokeMutation = useMutation({
     mutationFn: (id) => client.revokeInvitation(id),
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['invitations'] });
-      toast('Invitation revoked');
+      toast(revokeResultText(result?.action));
       setRevokeTarget(null);
     },
     onError: (err) => {
@@ -971,7 +969,9 @@ export default function Users() {
   });
 
   const users = usersQuery.data?.users || [];
-  const invitations = invitationsQuery.data?.invitations || [];
+  const allInvitations = invitationsQuery.data?.invitations;
+  const invitationChoices = invitationFilters(allInvitations);
+  const invitations = filterInvitations(allInvitations, invitationFilter);
   const isLastUser = users.length <= 1;
 
   // After creating a user, immediately reset TOTP to show enrollment
@@ -1184,7 +1184,44 @@ export default function Users() {
       {/* Invitations Section */}
       <div className="mt-8 mb-6">
         <h2 className="text-lg font-bold text-white mb-1">Invitations</h2>
-        <p className="text-zinc-500 text-sm">Pending and past invitation links.</p>
+        <p className="text-zinc-500 text-sm">
+          Pending and past invitation links — yours, and those people holding a plugin&apos;s
+          inviting role made.
+        </p>
+        {(invitationChoices.plugins.length > 0 || invitationChoices.inviters.length > 0) && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <select
+              value={invitationFilter.plugin}
+              onChange={(e) =>
+                setInvitationFilter((previous) => ({ ...previous, plugin: e.target.value }))
+              }
+              aria-label="Filter by plugin"
+              className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-white focus:border-cyan-500 focus:outline-none"
+            >
+              <option value="">All plugins</option>
+              {invitationChoices.plugins.map((plugin) => (
+                <option key={plugin} value={plugin}>
+                  {plugin}
+                </option>
+              ))}
+            </select>
+            <select
+              value={invitationFilter.inviter}
+              onChange={(e) =>
+                setInvitationFilter((previous) => ({ ...previous, inviter: e.target.value }))
+              }
+              aria-label="Filter by inviter"
+              className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-white focus:border-cyan-500 focus:outline-none"
+            >
+              <option value="">All inviters</option>
+              {invitationChoices.inviters.map((inviter) => (
+                <option key={inviter.userId} value={inviter.userId}>
+                  {inviter.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
       <div className="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900">
         {invitationsQuery.isLoading ? (
@@ -1195,17 +1232,20 @@ export default function Users() {
           <div className="p-8 text-center text-red-400 text-sm">Failed to load invitations</div>
         ) : invitations.length === 0 ? (
           <div className="p-8 text-center text-zinc-500 text-sm">
-            No invitations yet. Click &quot;Invite User&quot; to generate a link.
+            {(allInvitations?.length ?? 0) > 0
+              ? 'No invitation matches these filters.'
+              : 'No invitations yet. Click "Invite User" to generate a link.'}
           </div>
         ) : (
           <table className="w-full text-left">
             <thead>
               <tr className="border-b border-zinc-700">
-                <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400">
-                  Username
-                </th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400">Invitee</th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400 hidden sm:table-cell">
-                  Email
+                  Invited by
+                </th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400 hidden md:table-cell">
+                  Role
                 </th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400">Status</th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase text-zinc-400 hidden md:table-cell">
@@ -1220,34 +1260,37 @@ export default function Users() {
               {invitations.map((inv) => (
                 <tr key={inv.id} className="border-b border-zinc-700 last:border-b-0">
                   <td className="px-4 py-3 font-mono text-sm text-cyan-400">
-                    {inv.username}
+                    {inviteeText(inv)}
                     {isExternalAnywhere(inv.domains) && (
                       <span className="ml-2">
                         <ExternalBadge />
                       </span>
                     )}
+                    {inv.username && inv.email && (
+                      <span className="mt-0.5 block font-sans text-xs text-zinc-500">
+                        {inv.email}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-sm text-zinc-400 hidden sm:table-cell">
-                    {inv.email}
+                    {invitedByText(inv)}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-zinc-400 hidden md:table-cell">
+                    {inv.role ?? '—'}
                   </td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full border ${
-                        inv.status === 'accepted'
-                          ? 'text-green-400 bg-green-500/10 border-green-500/20'
-                          : inv.status === 'expired'
-                            ? 'text-zinc-500 bg-zinc-800 border-zinc-700'
-                            : 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20'
-                      }`}
-                    >
-                      {inv.status}
-                    </span>
+                    <InvitationStatus invitation={inv} />
+                    {inv.revokedReason && (
+                      <span className="mt-1 block text-xs text-zinc-500">
+                        {revokeReasonText(inv.revokedReason)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-sm text-zinc-500 hidden md:table-cell">
                     {new Date(inv.expiresAt).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {inv.status === 'pending' && (
+                    {isRevocable(inv) && (
                       <button
                         type="button"
                         onClick={() => setRevokeTarget(inv.id)}
