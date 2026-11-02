@@ -327,10 +327,65 @@ pub async fn admin_erase_directory_user(user_id: String) -> Result<serde_json::V
 // Invitations
 // ===========================================================================
 
+/// `/api/invitations`, with the filters given, each checked before the
+/// panel is asked: a plugin's name, the inviter's directory id, a kind.
+fn invitations_path(
+    plugin: Option<&str>,
+    inviter: Option<&str>,
+    kind: Option<&str>,
+) -> Result<String, serde_json::Value> {
+    let mut query = Vec::new();
+    if let Some(name) = plugin {
+        crate::local_plugins::validate_plugin_name(name).map_err(refusal)?;
+        query.push(format!("plugin={}", url_encode(name)));
+    }
+    if let Some(user_id) = inviter {
+        if !is_canonical_uuid(user_id) {
+            return Err(refusal(format!("\"{}\" is not a directory user id", user_id)));
+        }
+        query.push(format!("inviter={}", user_id));
+    }
+    match kind {
+        None => {}
+        Some(k @ ("admin" | "delegated")) => query.push(format!("kind={}", k)),
+        Some(_) => return Err(refusal("An invitation is of kind admin or delegated".to_string())),
+    }
+    Ok(if query.is_empty() {
+        "/api/invitations".to_string()
+    } else {
+        format!("/api/invitations?{}", query.join("&"))
+    })
+}
+
+/// Every invitation, both kinds, optionally of one plugin, one inviter
+/// (their directory id) or one kind. Never a token: none is stored.
 #[tauri::command]
-pub async fn admin_get_invitations() -> Result<serde_json::Value, String> {
-    tokio::task::spawn_blocking(|| admin_get("/api/invitations"))
-        .await.map_err(|e| format!("Task failed: {}", e))?
+pub async fn admin_get_invitations(
+    plugin: Option<String>,
+    inviter: Option<String>,
+    kind: Option<String>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = invitations_path(plugin.as_deref(), inviter.as_deref(), kind.as_deref())?;
+    admin_refusable_task("GET", path, None).await
+}
+
+/// The body of `disable-invitees`, for a directory id.
+fn disable_invitees_body(inviter_user_id: &str, transitive: bool) -> Result<String, serde_json::Value> {
+    if !is_canonical_uuid(inviter_user_id) {
+        return Err(refusal(format!("\"{}\" is not a directory user id", inviter_user_id)));
+    }
+    Ok(serde_json::json!({ "inviterUserId": inviter_user_id, "transitive": transitive }).to_string())
+}
+
+/// Disable everyone a user invited by delegated invitation — with
+/// `transitive`, everyone those invited too.
+#[tauri::command]
+pub async fn admin_disable_invitees(
+    inviter_user_id: String,
+    transitive: bool,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let body = disable_invitees_body(&inviter_user_id, transitive)?;
+    admin_refusable_task("POST", "/api/invitations/disable-invitees".to_string(), Some(body)).await
 }
 
 /// Invite a user. Rejects with the panel's refusal, as `admin_create_user`.
@@ -522,13 +577,11 @@ pub async fn admin_set_plugin_domain(
     admin_refusable_task("PUT", path, Some(body)).await
 }
 
+/// Revoke a pending invitation, delete one that ended, mark one being
+/// accepted (`action` says which). Rejects with the panel's refusal.
 #[tauri::command]
-pub async fn admin_revoke_invitation(id: String) -> Result<serde_json::Value, String> {
-    tokio::task::spawn_blocking(move || {
-        let path = format!("/api/invitations/{}", url_encode(&id));
-        admin_delete(&path, None)
-    })
-    .await.map_err(|e| format!("Task failed: {}", e))?
+pub async fn admin_revoke_invitation(id: String) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("DELETE", format!("/api/invitations/{}", url_encode(&id)), None).await
 }
 
 // ===========================================================================
@@ -1258,6 +1311,25 @@ pub async fn admin_get_plugin_audience(name: String) -> Result<serde_json::Value
 #[tauri::command]
 pub async fn admin_get_plugin_oidc_clients(name: String) -> Result<serde_json::Value, serde_json::Value> {
     plugin_people_get(name, "oidc-clients").await
+}
+
+/// The policy of the plugin's delegated invitations, whether it can be
+/// invited into now, and its inviting roles.
+#[tauri::command]
+pub async fn admin_get_plugin_invitation_policy(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    plugin_people_get(name, "invitation-policy").await
+}
+
+/// Set the whole policy (`{ enabled, emailDomains, maxOpenPerInviter?,
+/// maxJoined?, lifetimeDays? }`). Rejects with the panel's refusal (`code`
+/// `invalid_policy`, `invitations_unavailable`).
+#[tauri::command]
+pub async fn admin_set_plugin_invitation_policy(
+    name: String,
+    policy: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = plugin_api_path(&name, "invitation-policy")?;
+    admin_refusable_task("PUT", path, Some(policy.to_string())).await
 }
 
 /// The role grants on the plugin, and how many of its grants carry no roles.
@@ -2038,6 +2110,29 @@ pub async fn admin_clear_access_request_log() -> Result<serde_json::Value, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_invitations_filters_are_checked_before_the_panel_is_asked() {
+        const ID: &str = "11111111-1111-4111-8111-111111111111";
+        assert_eq!(invitations_path(None, None, None).unwrap(), "/api/invitations");
+        assert_eq!(
+            invitations_path(Some("corral"), Some(ID), Some("delegated")).unwrap(),
+            format!("/api/invitations?plugin=corral&inviter={}&kind=delegated", ID)
+        );
+        assert!(invitations_path(Some("../users"), None, None).is_err());
+        assert!(invitations_path(None, Some("ayse"), None).is_err());
+        assert!(invitations_path(None, None, Some("other")).is_err());
+    }
+
+    #[test]
+    fn disabling_invitees_names_a_directory_id() {
+        const ID: &str = "11111111-1111-4111-8111-111111111111";
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&disable_invitees_body(ID, true).unwrap()).unwrap(),
+            serde_json::json!({ "inviterUserId": ID, "transitive": true })
+        );
+        assert!(disable_invitees_body("ayse", false).is_err());
+    }
 
     #[test]
     fn a_membership_body_names_a_known_kind_only() {
