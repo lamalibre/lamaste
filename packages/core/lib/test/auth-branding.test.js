@@ -628,6 +628,9 @@ test("the inviter's page: the route from its path alone, its own host's API, the
     ),
   );
   assert.ok(INVITATIONS_PAGE_SCRIPT.includes("request('DELETE', api + '/' + inv.id)"));
+  // A revocation takes two clicks, and the link of a revoked invitation goes.
+  assert.ok(INVITATIONS_PAGE_SCRIPT.includes("revoke.textContent = 'Really revoke?'"));
+  assert.ok(INVITATIONS_PAGE_SCRIPT.includes('inv.id === linkId'));
   // Nothing from the query or the fragment; fetch's default mode (it sends Origin).
   assert.doesNotMatch(INVITATIONS_PAGE_SCRIPT, /location\.(search|hash)|URLSearchParams/);
   assert.doesNotMatch(INVITATIONS_PAGE_SCRIPT, /mode:|credentials:/);

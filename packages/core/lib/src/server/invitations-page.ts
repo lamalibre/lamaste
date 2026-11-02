@@ -49,7 +49,9 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
       var api = '/api/delegated-invitations/' + route;
       var signIn = window.location.origin + '/?rd=' +
         encodeURIComponent(window.location.origin + '/invitations/' + route);
+      // The link of the invitation just made, shown until it is revoked.
       var link = null;
+      var linkId = null;
 
       load();
 
@@ -184,6 +186,7 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
             }
             link = typeof answer.data.inviteUrl === 'string' && answer.data.inviteUrl.indexOf('https://') === 0
               ? answer.data.inviteUrl : null;
+            linkId = answer.data.invitation && answer.data.invitation.id;
             document.getElementById('invite-form').reset();
             refresh();
           })
@@ -195,7 +198,11 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
 
       function showResult() {
         var result = document.getElementById('result');
-        if (!result || link === null) return;
+        if (!result) return;
+        if (link === null) {
+          result.innerHTML = '';
+          return;
+        }
         result.innerHTML =
           '<div class="error-msg note-msg">' +
             '<p>The invitation is ready. Send this link yourself — it is shown only now, and ' +
@@ -209,10 +216,15 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
           var button = this;
           input.select();
           var done = function () { button.textContent = 'Copied'; };
+          // Where the browser refuses the clipboard, the link stays selected.
+          var fallback = function () {
+            if (document.execCommand && document.execCommand('copy')) done();
+            else button.textContent = 'Selected';
+          };
           if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(link).then(done, function () {});
-          } else if (document.execCommand && document.execCommand('copy')) {
-            done();
+            navigator.clipboard.writeText(link).then(done, fallback);
+          } else {
+            fallback();
           }
         });
       }
@@ -246,12 +258,26 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
             revoke.type = 'button';
             revoke.className = 'btn btn-outline btn-small';
             revoke.textContent = 'Revoke';
+            // Two clicks: a revoked invitation cannot be taken back.
             revoke.addEventListener('click', function () {
+              if (revoke.textContent === 'Revoke') {
+                revoke.textContent = 'Really revoke?';
+                return;
+              }
               revoke.disabled = true;
-              request('DELETE', api + '/' + inv.id).then(function (answer) {
-                if (answer.status === 401) return showSignIn();
-                refresh();
-              });
+              request('DELETE', api + '/' + inv.id)
+                .then(function (answer) {
+                  if (answer.status === 401) return showSignIn();
+                  if (inv.id === linkId && answer.status === 200) {
+                    link = null;
+                    linkId = null;
+                  }
+                  refresh();
+                })
+                .catch(function () {
+                  revoke.disabled = false;
+                  revoke.textContent = 'Revoke';
+                });
             });
             line.appendChild(revoke);
           }

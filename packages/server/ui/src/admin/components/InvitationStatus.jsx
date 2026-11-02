@@ -6,7 +6,7 @@ export default function InvitationStatus({ invitation }) {
   return (
     <span
       title={reason ?? undefined}
-      className={`text-xs px-2 py-0.5 rounded-full border ${statusClasses(invitation.status)}`}
+      className={`whitespace-nowrap text-xs px-2 py-0.5 rounded-full border ${statusClasses(invitation.status)}`}
     >
       {invitation.status}
       {invitation.status === 'accepted' && invitation.fulfilled === false && ' · access pending'}
