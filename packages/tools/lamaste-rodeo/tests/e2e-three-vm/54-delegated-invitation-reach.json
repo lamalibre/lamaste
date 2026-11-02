@@ -90,10 +90,12 @@
       "value": "e2e54-coord"
     },
     "MEM": {
-      "value": "e2e54-member"
+      "value": "e2e54-member-$timestamp()",
+      "expression": true
     },
     "INVITEE": {
-      "value": "e2e54-invitee"
+      "value": "e2e54-invitee-$timestamp()",
+      "expression": true
     },
     "AUDIT_BASE": {
       "value": "0"
@@ -350,7 +352,7 @@
       "label": "The coordinator invites a colleague; they accept",
       "steps": [
         {
-          "id": "step-41",
+          "id": "step-40",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -367,7 +369,7 @@
           ]
         },
         {
-          "id": "step-42",
+          "id": "step-41",
           "label": "Invitations enabled for ${PLUGIN}",
           "target": "local",
           "continueOnError": true,
@@ -388,7 +390,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-47",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -405,7 +407,7 @@
           ]
         },
         {
-          "id": "step-49",
+          "id": "step-48",
           "label": "Accepted",
           "target": "local",
           "continueOnError": true,
@@ -426,7 +428,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-49",
           "label": "…access complete",
           "target": "local",
           "continueOnError": true,
@@ -448,7 +450,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-50",
           "label": "Set SECRET",
           "target": "local",
           "op": {
@@ -465,7 +467,7 @@
           ]
         },
         {
-          "id": "step-52",
+          "id": "step-51",
           "label": "Set INVITEE_ID",
           "target": "local",
           "op": {
@@ -482,7 +484,7 @@
           ]
         },
         {
-          "id": "step-53",
+          "id": "step-52",
           "label": "…a directory user",
           "target": "local",
           "continueOnError": true,
@@ -503,7 +505,7 @@
           }
         },
         {
-          "id": "step-56",
+          "id": "step-55",
           "label": "Set AUTHELIA_PID",
           "target": "local",
           "op": {
@@ -527,7 +529,7 @@
       "label": "That plugin's site: the shell and the API",
       "steps": [
         {
-          "id": "step-57",
+          "id": "step-56",
           "label": "${INVITEE}: the shell",
           "target": "local",
           "op": {
@@ -537,7 +539,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-57",
           "label": "${INVITEE} on the shell: $(page_status \"${JAR_INV}\" /)",
           "target": "local",
           "op": {
@@ -547,7 +549,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-58",
           "label": "…the API, as a viewer",
           "target": "local",
           "continueOnError": true,
@@ -569,14 +571,14 @@
           }
         }
       ],
-      "bash": "log_section \"Tunnels on B (authenticated, restricted) and on A (authenticated)\"\n\nmd_backends \"${PORT_T}:E2E54_B_AUTH\" \"${PORT_R}:E2E54_B_RESTRICTED\" \"${PORT_A}:E2E54_A_AUTH\"\nmd_tunnel TUNNEL_T \"${SUB_T}\" \"${DOMAIN_2}\" \"${PORT_T}\" authenticated\nmd_tunnel TUNNEL_R \"${SUB_R}\" \"${DOMAIN_2}\" \"${PORT_R}\" restricted\nmd_tunnel TUNNEL_A \"${SUB_A}\" \"${DOMAIN}\" \"${PORT_A}\" authenticated\nnudge_sync\n\n# ===========================================================================\n# 2. The invitation\n# ==========================================================================="
+      "bash": "log_section \"Tunnels on B (authenticated, restricted) and on A (authenticated)\"\n\nmd_tunnel TUNNEL_T \"${SUB_T}\" \"${DOMAIN_2}\" \"${PORT_T}\" authenticated\nmd_tunnel TUNNEL_R \"${SUB_R}\" \"${DOMAIN_2}\" \"${PORT_R}\" restricted\nmd_tunnel TUNNEL_A \"${SUB_A}\" \"${DOMAIN}\" \"${PORT_A}\" authenticated\nmd_backends \"${PORT_T}:E2E54_B_AUTH\" \"${PORT_R}:E2E54_B_RESTRICTED\" \"${PORT_A}:E2E54_A_AUTH\"\n\n# ===========================================================================\n# 2. The invitation\n# ==========================================================================="
     },
     {
       "id": "nothing-else-on-b-the-other-plugin",
       "label": "Nothing else on B: the other plugin",
       "steps": [
         {
-          "id": "step-61",
+          "id": "step-60",
           "label": "…never its tree",
           "target": "local",
           "continueOnError": true,
@@ -597,7 +599,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-62",
           "label": "The other plugin's audience does not hold them",
           "target": "local",
           "continueOnError": true,
@@ -625,7 +627,7 @@
       "label": "Nothing else on B: its tunnels",
       "steps": [
         {
-          "id": "step-66",
+          "id": "step-65",
           "label": "…never its backend",
           "target": "local",
           "continueOnError": true,
@@ -646,7 +648,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-68",
           "label": "…never its backend",
           "target": "local",
           "continueOnError": true,
@@ -674,7 +676,7 @@
       "label": "Nothing on A",
       "steps": [
         {
-          "id": "step-72",
+          "id": "step-71",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -691,7 +693,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-73",
           "label": "…never its backend",
           "target": "local",
           "continueOnError": true,
@@ -719,7 +721,7 @@
       "label": "Nothing through OIDC: no client of the domain admits them",
       "steps": [
         {
-          "id": "step-75",
+          "id": "step-74",
           "label": "Set LOCATION",
           "target": "local",
           "op": {
@@ -736,7 +738,7 @@
           ]
         },
         {
-          "id": "step-76",
+          "id": "step-75",
           "label": "${MEM}, a member of B: the client's authorization request goes on",
           "target": "local",
           "op": {
@@ -746,7 +748,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-76",
           "label": "${MEM}: ${LOCATION}",
           "target": "local",
           "op": {
@@ -756,7 +758,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-77",
           "label": "${INVITEE}: refused (access_denied)",
           "target": "local",
           "continueOnError": true,
@@ -777,7 +779,7 @@
           }
         },
         {
-          "id": "step-79",
+          "id": "step-78",
           "label": "users.yml gives them the site's hostname and the external group, no client",
           "target": "local",
           "continueOnError": true,
@@ -805,7 +807,7 @@
       "label": "They invite no one, and the panel is not theirs",
       "steps": [
         {
-          "id": "step-80",
+          "id": "step-79",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -822,7 +824,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-80",
           "label": "${INVITEE}, a viewer, on the inviter's API: 403",
           "target": "local",
           "continueOnError": true,
@@ -843,7 +845,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-81",
           "label": "…role_not_grantable",
           "target": "local",
           "continueOnError": true,
@@ -865,7 +867,7 @@
           }
         },
         {
-          "id": "step-83",
+          "id": "step-82",
           "label": "…and sees nothing of ${COORD}'s invitations",
           "target": "local",
           "continueOnError": true,
@@ -887,7 +889,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-83",
           "label": "The admin panel's API, their session cookie and no certificate: not 200",
           "target": "local",
           "continueOnError": true,
@@ -915,7 +917,7 @@
       "label": "Nothing restarted Authelia",
       "steps": [
         {
-          "id": "step-85",
+          "id": "step-84",
           "label": "Authelia's MainPID unchanged",
           "target": "local",
           "continueOnError": true,
@@ -941,7 +943,7 @@
   ],
   "apiHelpers": [],
   "headerRaw": "# ============================================================================\n# 54 — Delegated invitations: an invitee reaches only that plugin's site (Three-VM)\n# ============================================================================\n# The second proof of delegated invitations (design: packages/core/docs/\n# delegated-invitations-design.md, \"Proof\"). What an invitation grants is a\n# plugin's site and one role, and nothing else on the relay. On B: two app\n# plugins, each with its own restricted web surface; an authenticated tunnel\n# and a restricted one; an OIDC client of the domain. On A: an authenticated\n# tunnel.\n#\n# A coordinator of the first plugin invites a colleague, who accepts. The\n# invitee then reaches that plugin's shell and API, and:\n# - the second plugin's surface: the access-request page and 403 forbidden —\n#   on the shell, and on its API, whose grant they do not hold;\n# - B's authenticated tunnel: the access-request page; B's restricted tunnel\n#   the same, with no grant on it;\n# - A's tunnel: the domain refusal, signed in at A's portal;\n# - the OIDC client of B: Authelia refuses their authorization (access_denied)\n#   where a member of B is admitted, and users.yml gives them no client group;\n# - the inviter's API: they are no inviter (403 role_not_grantable) and\n#   cannot see anything of it;\n# - the admin panel: no certificate, nothing.\n# Nothing here restarts Authelia.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=54\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=invitation-harness.sh\nsource \"${SCRIPT_DIR}/invitation-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-xinv\"\nSERVER_PACKAGE=\"@lamalibre/e2e-xinv-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-xinv-agent\"\nOTHER=\"e2e-xoth\"\nOTHER_SERVER=\"@lamalibre/e2e-xoth-server\"\nOTHER_AGENT=\"@lamalibre/e2e-xoth-agent\"\nOIDC_PLUGIN=\"e2e-emoidc\"\nOIDC_PACKAGE=\"@lamalibre/e2e-emoidc-server\"\nWEB_ID=\"e2e-emoidc-web\"\nREDIRECT_URI=\"https://e2e-emoidc.example.test/callback\"\nAPP=\"/api/${PLUGIN}/app\"\nOTHER_APP=\"/api/${OTHER}/app\"\nSUB_W=\"e2e54web\"\nSUB_OTHER=\"e2e54oth\"\nSUB_T=\"e2e54auth\"\nSUB_R=\"e2e54res\"\nSUB_A=\"e2e54a\"\nPORT_T=19954\nPORT_R=19955\nPORT_A=19956\nPOLICY_ID=\"e2e-apphost-54\"\nREMOTE_DIR=\"/var/tmp/e2e-54-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN} ${OTHER} ${OIDC_PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN} ${OTHER}\"\nPURGE_PACKAGES=\"\"\nCOORD=\"e2e54-coord\"\nMEM=\"e2e54-member\"\nINVITEE=\"e2e54-invitee\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nINVITEE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCOORD_ID=\"\"\nMEM_ID=\"\"\nINVITEE_ID=\"\"\nJAR_COORD=$(md_jar coord)\nJAR_MEM=$(md_jar member)\nJAR_INV=$(md_jar invitee)\nJAR_INV_A=$(md_jar invitee-a)\nFQDN=\"\"\nFQDN_OTHER=\"\"\nOTHER_SITE=\"\"\nTUNNEL_T=\"\"\nTUNNEL_R=\"\"\nTUNNEL_A=\"\"\nCOORD_GRANT=\"\"\nAUDIT_BASE=0\nTOKEN=\"\"\nINV_ID=\"\"\n\n# shell_for <jar> — the session gets the first plugin's shell (index.html of tree v1)\nshell_for() { [[ \"$(visit_body \"$(page \"$1\" /)\")\" == *\"E2E_WEB_v1\"* ]]; }\n\n# assert_forbidden <url> <what> — as the invitee: 403, JSON {error: forbidden}, no redirect\nassert_forbidden() {\n  local resp\n  resp=$(visit \"${JAR_INV}\" \"$1\")\n  assert_eq \"$(visit_status \"$resp\")\" \"403\" \"$2: 403\" || true\n  assert_json_field \"$(visit_body \"$resp\")\" '.error' 'forbidden' \"…JSON {error: forbidden}, not 'not a member': they are on the domain\" || true\n  assert_not_contains \"$(visit_headers \"$resp\" | tr '[:upper:]' '[:lower:]')\" \"location:\" \"…never a redirect\" || true\n}\n\n# authorize <jar> — an authorization request of the web client at auth.<B>\n# with the session in <jar>; prints Authelia's Location\nauthorize() {\n  local verifier challenge state\n  verifier=$(openssl rand -hex 32)\n  challenge=$(printf '%s' \"$verifier\" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')\n  state=$(openssl rand -hex 16)\n  visitor_exec \"curl -sk --max-time 15 -b $(printf %q \"$1\") -o /dev/null -w '%{redirect_url}' -G --data-urlencode $(printf %q \"client_id=${WEB_ID}\") --data-urlencode $(printf %q \"redirect_uri=${REDIRECT_URI}\") --data-urlencode response_type=code --data-urlencode $(printf %q 'scope=openid profile') --data-urlencode $(printf %q \"state=${state}\") --data-urlencode $(printf %q \"code_challenge=${challenge}\") --data-urlencode code_challenge_method=S256 https://auth.${DOMAIN_2}/api/oidc/authorization 2>/dev/null || true\" 2>/dev/null | tail -n 1\n}\n\nbegin_test \"54 — Delegated invitations: an invitee reaches only that plugin's site (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  if [ -n \"${COORD_GRANT}\" ]; then host_api_delete \"gatekeeper/grants/${COORD_GRANT}\" > /dev/null 2>&1 || true; fi\n  if [ -n \"${SITE_ID}\" ]; then inv_drop_site_grants \"${SITE_ID}\"; fi\n  for id in ${TUNNEL_T} ${TUNNEL_R} ${TUNNEL_A}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  md_backend_stop \"${PORT_T}\" \"${PORT_R}\" \"${PORT_A}\"\n  host_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\n  host_api_delete \"plugins/${OTHER}/web-surface\" > /dev/null 2>&1 || true\n  drop_plugin_grants \"${PLUGIN}\"\n  drop_plugin_grants \"${OTHER}\"\n  inv_cleanup_users \"${COORD}\" \"${MEM}\" \"${INVITEE}\"\n  inv_cleanup_ids ${COORD_ID} ${MEM_ID} ${INVITEE_ID}\n  nudge_sync\n  app_plugin_cleanup\n  md_cleanup\n}\ntrap cleanup EXIT\n",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=54\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=invitation-harness.sh\nsource \"${SCRIPT_DIR}/invitation-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-xinv\"\nSERVER_PACKAGE=\"@lamalibre/e2e-xinv-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-xinv-agent\"\nOTHER=\"e2e-xoth\"\nOTHER_SERVER=\"@lamalibre/e2e-xoth-server\"\nOTHER_AGENT=\"@lamalibre/e2e-xoth-agent\"\nOIDC_PLUGIN=\"e2e-emoidc\"\nOIDC_PACKAGE=\"@lamalibre/e2e-emoidc-server\"\nWEB_ID=\"e2e-emoidc-web\"\nREDIRECT_URI=\"https://e2e-emoidc.example.test/callback\"\nAPP=\"/api/${PLUGIN}/app\"\nOTHER_APP=\"/api/${OTHER}/app\"\nSUB_W=\"e2e54web\"\nSUB_OTHER=\"e2e54oth\"\nSUB_T=\"e2e54auth\"\nSUB_R=\"e2e54res\"\nSUB_A=\"e2e54a\"\nPORT_T=19954\nPORT_R=19955\nPORT_A=19956\nPOLICY_ID=\"e2e-apphost-54\"\nREMOTE_DIR=\"/var/tmp/e2e-54-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN} ${OTHER} ${OIDC_PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN} ${OTHER}\"\nPURGE_PACKAGES=\"\"\nCOORD=\"e2e54-coord\"\n# Both meet the OIDC client: Authelia keeps an opaque identifier for a username\n# that asked, and such a name is never given out again. A new one each run.\nMEM=\"e2e54-member-$(date +%s)\"\nINVITEE=\"e2e54-invitee-$(date +%s)\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nINVITEE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCOORD_ID=\"\"\nMEM_ID=\"\"\nINVITEE_ID=\"\"\nJAR_COORD=$(md_jar coord)\nJAR_MEM=$(md_jar member)\nJAR_INV=$(md_jar invitee)\nJAR_INV_A=$(md_jar invitee-a)\nFQDN=\"\"\nFQDN_OTHER=\"\"\nOTHER_SITE=\"\"\nTUNNEL_T=\"\"\nTUNNEL_R=\"\"\nTUNNEL_A=\"\"\nCOORD_GRANT=\"\"\nAUDIT_BASE=0\nTOKEN=\"\"\nINV_ID=\"\"\n\n# shell_for <jar> — the session gets the first plugin's shell (index.html of tree v1)\nshell_for() { [[ \"$(visit_body \"$(page \"$1\" /)\")\" == *\"E2E_WEB_v1\"* ]]; }\n\n# assert_forbidden <url> <what> — as the invitee: 403, JSON {error: forbidden}, no redirect\nassert_forbidden() {\n  local resp\n  resp=$(visit \"${JAR_INV}\" \"$1\")\n  assert_eq \"$(visit_status \"$resp\")\" \"403\" \"$2: 403\" || true\n  assert_json_field \"$(visit_body \"$resp\")\" '.error' 'forbidden' \"…JSON {error: forbidden}, not 'not a member': they are on the domain\" || true\n  assert_not_contains \"$(visit_headers \"$resp\" | tr '[:upper:]' '[:lower:]')\" \"location:\" \"…never a redirect\" || true\n}\n\n# authorize <jar> — an authorization request of the web client at auth.<B>\n# with the session in <jar>; prints Authelia's Location\nauthorize() {\n  local verifier challenge state\n  verifier=$(openssl rand -hex 32)\n  challenge=$(printf '%s' \"$verifier\" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')\n  state=$(openssl rand -hex 16)\n  visitor_exec \"curl -sk --max-time 15 -b $(printf %q \"$1\") -o /dev/null -w '%{redirect_url}' -G --data-urlencode $(printf %q \"client_id=${WEB_ID}\") --data-urlencode $(printf %q \"redirect_uri=${REDIRECT_URI}\") --data-urlencode response_type=code --data-urlencode $(printf %q 'scope=openid profile') --data-urlencode $(printf %q \"state=${state}\") --data-urlencode $(printf %q \"code_challenge=${challenge}\") --data-urlencode code_challenge_method=S256 https://auth.${DOMAIN_2}/api/oidc/authorization 2>/dev/null || true\" 2>/dev/null | tail -n 1\n}\n\nbegin_test \"54 — Delegated invitations: an invitee reaches only that plugin's site (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  if [ -n \"${COORD_GRANT}\" ]; then host_api_delete \"gatekeeper/grants/${COORD_GRANT}\" > /dev/null 2>&1 || true; fi\n  if [ -n \"${SITE_ID}\" ]; then inv_drop_site_grants \"${SITE_ID}\"; fi\n  for id in ${TUNNEL_T} ${TUNNEL_R} ${TUNNEL_A}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  md_backend_stop \"${PORT_T}\" \"${PORT_R}\" \"${PORT_A}\"\n  host_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\n  host_api_delete \"plugins/${OTHER}/web-surface\" > /dev/null 2>&1 || true\n  drop_plugin_grants \"${PLUGIN}\"\n  drop_plugin_grants \"${OTHER}\"\n  inv_cleanup_users \"${COORD}\" \"${MEM}\" \"${INVITEE}\"\n  inv_cleanup_ids ${COORD_ID} ${MEM_ID} ${INVITEE_ID}\n  nudge_sync\n  app_plugin_cleanup\n  md_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

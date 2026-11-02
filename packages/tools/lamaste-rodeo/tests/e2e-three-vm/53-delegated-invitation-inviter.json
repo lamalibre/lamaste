@@ -1822,7 +1822,7 @@
               "path": "\"\\(.kind) \\(.email) \\(.plugin) \\(.role) \\(.invitedBy) \\(.suggestedUsername)\"",
               "expected": {
                 "kind": "expr",
-                "template": "delegated ayse@${INV_MAIL} ${PLUGIN} Viewer E2E ${COORD} ayse"
+                "template": "delegated ayse@${INV_MAIL} E2E App Host (main) Viewer E2E ${COORD} ayse"
               },
               "message": "…what it is for and who invited, by display name"
             }
@@ -1975,14 +1975,14 @@
           "op": {
             "type": "assert",
             "check": {
-              "kind": "eq",
+              "kind": "not_eq",
               "actual": {
                 "kind": "expr",
                 "template": "$(visit_status \"$RESP\")"
               },
               "expected": {
                 "kind": "literal",
-                "value": "404"
+                "value": "200"
               },
               "message": "The token in a URL opens nothing: the path routes are gone"
             }
@@ -1990,6 +1990,27 @@
         },
         {
           "id": "step-128",
+          "label": "…it says nothing of the invitation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "ayse"
+              },
+              "message": "…it says nothing of the invitation"
+            }
+          }
+        },
+        {
+          "id": "step-129",
           "label": "A token that was never made: 404",
           "target": "local",
           "continueOnError": true,
@@ -2010,7 +2031,7 @@
           }
         },
         {
-          "id": "step-129",
+          "id": "step-130",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2027,7 +2048,7 @@
           ]
         },
         {
-          "id": "step-130",
+          "id": "step-131",
           "label": "The invitation page at /invite: 200 (the fragment never reaches the server)",
           "target": "local",
           "continueOnError": true,
@@ -2048,7 +2069,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-132",
           "label": "Set CSP",
           "target": "local",
           "op": {
@@ -2065,7 +2086,7 @@
           ]
         },
         {
-          "id": "step-132",
+          "id": "step-133",
           "label": "…its CSP names the served script's hash",
           "target": "local",
           "continueOnError": true,
@@ -2086,7 +2107,7 @@
           }
         },
         {
-          "id": "step-133",
+          "id": "step-134",
           "label": "…no foreign script: the QR is the panel's",
           "target": "local",
           "continueOnError": true,
@@ -2114,7 +2135,7 @@
       "label": "A username anything names is refused, with one answer",
       "steps": [
         {
-          "id": "step-135",
+          "id": "step-136",
           "label": "DELETE /api/users/${GONE}",
           "target": "host",
           "op": {
@@ -2125,7 +2146,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-137",
+          "id": "step-138",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2142,7 +2163,7 @@
           ]
         },
         {
-          "id": "step-138",
+          "id": "step-139",
           "label": "${FUTURE}, which a Gatekeeper grant names for a user still to come: 409",
           "target": "local",
           "continueOnError": true,
@@ -2163,7 +2184,7 @@
           }
         },
         {
-          "id": "step-139",
+          "id": "step-140",
           "label": "…username_unavailable",
           "target": "local",
           "continueOnError": true,
@@ -2185,7 +2206,7 @@
           }
         },
         {
-          "id": "step-140",
+          "id": "step-141",
           "label": "Set FIRST_ANSWER",
           "target": "local",
           "op": {
@@ -2202,7 +2223,7 @@
           ]
         },
         {
-          "id": "step-141",
+          "id": "step-142",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2219,7 +2240,7 @@
           ]
         },
         {
-          "id": "step-142",
+          "id": "step-143",
           "label": "${GONE}, a removed user's: 409",
           "target": "local",
           "continueOnError": true,
@@ -2240,7 +2261,7 @@
           }
         },
         {
-          "id": "step-143",
+          "id": "step-144",
           "label": "…the same answer, whatever named it",
           "target": "local",
           "continueOnError": true,
@@ -2261,7 +2282,7 @@
           }
         },
         {
-          "id": "step-144",
+          "id": "step-145",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2278,7 +2299,7 @@
           ]
         },
         {
-          "id": "step-145",
+          "id": "step-146",
           "label": "${COORD}, a living user's: 409",
           "target": "local",
           "continueOnError": true,
@@ -2299,7 +2320,7 @@
           }
         },
         {
-          "id": "step-146",
+          "id": "step-147",
           "label": "…the same answer",
           "target": "local",
           "continueOnError": true,
@@ -2320,7 +2341,7 @@
           }
         },
         {
-          "id": "step-147",
+          "id": "step-148",
           "label": "The invitation stays pending; no name is held",
           "target": "local",
           "continueOnError": true,
@@ -2342,14 +2363,14 @@
           }
         }
       ],
-      "bash": "log_section \"The link opens on B's sign-in host alone\"\n\nRESP=$(inv_lookup \"${TOKEN}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"POST auth.<B>/api/invite/lookup: 200\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.kind) \\(.email) \\(.plugin) \\(.role) \\(.invitedBy) \\(.suggestedUsername)\"' \"delegated ayse@${INV_MAIL} ${PLUGIN} Viewer E2E ${COORD} ayse\" \"…what it is for and who invited, by display name\" || true\nassert_eq \"$(json_get \"$(visit_body \"$RESP\")\" '.username // \"none\"')\" \"none\" \"…never the inviter's username\" || true\nassert_eq \"$(visit_status \"$(inv_lookup \"${TOKEN}\" \"auth.${DOMAIN}\")\")\" \"404\" \"auth.<A>: 404, as no invitation at all\" || true\nassert_eq \"$(inv_refused_off_portal \"${TOKEN}\" \"https://127.0.0.1:9292\")\" \"404\" \":9292, Host and X-Forwarded-Host naming auth.<B>: 404\" || true\nassert_eq \"$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --resolve panel.${DOMAIN}:443:127.0.0.1 -X POST -H 'X-Forwarded-Host: auth.${DOMAIN_2}' -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${TOKEN}\\\"}' https://panel.${DOMAIN}/api/invite/lookup\" 2>/dev/null | tail -n 1 | tr -d '\\r')\" \"404\" \"The panel vhost, X-Forwarded-Host naming auth.<B>: 404\" || true\nRESP=$(visit - -X POST -H 'Content-Type: application/json' -H \"X-Forwarded-Host: auth.${DOMAIN_2}\" -d \"{\\\"token\\\":\\\"${TOKEN}\\\"}\" \"https://auth.${DOMAIN}/api/invite/lookup\")\nassert_eq \"$(visit_status \"$RESP\")\" \"404\" \"auth.<A>, X-Forwarded-Host naming auth.<B>: 404\" || true\nRESP=$(visit - \"https://auth.${DOMAIN_2}/api/invite/${TOKEN}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"404\" \"The token in a URL opens nothing: the path routes are gone\" || true\nassert_eq \"$(visit_status \"$(inv_lookup \"$(printf '0%.0s' {1..64})\")\")\" \"404\" \"A token that was never made: 404\" || true\n\nRESP=$(visit - \"https://auth.${DOMAIN_2}/invite\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"The invitation page at /invite: 200 (the fragment never reaches the server)\" || true\nCSP=$(visit_headers \"$RESP\" | sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p')\nassert_contains \"${CSP}\" \"script-src '$(visit_body \"$RESP\" | inline_hash script)'\" \"…its CSP names the served script's hash\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"cdn.jsdelivr\" \"…no foreign script: the QR is the panel's\" || true"
+      "bash": "log_section \"The link opens on B's sign-in host alone\"\n\nRESP=$(inv_lookup \"${TOKEN}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"POST auth.<B>/api/invite/lookup: 200\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.kind) \\(.email) \\(.plugin) \\(.role) \\(.invitedBy) \\(.suggestedUsername)\"' \"delegated ayse@${INV_MAIL} E2E App Host (main) Viewer E2E ${COORD} ayse\" \"…what it is for and who invited, by display name\" || true\nassert_eq \"$(json_get \"$(visit_body \"$RESP\")\" '.username // \"none\"')\" \"none\" \"…never the inviter's username\" || true\nassert_eq \"$(visit_status \"$(inv_lookup \"${TOKEN}\" \"auth.${DOMAIN}\")\")\" \"404\" \"auth.<A>: 404, as no invitation at all\" || true\nassert_eq \"$(inv_refused_off_portal \"${TOKEN}\" \"https://127.0.0.1:9292\")\" \"404\" \":9292, Host and X-Forwarded-Host naming auth.<B>: 404\" || true\nassert_eq \"$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --resolve panel.${DOMAIN}:443:127.0.0.1 -X POST -H 'X-Forwarded-Host: auth.${DOMAIN_2}' -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${TOKEN}\\\"}' https://panel.${DOMAIN}/api/invite/lookup\" 2>/dev/null | tail -n 1 | tr -d '\\r')\" \"404\" \"The panel vhost, X-Forwarded-Host naming auth.<B>: 404\" || true\nRESP=$(visit - -X POST -H 'Content-Type: application/json' -H \"X-Forwarded-Host: auth.${DOMAIN_2}\" -d \"{\\\"token\\\":\\\"${TOKEN}\\\"}\" \"https://auth.${DOMAIN}/api/invite/lookup\")\nassert_eq \"$(visit_status \"$RESP\")\" \"404\" \"auth.<A>, X-Forwarded-Host naming auth.<B>: 404\" || true\nRESP=$(visit - \"https://auth.${DOMAIN_2}/api/invite/${TOKEN}\")\nassert_not_eq \"$(visit_status \"$RESP\")\" \"200\" \"The token in a URL opens nothing: the path routes are gone\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"ayse\" \"…it says nothing of the invitation\" || true\nassert_eq \"$(visit_status \"$(inv_lookup \"$(printf '0%.0s' {1..64})\")\")\" \"404\" \"A token that was never made: 404\" || true\n\nRESP=$(visit - \"https://auth.${DOMAIN_2}/invite\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"The invitation page at /invite: 200 (the fragment never reaches the server)\" || true\nCSP=$(visit_headers \"$RESP\" | sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p')\nassert_contains \"${CSP}\" \"script-src '$(visit_body \"$RESP\" | inline_hash script)'\" \"…its CSP names the served script's hash\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"cdn.jsdelivr\" \"…no foreign script: the QR is the panel's\" || true"
     },
     {
       "id": "accepted-a-new-external-member-of-b-with-the-one-role-and-the-site",
       "label": "Accepted: a new external member of B, with the one role and the site",
       "steps": [
         {
-          "id": "step-148",
+          "id": "step-149",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2366,7 +2387,7 @@
           ]
         },
         {
-          "id": "step-149",
+          "id": "step-150",
           "label": "POST auth.<B>/api/invite/accept: 200",
           "target": "local",
           "continueOnError": true,
@@ -2387,7 +2408,7 @@
           }
         },
         {
-          "id": "step-151",
+          "id": "step-152",
           "label": "Set BODY",
           "target": "local",
           "op": {
@@ -2404,7 +2425,7 @@
           ]
         },
         {
-          "id": "step-152",
+          "id": "step-153",
           "label": "…${INVITEE}, access complete, sent to the plugin's site",
           "target": "local",
           "continueOnError": true,
@@ -2426,7 +2447,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-154",
           "label": "…the QR, drawn by the panel",
           "target": "local",
           "continueOnError": true,
@@ -2447,7 +2468,7 @@
           }
         },
         {
-          "id": "step-154",
+          "id": "step-155",
           "label": "Set SECRET",
           "target": "local",
           "op": {
@@ -2464,7 +2485,7 @@
           ]
         },
         {
-          "id": "step-155",
+          "id": "step-156",
           "label": "…with its TOTP secret",
           "target": "local",
           "continueOnError": true,
@@ -2485,7 +2506,7 @@
           }
         },
         {
-          "id": "step-156",
+          "id": "step-157",
           "label": "Set INVITEE_ID",
           "target": "local",
           "op": {
@@ -2502,7 +2523,7 @@
           ]
         },
         {
-          "id": "step-157",
+          "id": "step-158",
           "label": "The directory holds them by id",
           "target": "local",
           "continueOnError": true,
@@ -2523,7 +2544,7 @@
           }
         },
         {
-          "id": "step-158",
+          "id": "step-159",
           "label": "The invitation is accepted, complete; its copy of the address gone",
           "target": "local",
           "continueOnError": true,
@@ -2545,7 +2566,7 @@
           }
         },
         {
-          "id": "step-159",
+          "id": "step-160",
           "label": "${INVITEE} is an external member of B, of nothing else",
           "target": "local",
           "continueOnError": true,
@@ -2566,7 +2587,7 @@
           }
         },
         {
-          "id": "step-162",
+          "id": "step-163",
           "label": "…and holds nothing else in users.yml",
           "target": "local",
           "continueOnError": true,
@@ -2587,7 +2608,7 @@
           }
         },
         {
-          "id": "step-163",
+          "id": "step-164",
           "label": "GET /api/gatekeeper/grants?principalType=user&principalId=${INVITEE}",
           "target": "host",
           "op": {
@@ -2605,7 +2626,7 @@
           ]
         },
         {
-          "id": "step-164",
+          "id": "step-165",
           "label": "Gatekeeper holds exactly the role and the site's grant",
           "target": "local",
           "continueOnError": true,
@@ -2627,7 +2648,7 @@
           }
         },
         {
-          "id": "step-165",
+          "id": "step-166",
           "label": "…with the role asked for",
           "target": "local",
           "continueOnError": true,
@@ -2649,7 +2670,7 @@
           }
         },
         {
-          "id": "step-167",
+          "id": "step-168",
           "label": "…and the agent half's projection: the plugin learned of them through the feed",
           "target": "local",
           "op": {
@@ -2659,7 +2680,7 @@
           }
         },
         {
-          "id": "step-168",
+          "id": "step-169",
           "label": "The projection: $(projected_user \"${PLUGIN}\" \"${INVITEE_ID}\")",
           "target": "local",
           "op": {
@@ -2669,7 +2690,7 @@
           }
         },
         {
-          "id": "step-169",
+          "id": "step-170",
           "label": "…with the role and the declared attributes",
           "target": "local",
           "continueOnError": true,
@@ -2698,7 +2719,7 @@
       "label": "They reach the plugin",
       "steps": [
         {
-          "id": "step-171",
+          "id": "step-172",
           "label": "${INVITEE}: the shell, signed in with the factor the invitation gave",
           "target": "local",
           "op": {
@@ -2708,7 +2729,7 @@
           }
         },
         {
-          "id": "step-172",
+          "id": "step-173",
           "label": "${INVITEE} on the shell: $(page_status \"${JAR_INVITEE}\" /)",
           "target": "local",
           "op": {
@@ -2718,7 +2739,7 @@
           }
         },
         {
-          "id": "step-173",
+          "id": "step-174",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2735,7 +2756,7 @@
           ]
         },
         {
-          "id": "step-174",
+          "id": "step-175",
           "label": "…GET ${APP}/echo 200",
           "target": "local",
           "continueOnError": true,
@@ -2756,7 +2777,7 @@
           }
         },
         {
-          "id": "step-175",
+          "id": "step-176",
           "label": "…the agent half sees the directory's user and their role",
           "target": "local",
           "continueOnError": true,
@@ -2785,7 +2806,7 @@
       "label": "One use",
       "steps": [
         {
-          "id": "step-176",
+          "id": "step-177",
           "label": "The link again: lookup 410",
           "target": "local",
           "continueOnError": true,
@@ -2806,7 +2827,7 @@
           }
         },
         {
-          "id": "step-177",
+          "id": "step-178",
           "label": "…accept 410",
           "target": "local",
           "continueOnError": true,
@@ -2834,7 +2855,7 @@
       "label": "The cap",
       "steps": [
         {
-          "id": "step-178",
+          "id": "step-179",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2851,7 +2872,7 @@
           ]
         },
         {
-          "id": "step-179",
+          "id": "step-180",
           "label": "The administrator lowers the cap to one open invitation",
           "target": "local",
           "continueOnError": true,
@@ -2872,7 +2893,7 @@
           }
         },
         {
-          "id": "step-181",
+          "id": "step-182",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2889,7 +2910,7 @@
           ]
         },
         {
-          "id": "step-182",
+          "id": "step-183",
           "label": "The next: 409",
           "target": "local",
           "continueOnError": true,
@@ -2910,7 +2931,7 @@
           }
         },
         {
-          "id": "step-183",
+          "id": "step-184",
           "label": "…invitation_cap, the inviter's",
           "target": "local",
           "continueOnError": true,
@@ -2932,7 +2953,7 @@
           }
         },
         {
-          "id": "step-184",
+          "id": "step-185",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2949,7 +2970,7 @@
           ]
         },
         {
-          "id": "step-185",
+          "id": "step-186",
           "label": "People by invitation capped at 2 (one joined, one open)",
           "target": "local",
           "continueOnError": true,
@@ -2970,7 +2991,7 @@
           }
         },
         {
-          "id": "step-186",
+          "id": "step-187",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2987,7 +3008,7 @@
           ]
         },
         {
-          "id": "step-187",
+          "id": "step-188",
           "label": "The next: 409",
           "target": "local",
           "continueOnError": true,
@@ -3008,7 +3029,7 @@
           }
         },
         {
-          "id": "step-188",
+          "id": "step-189",
           "label": "…invitation_cap, the plugin's",
           "target": "local",
           "continueOnError": true,
@@ -3030,7 +3051,7 @@
           }
         },
         {
-          "id": "step-189",
+          "id": "step-190",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3047,7 +3068,7 @@
           ]
         },
         {
-          "id": "step-190",
+          "id": "step-191",
           "label": "${COORD} revokes their own pending one",
           "target": "local",
           "continueOnError": true,
@@ -3075,7 +3096,7 @@
       "label": "Oversight: audited with no address, the administrators notified",
       "steps": [
         {
-          "id": "step-191",
+          "id": "step-192",
           "label": "Set CREATED",
           "target": "local",
           "op": {
@@ -3092,7 +3113,7 @@
           ]
         },
         {
-          "id": "step-193",
+          "id": "step-194",
           "label": "Set ACCEPT_AUDIT",
           "target": "local",
           "op": {
@@ -3109,7 +3130,7 @@
           ]
         },
         {
-          "id": "step-196",
+          "id": "step-197",
           "label": "No audit entry holds an address",
           "target": "local",
           "continueOnError": true,
@@ -3130,7 +3151,7 @@
           }
         },
         {
-          "id": "step-197",
+          "id": "step-198",
           "label": "GET /api/notifications?limit=50",
           "target": "host",
           "op": {
@@ -3148,7 +3169,7 @@
           ]
         },
         {
-          "id": "step-198",
+          "id": "step-199",
           "label": "The administrators were told someone joined, once",
           "target": "local",
           "continueOnError": true,
@@ -3176,7 +3197,7 @@
       "label": "No token at rest or in a log",
       "steps": [
         {
-          "id": "step-199",
+          "id": "step-200",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -3193,7 +3214,7 @@
           ]
         },
         {
-          "id": "step-200",
+          "id": "step-201",
           "label": "The token is in no journal of the panel or Gatekeeper",
           "target": "local",
           "continueOnError": true,
@@ -3214,7 +3235,7 @@
           }
         },
         {
-          "id": "step-201",
+          "id": "step-202",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -3231,7 +3252,7 @@
           ]
         },
         {
-          "id": "step-202",
+          "id": "step-203",
           "label": "…in no nginx log line but the one this spec's GET of the removed path made",
           "target": "local",
           "continueOnError": true,
@@ -3252,7 +3273,7 @@
           }
         },
         {
-          "id": "step-203",
+          "id": "step-204",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -3269,7 +3290,7 @@
           ]
         },
         {
-          "id": "step-204",
+          "id": "step-205",
           "label": "…and state.db does not hold it",
           "target": "local",
           "continueOnError": true,
@@ -3290,7 +3311,7 @@
           }
         },
         {
-          "id": "step-205",
+          "id": "step-206",
           "label": "…anywhere in its bytes, its write-ahead log included",
           "target": "local",
           "continueOnError": true,
@@ -3318,7 +3339,7 @@
       "label": "Nothing restarted Authelia",
       "steps": [
         {
-          "id": "step-206",
+          "id": "step-207",
           "label": "An invitation, its acceptance and a new user: Authelia's MainPID unchanged",
           "target": "local",
           "continueOnError": true,

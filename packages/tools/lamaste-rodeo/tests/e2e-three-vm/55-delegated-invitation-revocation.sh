@@ -300,7 +300,8 @@ assert_eq "$(page_status "${JAR_LEAF}" "${APP}/echo")" "401" "${LEAF}'s session:
 assert_eq "$(page_status "${JAR_CHAIN}" "${APP}/echo")" "401" "${CHAIN}'s session: 401 at once" || true
 assert_eq "$(page_status "${JAR_COORD}" "${APP}/echo")" "200" "${COORD} is untouched" || true
 assert_json_field "$(directory_user "${LEAF_ID}")" '.status' 'disabled' "The directory holds ${LEAF} disabled" || true
-assert_eq "$(json_get "$(inv_audit invitation.invitees.disabled)" 'length')" "1" "Audited invitation.invitees.disabled" || true
+# Everyone that person invited, on every plugin: an entry of no one plugin.
+assert_eq "$(host_api_get "audit?action=invitation.invitees.disabled&limit=50" | jq --argjson b "${AUDIT_BASE}" '[.entries[]? | select(.id > $b)] | length')" "1" "Audited invitation.invitees.disabled" || true
 
 # ===========================================================================
 # 5. A revocation racing an acceptance

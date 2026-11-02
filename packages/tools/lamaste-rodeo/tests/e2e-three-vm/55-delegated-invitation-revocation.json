@@ -1530,7 +1530,7 @@
               "kind": "eq",
               "actual": {
                 "kind": "expr",
-                "template": "$(json_get \"$(inv_audit invitation.invitees.disabled)\" 'length')"
+                "template": "$(host_api_get \"audit?action=invitation.invitees.disabled&limit=50\" | jq --argjson b \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $b)] | length')"
               },
               "expected": {
                 "kind": "literal",
@@ -1541,7 +1541,7 @@
           }
         }
       ],
-      "bash": "log_section \"disable-invitees, transitive: both sessions end at once\"\n\nRESP=$(host_api_call POST \"invitations/disable-invitees\" \"{\\\"inviterUserId\\\":\\\"${COORD_ID}\\\",\\\"transitive\\\":true}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"POST /api/invitations/disable-invitees {transitive}: 200\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.disabled | sort | join(\",\")' \"$(printf '%s\\n' \"${CHAIN_ID}\" \"${LEAF_ID}\" | sort | paste -sd, -)\" \"…the coordinator's invitee and theirs\" || true\nassert_eq \"$(page_status \"${JAR_LEAF}\" \"${APP}/echo\")\" \"401\" \"${LEAF}'s session: 401 at once\" || true\nassert_eq \"$(page_status \"${JAR_CHAIN}\" \"${APP}/echo\")\" \"401\" \"${CHAIN}'s session: 401 at once\" || true\nassert_eq \"$(page_status \"${JAR_COORD}\" \"${APP}/echo\")\" \"200\" \"${COORD} is untouched\" || true\nassert_json_field \"$(directory_user \"${LEAF_ID}\")\" '.status' 'disabled' \"The directory holds ${LEAF} disabled\" || true\nassert_eq \"$(json_get \"$(inv_audit invitation.invitees.disabled)\" 'length')\" \"1\" \"Audited invitation.invitees.disabled\" || true\n\n# ===========================================================================\n# 5. A revocation racing an acceptance\n# ==========================================================================="
+      "bash": "log_section \"disable-invitees, transitive: both sessions end at once\"\n\nRESP=$(host_api_call POST \"invitations/disable-invitees\" \"{\\\"inviterUserId\\\":\\\"${COORD_ID}\\\",\\\"transitive\\\":true}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"POST /api/invitations/disable-invitees {transitive}: 200\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.disabled | sort | join(\",\")' \"$(printf '%s\\n' \"${CHAIN_ID}\" \"${LEAF_ID}\" | sort | paste -sd, -)\" \"…the coordinator's invitee and theirs\" || true\nassert_eq \"$(page_status \"${JAR_LEAF}\" \"${APP}/echo\")\" \"401\" \"${LEAF}'s session: 401 at once\" || true\nassert_eq \"$(page_status \"${JAR_CHAIN}\" \"${APP}/echo\")\" \"401\" \"${CHAIN}'s session: 401 at once\" || true\nassert_eq \"$(page_status \"${JAR_COORD}\" \"${APP}/echo\")\" \"200\" \"${COORD} is untouched\" || true\nassert_json_field \"$(directory_user \"${LEAF_ID}\")\" '.status' 'disabled' \"The directory holds ${LEAF} disabled\" || true\n# Everyone that person invited, on every plugin: an entry of no one plugin.\nassert_eq \"$(host_api_get \"audit?action=invitation.invitees.disabled&limit=50\" | jq --argjson b \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $b)] | length')\" \"1\" \"Audited invitation.invitees.disabled\" || true\n\n# ===========================================================================\n# 5. A revocation racing an acceptance\n# ==========================================================================="
     },
     {
       "id": "a-revocation-racing-an-acceptance-marked-never-leaves-a-working-link",
