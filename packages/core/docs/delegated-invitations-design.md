@@ -660,11 +660,19 @@ web surface on B; an authenticated tunnel and a second plugin on B):
 5. **Rodeo** — done, 2026-11-02, on fresh Multipass VMs, the candidate
    (`939793c`, version 4.9.0) on the dev Feria only:
 
-   | Suite     | Result                                                                                                                                                                          |
-   | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | three-VM  | 55 of 55 specs, 2928 assertions, none failed (53: 159, 54: 97, 55: 141)                                                                                                         |
-   | single-VM | 37 of 37 specs, 1764 assertions (38: 142). Spec 11 passed on a rerun after a spec fix below. Spec 20 runs nothing on one VM (`lamaste-agent` is not there): it counts as passed |
-   | upgrade   | 01 Panel Update from the npmjs 4.8.0 tarballs, byte for byte: 88 of 88                                                                                                          |
+   | Suite     | Result                                                                                      |
+   | --------- | ------------------------------------------------------------------------------------------- |
+   | three-VM  | 55 of 55 specs, 2928 assertions, none failed (53: 159, 54: 97, 55: 141)                     |
+   | single-VM | 37 of 37 specs, 1764 assertions (38: 142). Spec 11 passed on a rerun after a spec fix below |
+   | upgrade   | 01 Panel Update from the npmjs 4.8.0 tarballs, byte for byte: 88 of 88                      |
+
+   Passing is not the same as running, and rodeo counts a skip as passed. None
+   of 53, 54, 55, 38 or upgrade 01 skips anything. Single-VM 20 and 23 need an
+   enrolled agent, which one VM lacks, so they run nothing past their
+   pre-flight; 24 and 27 skip one section each for the same reason. Three-VM
+   16, 19, 20 and 10 run those paths. Three-VM 20 skips one config check
+   because the spec is wrong: it compares `which authelia && echo yes` with
+   `yes`, so the check can never run. None of this touches invitations.
 
    **As built:** three specs rather than two: 53 (an inviter grants only what
    it may), 54 (an invitee reaches only that plugin's site: a second plugin,
