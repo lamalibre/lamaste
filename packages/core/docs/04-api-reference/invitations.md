@@ -17,11 +17,12 @@ The plugin's own code takes no part: the inviter works on a Lamaste page on the 
 
 - **Tokens are shown once.** A token is 32 random bytes; state.db keeps only its SHA-256, so nothing at rest opens an invitation and no answer can show one again. Lost link: revoke the invitation and make another.
 - **The token travels in the link's fragment**, `https://auth.<domain>/invite#<token>`, which reaches no server log; the page sends it in POST bodies. A link from before 4.9 (`/invite/<token>`) still opens the page.
+- **A revocation is final.** One that lands while an invitation is being accepted ends it `revoked` whatever the acceptance does next: before the account exists none is made; after, the account is disabled through the usual [offboarding](users.md#offboarding), an administrator's invitation naming `admins` included, the acceptance answers `410 invitation_revoked`, and admins are told. They may delete the account, or enable it.
 - **One use.** An acceptance **claims** the invitation first (`accepting`, with a claim id checked under the users lock). A crash leaves nothing half-done: an acceptance whose user exists is finished, one whose user does not is released, and one link never makes two accounts.
 - **One open invitation per username**, across kinds, and a username an open invitation names cannot be taken by anyone else: creating a user under it is refused (409 `username_invited`).
 - **Five refused acceptances lock a link** (`revoked`, `attempts_exhausted`).
-- **Every invitation and acceptance is audited**: `invitation.created`, `invitation.accepted`, `invitation.revoked`, `invitation.policy.updated`, `invitation.invitees.disabled`. Details name ids, the role and the address's domain, never an address. Admins are notified of every delegated acceptance.
-- **Personal data.** Once accepted, an invitation's copies of the address and name go (the directory holds them). Invitations that ended without acceptance are deleted 90 days later; accepted ones go when their user is erased.
+- **Every invitation and acceptance is audited**: `invitation.created`, `invitation.accepted`, `invitation.revoked`, `invitation.revoke.marked` (one being accepted), `invitation.deleted`, `invitation.account.disabled`, `invitation.policy.updated`, `invitation.invitees.disabled`, `invitation.import.refused`. Details name ids, the role and the address's domain, never an address. Admins are notified of every delegated acceptance.
+- **Personal data.** Once accepted, an invitation's copies of the address and name go (the directory holds them). Invitations that ended without making an account are deleted 90 days later; one that made an account stays until that user is erased, as the record of who invited whom. Erasing a user also deletes the delegated invitations to their address that made nobody an account.
 
 ## The Administrator's API
 
@@ -29,7 +30,7 @@ mTLS, admin certificate; `503` before onboarding completes.
 
 ### `GET /api/invitations`
 
-Every invitation, both kinds, newest first. Query: `plugin` (name), `inviter` (directory id), `kind` (`admin` or `delegated`).
+The newest invitations, both kinds. Query: `plugin` (name), `inviter` (directory id), `kind` (`admin` or `delegated`), `limit` (default 500, at most 2000). `truncated` says there are more.
 
 ```json
 {
@@ -55,7 +56,8 @@ Every invitation, both kinds, newest first. Query: `plugin` (name), `inviter` (d
       "fulfilled": false,
       "used": false
     }
-  ]
+  ],
+  "truncated": false
 }
 ```
 
@@ -87,12 +89,13 @@ An administrator's invitation.
 
 ### `DELETE /api/invitations/:id`
 
-| Invitation     | Answer                                                                                                                                      |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| pending        | `200 { ok, action: "revoked" }`                                                                                                             |
-| being accepted | `202 { ok, action: "marked" }`: its acceptance makes no grant and it ends revoked; the account stays, reaching nothing, and admins are told |
-| ended          | `200 { ok, action: "deleted" }`                                                                                                             |
-| none           | `404`                                                                                                                                       |
+| Invitation             | Answer                                                                                                   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| pending                | `200 { ok, action: "revoked" }`                                                                          |
+| being accepted         | `202 { ok, action: "marked" }`: it ends revoked; an account made by then is disabled and admins are told |
+| ended, no account made | `200 { ok, action: "deleted" }`                                                                          |
+| made an account        | `409 invitation_has_user`: it stays on record (disable or delete the user)                               |
+| none                   | `404`                                                                                                    |
 
 ### `POST /api/invitations/disable-invitees`
 
@@ -128,16 +131,18 @@ The whole policy. Omitted bounds take their defaults.
 | `enabled`           | Required                                                                                                                             |
 | `emailDomains`      | Up to 20 domain names, lower case. An invitee's address must end in `@<one of them>` exactly (no subdomains); at least one to enable |
 | `maxOpenPerInviter` | 1–100, default 10: pending invitations one inviter may hold on the plugin                                                            |
-| `maxJoined`         | 1–500, default 50: people who joined by invitation and were not removed, plus every open invitation of the plugin                    |
+| `maxJoined`         | 1–500, default 50: people an invitation of the plugin made and who were not removed, plus every open invitation of the plugin        |
 | `lifetimeDays`      | 1–30, default 7                                                                                                                      |
 
 Refused: `400 invalid_policy`; `404` for a plugin not installed; `409 invitations_unavailable` when enabling a plugin that cannot be invited into: no role of the approved version may invite, or it has no web surface of its own, or that surface is not `restricted`, or is not served. A tunnel bound as a user surface cannot be granted — it would open the tunnel's own application — and an `authenticated` web surface refuses external members.
+
+Answers the policy as `GET` does, with `warnings` when the enabled policies together allow more people than Gatekeeper's free grants can take (every invitee costs two, and below 100 free grants invitations stop on every domain).
 
 The change sweeps the plugin's open invitations: turned off, all are revoked (`policy_disabled`); a domain taken away, those to it (`email_domain_removed`); a shorter lifetime brings their expiry in. Lowered caps revoke nothing.
 
 ## The Inviter's API
 
-On the plugin's domain's sign-in host, for its page `https://auth.<domain>/invitations/<route>` — never on the plugin's own host, whose code must not reach it. nginx asks Gatekeeper (`/authz/delegated-invitations/<domain>`, [Gatekeeper](gatekeeper.md#delegated-invitations-authorization-nginx-auth_request)), which authenticates the session and signs a relay assertion bound to this request. The panel then checks `Sec-Fetch-Site` (absent or `same-origin`; `none` on a `GET`), that the assertion's domain is the plugin's, `Origin` exactly `https://auth.<domain>` on a change, and the user (`active`, entitled, the plugin's identity ready). 60 requests a minute per address and route; a body of at most 8 KiB; no CORS; `Cache-Control: no-store`.
+On the plugin's domain's sign-in host, for its page `https://auth.<domain>/invitations/<route>` — never on the plugin's own host, whose code must not reach it. The inviter must hold the grant on the plugin's site: holding the role alone is `403 forbidden`, and at acceptance ends their invitation (`inviter_unentitled`). nginx asks Gatekeeper (`/authz/delegated-invitations/<domain>`, [Gatekeeper](gatekeeper.md#delegated-invitations-authorization-nginx-auth_request)), which authenticates the session and signs a relay assertion bound to this request. The panel then checks `Sec-Fetch-Site` (absent or `same-origin`; `none` on a `GET`), that the assertion's domain is the plugin's, `Origin` exactly `https://auth.<domain>` on a change, and the user (`active`, entitled, the plugin's identity ready). 60 requests a minute per address and route; a body of at most 8 KiB; no CORS; `Cache-Control: no-store`.
 
 ### `GET /api/delegated-invitations/:route`
 
@@ -176,7 +181,7 @@ The caller's own invitations only, and never who accepted one.
 
 ### `DELETE /api/delegated-invitations/:route/:id`
 
-Revoke the caller's own pending invitation: `{ ok: true }`. Anything else — another's invitation, one that ended, none — is `404`.
+Revoke the caller's own open invitation: `{ ok: true }`. One being accepted is marked: it ends revoked, and an account made by then is disabled. Anything else — another's invitation, one that ended, none — is `404`.
 
 ### Refusals
 
