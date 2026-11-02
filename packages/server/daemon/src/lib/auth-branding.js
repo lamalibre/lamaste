@@ -62,6 +62,7 @@ import {
   ensureAutheliaBrandingBase,
   fetchAutheliaLocales,
   listRenderedBrands,
+  authPagesDigest,
   readRenderedBrand,
   removeAuthBranding,
   renderAuthBranding,
@@ -234,11 +235,12 @@ async function brandingView(row) {
     revision: row.revision,
     updatedAt: row.updated_at,
     rendered,
-    /** Whether the directory nginx serves is this revision from this Authelia release. */
+    /** Whether the directory nginx serves is this revision, from this Authelia release, with this release's pages. */
     renderedCurrent:
       rendered !== null &&
       rendered.revision === row.revision &&
-      rendered.autheliaVersion === dep('autheliaVersion'),
+      rendered.autheliaVersion === dep('autheliaVersion') &&
+      rendered.pagesDigest === authPagesDigest(),
   };
 }
 
@@ -605,7 +607,10 @@ async function reconcileRenderingsLocked(result, logger) {
       if (
         current &&
         current.revision === record.revision &&
-        current.autheliaVersion === dep('autheliaVersion')
+        current.autheliaVersion === dep('autheliaVersion') &&
+        // nginx sends this release's CSP hashes: a page of another release
+        // would be blocked by the browser.
+        current.pagesDigest === authPagesDigest()
       ) {
         continue;
       }

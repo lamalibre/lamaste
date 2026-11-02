@@ -653,6 +653,7 @@ export {
   authBrandingDir,
   parseAutheliaLocalesList,
   fetchAutheliaLocales,
+  authPagesDigest,
   renderAuthBranding,
   readRenderedBrand,
   removeAuthBranding,
