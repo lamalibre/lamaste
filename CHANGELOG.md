@@ -41,6 +41,10 @@ Delegated invitations: a person holding a plugin role the manifest marks as invi
 - **A reconcile could make an invited external member a full member.** A crash or failed read right after `users.yml` was written let the next reconcile adopt the user with the relay's default membership, `member` on a one-domain relay, also for an administrator's invitation naming `external`. It takes the invitation's memberships now.
 - **Non-primary sign-in hosts were never rewritten at start** when a vhost's `auth_request` presence changed: the portals' reconcile compares them whole now.
 
+### Tests
+
+- Rodeo specs for delegated invitations: three-VM 53, 54 and 55, single-VM 38, and the upgrade suite's `01` with a pending invitation and a branded domain of the previous release. On fresh VMs: three-VM 55 of 55 (2928 assertions), single-VM 37 of 37 (1764), upgrade 88 of 88 from the npmjs 4.8.0 tarballs.
+
 ## [4.8.0] - 2026-10-27
 
 All lockstep packages, the desktop crate and its Tauri config move to 4.8.0; internal `@lamalibre/*` ranges become `^4.8.0`. Per-domain branding of the auth pages: each of the relay's domains may carry its own name, logo, favicon, theme and colours on its sign-in, its invitation page and Gatekeeper's refusal pages; a domain without a brand keeps the stock page. Design: `packages/core/docs/auth-branding-design.md`.
