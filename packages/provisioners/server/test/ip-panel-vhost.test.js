@@ -64,12 +64,14 @@ test('every location proxying to the panel clears a client’s relay assertion',
   }
 });
 
-test('the public invitation API never takes the administrator’s invitations API', () => {
-  const text = generateIpPanelVhost(PKI);
-  // Without its slash the prefix would also match `/api/invitations*` and
-  // clear the client certificate the administrator's API needs.
-  assert.doesNotMatch(text, /location \/api\/invite \{/);
-  assert.match(text, /location \/api\/invite\/ \{/);
+test('the public invitation API writes a Host no invitation names', () => {
+  const [invite] = locations(generateIpPanelVhost(PKI)).filter(
+    ({ matcher }) => matcher === '/api/invite/',
+  );
+  // The server name here is `_`: a client's own Host would pass for a
+  // domain's sign-in host, and a delegated token is answered only by that.
+  assert.match(invite.body, /proxy_set_header Host 127\.0\.0\.1;/);
+  assert.doesNotMatch(invite.body, /proxy_set_header Host \$host/);
 });
 
 test('only the site upload location admits a body over nginx’s 1 MiB default', () => {
