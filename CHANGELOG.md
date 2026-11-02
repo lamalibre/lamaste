@@ -11,9 +11,10 @@ Delegated invitations: a person holding a plugin role the manifest marks as invi
 
 ### Upgrade notes
 
-- **Invitations move to `state.db`** (migration `0020`). `invitations.json` is imported at the first start, its tokens hashed, and deleted; pending invitations keep working. A **downgrade to 4.8 loses every invitation pending at the upgrade**.
+- **Invitations move to `state.db`** (migration `0020`). `invitations.json` is imported once, at the first start, its tokens hashed, and deleted; pending invitations keep working. A file that comes back afterwards, from a backup, is deleted unread. A **downgrade to 4.8 loses every invitation pending at the upgrade**.
 - **Invitation links are `https://auth.<domain>/invite#<token>`**: the token is in the fragment, which no server log keeps. A link made before the update (`/invite/<token>`) still opens the page. The public API's path-token routes are gone: `GET /api/invite/:token` and `POST /api/invite/:token/accept` become `POST /api/invite/lookup` and `POST /api/invite/accept`, with the token in the body. The stock pages are rewritten at start.
-- **The IP panel vhost needs a redeploy** to take the `location /api/invite/` fix below: the panel rewrites `panel.<domain>` and every `auth.<domain>` at start, the vhost on 9292 changes only through the panel's Update action or `create-lamaste --yes`.
+- **The IP panel vhost needs a redeploy** to write its own `Host` on `/api/invite/`: the panel rewrites `panel.<domain>` and every `auth.<domain>` at start, the vhost on 9292 changes only through the panel's Update action or `create-lamaste --yes`. Until then a delegated token can be used on 9292 by whoever holds it.
+- **Every branded domain is rendered again once at the first start**: `rendered.json` now records which release's pages it holds, since nginx sends that release's CSP hashes.
 - **A username an open invitation names can no longer be created any other way** (409 `username_invited`): revoke the invitation, or wait for it to expire. Two open invitations for one username, should an old file hold them, keep the newest.
 - **`@lamalibre/lamaste-gatekeeper` and the panel ship together**: the inviter's relay assertion and Gatekeeper's new routes need both.
 - **A plugin declaring `identity.roles[].invites` needs a 4.9 relay**: the identity block is strict, and an older one refuses it.
@@ -30,13 +31,13 @@ Delegated invitations: a person holding a plugin role the manifest marks as invi
 ### Changed
 
 - **Tokens are stored only as their SHA-256** and shown once, for administrators' invitations too; an acceptance claims its invitation atomically, closing the race two acceptances of one link ran.
-- **`DELETE /api/invitations/:id`** revokes a pending invitation (kept, with its reason) and deletes one that ended; one being accepted is marked and ends revoked (`202`, `action: "marked"`).
+- **`DELETE /api/invitations/:id`** revokes a pending invitation (kept, with its reason) and deletes one that ended; one being accepted is marked and ends revoked (`202`, `action: "marked"`), and an account made by then is disabled; one that made an account stays on record (`409 invitation_has_user`).
+- **`GET /api/invitations`** answers the newest 500 (`limit`, at most 2000) and `truncated`.
 - **The invitation page** gets its QR code from the panel (`totpQr`) instead of `cdn.jsdelivr.net`, and carries a CSP by hash, `frame-ancestors 'none'`, `X-Frame-Options`, Cross-Origin-Opener-Policy and `no-store`. Its inline script and style are one for every brand; a brand's colours are in `brand.css`.
-- **Ended invitations are deleted after 90 days**; an accepted invitation's copies of the address and name go at acceptance.
+- **Invitations that ended without making an account are deleted after 90 days**; an accepted invitation's copies of the address and name go at acceptance.
 
 ### Fixed
 
-- **`location /api/invite` on the panel and IP panel vhosts also took `/api/invitations*`** and cleared the client-certificate headers, so the administrators' invitations API answered 403 through nginx. Both are `/api/invite/` now.
 - **A reconcile could make an invited external member a full member.** A crash or failed read right after `users.yml` was written let the next reconcile adopt the user with the relay's default membership, `member` on a one-domain relay, also for an administrator's invitation naming `external`. It takes the invitation's memberships now.
 - **Non-primary sign-in hosts were never rewritten at start** when a vhost's `auth_request` presence changed: the portals' reconcile compares them whole now.
 

@@ -258,6 +258,8 @@ A person holding a plugin role the manifest marks as inviting may invite colleag
 
 **Acceptance fails closed.** The invitation is claimed atomically, every condition is read again, and again before each grant; a crash between the users file and the directory cannot make the invitee a full member (the reconcile takes the claimed invitation's memberships, never the relay's default); a revocation during an acceptance stops its grants. Recovery goes by what exists, never by timing, and a repair only creates what is missing, so one link never makes two accounts and no administrator's change is undone.
 
+**A revocation is final.** One that lands during an acceptance ends the invitation `revoked`, whatever ends the acceptance: before the account exists none is made; after, the account is disabled through the usual offboarding, an administrator's invitation naming `admins` included, and the administrators are told. An inviter must still hold the grant on the plugin's site: Gatekeeper checks it on each of their requests and the panel at each acceptance, so a role left on someone whose site grant was revoked invites nobody.
+
 **Bounds.** Open invitations per inviter, people by invitation per plugin, 30 invitations an hour per inviter, none while Gatekeeper's free grants run low; five refused acceptances lock a link; rate limits on both APIs; a password is hashed only after every check.
 
 **What remains:**
@@ -266,6 +268,7 @@ A person holding a plugin role the manifest marks as inviting may invite colleag
 - **An unverified address.** A plugin declaring the `email` attribute receives, for an invitee, what the inviter typed.
 - **Inviters are trusted with their cap.** An inviter can accept their own links and make up to the plugin's cap of accounts; each is external, reaches only that plugin, is listed under them, and the administrator can disable them all, transitively.
 - **Invitees outlive their inviter** (decided): their access is the administrator's to review.
+- **Whether a username is taken.** An inviter or a link holder can learn it, across the relay's clients, a removed user's included: four probes a link, about 120 an hour for an inviter. The answer does not say why; usernames are not secrets.
 - **A same-site cookie.** A plugin's shell can toss a second `authelia_session` for the parent domain: Gatekeeper refuses two (`401`), so the worst is a sign-in loop on the inviter's page, which explains it — never a wrong user.
 
 #### 6. TOTP 2FA for app access

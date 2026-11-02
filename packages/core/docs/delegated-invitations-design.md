@@ -1,6 +1,6 @@
 # Delegated Invitations — Design Document
 
-> **Status:** agreed 2026-10-28 — decisions D1–D12 (D1, D3–D8, D10–D12 put to the founders, each as recommended; D2 and D9 technical, taken as recommended); revised after two independent reviews of 2026-10-28 (24 findings, three blockers, all folded in — tables at the end). Waves 1 to 3 built (core, serverd + Gatekeeper, UI + desktop + CLI + docs: see Waves); the code's security review and rodeo are next.
+> **Status:** agreed 2026-10-28 — decisions D1–D12 (D1, D3–D8, D10–D12 put to the founders, each as recommended; D2 and D9 technical, taken as recommended); revised after two independent reviews of 2026-10-28 (24 findings, three blockers, all folded in — tables at the end; one, the `/api/invite` half of 2.5, turned out false and is marked so). Waves 1 to 4 built (core, serverd + Gatekeeper, UI + desktop + CLI + docs, the code's security review of 2026-11-02 with its fixes: see Waves); rodeo is next.
 > **Target:** Lamaste 4.9.0, on top of 4.8.0 (multi-domain relay, external members, per-domain branding).
 > **Pilot:** corral (`corral.codelama.com.tr`): the client's coordinator invites colleagues into corral, as external members of `codelama.com.tr`, with a corral role, without the relay admin.
 > **Companions:** `herd/docs/r730-workload-plan.md` §15.2 (scope), §15.2a, §15.4, §15.5;
@@ -167,19 +167,26 @@ CREATE TABLE plugin_invitation_policies (...);
 
 - **Tokens.** 32 random bytes; only the SHA-256 is stored and looked up (no
   scan). Shown once, in the answer that creates it.
-- **Import** (review 12). Whenever `invitations.json` exists at start (a
-  restored backup brings it back): `INSERT OR IGNORE` by id in one
-  transaction — a row state.db holds is never overwritten —, tokens hashed,
-  `used` → `accepted` with `accepted_user_id` filled from the directory by
-  username, the rest as it was; then the file is deleted. A downgrade to 4.8
-  loses the invitations pending at the upgrade (upgrade notes).
-- **Expiry** is read, not swept. **Retention:** ended without acceptance →
-  deleted 90 days later (the identity tick); accepted → kept until their user
-  is erased.
+- **Import** (review 12, code review 12). Once: at the first start,
+  `invitations.json` goes in by id, in one transaction with a marker
+  (`invitations_import`, written with no file too) — a row state.db holds is
+  never overwritten —, tokens hashed, `used` → `accepted`, with
+  `accepted_user_id` from the directory row created by the time it was
+  accepted (a later holder of the username is someone else), the rest as it
+  was; then the file is deleted. A file that appears after the marker is a
+  backup's and could bring back what was revoked, deleted or erased: it is
+  deleted unread, with a warning and `invitation.import.refused`. A downgrade
+  to 4.8 loses the invitations pending at the upgrade (upgrade notes).
+- **Expiry** is read, not swept. **Retention:** ended without making an
+  account → deleted 90 days later (the identity tick); one that made an
+  account, accepted or not, stays until that user is erased: it is the record
+  of who invited whom, `maxJoined` and `disable-invitees` read it, and an
+  administrator's `DELETE` refuses it (409 `invitation_has_user`).
 - **Erasure** (`purgeInvitations` moves here): erasing a removed user deletes
-  the invitations accepted by them and the admin invitations naming their
-  username made before they were removed; as an inviter they stay as the
-  bare id.
+  the invitations accepted by them, the one that created them
+  (`directory_users.invitation_id`), the delegated ones to their address that
+  made nobody an account, and the admin invitations naming their username made
+  before they were removed; as an inviter they stay as the bare id.
 
 ### 5. The inviter's page: Lamaste's, on the domain's sign-in host (D12)
 
@@ -233,7 +240,10 @@ joins `RESERVED_API_PREFIXES`.
    `isDelegatedInvitationsUrl(path, route)`, the unsafe-segment rule of
    `hasUnsafePathSegments`, `<id>` a UUID); the Authelia session for that URL
    (the portal rule admits only `d`'s members and external members); the
-   domain projection (member or external of `d`, fail closed); then it signs
+   domain projection (member or external of `d`, fail closed); the route
+   served by its plugin's own site, and on a restricted one the inviter's
+   grant on it (`checkAccess`: a role left on someone whose site grant was
+   revoked invites nobody); then it signs
    an assertion `aud: '@panel'`, caller `{ type: 'user', username }`, target
    `{ invitations: <route>, domain, path }`. Core `relay-assertion.ts` gains
    that target kind beside `{ route, path }` (user surfaces keep
@@ -269,9 +279,9 @@ emailDomain, expiresAt }`).
 
 ### 6. Locks
 
-The total order (review 2.3): the tunnel lock → the sites lock → the
-domains rendering → the users lock → the entitlements lock (per plugin) →
-**the invitations lock**, a leaf. The invitations lock (one
+The total order (review 2.3, corrected by code review 22): the tunnel lock →
+the sites lock → the users lock → the domains rendering and the entitlements
+lock (per plugin) → **the invitations lock**, a leaf. The invitations lock (one
 `KeyedPromiseChainMutex`, per plugin; the administrator's invitations share
 one key) is held only around state.db work and plain reads (the plugin row,
 `sites.json`, `tunnels.json`, the directory, the audience) — never across a
@@ -302,10 +312,10 @@ included. The page (`renderInvitePage`, stock and branded) asks for a
 (prefilled) and a password; the accept takes `{ token, username,
 displayName, password }` (admin invitations: `{ token, password }`).
 
-The panel and IP vhosts' `location /api/invite` (no slash) also matched
-`/api/invitations*` and cleared the client-certificate headers, so the admin
-invitations API answered 403 through nginx; both become `/api/invite/`
-(review 2.5, a 4.8 defect fixed here).
+The panel and IP vhosts serve the same public API for an administrator's
+invitations, and write a literal `Host 127.0.0.1` there: the IP vhost's
+server name is `_`, so a client's own `Host` would otherwise pass for a
+sign-in host (code review 16).
 
 **Both pages' CSP** (review 2.6): their inline script and style are the same
 for every brand — the brand's values live only in `/brand.css` — so one pair
@@ -332,7 +342,9 @@ In order, failing closed:
 2. **Still allowed now** (same lock): `whyNotAcceptable` (§8) — the plugin,
    identity approval, the role; the policy and the address's domain; the web
    surface (restricted, served, the recorded site and domain); the inviter
-   active and still able to grant the role (D1) — and the grant reserve. A
+   active and still able to grant the role (D1) — the grant reserve, and,
+   read from Gatekeeper before the lock since the lock is a leaf, the
+   inviter's grant on the site (`inviter_unentitled` without it). A
    failure releases the claim (`pending`, or `revoked` with the reason when
    it can never pass) and answers `410` (the reason in the log only).
 3. **The username** (review B1) — under the users lock, inside
@@ -368,43 +380,63 @@ In order, failing closed:
    `withUsernamesForGrants`, `requireUser`), then `syncDomainAccess` (a
    partial failure: not yet rendered). Each grant runs a **precondition
    inside the users lock** just before it is made — the invitation still
-   holds the claim, has no `revoke_pending_reason`, and `whyNotAcceptable`
-   finds nothing but the inviter's standing (that held at step 2; D1 keeps
-   invitees whose inviter goes later) — and each is recorded as it
-   completes (`role_granted_at`, `site_granted_at`, `rendered_at`).
+   holds the claim, has no `revoke_pending_reason`, the username is still
+   the accepted user's, and `whyNotAcceptable` finds nothing (an inviter's
+   standing counts until the invitation is accepted, as it does for a sweep:
+   only the repair ignores it, D1) — and each is recorded as it completes
+   (`role_granted_at`, `site_granted_at`, `rendered_at`).
 6. **Recorded** (the invitations lock): `accepted`, `accepted_user_id`;
    `email`/`display_name` nulled; audited `invitation.accepted` (actor
    `invitation`, plugin, `{ invitationId, userId, inviterUserId, role }`);
-   admins notified (D10). The answer's `loginUrl` is the plugin's site. When
-   a sweep marked the claim `revoke_pending_reason` meanwhile, or a step-5
-   precondition failed, the invitation is `revoked` with that reason instead,
-   the account exists reaching nothing, and the admins are notified to keep
-   or delete it.
+   admins notified (D10). The answer's `loginUrl` is the plugin's site. A user
+   without a TOTP secret (`totp_issued_at` unset: a failed write, a crash)
+   cannot sign in unaided: the admins are told to reset it, and the page tells
+   the invitee to ask.
+
+**A revocation during an acceptance** (code review 1, 2). A mark ends the
+invitation `revoked`, whatever ends the claim, with the reason and the author
+it was marked with (`revoke_pending_reason`, `revoke_pending_by`). Before the
+account exists no account is made: giving the claim up records the revocation,
+in the same statement. After it exists the account cannot be unmade by
+withholding what is left, since a mark may land after the last precondition,
+or between the role and the site: so whatever ended it `revoked`, a mark or a
+precondition, **the account is disabled** through the usual offboarding, for
+both kinds (an administrator's invitation naming `admins` included), retried
+on the tick until it is (`account_disabled_at`). The acceptance answers `410
+invitation_revoked`; `invitation.revoked` names the account, and the admins are
+told it was disabled and may delete it, or enable it. Once disabled, nothing
+disables it again.
 
 **Sweeps and `accepting` rows** (review 2.4). A sweep never revokes an
-`accepting` row: it sets `revoke_pending_reason`, which step 5 and step 6
-read. An administrator's `DELETE` of one does the same (answering 202).
+`accepting` row: it sets `revoke_pending_reason`, which every end of the claim
+reads. An administrator's or an inviter's `DELETE` of one does the same (the
+administrator's answers 202), audited `invitation.revoke.marked`.
 
-**Recovering** (review 6, 2.2). At start and on the identity tick, under the
-users lock, an `accepting` row older than 10 minutes is resolved by what
-exists, not by timing: a directory row stamped with its `invitation_id` → it
-is accepted (steps 5–6 follow); its username in users.yml but not yet in the
-directory → the reconcile adopts it (with the invitation's memberships and
-stamp) and it is accepted; neither → a new `claim_id` is not issued, the row
-goes back to `pending` (or ends as expired). An acceptance still queued
-behind the users lock finds its `claim_id` gone at step 3 and stops, so one
-link never makes two accounts and no other user is ever credited.
+**Recovering** (review 6, 2.2). On the identity tick, which also runs at
+start, under the users lock, an `accepting` row older than 10 minutes is
+resolved by what exists, not by timing: a directory row stamped with its
+`invitation_id` (never an erased one) → it is finished as an acceptance is;
+its username in users.yml but not yet in the directory → the reconcile adopts
+it (with the invitation's memberships and stamp) and it is finished; neither
+→ a new `claim_id` is not issued, the row goes back to `pending`, or ends
+`revoked` when marked. An acceptance still queued behind the users lock finds
+its `claim_id` gone at step 3 and stops, so one link never makes two accounts
+and no other user is ever credited.
 
-**Repairing** (review 7, 2.4). An accepted invitation with a step-5
-completion missing is completed on the identity tick for 24 hours — while
-`whyNotAcceptable` finds nothing but the inviter's standing, the user is
-active, and the audit holds no entitlement or site-grant change for that user
-on the plugin since the acceptance by any actor but `invitation:<id>` — and
-only by **creating what is missing**: the role grant only when the user holds
-no role grant on the plugin, the site grant only when none exists. It never
-replaces a grant. Otherwise, or after 24 hours, it stops (`repair_abandoned`,
-admins notified). The invitee's answer says when access is still being
-completed.
+**Repairing** (review 7, 2.4, code review 6, 18). An accepted invitation with
+a step-5 completion missing is completed on the identity tick for 24 hours —
+while `whyNotAcceptable` finds nothing but the inviter's standing, the user is
+active, the audit holds no entitlement change for that user on the plugin since
+by any actor but `invitation:<id>` (read by `userId` in SQL), and what it
+already made still stands in Gatekeeper, read there since a site grant changes
+by no audited route — and only by **creating what is missing**: the role grant
+only when the user holds no role grant on the plugin, the site grant only when
+none exists. It never replaces a grant. A definite refusal of the site grant
+(a refused connection, Gatekeeper's limit) clears its attempt and is asked
+again, so an outage is not terminal; an answer lost (`outcomeUnknown`) is not,
+since an administrator may have revoked what it made. Otherwise, or after 24
+hours, it stops (`repair_abandoned`, admins notified); the user keeps what they
+were given. The invitee's answer says when access is still being completed.
 
 The plugin learns of the new member through the feed: the role grant puts
 them in the audience (`upsert`, role, declared attributes). Protocol 1 is
@@ -431,11 +463,17 @@ on: policy changes; uninstall; an update or approval that drops a role or an
 `invites`; web-surface create/delete/move and access-mode changes; and on
 every audience recomputation for the inviter checks. A revocation keeps the
 row, audited `invitation.revoked`. Admin `DELETE /api/invitations/:id`
-revokes a pending one, deletes an ended one, and marks an `accepting` one
-`revoke_pending_reason` (202; §7).
+revokes a pending one, deletes one that ended without making an account,
+refuses one that made an account (409 `invitation_has_user`), and marks an
+`accepting` one (202; §7). A disabled plugin, a surface not served, or an
+operation running on the plugin (an update may yet revert) revoke nothing: they
+may pass again.
 
 **The inviter disabled, removed or unentitled (D1).** Their open
-invitations are revoked; the people they invited keep their access. For the
+invitations are revoked — a sweep sees their directory status and roles; the
+site's grant is Gatekeeper's to say, and a sweep holds the invitations lock, so
+that one is checked on every request of theirs and at each acceptance. The
+people they invited keep their access. For the
 administrator's review: the panel lists invitees by inviter, and
 `POST /api/invitations/disable-invitees { inviterUserId, transitive }`
 disables everyone they invited (and, transitive, everyone those invited),
@@ -614,7 +652,11 @@ web surface on B; an authenticated tunnel and a second plugin on B):
      of an ended invitation has no button, since an accepted row is the
      record of who invited whom and counts toward `maxJoined`.
 
-4. **Security review** — independent, given the code.
+4. **Security review** — done 2026-11-02: three independent reviews of the code
+   (the diff line by line, a threat model, the state machine and access
+   matrix), each given the code, not this document; every finding fixed
+   (`7bede9a`, `2874b54`, `a91b51b`, `beef152`, `bdf1ee9`; table below). Each
+   fix was checked by putting the bug back: its test failed.
 5. **Rodeo** — 53, 54, single-VM 38, upgrade 01 on fresh VMs.
 
 ## Decisions (agreed 2026-10-28)
@@ -682,16 +724,55 @@ folded in above.
 An independent review of the revised §5–§7 against the code; every finding
 folded in above.
 
-| #    | Severity   | Finding                                                                                                                                               | Resolution                                                                                                                                |
-| ---- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| 2.1  | blocker    | A crash or failed reconcile after the users.yml write lets the reconcile adopt the invitee with the default domains — `member` on a one-domain relay. | The reconcile takes an open invitation's memberships for its username; a `directory` warning is a step-4 failure.                         |
-| 2.2  | should-fix | Recovery by timing could reopen a link an acceptance still queued would use, or credit another user created under the name.                           | `claim_id`, checked under the users lock; recovery by `invitation_id` on the directory row; `changeUsers` honours claims; a unique index. |
-| 2.3  | should-fix | Lock order unstated; the invitations lock could deadlock with tunnel/sites/domains locks and the audience chain.                                      | §6: a total order, the invitations lock a leaf, sweeps after a recomputation queued.                                                      |
-| 2.4  | should-fix | After step 2 a revocation could not stop the grants; the repair could recreate a role an admin removed.                                               | `revoke_pending_reason`; preconditions inside the users lock before each grant; the repair reads the audit.                               |
-| 2.5  | should-fix | `request.host` follows a client's `X-Forwarded-Host`; `location /api/invite` also caught `/api/invitations*` (4.8 defect).                            | Literal `Host`, `X-Forwarded-Host` cleared, `request.headers.host`; `/api/invite/` on the panel and IP vhosts.                            |
-| 2.6  | should-fix | A hashed CSP goes stale on a brand change; `frame-ancestors` cannot be a meta tag; `no-referrer` makes a same-origin POST send `Origin: null`.        | Brand values only in `/brand.css`, one hash pair per release, in nginx's header; `Referrer-Policy: same-origin`.                          |
-| 2.7  | note       | Gatekeeper's session cache; `X-Original-Method: GET`; asking Authelia about the portal.                                                               | Cache bypassed; noted; spec 53 covers the portal and `rd`.                                                                                |
-| 2.8  | note       | The opener handle.                                                                                                                                    | COOP and `X-Frame-Options` on both pages; `rd` from origin + path.                                                                        |
-| 2.9  | note       | Cookie tossing from a same-site host.                                                                                                                 | `presentedSession`'s 401 (a loop, not a wrong user), explained on the page.                                                               |
-| 2.10 | note       | The token in nginx's access logs.                                                                                                                     | The link's token in its fragment; lookup and accept by POST body.                                                                         |
-| 2.11 | note       | A step-3 refusal must release the claim at once.                                                                                                      | It does, and counts a failed attempt.                                                                                                     |
+| #    | Severity   | Finding                                                                                                                                                                                                                                | Resolution                                                                                                                                |
+| ---- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 2.1  | blocker    | A crash or failed reconcile after the users.yml write lets the reconcile adopt the invitee with the default domains — `member` on a one-domain relay.                                                                                  | The reconcile takes an open invitation's memberships for its username; a `directory` warning is a step-4 failure.                         |
+| 2.2  | should-fix | Recovery by timing could reopen a link an acceptance still queued would use, or credit another user created under the name.                                                                                                            | `claim_id`, checked under the users lock; recovery by `invitation_id` on the directory row; `changeUsers` honours claims; a unique index. |
+| 2.3  | should-fix | Lock order unstated; the invitations lock could deadlock with tunnel/sites/domains locks and the audience chain.                                                                                                                       | §6: a total order, the invitations lock a leaf, sweeps after a recomputation queued.                                                      |
+| 2.4  | should-fix | After step 2 a revocation could not stop the grants; the repair could recreate a role an admin removed.                                                                                                                                | `revoke_pending_reason`; preconditions inside the users lock before each grant; the repair reads the audit.                               |
+| 2.5  | should-fix | `request.host` follows a client's `X-Forwarded-Host`. (Its second half, that `location /api/invite` also caught `/api/invitations*`, was **wrong**: `/api/invite` is no prefix of `/api/invitations`, and no such 4.8 defect existed.) | Literal `Host`, `X-Forwarded-Host` cleared, `request.headers.host`; `/api/invite/` kept, with no claim of a bug.                          |
+| 2.6  | should-fix | A hashed CSP goes stale on a brand change; `frame-ancestors` cannot be a meta tag; `no-referrer` makes a same-origin POST send `Origin: null`.                                                                                         | Brand values only in `/brand.css`, one hash pair per release, in nginx's header; `Referrer-Policy: same-origin`.                          |
+| 2.7  | note       | Gatekeeper's session cache; `X-Original-Method: GET`; asking Authelia about the portal.                                                                                                                                                | Cache bypassed; noted; spec 53 covers the portal and `rd`.                                                                                |
+| 2.8  | note       | The opener handle.                                                                                                                                                                                                                     | COOP and `X-Frame-Options` on both pages; `rd` from origin + path.                                                                        |
+| 2.9  | note       | Cookie tossing from a same-site host.                                                                                                                                                                                                  | `presentedSession`'s 401 (a loop, not a wrong user), explained on the page.                                                               |
+| 2.10 | note       | The token in nginx's access logs.                                                                                                                                                                                                      | The link's token in its fragment; lookup and accept by POST body.                                                                         |
+| 2.11 | note       | A step-3 refusal must release the claim at once.                                                                                                                                                                                       | It does, and counts a failed attempt.                                                                                                     |
+
+## Code review (2026-11-02)
+
+Three independent reviews of the built code. Tests are in
+`packages/server/daemon/test/delegated-invitations-review.test.js` unless
+named; each fails with its fix taken out.
+
+| #   | Severity | Finding                                                                                                                                                                                                | Resolution                                                                                                                                                                          | Test                                                                       |
+| --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 1   | high     | `releaseClaim` wiped a mark: an administrator's or inviter's revocation during an acceptance was undone, and the link worked again (run against the real functions, on an invitation naming `admins`). | A marked row ends `revoked` in the same statement, through the stale path too; `revoke_pending_by` keeps its author.                                                                | "1 — …" (three)                                                            |
+| 2   | high     | A row could end `revoked` with live grants or, for an administrator's, its groups; admins were told it "reaches nothing"; a false `invitation.accepted`.                                               | Any row ending `revoked` with an account has that account disabled, retried on the tick; the answer is `410 invitation_revoked`; audit and notification say what happened.          | "2 — …" (four)                                                             |
+| 3   | medium   | Audit: none for a revocation at the claim, `attempts_exhausted`, the admin's `deleted` or `marked`; a duplicate for an inviter's mark; a false one from a stale snapshot.                              | One entry per transition, from the row as recorded; `invitation.revoke.marked`, `invitation.deleted`, `invitation.account.disabled`, `invitation.import.refused`.                   | "3 — …" (six)                                                              |
+| 4   | high     | A branded domain kept its 4.8 invitation page under 4.9's CSP hashes: blocked by the browser until the brand was edited (availability; fails closed).                                                  | `rendered.json` records `pagesDigest`; the reconcile renders again when it differs or is absent.                                                                                    | `auth-branding.test.js` "a rendering from before its pages were recorded…" |
+| 5   | medium   | An inviter whose site grant was revoked kept inviting, and could reinstate themselves.                                                                                                                 | Gatekeeper's inviter route requires the plugin-owned site's grant; an acceptance checks it before its claim (`inviter_unentitled`). A sweep cannot: the invitations lock is a leaf. | "5 — …" (two); Gatekeeper `authz-delegated-invitations.test.js`            |
+| 6   | medium   | A Gatekeeper outage at the site step looked like a lost answer: the repair gave up after one outage.                                                                                                   | The client reports `outcomeUnknown`; only that keeps `site_attempted_at`.                                                                                                           | "6 — …" (two)                                                              |
+| 7   | medium   | Revoked rows that made a user were pruned, uncounted by `maxJoined`, and fell out of `disable-invitees`; an admin's `DELETE` dropped accepted rows.                                                    | Never pruned; `joined` counts by a live `accepted_user_id`; `DELETE` answers 409 `invitation_has_user`.                                                                             | "7 — …"                                                                    |
+| 8   | medium   | A restart before TOTP, or a failed write, stranded the invitee silently.                                                                                                                               | `totp_issued_at`; the admins are told to reset it.                                                                                                                                  | "8, 19 — …", "8 — …"                                                       |
+| 9   | low      | Erasure left other rows with the address, and an `accepting` row.                                                                                                                                      | Purged by address and by `invitation_id`; recovery skips an erased user.                                                                                                            | "9 — …" (two)                                                              |
+| 10  | low      | A disabled plugin kept taking invitations and joiners.                                                                                                                                                 | `plugin_disabled`: unavailable, and a reason that may pass again.                                                                                                                   | "10 — …"                                                                   |
+| 11  | low      | An update that reverted had already revoked open invitations.                                                                                                                                          | While an operation runs on the plugin nothing is revoked.                                                                                                                           | "11 — …"                                                                   |
+| 12  | low      | A restored `invitations.json` revived deleted rows; `accepted_user_id` could name a later holder.                                                                                                      | One-shot marker; a later file deleted unread, audited; the holder by acceptance time.                                                                                               | "12 — …" (two)                                                             |
+| 13  | low      | A role removed mid-acceptance threw past the precondition: accepted with nothing.                                                                                                                      | With a precondition the roles are checked after it: `role_undeclared`.                                                                                                              | "13 — …"                                                                   |
+| 14  | low      | Comment and sweep disagreed on when an inviter's standing stops counting.                                                                                                                              | It counts until the invitation is accepted; the acceptance's precondition reads it too; only the repair ignores it.                                                                 | "14 — …"                                                                   |
+| 15  | low      | A name deleted and recreated between lookup and grant would give the new holder the role (suspicion).                                                                                                  | The precondition compares the username's current holder.                                                                                                                            | "15 — …"                                                                   |
+| 16  | low      | The host rule was bypassable on `:9292` (`server_name _`, `Host $host`).                                                                                                                               | The panel and IP vhosts write `Host 127.0.0.1` on `/api/invite/`.                                                                                                                   | `nginx-vhosts.test.js`, `ip-panel-vhost.test.js`                           |
+| 17  | low      | Lists had no bound: about 65,000 rows for one inviter.                                                                                                                                                 | The inviter's view: the newest 200. `GET /api/invitations`: `limit` (500, at most 2000), `truncated`, shown by panel and CLI.                                                       | "17 — …"                                                                   |
+| 18  | low      | The repair read the newest 200 audit rows and only entitlement actions.                                                                                                                                | By `userId` in SQL; proxied site-grant changes are not audited, so it reads Gatekeeper's grants and stops when they differ from what it made.                                       | "18 — …"                                                                   |
+| 19  | low      | A failed TOTP write logged the command line, with the username.                                                                                                                                        | `exitCode` and the invitation's id.                                                                                                                                                 | "8, 19 — …"                                                                |
+| 20  | low      | One client's invitees could exhaust the relay's grant table.                                                                                                                                           | `PUT invitation-policy` warns when the enabled policies' `maxJoined × 2` exceeds the free grants.                                                                                   | "20 — …"                                                                   |
+| 21  | low      | The page said usernames run to 64 characters; the schema's cap is 32.                                                                                                                                  | The constants.                                                                                                                                                                      | core `auth-branding.test.js`                                               |
+| 22  | note     | This design's lock order was wrong (the code takes users before domains); "recovery at start".                                                                                                         | §6 corrected; the tick runs at start.                                                                                                                                               | —                                                                          |
+| 23  | note     | `location /api/invite` was said to catch `/api/invitations*`: false.                                                                                                                                   | Removed from the docs, comments and tests; row 2.5 records it.                                                                                                                      | —                                                                          |
+
+**Kept as a residual** (security-model.md 5g): an inviter or link holder can
+learn whether a username is taken, across the relay's clients, within the
+attempt limits.
+
+**A lowered cap** revokes nothing: open invitations stay and acceptance does
+not recheck it, so `joined` can pass a lowered `maxJoined` by what was open.

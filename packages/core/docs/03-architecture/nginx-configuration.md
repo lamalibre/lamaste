@@ -983,7 +983,7 @@ Protected locations (`/`, `/api`) enforce mTLS explicitly:
 if ($ssl_client_verify != SUCCESS) { return 496; }
 ```
 
-Public locations (`/api/enroll`, `/api/invite/` — with its slash: `/api/invite` would also take `/api/invitations*` and clear the certificate headers its routes need) skip the mTLS check and clear cert headers to prevent spoofing:
+Public locations (`/api/enroll`, `/api/invite/`, which writes `Host 127.0.0.1`: a client's own `Host` must not pass for a sign-in host, the only host that answers a delegated token) skip the mTLS check and clear cert headers to prevent spoofing:
 
 ```nginx
 location /api/enroll {
