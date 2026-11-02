@@ -841,7 +841,7 @@ export function withReconciledDirectory(fn, { actor = 'lamaste', logger } = {}) 
 
 /**
  * The directory user an invitation's acceptance created (stamped
- * `invitation_id`), or null.
+ * `invitation_id`), or null — an erased one is nobody's any more.
  *
  * @param {string} invitationId
  * @returns {Promise<DirectoryUser | null>}
@@ -849,7 +849,10 @@ export function withReconciledDirectory(fn, { actor = 'lamaste', logger } = {}) 
 export async function directoryUserOfInvitation(invitationId) {
   const db = await getStateDb();
   const row = db
-    .prepare('SELECT * FROM directory_users WHERE invitation_id = ? ORDER BY created_at LIMIT 1')
+    .prepare(
+      `SELECT * FROM directory_users WHERE invitation_id = ? AND erased_at IS NULL
+       ORDER BY created_at LIMIT 1`,
+    )
     .get(invitationId);
   return row ? rowToUser(row) : null;
 }
@@ -1144,6 +1147,8 @@ export async function eraseDirectoryUser(userId, { actor, logger }) {
       userId,
       username: row.username,
       removedAt: row.removed_at,
+      email: row.email,
+      invitationId: row.invitation_id,
     });
 
     const now = new Date().toISOString();

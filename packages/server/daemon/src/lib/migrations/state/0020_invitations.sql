@@ -30,10 +30,13 @@
 --                    acceptance checks under the users lock before it writes
 --                    anything — recovery or a revocation that took the claim
 --                    stops it
---   revoke_pending_reason
---                    a sweep or the administrator found an `accepting`
---                    invitation no longer acceptable: its acceptance makes no
---                    grant and ends it revoked with this reason
+--   revoke_pending_reason,
+--   revoke_pending_by
+--                    a sweep, the inviter or the administrator revoked an
+--                    `accepting` invitation (who: 'admin', 'user:<id>',
+--                    'lamaste'): it ends revoked with this reason, whatever
+--                    ends the claim — and an account the acceptance had made
+--                    by then is disabled
 --   role_granted_at,
 --   site_granted_at,
 --   rendered_at      delegated: what acceptance has completed
@@ -41,6 +44,11 @@
 --                    when the site grant was asked of Gatekeeper: an attempt
 --                    whose answer was lost is never made again blindly (the
 --                    administrator may have revoked what it made)
+--   totp_issued_at   when the acceptance gave the invitee their TOTP secret:
+--                    only then can they sign in unaided
+--   account_disabled_at
+--                    a revoked invitation that had made an account: when
+--                    that account was disabled
 CREATE TABLE invitations (
   id                TEXT PRIMARY KEY,
   token_sha256      TEXT NOT NULL UNIQUE CHECK (length(token_sha256) = 64),
@@ -63,6 +71,7 @@ CREATE TABLE invitations (
   failed_attempts   INTEGER NOT NULL DEFAULT 0,
   claim_id          TEXT,
   revoke_pending_reason TEXT,
+  revoke_pending_by TEXT,
   revoked_by        TEXT,
   revoked_reason    TEXT,
   accepted_user_id  TEXT,
@@ -70,6 +79,8 @@ CREATE TABLE invitations (
   site_granted_at   TEXT,
   rendered_at       TEXT,
   site_attempted_at TEXT,
+  totp_issued_at    TEXT,
+  account_disabled_at TEXT,
   CHECK (kind = 'admin' OR (
     plugin IS NOT NULL AND role IS NOT NULL AND site_id IS NOT NULL
     AND inviter_user_id IS NOT NULL AND groups_json = '[]'
@@ -77,7 +88,8 @@ CREATE TABLE invitations (
   CHECK ((status = 'revoked') = (revoked_reason IS NOT NULL)),
   CHECK (status NOT IN ('accepting', 'accepted') OR username IS NOT NULL),
   CHECK ((status = 'accepting') = (claim_id IS NOT NULL)),
-  CHECK (revoke_pending_reason IS NULL OR status = 'accepting')
+  CHECK (revoke_pending_reason IS NULL OR status = 'accepting'),
+  CHECK ((revoke_pending_reason IS NULL) = (revoke_pending_by IS NULL))
 );
 CREATE INDEX invitations_open ON invitations (status, plugin, inviter_user_id);
 CREATE INDEX invitations_accepted_user ON invitations (accepted_user_id);
@@ -90,6 +102,14 @@ CREATE UNIQUE INDEX invitations_open_username ON invitations (username)
 -- The invitation whose acceptance created a user — what recovery and the
 -- reconcile match an acceptance by, never the time it happened.
 ALTER TABLE directory_users ADD COLUMN invitation_id TEXT;
+
+-- invitations.json was imported (or there was none to import) — once: a file
+-- that comes back afterwards is a backup's, and its rows are not read.
+CREATE TABLE invitations_import (
+  id           INTEGER PRIMARY KEY CHECK (id = 1),
+  imported_at  TEXT NOT NULL,
+  rows         INTEGER NOT NULL
+);
 
 -- The administrator's policy for one plugin's delegated invitations: off
 -- until enabled, the e-mail domains invitees' addresses must be under, and

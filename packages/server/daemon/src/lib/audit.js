@@ -84,6 +84,26 @@ export async function recordAuditBestEffort(entry, logger) {
   }
 }
 
+/**
+ * Whether anyone but `actor` changed user `userId`'s entitlement on `plugin`
+ * at or after `since` — read from the whole log, whatever else filled it.
+ *
+ * @param {{ plugin: string, userId: string, since: string, actor: string }} query
+ * @returns {Promise<boolean>}
+ */
+export async function entitlementChangedByOthers({ plugin, userId, since, actor }) {
+  const db = await getStateDb();
+  const row = db
+    .prepare(
+      `SELECT 1 FROM audit_events
+       WHERE plugin = ? AND action IN ('plugin.entitlement.set', 'plugin.entitlement.removed')
+         AND at >= ? AND actor <> ? AND json_extract(details, '$.userId') = ?
+       LIMIT 1`,
+    )
+    .get(plugin, since, actor, userId);
+  return row !== undefined;
+}
+
 function pruneAudit(db) {
   const cutoff = new Date(Date.now() - AUDIT_RETENTION_DAYS * 86_400_000).toISOString();
   db.prepare('DELETE FROM audit_events WHERE at < ?').run(cutoff);

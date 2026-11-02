@@ -17,9 +17,15 @@
  * fifth locks the link). The password is hashed only after the checks that
  * need no lock pass.
  *
+ * A revocation that lands during an acceptance ends the invitation
+ * `revoked` however the acceptance goes. Before the account exists no
+ * account is made; after, it cannot be unmade by withholding, so the account
+ * is disabled through the usual offboarding and the administrators are told.
+ *
  * A delegated token is answered only by `auth.<its domain>` — the `Host`
- * every auth vhost writes as a literal (never `request.host`, which follows
- * a client's `X-Forwarded-Host` behind the trusted loopback hop).
+ * every auth vhost writes as a literal; the panel and IP vhosts write one no
+ * invitation names (never `request.host`, which follows a client's
+ * `X-Forwarded-Host` behind the trusted loopback hop).
  */
 
 import qrcode from 'qrcode-generator';
@@ -33,7 +39,7 @@ import {
 } from '@lamalibre/lamaste';
 
 import { httpError } from './app-error.js';
-import { listAudit, recordAuditBestEffort } from './audit.js';
+import { entitlementChangedByOthers, recordAuditBestEffort } from './audit.js';
 import {
   autheliaHoldsOidcIdentity,
   createUserFromInvitation,
@@ -41,31 +47,36 @@ import {
   hashPassword,
   readUsersRaw,
   writeTotpToDatabase,
+  writeUsers,
 } from './authelia.js';
 import {
   assertGrantReserve,
   invitationSurface,
+  inviterHoldsSite,
   whyNotAcceptable,
 } from './delegated-invitations.js';
 import {
   changeUsers,
   directoryUserOfInvitation,
+  findDirectoryUser,
   getDirectoryUser,
   usersFileError,
   withReconciledDirectory,
   withUsernamesForGrants,
 } from './directory.js';
 import { invitationDomainsNow, invitationSignInDomain, syncDomainAccess } from './domains.js';
-import { setEntitlement } from './entitlements.js';
+import { grantRoles, setEntitlement } from './entitlements.js';
 import {
   createGatekeeperGrant,
   inspectUserPrincipal,
+  listPluginGrants,
   listResourceGrants,
 } from './gatekeeper-client.js';
 import {
   abandonRepair,
   claimInvitation,
   claimState,
+  clearSiteAttempt,
   findInvitationByToken,
   finishClaim,
   getInvitation,
@@ -75,6 +86,7 @@ import {
   recordFailedAttempt,
   releaseClaim,
   reservedInvitationUsernames,
+  revokedAccountsToDisable,
   settleStaleClaim,
   staleClaims,
   unfulfilledAcceptances,
@@ -85,7 +97,12 @@ import { findPlugin } from './plugins.js';
 import { readSites } from './state.js';
 import { listGrantsForUser } from './user-access.js';
 
-/** Inviter reasons hold at the claim and no later: an invitee keeps what a departed inviter gave (D1). */
+/**
+ * An inviter's standing counts until their invitation is accepted — at the
+ * claim, in a sweep (which marks one being accepted) and before each grant.
+ * Once accepted it counts no more: the repair of an accepted invitation
+ * ignores these, as an invitee keeps what a departed inviter gave (D1).
+ */
 const INVITER_REASONS = new Set(['inviter_disabled', 'inviter_removed', 'inviter_unentitled']);
 
 function isRecord(value) {
@@ -246,16 +263,20 @@ class GrantStopped extends Error {
  * Make what delegated invitation `id` grants `username` and has not made
  * yet — the role, the site grant, the rendering — each behind a
  * precondition checked inside the users lock just before it is made: the
- * claim still `claimId`'s and not marked for revocation (an acceptance), and
- * nothing but the inviter's standing standing in the way. `repair`: never
- * replace a role grant, and never ask for a site grant twice when the first
- * answer was lost.
+ * claim still `claimId`'s and not marked for revocation (an acceptance), the
+ * username still user `userId`'s (a name deleted and taken again is someone
+ * else), and nothing standing in the way. `repair`: never replace a role
+ * grant, never ask for a site grant twice when the first answer was lost,
+ * and the inviter's standing no longer counts.
  *
  * @param {string} id
- * @param {{ username: string, claimId?: string | null, repair?: boolean, logger?: import('pino').Logger }} opts
+ * @param {{ username: string, userId: string, claimId?: string | null, repair?: boolean, logger?: import('pino').Logger }} opts
  * @returns {Promise<{ complete: boolean, stopped: string | null }>}
  */
-async function completeGrants(id, { username, claimId = null, repair = false, logger }) {
+export async function completeGrants(
+  id,
+  { username, userId, claimId = null, repair = false, logger },
+) {
   const actor = `invitation:${id}`;
   const precondition = async () => {
     if (claimId !== null) {
@@ -265,8 +286,12 @@ async function completeGrants(id, { username, claimId = null, repair = false, lo
     }
     const current = await getInvitation(id);
     if (!current) throw new GrantStopped('claim_lost');
+    if ((await findDirectoryUser(username))?.userId !== userId) {
+      throw new GrantStopped('repair_abandoned');
+    }
     const reason = await whyNotAcceptable(current);
-    if (reason !== null && !INVITER_REASONS.has(reason)) throw new GrantStopped(reason);
+    if (reason === null || (repair && INVITER_REASONS.has(reason))) return;
+    throw new GrantStopped(reason);
   };
 
   let invitation = await getInvitation(id);
@@ -304,7 +329,11 @@ async function completeGrants(id, { username, claimId = null, repair = false, lo
             resourceId: invitation.siteId,
             context: {},
           });
-          if (!created.ok) throw new GrantStopped('surface_unavailable');
+          if (!created.ok) {
+            // Refused, or never reached: nothing was made, the repair may ask again.
+            if (!created.outcomeUnknown) await clearSiteAttempt(id);
+            throw new GrantStopped('surface_unavailable');
+          }
         }
       });
       await recordCompletion(id, 'site_granted_at');
@@ -333,14 +362,23 @@ async function completeGrants(id, { username, claimId = null, repair = false, lo
 // Acceptance
 // ---------------------------------------------------------------------------
 
-/** TOTP for a user that exists: the URI and its QR code, or nulls (non-fatal). */
-async function setUpTotp(username, logger) {
+/**
+ * TOTP for a user that exists: the URI and its QR code, or nulls (non-fatal:
+ * the administrators are told to reset it). The error of a failed write
+ * names the command line, and with it the username: it is never logged.
+ */
+async function setUpTotp(invitationId, username, logger) {
   try {
     const { secret, uri } = generateTotpSecret(username);
     await writeTotpToDatabase(username, secret);
-    return { totpUri: uri, totpQr: totpQrDataUri(uri) };
+    const issued = { totpUri: uri, totpQr: totpQrDataUri(uri) };
+    await recordCompletion(invitationId, 'totp_issued_at');
+    return issued;
   } catch (err) {
-    logger?.error({ err: err.message }, 'Failed to set up TOTP for an invited user');
+    logger?.error(
+      { exitCode: err.exitCode ?? null, invitationId },
+      'Failed to set up TOTP for an invited user',
+    );
     return { totpUri: null, totpQr: null };
   }
 }
@@ -378,6 +416,162 @@ export async function acceptInvitation(input, { host, logger }) {
   return invitation.kind === 'delegated'
     ? acceptDelegated(invitation, parsed.data, { logger })
     : acceptAdmin(invitation, parsed.data, { logger });
+}
+
+/** Audit a revocation as it was recorded: its author, its reason, and the account it found. */
+async function auditRevoked(invitation, logger, details = {}) {
+  await recordAuditBestEffort(
+    {
+      actor: invitation.revokedBy ?? 'lamaste',
+      action: 'invitation.revoked',
+      plugin: invitation.plugin,
+      details: {
+        invitationId: invitation.id,
+        kind: invitation.kind,
+        reason: invitation.revokedReason,
+        ...details,
+      },
+    },
+    logger,
+  );
+}
+
+/** Give a claim up; a revocation that landed meanwhile ends the invitation (and is audited). */
+async function giveClaimUp(invitation, claimId, logger) {
+  const released = await releaseClaim(invitation.id, invitation.plugin, claimId);
+  if (released?.status === 'revoked') await auditRevoked(released, logger);
+}
+
+/** Count a refused acceptance; the fifth locks the link, and that is audited. */
+async function countFailedAttempt(invitation, logger) {
+  const { locked } = await recordFailedAttempt(invitation.id, invitation.plugin);
+  if (locked) {
+    await auditRevoked(
+      { ...invitation, revokedBy: 'lamaste', revokedReason: 'attempts_exhausted' },
+      logger,
+    );
+  }
+}
+
+/**
+ * Disable the account a revoked invitation had made, through the usual
+ * offboarding (an administrator's invitation with `admins` included): it
+ * was revoked, so it reaches nothing. Answers whether that is so; retried on
+ * the tick until it is. An administrator may delete it, or enable it.
+ *
+ * @returns {Promise<boolean>}
+ */
+export async function disableRevokedAccount(invitation, { logger } = {}) {
+  const user = await getDirectoryUser(invitation.acceptedUserId);
+  if (user?.status === 'active' && user.username) {
+    const { username, userId } = user;
+    try {
+      const outcome = await changeUsers(
+        async () => {
+          const usersData = await readUsersRaw();
+          const entry = usersData.users?.[username];
+          if (!entry || entry.disabled === true) return;
+          entry.disabled = true;
+          await writeUsers(usersData);
+        },
+        {
+          actor: `invitation:${invitation.id}`,
+          logger,
+          expect: (users) => !users[username] || users[username].disabled === true,
+        },
+      );
+      if (!outcome.persisted) return false;
+    } catch (err) {
+      logger?.error(
+        { err: err.message, invitationId: invitation.id },
+        'A revoked invitation’s account is not disabled yet',
+      );
+      return false;
+    }
+    await recordAuditBestEffort(
+      {
+        actor: 'lamaste',
+        action: 'invitation.account.disabled',
+        plugin: invitation.plugin,
+        details: { invitationId: invitation.id, kind: invitation.kind, userId },
+      },
+      logger,
+    );
+  }
+  await recordCompletion(invitation.id, 'account_disabled_at');
+  return true;
+}
+
+/**
+ * What follows a claim ending with a user, from the row as recorded: one
+ * audit entry, and what the administrators need to know. A revoked one has
+ * its account disabled. A user without a TOTP secret (a failed write, a
+ * recovered acceptance) cannot sign in until an administrator resets it.
+ */
+async function settleFinished(recorded, { logger, recovered = false }) {
+  const userId = recorded.acceptedUserId;
+  const where = recorded.plugin ? `plugin "${recorded.plugin}"` : 'the relay';
+  const source = recorded.plugin ? `invitation:${recorded.plugin}` : 'invitation';
+  const also = recovered ? { recovered: true } : {};
+  if (recorded.status === 'revoked') {
+    const disabled = await disableRevokedAccount(recorded, { logger });
+    await auditRevoked(recorded, logger, { userId, accountDisabled: disabled, ...also });
+    await notifyAdminsBestEffort(
+      {
+        source,
+        level: 'warning',
+        message: `An invitation into ${where} was revoked while it was being accepted (${recorded.revokedReason}), after its account was made (user ${userId}). The account ${disabled ? 'was disabled' : 'is being disabled — retried every minute'}; delete it, or enable it if it is wanted after all.`,
+      },
+      logger,
+    );
+    return;
+  }
+  await recordAuditBestEffort(
+    {
+      actor: 'invitation',
+      action: 'invitation.accepted',
+      plugin: recorded.plugin,
+      details: {
+        invitationId: recorded.id,
+        kind: recorded.kind,
+        userId,
+        ...(recorded.kind === 'delegated'
+          ? { inviterUserId: recorded.inviterUserId, role: recorded.role }
+          : {}),
+        ...also,
+      },
+    },
+    logger,
+  );
+  if (recorded.kind === 'delegated') {
+    await notifyAdminsBestEffort(
+      {
+        source,
+        level: 'info',
+        message: `Someone joined plugin "${recorded.plugin}" by invitation, as ${recorded.role} (user ${userId}).`,
+      },
+      logger,
+    );
+  }
+  if (recorded.totpIssuedAt === null) {
+    await notifyAdminsBestEffort(
+      {
+        source,
+        level: 'warning',
+        message: `User ${userId}, who accepted an invitation into ${where}, has no two-factor secret: reset their TOTP on Users, or they cannot sign in.`,
+      },
+      logger,
+    );
+  }
+}
+
+/** 410 for a claim that ended revoked — there is no account to hand over. */
+function assertNotRevoked(finished) {
+  if (finished?.status === 'revoked') {
+    throw httpError('This invitation was revoked while it was being accepted', 410, {
+      code: 'invitation_revoked',
+    });
+  }
 }
 
 /**
@@ -421,9 +615,9 @@ async function createInvitedUser(invitation, { username, claimId, vet, create, l
       },
     );
   } catch (err) {
-    await releaseClaim(invitation.id, invitation.plugin, claimId);
+    await giveClaimUp(invitation, claimId, logger);
     if (err.code === 'username_unavailable' || err.code === 'username_has_oidc_identity') {
-      await recordFailedAttempt(invitation.id, invitation.plugin);
+      await countFailedAttempt(invitation, logger);
       throw usernameUnavailableError();
     }
     throw err;
@@ -445,7 +639,7 @@ async function acceptAdmin(invitation, { password }, { logger }) {
   try {
     hashed = await hashPassword(password);
   } catch (err) {
-    await releaseClaim(invitation.id, null, claimId);
+    await giveClaimUp(invitation, claimId, logger);
     logger?.error({ err: err.message }, 'Failed to hash password');
     throw httpError('Failed to process password', 500);
   }
@@ -456,17 +650,13 @@ async function acceptAdmin(invitation, { password }, { logger }) {
     create: () => createUserFromInvitation(username, invitation.email, invitation.groups, hashed),
     logger,
   });
-  const totp = (await usersFileHolds(username)) ? await setUpTotp(username, logger) : {};
+  const totp = (await usersFileHolds(username))
+    ? await setUpTotp(invitation.id, username, logger)
+    : {};
   if (user) {
-    await finishClaim(invitation.id, null, claimId, user.userId);
-    await recordAuditBestEffort(
-      {
-        actor: 'invitation',
-        action: 'invitation.accepted',
-        details: { invitationId: invitation.id, kind: 'admin', userId: user.userId },
-      },
-      logger,
-    );
+    const recorded = await finishClaim(invitation.id, null, claimId, user.userId);
+    if (recorded) await settleFinished(recorded, { logger });
+    assertNotRevoked(recorded ?? (await getInvitation(invitation.id)));
   }
   const loginDomain = await invitationSignInDomain(invitation);
   return {
@@ -482,19 +672,27 @@ async function acceptAdmin(invitation, { password }, { logger }) {
 
 async function acceptDelegated(invitation, { username, displayName, password }, { logger }) {
   if (await usernameNamedLocally(username, invitation.id)) {
-    await recordFailedAttempt(invitation.id, invitation.plugin);
+    await countFailedAttempt(invitation, logger);
     throw usernameUnavailableError();
   }
   await assertGrantReserve();
+  // Gatekeeper's answer, before the lock: an inviter who lost the site's
+  // grant has lost the plugin, whatever role is left on their name.
+  const inviterHoldsGrant = await inviterHoldsSite(invitation);
   const claimId = await claimInvitation(invitation.id, invitation.plugin, username, {
     check: async () => {
       const current = await getInvitation(invitation.id);
       const reason = current ? await whyNotAcceptable(current) : 'plugin_removed';
-      return reason === 'surface_unavailable' ? 'unavailable' : reason;
+      if (reason === 'surface_unavailable') return 'unavailable';
+      return reason ?? (inviterHoldsGrant ? null : 'inviter_unentitled');
     },
   }).catch(async (err) => {
-    if (err.code === 'username_unavailable') {
-      await recordFailedAttempt(invitation.id, invitation.plugin);
+    if (err.code === 'username_unavailable') await countFailedAttempt(invitation, logger);
+    if (err.revokedReason) {
+      await auditRevoked(
+        { ...invitation, revokedBy: 'lamaste', revokedReason: err.revokedReason },
+        logger,
+      );
     }
     throw err;
   });
@@ -503,7 +701,7 @@ async function acceptDelegated(invitation, { username, displayName, password }, 
   try {
     hashed = await hashPassword(password);
   } catch (err) {
-    await releaseClaim(invitation.id, invitation.plugin, claimId);
+    await giveClaimUp(invitation, claimId, logger);
     logger?.error({ err: err.message }, 'Failed to hash password');
     throw httpError('Failed to process password', 500);
   }
@@ -514,7 +712,9 @@ async function acceptDelegated(invitation, { username, displayName, password }, 
     create: () => createUserFromInvitation(username, invitation.email, [], hashed, displayName),
     logger,
   });
-  const totp = (await usersFileHolds(username)) ? await setUpTotp(username, logger) : {};
+  const totp = (await usersFileHolds(username))
+    ? await setUpTotp(invitation.id, username, logger)
+    : {};
   const plugin = await findPlugin(invitation.plugin);
   const surface = plugin ? await invitationSurface(plugin) : { ok: false };
   const loginUrl = surface.ok
@@ -533,11 +733,18 @@ async function acceptDelegated(invitation, { username, displayName, password }, 
     };
   }
 
-  const grants = await completeGrants(invitation.id, { username, claimId, logger });
+  const grants = await completeGrants(invitation.id, {
+    username,
+    userId: user.userId,
+    claimId,
+    logger,
+  });
   const recorded = await finishClaim(invitation.id, invitation.plugin, claimId, user.userId, {
     revokeReason: grants.stopped === 'claim_lost' ? null : grants.stopped,
   });
-  await recordDelegatedAcceptance(recorded ?? invitation, user.userId, { logger });
+  // Null: recovery took the claim, and settled it.
+  if (recorded) await settleFinished(recorded, { logger });
+  assertNotRevoked(recorded ?? (await getInvitation(invitation.id)));
   return {
     ok: true,
     username,
@@ -549,38 +756,6 @@ async function acceptDelegated(invitation, { username, displayName, password }, 
   };
 }
 
-/** Audit and notify a delegated acceptance as it was recorded (accepted, or revoked with a reason). */
-async function recordDelegatedAcceptance(invitation, userId, { logger, recovered = false }) {
-  const accepted = invitation.status === 'accepted';
-  await recordAuditBestEffort(
-    {
-      actor: 'invitation',
-      action: accepted ? 'invitation.accepted' : 'invitation.revoked',
-      plugin: invitation.plugin,
-      details: {
-        invitationId: invitation.id,
-        kind: 'delegated',
-        userId,
-        inviterUserId: invitation.inviterUserId,
-        role: invitation.role,
-        ...(accepted ? {} : { reason: invitation.revokedReason }),
-        ...(recovered ? { recovered: true } : {}),
-      },
-    },
-    logger,
-  );
-  await notifyAdminsBestEffort(
-    {
-      source: `invitation:${invitation.plugin}`,
-      level: accepted ? 'info' : 'warning',
-      message: accepted
-        ? `Someone joined plugin "${invitation.plugin}" by invitation, as ${invitation.role} (user ${userId}).`
-        : `An invitation into plugin "${invitation.plugin}" made an account (user ${userId}) but was revoked while it was accepted (${invitation.revokedReason}): it reaches nothing — keep or delete it.`,
-    },
-    logger,
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Recovery and repair (the identity tick)
 // ---------------------------------------------------------------------------
@@ -588,8 +763,9 @@ async function recordDelegatedAcceptance(invitation, userId, { logger, recovered
 /**
  * Settle every claim older than the stale limit by what exists, under the
  * users lock after a reconcile: a directory row stamped with the invitation
- * → it is accepted (the repair completes its grants); otherwise it is
- * pending again. An acceptance still queued finds its claim gone and stops.
+ * → it is accepted (the repair completes its grants) or, marked, revoked
+ * with its account disabled; otherwise it is pending again, or revoked when
+ * marked. An acceptance still queued finds its claim gone and stops.
  *
  * @param {{ logger?: import('pino').Logger }} [opts]
  */
@@ -603,28 +779,8 @@ export async function resolveStaleClaims({ logger } = {}) {
         },
         { logger },
       );
-      if (settled?.acceptedUserId) {
-        if (settled.kind === 'delegated') {
-          await recordDelegatedAcceptance(settled, settled.acceptedUserId, {
-            logger,
-            recovered: true,
-          });
-        } else {
-          await recordAuditBestEffort(
-            {
-              actor: 'invitation',
-              action: 'invitation.accepted',
-              details: {
-                invitationId: claim.id,
-                kind: 'admin',
-                userId: settled.acceptedUserId,
-                recovered: true,
-              },
-            },
-            logger,
-          );
-        }
-      }
+      if (settled?.acceptedUserId) await settleFinished(settled, { logger, recovered: true });
+      else if (settled?.status === 'revoked') await auditRevoked(settled, logger);
     } catch (err) {
       logger?.warn(
         { err: err.message, invitationId: claim.id },
@@ -634,29 +790,44 @@ export async function resolveStaleClaims({ logger } = {}) {
   }
 }
 
-/** Whether anyone but the invitation changed `userId`'s entitlement on `plugin` since `since`. */
-async function entitlementChangedByOthers(plugin, userId, since, invitationId) {
-  for (const action of ['plugin.entitlement.set', 'plugin.entitlement.removed']) {
-    const entries = await listAudit({ plugin, action, limit: 200 });
-    if (
-      entries.some(
-        (e) =>
-          e.at >= since && e.details?.userId === userId && e.actor !== `invitation:${invitationId}`,
-      )
-    ) {
-      return true;
-    }
+/**
+ * Whether what the acceptance made still stands: the role grant it recorded
+ * and the site grant it recorded, read from Gatekeeper — a site grant changes
+ * by no audited route — and no entitlement change by anyone else in the
+ * audit. Null when Gatekeeper cannot say: the repair waits for the next tick.
+ */
+async function grantsStandAsMade(invitation, user) {
+  const changed = await entitlementChangedByOthers({
+    plugin: invitation.plugin,
+    userId: user.userId,
+    since: invitation.roleGrantedAt ?? invitation.statusAt,
+    actor: `invitation:${invitation.id}`,
+  });
+  if (changed) return false;
+  const own = (g) => g.principalType === 'user' && g.principalId === user.username;
+  if (invitation.roleGrantedAt !== null) {
+    const plugin = await findPlugin(invitation.plugin);
+    if (!plugin) return false;
+    const grants = await listPluginGrants(plugin.route);
+    if (!grants.ok) return null;
+    const roles = grants.grants.filter(own).map(grantRoles);
+    if (!roles.some((r) => r?.length === 1 && r[0] === invitation.role)) return false;
   }
-  return false;
+  if (invitation.siteGrantedAt !== null) {
+    const grants = await listResourceGrants('site', invitation.siteId);
+    if (!grants.ok) return null;
+    if (!grants.grants.some(own)) return false;
+  }
+  return true;
 }
 
 /**
  * Complete the grants of accepted delegated invitations, for
  * {@link INVITATION_REPAIR_WINDOW_MS} after their acceptance, only while
  * their user is active, nothing but the inviter's standing stands in the
- * way, and no one else changed the user's entitlement since — and only by
- * creating what is missing. Otherwise the repair stops (`repair_abandoned`,
- * admins notified).
+ * way, and what it already made stands as it made it — and only by creating
+ * what is missing. Otherwise the repair stops (`repair_abandoned`, admins
+ * notified).
  *
  * @param {{ logger?: import('pino').Logger, now?: number }} [opts]
  */
@@ -667,20 +838,15 @@ export async function repairAcceptances({ logger, now = Date.now() } = {}) {
       const expired = Date.parse(invitation.statusAt) + INVITATION_REPAIR_WINDOW_MS < now;
       let stopped =
         expired || !user || user.status !== 'active' || !user.username ? 'repair_abandoned' : null;
-      if (
-        !stopped &&
-        (await entitlementChangedByOthers(
-          invitation.plugin,
-          user.userId,
-          invitation.statusAt,
-          invitation.id,
-        ))
-      ) {
-        stopped = 'repair_abandoned';
+      if (!stopped) {
+        const standing = await grantsStandAsMade(invitation, user);
+        if (standing === null) continue;
+        if (!standing) stopped = 'repair_abandoned';
       }
       if (!stopped) {
         const result = await completeGrants(invitation.id, {
           username: user.username,
+          userId: user.userId,
           repair: true,
           logger,
         });
@@ -717,9 +883,21 @@ export async function repairAcceptances({ logger, now = Date.now() } = {}) {
 }
 
 /**
- * The invitations' part of the identity tick: import a restored
- * invitations.json, settle stale claims, repair acceptances, prune ended
- * invitations.
+ * Disable the accounts of revoked invitations that are not disabled yet: a
+ * failed write, or a crash between recording the revocation and disabling.
+ *
+ * @param {{ logger?: import('pino').Logger }} [opts]
+ */
+export async function disableRevokedAccounts({ logger } = {}) {
+  for (const invitation of await revokedAccountsToDisable()) {
+    await disableRevokedAccount(invitation, { logger });
+  }
+}
+
+/**
+ * The invitations' part of the identity tick, which also runs at start:
+ * import invitations.json (once), settle stale claims, disable the accounts
+ * of revoked invitations, repair acceptances, prune ended invitations.
  *
  * @param {{ logger?: import('pino').Logger }} [opts]
  */
@@ -729,7 +907,7 @@ export async function invitationsTick({ logger } = {}) {
   } catch (err) {
     logger?.error({ err: err.message }, 'Importing invitations.json failed');
   }
-  for (const step of [resolveStaleClaims, repairAcceptances]) {
+  for (const step of [resolveStaleClaims, disableRevokedAccounts, repairAcceptances]) {
     try {
       await step({ logger });
     } catch (err) {

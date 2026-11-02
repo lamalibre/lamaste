@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename, open, rm } from 'node:fs/promises';
+import { readFile, writeFile, rename, open, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { PromiseChainMutex } from '@lamalibre/lamaste';
 
@@ -153,6 +153,17 @@ export async function readLegacyInvitations() {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
+  }
+}
+
+/** Whether invitations.json exists — read by nobody once it was imported. */
+export async function hasLegacyInvitations() {
+  try {
+    await stat(invitationsPath());
+    return true;
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
   }
 }
 

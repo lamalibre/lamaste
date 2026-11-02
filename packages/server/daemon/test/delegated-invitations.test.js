@@ -145,6 +145,7 @@ async function makeInvitation(email = 'ayse@client.test', role = 'viewer', as = 
 }
 
 async function seedLegacy(rows) {
+  await lib.forgetInvitationsImportForTests();
   await writeFile(path.join(stateDir, 'invitations.json'), JSON.stringify(rows));
   return lib.importLegacyInvitations();
 }
@@ -228,6 +229,13 @@ before(async () => {
   // The coordinator: a member of the domain, entitled with the inviting role.
   entitle('coord', ['coordinator']);
   entitle('viewer1', ['viewer']);
+  gatekeeper.addGrant({
+    principalType: 'user',
+    principalId: 'coord',
+    resourceType: 'site',
+    resourceId: SITE.id,
+    context: {},
+  });
   await lib.recomputeAudiences({ logger });
 
   const { default: Fastify } = await import('fastify');
@@ -831,8 +839,8 @@ test('a grant made after a revocation landed never lands: the precondition runs 
   });
   const res = await accept({ token, username: 'late', displayName: 'L', password: PASSWORD });
   original(async () => surface);
-  assert.equal(res.statusCode, 200, res.body);
-  assert.equal(res.json().accessPending, true);
+  assert.equal(res.statusCode, 410, res.body);
+  assert.equal(res.json().code, 'invitation_revoked');
   const recorded = await lib.getInvitation(invitation.id);
   assert.equal(recorded.status, 'revoked');
   assert.equal(recorded.revokedReason, 'surface_removed');
@@ -841,6 +849,7 @@ test('a grant made after a revocation landed never lands: the precondition runs 
     false,
     'nothing granted',
   );
+  assert.equal((await usersNow()).late.disabled, true, 'the account it made reaches nothing');
 });
 
 // ---------------------------------------------------------------------------
@@ -950,7 +959,7 @@ test('disabling everyone a person invited — transitively — through the usual
   assert.equal(audited.details.transitive, true);
 });
 
-test('invitations.json: imported whenever it exists, by id, never over a row state.db holds; tokens hashed; the file deleted', async () => {
+test('invitations.json: imported by id, never over a row state.db holds; tokens hashed; the file deleted', async () => {
   const now = Date.now();
   const rows = [
     {
@@ -978,7 +987,7 @@ test('invitations.json: imported whenever it exists, by id, never over a row sta
       email: 'v@x.test',
       createdAt: new Date(now - 9000).toISOString(),
       used: true,
-      acceptedAt: new Date(now - 8000).toISOString(),
+      acceptedAt: new Date(now).toISOString(),
     },
     { id: 'bad', token: 'not-a-token', username: 'x', email: 'x@x.test' },
   ];
@@ -991,7 +1000,7 @@ test('invitations.json: imported whenever it exists, by id, never over a row sta
   const accepted = await lib.getInvitation('old-3');
   assert.equal(accepted.status, 'accepted');
   assert.equal(accepted.acceptedUserId, await idOf('viewer1'));
-  // A restored backup brings the file back: nothing already held is touched.
+  // Even without the marker, nothing already held is touched.
   await lib.revokeOrDeleteInvitation('old-1');
   assert.equal(await seedLegacy(rows), 0);
   assert.equal((await lib.getInvitation('old-1')).status, 'revoked');
