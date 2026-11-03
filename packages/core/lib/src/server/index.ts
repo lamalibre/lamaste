@@ -665,6 +665,7 @@ export type {
   AutheliaLocales,
   FetchAutheliaLocalesOptions,
   AuthBrandingRenderInput,
+  AuthBrandingRendering,
 } from './auth-branding-store.js';
 export {
   INVITE_PAGE_DEFAULT_ACCENT,
@@ -681,4 +682,19 @@ export {
   INVITATIONS_PAGE_SCRIPT,
   renderInvitationsPage,
 } from './invitations-page.js';
-export { AUTH_PAGE_BRAND_CSS_PATH, AUTH_PAGE_STYLE, cspHashSource } from './auth-pages.js';
+export {
+  AUTH_PAGE_BRAND_CSS_PATH,
+  AUTH_PAGE_MESSAGES_ID,
+  AUTH_PAGE_STYLE,
+  cspHashSource,
+} from './auth-pages.js';
+// The "not available" page of a plugin's site (page-language-design.md §2)
+export {
+  UNAVAILABLE_PAGE_STOCK_DIR,
+  UNAVAILABLE_PAGE_STYLE,
+  UNAVAILABLE_PAGE_STYLE_HASH,
+  renderUnavailablePage,
+  unavailablePageHeaders,
+  unavailablePageLogoUrl,
+} from './unavailable-page.js';
+export type { UnavailablePageBrand } from './unavailable-page.js';

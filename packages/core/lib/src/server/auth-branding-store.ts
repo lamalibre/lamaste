@@ -1,11 +1,14 @@
 /**
- * The rendered brands on the relay (packages/core/docs/auth-branding-design.md):
- * one entry per domain under {@link AUTH_BRANDING_WEB_ROOT}, holding what
- * nginx serves on `auth.<domain>` for the routes Authelia lets a file
- * override, the generated stylesheet and `brand.json`. The brand record in
- * `state.db` is the source of truth; a rendering is a projection of it,
- * rebuilt at every change and reconciled at start (`rendered.json` says
- * which revision and Authelia release it came from).
+ * The rendered brands and languages on the relay
+ * (packages/core/docs/auth-branding-design.md, page-language-design.md §5):
+ * one entry per domain with a brand or a page language under
+ * {@link AUTH_BRANDING_WEB_ROOT}, holding what nginx serves on
+ * `auth.<domain>` for the routes Authelia lets a file override, the
+ * generated stylesheet, Lamaste's own pages in the domain's language and
+ * `brand.json`. The domain's records in `state.db` are the source of truth;
+ * a rendering is a projection of them, rebuilt at every change and
+ * reconciled at start (`rendered.json` says which revision, language and
+ * Authelia release it came from).
  *
  * The layout is the web-tree store's: each rendering is a directory of its
  * own under `<root>/.renders/<domain>-<revision>-<hex>/` (files 0640,
@@ -43,14 +46,24 @@ import {
   AUTH_BRANDING_FILES,
   AUTH_BRANDING_WEB_ROOT,
   authBrandingLocaleFile,
-  renderBrandCss,
   renderBrandJson,
   renderBrandLocale,
+  renderDomainCss,
 } from '../auth-branding.js';
 import type { BrandFields, RenderedBrand } from '../auth-branding.js';
+import {
+  AUTHELIA_FORCED_NAMESPACES,
+  AUTHELIA_LOCALE_OF_LANGUAGE,
+  forcedAutheliaLocaleFile,
+  renderForcedAutheliaLocale,
+} from '../authelia-locales.js';
+import { AUTHELIA_RELEASE } from '../constants.js';
 import { assertDomainName } from '../domains.js';
+import { PAGE_LANGUAGES, isPageLanguage } from '../page-messages.js';
+import type { PageLanguage } from '../page-messages.js';
 import { renderInvitePage } from './invite-page.js';
 import { renderInvitationsPage } from './invitations-page.js';
+import { renderUnavailablePage } from './unavailable-page.js';
 
 const DIR_MODE = 0o750;
 const FILE_MODE = 0o640;
@@ -266,29 +279,39 @@ export async function fetchAutheliaLocales({
 // Rendering
 // ---------------------------------------------------------------------------
 
-/** What a rendering is made from. */
+/** What a rendering is made from: a brand, a language, or both. */
 export interface AuthBrandingRenderInput {
   readonly domain: string;
-  readonly brand: BrandFields;
+  /** The domain's brand, or null for a rendering of its language alone. */
+  readonly brand: BrandFields | null;
+  /** The domain's page language, or null/absent for a rendering of its brand alone (as 4.8). */
+  readonly language?: PageLanguage | null;
+  /** The brand record's revision; 0 without a brand. */
   readonly revision: number;
   /** The logo's PNG bytes, when set. */
   readonly logo: Uint8Array | null;
   /** The favicon's bytes (ICO or PNG), when set. */
   readonly favicon: Uint8Array | null;
   readonly locales: AutheliaLocales;
-  /** The Authelia release the locales came from (recorded in `rendered.json`). */
+  /** The Authelia release the locales came from — the running one (recorded in `rendered.json`). */
   readonly autheliaVersion: string;
   readonly root?: string;
   readonly now?: Date;
 }
 
 /**
- * The digest of this release's auth pages, whatever the brand: nginx sends
- * their CSP hashes, so a domain's rendering must hold exactly these pages.
+ * The digest of this release's auth pages, whatever the brand, in every
+ * language: nginx sends their CSP hashes, so a domain's rendering must hold
+ * exactly these pages, and a catalogue change re-renders every domain once.
  * The stock pages stand for every brand: only their markup differs.
  */
 export function authPagesDigest(): string {
-  return sha256Hex(Buffer.from(`${renderInvitePage(null)}\n${renderInvitationsPage(null)}`));
+  const pages = PAGE_LANGUAGES.flatMap((language) => [
+    renderInvitePage(null, language),
+    renderInvitationsPage(null, language),
+    renderUnavailablePage({ brand: null, language, domain: null }),
+  ]);
+  return sha256Hex(Buffer.from(pages.join('\n')));
 }
 
 /** Write `content` to a new 0640 file at `to` (exclusively), fsynced. */
@@ -322,21 +345,76 @@ export function sha256Hex(bytes: Uint8Array): string {
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
+/** What {@link renderAuthBranding} rendered: `rendered.json`, and what it could not translate. */
+export interface AuthBrandingRendering extends RenderedBrand {
+  /**
+   * The keys (`<namespace>:<dotted path>`) of the forced Authelia files no
+   * text of the domain's language covers, filled from Authelia's English —
+   * empty for the pinned release; the keys a newer running Authelia added.
+   */
+  readonly fromEnglish: readonly string[];
+}
+
 /**
- * Render a domain's brand under `root`: the favicon and logo when set,
- * every locale file with the brand name spliced in, `brand.css`, the
- * domain's invitation page (`invite/index.html`, {@link renderInvitePage})
- * and inviter's page (`invitations/index.html`, {@link renderInvitationsPage}),
- * `brand.json` and `rendered.json` — into a directory of its own under
- * `.renders/`, then served by replacing the domain's link in one rename.
- * The rendering it replaces is removed afterwards. Returns what
- * `rendered.json` says.
+ * Render a domain's brand and/or language under `root`:
+ *
+ * - with a brand: the favicon and logo when set, `brand.json`;
+ * - with a brand and no language: every Authelia locale file with the brand
+ *   name spliced in (`locales/<locale>/<namespace>.json`, as 4.8);
+ * - with a language: one forced file per namespace the portal loads
+ *   (`locales/forced/<namespace>.json`, {@link renderForcedAutheliaLocale}),
+ *   brand-spliced when branded — the auth vhost answers every locale path
+ *   with it;
+ * - always: `brand.css` ({@link renderDomainCss}), the domain's invitation
+ *   page, inviter's page and "not available" page in its language
+ *   (English without one) and `rendered.json`
+ *
+ * — into a directory of its own under `.renders/`, then served by
+ * replacing the domain's link in one rename. The rendering it replaces is
+ * removed afterwards. Returns what `rendered.json` says, with the keys left
+ * in English.
  */
-export async function renderAuthBranding(input: AuthBrandingRenderInput): Promise<RenderedBrand> {
+export async function renderAuthBranding(
+  input: AuthBrandingRenderInput,
+): Promise<AuthBrandingRendering> {
   const root = input.root ?? AUTH_BRANDING_WEB_ROOT;
   const link = authBrandingDir(input.domain, root);
+  const { brand } = input;
+  const language = input.language ?? null;
   if (!Number.isInteger(input.revision) || input.revision < 0) {
     throw new Error('A rendering has a non-negative integer revision');
+  }
+  if (language !== null && !isPageLanguage(language)) {
+    throw new Error('A rendering’s language is a page language');
+  }
+  if (brand === null) {
+    if (language === null) throw new Error('A rendering has a brand or a language');
+    if (input.revision !== 0 || input.logo !== null || input.favicon !== null) {
+      throw new Error('A rendering without a brand has revision 0, no logo and no favicon');
+    }
+  }
+  const forced: Array<{ relative: string; messages: Record<string, unknown> }> = [];
+  const fromEnglish: string[] = [];
+  if (language !== null) {
+    const fileOf = (locale: string, namespace: string): AutheliaLocaleFile | undefined =>
+      input.locales.files.find((f) => f.locale === locale && f.namespace === namespace);
+    for (const namespace of AUTHELIA_FORCED_NAMESPACES) {
+      const english = fileOf('en', namespace);
+      // Without Authelia's English there is nothing to force: the vhost's
+      // fallback then lets Authelia answer that namespace itself.
+      if (english === undefined) continue;
+      const result = renderForcedAutheliaLocale({
+        namespace,
+        language,
+        english: english.messages,
+        embedded: fileOf(AUTHELIA_LOCALE_OF_LANGUAGE[language], namespace)?.messages ?? null,
+      });
+      fromEnglish.push(...result.fromEnglish.map((key) => `${namespace}:${key}`));
+      forced.push({
+        relative: forcedAutheliaLocaleFile(namespace),
+        messages: brand === null ? result.messages : renderBrandLocale(result.messages, brand.name),
+      });
+    }
   }
   const rendersDir = path.join(root, AUTH_BRANDING_RENDERS_DIR);
   await mkdir(rendersDir, { recursive: true, mode: DIR_MODE });
@@ -346,44 +424,60 @@ export async function renderAuthBranding(input: AuthBrandingRenderInput): Promis
   const rendered: RenderedBrand = {
     v: 1,
     revision: input.revision,
+    language,
     autheliaVersion: input.autheliaVersion,
+    autheliaPinned: AUTHELIA_RELEASE.version,
     pagesDigest: authPagesDigest(),
     renderedAt: (input.now ?? new Date()).toISOString(),
   };
+  const json = (value: unknown, indent: string | number): string =>
+    `${JSON.stringify(value, null, indent)}\n`;
   try {
     if (input.favicon)
       await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.favicon), input.favicon);
     if (input.logo) await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.logo), input.logo);
-    for (const file of input.locales.files) {
-      const relative = authBrandingLocaleFile(file.locale, file.namespace);
-      const messages = renderBrandLocale(file.messages, input.brand.name);
-      await writeNewFile(path.join(dir, relative), `${JSON.stringify(messages, null, '\t')}\n`);
+    if (brand !== null && language === null) {
+      for (const file of input.locales.files) {
+        const relative = authBrandingLocaleFile(file.locale, file.namespace);
+        const messages = renderBrandLocale(file.messages, brand.name);
+        await writeNewFile(path.join(dir, relative), json(messages, '\t'));
+      }
     }
-    await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.css), renderBrandCss(input.brand));
-    const pageBrand = {
-      name: input.brand.name,
-      tagline: input.brand.tagline,
-      theme: input.brand.theme,
-      accent: input.brand.accent,
-      logo: input.logo !== null,
-    };
-    await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.invite), renderInvitePage(pageBrand));
+    for (const file of forced) {
+      await writeNewFile(path.join(dir, file.relative), json(file.messages, '\t'));
+    }
+    await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.css), renderDomainCss(brand, language));
+    const pageBrand =
+      brand === null
+        ? null
+        : {
+            name: brand.name,
+            tagline: brand.tagline,
+            theme: brand.theme,
+            accent: brand.accent,
+            logo: input.logo !== null,
+          };
+    const pageLanguage = language ?? 'en';
+    await writeNewFile(
+      path.join(dir, AUTH_BRANDING_FILES.invite),
+      renderInvitePage(pageBrand, pageLanguage),
+    );
     await writeNewFile(
       path.join(dir, AUTH_BRANDING_FILES.invitations),
-      renderInvitationsPage(pageBrand),
-    );
-    const brandJson = renderBrandJson(input.domain, input.brand, input.revision, {
-      logoSha256: input.logo ? sha256Hex(input.logo) : null,
-      faviconSha256: input.favicon ? sha256Hex(input.favicon) : null,
-    });
-    await writeNewFile(
-      path.join(dir, AUTH_BRANDING_FILES.brand),
-      `${JSON.stringify(brandJson, null, 2)}\n`,
+      renderInvitationsPage(pageBrand, pageLanguage),
     );
     await writeNewFile(
-      path.join(dir, AUTH_BRANDING_FILES.rendered),
-      `${JSON.stringify(rendered, null, 2)}\n`,
+      path.join(dir, AUTH_BRANDING_FILES.unavailable),
+      renderUnavailablePage({ brand: pageBrand, language: pageLanguage, domain: input.domain }),
     );
+    if (brand !== null) {
+      const brandJson = renderBrandJson(input.domain, brand, input.revision, {
+        logoSha256: input.logo ? sha256Hex(input.logo) : null,
+        faviconSha256: input.favicon ? sha256Hex(input.favicon) : null,
+      });
+      await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.brand), json(brandJson, 2));
+    }
+    await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.rendered), json(rendered, 2));
     await syncDir(dir);
     const previous = await linkedRender(input.domain, root);
     await switchLink(link, `${AUTH_BRANDING_RENDERS_DIR}/${name}`);
@@ -395,7 +489,7 @@ export async function renderAuthBranding(input: AuthBrandingRenderInput): Promis
     throw err;
   }
   await syncDir(root);
-  return rendered;
+  return { ...rendered, fromEnglish };
 }
 
 /**
@@ -478,7 +572,10 @@ export async function readRenderedBrand(
       return {
         v: 1,
         revision: parsed.revision as number,
+        // Absent (a rendering from before 4.10) or not one of ours: none.
+        language: isPageLanguage(parsed.language) ? parsed.language : null,
         autheliaVersion: parsed.autheliaVersion,
+        autheliaPinned: typeof parsed.autheliaPinned === 'string' ? parsed.autheliaPinned : null,
         pagesDigest: typeof parsed.pagesDigest === 'string' ? parsed.pagesDigest : null,
         renderedAt: parsed.renderedAt,
       };

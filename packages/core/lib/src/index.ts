@@ -349,6 +349,7 @@ export {
   DomainError,
   DomainNameSchema,
   MEMBERSHIP_KINDS,
+  domainLanguageOfHost,
   domainMembership,
   indexDomainsProjection,
   labelUnder,
@@ -688,6 +689,8 @@ export {
   AUTH_PAGE_DEFAULT_ACCENT_LIGHT,
   AUTH_PAGE_PROPERTY_PREFIX,
   renderAuthPageThemeCss,
+  BRAND_CSS_LANGUAGE_MENU_RULE,
+  renderDomainCss,
 } from './auth-branding.js';
 
 export type {
@@ -702,6 +705,55 @@ export type {
   BrandJson,
   AuthPagePalette,
 } from './auth-branding.js';
+
+// The pages' language: the catalogue (browser-safe; also the subpath
+// ./page-messages) and Authelia's portal forced into a domain's language
+// (page-language-design.md)
+export {
+  PAGE_LANGUAGES,
+  PAGE_LANGUAGE_NAMES,
+  isPageLanguage,
+  PAGE_MESSAGES_EN,
+  PAGE_MESSAGES_TR,
+  PAGE_MESSAGES,
+  PAGE_MESSAGE_KEYS,
+  PAGE_MESSAGE_DROPPED_PLACEHOLDERS,
+  INVITE_PAGE_KEYS,
+  INVITATIONS_PAGE_KEYS,
+  UNAVAILABLE_PAGE_KEYS,
+  FORBIDDEN_PAGE_KEYS,
+  ACCESS_REQUEST_PAGE_KEYS,
+  DOMAIN_REFUSAL_PAGE_KEYS,
+  pageMessage,
+  pageMessagesFor,
+  messagePlaceholders,
+  formatMessage,
+  formatMessageHtml,
+  pluralKey,
+  htmlAsciiReferences,
+  pageMessagesJson,
+} from './page-messages.js';
+export type { PageLanguage, PageMessageKey, HtmlMessageValue } from './page-messages.js';
+export {
+  AUTHELIA_FORCED_NAMESPACES,
+  AUTHELIA_LANGUAGE_DETECTION_ORDER,
+  AUTHELIA_LANGUAGE_MENU_SELECTOR,
+  AUTHELIA_INDEX_LANG_LITERAL,
+  AUTHELIA_NOSCRIPT_TEXT,
+  AUTHELIA_NOSCRIPT_TRANSLATIONS,
+  AUTHELIA_LOCALE_OF_LANGUAGE,
+  AUTHELIA_FORCED_LOCALES_DIR,
+  AUTHELIA_SUPPLEMENT,
+  AUTHELIA_CORRECTIONS,
+  forcedAutheliaLocaleFile,
+  autheliaIndexLanguageFilters,
+  renderForcedAutheliaLocale,
+} from './authelia-locales.js';
+export type {
+  AutheliaNamespace,
+  AutheliaMessages,
+  ForcedAutheliaLocale,
+} from './authelia-locales.js';
 
 // Delegated invitations: a plugin user with an inviting role invites
 // colleagues into that plugin (delegated-invitations-design.md)
