@@ -65,6 +65,7 @@
 
 import { execa } from 'execa';
 import {
+  AUTHELIA_LOCALE_OF_LANGUAGE,
   AUTHELIA_RELEASE,
   isPageLanguage,
   normaliseAutheliaVersion,
@@ -75,8 +76,9 @@ import {
   PromiseChainMutex,
   inspectBrandFavicon,
   inspectBrandLogo,
-  renderBrandCss,
   renderBrandLocale,
+  renderDomainCss,
+  renderForcedAutheliaLocale,
   validateBrandFields,
 } from '@lamalibre/lamaste';
 import {
@@ -1192,16 +1194,20 @@ function noBranding(name) {
 }
 
 /**
- * What the panel previews: the brand's `brand.css` and the English title
- * and footer as the sign-in shows them. 404 `no_branding`; 503
- * `authelia_unavailable` when Authelia's locales cannot be read.
+ * What the panel previews: the domain's `brand.css` and the title and
+ * footer as the sign-in shows them — in the domain's language when it has
+ * one (its forced portal file, as rendered), else Authelia's English. 404
+ * `no_branding`; 503 `authelia_unavailable` when Authelia's locales cannot
+ * be read.
  *
  * @param {string} name
  */
 export async function getDomainBrandingPreview(name) {
   await domainOr404(name);
-  const row = brandingRow(await getStateDb(), name);
+  const db = await getStateDb();
+  const row = brandingRow(db, name);
   if (!row) throw noBranding(name);
+  const language = languageOf(db, name);
   let all;
   try {
     all = await locales(await knownAutheliaVersion());
@@ -1210,11 +1216,22 @@ export async function getDomainBrandingPreview(name) {
       code: 'authelia_unavailable',
     });
   }
-  const en = all.files.find((f) => f.locale === 'en' && f.namespace === 'portal');
-  const strings = en ? renderBrandLocale(en.messages, row.name) : {};
+  const portalOf = (locale) =>
+    all.files.find((f) => f.locale === locale && f.namespace === 'portal')?.messages;
+  const english = portalOf('en');
+  const messages =
+    english && language !== null
+      ? renderForcedAutheliaLocale({
+          namespace: 'portal',
+          language,
+          english,
+          embedded: portalOf(AUTHELIA_LOCALE_OF_LANGUAGE[language]) ?? null,
+        }).messages
+      : english;
+  const strings = messages ? renderBrandLocale(messages, row.name) : {};
   return {
-    locale: 'en',
-    css: renderBrandCss({ accent: row.accent, theme: row.theme }),
+    locale: language ?? 'en',
+    css: renderDomainCss({ accent: row.accent, theme: row.theme }, language),
     title: strings['Login - {{authelia}}'] ?? `Login - ${row.name}`,
     footer: strings['Powered by {{authelia}}'] ?? `Powered by ${row.name}`,
     theme: row.theme,

@@ -115,6 +115,7 @@ export const webAdminClient = {
   removeDomainMember: (name, user) =>
     jsonDelete(domainPath(name, `/members/${encodeURIComponent(user)}`)),
   setPluginDomain: (name, domain) => jsonPut(pluginPath(name, 'domain'), { domain }),
+  setDomainLanguage: (name, language) => jsonPut(domainPath(name, '/language'), { language }),
 
   // --- A domain's brand on its auth pages ---
   getDomainBranding: (name) => apiFetch(domainPath(name, '/branding')),

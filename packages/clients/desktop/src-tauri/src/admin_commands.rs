@@ -473,6 +473,18 @@ pub async fn admin_remove_domain_member(
     admin_refusable_task("DELETE", domain_member_path(&name, &user), None).await
 }
 
+/// The language of every page on the domain (`en`, `tr`), or `None` to clear
+/// it. The panel validates it. Rejects with the panel's refusal (`code`
+/// `invalid_language`, `domain_not_found`).
+#[tauri::command]
+pub async fn admin_set_domain_language(
+    name: String,
+    language: Option<String>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let body = serde_json::json!({ "language": language }).to_string();
+    admin_refusable_task("PUT", domain_path(&name, "/language"), Some(body)).await
+}
+
 // --- A domain's brand on its auth pages ---
 
 /// `/api/domains/<name>/branding<rest>`.

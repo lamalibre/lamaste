@@ -97,6 +97,8 @@ export type {
   AdminUser,
   DirectoryUserView,
   DomainView,
+  DomainRenderingView,
+  AutheliaVersionsView,
   DomainUsage,
   DomainMemberView,
   DomainMembership,
