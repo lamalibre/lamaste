@@ -597,7 +597,7 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-38",
           "label": "Set BRANDED_PAGE_BEFORE",
           "target": "local",
           "op": {
@@ -614,7 +614,7 @@
           ]
         },
         {
-          "id": "step-38",
+          "id": "step-39",
           "label": "POST /api/invitations",
           "target": "host",
           "op": {
@@ -633,7 +633,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-40",
           "label": "A pending invitation on ${BEFORE_VERSION}",
           "target": "local",
           "continueOnError": true,
@@ -655,7 +655,7 @@
           }
         },
         {
-          "id": "step-40",
+          "id": "step-41",
           "label": "Extract INVITE_TOKEN",
           "target": "local",
           "op": {
@@ -672,7 +672,7 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-42",
           "label": "Extract INVITE_ID",
           "target": "local",
           "op": {
@@ -689,7 +689,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-43",
           "label": "…its link names the token in the path",
           "target": "local",
           "continueOnError": true,
@@ -710,7 +710,28 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-44",
+          "label": "…its link names the token in the fragment",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$RESP\" | jq -r '.inviteUrl // empty')"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}/invite#${INVITE_TOKEN}"
+              },
+              "message": "…its link names the token in the fragment"
+            }
+          }
+        },
+        {
+          "id": "step-45",
           "label": "POST /api/invitations",
           "target": "host",
           "op": {
@@ -729,7 +750,7 @@
           ]
         },
         {
-          "id": "step-44",
+          "id": "step-46",
           "label": "…and one on ${DOMAIN_2}",
           "target": "local",
           "continueOnError": true,
@@ -751,7 +772,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-47",
           "label": "Extract BRANDED_TOKEN",
           "target": "local",
           "op": {
@@ -768,7 +789,28 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-49",
+          "label": "state.db holds it, pending",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo sqlite3 \"${STATE_DIR}/state.db\" \"SELECT status FROM invitations WHERE id = '${INVITE_ID}'\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "pending"
+              },
+              "message": "state.db holds it, pending"
+            }
+          }
+        },
+        {
+          "id": "step-53",
           "label": "${BEFORE_VERSION} names the vhosts by subdomain (the enabled tunnel linked, the disabled one not, the auth portal linked)",
           "target": "local",
           "continueOnError": true,
@@ -789,7 +831,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-54",
           "label": "${BEFORE_VERSION} names the vhosts by full hostname (the enabled tunnel linked, the disabled one not, the auth portal linked)",
           "target": "local",
           "continueOnError": true,
@@ -810,7 +852,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-57",
           "label": "Set SECRET",
           "target": "local",
           "op": {
@@ -827,7 +869,7 @@
           ]
         },
         {
-          "id": "step-57",
+          "id": "step-60",
           "label": "${USERNAME} signed in at auth.${DOMAIN} on ${BEFORE_VERSION}",
           "target": "local",
           "continueOnError": true,
@@ -848,7 +890,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-61",
           "label": "Set REACH_BEFORE",
           "target": "local",
           "op": {
@@ -865,7 +907,7 @@
           ]
         },
         {
-          "id": "step-63",
+          "id": "step-66",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -883,7 +925,7 @@
           ]
         },
         {
-          "id": "step-65",
+          "id": "step-68",
           "label": "Users ${USERS_BEFORE//[$'\\n' ]/}; ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}",
           "target": "local",
           "op": {
@@ -893,7 +935,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-69",
           "label": "Set PRIV_BEFORE",
           "target": "local",
           "op": {
@@ -910,7 +952,7 @@
           ]
         },
         {
-          "id": "step-67",
+          "id": "step-70",
           "label": "GET /api/audit?limit=1",
           "target": "host",
           "op": {
@@ -928,14 +970,14 @@
           ]
         }
       ],
-      "bash": "log_section \"State written by ${BEFORE_VERSION}\"\n\nRESP=$(api_post \"users\" \"{\\\"username\\\":\\\"${USERNAME}\\\",\\\"displayname\\\":\\\"E2E Upgrade\\\",\\\"email\\\":\\\"${USERNAME}@example.test\\\",\\\"password\\\":\\\"${USER_PASSWORD}\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"User ${USERNAME} created beside the admin\" || true\n\nAGENT=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$AGENT\" '.ok' 'true' \"Agent ${AGENT_LABEL} enrolled (it carries the tunnels)\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_ON}\\\",\\\"port\\\":${PORT_ON},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nTUNNEL_ON=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${ON_FQDN}\" \"Tunnel ${ON_FQDN}\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_OFF}\\\",\\\"port\\\":${PORT_OFF},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nTUNNEL_OFF=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${OFF_FQDN}\" \"Tunnel ${OFF_FQDN}\" || true\nRESP=$(api_patch \"tunnels/${TUNNEL_OFF}\" '{\"enabled\":false}')\nassert_json_field \"$RESP\" '.tunnel.enabled' 'false' \"…disabled\" || true\n\n# A second domain, with a brand: its pages are in a rendering the update must\n# rebuild. (The primary stays without one: its stock pages are checked below.)\nDOMAIN_2=$(test_domain_n \"${DOMAIN}\" second)\nlocal_domain_dns \"${DOMAIN_2}\"\nRESP=$(api_post \"domains\" \"{\\\"name\\\":\\\"${DOMAIN_2}\\\"}\")\nassert_json_field \"$RESP\" '.domain.status' 'pending' \"Domain ${DOMAIN_2} added\" || true\nRESP=$(CURL_TIMEOUT=150 api_post \"domains/${DOMAIN_2}/activate\")\nassert_json_field \"$RESP\" '.domain.status' 'active' \"…active\" || true\nlocal_wait_authelia \"${DOMAIN_2}\"\nRESP=$(api_put \"domains/${DOMAIN_2}/branding\" \"{\\\"name\\\":\\\"${BRAND}\\\",\\\"theme\\\":\\\"dark\\\",\\\"accent\\\":\\\"${ACCENT}\\\"}\")\nassert_json_field \"$RESP\" '.branding.name' \"${BRAND}\" \"…branded ${BRAND}\" || true\nfor _ in $(seq 1 30); do\n  sudo test -f \"${WEB_ROOT}/${DOMAIN_2}/rendered.json\" && break\n  sleep 2\ndone\nassert_eq \"$(sudo jq -r '.pagesDigest // \"none\"' \"${WEB_ROOT}/${DOMAIN_2}/rendered.json\" 2>/dev/null || echo \"missing\")\" \"none\" \"${BEFORE_VERSION}'s rendering records no pages digest\" || true\nBRANDED_PAGE_BEFORE=$(sudo sha256sum \"${WEB_ROOT}/${DOMAIN_2}/invite/index.html\" | cut -d' ' -f1)\n\n# Pending invitations made on the release before: one on each domain.\nRESP=$(api_post \"invitations\" \"{\\\"username\\\":\\\"${INVITEE}\\\",\\\"email\\\":\\\"${INVITEE}@example.test\\\",\\\"domains\\\":[\\\"${DOMAIN}\\\"]}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"A pending invitation on ${BEFORE_VERSION}\" || true\nINVITE_TOKEN=$(echo \"$RESP\" | jq -r '.token // empty')\nINVITE_ID=$(echo \"$RESP\" | jq -r '.invitation.id // empty')\nassert_eq \"$(echo \"$RESP\" | jq -r '.inviteUrl // empty')\" \"https://auth.${DOMAIN}/invite/${INVITE_TOKEN}\" \"…its link names the token in the path\" || true\nRESP=$(api_post \"invitations\" \"{\\\"username\\\":\\\"e2eupbranded\\\",\\\"email\\\":\\\"e2eupbranded@example.test\\\",\\\"domains\\\":[\\\"${DOMAIN_2}\\\"]}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"…and one on ${DOMAIN_2}\" || true\nBRANDED_TOKEN=$(echo \"$RESP\" | jq -r '.token // empty')\nassert_eq \"$(sudo jq -r --arg t \"${INVITE_TOKEN}\" '[.[] | select(.token == $t)] | length' \"${STATE_DIR}/invitations.json\" 2>/dev/null || echo 0)\" \"1\" \"invitations.json holds it, its token in clear\" || true\n\nLEGACY_ON=\"lamalibre-lamaste-app-${SUB_ON}\"\nLEGACY_OFF=\"lamalibre-lamaste-app-${SUB_OFF}\"\nLEGACY_AUTH=\"lamalibre-lamaste-auth\"\n# A release before 4.7 named its vhosts by subdomain (and the one auth\n# portal `lamalibre-lamaste-auth`); from 4.7 they carry the full hostname.\nif version_before \"${BEFORE_VERSION}\" \"4.7.0\"; then\n  assert_eq \"$(link_state \"${LEGACY_ON}\") $(link_state \"${LEGACY_OFF}\") $(link_state \"${LEGACY_AUTH}\")\" \\\n    \"available linked available unlinked available linked\" \\\n    \"${BEFORE_VERSION} names the vhosts by subdomain (the enabled tunnel linked, the disabled one not, the auth portal linked)\" || true\nelse\n  assert_eq \"$(link_state \"$(vhost_name app \"${ON_FQDN}\")\") $(link_state \"$(vhost_name app \"${OFF_FQDN}\")\") $(link_state \"$(vhost_name auth \"${DOMAIN}\")\")\" \\\n    \"available linked available unlinked available linked\" \\\n    \"${BEFORE_VERSION} names the vhosts by full hostname (the enabled tunnel linked, the disabled one not, the auth portal linked)\" || true\nfi\n\n# Signed in on the previous release: what the user reaches (an\n# authenticated tunnel — admitted, so nginx answers for its backend, which\n# does not run here: 502).\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nSECRET=$(local_reset_totp \"${USERNAME}\")\nlocal_wait_authelia \"${DOMAIN}\"\nlocal_sign_in \"${USERNAME}\" \"${USER_PASSWORD}\" \"${SECRET}\" \"${WORK_DIR}/user-before.jar\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${USERNAME} signed in at auth.${DOMAIN} on ${BEFORE_VERSION}\" || true\nREACH_BEFORE=$(signed_status \"${WORK_DIR}/user-before.jar\" \"${ON_FQDN}\")\ncase \"${REACH_BEFORE}\" in\n  302 | 401 | 403 | 000) log_fail \"${USERNAME} is not admitted to ${ON_FQDN} on ${BEFORE_VERSION} (${REACH_BEFORE})\" ;;\n  *) log_pass \"${USERNAME} is admitted to ${ON_FQDN} on ${BEFORE_VERSION} (${REACH_BEFORE})\" ;;\nesac\n\nUSERS_BEFORE=$(api_get \"users\" 2>/dev/null | jq '[.users[]? | .username] | sort' 2>/dev/null || echo '[]')\nBEFORE=\"$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")\"\nlog_info \"Users ${USERS_BEFORE//[$'\\n' ]/}; ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}\"\nPRIV_BEFORE=$(sudo sha256sum \"${PRIV}\" | cut -d' ' -f1)\n# The last audit entry of the previous release: what the update adds comes after it\nAUDIT_BASE=$(api_get \"audit?limit=1\" 2>/dev/null | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 2. The Panel Update\n# ==========================================================================="
+      "bash": "log_section \"State written by ${BEFORE_VERSION}\"\n\nRESP=$(api_post \"users\" \"{\\\"username\\\":\\\"${USERNAME}\\\",\\\"displayname\\\":\\\"E2E Upgrade\\\",\\\"email\\\":\\\"${USERNAME}@example.test\\\",\\\"password\\\":\\\"${USER_PASSWORD}\\\"}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"User ${USERNAME} created beside the admin\" || true\n\nAGENT=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$AGENT\" '.ok' 'true' \"Agent ${AGENT_LABEL} enrolled (it carries the tunnels)\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_ON}\\\",\\\"port\\\":${PORT_ON},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nTUNNEL_ON=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${ON_FQDN}\" \"Tunnel ${ON_FQDN}\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_OFF}\\\",\\\"port\\\":${PORT_OFF},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nTUNNEL_OFF=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${OFF_FQDN}\" \"Tunnel ${OFF_FQDN}\" || true\nRESP=$(api_patch \"tunnels/${TUNNEL_OFF}\" '{\"enabled\":false}')\nassert_json_field \"$RESP\" '.tunnel.enabled' 'false' \"…disabled\" || true\n\n# A second domain, with a brand: its pages are in a rendering the update must\n# rebuild. (The primary stays without one: its stock pages are checked below.)\nDOMAIN_2=$(test_domain_n \"${DOMAIN}\" second)\nlocal_domain_dns \"${DOMAIN_2}\"\nRESP=$(api_post \"domains\" \"{\\\"name\\\":\\\"${DOMAIN_2}\\\"}\")\nassert_json_field \"$RESP\" '.domain.status' 'pending' \"Domain ${DOMAIN_2} added\" || true\nRESP=$(CURL_TIMEOUT=150 api_post \"domains/${DOMAIN_2}/activate\")\nassert_json_field \"$RESP\" '.domain.status' 'active' \"…active\" || true\nlocal_wait_authelia \"${DOMAIN_2}\"\nRESP=$(api_put \"domains/${DOMAIN_2}/branding\" \"{\\\"name\\\":\\\"${BRAND}\\\",\\\"theme\\\":\\\"dark\\\",\\\"accent\\\":\\\"${ACCENT}\\\"}\")\nassert_json_field \"$RESP\" '.branding.name' \"${BRAND}\" \"…branded ${BRAND}\" || true\nfor _ in $(seq 1 30); do\n  sudo test -f \"${WEB_ROOT}/${DOMAIN_2}/rendered.json\" && break\n  sleep 2\ndone\nif version_before \"${BEFORE_VERSION}\" \"4.9.0\"; then\n  assert_eq \"$(sudo jq -r '.pagesDigest // \"none\"' \"${WEB_ROOT}/${DOMAIN_2}/rendered.json\" 2>/dev/null || echo \"missing\")\" \"none\" \"${BEFORE_VERSION}'s rendering records no pages digest\" || true\nelse\n  assert_eq \"$(sudo jq -r '.pagesDigest // \"none\" | test(\"^[0-9a-f]{64}$\")' \"${WEB_ROOT}/${DOMAIN_2}/rendered.json\" 2>/dev/null || echo \"false\")\" \"true\" \"${BEFORE_VERSION}'s rendering records its pages digest\" || true\nfi\nBRANDED_PAGE_BEFORE=$(sudo sha256sum \"${WEB_ROOT}/${DOMAIN_2}/invite/index.html\" | cut -d' ' -f1)\n\n# Pending invitations made on the release before: one on each domain.\nRESP=$(api_post \"invitations\" \"{\\\"username\\\":\\\"${INVITEE}\\\",\\\"email\\\":\\\"${INVITEE}@example.test\\\",\\\"domains\\\":[\\\"${DOMAIN}\\\"]}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"A pending invitation on ${BEFORE_VERSION}\" || true\nINVITE_TOKEN=$(echo \"$RESP\" | jq -r '.token // empty')\nINVITE_ID=$(echo \"$RESP\" | jq -r '.invitation.id // empty')\nif version_before \"${BEFORE_VERSION}\" \"4.9.0\"; then\n  assert_eq \"$(echo \"$RESP\" | jq -r '.inviteUrl // empty')\" \"https://auth.${DOMAIN}/invite/${INVITE_TOKEN}\" \"…its link names the token in the path\" || true\nelse\n  assert_eq \"$(echo \"$RESP\" | jq -r '.inviteUrl // empty')\" \"https://auth.${DOMAIN}/invite#${INVITE_TOKEN}\" \"…its link names the token in the fragment\" || true\nfi\nRESP=$(api_post \"invitations\" \"{\\\"username\\\":\\\"e2eupbranded\\\",\\\"email\\\":\\\"e2eupbranded@example.test\\\",\\\"domains\\\":[\\\"${DOMAIN_2}\\\"]}\")\nassert_json_field \"$RESP\" '.ok' 'true' \"…and one on ${DOMAIN_2}\" || true\nBRANDED_TOKEN=$(echo \"$RESP\" | jq -r '.token // empty')\nif version_before \"${BEFORE_VERSION}\" \"4.9.0\"; then\n  assert_eq \"$(sudo jq -r --arg t \"${INVITE_TOKEN}\" '[.[] | select(.token == $t)] | length' \"${STATE_DIR}/invitations.json\" 2>/dev/null || echo 0)\" \"1\" \"invitations.json holds it, its token in clear\" || true\nelse\n  assert_eq \"$(sudo sqlite3 \"${STATE_DIR}/state.db\" \"SELECT status FROM invitations WHERE id = '${INVITE_ID}'\")\" \"pending\" \"state.db holds it, pending\" || true\nfi\n\nLEGACY_ON=\"lamalibre-lamaste-app-${SUB_ON}\"\nLEGACY_OFF=\"lamalibre-lamaste-app-${SUB_OFF}\"\nLEGACY_AUTH=\"lamalibre-lamaste-auth\"\n# A release before 4.7 named its vhosts by subdomain (and the one auth\n# portal `lamalibre-lamaste-auth`); from 4.7 they carry the full hostname.\nif version_before \"${BEFORE_VERSION}\" \"4.7.0\"; then\n  assert_eq \"$(link_state \"${LEGACY_ON}\") $(link_state \"${LEGACY_OFF}\") $(link_state \"${LEGACY_AUTH}\")\" \\\n    \"available linked available unlinked available linked\" \\\n    \"${BEFORE_VERSION} names the vhosts by subdomain (the enabled tunnel linked, the disabled one not, the auth portal linked)\" || true\nelse\n  assert_eq \"$(link_state \"$(vhost_name app \"${ON_FQDN}\")\") $(link_state \"$(vhost_name app \"${OFF_FQDN}\")\") $(link_state \"$(vhost_name auth \"${DOMAIN}\")\")\" \\\n    \"available linked available unlinked available linked\" \\\n    \"${BEFORE_VERSION} names the vhosts by full hostname (the enabled tunnel linked, the disabled one not, the auth portal linked)\" || true\nfi\n\n# Signed in on the previous release: what the user reaches (an\n# authenticated tunnel — admitted, so nginx answers for its backend, which\n# does not run here: 502).\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nSECRET=$(local_reset_totp \"${USERNAME}\")\nlocal_wait_authelia \"${DOMAIN}\"\nlocal_sign_in \"${USERNAME}\" \"${USER_PASSWORD}\" \"${SECRET}\" \"${WORK_DIR}/user-before.jar\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${USERNAME} signed in at auth.${DOMAIN} on ${BEFORE_VERSION}\" || true\nREACH_BEFORE=$(signed_status \"${WORK_DIR}/user-before.jar\" \"${ON_FQDN}\")\ncase \"${REACH_BEFORE}\" in\n  302 | 401 | 403 | 000) log_fail \"${USERNAME} is not admitted to ${ON_FQDN} on ${BEFORE_VERSION} (${REACH_BEFORE})\" ;;\n  *) log_pass \"${USERNAME} is admitted to ${ON_FQDN} on ${BEFORE_VERSION} (${REACH_BEFORE})\" ;;\nesac\n\nUSERS_BEFORE=$(api_get \"users\" 2>/dev/null | jq '[.users[]? | .username] | sort' 2>/dev/null || echo '[]')\nBEFORE=\"$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")\"\nlog_info \"Users ${USERS_BEFORE//[$'\\n' ]/}; ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}\"\nPRIV_BEFORE=$(sudo sha256sum \"${PRIV}\" | cut -d' ' -f1)\n# The last audit entry of the previous release: what the update adds comes after it\nAUDIT_BASE=$(api_get \"audit?limit=1\" 2>/dev/null | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 2. The Panel Update\n# ==========================================================================="
     },
     {
       "id": "post-api-system-update-to-candidate",
       "label": "POST /api/system/update to ${CANDIDATE}",
       "steps": [
         {
-          "id": "step-69",
+          "id": "step-72",
           "label": "POST /api/system/update",
           "target": "host",
           "op": {
@@ -954,7 +996,7 @@
           ]
         },
         {
-          "id": "step-70",
+          "id": "step-73",
           "label": "The update is accepted (202)",
           "target": "local",
           "continueOnError": true,
@@ -976,7 +1018,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-76",
           "label": "Sleep 5s",
           "target": "local",
           "op": {
@@ -985,7 +1027,7 @@
           }
         },
         {
-          "id": "step-74",
+          "id": "step-77",
           "label": "Set AFTER_VERSION",
           "target": "local",
           "op": {
@@ -1002,7 +1044,7 @@
           ]
         },
         {
-          "id": "step-77",
+          "id": "step-80",
           "label": "The panel is back on ${CANDIDATE}",
           "target": "local",
           "continueOnError": true,
@@ -1023,7 +1065,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-85",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -1032,7 +1074,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-87",
           "label": "The panel's start-up settled Authelia's configuration (domains rendered, or the branding base added)",
           "target": "local",
           "continueOnError": true,
@@ -1053,7 +1095,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-88",
           "label": "Authelia serves again",
           "target": "local",
           "op": {
@@ -1063,7 +1105,7 @@
           }
         },
         {
-          "id": "step-86",
+          "id": "step-89",
           "label": "Authelia does not answer its health check after the update",
           "target": "local",
           "op": {
@@ -1073,7 +1115,7 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-92",
           "label": "Set UNIT",
           "target": "local",
           "op": {
@@ -1090,7 +1132,7 @@
           ]
         },
         {
-          "id": "step-96",
+          "id": "step-99",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -1099,7 +1141,7 @@
           }
         },
         {
-          "id": "step-100",
+          "id": "step-103",
           "label": "Set RESULT",
           "target": "local",
           "op": {
@@ -1116,7 +1158,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-104",
           "label": "The update unit ${UNIT} ended in success",
           "target": "local",
           "continueOnError": true,
@@ -1144,7 +1186,7 @@
       "label": "The root helper is the candidate's",
       "steps": [
         {
-          "id": "step-106",
+          "id": "step-109",
           "label": "Set PRIV_AFTER",
           "target": "local",
           "op": {
@@ -1161,7 +1203,7 @@
           ]
         },
         {
-          "id": "step-109",
+          "id": "step-112",
           "label": "Set PRIV_CANDIDATE",
           "target": "local",
           "op": {
@@ -1178,7 +1220,7 @@
           ]
         },
         {
-          "id": "step-110",
+          "id": "step-113",
           "label": "lamaste-priv in place is the one ${CANDIDATE} ships",
           "target": "local",
           "continueOnError": true,
@@ -1199,7 +1241,7 @@
           }
         },
         {
-          "id": "step-111",
+          "id": "step-114",
           "label": "${BEFORE_VERSION} and ${CANDIDATE} ship the same lamaste-priv",
           "target": "local",
           "op": {
@@ -1209,7 +1251,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-115",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1226,7 +1268,7 @@
           ]
         },
         {
-          "id": "step-113",
+          "id": "step-116",
           "label": "It refuses a vhost under a pre-4.7 name",
           "target": "local",
           "continueOnError": true,
@@ -1254,7 +1296,7 @@
       "label": "The vhosts under the candidate's names, link state kept",
       "steps": [
         {
-          "id": "step-114",
+          "id": "step-117",
           "label": "${ON_FQDN}: under its full hostname, still linked",
           "target": "local",
           "continueOnError": true,
@@ -1275,7 +1317,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-118",
           "label": "${OFF_FQDN}: under its full hostname, still not linked",
           "target": "local",
           "continueOnError": true,
@@ -1296,7 +1338,7 @@
           }
         },
         {
-          "id": "step-116",
+          "id": "step-119",
           "label": "The auth portal: lamalibre-lamaste-auth-${DOMAIN}, linked",
           "target": "local",
           "continueOnError": true,
@@ -1317,7 +1359,7 @@
           }
         },
         {
-          "id": "step-117",
+          "id": "step-120",
           "label": "No pre-4.7 name is left, as a file or a link",
           "target": "local",
           "continueOnError": true,
@@ -1338,7 +1380,7 @@
           }
         },
         {
-          "id": "step-118",
+          "id": "step-121",
           "label": "nginx -t passes",
           "target": "local",
           "op": {
@@ -1348,7 +1390,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-122",
           "label": "nginx -t fails after the update",
           "target": "local",
           "op": {
@@ -1358,7 +1400,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-123",
           "label": "Every host answers as before (${BEFORE})",
           "target": "local",
           "continueOnError": true,
@@ -1386,7 +1428,7 @@
       "label": "The primary domain; every user of ${BEFORE_VERSION} its member",
       "steps": [
         {
-          "id": "step-121",
+          "id": "step-124",
           "label": "GET /api/domains",
           "target": "host",
           "op": {
@@ -1404,7 +1446,7 @@
           ]
         },
         {
-          "id": "step-122",
+          "id": "step-125",
           "label": "One primary domain",
           "target": "local",
           "continueOnError": true,
@@ -1426,7 +1468,7 @@
           }
         },
         {
-          "id": "step-123",
+          "id": "step-126",
           "label": "…${DOMAIN}, active",
           "target": "local",
           "continueOnError": true,
@@ -1448,7 +1490,7 @@
           }
         },
         {
-          "id": "step-125",
+          "id": "step-128",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -1466,7 +1508,7 @@
           ]
         },
         {
-          "id": "step-126",
+          "id": "step-129",
           "label": "The same users as before the update",
           "target": "local",
           "continueOnError": true,
@@ -1494,7 +1536,7 @@
       "label": "Authelia and Gatekeeper enforce membership",
       "steps": [
         {
-          "id": "step-128",
+          "id": "step-131",
           "label": "Set AUTHELIA_POLICY",
           "target": "local",
           "op": {
@@ -1511,7 +1553,7 @@
           ]
         },
         {
-          "id": "step-129",
+          "id": "step-132",
           "label": "Authelia's access_control denies by default",
           "target": "local",
           "continueOnError": true,
@@ -1532,7 +1574,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-133",
           "label": "Gatekeeper's domains.json names ${DOMAIN}",
           "target": "local",
           "op": {
@@ -1542,7 +1584,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-134",
           "label": "domains.json is missing or does not name ${DOMAIN}",
           "target": "local",
           "op": {
@@ -1552,7 +1594,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-135",
           "label": "Authelia and Gatekeeper are running",
           "target": "local",
           "continueOnError": true,
@@ -1573,7 +1615,7 @@
           }
         },
         {
-          "id": "step-133",
+          "id": "step-136",
           "label": "Set PROJECTION",
           "target": "local",
           "op": {
@@ -1590,7 +1632,7 @@
           ]
         },
         {
-          "id": "step-134",
+          "id": "step-137",
           "label": "…the projection is version 2, no external member",
           "target": "local",
           "continueOnError": true,
@@ -1619,7 +1661,7 @@
       "label": "Authelia reads who may pass from its users file",
       "steps": [
         {
-          "id": "step-135",
+          "id": "step-138",
           "label": "Set CONFIG",
           "target": "local",
           "op": {
@@ -1636,7 +1678,7 @@
           ]
         },
         {
-          "id": "step-136",
+          "id": "step-139",
           "label": "Authelia watches users.yml and reads a session's groups at every request",
           "target": "local",
           "continueOnError": true,
@@ -1658,7 +1700,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-140",
           "label": "…its own password change and reset are off (the panel is the file's one writer)",
           "target": "local",
           "continueOnError": true,
@@ -1680,7 +1722,7 @@
           }
         },
         {
-          "id": "step-138",
+          "id": "step-141",
           "label": "Set KEY",
           "target": "local",
           "op": {
@@ -1697,7 +1739,7 @@
           ]
         },
         {
-          "id": "step-139",
+          "id": "step-142",
           "label": "The primary domain's rules name its member group (lamaste:m:<key>)",
           "target": "local",
           "continueOnError": true,
@@ -1718,7 +1760,7 @@
           }
         },
         {
-          "id": "step-140",
+          "id": "step-143",
           "label": "…and name no user",
           "target": "local",
           "continueOnError": true,
@@ -1739,7 +1781,7 @@
           }
         },
         {
-          "id": "step-141",
+          "id": "step-144",
           "label": "Set USERS_GROUPS",
           "target": "local",
           "op": {
@@ -1756,7 +1798,7 @@
           ]
         },
         {
-          "id": "step-142",
+          "id": "step-145",
           "label": "Every user of users.yml holds the member group",
           "target": "local",
           "continueOnError": true,
@@ -1784,7 +1826,7 @@
       "label": "The branded sign-in's base is in place; the page is pixel-for-pixel stock",
       "steps": [
         {
-          "id": "step-143",
+          "id": "step-146",
           "label": "Set AUTH_VHOST",
           "target": "local",
           "op": {
@@ -1801,7 +1843,7 @@
           ]
         },
         {
-          "id": "step-144",
+          "id": "step-147",
           "label": "The auth vhost carries the brand-override locations (/brand.css)",
           "target": "local",
           "continueOnError": true,
@@ -1822,7 +1864,7 @@
           }
         },
         {
-          "id": "step-145",
+          "id": "step-148",
           "label": "…/static/media/logo.png",
           "target": "local",
           "continueOnError": true,
@@ -1843,7 +1885,7 @@
           }
         },
         {
-          "id": "step-146",
+          "id": "step-149",
           "label": "…/locales/",
           "target": "local",
           "continueOnError": true,
@@ -1864,7 +1906,7 @@
           }
         },
         {
-          "id": "step-147",
+          "id": "step-150",
           "label": "…with @authelia as the fallback",
           "target": "local",
           "continueOnError": true,
@@ -1885,7 +1927,7 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-153",
           "label": "Set AUTH_PAGE",
           "target": "local",
           "op": {
@@ -1902,7 +1944,7 @@
           ]
         },
         {
-          "id": "step-151",
+          "id": "step-154",
           "label": "https://${AUTH_FQDN}/ answers 200",
           "target": "local",
           "continueOnError": true,
@@ -1923,7 +1965,7 @@
           }
         },
         {
-          "id": "step-152",
+          "id": "step-155",
           "label": "…data-theme=\\",
           "target": "local",
           "continueOnError": true,
@@ -1944,7 +1986,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-156",
           "label": "…data-logooverride=\\",
           "target": "local",
           "continueOnError": true,
@@ -1965,7 +2007,7 @@
           }
         },
         {
-          "id": "step-154",
+          "id": "step-157",
           "label": "…no stylesheet: the stock page until a brand is set",
           "target": "local",
           "continueOnError": true,
@@ -1986,7 +2028,7 @@
           }
         },
         {
-          "id": "step-155",
+          "id": "step-158",
           "label": "Authelia's configuration gained theme light and server.asset_path /etc/authelia/assets",
           "target": "local",
           "continueOnError": true,
@@ -2008,7 +2050,7 @@
           }
         },
         {
-          "id": "step-156",
+          "id": "step-159",
           "label": "The placeholder logo is in the asset directory, group lamaste-authelia",
           "target": "local",
           "continueOnError": true,
@@ -2029,7 +2071,7 @@
           }
         },
         {
-          "id": "step-157",
+          "id": "step-160",
           "label": "GET /api/audit?action=authelia.restarted&limit=200",
           "target": "host",
           "op": {
@@ -2047,7 +2089,7 @@
           ]
         },
         {
-          "id": "step-158",
+          "id": "step-161",
           "label": "Exactly one authelia.restarted audited with reason branding-base since the update",
           "target": "local",
           "continueOnError": true,
@@ -2068,7 +2110,7 @@
           }
         },
         {
-          "id": "step-159",
+          "id": "step-162",
           "label": "No authelia.restarted for the base: ${BEFORE_VERSION} had it",
           "target": "local",
           "continueOnError": true,
@@ -2089,7 +2131,7 @@
           }
         },
         {
-          "id": "step-160",
+          "id": "step-163",
           "label": "GET /api/domains/${DOMAIN}/branding: no brand",
           "target": "local",
           "continueOnError": true,
@@ -2111,7 +2153,7 @@
           }
         },
         {
-          "id": "step-161",
+          "id": "step-164",
           "label": "nginx -V lists --with-http_sub_module (compiled in)",
           "target": "local",
           "continueOnError": true,
@@ -2132,7 +2174,7 @@
           }
         },
         {
-          "id": "step-162",
+          "id": "step-165",
           "label": "Set INVITE_PAGE",
           "target": "local",
           "op": {
@@ -2149,7 +2191,7 @@
           ]
         },
         {
-          "id": "step-163",
+          "id": "step-166",
           "label": "The stock invitation page is in place",
           "target": "local",
           "continueOnError": true,
@@ -2170,7 +2212,7 @@
           }
         },
         {
-          "id": "step-164",
+          "id": "step-167",
           "label": "…rewritten by the candidate (its colours are custom properties a brand sets from /brand.css)",
           "target": "local",
           "continueOnError": true,
@@ -2198,7 +2240,7 @@
       "label": "Signed in again: the user reaches what they reached",
       "steps": [
         {
-          "id": "step-166",
+          "id": "step-169",
           "label": "${USERNAME} signed in at auth.${DOMAIN} on ${CANDIDATE}",
           "target": "local",
           "continueOnError": true,
@@ -2219,7 +2261,7 @@
           }
         },
         {
-          "id": "step-167",
+          "id": "step-170",
           "label": "…and is answered on ${ON_FQDN} as before (${REACH_BEFORE})",
           "target": "local",
           "continueOnError": true,
@@ -2247,7 +2289,7 @@
       "label": "The pages under the candidate's CSP: the script served is the one it names",
       "steps": [
         {
-          "id": "step-170",
+          "id": "step-173",
           "label": "Set BRANDED_BODY",
           "target": "local",
           "op": {
@@ -2264,7 +2306,7 @@
           ]
         },
         {
-          "id": "step-171",
+          "id": "step-174",
           "label": "…still the brand's page",
           "target": "local",
           "continueOnError": true,
@@ -2285,7 +2327,7 @@
           }
         },
         {
-          "id": "step-172",
+          "id": "step-175",
           "label": "…its colours from /brand.css",
           "target": "local",
           "continueOnError": true,
@@ -2306,7 +2348,7 @@
           }
         },
         {
-          "id": "step-173",
+          "id": "step-176",
           "label": "…which carries the accent",
           "target": "local",
           "continueOnError": true,
@@ -2327,7 +2369,7 @@
           }
         },
         {
-          "id": "step-175",
+          "id": "step-178",
           "label": "The branded page was rendered again by the candidate",
           "target": "local",
           "continueOnError": true,
@@ -2355,7 +2397,7 @@
       "label": "The invitations moved into state.db",
       "steps": [
         {
-          "id": "step-177",
+          "id": "step-180",
           "label": "invitations.json is still there",
           "target": "local",
           "op": {
@@ -2365,7 +2407,7 @@
           }
         },
         {
-          "id": "step-178",
+          "id": "step-181",
           "label": "invitations.json is gone",
           "target": "local",
           "op": {
@@ -2375,7 +2417,7 @@
           }
         },
         {
-          "id": "step-179",
+          "id": "step-182",
           "label": "GET /api/invitations",
           "target": "host",
           "op": {
@@ -2393,7 +2435,7 @@
           ]
         },
         {
-          "id": "step-181",
+          "id": "step-184",
           "label": "No clear token in state.db or its log",
           "target": "local",
           "continueOnError": true,
@@ -2414,7 +2456,7 @@
           }
         },
         {
-          "id": "step-182",
+          "id": "step-185",
           "label": "It holds the token's SHA-256",
           "target": "local",
           "continueOnError": true,
@@ -2442,7 +2484,7 @@
       "label": "The invitation of ${BEFORE_VERSION} accepts by POST",
       "steps": [
         {
-          "id": "step-186",
+          "id": "step-189",
           "label": "POST /api/invite/lookup finds it",
           "target": "local",
           "continueOnError": true,
@@ -2464,7 +2506,7 @@
           }
         },
         {
-          "id": "step-187",
+          "id": "step-190",
           "label": "Set ACCEPT",
           "target": "local",
           "op": {
@@ -2481,7 +2523,7 @@
           ]
         },
         {
-          "id": "step-188",
+          "id": "step-191",
           "label": "POST /api/invite/accept: the user is made",
           "target": "local",
           "continueOnError": true,
@@ -2503,7 +2545,7 @@
           }
         },
         {
-          "id": "step-189",
+          "id": "step-192",
           "label": "…with the panel's QR",
           "target": "local",
           "continueOnError": true,
@@ -2524,14 +2566,285 @@
           }
         }
       ],
-      "bash": "log_section \"The invitation of ${BEFORE_VERSION} accepts by POST\"\n\ninvite_post() {\n  curl -sk --max-time 15 --resolve \"${AUTH_FQDN}:443:127.0.0.1\" -X POST -H 'Content-Type: application/json' -d \"$2\" \"https://${AUTH_FQDN}/api/invite/$1\" 2>/dev/null || echo '{}'\n}\nassert_json_field \"$(invite_post lookup \"{\\\"token\\\":\\\"${INVITE_TOKEN}\\\"}\")\" '\"\\(.kind) \\(.username)\"' \"admin ${INVITEE}\" \"POST /api/invite/lookup finds it\" || true\nACCEPT=$(invite_post accept \"$(jq -c -n --arg t \"${INVITE_TOKEN}\" --arg p \"${INVITEE_PASSWORD}\" '{token: $t, password: $p}')\")\nassert_json_field \"$ACCEPT\" '\"\\(.ok) \\(.username)\"' \"true ${INVITEE}\" \"POST /api/invite/accept: the user is made\" || true\nassert_contains \"$(echo \"$ACCEPT\" | jq -r '.totpQr // empty')\" \"data:image/svg+xml;base64,\" \"…with the panel's QR\" || true\nassert_json_field \"$(api_get \"users\" 2>/dev/null || echo '{}')\" \"[.users[] | select(.username == \\\"${INVITEE}\\\") | [.domains[] | \\\"\\(.name):\\(.kind)\\\"] | join(\\\",\\\")] | first\" \"${DOMAIN}:member\" \"…a member of ${DOMAIN}, as the invitation named\" || true"
+      "bash": "log_section \"The invitation of ${BEFORE_VERSION} accepts by POST\"\n\ninvite_post() {\n  curl -sk --max-time 15 --resolve \"${AUTH_FQDN}:443:127.0.0.1\" -X POST -H 'Content-Type: application/json' -d \"$2\" \"https://${AUTH_FQDN}/api/invite/$1\" 2>/dev/null || echo '{}'\n}\nassert_json_field \"$(invite_post lookup \"{\\\"token\\\":\\\"${INVITE_TOKEN}\\\"}\")\" '\"\\(.kind) \\(.username)\"' \"admin ${INVITEE}\" \"POST /api/invite/lookup finds it\" || true\nACCEPT=$(invite_post accept \"$(jq -c -n --arg t \"${INVITE_TOKEN}\" --arg p \"${INVITEE_PASSWORD}\" '{token: $t, password: $p}')\")\nassert_json_field \"$ACCEPT\" '\"\\(.ok) \\(.username)\"' \"true ${INVITEE}\" \"POST /api/invite/accept: the user is made\" || true\nassert_contains \"$(echo \"$ACCEPT\" | jq -r '.totpQr // empty')\" \"data:image/svg+xml;base64,\" \"…with the panel's QR\" || true\nassert_json_field \"$(api_get \"users\" 2>/dev/null || echo '{}')\" \"[.users[] | select(.username == \\\"${INVITEE}\\\") | [.domains[] | \\\"\\(.name):\\(.kind)\\\"] | join(\\\",\\\")] | first\" \"${DOMAIN}:member\" \"…a member of ${DOMAIN}, as the invitation named\" || true\n\n# ===========================================================================\n# 5. The page language\n# ==========================================================================="
+    },
+    {
+      "id": "the-page-language-migration-0021-no-domain-has-one-every-page-english",
+      "label": "The page language: migration 0021, no domain has one, every page English",
+      "steps": [
+        {
+          "id": "step-195",
+          "label": "GET /api/domains",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "domains"
+          },
+          "capture": [
+            {
+              "variable": "DOMAINS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-196",
+          "label": "No domain has a language",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DOMAINS"
+              },
+              "path": "[.domains[] | select(.language != null)] | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "No domain has a language"
+            }
+          }
+        },
+        {
+          "id": "step-197",
+          "label": "The running Authelia is the pin ($(echo \"$DOMAINS\" | jq -c '.authelia // {}' 2>/dev/null))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DOMAINS"
+              },
+              "path": "(.authelia.running != null) and (.authelia.running == .authelia.pinned)",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The running Authelia is the pin ($(echo \"$DOMAINS\" | jq -c '.authelia // {}' 2>/dev/null))"
+            }
+          }
+        },
+        {
+          "id": "step-199",
+          "label": "Set STOCK_INVITE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat /var/www/lamaste/invite/index.html 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "STOCK_INVITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-200",
+          "label": "The stock invitation page: lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "STOCK_INVITE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "The stock invitation page: lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-201",
+          "label": "…its words in the data block the candidate writes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "STOCK_INVITE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<script type=\"application/json\" id=\"lamaste-messages\">"
+              },
+              "message": "…its words in the data block the candidate writes"
+            }
+          }
+        },
+        {
+          "id": "step-202",
+          "label": "${DOMAIN_2}'s branded invitation page: lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo cat \"${WEB_ROOT}/${DOMAIN_2}/invite/index.html\" 2>/dev/null || echo \"\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "${DOMAIN_2}'s branded invitation page: lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-203",
+          "label": "The stock \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo cat /var/www/lamaste/unavailable/index.html 2>/dev/null || echo \"\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "The stock \\"
+            }
+          }
+        },
+        {
+          "id": "step-205",
+          "label": "Set AUTH_VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"${AVAILABLE}/$(vhost_name auth \"${D}\")\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "AUTH_VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-206",
+          "label": "The auth vhost of ${D} forces no locale",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "locales/forced"
+              },
+              "message": "The auth vhost of ${D} forces no locale"
+            }
+          }
+        },
+        {
+          "id": "step-207",
+          "label": "…and leaves Authelia's lang alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-authelia-lang"
+              },
+              "message": "…and leaves Authelia's lang alone"
+            }
+          }
+        },
+        {
+          "id": "step-209",
+          "label": "https://${AUTH_FQDN}/: Authelia's own <html lang>",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(curl -sk --max-time 15 --resolve \"${AUTH_FQDN}:443:127.0.0.1\" \"https://${AUTH_FQDN}/\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-authelia-lang"
+              },
+              "message": "https://${AUTH_FQDN}/: Authelia's own <html lang>"
+            }
+          }
+        },
+        {
+          "id": "step-210",
+          "label": "Gatekeeper's GET /access-request is gone (404)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:9294/access-request 2>/dev/null || echo 000)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Gatekeeper's GET /access-request is gone (404)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The page language: migration 0021, no domain has one, every page English\"\n\nassert_eq \"$(sudo sqlite3 \"${STATE_DIR}/state.db\" \"SELECT COUNT(*) FROM pragma_table_info('domains') WHERE name = 'language'\")\" \"1\" \"state.db's domains carry a language column (migration 0021)\" || true\nDOMAINS=$(api_get \"domains\" 2>/dev/null || echo '{}')\nassert_json_field \"$DOMAINS\" '[.domains[] | select(.language != null)] | length' '0' \"No domain has a language\" || true\nassert_json_field \"$DOMAINS\" '(.authelia.running != null) and (.authelia.running == .authelia.pinned)' 'true' \"The running Authelia is the pin ($(echo \"$DOMAINS\" | jq -c '.authelia // {}' 2>/dev/null))\" || true\nassert_json_field \"$DOMAINS\" \"[.domains[] | select(.name == \\\"${DOMAIN_2}\\\")] | first | \\\"\\\\(.rendering.current) \\\\(.rendering.rendered.language)\\\"\" 'true null' \"${DOMAIN_2}'s rendering is current, of its brand alone\" || true\nSTOCK_INVITE=$(sudo cat /var/www/lamaste/invite/index.html 2>/dev/null || echo \"\")\nassert_contains \"${STOCK_INVITE}\" '<html lang=\"en\">' \"The stock invitation page: lang=\\\"en\\\"\" || true\nassert_contains \"${STOCK_INVITE}\" '<script type=\"application/json\" id=\"lamaste-messages\">' \"…its words in the data block the candidate writes\" || true\nassert_contains \"$(sudo cat \"${WEB_ROOT}/${DOMAIN_2}/invite/index.html\" 2>/dev/null || echo \"\")\" '<html lang=\"en\">' \"${DOMAIN_2}'s branded invitation page: lang=\\\"en\\\"\" || true\nassert_contains \"$(sudo cat /var/www/lamaste/unavailable/index.html 2>/dev/null || echo \"\")\" '<html lang=\"en\">' \"The stock \\\"not available\\\" page is in place, in English\" || true\nfor D in \"${DOMAIN}\" \"${DOMAIN_2}\"; do\n  AUTH_VHOST=$(sudo cat \"${AVAILABLE}/$(vhost_name auth \"${D}\")\" 2>/dev/null || echo \"\")\n  assert_not_contains \"${AUTH_VHOST}\" \"locales/forced\" \"The auth vhost of ${D} forces no locale\" || true\n  assert_not_contains \"${AUTH_VHOST}\" \"data-authelia-lang\" \"…and leaves Authelia's lang alone\" || true\ndone\nassert_not_contains \"$(curl -sk --max-time 15 --resolve \"${AUTH_FQDN}:443:127.0.0.1\" \"https://${AUTH_FQDN}/\")\" \"data-authelia-lang\" \"https://${AUTH_FQDN}/: Authelia's own <html lang>\" || true\nassert_eq \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:9294/access-request 2>/dev/null || echo 000)\" \"404\" \"Gatekeeper's GET /access-request is gone (404)\" || true"
     },
     {
       "id": "the-panel-logged-no-error-since-the-update",
       "label": "The panel logged no error since the update",
       "steps": [
         {
-          "id": "step-191",
+          "id": "step-211",
           "label": "Set ERRORS",
           "target": "local",
           "op": {
@@ -2548,7 +2861,7 @@
           ]
         },
         {
-          "id": "step-192",
+          "id": "step-212",
           "label": "No level ≥ 50 line in the panel's journal since ${UPDATE_STARTED}",
           "target": "local",
           "continueOnError": true,
@@ -2573,7 +2886,7 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 01 — A relay on the previous release takes the Panel Update to the candidate\n# ============================================================================\n# The relay was installed from the registry while the release before the\n# candidate was the latest (tier installed-previous); the campaign then\n# published the candidate, now the registry's latest create-lamaste. Here,\n# the path a live relay takes:\n#\n# 1. State written by the previous release: a user beside the admin, two\n#    tunnels (one enabled, one disabled), their vhosts under that release's\n#    names, how every host answers, the root helper as installed.\n# 2. POST /api/system/update { version: <candidate> }: lamaste-priv starts\n#    create-lamaste@<candidate> --yes in a transient unit; the panel comes\n#    back on the candidate.\n# 3. After: the unit succeeded; lamaste-priv is the candidate's (it refuses\n#    what only the old one allowed); the panel's migrations ran on the old\n#    state; the vhosts carry the candidate's names with their link state;\n#    every host answers as before; one domain, every user its member (kind\n#    member); Authelia denies by default, watches its users file (refresh\n#    always, its own password change and reset off — external-members-\n#    design.md) and every user holds the domain's member group there;\n#    Gatekeeper has its member file (v2); the branded sign-in's base is in\n#    place with the page pixel-for-pixel stock (auth-branding-design.md,\n#    \"Upgrade and reconcile\": the override locations in the auth vhost,\n#    data-theme=\"light\", data-logooverride=\"false\", no stylesheet; theme\n#    and server.asset_path in Authelia's configuration — one restart,\n#    audited; no brand; nginx built with the sub module; the stock\n#    invitation page rewritten); the user signed in before the update,\n#    signed in again after it, reaches what they reached; the panel logged\n#    no error since the update.\n# 4. The invitations of the release before (delegated-invitations-design.md\n#    §11): a pending invitation made there, its link naming the token in its\n#    path, and a domain with a brand. After the update the old link's page\n#    opens and runs — on the stock page and the branded one the script served\n#    is the one the served CSP names, because the rendering was rebuilt\n#    (`pagesDigest` in rendered.json); the invitation was imported from\n#    invitations.json, which is gone, with no clear token left in state.db;\n#    it is looked up and accepted by POST.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 01 — A relay on the previous release takes the Panel Update to the candidate\n# ============================================================================\n# The relay was installed from the registry while the release before the\n# candidate was the latest (tier installed-previous); the campaign then\n# published the candidate, now the registry's latest create-lamaste. Here,\n# the path a live relay takes:\n#\n# 1. State written by the previous release: a user beside the admin, two\n#    tunnels (one enabled, one disabled), their vhosts under that release's\n#    names, how every host answers, the root helper as installed.\n# 2. POST /api/system/update { version: <candidate> }: lamaste-priv starts\n#    create-lamaste@<candidate> --yes in a transient unit; the panel comes\n#    back on the candidate.\n# 3. After: the unit succeeded; lamaste-priv is the candidate's (it refuses\n#    what only the old one allowed); the panel's migrations ran on the old\n#    state; the vhosts carry the candidate's names with their link state;\n#    every host answers as before; one domain, every user its member (kind\n#    member); Authelia denies by default, watches its users file (refresh\n#    always, its own password change and reset off — external-members-\n#    design.md) and every user holds the domain's member group there;\n#    Gatekeeper has its member file (v2); the branded sign-in's base is in\n#    place with the page pixel-for-pixel stock (auth-branding-design.md,\n#    \"Upgrade and reconcile\": the override locations in the auth vhost,\n#    data-theme=\"light\", data-logooverride=\"false\", no stylesheet; theme\n#    and server.asset_path in Authelia's configuration — one restart,\n#    audited; no brand; nginx built with the sub module; the stock\n#    invitation page rewritten); the user signed in before the update,\n#    signed in again after it, reaches what they reached; the panel logged\n#    no error since the update.\n# 4. The invitations of the release before (delegated-invitations-design.md\n#    §11): a pending invitation made there, its link naming the token in its\n#    path, and a domain with a brand. After the update the old link's page\n#    opens and runs — on the stock page and the branded one the script served\n#    is the one the served CSP names, because the rendering was rebuilt\n#    (`pagesDigest` in rendered.json); the invitation was imported from\n#    invitations.json, which is gone, with no clear token left in state.db;\n#    it is looked up and accepted by POST. From 4.9 on the invitation is in\n#    state.db already and its link names the token in its fragment.\n# 5. The page language (page-language-design.md, \"Upgrade in place\"): the\n#    panel's migration 0021 ran (domains.language), no domain has a\n#    language, the pages are English — the stock pages and the branded\n#    domain's rendering, written again by the candidate with its data block;\n#    the auth vhosts force no locale; the running Authelia is the pin; the\n#    stock \"not available\" page is in place; Gatekeeper's GET\n#    /access-request is gone.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq nginx npm sha256sum oathtool python3 node sqlite3\n\nbegin_test \"01 — Panel Update from the previous release to the candidate\"\n\nRUN_ID=\"$(date +%s)\"\nAGENT_LABEL=\"upgrade-e2e-${RUN_ID}\"\nSUB_ON=\"e2eup1on\"\nSUB_OFF=\"e2eup1off\"\nPORT_ON=19941\nPORT_OFF=19942\nUSERNAME=\"e2eupgrade\"\n# Test credentials for this run only, never printed\nUSER_PASSWORD=\"Upgrade-${RUN_ID}-pass\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-upgrade-01\"\nTUNNEL_ON=\"\"\nTUNNEL_OFF=\"\"\nAVAILABLE=\"/etc/nginx/sites-available\"\nENABLED=\"/etc/nginx/sites-enabled\"\nPRIV=/usr/local/sbin/lamaste-priv\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWEB_ROOT=\"/var/www/lamaste/auth\"\nINVITEE=\"e2eupinvited\"\n# Test credentials for this run only, never printed\nINVITEE_PASSWORD=\"Upgrade-${RUN_ID}-invitee\"\nBRAND=\"E2E Upgrade Brand\"\nACCENT=\"#0f766e\"\nDOMAIN_2=\"\"\nINVITE_TOKEN=\"\"\nINVITE_ID=\"\"\nBRANDED_TOKEN=\"\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${TUNNEL_ON} ${TUNNEL_OFF}; do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"users/${USERNAME}\" > /dev/null 2>&1 || true\n  api_delete \"users/${INVITEE}\" > /dev/null 2>&1 || true\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# inline_hash <script|style> — the CSP source of a page's inline element, from stdin\ninline_hash() {\n  node -e 'const h=require(\"fs\").readFileSync(0,\"utf8\");const t=process.argv[1];const m=h.match(new RegExp(\"<\"+t+\">([\\\\s\\\\S]*?)</\"+t+\">\"));process.stdout.write(m?\"sha256-\"+require(\"crypto\").createHash(\"sha256\").update(m[1],\"utf8\").digest(\"base64\"):\"none\")' \"$1\"\n}\n\n# assert_page_runs <host> <path> <what> — the page answers 200 and its CSP names\n# the served inline script and style: a browser runs it\nassert_page_runs() {\n  local dir=\"${WORK_DIR}/page\" csp\n  mkdir -p \"$dir\"\n  curl -sk --max-time 15 --resolve \"$1:443:127.0.0.1\" -D \"$dir/headers\" -o \"$dir/body\" -w '%{http_code}' \"https://$1$2\" > \"$dir/status\" 2>/dev/null || echo 000 > \"$dir/status\"\n  assert_eq \"$(cat \"$dir/status\")\" \"200\" \"$3: 200\" || true\n  csp=$(tr -d '\\r' < \"$dir/headers\" | sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p')\n  assert_contains \"${csp}\" \"script-src '$(inline_hash script < \"$dir/body\")'\" \"…its CSP names the script served\" || true\n  assert_contains \"${csp}\" \"'$(inline_hash style < \"$dir/body\")'\" \"…and the style served\" || true\n  assert_contains \"${csp}\" \"frame-ancestors 'none'\" \"…nothing frames it\" || true\n}\n\n# host_status <hostname> — how nginx answers https://<hostname>/ on this VM\nhost_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve \"$1:443:127.0.0.1\" \"https://$1/\" 2>/dev/null || echo \"000\"\n}\n\n# link_state <site name> — \"available linked\" / \"available unlinked\" / \"gone …\"\nlink_state() {\n  local a=gone e=unlinked\n  if sudo test -e \"${AVAILABLE}/$1\"; then a=available; fi\n  if sudo test -L \"${ENABLED}/$1\"; then e=linked; fi\n  echo \"$a $e\"\n}\n\n# signed_status <jar> <hostname> — how nginx answers https://<hostname>/ to the session in <jar>\nsigned_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 -b \"$1\" --resolve \"$2:443:127.0.0.1\" \"https://$2/\" 2>/dev/null || echo \"000\"\n}\n\n# panel_version — the version the panel reports, or \"down\"\npanel_version() {\n  api_get \"health\" 2>/dev/null | jq -r '.version // \"down\"' 2>/dev/null || echo \"down\"\n}\n\n# version_before <a> <b> — whether release <a> is older than <b> (x.y.z)\nversion_before() {\n  [ \"$1\" != \"$2\" ] && [ \"$(printf '%s\\n%s\\n' \"$1\" \"$2\" | sort -V | head -n 1)\" = \"$1\" ]\n}\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

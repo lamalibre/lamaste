@@ -1,0 +1,3580 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 56,
+    "name": "A domain's page language: Turkish where set, English elsewhere",
+    "suite": "e2e-three-vm",
+    "description": "56 — A domain's page language: Turkish where set, English elsewhere (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-plang"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-plang-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-plang-agent"
+    },
+    "SUB_W": {
+      "value": "e2e56web"
+    },
+    "SUB_TB": {
+      "value": "e2e56bauth"
+    },
+    "SUB_RB": {
+      "value": "e2e56bres"
+    },
+    "SUB_RC": {
+      "value": "e2e56cres"
+    },
+    "SUB_TC": {
+      "value": "e2e56cauth"
+    },
+    "PORT_TB": {
+      "value": "19961"
+    },
+    "PORT_RB": {
+      "value": "19962"
+    },
+    "PORT_RC": {
+      "value": "19963"
+    },
+    "PORT_TC": {
+      "value": "19964"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-56"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-56-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "BRAND_B": {
+      "value": "E2E Marka 56"
+    },
+    "ACCENT_B": {
+      "value": "#7c3aed"
+    },
+    "COORD": {
+      "value": "e2e56-coord"
+    },
+    "MEM": {
+      "value": "e2e56-member"
+    },
+    "OUT": {
+      "value": "e2e56-outsider"
+    },
+    "INVITEE": {
+      "value": "e2e56-invitee-$timestamp()",
+      "expression": true
+    },
+    "NOSCRIPT_TR": {
+      "value": "'Bu uygulama i&#231;in taray&#305;c&#305;n&#305;zda JavaScript etkin olmal&#305;d&#305;r.'"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE tunnels/${id}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${id}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE plugins/${PLUGIN}/web-surface",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN}/web-surface"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "DELETE /api/plugins/${PLUGIN}/web-surface",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}/web-surface"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-9",
+          "label": "DELETE /api/domains/${DOMAIN_2}/branding",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "domains/${DOMAIN_2}/branding"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-10",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nmd_setup\nif agent_has_node_sqlite; then\n  log_pass \"The agent VM's Node.js has node:sqlite, which the agent half's projection needs\"\nelse\n  log_fail \"The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run\"\n  end_test\n  exit $?\nfi\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\nhost_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\ndrop_plugin_grants \"${PLUGIN}\"\nfor D in \"${DOMAIN}\" \"${DOMAIN_2}\" \"${DOMAIN_3}\"; do\n  md_api PUT \"domains/${D}/language\" '{\"language\":null}' > /dev/null 2>&1 || true\ndone\nhost_api_delete \"domains/${DOMAIN_2}/branding\" > /dev/null 2>&1 || true\nAUDIT_BASE=$(host_api_get \"audit?limit=1\" 2>/dev/null | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 1. The languages\n# ==========================================================================="
+    },
+    {
+      "id": "b-and-c-active-b-branded-a-the-primary-left-alone",
+      "label": "B and C active; B branded; A, the primary, left alone",
+      "steps": [
+        {
+          "id": "step-13",
+          "label": "No domain has a language yet",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(language_of \"${DOMAIN}\") $(language_of \"${DOMAIN_2}\") $(language_of \"${DOMAIN_3}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null null null"
+              },
+              "message": "No domain has a language yet"
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_api PUT \"domains/${DOMAIN_2}/branding\" \"$(jq -c -n --arg n \"${BRAND_B}\" --arg a \"${ACCENT_B}\" '{name: $n, theme: \"light\", accent: $a}')\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "B branded ${BRAND_B}, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.branding.name) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${BRAND_B} 0"
+              },
+              "message": "B branded ${BRAND_B}, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "…rendered",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…rendered"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "B's brand is not rendered: $(json_get \"$(domain_entry \"${DOMAIN_2}\")\" '.rendering')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "B's brand is not rendered: $(json_get \"$(domain_entry \"${DOMAIN_2}\")\" '.rendering')"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Set AUTHELIA_PID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "authelia_pid"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_PID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"B and C active; B branded; A, the primary, left alone\"\n\nmd_domain_active \"${DOMAIN_2}\"\nmd_domain_active \"${DOMAIN_3}\"\nassert_eq \"$(language_of \"${DOMAIN}\") $(language_of \"${DOMAIN_2}\") $(language_of \"${DOMAIN_3}\")\" \"null null null\" \"No domain has a language yet\" || true\nRESP=$(md_api PUT \"domains/${DOMAIN_2}/branding\" \"$(jq -c -n --arg n \"${BRAND_B}\" --arg a \"${ACCENT_B}\" '{name: $n, theme: \"light\", accent: $a}')\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.branding.name) \\(.warnings // [] | length)\"' \"${BRAND_B} 0\" \"B branded ${BRAND_B}, no warning\" || true\nif wait_for 90 rendering_current \"${DOMAIN_2}\"; then\n  log_pass \"…rendered\"\nelse\n  log_fail \"B's brand is not rendered: $(json_get \"$(domain_entry \"${DOMAIN_2}\")\" '.rendering')\"\nfi\nmd_wait_authelia \"${DOMAIN_2}\"\nmd_wait_authelia \"${DOMAIN_3}\"\nAUTHELIA_PID=$(authelia_pid)"
+    },
+    {
+      "id": "b-speaks-turkish-c-english",
+      "label": "B speaks Turkish, C English",
+      "steps": [
+        {
+          "id": "step-21",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "set_language \"${DOMAIN_2}\" tr"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "PUT /api/domains/${DOMAIN_2}/language {language: tr}: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/domains/${DOMAIN_2}/language {language: tr}: 200"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "…changed, tr, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true tr 0"
+              },
+              "message": "…changed, tr, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "set_language \"${DOMAIN_3}\" en"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "PUT /api/domains/${DOMAIN_3}/language {language: en}: changed, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true en 0"
+              },
+              "message": "PUT /api/domains/${DOMAIN_3}/language {language: en}: changed, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "set_language \"${DOMAIN_2}\" tr"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "The same language again: unchanged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.domain.language)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "false tr"
+              },
+              "message": "The same language again: unchanged"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "GET /api/domains: A none, B tr, C en",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(language_of \"${DOMAIN}\") $(language_of \"${DOMAIN_2}\") $(language_of \"${DOMAIN_3}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null tr en"
+              },
+              "message": "GET /api/domains: A none, B tr, C en"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "B's rendering (brand and language) and C's (language alone) are current",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "B's rendering (brand and language) and C's (language alone) are current"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "A rendering is not current: B $(json_get \"$(domain_entry \"${DOMAIN_2}\")\" '.rendering'), C $(json_get \"$(domain_entry \"${DOMAIN_3}\")\" '.rendering')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "A rendering is not current: B $(json_get \"$(domain_entry \"${DOMAIN_2}\")\" '.rendering'), C $(json_get \"$(domain_entry \"${DOMAIN_3}\")\" '.rendering')"
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "…C's rendering: revision 0 (no brand), language en",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(domain_entry \"${DOMAIN_3}\")"
+              },
+              "path": "\"\\(.rendering.rendered.revision) \\(.rendering.rendered.language)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "0 en"
+              },
+              "message": "…C's rendering: revision 0 (no brand), language en"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "GET /api/domains",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "domains"
+          },
+          "capture": [
+            {
+              "variable": "VERSIONS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "The running Authelia is the pinned release (${VERSIONS})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VERSIONS"
+              },
+              "path": "(.running != null) and (.running == .pinned)",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The running Authelia is the pinned release (${VERSIONS})"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Setting a language restarted no Authelia",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "AUTHELIA_PID"
+              },
+              "message": "Setting a language restarted no Authelia"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"B speaks Turkish, C English\"\n\nRESP=$(set_language \"${DOMAIN_2}\" tr)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/domains/${DOMAIN_2}/language {language: tr}: 200\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"' \"true tr 0\" \"…changed, tr, no warning\" || true\nRESP=$(set_language \"${DOMAIN_3}\" en)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"' \"true en 0\" \"PUT /api/domains/${DOMAIN_3}/language {language: en}: changed, no warning\" || true\nRESP=$(set_language \"${DOMAIN_2}\" tr)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language)\"' \"false tr\" \"The same language again: unchanged\" || true\nassert_eq \"$(language_of \"${DOMAIN}\") $(language_of \"${DOMAIN_2}\") $(language_of \"${DOMAIN_3}\")\" \"null tr en\" \"GET /api/domains: A none, B tr, C en\" || true\nif wait_for 90 rendering_current \"${DOMAIN_2}\" && wait_for 90 rendering_current \"${DOMAIN_3}\"; then\n  log_pass \"B's rendering (brand and language) and C's (language alone) are current\"\nelse\n  log_fail \"A rendering is not current: B $(json_get \"$(domain_entry \"${DOMAIN_2}\")\" '.rendering'), C $(json_get \"$(domain_entry \"${DOMAIN_3}\")\" '.rendering')\"\nfi\nassert_json_field \"$(domain_entry \"${DOMAIN_3}\")\" '\"\\(.rendering.rendered.revision) \\(.rendering.rendered.language)\"' \"0 en\" \"…C's rendering: revision 0 (no brand), language en\" || true\nVERSIONS=$(host_api_get \"domains\" 2>/dev/null | jq -c '.authelia // {}' 2>/dev/null || echo '{}')\nassert_json_field \"${VERSIONS}\" '(.running != null) and (.running == .pinned)' \"true\" \"The running Authelia is the pinned release (${VERSIONS})\" || true\nassert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"Setting a language restarted no Authelia\" || true\n\n# ===========================================================================\n# 2. Authelia's portal\n# ==========================================================================="
+    },
+    {
+      "id": "the-sign-in-page-lang-follows-the-domain-the-menu-hidden",
+      "label": "The sign-in page: lang follows the domain, the menu hidden",
+      "steps": [
+        {
+          "id": "step-35",
+          "label": "auth.${DOMAIN_2}/: <html lang=\\\"tr\\\" data-authelia-lang=\\\"…\\\">",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "auth.${DOMAIN_2}/: <html lang=\\\"tr\\\" data-authelia-lang=\\\"…\\\">"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "auth.${DOMAIN_2}/ does not say lang=\\\"tr\\\": $(visit_body \"$(page_of \"${DOMAIN_2}\" /)\" | grep -o '<html[^>]*>' | head -n 1)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "auth.${DOMAIN_2}/ does not say lang=\\\"tr\\\": $(visit_body \"$(page_of \"${DOMAIN_2}\" /)\" | grep -o '<html[^>]*>' | head -n 1)"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Set INDEX_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$(page_of \"${DOMAIN_2}\" /)\""
+          },
+          "capture": [
+            {
+              "variable": "INDEX_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "…its noscript sentence in Turkish (ASCII character references)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INDEX_B"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "NOSCRIPT_TR"
+              },
+              "message": "…its noscript sentence in Turkish (ASCII character references)"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "…links /brand.css",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INDEX_B"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<link rel=\"stylesheet\" href=\"/brand.css\">"
+              },
+              "message": "…links /brand.css"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Set CSS_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$(page_of \"${DOMAIN_2}\" /brand.css)\""
+          },
+          "capture": [
+            {
+              "variable": "CSS_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "auth.${DOMAIN_2}/brand.css hides the language menu (#language-button)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CSS_B"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "#language-button"
+              },
+              "message": "auth.${DOMAIN_2}/brand.css hides the language menu (#language-button)"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "…and keeps the brand's accent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CSS_B"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "ACCENT_B"
+              },
+              "message": "…and keeps the brand's accent"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "auth.${DOMAIN_3}/: <html lang=\\\"en\\\" data-authelia-lang=\\\"…\\\">",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "auth.${DOMAIN_3}/: <html lang=\\\"en\\\" data-authelia-lang=\\\"…\\\">"
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "auth.${DOMAIN_3}/ does not say lang=\\\"en\\\"",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "auth.${DOMAIN_3}/ does not say lang=\\\"en\\\""
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Set INDEX_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$(page_of \"${DOMAIN_3}\" /)\""
+          },
+          "capture": [
+            {
+              "variable": "INDEX_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "…no Turkish noscript sentence",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "INDEX_C"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "taray&#305;c"
+              },
+              "message": "…no Turkish noscript sentence"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "auth.${DOMAIN_3}/brand.css hides the menu too (a language, no brand)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(page_of \"${DOMAIN_3}\" /brand.css)\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "#language-button"
+              },
+              "message": "auth.${DOMAIN_3}/brand.css hides the menu too (a language, no brand)"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Set INDEX_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$(page_of \"${DOMAIN}\" /)\""
+          },
+          "capture": [
+            {
+              "variable": "INDEX_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "auth.${DOMAIN}/: Authelia's own <html lang>",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INDEX_A"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\""
+              },
+              "message": "auth.${DOMAIN}/: Authelia's own <html lang>"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "…not rewritten (no language)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "INDEX_A"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-authelia-lang"
+              },
+              "message": "…not rewritten (no language)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The sign-in page: lang follows the domain, the menu hidden\"\n\nif wait_for 60 index_says \"${DOMAIN_2}\" '<html lang=\"tr\" data-authelia-lang=\"'; then\n  log_pass \"auth.${DOMAIN_2}/: <html lang=\\\"tr\\\" data-authelia-lang=\\\"…\\\">\"\nelse\n  log_fail \"auth.${DOMAIN_2}/ does not say lang=\\\"tr\\\": $(visit_body \"$(page_of \"${DOMAIN_2}\" /)\" | grep -o '<html[^>]*>' | head -n 1)\"\nfi\nINDEX_B=$(visit_body \"$(page_of \"${DOMAIN_2}\" /)\")\nassert_contains \"${INDEX_B}\" \"${NOSCRIPT_TR}\" \"…its noscript sentence in Turkish (ASCII character references)\" || true\nassert_contains \"${INDEX_B}\" '<link rel=\"stylesheet\" href=\"/brand.css\">' \"…links /brand.css\" || true\nCSS_B=$(visit_body \"$(page_of \"${DOMAIN_2}\" /brand.css)\")\nassert_contains \"${CSS_B}\" \"#language-button\" \"auth.${DOMAIN_2}/brand.css hides the language menu (#language-button)\" || true\nassert_contains \"${CSS_B}\" \"${ACCENT_B}\" \"…and keeps the brand's accent\" || true\nif wait_for 60 index_says \"${DOMAIN_3}\" '<html lang=\"en\" data-authelia-lang=\"'; then\n  log_pass \"auth.${DOMAIN_3}/: <html lang=\\\"en\\\" data-authelia-lang=\\\"…\\\">\"\nelse\n  log_fail \"auth.${DOMAIN_3}/ does not say lang=\\\"en\\\"\"\nfi\nINDEX_C=$(visit_body \"$(page_of \"${DOMAIN_3}\" /)\")\nassert_not_contains \"${INDEX_C}\" \"taray&#305;c\" \"…no Turkish noscript sentence\" || true\nassert_contains \"$(visit_body \"$(page_of \"${DOMAIN_3}\" /brand.css)\")\" \"#language-button\" \"auth.${DOMAIN_3}/brand.css hides the menu too (a language, no brand)\" || true\nINDEX_A=$(visit_body \"$(page_of \"${DOMAIN}\" /)\")\nassert_contains \"${INDEX_A}\" '<html lang=\"' \"auth.${DOMAIN}/: Authelia's own <html lang>\" || true\nassert_not_contains \"${INDEX_A}\" \"data-authelia-lang\" \"…not rewritten (no language)\" || true"
+    },
+    {
+      "id": "every-locale-path-answers-the-domain-s-language",
+      "label": "Every locale path answers the domain's language",
+      "steps": [
+        {
+          "id": "step-52",
+          "label": "auth.${DOMAIN_2}/locales/${LOC}/portal.json: \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(loading_of \"${DOMAIN_2}\" \"${LOC}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "Yükleniyor"
+              },
+              "message": "auth.${DOMAIN_2}/locales/${LOC}/portal.json: \\"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "…\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(locale_file \"${DOMAIN_2}\" \"${LOC}\" portal)"
+              },
+              "path": ".\"Powered by {{authelia}}\"",
+              "expected": {
+                "kind": "expr",
+                "template": "Altyapı: ${BRAND_B}"
+              },
+              "message": "…\\"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set SETTINGS_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "locale_file \"${DOMAIN_2}\" de-AT settings"
+          },
+          "capture": [
+            {
+              "variable": "SETTINGS_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "…settings.json the same file for de-AT and tr",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SETTINGS_B"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(locale_file \"${DOMAIN_2}\" tr settings)"
+              },
+              "message": "…settings.json the same file for de-AT and tr"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "…and not C's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "SETTINGS_B"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(locale_file \"${DOMAIN_3}\" tr settings)"
+              },
+              "message": "…and not C's"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "…consent.json answered for ar as well",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(locale_file \"${DOMAIN_2}\" ar consent)"
+              },
+              "path": "[.. | strings] | length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…consent.json answered for ar as well"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "auth.${DOMAIN_3}/locales/${LOC}/portal.json: English (Loading)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(loading_of \"${DOMAIN_3}\" \"${LOC}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "Loading"
+              },
+              "message": "auth.${DOMAIN_3}/locales/${LOC}/portal.json: English (Loading)"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "…Authelia's English, no brand to splice",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(locale_file \"${DOMAIN_3}\" tr portal)"
+              },
+              "path": ".\"Powered by {{authelia}}\"",
+              "expected": {
+                "kind": "literal",
+                "value": "Powered by {{authelia}}"
+              },
+              "message": "…Authelia's English, no brand to splice"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "auth.${DOMAIN}/locales/tr/portal.json: Authelia's own (its Turkish lacks \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(loading_of \"${DOMAIN}\" tr)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "auth.${DOMAIN}/locales/tr/portal.json: Authelia's own (its Turkish lacks \\"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "…and its de-AT is not its English",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(locale_file \"${DOMAIN}\" de-AT portal)"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(locale_file \"${DOMAIN}\" en portal)"
+              },
+              "message": "…and its de-AT is not its English"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Every locale path answers the domain's language\"\n\nfor LOC in en de-AT tr; do\n  assert_eq \"$(loading_of \"${DOMAIN_2}\" \"${LOC}\")\" \"Yükleniyor\" \"auth.${DOMAIN_2}/locales/${LOC}/portal.json: \\\"Loading\\\" is Lamaste's supplement, Yükleniyor\" || true\n  assert_json_field \"$(locale_file \"${DOMAIN_2}\" \"${LOC}\" portal)\" '.\"Powered by {{authelia}}\"' \"Altyapı: ${BRAND_B}\" \"…\\\"Powered by\\\" corrected and brand-spliced: Altyapı: ${BRAND_B}\" || true\ndone\nSETTINGS_B=$(locale_file \"${DOMAIN_2}\" de-AT settings)\nassert_eq \"${SETTINGS_B}\" \"$(locale_file \"${DOMAIN_2}\" tr settings)\" \"…settings.json the same file for de-AT and tr\" || true\nassert_not_eq \"${SETTINGS_B}\" \"$(locale_file \"${DOMAIN_3}\" tr settings)\" \"…and not C's\" || true\nassert_json_field \"$(locale_file \"${DOMAIN_2}\" ar consent)\" '[.. | strings] | length > 0' \"true\" \"…consent.json answered for ar as well\" || true\nfor LOC in tr de-AT; do\n  assert_eq \"$(loading_of \"${DOMAIN_3}\" \"${LOC}\")\" \"Loading\" \"auth.${DOMAIN_3}/locales/${LOC}/portal.json: English (Loading)\" || true\ndone\nassert_json_field \"$(locale_file \"${DOMAIN_3}\" tr portal)\" '.\"Powered by {{authelia}}\"' \"Powered by {{authelia}}\" \"…Authelia's English, no brand to splice\" || true\nassert_eq \"$(loading_of \"${DOMAIN}\" tr)\" \"null\" \"auth.${DOMAIN}/locales/tr/portal.json: Authelia's own (its Turkish lacks \\\"Loading\\\")\" || true\nassert_not_eq \"$(locale_file \"${DOMAIN}\" de-AT portal)\" \"$(locale_file \"${DOMAIN}\" en portal)\" \"…and its de-AT is not its English\" || true\n\n# ===========================================================================\n# 3. Lamaste's pages\n# ==========================================================================="
+    },
+    {
+      "id": "the-invitation-page-and-the-inviter-s-page-turkish-on-b-english-on-c-and-a",
+      "label": "The invitation page and the inviter's page: Turkish on B, English on C and A",
+      "steps": [
+        {
+          "id": "step-65",
+          "label": "Set INVITE_B_RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "page_of \"${DOMAIN_2}\" /invite"
+          },
+          "capture": [
+            {
+              "variable": "INVITE_B_RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-66",
+          "label": "Set INVITE_C_RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "page_of \"${DOMAIN_3}\" /invite"
+          },
+          "capture": [
+            {
+              "variable": "INVITE_C_RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-67",
+          "label": "Set INVITE_A_RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "page_of \"${DOMAIN}\" /invite"
+          },
+          "capture": [
+            {
+              "variable": "INVITE_A_RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "Set INVITE_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"${INVITE_B_RESP}\""
+          },
+          "capture": [
+            {
+              "variable": "INVITE_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-69",
+          "label": "Set INVITE_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"${INVITE_C_RESP}\""
+          },
+          "capture": [
+            {
+              "variable": "INVITE_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "Set INVITE_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"${INVITE_A_RESP}\""
+          },
+          "capture": [
+            {
+              "variable": "INVITE_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-71",
+          "label": "auth.<B|C|A>/invite: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"${INVITE_B_RESP}\") $(visit_status \"${INVITE_C_RESP}\") $(visit_status \"${INVITE_A_RESP}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200 200 200"
+              },
+              "message": "auth.<B|C|A>/invite: 200"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "B: lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_B"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"tr\">"
+              },
+              "message": "B: lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "…titled ${BRAND_B} — Daveti kabul edin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_B"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "<title>${BRAND_B} — Daveti kabul edin</title>"
+              },
+              "message": "…titled ${BRAND_B} — Daveti kabul edin"
+            }
+          }
+        },
+        {
+          "id": "step-74",
+          "label": "…its data block: tr, invite.title Daveti kabul edin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(data_block \"${INVITE_B}\")"
+              },
+              "path": "\"\\(.lang) \\(.messages.\"invite.title\")\"",
+              "expected": {
+                "kind": "literal",
+                "value": "tr Daveti kabul edin"
+              },
+              "message": "…its data block: tr, invite.title Daveti kabul edin"
+            }
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "…invite.invalidLink in Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(data_block \"${INVITE_B}\")"
+              },
+              "path": ".messages.\"invite.invalidLink\"",
+              "expected": {
+                "kind": "literal",
+                "value": "Bu davet bağlantısı geçerli değil."
+              },
+              "message": "…invite.invalidLink in Turkish"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "C: lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_C"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "C: lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "…the stock English title",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_C"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<title>Lamaste — Accept Invitation</title>"
+              },
+              "message": "…the stock English title"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "…its data block: en",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(data_block \"${INVITE_C}\")"
+              },
+              "path": "\"\\(.lang) \\(.messages.\"invite.title\")\"",
+              "expected": {
+                "kind": "literal",
+                "value": "en Accept Invitation"
+              },
+              "message": "…its data block: en"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "A (no language): lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_A"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "A (no language): lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "…its data block: en",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(data_block \"${INVITE_A}\")"
+              },
+              "path": ".lang",
+              "expected": {
+                "kind": "literal",
+                "value": "en"
+              },
+              "message": "…its data block: en"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "B with Accept-Language: en-US: still Turkish (the domain decides)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(page_of \"${DOMAIN_2}\" /invite -H 'Accept-Language: en-US,en;q=0.9')\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"tr\">"
+              },
+              "message": "B with Accept-Language: en-US: still Turkish (the domain decides)"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "A with Accept-Language: tr-TR: still English",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(page_of \"${DOMAIN}\" /invite -H 'Accept-Language: tr-TR,tr;q=0.9')\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "A with Accept-Language: tr-TR: still English"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "B's and C's invitation page: byte for byte the same script",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(script_of \"${INVITE_B}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(script_of \"${INVITE_C}\")"
+              },
+              "message": "B's and C's invitation page: byte for byte the same script"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "…and A's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(script_of \"${INVITE_B}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(script_of \"${INVITE_A}\")"
+              },
+              "message": "…and A's"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "…one Content-Security-Policy on B and C",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(csp_of \"${INVITE_B_RESP}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(csp_of \"${INVITE_C_RESP}\")"
+              },
+              "message": "…one Content-Security-Policy on B and C"
+            }
+          }
+        },
+        {
+          "id": "step-86",
+          "label": "…and A",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(csp_of \"${INVITE_B_RESP}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(csp_of \"${INVITE_A_RESP}\")"
+              },
+              "message": "…and A"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "Set INVITERS_B_RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "page_of \"${DOMAIN_2}\" \"/invitations/${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "INVITERS_B_RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-88",
+          "label": "Set INVITERS_C_RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "page_of \"${DOMAIN_3}\" \"/invitations/${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "INVITERS_C_RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-89",
+          "label": "Set INVITERS_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"${INVITERS_B_RESP}\""
+          },
+          "capture": [
+            {
+              "variable": "INVITERS_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-90",
+          "label": "The inviter's page on B: lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITERS_B"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"tr\">"
+              },
+              "message": "The inviter's page on B: lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "…titled ${BRAND_B} — Kişi davet edin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITERS_B"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "<title>${BRAND_B} — Kişi davet edin</title>"
+              },
+              "message": "…titled ${BRAND_B} — Kişi davet edin"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "…its data block: tr",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(data_block \"${INVITERS_B}\")"
+              },
+              "path": ".lang",
+              "expected": {
+                "kind": "literal",
+                "value": "tr"
+              },
+              "message": "…its data block: tr"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "…on C: Lamaste — Invite People",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"${INVITERS_C_RESP}\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<title>Lamaste — Invite People</title>"
+              },
+              "message": "…on C: Lamaste — Invite People"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "…one Content-Security-Policy on B and C",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(csp_of \"${INVITERS_B_RESP}\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(csp_of \"${INVITERS_C_RESP}\")"
+              },
+              "message": "…one Content-Security-Policy on B and C"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The invitation page and the inviter's page: Turkish on B, English on C and A\"\n\nINVITE_B_RESP=$(page_of \"${DOMAIN_2}\" /invite)\nINVITE_C_RESP=$(page_of \"${DOMAIN_3}\" /invite)\nINVITE_A_RESP=$(page_of \"${DOMAIN}\" /invite)\nINVITE_B=$(visit_body \"${INVITE_B_RESP}\")\nINVITE_C=$(visit_body \"${INVITE_C_RESP}\")\nINVITE_A=$(visit_body \"${INVITE_A_RESP}\")\nassert_eq \"$(visit_status \"${INVITE_B_RESP}\") $(visit_status \"${INVITE_C_RESP}\") $(visit_status \"${INVITE_A_RESP}\")\" \"200 200 200\" \"auth.<B|C|A>/invite: 200\" || true\nassert_contains \"${INVITE_B}\" '<html lang=\"tr\">' \"B: lang=\\\"tr\\\"\" || true\nassert_contains \"${INVITE_B}\" \"<title>${BRAND_B} — Daveti kabul edin</title>\" \"…titled ${BRAND_B} — Daveti kabul edin\" || true\nassert_json_field \"$(data_block \"${INVITE_B}\")\" '\"\\(.lang) \\(.messages.\"invite.title\")\"' \"tr Daveti kabul edin\" \"…its data block: tr, invite.title Daveti kabul edin\" || true\nassert_json_field \"$(data_block \"${INVITE_B}\")\" '.messages.\"invite.invalidLink\"' \"Bu davet bağlantısı geçerli değil.\" \"…invite.invalidLink in Turkish\" || true\nassert_contains \"${INVITE_C}\" '<html lang=\"en\">' \"C: lang=\\\"en\\\"\" || true\nassert_contains \"${INVITE_C}\" \"<title>Lamaste — Accept Invitation</title>\" \"…the stock English title\" || true\nassert_json_field \"$(data_block \"${INVITE_C}\")\" '\"\\(.lang) \\(.messages.\"invite.title\")\"' \"en Accept Invitation\" \"…its data block: en\" || true\nassert_contains \"${INVITE_A}\" '<html lang=\"en\">' \"A (no language): lang=\\\"en\\\"\" || true\nassert_json_field \"$(data_block \"${INVITE_A}\")\" '.lang' \"en\" \"…its data block: en\" || true\nassert_contains \"$(visit_body \"$(page_of \"${DOMAIN_2}\" /invite -H 'Accept-Language: en-US,en;q=0.9')\")\" '<html lang=\"tr\">' \"B with Accept-Language: en-US: still Turkish (the domain decides)\" || true\nassert_contains \"$(visit_body \"$(page_of \"${DOMAIN}\" /invite -H 'Accept-Language: tr-TR,tr;q=0.9')\")\" '<html lang=\"en\">' \"A with Accept-Language: tr-TR: still English\" || true\nassert_eq \"$(script_of \"${INVITE_B}\")\" \"$(script_of \"${INVITE_C}\")\" \"B's and C's invitation page: byte for byte the same script\" || true\nassert_eq \"$(script_of \"${INVITE_B}\")\" \"$(script_of \"${INVITE_A}\")\" \"…and A's\" || true\nassert_eq \"$(csp_of \"${INVITE_B_RESP}\")\" \"$(csp_of \"${INVITE_C_RESP}\")\" \"…one Content-Security-Policy on B and C\" || true\nassert_eq \"$(csp_of \"${INVITE_B_RESP}\")\" \"$(csp_of \"${INVITE_A_RESP}\")\" \"…and A\" || true\n\nINVITERS_B_RESP=$(page_of \"${DOMAIN_2}\" \"/invitations/${PLUGIN}\")\nINVITERS_C_RESP=$(page_of \"${DOMAIN_3}\" \"/invitations/${PLUGIN}\")\nINVITERS_B=$(visit_body \"${INVITERS_B_RESP}\")\nassert_contains \"${INVITERS_B}\" '<html lang=\"tr\">' \"The inviter's page on B: lang=\\\"tr\\\"\" || true\nassert_contains \"${INVITERS_B}\" \"<title>${BRAND_B} — Kişi davet edin</title>\" \"…titled ${BRAND_B} — Kişi davet edin\" || true\nassert_json_field \"$(data_block \"${INVITERS_B}\")\" '.lang' \"tr\" \"…its data block: tr\" || true\nassert_contains \"$(visit_body \"${INVITERS_C_RESP}\")\" \"<title>Lamaste — Invite People</title>\" \"…on C: Lamaste — Invite People\" || true\nassert_eq \"$(csp_of \"${INVITERS_B_RESP}\")\" \"$(csp_of \"${INVITERS_C_RESP}\")\" \"…one Content-Security-Policy on B and C\" || true\n\n# ===========================================================================\n# 4. The plugin's site before it is served\n# ==========================================================================="
+    },
+    {
+      "id": "the-plugin-installed-on-b-its-site-before-approval-the-not-available-page-in-turkish",
+      "label": "The plugin installed on B; its site before approval: the \\\"not available\\\" page in Turkish",
+      "steps": [
+        {
+          "id": "step-95",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-56-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-96",
+          "label": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "Fixture built: ${SERVER_PACKAGE}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixture built: ${SERVER_PACKAGE}"
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-104",
+          "label": "Installed ${SERVER_PACKAGE}@1.0.0, not approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed ${SERVER_PACKAGE}@1.0.0, not approved"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/domain\" \"{\\\"domain\\\":\\\"${DOMAIN_2}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "…moved to B",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…moved to B"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PLUGIN}/web-surface\" '{\"accessMode\":\"restricted\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-108",
+          "label": "Its web surface created, restricted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "Its web surface created, restricted"
+            }
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "Set SITE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "SITE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-110",
+          "label": "…not served: not approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(web_surface \"${PLUGIN}\")"
+              },
+              "path": "\"\\(.served) \\(.reason)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "false not_approved"
+              },
+              "message": "…not served: not approved"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"https://${FQDN}/\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
+          "label": "Set P8",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "P8",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-115",
+          "label": "…Lamaste's page, lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "P8"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"tr\">"
+              },
+              "message": "…Lamaste's page, lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "…Uygulama şu anda kullanılamıyor",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "P8"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<h1>Uygulama şu anda kullanılamıyor</h1>"
+              },
+              "message": "…Uygulama şu anda kullanılamıyor"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "…Lütfen birkaç dakika sonra yeniden deneyin.",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "P8"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Lütfen birkaç dakika sonra yeniden deneyin."
+              },
+              "message": "…Lütfen birkaç dakika sonra yeniden deneyin."
+            }
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "…in B's brand",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "P8"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "BRAND_B"
+              },
+              "message": "…in B's brand"
+            }
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "…not nginx's stock page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "P8"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "nginx"
+              },
+              "message": "…not nginx's stock page"
+            }
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "…its CSP names its style by hash",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(csp_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "style-src 'sha256-"
+              },
+              "message": "…its CSP names its style by hash"
+            }
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "…never cached",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "cache-control: no-store"
+              },
+              "message": "…never cached"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The plugin installed on B; its site before approval: the \\\"not available\\\" page in Turkish\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-56-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/plang\" \"${PLUGIN}\" 1.0.0 main \"l$(date +%s)-$$\" '[]' none inviting v1 \"${SUB_W}\"; then\n  log_fail \"The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE}\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/plang/server fixtures/plang/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\nFQDN=\"${SUB_W}.${DOMAIN_2}\"\nRESP=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${SERVER_PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$RESP\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0, not approved\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/domain\" \"{\\\"domain\\\":\\\"${DOMAIN_2}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"…moved to B\" || true\nRESP=$(host_api_call POST \"plugins/${PLUGIN}/web-surface\" '{\"accessMode\":\"restricted\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Its web surface created, restricted\" || true\nSITE_ID=$(json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty')\nassert_json_field \"$(web_surface \"${PLUGIN}\")\" '\"\\(.served) \\(.reason)\"' \"false not_approved\" \"…not served: not approved\" || true\nmd_hosts \"${FQDN}\"\nwait_status - \"https://${FQDN}/\" 503 \"https://${FQDN}/: 503 until it is served\"\nRESP=$(visit - \"https://${FQDN}/\")\nP8=$(visit_body \"$RESP\")\nassert_contains \"${P8}\" '<html lang=\"tr\">' \"…Lamaste's page, lang=\\\"tr\\\" (P8)\" || true\nassert_contains \"${P8}\" \"<h1>Uygulama şu anda kullanılamıyor</h1>\" \"…Uygulama şu anda kullanılamıyor\" || true\nassert_contains \"${P8}\" \"Lütfen birkaç dakika sonra yeniden deneyin.\" \"…Lütfen birkaç dakika sonra yeniden deneyin.\" || true\nassert_contains \"${P8}\" \"${BRAND_B}\" \"…in B's brand\" || true\nassert_not_contains \"${P8}\" \"nginx\" \"…not nginx's stock page\" || true\nassert_contains \"$(csp_of \"$RESP\")\" \"style-src 'sha256-\" \"…its CSP names its style by hash\" || true\nassert_contains \"$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\" \"cache-control: no-store\" \"…never cached\" || true"
+    },
+    {
+      "id": "approved-hosted-served",
+      "label": "Approved, hosted, served",
+      "steps": [
+        {
+          "id": "step-122",
+          "label": "Set DIGEST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(host_api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.approval.digest // empty'"
+          },
+          "capture": [
+            {
+              "variable": "DIGEST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-123",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-124",
+          "label": "${PLUGIN} approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".hooks.approval.state",
+              "expected": {
+                "kind": "literal",
+                "value": "approved"
+              },
+              "message": "${PLUGIN} approved"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "POST /api/plugins/${PLUGIN}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/enable",
+            "body": {}
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 300 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-127",
+          "label": "…hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "…hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-128",
+          "label": "…ready: its agent half's first complete sync ended at the head",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…ready: its agent half's first complete sync ended at the head"
+          }
+        },
+        {
+          "id": "step-129",
+          "label": "…not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "…not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')"
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "…its web surface served",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…its web surface served"
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "…its web surface not served: $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "…its web surface not served: $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')"
+          }
+        }
+      ],
+      "bash": "log_section \"Approved, hosted, served\"\n\nDIGEST=$(json_get \"$(host_api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.approval.digest // empty')\nRESP=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"${DIGEST}\\\"}\")\nassert_json_field \"$RESP\" '.hooks.approval.state' 'approved' \"${PLUGIN} approved\" || true\nhost_api_post \"plugins/${PLUGIN}/enable\" '{}' > /dev/null\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"…hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nif wait_for 60 health_up \"${PLUGIN}\"; then log_pass \"…its hosting is up\"; else log_fail \"…its hosting: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"; fi\nif wait_for 120 identity_ready \"${PLUGIN}\"; then\n  log_pass \"…ready: its agent half's first complete sync ended at the head\"\nelse\n  log_fail \"…not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')\"\nfi\nif wait_for 120 web_served \"${PLUGIN}\"; then\n  log_pass \"…its web surface served\"\nelse\n  log_fail \"…its web surface not served: $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')\"\nfi\n\n# ===========================================================================\n# 5. The people\n# ==========================================================================="
+    },
+    {
+      "id": "a-coordinator-external-of-b-a-member-of-b-and-c-a-member-of-a-alone-tunnels-on-b-and-c",
+      "label": "A coordinator (external of B), a member of B and C, a member of A alone; tunnels on B and C",
+      "steps": [
+        {
+          "id": "step-142",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-143",
+          "label": "Invitations enabled for ${PLUGIN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Invitations enabled for ${PLUGIN}"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A coordinator (external of B), a member of B and C, a member of A alone; tunnels on B and C\"\n\nmd_user COORD_ID \"${COORD}\" \"${PASSWORD}\" \"[{\\\"name\\\":\\\"${DOMAIN_2}\\\",\\\"kind\\\":\\\"external\\\"}]\"\nmd_user MEM_ID \"${MEM}\" \"${PASSWORD}\" \"[\\\"${DOMAIN_2}\\\",\\\"${DOMAIN_3}\\\"]\"\nmd_user OUT_ID \"${OUT}\" \"${PASSWORD}\" \"[\\\"${DOMAIN}\\\"]\"\nmd_tunnel TUNNEL_TB \"${SUB_TB}\" \"${DOMAIN_2}\" \"${PORT_TB}\" authenticated\nmd_tunnel TUNNEL_RB \"${SUB_RB}\" \"${DOMAIN_2}\" \"${PORT_RB}\" restricted\nmd_tunnel TUNNEL_RC \"${SUB_RC}\" \"${DOMAIN_3}\" \"${PORT_RC}\" restricted\nmd_tunnel TUNNEL_TC \"${SUB_TC}\" \"${DOMAIN_3}\" \"${PORT_TC}\" authenticated\ninv_entitle \"${COORD}\" coordinator\nmd_grant COORD_GRANT user \"${COORD}\" site \"${SITE_ID}\"\ninv_wait_audience \"${COORD_ID}\" coordinator \"The audience holds ${COORD} as coordinator\"\nRESP=$(inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${INV_MAIL}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Invitations enabled for ${PLUGIN}\" || true\nmd_wait_authelia \"${DOMAIN_2}\"\nmd_wait_authelia \"${DOMAIN_3}\"\nmd_sign_in \"${COORD}\" \"${PASSWORD}\" \"$(reset_totp \"${COORD}\")\" \"${JAR_COORD}\" \"${FQDN}\""
+    },
+    {
+      "id": "the-refusals-the-pages-map-each-with-its-code",
+      "label": "The refusals the pages map: each with its code",
+      "steps": [
+        {
+          "id": "step-147",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_lookup \"$(openssl rand -hex 32)\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-148",
+          "label": "A token nobody holds: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "A token nobody holds: 404"
+            }
+          }
+        },
+        {
+          "id": "step-149",
+          "label": "…invitation_not_found",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "invitation_not_found"
+              },
+              "message": "…invitation_not_found"
+            }
+          }
+        },
+        {
+          "id": "step-151",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" DELETE \"/${INV_ID_2}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-152",
+          "label": "…and revokes it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…and revokes it"
+            }
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_lookup \"${TOKEN_2}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-154",
+          "label": "Its token: 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "Its token: 410"
+            }
+          }
+        },
+        {
+          "id": "step-155",
+          "label": "…invitation_closed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "invitation_closed"
+              },
+              "message": "…invitation_closed"
+            }
+          }
+        },
+        {
+          "id": "step-156",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" DELETE \"/00000000-0000-4000-8000-000000000000\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-157",
+          "label": "The inviter revokes an invitation that does not exist: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The inviter revokes an invitation that does not exist: 404"
+            }
+          }
+        },
+        {
+          "id": "step-158",
+          "label": "…not_found (the inviter's page's key)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "not_found"
+              },
+              "message": "…not_found (the inviter's page's key)"
+            }
+          }
+        },
+        {
+          "id": "step-160",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_accept \"${TOKEN}\" \"${INVITEE}\" \"${INVITEE_PASSWORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-161",
+          "label": "Accepted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Accepted"
+            }
+          }
+        },
+        {
+          "id": "step-162",
+          "label": "Set SECRET",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_secret \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-163",
+          "label": "Set INVITEE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(inv_row \"${INV_ID}\")\" '.acceptedUserId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "INVITEE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-164",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_lookup \"${TOKEN}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-165",
+          "label": "Its token once used: 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "Its token once used: 410"
+            }
+          }
+        },
+        {
+          "id": "step-166",
+          "label": "…invitation_used",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "invitation_used"
+              },
+              "message": "…invitation_used"
+            }
+          }
+        },
+        {
+          "id": "step-167",
+          "label": "…the API answers codes, never the page's words",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Bu davet"
+              },
+              "message": "…the API answers codes, never the page's words"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The refusals the pages map: each with its code\"\n\nRESP=$(inv_lookup \"$(openssl rand -hex 32)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"404\" \"A token nobody holds: 404\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.code' 'invitation_not_found' \"…invitation_not_found\" || true\ninv_new TOKEN_2 INV_ID_2 \"${JAR_COORD}\" \"ayse@${INV_MAIL}\" viewer \"${COORD} invites ayse@${INV_MAIL} as viewer\"\nRESP=$(inv_api \"${JAR_COORD}\" DELETE \"/${INV_ID_2}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"…and revokes it\" || true\nRESP=$(inv_lookup \"${TOKEN_2}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"410\" \"Its token: 410\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.code' 'invitation_closed' \"…invitation_closed\" || true\nRESP=$(inv_api \"${JAR_COORD}\" DELETE \"/00000000-0000-4000-8000-000000000000\")\nassert_eq \"$(visit_status \"$RESP\")\" \"404\" \"The inviter revokes an invitation that does not exist: 404\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.code' 'not_found' \"…not_found (the inviter's page's key)\" || true\ninv_new TOKEN INV_ID \"${JAR_COORD}\" \"deniz@${INV_MAIL}\" viewer \"${COORD} invites deniz@${INV_MAIL} as viewer\"\nRESP=$(inv_accept \"${TOKEN}\" \"${INVITEE}\" \"${INVITEE_PASSWORD}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"Accepted\" || true\nSECRET=$(inv_secret \"$RESP\")\nINVITEE_ID=$(json_get \"$(inv_row \"${INV_ID}\")\" '.acceptedUserId // empty')\nRESP=$(inv_lookup \"${TOKEN}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"410\" \"Its token once used: 410\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.code' 'invitation_used' \"…invitation_used\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"Bu davet\" \"…the API answers codes, never the page's words\" || true"
+    },
+    {
+      "id": "the-access-request-page-turkish-on-b-english-on-c-p6",
+      "label": "The access-request page: Turkish on B, English on C (P6)",
+      "steps": [
+        {
+          "id": "step-169",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_INV}\" \"https://${SUB_TB}.${DOMAIN_2}/\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-170",
+          "label": "${INVITEE} (external, not granted) on B's authenticated tunnel: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${INVITEE} (external, not granted) on B's authenticated tunnel: 403"
+            }
+          }
+        },
+        {
+          "id": "step-171",
+          "label": "Set P6",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "P6",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-172",
+          "label": "…the access-request page in Turkish (lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "P6"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"tr\">"
+              },
+              "message": "…the access-request page in Turkish (lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-173",
+          "label": "…Erişim izni gerekiyor",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "P6"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<h1>Erişim izni gerekiyor"
+              },
+              "message": "…Erişim izni gerekiyor"
+            }
+          }
+        },
+        {
+          "id": "step-175",
+          "label": "…its e-mail template's Subject is Konu:",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "P6"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Konu:"
+              },
+              "message": "…its e-mail template's Subject is Konu:"
+            }
+          }
+        },
+        {
+          "id": "step-176",
+          "label": "…the subject in Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "P6"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "${SUB_TB}.${DOMAIN_2} için erişim talebi"
+              },
+              "message": "…the subject in Turkish"
+            }
+          }
+        },
+        {
+          "id": "step-177",
+          "label": "…the message templates in Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "P6"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "Kullanıcı adım: ${INVITEE}"
+              },
+              "message": "…the message templates in Turkish"
+            }
+          }
+        },
+        {
+          "id": "step-178",
+          "label": "…no English heading",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "P6"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Access Required"
+              },
+              "message": "…no English heading"
+            }
+          }
+        },
+        {
+          "id": "step-179",
+          "label": "Set MEM_SECRET",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${MEM}\""
+          },
+          "capture": [
+            {
+              "variable": "MEM_SECRET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-181",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_MEM_B}\" \"https://${SUB_RB}.${DOMAIN_2}/\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-182",
+          "label": "${MEM} (member of B, no grant) on B's restricted tunnel: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${MEM} (member of B, no grant) on B's restricted tunnel: 403"
+            }
+          }
+        },
+        {
+          "id": "step-183",
+          "label": "…in Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<h1>Erişim izni gerekiyor"
+              },
+              "message": "…in Turkish"
+            }
+          }
+        },
+        {
+          "id": "step-185",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_MEM_C}\" \"https://${SUB_RC}.${DOMAIN_3}/\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-187",
+          "label": "…in English (lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "…in English (lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-188",
+          "label": "…Subject:",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Subject:"
+              },
+              "message": "…Subject:"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The access-request page: Turkish on B, English on C (P6)\"\n\nmd_sign_in \"${INVITEE}\" \"${INVITEE_PASSWORD}\" \"${SECRET}\" \"${JAR_INV}\" \"${FQDN}\"\nRESP=$(visit \"${JAR_INV}\" \"https://${SUB_TB}.${DOMAIN_2}/\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${INVITEE} (external, not granted) on B's authenticated tunnel: 403\" || true\nP6=$(visit_body \"$RESP\")\nassert_contains \"${P6}\" '<html lang=\"tr\">' \"…the access-request page in Turkish (lang=\\\"tr\\\")\" || true\nassert_contains \"${P6}\" \"<h1>Erişim izni gerekiyor\" \"…Erişim izni gerekiyor\" || true\nassert_contains \"${P6}\" \"Giriş yapılan hesap: <span class=\\\"user-badge\\\">${INVITEE}</span>\" \"…Giriş yapılan hesap: ${INVITEE}\" || true\nassert_contains \"${P6}\" \"Konu:\" \"…its e-mail template's Subject is Konu:\" || true\nassert_contains \"${P6}\" \"${SUB_TB}.${DOMAIN_2} için erişim talebi\" \"…the subject in Turkish\" || true\nassert_contains \"${P6}\" \"Kullanıcı adım: ${INVITEE}\" \"…the message templates in Turkish\" || true\nassert_not_contains \"${P6}\" \"Access Required\" \"…no English heading\" || true\nMEM_SECRET=$(reset_totp \"${MEM}\")\nmd_sign_in \"${MEM}\" \"${PASSWORD}\" \"${MEM_SECRET}\" \"${JAR_MEM_B}\" \"${SUB_RB}.${DOMAIN_2}\"\nRESP=$(visit \"${JAR_MEM_B}\" \"https://${SUB_RB}.${DOMAIN_2}/\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${MEM} (member of B, no grant) on B's restricted tunnel: 403\" || true\nassert_contains \"$(visit_body \"$RESP\")\" \"<h1>Erişim izni gerekiyor\" \"…in Turkish\" || true\nmd_sign_in \"${MEM}\" \"${PASSWORD}\" \"${MEM_SECRET}\" \"${JAR_MEM_C}\" \"${SUB_RC}.${DOMAIN_3}\"\nRESP=$(visit \"${JAR_MEM_C}\" \"https://${SUB_RC}.${DOMAIN_3}/\")\nassert_access_request \"$RESP\" \"${MEM} (member of C, no grant) on C's restricted tunnel\"\nassert_contains \"$(visit_body \"$RESP\")\" '<html lang=\"en\">' \"…in English (lang=\\\"en\\\")\" || true\nassert_contains \"$(visit_body \"$RESP\")\" \"Subject:\" \"…Subject:\" || true"
+    },
+    {
+      "id": "the-domain-refusal-turkish-on-b-english-on-c-p7",
+      "label": "The domain refusal: Turkish on B, English on C (P7)",
+      "steps": [
+        {
+          "id": "step-189",
+          "label": "Set OUT_SECRET",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${OUT}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT_SECRET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-191",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_OUT_B}\" \"https://${SUB_TB}.${DOMAIN_2}/\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-192",
+          "label": "${OUT} (member of A alone) on B's tunnel: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${OUT} (member of A alone) on B's tunnel: 403"
+            }
+          }
+        },
+        {
+          "id": "step-193",
+          "label": "Set P7",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "P7",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-194",
+          "label": "…the domain refusal in Turkish (lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "P7"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"tr\">"
+              },
+              "message": "…the domain refusal in Turkish (lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-196",
+          "label": "…titled İzin verilmiyor — ${DOMAIN_2}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "P7"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "<title>İzin verilmiyor — ${DOMAIN_2}"
+              },
+              "message": "…titled İzin verilmiyor — ${DOMAIN_2}"
+            }
+          }
+        },
+        {
+          "id": "step-198",
+          "label": "…no English",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "P7"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Not a member"
+              },
+              "message": "…no English"
+            }
+          }
+        },
+        {
+          "id": "step-200",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit \"${JAR_OUT_C}\" \"https://${SUB_TC}.${DOMAIN_3}/\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-202",
+          "label": "…in English (lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "…in English (lang=\\"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The domain refusal: Turkish on B, English on C (P7)\"\n\nOUT_SECRET=$(reset_totp \"${OUT}\")\nmd_sign_in \"${OUT}\" \"${PASSWORD}\" \"${OUT_SECRET}\" \"${JAR_OUT_B}\" \"${SUB_TB}.${DOMAIN_2}\"\nRESP=$(visit \"${JAR_OUT_B}\" \"https://${SUB_TB}.${DOMAIN_2}/\")\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${OUT} (member of A alone) on B's tunnel: 403\" || true\nP7=$(visit_body \"$RESP\")\nassert_contains \"${P7}\" '<html lang=\"tr\">' \"…the domain refusal in Turkish (lang=\\\"tr\\\")\" || true\nassert_contains \"${P7}\" \"<span class=\\\"fqdn\\\">${DOMAIN_2}</span> üyesi değilsiniz\" \"…${DOMAIN_2} üyesi değilsiniz\" || true\nassert_contains \"${P7}\" \"<title>İzin verilmiyor — ${DOMAIN_2}\" \"…titled İzin verilmiyor — ${DOMAIN_2}\" || true\nassert_contains \"${P7}\" \"<a href=\\\"https://auth.${DOMAIN_2}/logout\\\">oturumu kapatın</a>\" \"…the sign-out link in Turkish, on B's sign-in host\" || true\nassert_not_contains \"${P7}\" \"Not a member\" \"…no English\" || true\nmd_sign_in \"${OUT}\" \"${PASSWORD}\" \"${OUT_SECRET}\" \"${JAR_OUT_C}\" \"${SUB_TC}.${DOMAIN_3}\"\nRESP=$(visit \"${JAR_OUT_C}\" \"https://${SUB_TC}.${DOMAIN_3}/\")\nassert_domain_refusal \"$RESP\" \"${DOMAIN_3}\" \"${OUT} on C's tunnel\"\nassert_contains \"$(visit_body \"$RESP\")\" '<html lang=\"en\">' \"…in English (lang=\\\"en\\\")\" || true"
+    },
+    {
+      "id": "gatekeeper-s-not-allowed-page-follows-the-domain-the-path-names-p9",
+      "label": "Gatekeeper's \\\"not allowed\\\" page follows the domain the path names (P9)",
+      "steps": [
+        {
+          "id": "step-203",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "gatekeeper_forbidden \"${FQDN}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-204",
+          "label": "A shell check of ${FQDN} without its original request: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n' \"$RESP\" | tail -n 1)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "A shell check of ${FQDN} without its original request: 403"
+            }
+          }
+        },
+        {
+          "id": "step-205",
+          "label": "…Gatekeeper's page in Turkish (lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"tr\">"
+              },
+              "message": "…Gatekeeper's page in Turkish (lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-206",
+          "label": "…İzin verilmiyor",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<h1>İzin verilmiyor</h1>"
+              },
+              "message": "…İzin verilmiyor"
+            }
+          }
+        },
+        {
+          "id": "step-207",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "gatekeeper_forbidden \"e2e56none.${DOMAIN_3}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-208",
+          "label": "…for a host on C: in English",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "…for a host on C: in English"
+            }
+          }
+        },
+        {
+          "id": "step-209",
+          "label": "…Not Allowed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Not Allowed"
+              },
+              "message": "…Not Allowed"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Gatekeeper's \\\"not allowed\\\" page follows the domain the path names (P9)\"\n\nRESP=$(gatekeeper_forbidden \"${FQDN}\")\nassert_eq \"$(printf '%s\\n' \"$RESP\" | tail -n 1)\" \"403\" \"A shell check of ${FQDN} without its original request: 403\" || true\nassert_contains \"$RESP\" '<html lang=\"tr\">' \"…Gatekeeper's page in Turkish (lang=\\\"tr\\\")\" || true\nassert_contains \"$RESP\" \"<h1>İzin verilmiyor</h1>\" \"…İzin verilmiyor\" || true\nRESP=$(gatekeeper_forbidden \"e2e56none.${DOMAIN_3}\")\nassert_contains \"$RESP\" '<html lang=\"en\">' \"…for a host on C: in English\" || true\nassert_contains \"$RESP\" \"Not Allowed\" \"…Not Allowed\" || true\n\n# ===========================================================================\n# 6. Back to unset\n# ==========================================================================="
+    },
+    {
+      "id": "b-and-c-back-to-unset",
+      "label": "B and C back to unset",
+      "steps": [
+        {
+          "id": "step-210",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "set_language \"${DOMAIN_2}\" null"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-211",
+          "label": "PUT /api/domains/${DOMAIN_2}/language {language: null}: cleared, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true null 0"
+              },
+              "message": "PUT /api/domains/${DOMAIN_2}/language {language: null}: cleared, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-212",
+          "label": "auth.${DOMAIN_2}/: lang no longer rewritten",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "auth.${DOMAIN_2}/: lang no longer rewritten"
+          }
+        },
+        {
+          "id": "step-213",
+          "label": "auth.${DOMAIN_2}/ still rewrites lang",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "auth.${DOMAIN_2}/ still rewrites lang"
+          }
+        },
+        {
+          "id": "step-214",
+          "label": "…its de-AT locale is no longer the forced Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(loading_of \"${DOMAIN_2}\" de-AT)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "Yükleniyor"
+              },
+              "message": "…its de-AT locale is no longer the forced Turkish"
+            }
+          }
+        },
+        {
+          "id": "step-215",
+          "label": "…its menu shown again (brand.css without the rule)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(page_of \"${DOMAIN_2}\" /brand.css)\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "#language-button"
+              },
+              "message": "…its menu shown again (brand.css without the rule)"
+            }
+          }
+        },
+        {
+          "id": "step-216",
+          "label": "Set INVITE_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$(page_of \"${DOMAIN_2}\" /invite)\""
+          },
+          "capture": [
+            {
+              "variable": "INVITE_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-217",
+          "label": "…its invitation page in English",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_B"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "…its invitation page in English"
+            }
+          }
+        },
+        {
+          "id": "step-218",
+          "label": "…with its brand",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_B"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "<title>${BRAND_B} — Accept Invitation</title>"
+              },
+              "message": "…with its brand"
+            }
+          }
+        },
+        {
+          "id": "step-219",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "set_language \"${DOMAIN_3}\" null"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-220",
+          "label": "${DOMAIN_3} cleared",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.domain.language)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true null"
+              },
+              "message": "${DOMAIN_3} cleared"
+            }
+          }
+        },
+        {
+          "id": "step-221",
+          "label": "…its language-only rendering is gone",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…its language-only rendering is gone"
+          }
+        },
+        {
+          "id": "step-222",
+          "label": "…a rendering is left: $(json_get \"$(domain_entry \"${DOMAIN_3}\")\" '.rendering')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "…a rendering is left: $(json_get \"$(domain_entry \"${DOMAIN_3}\")\" '.rendering')"
+          }
+        },
+        {
+          "id": "step-223",
+          "label": "auth.${DOMAIN_3}/brand.css: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(page_of \"${DOMAIN_3}\" /brand.css)\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "auth.${DOMAIN_3}/brand.css: 404"
+            }
+          }
+        },
+        {
+          "id": "step-224",
+          "label": "The audit: domain.language.updated for ${DOMAIN_2}, null → tr, then tr → null",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(language_audit \"${DOMAIN_2}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null tr,tr null"
+              },
+              "message": "The audit: domain.language.updated for ${DOMAIN_2}, null → tr, then tr → null"
+            }
+          }
+        },
+        {
+          "id": "step-225",
+          "label": "…for ${DOMAIN_3}, null → en, then en → null",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(language_audit \"${DOMAIN_3}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null en,en null"
+              },
+              "message": "…for ${DOMAIN_3}, null → en, then en → null"
+            }
+          }
+        },
+        {
+          "id": "step-226",
+          "label": "No language change restarted Authelia",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(authelia_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "AUTHELIA_PID"
+              },
+              "message": "No language change restarted Authelia"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"B and C back to unset\"\n\nRESP=$(set_language \"${DOMAIN_2}\" null)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"' \"true null 0\" \"PUT /api/domains/${DOMAIN_2}/language {language: null}: cleared, no warning\" || true\nif wait_for 60 index_lacks \"${DOMAIN_2}\" \"data-authelia-lang\"; then\n  log_pass \"auth.${DOMAIN_2}/: lang no longer rewritten\"\nelse\n  log_fail \"auth.${DOMAIN_2}/ still rewrites lang\"\nfi\nassert_not_eq \"$(loading_of \"${DOMAIN_2}\" de-AT)\" \"Yükleniyor\" \"…its de-AT locale is no longer the forced Turkish\" || true\nassert_not_contains \"$(visit_body \"$(page_of \"${DOMAIN_2}\" /brand.css)\")\" \"#language-button\" \"…its menu shown again (brand.css without the rule)\" || true\nINVITE_B=$(visit_body \"$(page_of \"${DOMAIN_2}\" /invite)\")\nassert_contains \"${INVITE_B}\" '<html lang=\"en\">' \"…its invitation page in English\" || true\nassert_contains \"${INVITE_B}\" \"<title>${BRAND_B} — Accept Invitation</title>\" \"…with its brand\" || true\nRESP=$(set_language \"${DOMAIN_3}\" null)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language)\"' \"true null\" \"${DOMAIN_3} cleared\" || true\nif wait_for 90 rendering_gone \"${DOMAIN_3}\"; then\n  log_pass \"…its language-only rendering is gone\"\nelse\n  log_fail \"…a rendering is left: $(json_get \"$(domain_entry \"${DOMAIN_3}\")\" '.rendering')\"\nfi\nassert_eq \"$(visit_status \"$(page_of \"${DOMAIN_3}\" /brand.css)\")\" \"404\" \"auth.${DOMAIN_3}/brand.css: 404\" || true\nassert_eq \"$(language_audit \"${DOMAIN_2}\")\" \"null tr,tr null\" \"The audit: domain.language.updated for ${DOMAIN_2}, null → tr, then tr → null\" || true\nassert_eq \"$(language_audit \"${DOMAIN_3}\")\" \"null en,en null\" \"…for ${DOMAIN_3}, null → en, then en → null\" || true\nassert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"No language change restarted Authelia\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 56 — A domain's page language: Turkish where set, English elsewhere (Three-VM)\n# ============================================================================\n# Every page a person meets on a domain speaks the domain's language (design:\n# packages/core/docs/page-language-design.md, \"Proof (rodeo)\"). Three\n# domains of the multi-domain harness:\n#   B — branded, language `tr` (the plugin's domain: the inviting harness\n#       works on B);\n#   C — unbranded, language `en`;\n#   A — the primary, no language: exactly 4.9's behaviour.\n#\n# 1. The language set on B and C (PUT /api/domains/:name/language; again =\n#    unchanged); GET /api/domains lists it, each rendering current, and the\n#    running Authelia is the pinned release. Nothing restarts Authelia.\n# 2. Authelia's portal: B's index says lang=\"tr\" (the cookie's value moved\n#    to data-authelia-lang) with the noscript sentence in Turkish, C's\n#    lang=\"en\"; A's is untouched. /brand.css hides the language menu on B\n#    and C. Every locale path on B (en, de-AT, tr) answers the forced\n#    Turkish — a key Lamaste supplements (\"Loading\" → \"Yükleniyor\") and a\n#    correction (\"Powered by\" → \"Altyapı: <brand>\"); on C the forced\n#    English; on A Authelia's own files.\n# 3. Lamaste's pages: the invitation page and the inviter's page on B in\n#    Turkish (lang, title, the data block), on C and A in English, whatever\n#    Accept-Language says; one script and one CSP for all three.\n# 4. The plugin's site on B before it is served: Lamaste's \"not available\"\n#    page in Turkish (P8), with its CSP — then the plugin approved, hosted,\n#    served.\n# 5. The people: a coordinator (external of B) invites; the refusal codes\n#    the pages map (invitation_not_found, invitation_closed,\n#    invitation_used, not_found); the invitee, refused on B's\n#    authenticated tunnel, meets the access-request page in Turkish, with\n#    Turkish message templates (P6); a member of B and C meets it in\n#    Turkish on B, in English on C; a member of A alone meets the domain\n#    refusal in Turkish on B, in English on C (P7); Gatekeeper's \"not\n#    allowed\" page (P9) follows the domain the path names.\n# 6. B and C back to unset: B's portal follows the browser again, its pages\n#    English with its brand; C's language-only rendering is gone. The audit\n#    holds each change ({domain, from, to}); Authelia never restarted.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=56\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=invitation-harness.sh\nsource \"${SCRIPT_DIR}/invitation-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-plang\"\nSERVER_PACKAGE=\"@lamalibre/e2e-plang-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-plang-agent\"\nSUB_W=\"e2e56web\"\nSUB_TB=\"e2e56bauth\"\nSUB_RB=\"e2e56bres\"\nSUB_RC=\"e2e56cres\"\nSUB_TC=\"e2e56cauth\"\nPORT_TB=19961\nPORT_RB=19962\nPORT_RC=19963\nPORT_TC=19964\nPOLICY_ID=\"e2e-apphost-56\"\nREMOTE_DIR=\"/var/tmp/e2e-56-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nBRAND_B=\"E2E Marka 56\"\nACCENT_B=\"#7c3aed\"\nCOORD=\"e2e56-coord\"\nMEM=\"e2e56-member\"\nOUT=\"e2e56-outsider\"\nINVITEE=\"e2e56-invitee-$(date +%s)\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nINVITEE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCOORD_ID=\"\"\nMEM_ID=\"\"\nOUT_ID=\"\"\nINVITEE_ID=\"\"\nJAR_COORD=$(md_jar coord)\nJAR_MEM_B=$(md_jar member-b)\nJAR_MEM_C=$(md_jar member-c)\nJAR_OUT_B=$(md_jar outsider-b)\nJAR_OUT_C=$(md_jar outsider-c)\nJAR_INV=$(md_jar invitee)\nFQDN=\"\"\nTUNNEL_TB=\"\"\nTUNNEL_RB=\"\"\nTUNNEL_RC=\"\"\nTUNNEL_TC=\"\"\nCOORD_GRANT=\"\"\nTOKEN=\"\"\nINV_ID=\"\"\nTOKEN_2=\"\"\nINV_ID_2=\"\"\nAUTHELIA_PID=\"\"\nMEM_SECRET=\"\"\nOUT_SECRET=\"\"\n# The Turkish noscript sentence as the vhost writes it (ASCII character references)\nNOSCRIPT_TR='Bu uygulama i&#231;in taray&#305;c&#305;n&#305;zda JavaScript etkin olmal&#305;d&#305;r.'\n\n# auth_url <domain> <path> — a page of the domain's sign-in host\nauth_url() { echo \"https://auth.$1$2\"; }\n\n# language_of <domain> — the domain's language as GET /api/domains lists it ('null' when none)\nlanguage_of() { json_get \"$(domain_entry \"$1\")\" '.language'; }\n\n# set_language <domain> <tr|en|null> — PUT /api/domains/<domain>/language, the response\nset_language() {\n  local value=\"$2\"\n  if [ \"$value\" != \"null\" ]; then value=\"\\\"$2\\\"\"; fi\n  md_api PUT \"domains/$1/language\" \"{\\\"language\\\":${value}}\"\n}\n\n# rendering_current <domain> — the domain's rendering serves what its record says\nrendering_current() { [ \"$(json_get \"$(domain_entry \"$1\")\" '.rendering.current')\" = \"true\" ]; }\n\n# rendering_gone <domain> — the domain has no rendering (no brand, no language)\nrendering_gone() { [ \"$(json_get \"$(domain_entry \"$1\")\" '.rendering')\" = \"null\" ]; }\n\n# page_of <domain> <path> [curl args...] — the page on the domain's sign-in host, as visit prints it\npage_of() {\n  local d=\"$1\" p=\"$2\"\n  shift 2\n  visit - \"$@\" \"$(auth_url \"$d\" \"$p\")\"\n}\n\n# index_says <domain> <substring> — the sign-in page of <domain> carries <substring>\nindex_says() { [[ \"$(visit_body \"$(page_of \"$1\" /)\")\" == *\"$2\"* ]]; }\n\n# index_lacks <domain> <substring> — the sign-in page of <domain> does not carry <substring>\nindex_lacks() { ! index_says \"$@\"; }\n\n# locale_file <domain> <locale> <namespace> — the locale file as the portal gets it\nlocale_file() { visit_body \"$(page_of \"$1\" \"/locales/$2/$3.json\")\"; }\n\n# loading_of <domain> <locale> — the portal's \"Loading\" text there ('null' when the file lacks it)\nloading_of() { json_get \"$(locale_file \"$1\" \"$2\" portal)\" '.Loading'; }\n\n# data_block <html> — the page's messages (its JSON data block), compact\ndata_block() {\n  printf '%s' \"$1\" | node -e 'const h=require(\"fs\").readFileSync(0,\"utf8\");const m=h.match(/<script type=\"application\\/json\" id=\"lamaste-messages\">([\\s\\S]*?)<\\/script>/);process.stdout.write(m?m[1].trim():\"null\")' | jq -c . 2>/dev/null || echo \"null\"\n}\n\n# script_of <html> — the page's hashed <script> section alone\nscript_of() { printf '%s\\n' \"$1\" | sed -n '/<script>/,/<\\/script>/p'; }\n\n# csp_of <visit response> — its Content-Security-Policy header\ncsp_of() { visit_headers \"$1\" | awk 'tolower($1) == \"content-security-policy:\" {sub(/^[^:]*: */, \"\"); print}' | tail -n 1; }\n\n# gatekeeper_forbidden <fqdn> — Gatekeeper's answer to a shell check with no\n# original request (refused: P9), from the host VM: the status, then the body\ngatekeeper_forbidden() {\n  host_exec \"curl -s --max-time 15 -w '\\n%{http_code}' http://127.0.0.1:9294/authz/user-surface-shell/$1 || echo 000\" 2>/dev/null | tr -d '\\r'\n}\n\n# language_audit <domain> — the domain.language.updated entries of <domain>\n# since the spec began, oldest first, as \"<from> <to>\" lines joined by \",\"\nlanguage_audit() {\n  host_api_get \"audit?action=domain.language.updated&limit=200\" 2>/dev/null |\n    jq -r --arg d \"$1\" --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base and .details.domain == $d)] | sort_by(.id) | map(\"\\(.details.from) \\(.details.to)\") | join(\",\")' 2>/dev/null || echo \"\"\n}\n\nbegin_test \"56 — A domain's page language: Turkish where set, English elsewhere (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id d\n  for d in \"${DOMAIN}\" \"${DOMAIN_2}\" \"${DOMAIN_3}\"; do\n    [ -n \"$d\" ] && md_api PUT \"domains/${d}/language\" '{\"language\":null}' > /dev/null 2>&1 || true\n  done\n  if [ -n \"${DOMAIN_2}\" ]; then host_api_delete \"domains/${DOMAIN_2}/branding\" > /dev/null 2>&1 || true; fi\n  if [ -n \"${COORD_GRANT}\" ]; then host_api_delete \"gatekeeper/grants/${COORD_GRANT}\" > /dev/null 2>&1 || true; fi\n  if [ -n \"${SITE_ID}\" ]; then inv_drop_site_grants \"${SITE_ID}\"; fi\n  for id in ${TUNNEL_TB} ${TUNNEL_RB} ${TUNNEL_RC} ${TUNNEL_TC}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  host_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\n  drop_plugin_grants \"${PLUGIN}\"\n  inv_cleanup_users \"${COORD}\" \"${MEM}\" \"${OUT}\" \"${INVITEE}\"\n  inv_cleanup_ids ${COORD_ID} ${MEM_ID} ${OUT_ID} ${INVITEE_ID}\n  nudge_sync\n  app_plugin_cleanup\n  md_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

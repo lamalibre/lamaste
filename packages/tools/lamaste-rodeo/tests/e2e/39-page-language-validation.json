@@ -1,0 +1,1169 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 39,
+    "name": "A domain's page language: the relay's side (Single-VM)",
+    "suite": "e2e",
+    "description": "39 — A domain's page language: the relay's side (Single-VM)",
+    "deps": [],
+    "requires": ["curl", "jq", "node", "nginx", "openssl", "sqlite3"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE users/${u}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${u}?erase=true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-onboarding-complete",
+      "label": "Pre-flight: onboarding complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is not complete (provision the 'provisioned' tier)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Onboarding is not complete (provision the 'provisioned' tier)"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Set DOMAIN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$ONBOARDING\" '.domain'"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Onboarding is complete (${DOMAIN})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete (${DOMAIN})"
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "DELETE /api/domains/${DOMAIN}/branding",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "domains/${DOMAIN}/branding"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-7",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "GET /api/domains",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "domains"
+          },
+          "capture": [
+            {
+              "variable": "PINNED",
+              "from": {
+                "kind": "jq",
+                "expression": ".authelia.pinned // empty"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "${DOMAIN}: no language, no rendering",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(domain_entry)"
+              },
+              "path": "\"\\(.language) \\(.rendering)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null"
+              },
+              "message": "${DOMAIN}: no language, no rendering"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: onboarding complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(api_get \"onboarding/status\" 2>/dev/null || echo '{}')\nif [ \"$(json_get \"$ONBOARDING\" '.status')\" != \"COMPLETED\" ]; then\n  log_fail \"Onboarding is not complete (provision the 'provisioned' tier)\"\n  end_test\n  exit $?\nfi\nDOMAIN=$(json_get \"$ONBOARDING\" '.domain')\nlog_pass \"Onboarding is complete (${DOMAIN})\"\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\ncleanup\napi_delete \"domains/${DOMAIN}/branding\" > /dev/null 2>&1 || true\nmkdir -p \"${WORK_DIR}\"\nAUDIT_BASE=$(api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\nPINNED=$(api_get \"domains\" | jq -r '.authelia.pinned // empty' 2>/dev/null || echo \"\")\nassert_eq \"$(api_get \"domains\" | jq -r '\"\\(.authelia.running) \\(.authelia.pinned)\"' 2>/dev/null)\" \"${PINNED} ${PINNED}\" \"GET /api/domains: the running Authelia is the pinned release (${PINNED})\" || true\nassert_json_field \"$(domain_entry)\" '\"\\(.language) \\(.rendering)\"' 'null null' \"${DOMAIN}: no language, no rendering\" || true\n\n# ===========================================================================\n# 1. The API\n# ==========================================================================="
+    },
+    {
+      "id": "refused-not-a-language-not-that-spelling-an-unknown-field-no-body",
+      "label": "Refused: not a language, not that spelling, an unknown field, no body",
+      "steps": [
+        {
+          "id": "step-17",
+          "label": "…and ${DOMAIN} still has none",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(domain_entry)"
+              },
+              "path": ".language",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "…and ${DOMAIN} still has none"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Refused: not a language, not that spelling, an unknown field, no body\"\n\nassert_refusal \"$(language_put '{\"language\":\"fr\"}')\" 400 invalid_language \"{language: fr}\"\nassert_refusal \"$(language_put '{\"language\":\"TR\"}')\" 400 invalid_language \"{language: TR}\"\nassert_refusal \"$(language_put '{\"language\":\"tr-TR\"}')\" 400 invalid_language \"{language: tr-TR}\"\nassert_refusal \"$(language_put '{\"language\":\"tr\",\"default\":true}')\" 400 invalid_language \"{language: tr, default: true}\"\nassert_refusal \"$(language_put '{}')\" 400 invalid_language \"{}\"\nassert_refusal \"$(call PUT \"domains/e2e39-none.example.test/language\" '{\"language\":\"tr\"}')\" 404 domain_not_found \"A domain that is not there\"\nassert_json_field \"$(domain_entry)\" '.language' 'null' \"…and ${DOMAIN} still has none\" || true"
+    },
+    {
+      "id": "turkish-a-rendering-of-a-language-alone",
+      "label": "Turkish: a rendering of a language alone",
+      "steps": [
+        {
+          "id": "step-18",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "language_put '{\"language\":\"tr\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "PUT …/language {language: tr}: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT …/language {language: tr}: 200"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "…changed, tr, no warning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true tr 0"
+              },
+              "message": "…changed, tr, no warning"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "…revision 0 (no brand), the running Authelia and the pin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(rendered)"
+              },
+              "path": "\"\\(.revision) \\(.autheliaVersion) \\(.autheliaPinned)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "0 ${PINNED} ${PINNED}"
+              },
+              "message": "…revision 0 (no brand), the running Authelia and the pin"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "…the pages' digest",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(rendered)"
+              },
+              "path": ".pagesDigest | test(\"^[0-9a-f]{64}$\")",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…the pages' digest"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "locales/forced/${NS}.json rendered",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "locales/forced/${NS}.json rendered"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "locales/forced/${NS}.json is missing",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "locales/forced/${NS}.json is missing"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "…portal.json: Loading → Yükleniyor (Lamaste's supplement)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo jq -r '.Loading' \"${WEB_ROOT}/${DOMAIN}/locales/forced/portal.json\" 2>/dev/null)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "Yükleniyor"
+              },
+              "message": "…portal.json: Loading → Yükleniyor (Lamaste's supplement)"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "invite/index.html in Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo cat \"${WEB_ROOT}/${DOMAIN}/invite/index.html\" 2>/dev/null)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"tr\">"
+              },
+              "message": "invite/index.html in Turkish"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "unavailable/index.html in Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo cat \"${WEB_ROOT}/${DOMAIN}/unavailable/index.html\" 2>/dev/null)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"tr\">"
+              },
+              "message": "unavailable/index.html in Turkish"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "brand.css hides the language menu",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo cat \"${WEB_ROOT}/${DOMAIN}/brand.css\" 2>/dev/null)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "#language-button"
+              },
+              "message": "brand.css hides the language menu"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "GET /api/domains: tr, its rendering current",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(domain_entry)"
+              },
+              "path": "\"\\(.language) \\(.rendering.current)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "tr true"
+              },
+              "message": "GET /api/domains: tr, its rendering current"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "GET /api/audit?action=domain.language.updated&limit=50",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?action=domain.language.updated&limit=50"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "Audited once: domain.language.updated {domain, from: null, to: tr}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUDIT"
+              },
+              "path": "[.[] | \"\\(.details.domain) \\(.details.from) \\(.details.to)\"] | join(\",\")",
+              "expected": {
+                "kind": "expr",
+                "template": "${DOMAIN} null tr"
+              },
+              "message": "Audited once: domain.language.updated {domain, from: null, to: tr}"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Turkish: a rendering of a language alone\"\n\nRESP=$(language_put '{\"language\":\"tr\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT …/language {language: tr}: 200\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"' 'true tr 0' \"…changed, tr, no warning\" || true\nif wait_for 60 rendered_language_is tr; then log_pass \"rendered.json names tr\"; else log_fail \"rendered.json: $(rendered | jq -c .)\"; fi\nassert_json_field \"$(rendered)\" '\"\\(.revision) \\(.autheliaVersion) \\(.autheliaPinned)\"' \"0 ${PINNED} ${PINNED}\" \"…revision 0 (no brand), the running Authelia and the pin\" || true\nassert_json_field \"$(rendered)\" '.pagesDigest | test(\"^[0-9a-f]{64}$\")' 'true' \"…the pages' digest\" || true\nfor NS in portal settings consent; do\n  if sudo test -s \"${WEB_ROOT}/${DOMAIN}/locales/forced/${NS}.json\"; then\n    log_pass \"locales/forced/${NS}.json rendered\"\n  else\n    log_fail \"locales/forced/${NS}.json is missing\"\n  fi\ndone\nassert_eq \"$(sudo jq -r '.Loading' \"${WEB_ROOT}/${DOMAIN}/locales/forced/portal.json\" 2>/dev/null)\" \"Yükleniyor\" \"…portal.json: Loading → Yükleniyor (Lamaste's supplement)\" || true\nassert_contains \"$(sudo cat \"${WEB_ROOT}/${DOMAIN}/invite/index.html\" 2>/dev/null)\" '<html lang=\"tr\">' \"invite/index.html in Turkish\" || true\nassert_contains \"$(sudo cat \"${WEB_ROOT}/${DOMAIN}/unavailable/index.html\" 2>/dev/null)\" '<html lang=\"tr\">' \"unavailable/index.html in Turkish\" || true\nassert_contains \"$(sudo cat \"${WEB_ROOT}/${DOMAIN}/brand.css\" 2>/dev/null)\" \"#language-button\" \"brand.css hides the language menu\" || true\nassert_json_field \"$(domain_entry)\" '\"\\(.language) \\(.rendering.current)\"' 'tr true' \"GET /api/domains: tr, its rendering current\" || true\nAUDIT=$(api_get \"audit?action=domain.language.updated&limit=50\" | jq -c --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base)]' 2>/dev/null || echo \"[]\")\nassert_json_field \"${AUDIT}\" '[.[] | \"\\(.details.domain) \\(.details.from) \\(.details.to)\"] | join(\",\")' \"${DOMAIN} null tr\" \"Audited once: domain.language.updated {domain, from: null, to: tr}\" || true\n\n# ===========================================================================\n# 2. The auth vhost\n# ==========================================================================="
+    },
+    {
+      "id": "the-auth-vhost-the-forced-locales-and-the-filters-accepted-by-lamaste-priv",
+      "label": "The auth vhost: the forced locales and the filters, accepted by lamaste-priv",
+      "steps": [
+        {
+          "id": "step-34",
+          "label": "Set VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "auth_vhost"
+          },
+          "capture": [
+            {
+              "variable": "VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "…serving one file per namespace, Authelia behind it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "FORCED_TRY"
+              },
+              "message": "…serving one file per namespace, Authelia behind it"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "…the lang filter",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "LANG_FILTER"
+              },
+              "message": "…the lang filter"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "…the noscript sentence as ASCII character references",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "NOSCRIPT_FILTER"
+              },
+              "message": "…the noscript sentence as ASCII character references"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "…every byte printable ASCII",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s' \"${VHOST}\" | LC_ALL=C grep -c '[^[:print:][:space:]]' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…every byte printable ASCII"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Set AUTH_NAME",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "vhost_name auth \"${DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "AUTH_NAME",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "lamaste-priv nginx-site write accepts the auth vhost as installed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "lamaste-priv nginx-site write accepts the auth vhost as installed"
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "lamaste-priv nginx-site write refused the auth vhost",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "lamaste-priv nginx-site write refused the auth vhost"
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "auth.${DOMAIN}/: lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(auth_get /)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"tr\" data-authelia-lang=\""
+              },
+              "message": "auth.${DOMAIN}/: lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "auth.${DOMAIN}/locales/de-AT/portal.json: the forced Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(auth_get /locales/de-AT/portal.json | jq -r '.Loading' 2>/dev/null)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "Yükleniyor"
+              },
+              "message": "auth.${DOMAIN}/locales/de-AT/portal.json: the forced Turkish"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "…/locales/en/portal.json too",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(auth_get /locales/en/portal.json | jq -r '.Loading' 2>/dev/null)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "Yükleniyor"
+              },
+              "message": "…/locales/en/portal.json too"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Set LIST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "auth_get /locales"
+          },
+          "capture": [
+            {
+              "variable": "LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "…/locales (Authelia's language list) is not a locale file",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "LIST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Yükleniyor"
+              },
+              "message": "…/locales (Authelia's language list) is not a locale file"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The auth vhost: the forced locales and the filters, accepted by lamaste-priv\"\n\nif wait_for 60 vhost_forces; then log_pass \"The auth vhost has the forced-locale location\"; else log_fail \"The auth vhost has no forced-locale location\"; fi\nVHOST=$(auth_vhost)\nassert_contains \"${VHOST}\" \"${FORCED_TRY}\" \"…serving one file per namespace, Authelia behind it\" || true\nassert_contains \"${VHOST}\" \"${LANG_FILTER}\" \"…the lang filter\" || true\nassert_contains \"${VHOST}\" \"${NOSCRIPT_FILTER}\" \"…the noscript sentence as ASCII character references\" || true\nassert_eq \"$(printf '%s' \"${VHOST}\" | LC_ALL=C grep -c '[^[:print:][:space:]]' || true)\" \"0\" \"…every byte printable ASCII\" || true\nAUTH_NAME=$(vhost_name auth \"${DOMAIN}\")\nif sudo cat \"${AVAILABLE}/${AUTH_NAME}\" | sudo /usr/local/sbin/lamaste-priv nginx-site write \"${AUTH_NAME}\" > /dev/null 2>&1; then\n  log_pass \"lamaste-priv nginx-site write accepts the auth vhost as installed\"\nelse\n  log_fail \"lamaste-priv nginx-site write refused the auth vhost\"\nfi\nif sudo nginx -t > /dev/null 2>&1; then log_pass \"nginx -t passes\"; else log_fail \"nginx -t fails\"; fi\nassert_contains \"$(auth_get /)\" '<html lang=\"tr\" data-authelia-lang=\"' \"auth.${DOMAIN}/: lang=\\\"tr\\\"\" || true\nassert_eq \"$(auth_get /locales/de-AT/portal.json | jq -r '.Loading' 2>/dev/null)\" \"Yükleniyor\" \"auth.${DOMAIN}/locales/de-AT/portal.json: the forced Turkish\" || true\nassert_eq \"$(auth_get /locales/en/portal.json | jq -r '.Loading' 2>/dev/null)\" \"Yükleniyor\" \"…/locales/en/portal.json too\" || true\nLIST=$(auth_get /locales)\nassert_not_contains \"${LIST}\" \"Yükleniyor\" \"…/locales (Authelia's language list) is not a locale file\" || true\n\n# ===========================================================================\n# 3. The reconcile\n# ==========================================================================="
+    },
+    {
+      "id": "the-reconcile-after-a-restart-after-rendered-json-names-another-language",
+      "label": "The reconcile: after a restart; after rendered.json names another language",
+      "steps": [
+        {
+          "id": "step-48",
+          "label": "After a panel restart: tr, its rendering current",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(domain_entry)"
+              },
+              "path": "\"\\(.language) \\(.rendering.current)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "tr true"
+              },
+              "message": "After a panel restart: tr, its rendering current"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "rendered.json made to say en",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "rendered.json made to say en"
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "The minute reconcile rendered it again (tr)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The minute reconcile rendered it again (tr)"
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "rendered.json still says $(rendered | jq -r '.language')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "rendered.json still says $(rendered | jq -r '.language')"
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "…current again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(domain_entry)"
+              },
+              "path": ".rendering.current",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…current again"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The reconcile: after a restart; after rendered.json names another language\"\n\nrestart_panel\nassert_json_field \"$(domain_entry)\" '\"\\(.language) \\(.rendering.current)\"' 'tr true' \"After a panel restart: tr, its rendering current\" || true\nsudo bash -c \"jq '.language = \\\"en\\\"' ${WEB_ROOT}/${DOMAIN}/rendered.json > ${WORK_DIR}/rendered.json && cat ${WORK_DIR}/rendered.json > ${WEB_ROOT}/${DOMAIN}/rendered.json\"\nlog_info \"rendered.json made to say en\"\nif wait_for 100 rendered_language_is tr; then\n  log_pass \"The minute reconcile rendered it again (tr)\"\nelse\n  log_fail \"rendered.json still says $(rendered | jq -r '.language')\"\nfi\nassert_json_field \"$(domain_entry)\" '.rendering.current' 'true' \"…current again\" || true\n\n# ===========================================================================\n# 4. The CLI\n# ==========================================================================="
+    },
+    {
+      "id": "lamaste-server-domains-language",
+      "label": "lamaste-server domains language",
+      "steps": [
+        {
+          "id": "step-54",
+          "label": "domains language ${DOMAIN}: shown — tr, rendered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(cli_json domains language \"${DOMAIN}\")"
+              },
+              "path": "\"\\(.domain) \\(.language) \\(.rendering.current)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${DOMAIN} tr true"
+              },
+              "message": "domains language ${DOMAIN}: shown — tr, rendered"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json domains language \"${DOMAIN}\" fr"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "…fr: refused, invalid_language",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.event) \\(.code)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "error invalid_language"
+              },
+              "message": "…fr: refused, invalid_language"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json domains language \"${DOMAIN}\" en"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "…en: set",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.event) \\(.changed) \\(.domain.language)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "complete true en"
+              },
+              "message": "…en: set"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json domains language \"${DOMAIN}\" --unset"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "…--unset: cleared",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.event) \\(.changed) \\(.domain.language)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "complete true null"
+              },
+              "message": "…--unset: cleared"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "…a domain that is not there: domain_not_found",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(cli_json domains language e2e39-none.example.test)"
+              },
+              "path": "\"\\(.event) \\(.code)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "error domain_not_found"
+              },
+              "message": "…a domain that is not there: domain_not_found"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"lamaste-server domains language\"\n\nassert_json_field \"$(cli_json domains language \"${DOMAIN}\")\" '\"\\(.domain) \\(.language) \\(.rendering.current)\"' \"${DOMAIN} tr true\" \"domains language ${DOMAIN}: shown — tr, rendered\" || true\nOUT=$(cli_json domains language \"${DOMAIN}\" fr)\nassert_json_field \"$OUT\" '\"\\(.event) \\(.code)\"' 'error invalid_language' \"…fr: refused, invalid_language\" || true\nOUT=$(cli_json domains language \"${DOMAIN}\" en)\nassert_json_field \"$OUT\" '\"\\(.event) \\(.changed) \\(.domain.language)\"' 'complete true en' \"…en: set\" || true\nOUT=$(cli_json domains language \"${DOMAIN}\" --unset)\nassert_json_field \"$OUT\" '\"\\(.event) \\(.changed) \\(.domain.language)\"' 'complete true null' \"…--unset: cleared\" || true\nassert_json_field \"$(cli_json domains language e2e39-none.example.test)\" '\"\\(.event) \\(.code)\"' 'error domain_not_found' \"…a domain that is not there: domain_not_found\" || true"
+    },
+    {
+      "id": "unset-the-rendering-gone-the-vhost-without-the-language",
+      "label": "Unset: the rendering gone, the vhost without the language",
+      "steps": [
+        {
+          "id": "step-62",
+          "label": "Set VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "auth_vhost"
+          },
+          "capture": [
+            {
+              "variable": "VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-63",
+          "label": "…no lang filter",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data-authelia-lang"
+              },
+              "message": "…no lang filter"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "…no noscript filter",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "taray&#305;c"
+              },
+              "message": "…no noscript filter"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "GET /api/domains: no language, no rendering",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(domain_entry)"
+              },
+              "path": "\"\\(.language) \\(.rendering)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null"
+              },
+              "message": "GET /api/domains: no language, no rendering"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "auth.${DOMAIN}/invite: the stock English page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(auth_get /invite)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "auth.${DOMAIN}/invite: the stock English page"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "The stock \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo cat /var/www/lamaste/unavailable/index.html 2>/dev/null)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "The stock \\"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Unset: the rendering gone, the vhost without the language\"\n\nif wait_for 60 rendering_gone; then log_pass \"No rendering of ${DOMAIN} is left (no brand, no language)\"; else log_fail \"A rendering of ${DOMAIN} is left\"; fi\nif wait_for 60 vhost_free; then log_pass \"The auth vhost has no forced-locale location\"; else log_fail \"The auth vhost still forces a language\"; fi\nVHOST=$(auth_vhost)\nassert_not_contains \"${VHOST}\" \"data-authelia-lang\" \"…no lang filter\" || true\nassert_not_contains \"${VHOST}\" \"taray&#305;c\" \"…no noscript filter\" || true\nassert_json_field \"$(domain_entry)\" '\"\\(.language) \\(.rendering)\"' 'null null' \"GET /api/domains: no language, no rendering\" || true\nassert_contains \"$(auth_get /invite)\" '<html lang=\"en\">' \"auth.${DOMAIN}/invite: the stock English page\" || true\nassert_contains \"$(sudo cat /var/www/lamaste/unavailable/index.html 2>/dev/null)\" '<html lang=\"en\">' \"The stock \\\"not available\\\" page is in place, in English\" || true\n\n# ===========================================================================\n# 5. The refusals of /api/invite/*\n# ==========================================================================="
+    },
+    {
+      "id": "the-invitation-api-s-refusals-each-with-its-code",
+      "label": "The invitation API's refusals, each with its code",
+      "steps": [
+        {
+          "id": "step-77",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "invite_post accept \"$(jq -c -n --arg t \"${TOKEN_THREE}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-78",
+          "label": "An invitation accepted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "An invitation accepted"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The invitation API's refusals, each with its code\"\n\nassert_refusal \"$(invite_post lookup \"{\\\"token\\\":\\\"$(openssl rand -hex 32)\\\"}\")\" 404 invitation_not_found \"A token nobody holds\"\nread -r ID_ONE TOKEN_ONE <<< \"$(admin_invitation \"${USER_ONE}\")\"\ncall DELETE \"invitations/${ID_ONE}\" > /dev/null\nassert_refusal \"$(invite_post lookup \"{\\\"token\\\":\\\"${TOKEN_ONE}\\\"}\")\" 410 invitation_closed \"A revoked invitation's token\"\nassert_refusal \"$(invite_post accept \"$(jq -c -n --arg t \"${TOKEN_ONE}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\")\" 410 invitation_closed \"…accepted all the same\"\nread -r ID_TWO TOKEN_TWO <<< \"$(admin_invitation \"${USER_TWO}\")\"\nsudo sqlite3 \"${STATE_DIR}/state.db\" \"UPDATE invitations SET expires_at = '2020-01-01T00:00:00.000Z' WHERE id = '${ID_TWO}'\"\nassert_refusal \"$(invite_post lookup \"{\\\"token\\\":\\\"${TOKEN_TWO}\\\"}\")\" 410 invitation_expired \"An expired invitation's token\"\nread -r _ TOKEN_THREE <<< \"$(admin_invitation \"${USER_THREE}\")\"\nRESP=$(invite_post accept \"$(jq -c -n --arg t \"${TOKEN_THREE}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"An invitation accepted\" || true\nassert_refusal \"$(invite_post lookup \"{\\\"token\\\":\\\"${TOKEN_THREE}\\\"}\")\" 410 invitation_used \"…its token looked up again\"\nassert_refusal \"$(invite_post accept \"$(jq -c -n --arg t \"${TOKEN_THREE}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\")\" 410 invitation_used \"…accepted again\""
+    },
+    {
+      "id": "gatekeeper-get-access-request-is-gone",
+      "label": "Gatekeeper: GET /access-request is gone",
+      "steps": [
+        {
+          "id": "step-81",
+          "label": "http://127.0.0.1:9294/access-request: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:9294/access-request 2>/dev/null || echo 000)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "http://127.0.0.1:9294/access-request: 404"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Gatekeeper: GET /access-request is gone\"\n\nassert_eq \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:9294/access-request 2>/dev/null || echo 000)\" \"404\" \"http://127.0.0.1:9294/access-request: 404\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 39 — A domain's page language: the relay's side (Single-VM)\n# ============================================================================\n# The relay's side of the page language on one VM (design: packages/core/\n# docs/page-language-design.md, \"Proof (rodeo)\"); three-VM 56 is the pages\n# as people meet them on three domains.\n#\n# 1. The API: a language that is not one (or not one in that spelling), a\n#    field it does not know, no body — 400 invalid_language; a domain that\n#    is not there — 404 domain_not_found. Set to tr: a rendering of a\n#    language alone (revision 0, the running Authelia, the pin), the forced\n#    locale files, the pages in Turkish; null clears it and the rendering\n#    goes.\n# 2. The auth vhost: the forced-locale location and the lang and noscript\n#    filters as written, ASCII only, accepted by lamaste-priv; nginx -t.\n#    Unset, none of it is left.\n# 3. The reconcile: after a panel restart the rendering is still current;\n#    a rendered.json naming another language is rendered again within the\n#    minute.\n# 4. lamaste-server domains language: shown, set, cleared, a refusal with\n#    its code.\n# 5. The refusals of /api/invite/*, each with its code: invitation_not_found,\n#    invitation_closed, invitation_expired, invitation_used — the error text\n#    stays English. Gatekeeper's GET /access-request is gone; the stock\n#    \"not available\" page is in place.\n#\n# The inviter's API (/api/delegated-invitations/*) needs Gatekeeper's\n# assertion for a signed-in user: three-VM 56 asserts its not_found.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node nginx openssl sqlite3\n\nbegin_test \"39 — A domain's page language: the relay's side (Single-VM)\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-page-language-39\"\nWEB_ROOT=\"/var/www/lamaste/auth\"\nAVAILABLE=\"/etc/nginx/sites-available\"\nUSER_ONE=\"e2e39-one\"\nUSER_TWO=\"e2e39-two\"\nUSER_THREE=\"e2e39-three\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nFORCED_LOCATION='location ~ \"^/locales/[^/]{1,64}/(consent|portal|settings)[.]json$\" {'\n# shellcheck disable=SC2016 # nginx's $1, written as the vhost carries it\nFORCED_TRY='try_files /locales/forced/$1.json @authelia;'\nLANG_FILTER=\"sub_filter '<html lang=\\\"' '<html lang=\\\"tr\\\" data-authelia-lang=\\\"';\"\nNOSCRIPT_FILTER=\"sub_filter 'You need to enable JavaScript to run this app.' 'Bu uygulama i&#231;in taray&#305;c&#305;n&#305;zda JavaScript etkin olmal&#305;d&#305;r.';\"\nAUDIT_BASE=0\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  if [ -n \"${DOMAIN:-}\" ]; then\n    call PUT \"domains/${DOMAIN}/language\" '{\"language\":null}' > /dev/null 2>&1 || true\n  fi\n  local u\n  for u in \"${USER_ONE}\" \"${USER_TWO}\" \"${USER_THREE}\"; do\n    api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true\n  done\n  local id\n  for id in $(api_get \"invitations\" 2>/dev/null | jq -r --arg a \"${USER_ONE}\" --arg b \"${USER_TWO}\" --arg c \"${USER_THREE}\" '.invitations[]? | select(.username == $a or .username == $b or .username == $c) | .id' 2>/dev/null || true); do\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n  done\n  sudo rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\n# call <method> <api path> [<json>] — one panel API call as the admin: the\n# body, then the HTTP status on a line of its own\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 2 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\n# restart_panel — the panel restarted, answering again\nrestart_panel() {\n  sudo systemctl restart lamalibre-lamaste-serverd\n  wait_for_http \"${PANEL_DIRECT_URL}/api/health\" 60 || log_fail \"The panel does not answer after a restart\"\n}\n\n# language_put <json> — PUT /api/domains/<DOMAIN>/language: the body, then the status\nlanguage_put() { call PUT \"domains/${DOMAIN}/language\" \"$1\"; }\n\n# domain_entry — the primary as GET /api/domains lists it\ndomain_entry() { api_get \"domains\" | jq -c --arg n \"${DOMAIN}\" '[.domains[]? | select(.name == $n)] | first // null' 2>/dev/null || echo \"null\"; }\n\n# rendered — the domain's rendered.json ('{}' when there is none)\nrendered() { sudo cat \"${WEB_ROOT}/${DOMAIN}/rendered.json\" 2>/dev/null || echo '{}'; }\n\n# rendered_language_is <language> — rendered.json names it\nrendered_language_is() { [ \"$(rendered | jq -r '.language // \"null\"' 2>/dev/null)\" = \"$1\" ]; }\n\n# rendering_gone — no entry for the domain under the web root\nrendering_gone() { ! sudo test -e \"${WEB_ROOT}/${DOMAIN}\"; }\n\n# auth_get <path> — a page of auth.<DOMAIN> from this VM\nauth_get() { curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}$1\" 2>/dev/null || echo \"\"; }\n\n# auth_vhost — the installed auth vhost of the domain\nauth_vhost() { sudo cat \"${AVAILABLE}/$(vhost_name auth \"${DOMAIN}\")\" 2>/dev/null || echo \"\"; }\n\n# vhost_forces — the installed auth vhost carries the forced-locale location\nvhost_forces() { [[ \"$(auth_vhost)\" == *\"${FORCED_LOCATION}\"* ]]; }\nvhost_free() { ! vhost_forces; }\n\n# invite_post <lookup|accept> <json> — POST /api/invite/<…> on the panel's\n# loopback port (public): the body, then the status\ninvite_post() {\n  curl -s --max-time 15 -X POST -H 'Content-Type: application/json' -d \"$2\" -w '\\n%{http_code}' \"${PANEL_DIRECT_URL}/api/invite/$1\" 2>/dev/null || echo \"000\"\n}\n\n# assert_refusal <response> <status> <code> <what> — the status and its code, the text in English\nassert_refusal() {\n  assert_eq \"$(status_of \"$1\")\" \"$2\" \"$4: $2\" || true\n  assert_json_field \"$(body_of \"$1\")\" '.code' \"$3\" \"…$3\" || true\n  assert_json_field \"$(body_of \"$1\")\" '.error | test(\"^[ -~]+$\")' 'true' \"…its error text English (ASCII)\" || true\n}\n\n# admin_invitation <username> — an administrator's invitation: \"<id> <token>\"\nadmin_invitation() {\n  api_post \"invitations\" \"{\\\"username\\\":\\\"$1\\\",\\\"email\\\":\\\"$1@example.test\\\"}\" | jq -r '\"\\(.invitation.id) \\(.token)\"' 2>/dev/null || echo \" \"\n}\n\n# cli_json <args...> — lamaste-server <args> --json: its last JSON line\ncli_json() { sudo lamaste-server \"$@\" --json 2>/dev/null | grep -E '^\\{' | tail -n 1 || echo '{}'; }\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

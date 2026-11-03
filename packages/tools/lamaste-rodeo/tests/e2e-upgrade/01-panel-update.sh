@@ -36,7 +36,15 @@
 #    is the one the served CSP names, because the rendering was rebuilt
 #    (`pagesDigest` in rendered.json); the invitation was imported from
 #    invitations.json, which is gone, with no clear token left in state.db;
-#    it is looked up and accepted by POST.
+#    it is looked up and accepted by POST. From 4.9 on the invitation is in
+#    state.db already and its link names the token in its fragment.
+# 5. The page language (page-language-design.md, "Upgrade in place"): the
+#    panel's migration 0021 ran (domains.language), no domain has a
+#    language, the pages are English — the stock pages and the branded
+#    domain's rendering, written again by the candidate with its data block;
+#    the auth vhosts force no locale; the running Authelia is the pin; the
+#    stock "not available" page is in place; Gatekeeper's GET
+#    /access-request is gone.
 # ============================================================================
 
 set -euo pipefail
@@ -193,7 +201,11 @@ for _ in $(seq 1 30); do
   sudo test -f "${WEB_ROOT}/${DOMAIN_2}/rendered.json" && break
   sleep 2
 done
-assert_eq "$(sudo jq -r '.pagesDigest // "none"' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null || echo "missing")" "none" "${BEFORE_VERSION}'s rendering records no pages digest" || true
+if version_before "${BEFORE_VERSION}" "4.9.0"; then
+  assert_eq "$(sudo jq -r '.pagesDigest // "none"' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null || echo "missing")" "none" "${BEFORE_VERSION}'s rendering records no pages digest" || true
+else
+  assert_eq "$(sudo jq -r '.pagesDigest // "none" | test("^[0-9a-f]{64}$")' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null || echo "false")" "true" "${BEFORE_VERSION}'s rendering records its pages digest" || true
+fi
 BRANDED_PAGE_BEFORE=$(sudo sha256sum "${WEB_ROOT}/${DOMAIN_2}/invite/index.html" | cut -d' ' -f1)
 
 # Pending invitations made on the release before: one on each domain.
@@ -201,11 +213,19 @@ RESP=$(api_post "invitations" "{\"username\":\"${INVITEE}\",\"email\":\"${INVITE
 assert_json_field "$RESP" '.ok' 'true' "A pending invitation on ${BEFORE_VERSION}" || true
 INVITE_TOKEN=$(echo "$RESP" | jq -r '.token // empty')
 INVITE_ID=$(echo "$RESP" | jq -r '.invitation.id // empty')
-assert_eq "$(echo "$RESP" | jq -r '.inviteUrl // empty')" "https://auth.${DOMAIN}/invite/${INVITE_TOKEN}" "…its link names the token in the path" || true
+if version_before "${BEFORE_VERSION}" "4.9.0"; then
+  assert_eq "$(echo "$RESP" | jq -r '.inviteUrl // empty')" "https://auth.${DOMAIN}/invite/${INVITE_TOKEN}" "…its link names the token in the path" || true
+else
+  assert_eq "$(echo "$RESP" | jq -r '.inviteUrl // empty')" "https://auth.${DOMAIN}/invite#${INVITE_TOKEN}" "…its link names the token in the fragment" || true
+fi
 RESP=$(api_post "invitations" "{\"username\":\"e2eupbranded\",\"email\":\"e2eupbranded@example.test\",\"domains\":[\"${DOMAIN_2}\"]}")
 assert_json_field "$RESP" '.ok' 'true' "…and one on ${DOMAIN_2}" || true
 BRANDED_TOKEN=$(echo "$RESP" | jq -r '.token // empty')
-assert_eq "$(sudo jq -r --arg t "${INVITE_TOKEN}" '[.[] | select(.token == $t)] | length' "${STATE_DIR}/invitations.json" 2>/dev/null || echo 0)" "1" "invitations.json holds it, its token in clear" || true
+if version_before "${BEFORE_VERSION}" "4.9.0"; then
+  assert_eq "$(sudo jq -r --arg t "${INVITE_TOKEN}" '[.[] | select(.token == $t)] | length' "${STATE_DIR}/invitations.json" 2>/dev/null || echo 0)" "1" "invitations.json holds it, its token in clear" || true
+else
+  assert_eq "$(sudo sqlite3 "${STATE_DIR}/state.db" "SELECT status FROM invitations WHERE id = '${INVITE_ID}'")" "pending" "state.db holds it, pending" || true
+fi
 
 LEGACY_ON="lamalibre-lamaste-app-${SUB_ON}"
 LEGACY_OFF="lamalibre-lamaste-app-${SUB_OFF}"
@@ -450,6 +470,30 @@ ACCEPT=$(invite_post accept "$(jq -c -n --arg t "${INVITE_TOKEN}" --arg p "${INV
 assert_json_field "$ACCEPT" '"\(.ok) \(.username)"' "true ${INVITEE}" "POST /api/invite/accept: the user is made" || true
 assert_contains "$(echo "$ACCEPT" | jq -r '.totpQr // empty')" "data:image/svg+xml;base64," "…with the panel's QR" || true
 assert_json_field "$(api_get "users" 2>/dev/null || echo '{}')" "[.users[] | select(.username == \"${INVITEE}\") | [.domains[] | \"\(.name):\(.kind)\"] | join(\",\")] | first" "${DOMAIN}:member" "…a member of ${DOMAIN}, as the invitation named" || true
+
+# ===========================================================================
+# 5. The page language
+# ===========================================================================
+
+log_section "The page language: migration 0021, no domain has one, every page English"
+
+assert_eq "$(sudo sqlite3 "${STATE_DIR}/state.db" "SELECT COUNT(*) FROM pragma_table_info('domains') WHERE name = 'language'")" "1" "state.db's domains carry a language column (migration 0021)" || true
+DOMAINS=$(api_get "domains" 2>/dev/null || echo '{}')
+assert_json_field "$DOMAINS" '[.domains[] | select(.language != null)] | length' '0' "No domain has a language" || true
+assert_json_field "$DOMAINS" '(.authelia.running != null) and (.authelia.running == .authelia.pinned)' 'true' "The running Authelia is the pin ($(echo "$DOMAINS" | jq -c '.authelia // {}' 2>/dev/null))" || true
+assert_json_field "$DOMAINS" "[.domains[] | select(.name == \"${DOMAIN_2}\")] | first | \"\\(.rendering.current) \\(.rendering.rendered.language)\"" 'true null' "${DOMAIN_2}'s rendering is current, of its brand alone" || true
+STOCK_INVITE=$(sudo cat /var/www/lamaste/invite/index.html 2>/dev/null || echo "")
+assert_contains "${STOCK_INVITE}" '<html lang="en">' "The stock invitation page: lang=\"en\"" || true
+assert_contains "${STOCK_INVITE}" '<script type="application/json" id="lamaste-messages">' "…its words in the data block the candidate writes" || true
+assert_contains "$(sudo cat "${WEB_ROOT}/${DOMAIN_2}/invite/index.html" 2>/dev/null || echo "")" '<html lang="en">' "${DOMAIN_2}'s branded invitation page: lang=\"en\"" || true
+assert_contains "$(sudo cat /var/www/lamaste/unavailable/index.html 2>/dev/null || echo "")" '<html lang="en">' "The stock \"not available\" page is in place, in English" || true
+for D in "${DOMAIN}" "${DOMAIN_2}"; do
+  AUTH_VHOST=$(sudo cat "${AVAILABLE}/$(vhost_name auth "${D}")" 2>/dev/null || echo "")
+  assert_not_contains "${AUTH_VHOST}" "locales/forced" "The auth vhost of ${D} forces no locale" || true
+  assert_not_contains "${AUTH_VHOST}" "data-authelia-lang" "…and leaves Authelia's lang alone" || true
+done
+assert_not_contains "$(curl -sk --max-time 15 --resolve "${AUTH_FQDN}:443:127.0.0.1" "https://${AUTH_FQDN}/")" "data-authelia-lang" "https://${AUTH_FQDN}/: Authelia's own <html lang>" || true
+assert_eq "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:9294/access-request 2>/dev/null || echo 000)" "404" "Gatekeeper's GET /access-request is gone (404)" || true
 
 log_section "The panel logged no error since the update"
 
