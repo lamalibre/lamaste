@@ -3,6 +3,7 @@
  * helpers, exported for tests (the command is src/commands/domains.js).
  */
 
+import { PAGE_LANGUAGE_NAMES, isPageLanguage } from '@lamalibre/lamaste/page-messages';
 import { terminalText } from './plugin-settings.js';
 
 /**
@@ -17,7 +18,62 @@ export function domainRows(domains) {
     members: Number.isInteger(d.members) ? d.members : 0,
     externalMembers: Number.isInteger(d.externalMembers) ? d.externalMembers : 0,
     usedBy: usageText(d.usedBy),
+    language: isPageLanguage(d.language) ? d.language : null,
   }));
+}
+
+/** A page language in words — `tr (Türkçe)` —, or the "not set" words. */
+export function languageText(language) {
+  return isPageLanguage(language)
+    ? `${language} (${PAGE_LANGUAGE_NAMES[language]})`
+    : 'not set — English pages, sign-in following the browser';
+}
+
+/**
+ * What `domains language <domain> [<language> | --unset]` does: show the
+ * current language (no argument), set one, or clear it. The panel decides
+ * which languages exist (400 `invalid_language`); null for a command line
+ * it does not take.
+ *
+ * @param {string} domain
+ * @param {string[]} rest  what follows `language <domain>`
+ * @returns {{ action: 'show' } | { action: 'set', language: string | null, path: string, body: { language: string | null } } | null}
+ */
+export function languageRequest(domain, rest) {
+  if (rest.length === 0) return { action: 'show' };
+  if (rest.length !== 1) return null;
+  const [arg] = rest;
+  if (arg !== '--unset' && arg.startsWith('-')) return null;
+  const language = arg === '--unset' ? null : arg;
+  return { action: 'set', language, path: domainPath(domain, '/language'), body: { language } };
+}
+
+/**
+ * The state of a domain's sign-in rendering in one line, or null when it
+ * has neither a brand nor a language.
+ *
+ * @param {{ status?: string, rendering?: { rendered: object | null, current: boolean, renderFailing: boolean, vhostPending: boolean } | null }} domain
+ */
+export function renderingText(domain) {
+  const r = domain?.rendering;
+  if (!r) return null;
+  if (r.renderFailing) return 'the last rendering failed — the panel retries every minute';
+  if (!r.current || r.rendered === null) return 'rendering (within a minute)';
+  if (domain.status === 'active' && r.vhostPending) return 'rendered; the vhost waits for a retry';
+  return domain.status === 'active' ? 'rendered and served' : 'rendered; served once active';
+}
+
+/**
+ * The relay's Authelia when it is not the pinned release, in one line —
+ * null when it is, or when its version could not be read.
+ *
+ * @param {{ running: string | null, pinned: string } | null | undefined} authelia
+ */
+export function autheliaVersionText(authelia) {
+  if (!authelia?.running || authelia.running === authelia.pinned) return null;
+  return terminalText(
+    `Authelia ${authelia.running} runs on this relay; Lamaste is tested with ${authelia.pinned} — on a domain with a language or a brand, some sign-in texts may show in English or the browser's language.`,
+  );
 }
 
 /** What uses a domain, in one line (empty when nothing does). */

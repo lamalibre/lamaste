@@ -21,6 +21,7 @@
  *   branding <domain> favicon <file.ico|.png> | --remove
  *   branding <domain> remove          Back to the stock pages
  *   branding <domain> preview         The title, footer, theme and the generated stylesheet
+ *   language <domain> [en|tr|--unset] The language of its pages: shown, set or cleared
  *
  * Also `plugins domain <name> [<domain>]` ({@link pluginDomainCmd}).
  *
@@ -35,7 +36,15 @@ import { panelRequest } from '../panel-api.js';
 import { emit, emitComplete, emitError } from '../ndjson.js';
 import { fail } from '../fail.js';
 import { terminalText } from '../plugin-settings.js';
-import { domainPath, domainRows, memberRequest } from '../domains.js';
+import {
+  autheliaVersionText,
+  domainPath,
+  domainRows,
+  languageRequest,
+  languageText,
+  memberRequest,
+  renderingText,
+} from '../domains.js';
 import {
   assetFileProblem,
   assetLine,
@@ -60,6 +69,7 @@ export async function runDomains(args, { json }) {
   if (sub === 'list') return listDomains({ json });
   if (sub === 'members' && name) return membersCmd(name.toLowerCase(), rest, { json });
   if (sub === 'branding' && name) return brandingCmd(name.toLowerCase(), rest, { json });
+  if (sub === 'language' && name) return languageCmd(name.toLowerCase(), rest, { json });
   const command = DOMAIN_COMMANDS[sub];
   if (!command || !name) return usage(sub ? 1 : 0);
   const domain = name.toLowerCase();
@@ -97,6 +107,7 @@ ${b('Subcommands:')}
                                     The favicon: an ICO, or a PNG of at most 256 pixels a side; at most 64 KiB
   ${c('branding <domain> remove')}          Back to the stock pages
   ${c('branding <domain> preview')}         The title, footer, theme and the generated stylesheet
+  ${c('language <domain> [en|tr|--unset]')} The language of its pages — shown without an argument
 
   Every domain has its own sign-in (auth.<domain>) and member list; a user reaches a
   domain's protected hosts only as its member. An external member reaches only what
@@ -105,14 +116,17 @@ ${b('Subcommands:')}
   A domain's brand reaches its sign-in (title, logo, favicon, theme, accent; the
   "Powered by Authelia" footer hidden), its invitation page and the access-request and
   refusal pages on its hosts; until one is set, the pages are the stock ones.
+  A domain's language is every page's on it — the sign-in (Authelia's language menu
+  hidden), the invitation pages, the access-request and refusal pages; until one is
+  set, Lamaste's pages are English and the sign-in follows the visitor's browser.
 `);
   process.exit(code);
 }
 
 async function listDomains({ json }) {
-  const { domains } = await call(json, 'GET', '/api/domains');
+  const { domains, authelia } = await call(json, 'GET', '/api/domains');
   if (json) {
-    emit({ domains });
+    emit({ domains, authelia });
     return;
   }
   const d = chalk.dim;
@@ -123,8 +137,50 @@ async function listDomains({ json }) {
     const state = row.state === 'pending' ? chalk.yellow(row.state) : chalk.green(row.state);
     const used = row.usedBy ? d(`  used by ${row.usedBy}`) : '';
     const external = row.externalMembers > 0 ? `, ${row.externalMembers} external` : '';
-    console.log(`  ${chalk.cyan(row.name)}  ${state}  ${row.members} member(s)${external}${used}`);
+    const language = row.language ? `  pages: ${row.language}` : '';
+    console.log(
+      `  ${chalk.cyan(row.name)}  ${state}  ${row.members} member(s)${external}${language}${used}`,
+    );
   }
+  const note = autheliaVersionText(authelia);
+  if (note) console.log(`\n  ${chalk.yellow('!')} ${note}`);
+  console.log('');
+}
+
+/**
+ * `domains language <domain> [en|tr|--unset]`: the language of the
+ * domain's pages — shown with its rendering's state, set, or cleared.
+ *
+ * @param {string} domain
+ * @param {string[]} rest  what follows `language <domain>`
+ */
+async function languageCmd(domain, rest, { json }) {
+  const request = languageRequest(domain, rest);
+  if (!request) return usage(1);
+  const where = terminalText(domain);
+  if (request.action === 'show') {
+    const { domains } = await call(json, 'GET', '/api/domains');
+    const found = domains.find((d) => d.name === domain);
+    if (!found) fail(`Domain '${where}' not found`, json, { code: 'domain_not_found' });
+    if (json) {
+      emit({ domain: found.name, language: found.language ?? null, rendering: found.rendering });
+      return;
+    }
+    console.log('');
+    row('language', languageText(found.language));
+    const state = renderingText(found);
+    if (state) row('rendering', state);
+    console.log('');
+    return;
+  }
+  const result = await call(json, 'PUT', request.path, request.body);
+  if (json) {
+    emitComplete(result);
+    return;
+  }
+  const what = result.changed ? `Language of ${where}` : `Language of ${where} unchanged`;
+  console.log(`\n  ${chalk.green('✓')} ${what}: ${languageText(result.domain?.language)}`);
+  printWarnings(result.warnings);
   console.log('');
 }
 
