@@ -67,6 +67,8 @@ import {
   renderInvitationsPage,
   renderInvitePage,
   renderUnavailablePage,
+  renderedBrandSha256,
+  sha256Hex,
   unavailablePageHeaders,
 } from '../dist/server/index.js';
 import { authPageShell } from '../dist/server/auth-pages.js';
@@ -383,6 +385,38 @@ test('the inviter’s page words a refusal by its action, its code, its status, 
   assert.notEqual(M['invitations.loadFailed'], M['invitations.errorTitle']);
 });
 
+test('the invitation page: a taken username on an administrator’s invitation is not told to choose another', () => {
+  const take = (re) => {
+    const m = re.exec(INVITE_PAGE_SCRIPT);
+    assert.ok(m, String(re));
+    return m[0];
+  };
+  const source = [
+    take(/var STATUS_KEYS = [^\n]*\n/),
+    take(/var CODE_RE = [^\n]*\n/),
+    take(/var DETAIL_RE = [^\n]*\n/),
+    take(/function has\(key\) [^\n]*\n/),
+    take(/function msg\(key\) [^\n]*\n/),
+    take(/function refusal\(status, body, statusKeys, action\) \{[\s\S]*?\n {6}\}\n/),
+    'return { refusal, STATUS_KEYS };',
+  ].join('');
+  // The administrator's form sends with its action; the delegated one without.
+  assert.ok(INVITE_PAGE_SCRIPT.includes("bindForm(function () { return {}; }, 'admin');"));
+  assert.ok(INVITE_PAGE_SCRIPT.includes("post('/api/invite/accept', body, action)"));
+  const taken = { code: 'username_unavailable', error: 'This username already exists' };
+  for (const language of PAGE_LANGUAGES) {
+    const M = pageMessagesFor(language, INVITE_PAGE_KEYS);
+    const { refusal, STATUS_KEYS } = new Function('M', source)(M);
+    assert.equal(refusal(409, taken, STATUS_KEYS, 'admin'), M['error.username_unavailable.admin']);
+    assert.equal(refusal(409, taken, STATUS_KEYS), M['error.username_unavailable']);
+  }
+  // English as 4.9 showed it.
+  assert.equal(
+    PAGE_MESSAGES.en['error.username_unavailable.admin'],
+    'This username already exists.',
+  );
+});
+
 test('the shell escapes its title and loading text', () => {
   const html = authPageShell({
     brand: null,
@@ -661,6 +695,7 @@ test('a domain with a language and no brand: the forced locales, the menu hidden
       autheliaVersion: '4.39.29',
       autheliaPinned: PINNED,
       pagesDigest: authPagesDigest(),
+      brandSha256: null,
       renderedAt: '2026-11-03T10:00:00.000Z',
     });
     assert.deepEqual(await readRenderedBrand('alpha.test', root), stored);
@@ -749,7 +784,15 @@ test('a domain with a brand and a language: brand-spliced forced locales, brande
     });
     assert.equal(rendered.language, 'tr');
     const link = path.join(root, 'alpha.test');
-    assert.deepEqual(await readdir(path.join(link, 'locales')), ['forced'], 'no per-locale files');
+    // The brand's own locale files too: a vhost not yet rewritten for the
+    // language serves them, and the domain keeps its brand meanwhile.
+    const localeDirs = await readdir(path.join(link, 'locales'));
+    assert.ok(localeDirs.includes('forced'));
+    assert.ok(localeDirs.includes('tr-TR') && localeDirs.includes('en'), 'per-locale files');
+    const ownPortal = JSON.parse(
+      await readFile(path.join(link, 'locales/en/portal.json'), 'utf-8'),
+    );
+    assert.equal(ownPortal['Powered by {{authelia}}'], 'Powered by Alpha Works');
     const portal = JSON.parse(
       await readFile(path.join(link, 'locales/forced/portal.json'), 'utf-8'),
     );
@@ -779,6 +822,23 @@ test('a domain with a brand and a language: brand-spliced forced locales, brande
     );
     assert.equal(brandJson.name, 'Alpha Works');
     assert.equal('language' in brandJson, false, 'brand.json stays the brand’s alone');
+    // rendered.json names the brand it holds by brand.json's digest — what
+    // the record's holder computes with renderedBrandSha256.
+    const brandText = await readFile(path.join(link, AUTH_BRANDING_FILES.brand));
+    assert.equal(rendered.brandSha256, sha256Hex(brandText));
+    assert.equal(
+      rendered.brandSha256,
+      renderedBrandSha256('alpha.test', BRAND_FIELDS, 3, { logoSha256: null, faviconSha256: null }),
+    );
+    assert.equal((await readRenderedBrand('alpha.test', root)).brandSha256, rendered.brandSha256);
+    assert.notEqual(
+      rendered.brandSha256,
+      renderedBrandSha256('alpha.test', { ...BRAND_FIELDS, name: 'Beta Works' }, 3, {
+        logoSha256: null,
+        faviconSha256: null,
+      }),
+      'another brand at the same revision',
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

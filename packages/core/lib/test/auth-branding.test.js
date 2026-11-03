@@ -532,7 +532,7 @@ test('the stock invitation page carries no brand; a branded one its name, taglin
   assert.ok(stock.includes('var(--lamaste-page-background, #09090b)'));
   // The token goes in POST bodies, never in a URL.
   assert.ok(stock.includes("post('/api/invite/lookup', { token: token })"));
-  assert.ok(stock.includes("post('/api/invite/accept', body)"));
+  assert.ok(stock.includes("post('/api/invite/accept', body, action)"));
   assert.doesNotMatch(stock, /\/api\/invite\/' \+/);
   assert.ok(stock.includes('window.location.hash.slice(1)'));
   assert.doesNotMatch(stock, /location\.search|URLSearchParams/, 'nothing from the query');
@@ -737,6 +737,9 @@ test('a brand is rendered into a directory of its own and served through its dom
       autheliaVersion: PINNED,
       autheliaPinned: PINNED,
       pagesDigest: authPagesDigest(),
+      brandSha256: createHash('sha256')
+        .update(await readFile(path.join(root, domain, 'brand.json')))
+        .digest('hex'),
       renderedAt: '2026-10-27T10:00:00.000Z',
     });
     const link = path.join(root, domain);

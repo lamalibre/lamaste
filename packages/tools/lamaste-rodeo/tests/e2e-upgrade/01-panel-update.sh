@@ -447,6 +447,7 @@ assert_contains "$(curl -sk --max-time 15 --resolve "auth.${DOMAIN_2}:443:127.0.
 assert_page_runs "auth.${DOMAIN_2}" "/invitations/e2e" "The new inviter's page on ${DOMAIN_2}, branded"
 assert_not_eq "$(sudo sha256sum "${WEB_ROOT}/${DOMAIN_2}/invite/index.html" | cut -d' ' -f1)" "${BRANDED_PAGE_BEFORE}" "The branded page was rendered again by the candidate" || true
 assert_eq "$(sudo jq -r '.pagesDigest // "none" | test("^[0-9a-f]{64}$")' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null || echo "false")" "true" "rendered.json holds the pages' digest" || true
+assert_eq "$(sudo jq -r '.brandSha256 // "none"' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null)" "$(sudo sha256sum "${WEB_ROOT}/${DOMAIN_2}/brand.json" | cut -d' ' -f1)" "…and names the brand it holds by brand.json's digest" || true
 
 log_section "The invitations moved into state.db"
 

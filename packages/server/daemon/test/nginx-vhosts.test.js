@@ -953,7 +953,7 @@ test('a domain with a page language: every locale file forced, the index in its 
       config.indexOf('\n    }', config.indexOf(opening)),
     );
     assert.ok(forced.includes('root /var/www/lamaste/auth/alpha.example;'));
-    assert.ok(forced.includes('try_files /locales/forced/$1.json @authelia;'));
+    assert.ok(forced.includes('try_files /locales/forced/$1.json $uri @authelia;'));
     assert.doesNotMatch(forced, /\\/);
     const index = locationBody(config, '/');
     for (const [from, to] of autheliaIndexLanguageFilters('tr')) {

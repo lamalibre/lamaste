@@ -377,13 +377,13 @@ An **unbranded domain's** vhost differs in `location /` alone: `data-theme="ligh
     # Every locale file the portal can ask for is the forced file of its namespace
     location ~ "^/locales/[^/]{1,64}/(consent|portal|settings)[.]json$" {
         root /var/www/lamaste/auth/example.com;
-        try_files /locales/forced/$1.json @authelia;
+        try_files /locales/forced/$1.json $uri @authelia;
         add_header X-Content-Type-Options nosniff;
         add_header Cache-Control "public, max-age=0, must-revalidate";
     }
 ```
 
-nginx checks regex locations after the prefix ones not marked `^~`, so this one wins over `/locales/`; the portal's language list (`GET /locales`, no second segment) still reaches Authelia. `[.]` stands for the dot because `lamaste-priv` refuses a backslash. And `location /` rewrites the index page's `lang` and its `<noscript>` sentence, and links the stylesheet (which hides Authelia's language menu) even without a brand:
+nginx checks regex locations after the prefix ones not marked `^~`, so this one wins over `/locales/`; without a forced file (a rendering of no language, served while the rewrite for a cleared language is pending) the path's own file comes next, as from `/locales/`, so a branded domain keeps its brand; the portal's language list (`GET /locales`, no second segment) still reaches Authelia. `[.]` stands for the dot because `lamaste-priv` refuses a backslash. And `location /` rewrites the index page's `lang` and its `<noscript>` sentence, and links the stylesheet (which hides Authelia's language menu) even without a brand:
 
 ```nginx
         sub_filter '<html lang="' '<html lang="tr" data-authelia-lang="';

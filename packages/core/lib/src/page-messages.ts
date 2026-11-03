@@ -136,6 +136,7 @@ export const PAGE_MESSAGES_EN = {
   'error.invitation_accepting': 'This invitation is being accepted right now.',
   'error.invitation_unavailable': 'This invitation cannot be accepted right now — try again later.',
   'error.username_unavailable': 'This username is not available — choose another.',
+  'error.username_unavailable.admin': 'This username already exists.',
   'error.invalid_request.username': 'Invalid username.',
   'error.invalid_request.password': 'Invalid password.',
   'error.invalid_request.displayName': 'Invalid name.',
@@ -312,6 +313,7 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'error.invitation_unavailable':
     'Bu davet şu anda kabul edilemiyor. Lütfen daha sonra yeniden deneyin.',
   'error.username_unavailable': 'Bu kullanıcı adı kullanılamıyor. Başka bir kullanıcı adı deneyin.',
+  'error.username_unavailable.admin': 'Bu kullanıcı adı zaten kullanılıyor.',
   'error.invalid_request.username': 'Kullanıcı adı geçersiz.',
   'error.invalid_request.password': 'Şifre geçersiz.',
   'error.invalid_request.displayName': 'Ad soyad geçersiz.',
@@ -417,6 +419,7 @@ const INVITE_REFUSAL_KEYS = [
   'error.invitation_accepting',
   'error.invitation_unavailable',
   'error.username_unavailable',
+  'error.username_unavailable.admin',
   'error.invalid_request.username',
   'error.invalid_request.password',
   'error.invalid_request.displayName',

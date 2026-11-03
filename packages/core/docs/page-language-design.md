@@ -289,7 +289,7 @@ domain with a language then carries:
     # Every locale the portal can ask for: the domain's language
     location ~ "^/locales/[^/]{1,64}/(consent|portal|settings)[.]json$" {
         root /var/www/lamaste/auth/<domain>;
-        try_files /locales/forced/$1.json @authelia;
+        try_files /locales/forced/$1.json $uri @authelia;
         add_header X-Content-Type-Options nosniff;
         add_header Cache-Control "public, max-age=0, must-revalidate";
     }
@@ -462,16 +462,23 @@ has one when it has a brand **or** a language; `renderAuthBranding` takes
 | File                                                           | Brand only       | Language only            | Both                  |
 | -------------------------------------------------------------- | ---------------- | ------------------------ | --------------------- |
 | `favicon.ico`, `static/media/logo.png`                         | when set         | —                        | when set              |
-| `locales/<locale>/<ns>.json` (4.8)                             | yes              | —                        | —                     |
+| `locales/<locale>/<ns>.json` (4.8)                             | yes              | —                        | yes                   |
 | `locales/forced/<ns>.json`                                     | —                | yes                      | yes                   |
 | `brand.css`                                                    | yes              | yes (menu rule only)     | yes                   |
 | `invite/index.html`, `invitations/index.html`, `unavailable/…` | branded, English | stock look, the language | branded, the language |
 | `brand.json`                                                   | yes              | —                        | yes                   |
 | `rendered.json`                                                | + `language`     | + `language`             | + `language`          |
 
-`rendered.json` gains `language` (absent = null, as a 4.9 rendering reads);
-the reconcile re-renders when the record's brand revision, the language, the
-Authelia release or the pages' digest differ. A domain whose brand is removed
+`rendered.json` gains `language` (absent = null, as a 4.9 rendering reads)
+and `brandSha256`, the digest of its `brand.json` (null without a brand): a
+brand set after one was removed starts again at revision 1, so the revision
+alone cannot tell the two apart. The reconcile re-renders when the record's
+brand revision or digest, the language, the Authelia release or the pages'
+digest differ. A branded rendering keeps the per-locale files with a
+language too: a vhost whose rewrite for the change failed still serves them
+(through the `/locales/` prefix, or the forced location's `$uri` once the
+language is cleared), so the domain keeps its brand until the vhost catches
+up. A domain whose brand is removed
 but whose language is set keeps a rendering (unbranded). The directory name
 keeps `<domain>-<revision>-<hex>` with revision 0 for an unbranded rendering.
 `brand.json` stays brand-only, so Gatekeeper's brand reader is unchanged.
@@ -488,8 +495,9 @@ What 4.8's code assumes and wave 2 changes (`server/daemon/src/lib/auth-branding
   it, and so does every other writer of an auth vhost — domain activation in
   `lib/domains.js` and the start's vhost reconcile pass the language too, so
   none of them writes a vhost that drops it.
-- **Lock order:** the domain-rendering lock (`withDomainRendering`), then the
-  branding mutex — as a brand change takes them. A language change touches no
+- **Lock order:** the domains lock, the domain-rendering lock
+  (`withDomainRendering`), then the branding mutex — a brand change takes the
+  branding mutex alone, and nothing that holds it takes the other two. A language change touches no
   Authelia configuration and **never restarts Authelia**: it writes files, the
   projection and the vhost (an nginx reload).
 - **Where an operator sees it:** `GET /api/domains` and the Domains page show,
@@ -678,32 +686,33 @@ Principles for the reviewer:
 
 #### 8.2 Refusals the pages map (§6)
 
-| Code (status)                                                                | English                                                                                      | Türkçe (reviewed)                                                                                           |
-| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `invitation_not_found` (404)                                                 | This invitation link is not valid.                                                           | Bu davet bağlantısı geçerli değil.                                                                          |
-| `invitation_used` (410)                                                      | This invitation has already been used.                                                       | Bu davet daha önce kullanılmış.                                                                             |
-| `invitation_expired` (410)                                                   | This invitation has expired.                                                                 | Bu davetin süresi dolmuş.                                                                                   |
-| `invitation_closed` (410)                                                    | This invitation is no longer valid.                                                          | Bu davet artık geçerli değil.                                                                               |
-| `invitation_revoked` (410)                                                   | This invitation was revoked while it was being accepted.                                     | Bu davet, kabul edilirken iptal edildi.                                                                     |
-| `invitation_accepting` (409)                                                 | This invitation is being accepted right now.                                                 | Bu davet şu anda başka bir yerde kabul ediliyor. Birkaç dakika sonra sayfayı yenileyin.                     |
-| `invitation_unavailable` (503)                                               | This invitation cannot be accepted right now — try again later.                              | Bu davet şu anda kabul edilemiyor. Lütfen daha sonra yeniden deneyin.                                       |
-| `username_unavailable` (409)                                                 | This username is not available — choose another.                                             | Bu kullanıcı adı kullanılamıyor. Başka bir kullanıcı adı deneyin.                                           |
-| `invalid_request` + `field` username / password / displayName / email / role | Invalid username / password / name / e-mail address / role.                                  | Kullanıcı adı geçersiz. / Şifre geçersiz. / Ad soyad geçersiz. / E-posta adresi geçersiz. / Rol geçersiz.   |
-| `invalid_request` (no field)                                                 | Something you entered is not valid.                                                          | Girdiğiniz bilgilerden biri geçersiz.                                                                       |
-| `invitations_unavailable` (403)                                              | Invitations are not available for this application.                                          | Bu uygulamada davetler kullanılamıyor.                                                                      |
-| `email_domain_not_allowed` (400)                                             | Invitations cannot go to this e-mail address’s domain.                                       | Bu alan adındaki e-posta adresleri için davet oluşturulamaz.                                                |
-| `role_not_grantable` (403)                                                   | You may not invite people with this role.                                                    | Bu rolle kişi davet edemezsiniz.                                                                            |
-| `invitation_rate` (429)                                                      | Too many invitations in the last hour — try again later.                                     | Son bir saatte çok fazla davet oluşturdunuz. Lütfen daha sonra yeniden deneyin.                             |
-| `invitation_cap` `inviter` (409)                                             | You have reached your limit of open invitations — revoke one or wait for one to be accepted. | Açık davet sınırınıza ulaştınız. Bir daveti iptal edin ya da davetlerden birinin kabul edilmesini bekleyin. |
-| `invitation_cap` `plugin` (409)                                              | This application takes no more people by invitation.                                         | Bu uygulamaya davetle daha fazla kişi eklenemiyor.                                                          |
-| `grant_reserve` (503)                                                        | No more people can be added by invitation right now.                                         | Şu anda davetle yeni kişi eklenemiyor. Lütfen daha sonra yeniden deneyin.                                   |
-| `gatekeeper_unavailable`, `authelia_storage_unavailable` (503)               | The service is not answering — try again shortly.                                            | Hizmet şu anda yanıt vermiyor. Lütfen biraz sonra yeniden deneyin.                                          |
-| `not_found` (404, the inviter's revoke)                                      | Invitation not found.                                                                        | Davet bulunamadı.                                                                                           |
-| `not_found` (404, the inviter's create: `error.not_found.create`)            | Application not found.                                                                       | Uygulama bulunamadı.                                                                                        |
-| by status 429                                                                | Too many requests — wait a moment and try again.                                             | Çok fazla istek gönderildi. Lütfen biraz bekleyip yeniden deneyin.                                          |
-| by status 5xx / other                                                        | Something went wrong — try again later.                                                      | Bir sorun oluştu. Lütfen daha sonra yeniden deneyin.                                                        |
-| inviter's form, no address                                                   | Enter an e-mail address.                                                                     | Bir e-posta adresi girin.                                                                                   |
-| inviter's form, not an address                                               | Enter a valid e-mail address.                                                                | Geçerli bir e-posta adresi girin.                                                                           |
+| Code (status)                                                                                   | English                                                                                      | Türkçe (reviewed)                                                                                           |
+| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `invitation_not_found` (404)                                                                    | This invitation link is not valid.                                                           | Bu davet bağlantısı geçerli değil.                                                                          |
+| `invitation_used` (410)                                                                         | This invitation has already been used.                                                       | Bu davet daha önce kullanılmış.                                                                             |
+| `invitation_expired` (410)                                                                      | This invitation has expired.                                                                 | Bu davetin süresi dolmuş.                                                                                   |
+| `invitation_closed` (410)                                                                       | This invitation is no longer valid.                                                          | Bu davet artık geçerli değil.                                                                               |
+| `invitation_revoked` (410)                                                                      | This invitation was revoked while it was being accepted.                                     | Bu davet, kabul edilirken iptal edildi.                                                                     |
+| `invitation_accepting` (409)                                                                    | This invitation is being accepted right now.                                                 | Bu davet şu anda başka bir yerde kabul ediliyor. Birkaç dakika sonra sayfayı yenileyin.                     |
+| `invitation_unavailable` (503)                                                                  | This invitation cannot be accepted right now — try again later.                              | Bu davet şu anda kabul edilemiyor. Lütfen daha sonra yeniden deneyin.                                       |
+| `username_unavailable` (409)                                                                    | This username is not available — choose another.                                             | Bu kullanıcı adı kullanılamıyor. Başka bir kullanıcı adı deneyin.                                           |
+| `username_unavailable` (409) on an administrator's invitation (no username to change; `.admin`) | This username already exists.                                                                | Bu kullanıcı adı zaten kullanılıyor.                                                                        |
+| `invalid_request` + `field` username / password / displayName / email / role                    | Invalid username / password / name / e-mail address / role.                                  | Kullanıcı adı geçersiz. / Şifre geçersiz. / Ad soyad geçersiz. / E-posta adresi geçersiz. / Rol geçersiz.   |
+| `invalid_request` (no field)                                                                    | Something you entered is not valid.                                                          | Girdiğiniz bilgilerden biri geçersiz.                                                                       |
+| `invitations_unavailable` (403)                                                                 | Invitations are not available for this application.                                          | Bu uygulamada davetler kullanılamıyor.                                                                      |
+| `email_domain_not_allowed` (400)                                                                | Invitations cannot go to this e-mail address’s domain.                                       | Bu alan adındaki e-posta adresleri için davet oluşturulamaz.                                                |
+| `role_not_grantable` (403)                                                                      | You may not invite people with this role.                                                    | Bu rolle kişi davet edemezsiniz.                                                                            |
+| `invitation_rate` (429)                                                                         | Too many invitations in the last hour — try again later.                                     | Son bir saatte çok fazla davet oluşturdunuz. Lütfen daha sonra yeniden deneyin.                             |
+| `invitation_cap` `inviter` (409)                                                                | You have reached your limit of open invitations — revoke one or wait for one to be accepted. | Açık davet sınırınıza ulaştınız. Bir daveti iptal edin ya da davetlerden birinin kabul edilmesini bekleyin. |
+| `invitation_cap` `plugin` (409)                                                                 | This application takes no more people by invitation.                                         | Bu uygulamaya davetle daha fazla kişi eklenemiyor.                                                          |
+| `grant_reserve` (503)                                                                           | No more people can be added by invitation right now.                                         | Şu anda davetle yeni kişi eklenemiyor. Lütfen daha sonra yeniden deneyin.                                   |
+| `gatekeeper_unavailable`, `authelia_storage_unavailable` (503)                                  | The service is not answering — try again shortly.                                            | Hizmet şu anda yanıt vermiyor. Lütfen biraz sonra yeniden deneyin.                                          |
+| `not_found` (404, the inviter's revoke)                                                         | Invitation not found.                                                                        | Davet bulunamadı.                                                                                           |
+| `not_found` (404, the inviter's create: `error.not_found.create`)                               | Application not found.                                                                       | Uygulama bulunamadı.                                                                                        |
+| by status 429                                                                                   | Too many requests — wait a moment and try again.                                             | Çok fazla istek gönderildi. Lütfen biraz bekleyip yeniden deneyin.                                          |
+| by status 5xx / other                                                                           | Something went wrong — try again later.                                                      | Bir sorun oluştu. Lütfen daha sonra yeniden deneyin.                                                        |
+| inviter's form, no address                                                                      | Enter an e-mail address.                                                                     | Bir e-posta adresi girin.                                                                                   |
+| inviter's form, not an address                                                                  | Enter a valid e-mail address.                                                                | Geçerli bir e-posta adresi girin.                                                                           |
 
 #### 8.3 Gatekeeper's pages (P6, P7)
 
@@ -1148,3 +1157,24 @@ site's refusal names the site in its title. Left as they are: Authelia's
 Title Case ("Kullanıcı Değiştir", its own file's casing, which its other
 strings share) and the two date forms (the list's short month, the
 invitation page's long one — each reads well where it is).
+
+**Review of the pull request (2026-11-03)** — two independent reviews of the
+branch after rodeo. Security: nothing to fix; it rendered every auth and
+web-surface vhost variant and passed each through `lamaste-priv`'s own
+validator, and noted that a refusal of the shell before a session check now
+reads the domain's brand from disk (bounded by Gatekeeper's rate limit).
+Correctness, all fixed: (1) a branded rendering with a language held only
+the forced files, so a vhost whose rewrite for the change failed served
+Authelia's unbranded texts until it converged — a branded rendering keeps
+its per-locale files with a language, the forced location falls back to
+`$uri` before Authelia, and the `vhost` warning says the page may mix
+languages until the vhost is rewritten (it said the page kept its previous
+language, untrue when a language is cleared); (2) a brand set after a
+removal restarts at revision 1, so a stale rendering of the removed brand at
+the same revision and language counted as current — `rendered.json` records
+`brandSha256` and currency compares it (core `renderedBrandSha256`); (3) on
+an administrator's invitation whose username exists, the page said to
+choose another username on a form that has none — its form maps the code
+through `error.username_unavailable.admin` (English as 4.9: "This username
+already exists."); (4) §5's lock sentence (a brand change takes the branding
+mutex alone).

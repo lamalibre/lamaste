@@ -304,7 +304,10 @@ test('Turkish on an unbranded domain: rendered, its vhost, the projection, audit
     branding: null,
     language: 'tr',
   });
-  assert.match(installedVhosts.get(PRIMARY), /try_files \/locales\/forced\/\$1\.json @authelia;/);
+  assert.match(
+    installedVhosts.get(PRIMARY),
+    /try_files \/locales\/forced\/\$1\.json \$uri @authelia;/,
+  );
   assert.match(installedVhosts.get(PRIMARY), /<html lang="tr" data-authelia-lang="/);
 
   // Gatekeeper's projection: the language, the members unchanged.
@@ -401,6 +404,50 @@ test('a brand on a Turkish domain: brand-spliced forced files; removing the bran
     branding: null,
     language: 'tr',
   });
+});
+
+test('a brand removed and another set while Authelia is not answering: the reconcile renders the new one, not the old one at the same revision', async () => {
+  const first = await call('PUT', `/api/domains/${PRIMARY}/branding`, { name: 'Alpha Works' });
+  assert.equal(first.statusCode, 200, first.body);
+  assert.equal((await readJson(PRIMARY, 'brand.json')).revision, 1);
+
+  lib.setAuthBrandingForTests({
+    ...overrides(),
+    fetchLocales: async () => {
+      throw new Error('Authelia is not answering');
+    },
+  });
+  const removed = await call('DELETE', `/api/domains/${PRIMARY}/branding`);
+  assert.equal(removed.statusCode, 200);
+  assert.deepEqual(
+    removed.json().warnings.map((w) => w.step),
+    ['render'],
+  );
+  const second = await call('PUT', `/api/domains/${PRIMARY}/branding`, { name: 'Beta Works' });
+  assert.equal(second.statusCode, 200, second.body);
+  assert.equal(second.json().branding.revision, 1, 'a new brand starts again at 1');
+  // Still the removed brand on disk, at the same revision and language.
+  const stale = await readJson(PRIMARY, 'rendered.json');
+  assert.equal(stale.revision, 1);
+  assert.equal((await readJson(PRIMARY, 'brand.json')).name, 'Alpha Works');
+  assert.equal(second.json().branding.renderedCurrent, false);
+
+  lib.setAuthBrandingForTests(overrides());
+  assert.deepEqual((await lib.reconcileAuthBranding()).rendered, [PRIMARY]);
+  assert.equal((await readJson(PRIMARY, 'brand.json')).name, 'Beta Works');
+  assert.equal(
+    (await readJson(PRIMARY, 'locales/forced/portal.json'))['Powered by {{authelia}}'],
+    'Altyapı: Beta Works',
+  );
+  // The brand's own locale files beside the forced ones, for a vhost not yet rewritten.
+  assert.equal(
+    (await readJson(PRIMARY, 'locales/en/portal.json'))['Powered by {{authelia}}'],
+    'Powered by Beta Works',
+  );
+  assert.deepEqual(await lib.reconcileAuthBranding(), { rendered: [], removed: [], failed: [] });
+
+  assert.equal((await call('DELETE', `/api/domains/${PRIMARY}/branding`)).statusCode, 200);
+  assert.equal((await readJson(PRIMARY, 'rendered.json')).revision, 0);
 });
 
 test('a running Authelia that is not the pin: rendered from it, audited and notified once per version', async () => {
