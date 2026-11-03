@@ -1,7 +1,8 @@
 # Page Language — Design Document
 
-> **Status:** 2026-11-03, reviewed. Wave 0 (inventory and design) done; wave 1 (core) built, waves 2–6 to come. An independent review of the design against the code and Authelia v4.39.28, and an independent reading of the Turkish (§8), are both done and folded in (see _Review findings_ at the end). Decisions D1–D13 agreed by the founders on 2026-11-03, all as recommended (D3 the domain decides, D4 Authelia forced with its menu hidden, D11 templates in the domain's language, D13 4.10.0 asked explicitly).
+> **Status:** 2026-11-03, reviewed. Wave 0 (inventory and design) done; waves 1 (core) and 2 (serverd, nginx, the Authelia browser spike) built, waves 3–6 to come. An independent review of the design against the code and Authelia v4.39.28, and an independent reading of the Turkish (§8), are both done and folded in (see _Review findings_ at the end). Decisions D1–D13 agreed by the founders on 2026-11-03, all as recommended (D3 the domain decides, D4 Authelia forced with its menu hidden, D11 templates in the domain's language, D13 4.10.0 asked explicitly).
 > **Wave 1 (core) built 2026-11-03:** `page-messages.ts` (subpath `./page-messages`; EN/TR catalogue of §8, typed; per-page key lists; one-pass `formatMessage`/`formatMessageHtml` — the latter also turns the one `[…]` span of `refusal.signOut` into the sign-out link —, `pluralKey`, `htmlAsciiReferences`, `pageMessagesJson`, `escapeHtml`), `authelia-locales.ts` (root, browser-safe: the portal contracts, the supplement and corrections of §8.4, `renderForcedAutheliaLocale`, `autheliaIndexLanguageFilters` — the `sub_filter` pairs wave 2 writes), `server/unavailable-page.ts` (P8: `renderUnavailablePage`, `UNAVAILABLE_PAGE_STYLE_HASH`, `unavailablePageHeaders(domain)` for the vhost), the invite and inviter pages in a language (one script each, its shared helpers `AUTH_PAGE_SCRIPT_WORDS`; never `data.error`; `novalidate`; Revoke by `data-confirm`), `renderAuthBranding` with `brand | null` and `language` (writes `unavailable/index.html` for every rendering), the projection's lenient `language` (`DomainsIndex.languages`, `domainLanguageOfHost`), verbatim Authelia 4.39.28 fixtures and 4.9.0 page fixtures for the regression pin. Built differently from the text below: the data block is `{"lang":…,"messages":{…}}` (not flat); the supplement and corrections live in `authelia-locales.ts`, not beside the catalogue; `renderForcedAutheliaLocale` takes `{ namespace, language, english, embedded }` and returns `{ messages, fromEnglish }` (the brand is spliced by the caller); `rendered.json` records `language` and `autheliaPinned` (the pin) beside `autheliaVersion`, which is whatever the caller passes — wave 2 passes the running version; English `template.chat` keeps 4.9's backticks (`` `{resource}` ``), the Turkish is the reviewed text without them; the inviter's page shows a refused revocation above its list. The auth-vhost pieces stay in serverd (`nginx.js`) for wave 2. Wave 3 note: 4.9's Gatekeeper explanations break a sentence across a line inside the HTML; the catalogue holds each on one line, so the English regression pin compares whitespace-collapsed text.
+> **Wave 2 (serverd, nginx) built 2026-11-03:** migration `0021_domain_language.sql`; `PUT /api/domains/:name/language` (`lib/domains.js` `setDomainLanguage`: domains lock → domain rendering → branding mutex; 400 `invalid_language`, 404 `domain_not_found`, `warnings` `gatekeeper|render|vhost`; audit `domain.language.updated {domain, from, to}`; Authelia never rendered again nor restarted); `GET /api/domains` lists `language`, a `rendering` per domain (`rendered`, `current`, `renderFailing`, `vhostPending`) and `authelia: {running, pinned}`; the projection writer (`writeDomainsProjection`) carries `language` only when set (version stays 2). `lib/auth-branding.js`: the running Authelia's version read from its binary (`authelia --version`, cached with the locales for 10 min, the locales fetched again when it changes), recorded in `rendered.json`, flagged once per version (audit `authelia.version.unpinned {running, pinned}` + one notification, remembered across restarts through the audit log); renderings for a brand **or** a language (`renderInputs`, `renderingCurrent` compares revision, language, running version, pages digest); removing a brand keeps a language-only rendering; `authVhostInputs` (replaces `authVhostBranding`) feeds every auth-vhost writer — branding changes, `applyDomainLanguage`, activation, the start's vhost reconcile, onboarding; a removed domain's language-only rendering goes with it. `lib/nginx.js`: the forced-locale regex location and the `lang`/`noscript` `sub_filter`s exactly as §3, the stylesheet linked for a brand or a language; P8 as §2 (`error_page 503 /internal/lamaste/unavailable`, internal location on the rendering, `@unavailable` on the stock copy — named without a hyphen, lamaste-priv's named-location rule); the stock page written at start and at onboarding (`writeUnavailablePage`). **lamaste-priv needed no change**: its tests now accept the exact lines (the quoted regex, the character-reference `noscript`, the P8 locations) and refuse the raw Turkish, a backslash regex and a variable. Regression pins against 4.9.0's own output (`test/fixtures/lamaste-4.9.0/`, rendered by 4.9.0's code): an unset domain's auth vhost (unbranded and branded) differs only in the CSP hashes; a served web surface is byte for byte the same; a not-served one differs only by the page's lines. **The browser spike passed** (§3, _Spike result_).
 > **Target:** Lamaste 4.10.0, on top of 4.9.0 (`develop` at `d5bc67f`). The tag `v4.9.0` is not touched. Tagging, publishing and the live relay are the founders'.
 > **Pilot:** a plugin with a Turkish UI whose coordinator invites colleagues (delegated invitations, 4.9.0) on a domain whose people read Turkish. Lamaste holds no client content: every example here and in the tests uses invented domains (`alpha.test`-style names, as the existing specs do).
 > **Companions:** `auth-branding-design.md` (the per-domain rendering this builds on), `delegated-invitations-design.md` (the inviter's and invitee's pages), `multi-domain-relay-design.md` (Gatekeeper's projection), `external-members-design.md`.
@@ -344,6 +345,36 @@ and second-factor screens in Turkish, no request answered by Authelia's own
 locale files, `lang="tr"`, and no language menu. The spike's tools stay in the
 scratchpad, not in the repository; its result and screenshots go in this
 document.
+
+**Spike result (2026-11-03).** Authelia 4.39.28's official image under
+Docker, a minimal file-backend configuration (one invented user, one
+`two_factor` rule for an invented host), Homebrew nginx 1.29.1 running the
+auth vhost **as `renderAuthVhost` generates it** for a `tr` domain (only the
+listen address, certificate and web-root paths rewritten for the Mac; `nginx
+-t` accepted it unchanged otherwise), the rendering made by
+`renderAuthBranding` from the locales `fetchAutheliaLocales` read from that
+Authelia (327 files; `fromEnglish` empty). A real Chrome (headless, a fresh
+profile per case, `--lang`/`--accept-lang`) opened the sign-in, signed in and
+reached the second-factor screen:
+
+| Case                                              | `navigator.languages` | Locale files the portal asked for                        | Sign-in and second factor                  |
+| ------------------------------------------------- | --------------------- | -------------------------------------------------------- | ------------------------------------------ |
+| `de-AT`                                           | `["de-AT"]`           | `de-AT`, `de`, `en` × 3 namespaces — all the forced file | Turkish, `lang="tr"`, menu `display: none` |
+| `en-US`                                           | `["en-US"]`           | `en-US`, `en` × 3                                        | Turkish, `lang="tr"`, menu hidden          |
+| `ar`                                              | `["ar"]`              | `ar`, `en` × 3                                           | Turkish, `lang="tr"`, menu hidden          |
+| `localStorage['lang.preference'] = 'fr'`, `en-US` | `["en-US"]`           | `fr`, `en` × 3                                           | Turkish, `lang="tr"`, menu hidden          |
+
+nginx's access log showed every `/locales/<x>/<ns>.json` answered 200 with
+the forced file's exact size; none reached Authelia. The screens read
+"Giriş yap", "Kullanıcı adı", "Şifre", "Beni hatırla", "Altyapı: Authelia"
+(the correction) and, after signing in, "Merhaba …", "OTURUMU KAPAT |
+KULLANICI DEĞİŞTİR | YÖNTEMLER" (upper-cased by CSS, the dotted `İ` right
+because `lang="tr"`), "Tek Seferlik Şifre", "Cihaz kaydedin". One surprise,
+harmless: the portal requests the language list `GET /locales` on every
+load (twice), not only from the menu; Authelia answers it (the list of its
+languages, no texts), and nothing the visitor reads comes from it.
+Screenshots and the raw results stayed in the session's scratchpad, as the
+spike's tools did, not in the repository.
 
 Known gaps and trade-offs of forcing (D4):
 
