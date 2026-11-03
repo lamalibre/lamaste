@@ -36,7 +36,8 @@
 #    allowed" page (P9) follows the domain the path names.
 # 6. B and C back to unset: B's portal follows the browser again, its pages
 #    English with its brand; C's language-only rendering is gone. The audit
-#    holds each change ({domain, from, to}); Authelia never restarted.
+#    holds each change ({domain, from, to}); no language change restarts
+#    Authelia.
 # ============================================================================
 
 set -euo pipefail
@@ -503,6 +504,9 @@ assert_contains "$RESP" "Not Allowed" "…Not Allowed" || true
 
 log_section "B and C back to unset"
 
+# The plugin's registry credential (OIDC) restarted Authelia in section 4:
+# what counts here is that clearing the languages does not.
+AUTHELIA_PID=$(authelia_pid)
 RESP=$(set_language "${DOMAIN_2}" null)
 assert_json_field "$(body_of "$RESP")" '"\(.changed) \(.domain.language) \(.warnings // [] | length)"' "true null 0" "PUT /api/domains/${DOMAIN_2}/language {language: null}: cleared, no warning" || true
 if wait_for 60 index_lacks "${DOMAIN_2}" "data-authelia-lang"; then
@@ -525,6 +529,6 @@ fi
 assert_eq "$(visit_status "$(page_of "${DOMAIN_3}" /brand.css)")" "404" "auth.${DOMAIN_3}/brand.css: 404" || true
 assert_eq "$(language_audit "${DOMAIN_2}")" "null tr,tr null" "The audit: domain.language.updated for ${DOMAIN_2}, null → tr, then tr → null" || true
 assert_eq "$(language_audit "${DOMAIN_3}")" "null en,en null" "…for ${DOMAIN_3}, null → en, then en → null" || true
-assert_eq "$(authelia_pid)" "${AUTHELIA_PID}" "No language change restarted Authelia" || true
+assert_eq "$(authelia_pid)" "${AUTHELIA_PID}" "Clearing the languages restarted no Authelia" || true
 
 end_test

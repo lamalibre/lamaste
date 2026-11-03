@@ -3267,6 +3267,23 @@
       "steps": [
         {
           "id": "step-210",
+          "label": "Set AUTHELIA_PID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "authelia_pid"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_PID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-211",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3283,7 +3300,7 @@
           ]
         },
         {
-          "id": "step-211",
+          "id": "step-212",
           "label": "PUT /api/domains/${DOMAIN_2}/language {language: null}: cleared, no warning",
           "target": "local",
           "continueOnError": true,
@@ -3305,7 +3322,7 @@
           }
         },
         {
-          "id": "step-212",
+          "id": "step-213",
           "label": "auth.${DOMAIN_2}/: lang no longer rewritten",
           "target": "local",
           "op": {
@@ -3315,7 +3332,7 @@
           }
         },
         {
-          "id": "step-213",
+          "id": "step-214",
           "label": "auth.${DOMAIN_2}/ still rewrites lang",
           "target": "local",
           "op": {
@@ -3325,7 +3342,7 @@
           }
         },
         {
-          "id": "step-214",
+          "id": "step-215",
           "label": "…its de-AT locale is no longer the forced Turkish",
           "target": "local",
           "continueOnError": true,
@@ -3346,7 +3363,7 @@
           }
         },
         {
-          "id": "step-215",
+          "id": "step-216",
           "label": "…its menu shown again (brand.css without the rule)",
           "target": "local",
           "continueOnError": true,
@@ -3367,7 +3384,7 @@
           }
         },
         {
-          "id": "step-216",
+          "id": "step-217",
           "label": "Set INVITE_B",
           "target": "local",
           "op": {
@@ -3384,7 +3401,7 @@
           ]
         },
         {
-          "id": "step-217",
+          "id": "step-218",
           "label": "…its invitation page in English",
           "target": "local",
           "continueOnError": true,
@@ -3405,7 +3422,7 @@
           }
         },
         {
-          "id": "step-218",
+          "id": "step-219",
           "label": "…with its brand",
           "target": "local",
           "continueOnError": true,
@@ -3426,7 +3443,7 @@
           }
         },
         {
-          "id": "step-219",
+          "id": "step-220",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -3443,7 +3460,7 @@
           ]
         },
         {
-          "id": "step-220",
+          "id": "step-221",
           "label": "${DOMAIN_3} cleared",
           "target": "local",
           "continueOnError": true,
@@ -3465,7 +3482,7 @@
           }
         },
         {
-          "id": "step-221",
+          "id": "step-222",
           "label": "…its language-only rendering is gone",
           "target": "local",
           "op": {
@@ -3475,7 +3492,7 @@
           }
         },
         {
-          "id": "step-222",
+          "id": "step-223",
           "label": "…a rendering is left: $(json_get \"$(domain_entry \"${DOMAIN_3}\")\" '.rendering')",
           "target": "local",
           "op": {
@@ -3485,7 +3502,7 @@
           }
         },
         {
-          "id": "step-223",
+          "id": "step-224",
           "label": "auth.${DOMAIN_3}/brand.css: 404",
           "target": "local",
           "continueOnError": true,
@@ -3506,7 +3523,7 @@
           }
         },
         {
-          "id": "step-224",
+          "id": "step-225",
           "label": "The audit: domain.language.updated for ${DOMAIN_2}, null → tr, then tr → null",
           "target": "local",
           "continueOnError": true,
@@ -3527,7 +3544,7 @@
           }
         },
         {
-          "id": "step-225",
+          "id": "step-226",
           "label": "…for ${DOMAIN_3}, null → en, then en → null",
           "target": "local",
           "continueOnError": true,
@@ -3548,8 +3565,8 @@
           }
         },
         {
-          "id": "step-226",
-          "label": "No language change restarted Authelia",
+          "id": "step-227",
+          "label": "Clearing the languages restarted no Authelia",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -3564,16 +3581,16 @@
                 "kind": "var",
                 "name": "AUTHELIA_PID"
               },
-              "message": "No language change restarted Authelia"
+              "message": "Clearing the languages restarted no Authelia"
             }
           }
         }
       ],
-      "bash": "log_section \"B and C back to unset\"\n\nRESP=$(set_language \"${DOMAIN_2}\" null)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"' \"true null 0\" \"PUT /api/domains/${DOMAIN_2}/language {language: null}: cleared, no warning\" || true\nif wait_for 60 index_lacks \"${DOMAIN_2}\" \"data-authelia-lang\"; then\n  log_pass \"auth.${DOMAIN_2}/: lang no longer rewritten\"\nelse\n  log_fail \"auth.${DOMAIN_2}/ still rewrites lang\"\nfi\nassert_not_eq \"$(loading_of \"${DOMAIN_2}\" de-AT)\" \"Yükleniyor\" \"…its de-AT locale is no longer the forced Turkish\" || true\nassert_not_contains \"$(visit_body \"$(page_of \"${DOMAIN_2}\" /brand.css)\")\" \"#language-button\" \"…its menu shown again (brand.css without the rule)\" || true\nINVITE_B=$(visit_body \"$(page_of \"${DOMAIN_2}\" /invite)\")\nassert_contains \"${INVITE_B}\" '<html lang=\"en\">' \"…its invitation page in English\" || true\nassert_contains \"${INVITE_B}\" \"<title>${BRAND_B} — Accept Invitation</title>\" \"…with its brand\" || true\nRESP=$(set_language \"${DOMAIN_3}\" null)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language)\"' \"true null\" \"${DOMAIN_3} cleared\" || true\nif wait_for 90 rendering_gone \"${DOMAIN_3}\"; then\n  log_pass \"…its language-only rendering is gone\"\nelse\n  log_fail \"…a rendering is left: $(json_get \"$(domain_entry \"${DOMAIN_3}\")\" '.rendering')\"\nfi\nassert_eq \"$(visit_status \"$(page_of \"${DOMAIN_3}\" /brand.css)\")\" \"404\" \"auth.${DOMAIN_3}/brand.css: 404\" || true\nassert_eq \"$(language_audit \"${DOMAIN_2}\")\" \"null tr,tr null\" \"The audit: domain.language.updated for ${DOMAIN_2}, null → tr, then tr → null\" || true\nassert_eq \"$(language_audit \"${DOMAIN_3}\")\" \"null en,en null\" \"…for ${DOMAIN_3}, null → en, then en → null\" || true\nassert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"No language change restarted Authelia\" || true"
+      "bash": "log_section \"B and C back to unset\"\n\n# The plugin's registry credential (OIDC) restarted Authelia in section 4:\n# what counts here is that clearing the languages does not.\nAUTHELIA_PID=$(authelia_pid)\nRESP=$(set_language \"${DOMAIN_2}\" null)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"' \"true null 0\" \"PUT /api/domains/${DOMAIN_2}/language {language: null}: cleared, no warning\" || true\nif wait_for 60 index_lacks \"${DOMAIN_2}\" \"data-authelia-lang\"; then\n  log_pass \"auth.${DOMAIN_2}/: lang no longer rewritten\"\nelse\n  log_fail \"auth.${DOMAIN_2}/ still rewrites lang\"\nfi\nassert_not_eq \"$(loading_of \"${DOMAIN_2}\" de-AT)\" \"Yükleniyor\" \"…its de-AT locale is no longer the forced Turkish\" || true\nassert_not_contains \"$(visit_body \"$(page_of \"${DOMAIN_2}\" /brand.css)\")\" \"#language-button\" \"…its menu shown again (brand.css without the rule)\" || true\nINVITE_B=$(visit_body \"$(page_of \"${DOMAIN_2}\" /invite)\")\nassert_contains \"${INVITE_B}\" '<html lang=\"en\">' \"…its invitation page in English\" || true\nassert_contains \"${INVITE_B}\" \"<title>${BRAND_B} — Accept Invitation</title>\" \"…with its brand\" || true\nRESP=$(set_language \"${DOMAIN_3}\" null)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language)\"' \"true null\" \"${DOMAIN_3} cleared\" || true\nif wait_for 90 rendering_gone \"${DOMAIN_3}\"; then\n  log_pass \"…its language-only rendering is gone\"\nelse\n  log_fail \"…a rendering is left: $(json_get \"$(domain_entry \"${DOMAIN_3}\")\" '.rendering')\"\nfi\nassert_eq \"$(visit_status \"$(page_of \"${DOMAIN_3}\" /brand.css)\")\" \"404\" \"auth.${DOMAIN_3}/brand.css: 404\" || true\nassert_eq \"$(language_audit \"${DOMAIN_2}\")\" \"null tr,tr null\" \"The audit: domain.language.updated for ${DOMAIN_2}, null → tr, then tr → null\" || true\nassert_eq \"$(language_audit \"${DOMAIN_3}\")\" \"null en,en null\" \"…for ${DOMAIN_3}, null → en, then en → null\" || true\nassert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"Clearing the languages restarted no Authelia\" || true"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 56 — A domain's page language: Turkish where set, English elsewhere (Three-VM)\n# ============================================================================\n# Every page a person meets on a domain speaks the domain's language (design:\n# packages/core/docs/page-language-design.md, \"Proof (rodeo)\"). Three\n# domains of the multi-domain harness:\n#   B — branded, language `tr` (the plugin's domain: the inviting harness\n#       works on B);\n#   C — unbranded, language `en`;\n#   A — the primary, no language: exactly 4.9's behaviour.\n#\n# 1. The language set on B and C (PUT /api/domains/:name/language; again =\n#    unchanged); GET /api/domains lists it, each rendering current, and the\n#    running Authelia is the pinned release. Nothing restarts Authelia.\n# 2. Authelia's portal: B's index says lang=\"tr\" (the cookie's value moved\n#    to data-authelia-lang) with the noscript sentence in Turkish, C's\n#    lang=\"en\"; A's is untouched. /brand.css hides the language menu on B\n#    and C. Every locale path on B (en, de-AT, tr) answers the forced\n#    Turkish — a key Lamaste supplements (\"Loading\" → \"Yükleniyor\") and a\n#    correction (\"Powered by\" → \"Altyapı: <brand>\"); on C the forced\n#    English; on A Authelia's own files.\n# 3. Lamaste's pages: the invitation page and the inviter's page on B in\n#    Turkish (lang, title, the data block), on C and A in English, whatever\n#    Accept-Language says; one script and one CSP for all three.\n# 4. The plugin's site on B before it is served: Lamaste's \"not available\"\n#    page in Turkish (P8), with its CSP — then the plugin approved, hosted,\n#    served.\n# 5. The people: a coordinator (external of B) invites; the refusal codes\n#    the pages map (invitation_not_found, invitation_closed,\n#    invitation_used, not_found); the invitee, refused on B's\n#    authenticated tunnel, meets the access-request page in Turkish, with\n#    Turkish message templates (P6); a member of B and C meets it in\n#    Turkish on B, in English on C; a member of A alone meets the domain\n#    refusal in Turkish on B, in English on C (P7); Gatekeeper's \"not\n#    allowed\" page (P9) follows the domain the path names.\n# 6. B and C back to unset: B's portal follows the browser again, its pages\n#    English with its brand; C's language-only rendering is gone. The audit\n#    holds each change ({domain, from, to}); Authelia never restarted.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 56 — A domain's page language: Turkish where set, English elsewhere (Three-VM)\n# ============================================================================\n# Every page a person meets on a domain speaks the domain's language (design:\n# packages/core/docs/page-language-design.md, \"Proof (rodeo)\"). Three\n# domains of the multi-domain harness:\n#   B — branded, language `tr` (the plugin's domain: the inviting harness\n#       works on B);\n#   C — unbranded, language `en`;\n#   A — the primary, no language: exactly 4.9's behaviour.\n#\n# 1. The language set on B and C (PUT /api/domains/:name/language; again =\n#    unchanged); GET /api/domains lists it, each rendering current, and the\n#    running Authelia is the pinned release. Nothing restarts Authelia.\n# 2. Authelia's portal: B's index says lang=\"tr\" (the cookie's value moved\n#    to data-authelia-lang) with the noscript sentence in Turkish, C's\n#    lang=\"en\"; A's is untouched. /brand.css hides the language menu on B\n#    and C. Every locale path on B (en, de-AT, tr) answers the forced\n#    Turkish — a key Lamaste supplements (\"Loading\" → \"Yükleniyor\") and a\n#    correction (\"Powered by\" → \"Altyapı: <brand>\"); on C the forced\n#    English; on A Authelia's own files.\n# 3. Lamaste's pages: the invitation page and the inviter's page on B in\n#    Turkish (lang, title, the data block), on C and A in English, whatever\n#    Accept-Language says; one script and one CSP for all three.\n# 4. The plugin's site on B before it is served: Lamaste's \"not available\"\n#    page in Turkish (P8), with its CSP — then the plugin approved, hosted,\n#    served.\n# 5. The people: a coordinator (external of B) invites; the refusal codes\n#    the pages map (invitation_not_found, invitation_closed,\n#    invitation_used, not_found); the invitee, refused on B's\n#    authenticated tunnel, meets the access-request page in Turkish, with\n#    Turkish message templates (P6); a member of B and C meets it in\n#    Turkish on B, in English on C; a member of A alone meets the domain\n#    refusal in Turkish on B, in English on C (P7); Gatekeeper's \"not\n#    allowed\" page (P9) follows the domain the path names.\n# 6. B and C back to unset: B's portal follows the browser again, its pages\n#    English with its brand; C's language-only rendering is gone. The audit\n#    holds each change ({domain, from, to}); no language change restarts\n#    Authelia.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=56\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=invitation-harness.sh\nsource \"${SCRIPT_DIR}/invitation-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-plang\"\nSERVER_PACKAGE=\"@lamalibre/e2e-plang-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-plang-agent\"\nSUB_W=\"e2e56web\"\nSUB_TB=\"e2e56bauth\"\nSUB_RB=\"e2e56bres\"\nSUB_RC=\"e2e56cres\"\nSUB_TC=\"e2e56cauth\"\nPORT_TB=19961\nPORT_RB=19962\nPORT_RC=19963\nPORT_TC=19964\nPOLICY_ID=\"e2e-apphost-56\"\nREMOTE_DIR=\"/var/tmp/e2e-56-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nBRAND_B=\"E2E Marka 56\"\nACCENT_B=\"#7c3aed\"\nCOORD=\"e2e56-coord\"\nMEM=\"e2e56-member\"\nOUT=\"e2e56-outsider\"\nINVITEE=\"e2e56-invitee-$(date +%s)\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nINVITEE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCOORD_ID=\"\"\nMEM_ID=\"\"\nOUT_ID=\"\"\nINVITEE_ID=\"\"\nJAR_COORD=$(md_jar coord)\nJAR_MEM_B=$(md_jar member-b)\nJAR_MEM_C=$(md_jar member-c)\nJAR_OUT_B=$(md_jar outsider-b)\nJAR_OUT_C=$(md_jar outsider-c)\nJAR_INV=$(md_jar invitee)\nFQDN=\"\"\nTUNNEL_TB=\"\"\nTUNNEL_RB=\"\"\nTUNNEL_RC=\"\"\nTUNNEL_TC=\"\"\nCOORD_GRANT=\"\"\nTOKEN=\"\"\nINV_ID=\"\"\nTOKEN_2=\"\"\nINV_ID_2=\"\"\nAUTHELIA_PID=\"\"\nMEM_SECRET=\"\"\nOUT_SECRET=\"\"\n# The Turkish noscript sentence as the vhost writes it (ASCII character references)\nNOSCRIPT_TR='Bu uygulama i&#231;in taray&#305;c&#305;n&#305;zda JavaScript etkin olmal&#305;d&#305;r.'\n\n# auth_url <domain> <path> — a page of the domain's sign-in host\nauth_url() { echo \"https://auth.$1$2\"; }\n\n# language_of <domain> — the domain's language as GET /api/domains lists it ('null' when none)\nlanguage_of() { json_get \"$(domain_entry \"$1\")\" '.language'; }\n\n# set_language <domain> <tr|en|null> — PUT /api/domains/<domain>/language, the response\nset_language() {\n  local value=\"$2\"\n  if [ \"$value\" != \"null\" ]; then value=\"\\\"$2\\\"\"; fi\n  md_api PUT \"domains/$1/language\" \"{\\\"language\\\":${value}}\"\n}\n\n# rendering_current <domain> — the domain's rendering serves what its record says\nrendering_current() { [ \"$(json_get \"$(domain_entry \"$1\")\" '.rendering.current')\" = \"true\" ]; }\n\n# rendering_gone <domain> — the domain has no rendering (no brand, no language)\nrendering_gone() { [ \"$(json_get \"$(domain_entry \"$1\")\" '.rendering')\" = \"null\" ]; }\n\n# page_of <domain> <path> [curl args...] — the page on the domain's sign-in host, as visit prints it\npage_of() {\n  local d=\"$1\" p=\"$2\"\n  shift 2\n  visit - \"$@\" \"$(auth_url \"$d\" \"$p\")\"\n}\n\n# index_says <domain> <substring> — the sign-in page of <domain> carries <substring>\nindex_says() { [[ \"$(visit_body \"$(page_of \"$1\" /)\")\" == *\"$2\"* ]]; }\n\n# index_lacks <domain> <substring> — the sign-in page of <domain> does not carry <substring>\nindex_lacks() { ! index_says \"$@\"; }\n\n# locale_file <domain> <locale> <namespace> — the locale file as the portal gets it\nlocale_file() { visit_body \"$(page_of \"$1\" \"/locales/$2/$3.json\")\"; }\n\n# loading_of <domain> <locale> — the portal's \"Loading\" text there ('null' when the file lacks it)\nloading_of() { json_get \"$(locale_file \"$1\" \"$2\" portal)\" '.Loading'; }\n\n# data_block <html> — the page's messages (its JSON data block), compact\ndata_block() {\n  printf '%s' \"$1\" | node -e 'const h=require(\"fs\").readFileSync(0,\"utf8\");const m=h.match(/<script type=\"application\\/json\" id=\"lamaste-messages\">([\\s\\S]*?)<\\/script>/);process.stdout.write(m?m[1].trim():\"null\")' | jq -c . 2>/dev/null || echo \"null\"\n}\n\n# script_of <html> — the page's hashed <script> section alone\nscript_of() { printf '%s\\n' \"$1\" | sed -n '/<script>/,/<\\/script>/p'; }\n\n# csp_of <visit response> — its Content-Security-Policy header\ncsp_of() { visit_headers \"$1\" | awk 'tolower($1) == \"content-security-policy:\" {sub(/^[^:]*: */, \"\"); print}' | tail -n 1; }\n\n# gatekeeper_forbidden <fqdn> — Gatekeeper's answer to a shell check with no\n# original request (refused: P9), from the host VM: the status, then the body\ngatekeeper_forbidden() {\n  host_exec \"curl -s --max-time 15 -w '\\n%{http_code}' http://127.0.0.1:9294/authz/user-surface-shell/$1 || echo 000\" 2>/dev/null | tr -d '\\r'\n}\n\n# language_audit <domain> — the domain.language.updated entries of <domain>\n# since the spec began, oldest first, as \"<from> <to>\" lines joined by \",\"\nlanguage_audit() {\n  host_api_get \"audit?action=domain.language.updated&limit=200\" 2>/dev/null |\n    jq -r --arg d \"$1\" --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base and .details.domain == $d)] | sort_by(.id) | map(\"\\(.details.from) \\(.details.to)\") | join(\",\")' 2>/dev/null || echo \"\"\n}\n\nbegin_test \"56 — A domain's page language: Turkish where set, English elsewhere (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id d\n  for d in \"${DOMAIN}\" \"${DOMAIN_2}\" \"${DOMAIN_3}\"; do\n    [ -n \"$d\" ] && md_api PUT \"domains/${d}/language\" '{\"language\":null}' > /dev/null 2>&1 || true\n  done\n  if [ -n \"${DOMAIN_2}\" ]; then host_api_delete \"domains/${DOMAIN_2}/branding\" > /dev/null 2>&1 || true; fi\n  if [ -n \"${COORD_GRANT}\" ]; then host_api_delete \"gatekeeper/grants/${COORD_GRANT}\" > /dev/null 2>&1 || true; fi\n  if [ -n \"${SITE_ID}\" ]; then inv_drop_site_grants \"${SITE_ID}\"; fi\n  for id in ${TUNNEL_TB} ${TUNNEL_RB} ${TUNNEL_RC} ${TUNNEL_TC}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  host_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\n  drop_plugin_grants \"${PLUGIN}\"\n  inv_cleanup_users \"${COORD}\" \"${MEM}\" \"${OUT}\" \"${INVITEE}\"\n  inv_cleanup_ids ${COORD_ID} ${MEM_ID} ${OUT_ID} ${INVITEE_ID}\n  nudge_sync\n  app_plugin_cleanup\n  md_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
