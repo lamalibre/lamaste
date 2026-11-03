@@ -1,34 +1,34 @@
 # Lamaste E2E: 18 — Agent Plugin Hosting
 
-> Started at `2026-11-02 15:51:41 UTC`
+> Started at `2026-11-03 09:31:26 UTC`
 
 
 ## Pre-flight: check onboarding is complete
 
-✅ `15:51:41` Onboarding is complete  
+✅ `09:31:26` Onboarding is complete  
 
 ## Create agent cert for plugin reporting
 
-✅ `15:51:41` Agent cert created for plugin reporting  
-✅ `15:51:42` Agent PEM cert extracted  
+✅ `09:31:27` Agent cert created for plugin reporting  
+✅ `09:31:27` Agent PEM cert extracted  
 
 ## Agent reports plugin capabilities
 
-✅ `15:51:42` Plugin report accepted  
-✅ `15:51:42` Two capabilities merged  
+✅ `09:31:27` Plugin report accepted  
+✅ `09:31:27` Two capabilities merged  
 
 ## Capability prefix scoping
 
-✅ `15:51:42` Only plugin:myplugin:action merged (plugin:other:action rejected)  
+✅ `09:31:27` Only plugin:myplugin:action merged (plugin:other:action rejected)  
 
 ## Invalid capability format rejected
 
-✅ `15:51:42` Capability without colon rejected with 400  
-✅ `15:51:42` Capability claiming a core namespace rejected with 400  
+✅ `09:31:28` Capability without colon rejected with 400  
+✅ `09:31:28` Capability claiming a core namespace rejected with 400  
 
 ## Admin can also report
 
-✅ `15:51:42` Admin can report plugin capabilities  
+✅ `09:31:28` Admin can report plugin capabilities  
 
 ---
 

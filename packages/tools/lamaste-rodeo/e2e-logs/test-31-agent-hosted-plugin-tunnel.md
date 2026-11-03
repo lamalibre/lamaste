@@ -1,77 +1,77 @@
 # Lamaste E2E: 31 — Agent-hosted plugin through the internal tunnel (Three-VM)
 
-> Started at `2026-11-02 15:56:26 UTC`
+> Started at `2026-11-03 09:36:13 UTC`
 
 
 ## Pre-flight
 
-✅ `15:56:26` Onboarding is complete  
-✅ `15:56:27` Agent test-agent is enrolled on the host  
-✅ `15:56:27` Sync timer lamalibre-lamaste-sync-e2e-agent.timer is active on the agent VM  
-ℹ️ `15:56:27` Agent VM's @lamalibre/lamaste: /usr/lib/node_modules/@lamalibre/lamaste-agent/node_modules/@lamalibre/lamaste  
+✅ `09:36:13` Onboarding is complete  
+✅ `09:36:14` Agent test-agent is enrolled on the host  
+✅ `09:36:14` Sync timer lamalibre-lamaste-sync-e2e-agent.timer is active on the agent VM  
+ℹ️ `09:36:14` Agent VM's @lamalibre/lamaste: /usr/lib/node_modules/@lamalibre/lamaste-agent/node_modules/@lamalibre/lamaste  
 
 ## Install, enable, host on test-agent
 
-✅ `15:56:29` Stand-in registry is up on the host VM  
-✅ `15:56:31` Fixture installed as agent-hosted  
-✅ `15:56:31` Plugin enabled  
-✅ `15:56:32` Hosting on test-agent started as an operation  
-✅ `15:56:32` Port 21000 assigned from the internal range  
+✅ `09:36:19` Stand-in registry is up on the host VM  
+✅ `09:36:23` Fixture installed as agent-hosted  
+✅ `09:36:23` Plugin enabled  
+✅ `09:36:23` Hosting on test-agent started as an operation  
+✅ `09:36:23` Port 21000 assigned from the internal range  
 
 ## The agent's sync timer fetches and acknowledges the plugin config
 
-✅ `15:56:39` Plugin config file appeared on the agent VM within 90 seconds  
-✅ `15:56:39` The file names the plugin  
-✅ `15:56:39` The file carries the assigned port  
-✅ `15:56:39` The file is 0600  
-✅ `15:56:39` The agent acknowledged the secret  
-✅ `15:56:39` The host records the acknowledgement  
-✅ `15:56:40` sync.log records the fetch  
+✅ `09:36:59` Plugin config file appeared on the agent VM within 90 seconds  
+✅ `09:36:59` The file names the plugin  
+✅ `09:36:59` The file carries the assigned port  
+✅ `09:37:00` The file is 0600  
+✅ `09:37:00` The agent acknowledged the secret  
+✅ `09:37:00` The host records the acknowledgement  
+✅ `09:37:00` sync.log records the fetch  
 
 ## Forwarding through the internal tunnel
 
-✅ `15:56:40` Agent half listens on the agent VM's 127.0.0.1:21000  
-✅ `15:56:40` The host's loopback port 21000 reaches the agent half through chisel  
-✅ `15:56:43` The hosting operation succeeded once the agent half answered through the tunnel  
-✅ `15:56:43` The hosting is active  
-✅ `15:56:43` GET /api/e2e-app-plugin/ping reaches the agent half across VMs  
-✅ `15:56:43` The caller assertion names the admin  
-✅ `15:56:43` No cookie crosses the tunnel  
-✅ `15:56:44` The admin bundle comes from the agent half  
-✅ `15:56:44` The user surface is out of the forwarder's reach: 401 without a relay assertion  
-✅ `15:56:57` Health is up  
+✅ `09:37:00` Agent half listens on the agent VM's 127.0.0.1:21000  
+✅ `09:37:00` The host's loopback port 21000 reaches the agent half through chisel  
+✅ `09:37:04` The hosting operation succeeded once the agent half answered through the tunnel  
+✅ `09:37:04` The hosting is active  
+✅ `09:37:04` GET /api/e2e-app-plugin/ping reaches the agent half across VMs  
+✅ `09:37:04` The caller assertion names the admin  
+✅ `09:37:04` No cookie crosses the tunnel  
+✅ `09:37:04` The admin bundle comes from the agent half  
+✅ `09:37:04` The user surface is out of the forwarder's reach: 401 without a relay assertion  
+✅ `09:37:21` Health is up  
 
 ## Secret rotation across the tunnel
 
-✅ `15:56:57` Rotation pending  
-✅ `15:56:57` Calls keep working while the rotation is pending  
-✅ `15:57:11` The sync timer fetched and acknowledged the new secret within 90 seconds  
-✅ `15:57:11` The agent's file carries the new secret  
-✅ `15:57:11` sync.log records the rotation's fetch as well  
-✅ `15:57:11` Calls work on the new secret  
+✅ `09:37:21` Rotation pending  
+✅ `09:37:21` Calls keep working while the rotation is pending  
+✅ `09:37:34` The sync timer fetched and acknowledged the new secret within 90 seconds  
+✅ `09:37:34` The agent's file carries the new secret  
+✅ `09:37:34` sync.log records the rotation's fetch as well  
+✅ `09:37:35` Calls work on the new secret  
 
 ## Health: application down
 
-✅ `15:57:13` A stopped agent half behind a live tunnel is a 502  
-✅ `15:57:40` Health reports down within 60 seconds  
-✅ `15:57:40` The tunnel is up, the application is down: reason app  
-✅ `15:58:00` Health is up again with the agent half back  
+✅ `09:37:36` A stopped agent half behind a live tunnel is a 502  
+✅ `09:37:59` Health reports down within 60 seconds  
+✅ `09:37:59` The tunnel is up, the application is down: reason app  
+✅ `09:38:19` Health is up again with the agent half back  
 
 ## Health: tunnel down
 
-✅ `15:58:00` The agent's tunnel client is stopped  
-✅ `15:58:30` Health reports down within 75 seconds  
-✅ `15:58:30` Nothing listens on the relay port: reason tunnel  
-✅ `15:58:30` The forwarder answers 502 with reason tunnel  
-✅ `15:58:47` Health is up again once the tunnel client runs  
+✅ `09:38:20` The agent's tunnel client is stopped  
+✅ `09:38:49` Health reports down within 75 seconds  
+✅ `09:38:49` Nothing listens on the relay port: reason tunnel  
+✅ `09:38:50` The forwarder answers 502 with reason tunnel  
+✅ `09:39:10` Health is up again once the tunnel client runs  
 
 ## Clear the hosting
 
-✅ `15:58:47` Hosting removed  
-✅ `15:58:48` The internal tunnel is gone  
-✅ `15:59:17` The sync timer removed the agent's plugin config file  
-✅ `15:59:17` sync.log records the removal  
-✅ `15:59:17` The relay port no longer reaches the agent half  
+✅ `09:39:10` Hosting removed  
+✅ `09:39:11` The internal tunnel is gone  
+✅ `09:39:34` The sync timer removed the agent's plugin config file  
+✅ `09:39:34` sync.log records the removal  
+✅ `09:39:34` The relay port no longer reaches the agent half  
 
 ---
 
@@ -84,4 +84,4 @@
 | **Skipped** | `0` |
 | **Total** | `45` |
 
-ℹ️ `15:59:17` Cleaning up test resources...  
+ℹ️ `09:39:34` Cleaning up test resources...  
