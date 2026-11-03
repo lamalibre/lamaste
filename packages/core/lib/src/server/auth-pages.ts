@@ -135,7 +135,7 @@ export const AUTH_PAGE_STYLE = `
     }
     .detail-row:last-child { border-bottom: none; }
     .detail-label { color: ${v('muted')}; }
-    .detail-value { color: ${v('heading')}; font-weight: 500; text-align: right; word-break: break-all; }
+    .detail-value { color: ${v('heading')}; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
     .details-box {
       background: ${v('input')}; border: 1px solid ${v('border')}; border-radius: 0.5rem;
       padding: 0.75rem 1rem; margin-bottom: 1.5rem;

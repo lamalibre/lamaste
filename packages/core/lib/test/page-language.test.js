@@ -367,14 +367,33 @@ function shellOf(html) {
     .replace(/<script>[\s\S]*?<\/script>/, '<script>…</script>');
 }
 
-test('an unset domain’s pages are 4.9.0’s but for the data block and the script (regression pin)', async () => {
+/**
+ * The style's changes since 4.9.0, each on purpose: a detail row's value
+ * breaks at a space when it can — `break-all` split "17:30" in two when a
+ * longer label (Turkish "Davet iptal edilsin mi?") narrowed the column.
+ */
+const STYLE_CHANGES_SINCE_4_9 = [
+  ['text-align: right; word-break: break-all; }', 'text-align: right; overflow-wrap: anywhere; }'],
+];
+
+test('an unset domain’s pages are 4.9.0’s but for the data block, the script and the listed style changes (regression pin)', async () => {
   for (const [render, name] of [
     [renderInvitePage, 'invite-page.html'],
     [renderInvitationsPage, 'invitations-page.html'],
   ]) {
-    const before = await readFile(fixture(`lamaste-4.9.0/${name}`), 'utf-8');
+    let before = await readFile(fixture(`lamaste-4.9.0/${name}`), 'utf-8');
+    for (const [from, to] of STYLE_CHANGES_SINCE_4_9) {
+      assert.ok(before.includes(from), `${name}: 4.9.0 had ${from}`);
+      before = before.replace(from, to);
+    }
     assert.equal(shellOf(render(null)), shellOf(before), name);
   }
+});
+
+test('a detail row’s value wraps at a space, never inside a word it could keep whole', () => {
+  const rule = /\.detail-value \{([^}]*)\}/.exec(AUTH_PAGE_STYLE)?.[1] ?? '';
+  assert.ok(rule.includes('overflow-wrap: anywhere'), rule);
+  assert.ok(!rule.includes('word-break'), rule);
 });
 
 // --- the "not available" page ----------------------------------------------
