@@ -64,9 +64,7 @@ const fakeVhost = {
 /** The overrides every test runs with. */
 const overrides = () => ({
   webRoot,
-  get autheliaVersion() {
-    return autheliaVersion;
-  },
+  autheliaVersion: async () => autheliaVersion,
   fetchLocales: fakeLocales,
   ensureBase: async () => base,
   vhost: fakeVhost,
@@ -290,10 +288,19 @@ test('the fields: created at revision 1, rendered at once, read without blobs, r
   // The auth vhost rewritten once for the theme: the primary's, linked as it
   // is, no logo yet.
   assert.deepEqual(vhostWrites, [
-    { domain: PRIMARY, primary: true, enabled: true, branding: { theme: 'dark', logo: false } },
+    {
+      domain: PRIMARY,
+      primary: true,
+      enabled: true,
+      branding: { theme: 'dark', logo: false },
+      language: null,
+    },
   ]);
   assert.match(installedVhosts.get(PRIMARY), /data-theme="dark"/);
-  assert.deepEqual(await lib.authVhostBranding(PRIMARY), { theme: 'dark', logo: false });
+  assert.deepEqual(await lib.authVhostInputs(PRIMARY), {
+    branding: { theme: 'dark', logo: false },
+    language: null,
+  });
 
   // Rendered under the web root: the locales with the name spliced in, the stylesheet, brand.json.
   const tr = JSON.parse(await readRendered(PRIMARY, 'locales/tr-TR/portal.json'));
@@ -492,7 +499,10 @@ test('the logo and the favicon: checked, stored and audited by digest, served fr
 
 test('the auth vhost: untouched by a change it does not say; a refused rewrite warned, audited once per streak, retried by the reconcile until it converges; its link state kept', async () => {
   const { listNotifications } = await import('../src/lib/notifications.js');
-  assert.equal(await lib.authVhostBranding('nobody.example'), null);
+  assert.deepEqual(await lib.authVhostInputs('nobody.example'), {
+    branding: null,
+    language: null,
+  });
   const writesBefore = vhostWrites.length;
   const revision = (await call('GET', `/api/domains/${PRIMARY}/branding`)).json().branding.revision;
 
@@ -565,6 +575,7 @@ test('the auth vhost: untouched by a change it does not say; a refused rewrite w
     primary: true,
     enabled: true,
     branding: { theme: 'oled', logo: true },
+    language: null,
   });
   assert.equal(
     (await audits('domain.branding.vhost.recovered')).filter((e) => e.details.domain === PRIMARY)
@@ -730,8 +741,10 @@ test('the reconcile: a stale revision or Authelia release re-rendered, a directo
   });
   assert.equal(JSON.parse(await readFile(renderedFile, 'utf-8')).revision, current.revision);
   assert.equal(await exists(path.join(webRoot, 'gone.example')), false);
-  // A pin bump: every brand rendered again from the new release's locales.
+  // Another running Authelia (once the panel reads its version again):
+  // every brand rendered again from that release's locales.
   autheliaVersion = '4.39.29';
+  lib.setAuthBrandingForTests(overrides()); // forgets the version read
   const before = localeFetches;
   assert.deepEqual(await lib.reconcileAuthBranding(), {
     rendered: [OTHER, PRIMARY],
@@ -739,7 +752,7 @@ test('the reconcile: a stale revision or Authelia release re-rendered, a directo
     failed: [],
   });
   assert.equal(JSON.parse(await readFile(renderedFile, 'utf-8')).autheliaVersion, '4.39.29');
-  assert.equal(localeFetches, before);
+  assert.equal(localeFetches, before + 1);
   assert.deepEqual(await lib.reconcileAuthBranding(), { rendered: [], removed: [], failed: [] });
 });
 
@@ -770,6 +783,7 @@ test('removing the brand: the record and the directory go, audited; a removed do
     primary: true,
     enabled: true,
     branding: null,
+    language: null,
   });
   assert.equal(
     installedVhosts.get(PRIMARY),

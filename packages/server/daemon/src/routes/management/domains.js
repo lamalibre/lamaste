@@ -2,7 +2,9 @@
  * The relay's base domains and their members (the multi-domain relay,
  * lib/domains.js). Admin only (mTLS).
  *
- *   GET    /api/domains                          domains, member counts (members, external), what uses each
+ *   GET    /api/domains                          domains (each with its `language` and `rendering`),
+ *                                                member counts (members, external), what uses each;
+ *                                                the running and pinned Authelia (`authelia`)
  *   POST   /api/domains                          add one (`pending`)
  *   POST   /api/domains/:name/verify-dns         does auth.<domain> resolve here?
  *   POST   /api/domains/:name/activate           issue auth.<domain>, serve its sign-in
@@ -13,6 +15,12 @@
  *                                                unless named; another kind changes it
  *   DELETE /api/domains/:name/members/:user      end a membership
  *   PUT    /api/plugins/:name/domain             move a plugin to another domain
+ *
+ * A domain's page language (lib/domains.js `setDomainLanguage`,
+ * packages/core/docs/page-language-design.md):
+ *
+ *   PUT    /api/domains/:name/language           `{ language: 'en' | 'tr' | null }` — 400
+ *                                                `invalid_language`, 404 `domain_not_found`
  *
  * A domain's brand on its auth pages (lib/auth-branding.js):
  *
@@ -31,7 +39,7 @@
  */
 
 import { z } from 'zod';
-import { DomainNameSchema, MEMBERSHIP_KINDS } from '@lamalibre/lamaste';
+import { DomainNameSchema, MEMBERSHIP_KINDS, PAGE_LANGUAGES } from '@lamalibre/lamaste';
 import { actorFromRequest } from '../../lib/actor.js';
 import { sendFailure } from '../../lib/app-error.js';
 import {
@@ -44,12 +52,15 @@ import {
   newUsersNeedDomains,
   removeDomain,
   removeDomainMember,
+  setDomainLanguage,
   verifyDomainDns,
 } from '../../lib/domains.js';
 import { setPluginDomain } from '../../lib/plugin-domain.js';
 import { AUTH_BRANDING_FAVICON_MAX_BYTES, AUTH_BRANDING_LOGO_MAX_BYTES } from '@lamalibre/lamaste';
 import {
+  autheliaVersions,
   base64LengthFor,
+  domainRenderings,
   getDomainBranding,
   getDomainBrandingPreview,
   removeDomainBranding,
@@ -65,6 +76,8 @@ const AddDomainSchema = z.object({ name: DomainNameSchema }).strict();
 const MemberBodySchema = z.object({ kind: z.enum(MEMBERSHIP_KINDS).optional() }).strict();
 const PluginParamSchema = z.object({ name: z.string().min(1).max(200) });
 const PluginDomainSchema = z.object({ domain: DomainNameSchema }).strict();
+/** A language change: one of core's page languages, or null to clear it. */
+const LanguageBodySchema = z.object({ language: z.enum(PAGE_LANGUAGES).nullable() }).strict();
 /** A brand change: `ifRevision` beside the fields (which lib/auth-branding.js validates by hand, never echoing a value). */
 const IfRevisionSchema = z.number().int().positive().optional();
 const AssetParamsSchema = z.object({ name: DomainNameSchema, kind: z.enum(['logo', 'favicon']) });
@@ -97,9 +110,38 @@ export default async function domainRoutes(fastify) {
   const admin = { preHandler: fastify.requireRole(['admin']) };
 
   fastify.get('/domains', admin, async () => {
-    const domains = await domainsOverview();
-    // Whether users and invitations must name their domains (`domains_required`).
-    return { domains, newUsersNeedDomains: newUsersNeedDomains(domains) };
+    const [domains, renderings, authelia] = await Promise.all([
+      domainsOverview(),
+      domainRenderings(),
+      autheliaVersions(),
+    ]);
+    return {
+      // Each with its sign-in pages' rendering (a brand or a language): what
+      // is served, whether it is current, whether a retry is pending.
+      domains: domains.map((d) => ({ ...d, rendering: renderings.get(d.name) ?? null })),
+      // Whether users and invitations must name their domains (`domains_required`).
+      newUsersNeedDomains: newUsersNeedDomains(domains),
+      authelia,
+    };
+  });
+
+  fastify.put('/domains/:name/language', admin, async (request, reply) => {
+    const { name } = NameParamSchema.parse(request.params);
+    const body = LanguageBodySchema.safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({
+        error: `The language is one of ${PAGE_LANGUAGES.join(', ')}, or null`,
+        code: 'invalid_language',
+      });
+    }
+    try {
+      return await setDomainLanguage(name, body.data.language, {
+        actor: actorFromRequest(request),
+        logger: request.log,
+      });
+    } catch (err) {
+      return sendFailure(request, reply, err, 'The language change failed');
+    }
   });
 
   fastify.post('/domains', admin, async (request, reply) => {

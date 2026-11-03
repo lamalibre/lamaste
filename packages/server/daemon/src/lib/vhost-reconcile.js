@@ -65,7 +65,7 @@ import {
   renderTunnelVhost,
   vhostCertDir,
 } from './nginx.js';
-import { authVhostBranding } from './auth-branding.js';
+import { authVhostInputs } from './auth-branding.js';
 import { notifyAdminsBestEffort } from './notifications.js';
 import { readSites, readTunnels } from './state.js';
 
@@ -318,13 +318,14 @@ const defaultSiteDeps = {
   installVhost,
   isSiteEnabled,
   notify: notifyAdminsBestEffort,
-  authVhostBranding,
+  authVhostInputs,
 };
 
 /**
  * Reconcile the vhosts that proxy a browser to the panel or ask Authelia
  * directly: the panel's own (`panel.<primary>`), every active domain's auth
- * portal (`auth.<domain>`, with the domain's brand as its record says) and
+ * portal (`auth.<domain>`, with the domain's brand and language as its
+ * records say) and
  * every static site but a plugin's web surface. Call it before the panel
  * listens — then nothing can change a site or a brand meanwhile.
  *
@@ -353,12 +354,13 @@ export async function reconcileSiteVhosts(log, domains, deps = defaultSiteDeps) 
   for (const domain of domains) {
     const name = authVhostName(domain.name);
     const label = `auth.${domain.name}`;
-    // The domain's brand as its record says (lib/auth-branding.js): the
-    // theme and the logo switch are in the vhost's text, so an upgrade
-    // rolls the branded vhost out here and a restart repairs a drifted one.
-    let branding;
+    // The domain's brand and language as its records say
+    // (lib/auth-branding.js): the theme, the logo switch and the language
+    // are in the vhost's text, so an upgrade rolls the vhost out here and a
+    // restart repairs a drifted one.
+    let inputs;
     try {
-      branding = await deps.authVhostBranding(domain.name);
+      inputs = await deps.authVhostInputs(domain.name);
     } catch (err) {
       result.failed.push({ vhost: label, error: err instanceof Error ? err.message : String(err) });
       continue;
@@ -368,7 +370,7 @@ export async function reconcileSiteVhosts(log, domains, deps = defaultSiteDeps) 
         name,
         label,
         render: (certDir) =>
-          renderAuthVhost(domain.name, certDir, { primary: domain.primary, branding }),
+          renderAuthVhost(domain.name, certDir, { primary: domain.primary, ...inputs }),
         enabled: () => deps.isSiteEnabled(name),
         // A portal's authentication is the generator's, never a setting a
         // drifted file could disagree with: its inviter API (4.9) asks
