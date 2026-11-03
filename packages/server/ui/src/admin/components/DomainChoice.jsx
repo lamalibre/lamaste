@@ -27,6 +27,8 @@ export function useDomains() {
     ...query,
     domains: query.data?.domains ?? [],
     newUsersNeedDomains: query.data?.newUsersNeedDomains === true,
+    /** The running and pinned Authelia, or null before the first answer. */
+    authelia: query.data?.authelia ?? null,
   };
 }
 
