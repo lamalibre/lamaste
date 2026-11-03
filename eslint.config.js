@@ -18,6 +18,8 @@ export default [
       '**/vendor/',
       '.claude/worktrees/',
       '**/target/',
+      // Verbatim upstream sources (Authelia's portal), test data only
+      'packages/core/lib/test/fixtures/authelia-*/',
     ],
   },
 

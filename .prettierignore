@@ -13,5 +13,10 @@ website/.vitepress/dist/
 website/.vitepress/cache/
 packages/clients/desktop/src-tauri/gen/schemas/
 
-# Verbatim upstream fixtures (Authelia theme CSS), never reformatted
+# Verbatim upstream fixtures (Authelia's theme CSS, locale files and portal
+# sources), never reformatted
 packages/core/lib/test/fixtures/*.css
+packages/core/lib/test/fixtures/authelia-*/internal/
+packages/core/lib/test/fixtures/authelia-*/web/
+# A previous release's rendered pages, byte for byte (regression pins)
+packages/core/lib/test/fixtures/lamaste-*/
