@@ -91,6 +91,8 @@ export const desktopAdminClient = {
     invokeRefusable('admin_add_domain_member', { name, user, kind: options?.kind ?? null }),
   removeDomainMember: (name, user) => invokeRefusable('admin_remove_domain_member', { name, user }),
   setPluginDomain: (name, domain) => invokeRefusable('admin_set_plugin_domain', { name, domain }),
+  setDomainLanguage: (name, language) =>
+    invokeRefusable('admin_set_domain_language', { name, language }),
 
   // --- A domain's brand on its auth pages ---
   getDomainBranding: (name) => invokeRefusable('admin_get_domain_branding', { name }),

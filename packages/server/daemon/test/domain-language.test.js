@@ -373,6 +373,18 @@ test('a brand on a Turkish domain: brand-spliced forced files; removing the bran
     branding: { theme: 'dark', logo: false },
     language: 'tr',
   });
+  // The panel's preview speaks the domain's language, its stylesheet the rendered one.
+  const preview = await call('GET', `/api/domains/${PRIMARY}/branding/preview`);
+  assert.equal(preview.statusCode, 200, preview.body);
+  assert.deepEqual(
+    (({ locale, css, title, footer }) => ({ locale, css, title, footer }))(preview.json()),
+    {
+      locale: 'tr',
+      css: await readRendered(PRIMARY, 'brand.css'),
+      title: 'Giriş - Alpha Works',
+      footer: 'Altyapı: Alpha Works',
+    },
+  );
 
   const removed = await call('DELETE', `/api/domains/${PRIMARY}/branding`);
   assert.equal(removed.statusCode, 200);

@@ -8,6 +8,7 @@
 import type { BrandFieldError, BrandFields, RenderedBrand } from './auth-branding.js';
 import type { PluginHosting, PluginMode } from './constants.js';
 import type { MembershipKind } from './domains.js';
+import type { PageLanguage } from './page-messages.js';
 import type { HostEligibility } from './host-eligibility.js';
 import type { AudienceChange, NormalizedIdentityBlock } from './identity.js';
 import type {
@@ -211,6 +212,32 @@ export interface DomainView {
   /** How many users are external members (disabled ones too). */
   readonly externalMembers: number;
   readonly usedBy: DomainUsage;
+  /**
+   * The language every page on the domain speaks — Lamaste's pages,
+   * Authelia's and Gatekeeper's; null: not set (English pages, the sign-in
+   * following the browser, as before 4.10).
+   */
+  readonly language: PageLanguage | null;
+  /** Its sign-in pages' rendering (a brand or a language), or null when it has neither. */
+  readonly rendering: DomainRenderingView | null;
+}
+
+/** A domain's rendering as `GET /api/domains` reports it. */
+export interface DomainRenderingView {
+  /** What is served now, or null when nothing is rendered yet. */
+  readonly rendered: RenderedBrand | null;
+  /** Whether what is served is made from the current brand, language, Authelia and pages. */
+  readonly current: boolean;
+  /** Whether the last attempt failed (the panel retries every minute). */
+  readonly renderFailing: boolean;
+  /** Whether the domain's auth vhost waits for a retry. */
+  readonly vhostPending: boolean;
+}
+
+/** The running Authelia and the release this Lamaste pins; `running` null when it cannot be read. */
+export interface AutheliaVersionsView {
+  readonly running: string | null;
+  readonly pinned: string;
 }
 
 /** What keeps a domain from being removed. */
@@ -311,9 +338,13 @@ export interface DomainBrandingChange {
 /** A refused brand: `errors` by field name, never a value (400 `invalid_branding`). */
 export type DomainBrandingFieldError = BrandFieldError;
 
-/** `GET /api/domains/:name/branding/preview`: the stylesheet and the English title and footer the sign-in shows. */
+/**
+ * `GET /api/domains/:name/branding/preview`: the stylesheet and the title
+ * and footer the sign-in shows — in the domain's language when it has one,
+ * else in English.
+ */
 export interface DomainBrandingPreview {
-  readonly locale: 'en';
+  readonly locale: PageLanguage;
   readonly css: string;
   readonly title: string;
   readonly footer: string;
@@ -666,7 +697,11 @@ export interface AdminClient {
 
   // Domains — the relay's base domains and their members (multi-domain relay)
   /** `newUsersNeedDomains`: users and invitations must name their domains (`domains_required`). */
-  getDomains(): Promise<{ domains: DomainView[]; newUsersNeedDomains: boolean }>;
+  getDomains(): Promise<{
+    domains: DomainView[];
+    newUsersNeedDomains: boolean;
+    authelia: AutheliaVersionsView;
+  }>;
   /** Add a domain, `pending` until activated. Refused when it overlaps one (`code` `domain_overlap`). */
   addDomain(name: string): Promise<{ domain: DomainView }>;
   verifyDomainDns(name: string): Promise<DomainDnsCheck>;
@@ -692,6 +727,23 @@ export interface AdminClient {
     name: string,
     domain: string,
   ): Promise<{ name: string; domain: string; changed: boolean }>;
+  /**
+   * The language of every page on the domain, or null to clear it
+   * (page-language-design.md). 400 `invalid_language`, 404
+   * `domain_not_found`; `warnings` when Gatekeeper's projection, the
+   * rendering or the auth vhost could not follow (the panel retries).
+   */
+  setDomainLanguage(
+    name: string,
+    language: PageLanguage | null,
+  ): Promise<{
+    domain: Pick<
+      DomainView,
+      'name' | 'primary' | 'status' | 'createdAt' | 'activatedAt' | 'language'
+    >;
+    changed: boolean;
+    warnings?: AdminWarning[];
+  }>;
 
   // A domain's brand on its auth pages (per-domain branding)
   /** The brand without its blobs, or null when the domain has none (404 `unknown_domain`). */
@@ -718,7 +770,7 @@ export interface AdminClient {
   removeDomainBrandingFavicon(
     name: string,
   ): Promise<{ removed: boolean; branding: DomainBrandingView; warnings?: AdminWarning[] }>;
-  /** The rendered stylesheet and the English title and footer (404 `no_branding`, 503 `authelia_unavailable`). */
+  /** The rendered stylesheet, title and footer, in the domain's language (404 `no_branding`, 503 `authelia_unavailable`). */
   getDomainBrandingPreview(name: string): Promise<DomainBrandingPreview>;
 
   // Invitations — the administrator's and delegated ones (delegated-invitations-design.md)
