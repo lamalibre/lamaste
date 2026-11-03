@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   Globe2,
+  Languages,
   Palette,
   Plus,
   Power,
@@ -21,6 +22,7 @@ import { ExternalBadge, useDomains } from '../components/DomainChoice.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 import { ConfirmDialog } from '../components/Dialog.jsx';
 import { DomainBranding } from '../components/DomainBranding.jsx';
+import { DomainLanguage } from '../components/DomainLanguage.jsx';
 import {
   EXTERNAL_MEMBER_HINT,
   domainStatusText,
@@ -28,6 +30,7 @@ import {
   explainDomainRefusal,
   memberCandidates,
 } from '../lib/domains.js';
+import { autheliaVersionNote, languageName } from '../lib/language.js';
 
 const BUTTON =
   'inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:border-cyan-600 hover:text-white disabled:opacity-50';
@@ -217,6 +220,7 @@ function DomainCard({ domain }) {
   const addToast = useToast();
   const [open, setOpen] = useState(false);
   const [brandOpen, setBrandOpen] = useState(false);
+  const [languageOpen, setLanguageOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const onError = (err) => addToast(explainDomainRefusal(err), 'error');
   const activate = useMutation({
@@ -247,6 +251,7 @@ function DomainCard({ domain }) {
           <p className={`text-xs ${active ? 'text-green-400' : 'text-yellow-400'}`}>
             {domainStatusText(domain)} · {domain.members} member{domain.members === 1 ? '' : 's'}
             {domain.externalMembers > 0 && ` · ${domain.externalMembers} external`}
+            {domain.language && ` · pages in ${languageName(domain.language)}`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -283,6 +288,15 @@ function DomainCard({ domain }) {
             <Palette size={14} /> Branding{' '}
             {brandOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </button>
+          <button
+            type="button"
+            className={BUTTON}
+            onClick={() => setLanguageOpen(!languageOpen)}
+            title="The language of the domain’s sign-in, invitation and refusal pages"
+          >
+            <Languages size={14} /> Language{' '}
+            {languageOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
         </div>
       </div>
       {usage.length > 0 && (
@@ -305,6 +319,11 @@ function DomainCard({ domain }) {
       {brandOpen && (
         <div className="mt-3 border-t border-zinc-800 pt-3">
           <DomainBranding domain={domain} />
+        </div>
+      )}
+      {languageOpen && (
+        <div className="mt-3 border-t border-zinc-800 pt-3">
+          <DomainLanguage key={domain.language ?? ''} domain={domain} />
         </div>
       )}
       {confirmRemove && (
@@ -367,7 +386,8 @@ function AddDomain() {
  * member list; a user reaches a domain's protected hosts only as a member.
  */
 export default function Domains() {
-  const { domains, isLoading, isError, error } = useDomains();
+  const { domains, authelia, isLoading, isError, error } = useDomains();
+  const autheliaNote = autheliaVersionNote(authelia);
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -380,6 +400,11 @@ export default function Domains() {
           </p>
         </div>
       </div>
+      {autheliaNote && (
+        <p className="flex items-start gap-2 rounded-lg border border-yellow-800 bg-yellow-950/40 p-3 text-xs text-yellow-300">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" /> {autheliaNote}
+        </p>
+      )}
       <AddDomain />
       {isLoading && <p className="text-sm text-zinc-500">Loading domains…</p>}
       {isError && (
