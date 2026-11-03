@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Page language: each of the relay's domains may carry a language — English or Turkish — that every page a person meets on it speaks: Authelia's sign-in, second-factor, settings and consent pages, the invitation page, the inviter's page of delegated invitations, Gatekeeper's access-request and refusal pages, and the "not available" page of a plugin's site. A domain without one keeps 4.9's pages: Lamaste's in English, Authelia's following the visitor's browser. Design: `packages/core/docs/page-language-design.md`; reference: `04-api-reference/domains.md#page-language`.
+
+### Upgrade notes
+
+- **Nothing changes until a language is set.** `state.db` migration `0021` adds `domains.language`, unset for every domain. The stock pages are rewritten at the first start (their words now travel as a data block; the English text is the same), every brand is rendered again once, and every `auth.<domain>` vhost is rewritten by the start's reconcile because the invitation pages' CSP hashes change with their script. Not-served web-surface vhosts gain the "not available" page (`error_page 503`), and the panel writes its stock copy to `/var/www/lamaste/unavailable/index.html` at start.
+- **`lamaste-priv` needs no change**: it already accepts the new vhost lines (the quoted regex location, `sub_filter` with character references, the `error_page 503` locations). The IP panel vhost does not change.
+- **`@lamalibre/lamaste-gatekeeper` and the panel ship together**, in either order: the projection's `language` is optional both ways, and a 4.9 Gatekeeper ignores it.
+- **The running Authelia's version is now read from its binary** and recorded in each rendering. A relay running another Authelia than the pinned 4.39.28 (create-lamaste keeps a newer one) is audited `authelia.version.unpinned` and its administrators notified once per version; on a domain with a language, strings that Authelia added since the pin stay English.
+- **Gatekeeper's `GET /access-request` is removed.** Nothing linked to it; it rendered the access-request page outside every domain, unbranded, from an unsigned `Remote-User`. The access-request page is served where it always was, inline on a refused host.
+- **A downgrade to 4.9** ignores the column, renders every domain again with 4.9's pages and puts them back in English.
+
+### Added
+
+- **A domain's page language** — `PUT /api/domains/:name/language` `{ language: "en" | "tr" | null }` (400 `invalid_language`, 404 `domain_not_found`, `warnings` `gatekeeper|render|vhost`), audited `domain.language.updated`. `GET /api/domains` lists each domain's `language` and `rendering` (`rendered`, `current`, `renderFailing`, `vhostPending`) and the relay's `authelia` (`running`, `pinned`). Set, every page on the domain speaks it, whatever the browser prefers; `Accept-Language` plays no part.
+- **Authelia in the domain's language** without touching Authelia: the rendering holds one file per namespace — Authelia's translation, Lamaste's supplement of the strings it lacks (84 for Turkish in 4.39.28) and a few corrections — which the auth vhost serves for every locale path the portal asks for; the index page's `lang` and `<noscript>` sentence are rewritten and the language menu is hidden. Proven in a real browser against Authelia 4.39.28 for browsers asking German (Austria), US English, Arabic and a stored French choice.
+- **Lamaste's pages in the domain's language**: the invitation page and the inviter's page carry their words as a JSON data block — one script and style for every language and brand, one CSP hash pair per release —, format dates and plurals in the page's language and validate forms in their own words. Gatekeeper's access-request page (its message templates too) and domain refusal page follow the language of the host's domain, read from the `domains.json` projection.
+- **A "not available" page** on a plugin's site whose web surface is not served, in the domain's language and brand, instead of nginx's English 503; Gatekeeper's other refusals there (not a web surface, not served, names that disagree) answer a "not allowed" page instead of an empty 403.
+- **Refusal codes** on the invitation APIs, which the pages translate: `invitation_not_found`, `invitation_used`, `invitation_expired`, `invitation_closed` and `username_unavailable` on `/api/invite/*`, `not_found` on `/api/delegated-invitations/*`. The `error` texts stay English; the pages never show them.
+- **Core `@lamalibre/lamaste/page-messages`**, browser-safe: the page languages, the typed English and Turkish catalogue (a missing translation fails the build), one-pass formatting and plurals.
+- **Panel:** each domain card gains a **Language** section (Not set, English, Türkçe; the rendering's state); the Domains page warns when Authelia is not the pinned release; the branding preview shows the sign-in's title and footer in the domain's language. **CLI:** `lamaste-server domains language <domain> [en|tr|--unset]`; `domains list` names a set language. **Desktop:** `admin_set_domain_language`. `AdminClient.setDomainLanguage`.
+
+### Changed
+
+- **`GET /api/domains/:name/branding/preview`** answers in the domain's language (`locale` `tr` with Turkish title and footer) and with the domain's stylesheet.
+- **Gatekeeper's copy buttons** keep their words in `data-` attributes and copy the template's own element, so the access-request page's script is one text for every language.
+
+### Removed
+
+- Gatekeeper's `GET /access-request` (see the upgrade notes).
+
 ## [4.9.0] - 2026-11-02
 
 Delegated invitations: a person holding a plugin role the manifest marks as inviting invites colleagues into that plugin, with a role that role may give, without the relay's administrator. Each invitee becomes an external member of the plugin's domain, with the role and the grant on the plugin's own site, and reaches nothing else. Corral is the pilot. Design: `packages/core/docs/delegated-invitations-design.md`; reference: `04-api-reference/invitations.md`.

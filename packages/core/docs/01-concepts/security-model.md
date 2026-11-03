@@ -724,6 +724,16 @@ A domain's brand ([Domains API — Branding](../04-api-reference/domains.md#bran
 - **The placeholder logo in Authelia's asset directory** (`/etc/authelia/assets/logo.png`, Lamaste's own, 0640 for the `lamaste-authelia` group) exists only to switch the portal's logo slot on at Authelia's start; it is never a visitor's — the per-domain vhost of the later wave decides what each domain shows.
 - **Logs and the audit log name the domain, the field names and the asset digests** — never the image bytes, never the name.
 
+### A domain's page language
+
+A domain's [page language](../04-api-reference/domains.md#page-language) (4.10) puts every page on the domain — Lamaste's, Gatekeeper's and Authelia's — in one language. Nothing the operator types reaches a page through it:
+
+- **A closed value.** The language is one of core's `PAGE_LANGUAGES`, validated by the route and again by every vhost generator (it is interpolated into a root-validated file); the texts are Lamaste's catalogue (`@lamalibre/lamaste/page-messages`), reviewed, typed so a missing translation fails the build, and checked by tests for control, bidirectional and invisible characters and for `<` `>`.
+- **Words as data, one script.** The invitation and inviter's pages carry their words as `<script type="application/json">` — a data block the browser never executes, so the CSP's `script-src` hash does not cover it — serialised with `<`, `>`, `&`, U+2028 and U+2029 escaped, so no text can end the element. The one script reads it with `JSON.parse` and puts every message in as text; where a message wraps a value in `<strong>`, the script builds the element around the escaped value. Script and style are the same text in every language and brand (a unit test compares their hashes), so nginx still sends one CSP hash pair per page per release. Formatting fills `{name}` placeholders in one pass: a value that holds `{plugin}` stays text. The pages never show an API's `error` text — a code, else the status, picks their words.
+- **ASCII in every vhost.** `lamaste-priv` refuses non-ASCII, a backslash and `$` in a vhost token; the Turkish `<noscript>` sentence is written as numeric character references, and the forced-locale regex spells the dot `[.]`. The regex admits only Authelia's locale grammar and its three namespaces, and serves only files the panel rendered.
+- **Presentation fails open, membership fails closed.** Gatekeeper reads the language from its `domains.json` projection; a missing or unknown value means English and never makes the projection invalid.
+- **Authelia untouched.** No Authelia setting changes and Authelia is never restarted for a language; the forcing is the vhost's and the rendering's. A running Authelia newer than the pin is flagged to the administrators (its portal contracts are not pinned then).
+
 ## Quick Reference
 
 ### Security layers
