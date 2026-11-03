@@ -33,6 +33,10 @@
     "./invitation-limits": {
       "types": "./dist/invitation-limits.d.ts",
       "import": "./dist/invitation-limits.js"
+    },
+    "./page-messages": {
+      "types": "./dist/page-messages.d.ts",
+      "import": "./dist/page-messages.js"
     }
   },
   "files": [

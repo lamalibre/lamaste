@@ -1,0 +1,603 @@
+/**
+ * The words of the pages a person meets on a domain's sign-in host and on
+ * a plugin's site (packages/core/docs/page-language-design.md): the
+ * invitation page, the inviter's page, the "not available" page of a
+ * plugin's site, and Gatekeeper's access-request, refusal and "not
+ * allowed" pages — in every language a domain can be set to.
+ *
+ * Browser-safe (no node built-ins), exported as
+ * `@lamalibre/lamaste/page-messages`: the panel's language picker and the
+ * branding preview import the languages and texts instead of copying them.
+ *
+ * A domain's language decides every page on it (decision D3: the visitor's
+ * `Accept-Language` plays no part). The catalogues are typed: every key of
+ * {@link PAGE_MESSAGES_EN} must have a Turkish text, or the build fails.
+ * Each page embeds only its own keys ({@link INVITE_PAGE_KEYS}, …).
+ *
+ * Writing rules the catalogue keeps (§8 of the design): `{name}`
+ * placeholders, filled in one pass ({@link formatMessage}) so a value is
+ * never read as a template; a Turkish text never puts a suffix on an
+ * interpolated name (vowel harmony depends on a word Lamaste does not know);
+ * plurals by `Intl.PluralRules` (`<key>_one`, `<key>_other`). A name is not
+ * translated: plugin, role, inviter, host and brand names are shown as they
+ * are given.
+ */
+
+/** The languages a domain's pages can speak. */
+export const PAGE_LANGUAGES = ['en', 'tr'] as const;
+
+export type PageLanguage = (typeof PAGE_LANGUAGES)[number];
+
+/** Each language's own name, as a picker shows it. */
+export const PAGE_LANGUAGE_NAMES: Readonly<Record<PageLanguage, string>> = Object.freeze({
+  en: 'English',
+  tr: 'Türkçe',
+});
+
+export function isPageLanguage(value: unknown): value is PageLanguage {
+  return typeof value === 'string' && (PAGE_LANGUAGES as readonly string[]).includes(value);
+}
+
+// ---------------------------------------------------------------------------
+// The catalogues
+// ---------------------------------------------------------------------------
+
+/** English: the source of every key. */
+export const PAGE_MESSAGES_EN = {
+  // The invitation page (P2)
+  'invite.title': 'Accept Invitation',
+  'invite.loading': 'Loading invitation…',
+  'invite.invalidLink': 'This invitation link is not valid.',
+  'invite.unavailableTitle': 'Invitation Unavailable',
+  'invite.invitedTitle': 'You’ve Been Invited',
+  'invite.adminSubtitle': 'Set your password to create your account.',
+  'invite.delegatedBy': '{inviter} invited you to {plugin} as {role}.',
+  'invite.delegated': 'You are invited to {plugin} as {role}.',
+  'invite.username': 'Username',
+  'invite.usernameHint':
+    'You sign in with it. Lower-case letters, digits, - and _; it cannot be changed later.',
+  'invite.email': 'Email',
+  'invite.expires': 'Expires',
+  'invite.yourName': 'Your name',
+  'invite.password': 'Password',
+  'invite.passwordHint': 'At least 8 characters',
+  'invite.confirmPassword': 'Confirm password',
+  'invite.create': 'Create Account',
+  'invite.creating': 'Creating account…',
+  'invite.usernameRule':
+    'A username has {min} to {max} lower-case letters, digits, - and _, and starts with a letter or digit.',
+  'invite.nameRequired': 'Enter your name.',
+  'invite.passwordShort': 'A password has at least 8 characters.',
+  'invite.passwordLong': 'A password has at most 128 characters.',
+  'invite.passwordMismatch': 'The passwords do not match.',
+  'invite.createdTitle': 'Account Created',
+  'invite.created': 'Your account {username} has been created.',
+  'invite.scanQr':
+    'Scan this QR code with your authenticator app to set up two-factor authentication.',
+  'invite.qrAlt': 'Two-factor QR code',
+  'invite.manualEntry': 'Manual entry:',
+  'invite.saveNow': 'Save this before you leave the page — it is not shown again.',
+  'invite.askAdminTotp': 'Ask your administrator to set up two-factor authentication.',
+  'invite.accessPending':
+    'Your access is still being set up — if signing in shows nothing yet, try again in a minute.',
+  'invite.goToSignIn': 'Go to sign-in',
+
+  // The inviter's page (P1)
+  'invitations.title': 'Invite People',
+  'invitations.loading': 'Loading…',
+  'invitations.notFoundTitle': 'Not Found',
+  'invitations.notFound': 'There is no invitations page here.',
+  'invitations.signInTitle': 'Sign In to Continue',
+  'invitations.signInText': 'Sign in to invite people.',
+  'invitations.signIn': 'Sign in',
+  'invitations.signInLoop':
+    'If signing in brings you back here again and again, clear this site’s cookies in your browser and sign in once more.',
+  'invitations.unavailableTitle': 'Not Available',
+  'invitations.unavailable':
+    'You cannot invite people into this application, or invitations are turned off for it.',
+  'invitations.errorTitle': 'Something Went Wrong',
+  'invitations.unreachable': 'The relay could not be reached.',
+  'invitations.to': 'to {plugin}',
+  'invitations.noRole': 'You may not invite anyone with your role.',
+  'invitations.email': 'E-mail address',
+  'invitations.emailDomains': 'Under {domains}',
+  'invitations.theirName': 'Their name (optional)',
+  'invitations.role': 'Role',
+  'invitations.bounds_one':
+    'A link works once and expires after {days} day. You have {open} of {max} open invitations.',
+  'invitations.bounds_other':
+    'A link works once and expires after {days} days. You have {open} of {max} open invitations.',
+  'invitations.create': 'Create Invitation',
+  'invitations.ready':
+    'The invitation is ready. Send this link yourself — it is shown only now, and whoever opens it first can accept it.',
+  'invitations.copy': 'Copy',
+  'invitations.copied': 'Copied',
+  'invitations.selected': 'Selected',
+  'invitations.yours': 'Your invitations',
+  'invitations.none': 'None yet.',
+  'invitations.back': '← Back to {plugin}',
+  'invitations.revoke': 'Revoke',
+  'invitations.reallyRevoke': 'Really revoke?',
+  'invitations.emailRequired': 'Enter an e-mail address.',
+  'invitations.emailInvalid': 'Enter a valid e-mail address.',
+  'status.pending': 'Pending',
+  'status.expired': 'Expired',
+  'status.accepting': 'Being accepted',
+  'status.accepted': 'Accepted',
+  'status.revoked': 'Revoked',
+
+  // The refusals the two pages map (§6): `error.<code>`, else by status
+  'error.invitation_not_found': 'This invitation link is not valid.',
+  'error.invitation_used': 'This invitation has already been used.',
+  'error.invitation_expired': 'This invitation has expired.',
+  'error.invitation_closed': 'This invitation is no longer valid.',
+  'error.invitation_revoked': 'This invitation was revoked while it was being accepted.',
+  'error.invitation_accepting': 'This invitation is being accepted right now.',
+  'error.invitation_unavailable': 'This invitation cannot be accepted right now — try again later.',
+  'error.username_unavailable': 'This username is not available — choose another.',
+  'error.invalid_request.username': 'Invalid username.',
+  'error.invalid_request.password': 'Invalid password.',
+  'error.invalid_request.displayName': 'Invalid name.',
+  'error.invalid_request.email': 'Invalid e-mail address.',
+  'error.invalid_request.role': 'Invalid role.',
+  'error.invalid_request': 'Something you entered is not valid.',
+  'error.invitations_unavailable': 'Invitations are not available for this application.',
+  'error.email_domain_not_allowed': 'Invitations cannot go to this e-mail address’s domain.',
+  'error.role_not_grantable': 'You may not invite people with this role.',
+  'error.invitation_rate': 'Too many invitations in the last hour — try again later.',
+  'error.invitation_cap.inviter':
+    'You have reached your limit of open invitations — revoke one or wait for one to be accepted.',
+  'error.invitation_cap.plugin': 'This application takes no more people by invitation.',
+  'error.grant_reserve': 'No more people can be added by invitation right now.',
+  'error.gatekeeper_unavailable': 'The service is not answering — try again shortly.',
+  'error.authelia_storage_unavailable': 'The service is not answering — try again shortly.',
+  'error.not_found': 'Invitation not found.',
+  'error.tooManyRequests': 'Too many requests — wait a moment and try again.',
+  'error.generic': 'Something went wrong — try again later.',
+
+  // The plugin's site when its web surface is not served (P8) …
+  'unavailable.title': 'Not Available Right Now',
+  'unavailable.text': 'This application is not available right now. Try again later.',
+  // … and when Gatekeeper does not allow the request (P9)
+  'forbidden.title': 'Not Allowed',
+  'forbidden.text': 'You cannot open this page.',
+
+  // Gatekeeper's access-request page (P6)
+  'access.title': 'Access Required',
+  'access.heading': 'Access Required',
+  'access.noAccess': "You don't have access to {host}",
+  'access.signedInAs': 'Signed in as {username}',
+  'access.contact': 'Contact {admin} to request access. Copy a message template below:',
+  'access.defaultAdmin': 'your administrator',
+  'access.defaultAdminSalutation': 'Administrator',
+  'access.subjectLabel': 'Subject:',
+  'access.labelEmail': 'Email',
+  'access.copy': 'Copy',
+  'access.copied': 'Copied',
+  'contact.admin': 'Admin:',
+  'contact.help': 'Help:',
+  'template.subject': 'Access request for {resource}',
+  'template.body':
+    "Hi {admin},\n\nI'd like to request access to {resource}.\nMy username is: {username}\n\nThank you.",
+  'template.chat': 'Hi, could I get access to `{resource}`? My username is `{username}`.',
+  'template.whatsapp': 'Hi, I need access to {resource} (username: {username}). Thanks!',
+  'template.generic':
+    'Access request for {resource}\nUsername: {username}\nAdmin contact: {contact}',
+
+  // Gatekeeper's domain refusal page (P7); `[…]` marks the sign-out link
+  'refusal.title': 'Not allowed — {domain}',
+  'refusal.notAllowedOn': 'Not allowed on {host}',
+  'refusal.notMember': 'Not a member of {domain}',
+  'refusal.noDomain':
+    "Your account is signed in, but this host is under none of this relay's domains, so nobody may open it.",
+  'refusal.site':
+    "Your account is signed in, but it may not open this site: it is not a member of {domain}, or not one of the site's users.",
+  'refusal.domain':
+    'Your account is signed in, but it is not a member of this domain, so none of its applications are open to it.',
+  'refusal.ask': 'Ask {admin} to add you if you should have access.',
+  'refusal.signOut': '[Sign out] to sign in with another account.',
+} as const satisfies Record<string, string>;
+
+export type PageMessageKey = keyof typeof PAGE_MESSAGES_EN;
+
+/** Every key, in the catalogue's order. */
+export const PAGE_MESSAGE_KEYS = Object.freeze(Object.keys(PAGE_MESSAGES_EN) as PageMessageKey[]);
+
+/**
+ * Turkish (reviewed, §8 of the design): formal (siz), sentence case for
+ * headings and buttons, Authelia's own terms where its screens use them
+ * (_giriş yap_, _oturumu kapat_, _şifre_). A missing key is a compile error.
+ */
+export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object.freeze({
+  'invite.title': 'Daveti kabul edin',
+  'invite.loading': 'Davet yükleniyor…',
+  'invite.invalidLink': 'Bu davet bağlantısı geçerli değil.',
+  'invite.unavailableTitle': 'Davet kullanılamıyor',
+  'invite.invitedTitle': 'Davet edildiniz',
+  'invite.adminSubtitle': 'Hesabınızı oluşturmak için şifrenizi belirleyin.',
+  'invite.delegatedBy': '{inviter} sizi {plugin} uygulamasına {role} olarak davet etti.',
+  'invite.delegated': '{plugin} uygulamasına {role} olarak davet edildiniz.',
+  'invite.username': 'Kullanıcı adı',
+  'invite.usernameHint':
+    'Giriş yaparken bu adı kullanacaksınız. Küçük harf, rakam, - ve _ içerebilir; ç, ğ, ı, ö, ş, ü kullanılamaz. Daha sonra değiştirilemez.',
+  'invite.email': 'E-posta',
+  'invite.expires': 'Son geçerlilik tarihi',
+  'invite.yourName': 'Adınız soyadınız',
+  'invite.password': 'Şifre',
+  'invite.passwordHint': 'En az 8 karakter',
+  'invite.confirmPassword': 'Şifre (tekrar)',
+  'invite.create': 'Hesap oluştur',
+  'invite.creating': 'Hesap oluşturuluyor…',
+  'invite.usernameRule':
+    'Kullanıcı adı {min}–{max} karakter uzunluğunda olmalı; yalnızca küçük harf, rakam, - ve _ içerebilir (ç, ğ, ı, ö, ş, ü kullanılamaz) ve bir harf ya da rakamla başlamalıdır.',
+  'invite.nameRequired': 'Adınızı ve soyadınızı girin.',
+  'invite.passwordShort': 'Şifre en az 8 karakter olmalıdır.',
+  'invite.passwordLong': 'Şifre en fazla 128 karakter olabilir.',
+  'invite.passwordMismatch': 'Şifreler eşleşmiyor.',
+  'invite.createdTitle': 'Hesabınız oluşturuldu',
+  'invite.created': 'Kullanıcı adınız: {username}',
+  'invite.scanQr':
+    'İki faktörlü kimlik doğrulamayı kurmak için bu QR kodunu kimlik doğrulama uygulamanızla tarayın.',
+  'invite.qrAlt': 'İki faktörlü kimlik doğrulama QR kodu',
+  'invite.manualEntry': 'Elle girilecek kod:',
+  'invite.saveNow': 'Sayfadan ayrılmadan önce kodu kaydedin; bir daha gösterilmeyecek.',
+  'invite.askAdminTotp': 'İki faktörlü kimlik doğrulamanın kurulması için yöneticinize başvurun.',
+  'invite.accessPending':
+    'Erişiminiz hâlâ hazırlanıyor. Giriş yaptığınızda henüz bir şey görmüyorsanız bir dakika sonra yeniden deneyin.',
+  'invite.goToSignIn': 'Giriş sayfasına git',
+
+  'invitations.title': 'Kişi davet edin',
+  'invitations.loading': 'Yükleniyor…',
+  'invitations.notFoundTitle': 'Bulunamadı',
+  'invitations.notFound': 'Burada bir davet sayfası yok.',
+  'invitations.signInTitle': 'Devam etmek için giriş yapın',
+  'invitations.signInText': 'Kişi davet etmek için giriş yapın.',
+  'invitations.signIn': 'Giriş yap',
+  'invitations.signInLoop':
+    'Giriş yaptıktan sonra tekrar tekrar bu sayfaya dönüyorsanız tarayıcınızda bu sitenin çerezlerini temizleyip yeniden giriş yapın.',
+  'invitations.unavailableTitle': 'Kullanılamıyor',
+  'invitations.unavailable':
+    'Bu uygulamaya kişi davet etme yetkiniz yok ya da uygulamada davetler kapalı.',
+  'invitations.errorTitle': 'Bir sorun oluştu',
+  'invitations.unreachable': 'Sunucuya ulaşılamadı.',
+  'invitations.to': 'Uygulama: {plugin}',
+  'invitations.noRole': 'Rolünüz kimseyi davet etmenize izin vermiyor.',
+  'invitations.email': 'E-posta adresi',
+  'invitations.emailDomains': 'İzin verilen alan adları: {domains}',
+  'invitations.theirName': 'Kişinin adı soyadı (isteğe bağlı)',
+  'invitations.role': 'Rol',
+  'invitations.bounds_one':
+    'Her bağlantı yalnızca bir kez kullanılabilir ve {days} gün sonra süresi dolar. Açık davetleriniz: {open}/{max}.',
+  'invitations.bounds_other':
+    'Her bağlantı yalnızca bir kez kullanılabilir ve {days} gün sonra süresi dolar. Açık davetleriniz: {open}/{max}.',
+  'invitations.create': 'Davet oluştur',
+  'invitations.ready':
+    'Davet hazır. Bu bağlantıyı kişiye kendiniz gönderin: yalnızca şimdi gösteriliyor ve bağlantıyı ilk açan kişi daveti kabul edebilir.',
+  'invitations.copy': 'Kopyala',
+  'invitations.copied': 'Kopyalandı',
+  'invitations.selected': 'Seçildi',
+  'invitations.yours': 'Davetleriniz',
+  'invitations.none': 'Henüz davet yok.',
+  'invitations.back': '← {plugin} uygulamasına dön',
+  'invitations.revoke': 'İptal et',
+  'invitations.reallyRevoke': 'Davet iptal edilsin mi?',
+  'invitations.emailRequired': 'Bir e-posta adresi girin.',
+  'invitations.emailInvalid': 'Geçerli bir e-posta adresi girin.',
+  'status.pending': 'Bekliyor',
+  'status.expired': 'Süresi doldu',
+  'status.accepting': 'Kabul ediliyor',
+  'status.accepted': 'Kabul edildi',
+  'status.revoked': 'İptal edildi',
+
+  'error.invitation_not_found': 'Bu davet bağlantısı geçerli değil.',
+  'error.invitation_used': 'Bu davet daha önce kullanılmış.',
+  'error.invitation_expired': 'Bu davetin süresi dolmuş.',
+  'error.invitation_closed': 'Bu davet artık geçerli değil.',
+  'error.invitation_revoked': 'Bu davet, kabul edilirken iptal edildi.',
+  'error.invitation_accepting': 'Bu davet şu anda kabul ediliyor.',
+  'error.invitation_unavailable':
+    'Bu davet şu anda kabul edilemiyor. Lütfen daha sonra yeniden deneyin.',
+  'error.username_unavailable': 'Bu kullanıcı adı kullanılamıyor. Başka bir kullanıcı adı deneyin.',
+  'error.invalid_request.username': 'Kullanıcı adı geçersiz.',
+  'error.invalid_request.password': 'Şifre geçersiz.',
+  'error.invalid_request.displayName': 'Ad soyad geçersiz.',
+  'error.invalid_request.email': 'E-posta adresi geçersiz.',
+  'error.invalid_request.role': 'Rol geçersiz.',
+  'error.invalid_request': 'Girdiğiniz bilgilerden biri geçersiz.',
+  'error.invitations_unavailable': 'Bu uygulamada davetler kullanılamıyor.',
+  'error.email_domain_not_allowed': 'Bu alan adındaki e-posta adreslerine davet oluşturulamaz.',
+  'error.role_not_grantable': 'Bu rolle kişi davet edemezsiniz.',
+  'error.invitation_rate':
+    'Son bir saatte çok fazla davet oluşturdunuz. Lütfen daha sonra yeniden deneyin.',
+  'error.invitation_cap.inviter':
+    'Açık davet sınırınıza ulaştınız. Bir daveti iptal edin ya da davetlerden birinin kabul edilmesini bekleyin.',
+  'error.invitation_cap.plugin': 'Bu uygulamaya davetle daha fazla kişi eklenemiyor.',
+  'error.grant_reserve': 'Şu anda davetle yeni kişi eklenemiyor.',
+  'error.gatekeeper_unavailable':
+    'Hizmet şu anda yanıt vermiyor. Lütfen biraz sonra yeniden deneyin.',
+  'error.authelia_storage_unavailable':
+    'Hizmet şu anda yanıt vermiyor. Lütfen biraz sonra yeniden deneyin.',
+  'error.not_found': 'Davet bulunamadı.',
+  'error.tooManyRequests': 'Çok fazla istek gönderildi. Lütfen biraz bekleyip yeniden deneyin.',
+  'error.generic': 'Bir sorun oluştu. Lütfen daha sonra yeniden deneyin.',
+
+  'unavailable.title': 'Şu anda kullanılamıyor',
+  'unavailable.text': 'Bu uygulama şu anda kullanılamıyor. Lütfen daha sonra yeniden deneyin.',
+  'forbidden.title': 'İzin verilmiyor',
+  'forbidden.text': 'Bu sayfayı açma izniniz yok.',
+
+  'access.title': 'Erişim gerekli',
+  'access.heading': 'Erişim gerekli',
+  'access.noAccess': '{host} adresine erişiminiz yok',
+  'access.signedInAs': 'Giriş yapılan hesap: {username}',
+  'access.contact':
+    'Erişim istemek için {admin} ile iletişime geçin. Aşağıdaki mesaj şablonlarından birini kopyalayabilirsiniz:',
+  'access.defaultAdmin': 'yöneticiniz',
+  // Unused in Turkish: the e-mail body has no name (below).
+  'access.defaultAdminSalutation': 'Yönetici',
+  'access.subjectLabel': 'Konu:',
+  'access.labelEmail': 'E-posta',
+  'access.copy': 'Kopyala',
+  'access.copied': 'Kopyalandı',
+  'contact.admin': 'Yönetici:',
+  'contact.help': 'Yardım:',
+  'template.subject': '{resource} için erişim talebi',
+  // No `{admin}`: a default administrator name reads oddly after "Merhaba",
+  // and an operator-set name is not always a person's.
+  'template.body':
+    'Merhaba,\n\n{resource} adresine erişim talep ediyorum.\nKullanıcı adım: {username}\n\nTeşekkürler.',
+  'template.chat':
+    'Merhaba, {resource} adresine erişim izni verebilir misiniz? Kullanıcı adım: {username}.',
+  'template.whatsapp':
+    'Merhaba, {resource} adresine erişmem gerekiyor (kullanıcı adım: {username}). Teşekkürler!',
+  'template.generic':
+    '{resource} için erişim talebi\nKullanıcı adı: {username}\nYönetici iletişim bilgisi: {contact}',
+
+  'refusal.title': 'İzin verilmiyor — {domain}',
+  'refusal.notAllowedOn': '{host} adresine erişim izniniz yok',
+  'refusal.notMember': '{domain} üyeleri arasında değilsiniz',
+  'refusal.noDomain':
+    'Giriş yaptınız, ancak bu adres sunucunun hiçbir alan adına bağlı olmadığından kimse tarafından açılamaz.',
+  'refusal.site':
+    'Giriş yaptınız, ancak bu siteyi açma izniniz yok: {domain} üyeleri arasında değilsiniz ya da bu sitenin kullanıcıları arasında yer almıyorsunuz.',
+  'refusal.domain':
+    'Giriş yaptınız, ancak bu alan adının üyesi olmadığınız için buradaki uygulamaların hiçbirine erişemezsiniz.',
+  'refusal.ask':
+    'Erişiminiz olması gerekiyorsa {admin} ile iletişime geçip sizi eklemesini isteyin.',
+  'refusal.signOut': 'Başka bir hesapla giriş yapmak için [oturumu kapatın].',
+});
+
+/** Every language's catalogue. */
+export const PAGE_MESSAGES: Readonly<
+  Record<PageLanguage, Readonly<Record<PageMessageKey, string>>>
+> = Object.freeze({ en: PAGE_MESSAGES_EN, tr: PAGE_MESSAGES_TR });
+
+/**
+ * Placeholders a translation may leave out — the text names each such
+ * key and the placeholder, and why: everything else must carry exactly
+ * the English placeholders.
+ */
+export const PAGE_MESSAGE_DROPPED_PLACEHOLDERS: Readonly<
+  Partial<Record<PageLanguage, Partial<Record<PageMessageKey, readonly string[]>>>>
+> = Object.freeze({ tr: { 'template.body': ['admin'] } });
+
+// ---------------------------------------------------------------------------
+// Each page's keys
+// ---------------------------------------------------------------------------
+
+/** The refusals the invitation page maps by code (§6). */
+const INVITE_REFUSAL_KEYS = [
+  'error.invitation_not_found',
+  'error.invitation_used',
+  'error.invitation_expired',
+  'error.invitation_closed',
+  'error.invitation_revoked',
+  'error.invitation_accepting',
+  'error.invitation_unavailable',
+  'error.username_unavailable',
+  'error.invalid_request.username',
+  'error.invalid_request.password',
+  'error.invalid_request.displayName',
+  'error.invalid_request',
+  'error.gatekeeper_unavailable',
+  'error.authelia_storage_unavailable',
+  'error.tooManyRequests',
+  'error.generic',
+] as const satisfies readonly PageMessageKey[];
+
+/** The invitation page's keys (P2): what its data block carries. */
+export const INVITE_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
+  ...PAGE_MESSAGE_KEYS.filter((key) => key.startsWith('invite.')),
+  ...INVITE_REFUSAL_KEYS,
+]);
+
+/** The inviter's page's keys (P1). */
+export const INVITATIONS_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
+  ...PAGE_MESSAGE_KEYS.filter((key) => key.startsWith('invitations.') || key.startsWith('status.')),
+  'error.invalid_request.email',
+  'error.invalid_request.displayName',
+  'error.invalid_request.role',
+  'error.invalid_request',
+  'error.invitations_unavailable',
+  'error.email_domain_not_allowed',
+  'error.role_not_grantable',
+  'error.invitation_rate',
+  'error.invitation_cap.inviter',
+  'error.invitation_cap.plugin',
+  'error.grant_reserve',
+  'error.gatekeeper_unavailable',
+  'error.not_found',
+  'error.tooManyRequests',
+  'error.generic',
+]);
+
+/** The "not available" page of a plugin's site (P8). */
+export const UNAVAILABLE_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
+  'unavailable.title',
+  'unavailable.text',
+]);
+
+/** Gatekeeper's "not allowed" page (P9). */
+export const FORBIDDEN_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
+  'forbidden.title',
+  'forbidden.text',
+]);
+
+/** Gatekeeper's access-request page (P6). */
+export const ACCESS_REQUEST_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze(
+  PAGE_MESSAGE_KEYS.filter(
+    (key) => key.startsWith('access.') || key.startsWith('contact.') || key.startsWith('template.'),
+  ),
+);
+
+/** Gatekeeper's domain refusal page (P7). */
+export const DOMAIN_REFUSAL_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
+  ...PAGE_MESSAGE_KEYS.filter((key) => key.startsWith('refusal.') || key.startsWith('contact.')),
+  'access.defaultAdmin',
+]);
+
+/** One text of a language's catalogue. */
+export function pageMessage(language: PageLanguage, key: PageMessageKey): string {
+  return PAGE_MESSAGES[language][key];
+}
+
+/** The texts of `keys` in `language`, as a page's data block carries them. */
+export function pageMessagesFor(
+  language: PageLanguage,
+  keys: readonly PageMessageKey[],
+): Record<string, string> {
+  const catalogue = PAGE_MESSAGES[language];
+  const out: Record<string, string> = {};
+  for (const key of keys) out[key] = catalogue[key];
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Formatting
+// ---------------------------------------------------------------------------
+
+/** A placeholder: `{name}`. */
+const PLACEHOLDER_RE = /\{([A-Za-z]+)\}/g;
+
+/** The placeholder names of a text, sorted, each once. */
+export function messagePlaceholders(text: string): string[] {
+  return [...new Set([...text.matchAll(PLACEHOLDER_RE)].map((m) => m[1] ?? ''))].sort();
+}
+
+/**
+ * `template` with every `{name}` replaced by its value, **in one pass**: a
+ * value is never scanned again, so a display name or role label holding
+ * `{plugin}` stays text. A placeholder without a value is left as it is.
+ */
+export function formatMessage(
+  template: string,
+  values: Readonly<Record<string, string | number>>,
+): string {
+  return template.replace(PLACEHOLDER_RE, (whole, name: string) =>
+    Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : whole,
+  );
+}
+
+/** A value for {@link formatMessageHtml}: plain text, or text wrapped in one element. */
+export type HtmlMessageValue =
+  | string
+  | number
+  | {
+      readonly text: string | number;
+      readonly tag: 'strong' | 'span';
+      readonly className?: string;
+    };
+
+/** `value` as HTML text or attribute value: `&`, `<`, `>`, `"` and `'` escaped. */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+const CLASS_NAME_RE = /^[a-z][a-z0-9-]*$/;
+
+/**
+ * {@link formatMessage} as markup: the template's own text escaped, each
+ * value escaped and — when given as `{ text, tag, className }` — wrapped
+ * in that element. With `link`, the one `[…]` span of the template becomes
+ * a link to `link.href` (escaped as an attribute). One pass, as
+ * {@link formatMessage}: nothing a value holds is read as a template.
+ */
+export function formatMessageHtml(
+  template: string,
+  values: Readonly<Record<string, HtmlMessageValue>>,
+  link?: { readonly href: string },
+): string {
+  const fill = (part: string): string =>
+    part
+      .split(/(\{[A-Za-z]+\})/)
+      .map((piece) => {
+        const match = /^\{([A-Za-z]+)\}$/.exec(piece);
+        const name = match?.[1];
+        if (name === undefined || !Object.prototype.hasOwnProperty.call(values, name)) {
+          return escapeHtml(piece);
+        }
+        const value = values[name] as HtmlMessageValue;
+        if (typeof value === 'string' || typeof value === 'number') {
+          return escapeHtml(String(value));
+        }
+        if (value.className !== undefined && !CLASS_NAME_RE.test(value.className)) {
+          throw new Error('A class name is lower-case letters, digits and hyphens');
+        }
+        const attrs = value.className === undefined ? '' : ` class="${value.className}"`;
+        return `<${value.tag}${attrs}>${escapeHtml(String(value.text))}</${value.tag}>`;
+      })
+      .join('');
+  if (link === undefined) return fill(template);
+  const match = /^([^[\]]*)\[([^[\]]+)\]([^[\]]*)$/.exec(template);
+  if (!match) throw new Error('A link template holds exactly one [ … ] span');
+  return `${fill(match[1] ?? '')}<a href="${escapeHtml(link.href)}">${fill(match[2] ?? '')}</a>${fill(match[3] ?? '')}`;
+}
+
+/**
+ * The key of the plural form of `base` for `count` in `language` —
+ * `<base>_one` or `<base>_other` — by `Intl.PluralRules`. Every plural in
+ * the catalogue has both forms; a category the catalogue lacks falls back
+ * to `_other`.
+ */
+export function pluralKey(language: PageLanguage, base: string, count: number): string {
+  const category = new Intl.PluralRules(language).select(count);
+  return category === 'one' ? `${base}_one` : `${base}_other`;
+}
+
+/**
+ * `text` with every character outside printable ASCII written as an HTML
+ * numeric character reference (`ç` → `&#231;`): what a text must become
+ * before it goes into an nginx vhost, whose validator refuses any byte
+ * outside 0x20–0x7e (`lamaste-priv`). A control character is refused, not
+ * encoded.
+ */
+export function htmlAsciiReferences(text: string): string {
+  let out = '';
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) throw new Error('A control character is never encoded');
+    out += code > 0x7e ? `&#${code};` : char;
+  }
+  return out;
+}
+
+/**
+ * A page's data block: `{ lang, messages }` as JSON with `<`, `>`, `&`,
+ * U+2028 and U+2029 escaped as `\u…`, so nothing in it can end the
+ * `<script type="application/json">` element it sits in or be read as
+ * markup.
+ */
+export function pageMessagesJson(
+  language: PageLanguage,
+  messages: Readonly<Record<string, string>>,
+): string {
+  return JSON.stringify({ lang: language, messages }).replace(
+    /[<>&\u2028\u2029]/g,
+    (char) => `\\u${(char.codePointAt(0) ?? 0).toString(16).padStart(4, '0')}`,
+  );
+}
