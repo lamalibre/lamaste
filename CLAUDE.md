@@ -71,7 +71,7 @@ The single source of truth is `packages/core/lib/src/branding.ts` (TS) and `pack
 
 ### Core Library Pattern
 
-`@lamalibre/lamaste` is a single package with subpath exports providing domain-specific entry points (plus `./hooks`, and three browser-safe entries the panel UI imports instead of copying a rule — `./domains`: the domain rules, reserved names and ports; `./branding`: the brand fields' rules and limits, the image checks, `accentForeground`, `renderBrandCss`; `./invitation-limits`: the invitation policy's bounds, statuses and revocation reasons):
+`@lamalibre/lamaste` is a single package with subpath exports providing domain-specific entry points (plus `./hooks`, and four browser-safe entries the panel UI imports instead of copying a rule — `./domains`: the domain rules, reserved names and ports; `./branding`: the brand fields' rules and limits, the image checks, `accentForeground`, `renderBrandCss`; `./invitation-limits`: the invitation policy's bounds, statuses and revocation reasons; `./page-messages`: the page languages (`PAGE_LANGUAGES`), the pages' catalogue (English and Turkish, typed: a missing translation fails the build) and its one-pass formatting):
 
 ```json
 {
