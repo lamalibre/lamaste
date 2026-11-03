@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lamaste — Invite People</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      background: var(--lamaste-page-background, #09090b); color: var(--lamaste-page-text, #a1a1aa);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 1.5rem;
+    }
+    .card {
+      background: var(--lamaste-page-card, #18181b); border: 1px solid var(--lamaste-page-border, #27272a); border-radius: 0.75rem;
+      max-width: 520px; width: 100%; padding: 2.5rem;
+    }
+    .brand { text-align: center; margin-bottom: 2rem; }
+    .brand-logo { max-width: 160px; max-height: 80px; margin-bottom: 0.75rem; }
+    .brand-name { color: var(--lamaste-page-heading, #f4f4f5); font-size: 1rem; font-weight: 700; }
+    .brand-tagline { font-size: 0.8125rem; margin-top: 0.25rem; }
+    .icon { text-align: center; font-size: 3rem; margin-bottom: 1rem; }
+    h1 { color: var(--lamaste-page-heading, #f4f4f5); font-size: 1.25rem; text-align: center; margin-bottom: 0.5rem; }
+    h2 { color: var(--lamaste-page-heading, #f4f4f5); font-size: 0.9375rem; margin: 2rem 0 0.75rem; }
+    .subtitle { text-align: center; margin-bottom: 2rem; font-size: 0.875rem; line-height: 1.6; }
+    .field { margin-bottom: 1.25rem; }
+    .field label {
+      display: block; font-size: 0.8125rem; color: var(--lamaste-page-text, #a1a1aa);
+      margin-bottom: 0.375rem; font-weight: 600;
+    }
+    .field input, .field select {
+      width: 100%; padding: 0.625rem 0.875rem;
+      background: var(--lamaste-page-input, #09090b); border: 1px solid var(--lamaste-page-border, #27272a); border-radius: 0.5rem;
+      color: var(--lamaste-page-heading, #f4f4f5); font-family: inherit; font-size: 0.875rem;
+      outline: none; transition: border-color 0.15s;
+    }
+    .field input:focus, .field select:focus { border-color: var(--lamaste-page-accent, #22d3ee); }
+    .field input:disabled, .field input[readonly] { color: var(--lamaste-page-disabled, #71717a); }
+    .field .hint { font-size: 0.75rem; color: var(--lamaste-page-hint, #52525b); margin-top: 0.25rem; }
+    .error-msg {
+      background: var(--lamaste-page-error-background, #1c0f0f); border: 1px solid var(--lamaste-page-error-border, #7f1d1d); border-radius: 0.5rem;
+      padding: 0.75rem 1rem; margin-bottom: 1.25rem;
+      font-size: 0.8125rem; color: var(--lamaste-page-error-text, #fca5a5);
+    }
+    .note-msg {
+      background: var(--lamaste-page-note-background, #0f1c1c); border-color: var(--lamaste-page-note-border, #134e4a); color: var(--lamaste-page-note-text, #5eead4);
+    }
+    .success-card { text-align: center; }
+    .success-card h1 { color: var(--lamaste-page-success, #4ade80); margin-bottom: 1rem; }
+    .success-card p { margin-bottom: 1.5rem; font-size: 0.875rem; line-height: 1.6; }
+    .accent { color: var(--lamaste-page-accent, #22d3ee); }
+    .btn {
+      display: block; width: 100%;
+      background: var(--lamaste-page-accent, #22d3ee); color: var(--lamaste-page-accent-foreground, #000000); font-weight: 700;
+      border: none; border-radius: 0.5rem; padding: 0.75rem;
+      font-size: 0.875rem; cursor: pointer; font-family: inherit;
+      transition: filter 0.15s;
+    }
+    .btn:hover { filter: brightness(0.92); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-link { text-decoration: none; text-align: center; margin-top: 1rem; }
+    .btn-outline {
+      background: transparent; border: 1px solid var(--lamaste-page-border, #27272a); color: var(--lamaste-page-text, #a1a1aa);
+    }
+    .btn-outline:hover { border-color: var(--lamaste-page-accent, #22d3ee); color: var(--lamaste-page-heading, #f4f4f5); }
+    .btn-small { display: inline-block; width: auto; padding: 0.25rem 0.625rem; font-size: 0.75rem; }
+    .row { display: flex; gap: 0.5rem; }
+    .row input { flex: 1; }
+    .loading {
+      display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+      padding: 3rem 0; font-size: 0.875rem;
+    }
+    .spinner {
+      width: 1.25rem; height: 1.25rem;
+      border: 2px solid var(--lamaste-page-border, #27272a); border-top-color: var(--lamaste-page-accent, #22d3ee);
+      border-radius: 50%; animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .detail-row {
+      display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+      padding: 0.5rem 0; border-bottom: 1px solid var(--lamaste-page-border, #27272a);
+      font-size: 0.8125rem;
+    }
+    .detail-row:last-child { border-bottom: none; }
+    .detail-label { color: var(--lamaste-page-muted, #71717a); }
+    .detail-value { color: var(--lamaste-page-heading, #f4f4f5); font-weight: 500; text-align: right; word-break: break-all; }
+    .details-box {
+      background: var(--lamaste-page-input, #09090b); border: 1px solid var(--lamaste-page-border, #27272a); border-radius: 0.5rem;
+      padding: 0.75rem 1rem; margin-bottom: 1.5rem;
+    }
+    .qr {
+      display: flex; justify-content: center; margin: 0 auto 1.5rem;
+      background: #fff; border-radius: 0.5rem; padding: 1rem; max-width: 220px;
+    }
+    .qr img { width: 100%; height: auto; }
+    .manual { font-size: 0.75rem; color: var(--lamaste-page-muted, #71717a); margin-bottom: 1rem; word-break: break-all; }
+    .manual strong { color: var(--lamaste-page-text, #a1a1aa); }
+    .muted { color: var(--lamaste-page-muted, #71717a); font-size: 0.75rem; }
+    #bounds { margin-bottom: 1rem; }
+    #result:not(:empty) { margin-top: 1rem; }
+    .back { display: inline-block; margin-top: 1.5rem; font-size: 0.8125rem; color: var(--lamaste-page-accent, #22d3ee); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div id="app">
+      <div class="loading">
+        <div class="spinner"></div>
+        Loading…
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      'use strict';
+      var app = document.getElementById('app');
+      var ROUTE_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+      var ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+      var STATUS = {
+        pending: 'Pending', expired: 'Expired', accepting: 'Being accepted',
+        accepted: 'Accepted', revoked: 'Revoked'
+      };
+
+      // The route, from the path alone.
+      var segments = window.location.pathname.split('/').filter(function (s) { return s !== ''; });
+      var route = segments.length === 2 && segments[0] === 'invitations' &&
+        segments[1].length <= 64 && ROUTE_RE.test(segments[1]) ? segments[1] : null;
+      if (!route) {
+        showMessage('Not Found', 'There is no invitations page here.');
+        return;
+      }
+      var api = '/api/delegated-invitations/' + route;
+      var signIn = window.location.origin + '/?rd=' +
+        encodeURIComponent(window.location.origin + '/invitations/' + route);
+      // The link of the invitation just made, shown until it is revoked.
+      var link = null;
+      var linkId = null;
+
+      load();
+
+      function request(method, path, body) {
+        var init = { method: method, headers: { Accept: 'application/json' } };
+        if (body !== undefined) {
+          init.headers['Content-Type'] = 'application/json';
+          init.body = JSON.stringify(body);
+        }
+        return fetch(path, init).then(function (res) {
+          return res.json().catch(function () { return {}; }).then(function (data) {
+            return { status: res.status, data: data };
+          });
+        });
+      }
+
+      function errorOf(answer) {
+        return typeof answer.data.error === 'string' ? answer.data.error : 'The request failed.';
+      }
+
+      function text(value) {
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(String(value)));
+        return div.innerHTML;
+      }
+
+      function formatDate(iso) {
+        var date = new Date(iso);
+        return isNaN(date.getTime()) ? '' : date.toLocaleString(undefined, {
+          year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+        });
+      }
+
+      function showMessage(title, message) {
+        app.innerHTML =
+          '<div class="icon">⚠️</div>' +
+          '<h1>' + text(title) + '</h1>' +
+          '<p class="subtitle">' + text(message) + '</p>';
+      }
+
+      function showSignIn() {
+        app.innerHTML =
+          '<div class="icon">🔒</div>' +
+          '<h1>Sign In to Continue</h1>' +
+          '<p class="subtitle">Sign in to invite people.</p>' +
+          '<a id="sign-in" class="btn btn-link">Sign in</a>' +
+          '<p class="muted">If signing in brings you back here again and again, clear this ' +
+          'site’s cookies in your browser and sign in once more.</p>';
+        document.getElementById('sign-in').href = signIn;
+      }
+
+      function load() {
+        request('GET', api)
+          .then(function (answer) {
+            if (answer.status === 401) return showSignIn();
+            if (answer.status === 403 || answer.status === 404) {
+              return showMessage('Not Available',
+                'You cannot invite people into this application, or invitations are turned off for it.');
+            }
+            if (answer.status !== 200) return showMessage('Something Went Wrong', errorOf(answer));
+            render(answer.data);
+          })
+          .catch(function () { showMessage('Something Went Wrong', 'The relay could not be reached.'); });
+      }
+
+      function render(data) {
+        var roles = data.policy.grantableRoles;
+        var back = typeof data.plugin.siteUrl === 'string' && data.plugin.siteUrl.indexOf('https://') === 0;
+        app.innerHTML =
+          '<h1>Invite People</h1>' +
+          '<p class="subtitle">to <strong class="accent">' + text(data.plugin.displayName) + '</strong></p>' +
+          (roles.length === 0
+            ? '<div class="error-msg">You may not invite anyone with your role.</div>'
+            : '<div id="form-error"></div>' +
+              '<form id="invite-form">' +
+                '<div class="field"><label for="email">E-mail address</label><input type="email" id="email" required>' +
+                  '<div class="hint">Under ' + text(data.policy.emailDomains.join(', ')) + '</div></div>' +
+                '<div class="field"><label for="display-name">Their name (optional)</label><input type="text" id="display-name"></div>' +
+                '<div class="field"><label for="role">Role</label><select id="role"></select></div>' +
+                '<p class="muted" id="bounds"></p>' +
+                '<button type="submit" class="btn" id="submit-btn">Create Invitation</button>' +
+              '</form>') +
+          '<div id="result"></div>' +
+          '<h2>Your invitations</h2>' +
+          '<div id="list"></div>' +
+          (back ? '<a id="back" class="back">← Back to ' + text(data.plugin.displayName) + '</a>' : '');
+        if (back) document.getElementById('back').href = data.plugin.siteUrl;
+        if (roles.length > 0) {
+          var select = document.getElementById('role');
+          roles.forEach(function (role) {
+            var option = document.createElement('option');
+            option.value = role.id;
+            option.textContent = role.label;
+            select.appendChild(option);
+          });
+          document.getElementById('email').setAttribute('maxlength', '254');
+          document.getElementById('display-name').setAttribute('maxlength', '100');
+          document.getElementById('invite-form').addEventListener('submit', submit);
+        }
+        showBounds(data.policy);
+        showResult();
+        showList(data.invitations);
+      }
+
+      function showBounds(policy) {
+        var bounds = document.getElementById('bounds');
+        if (!bounds) return;
+        bounds.textContent = 'A link works once and expires after ' + policy.lifetimeDays +
+          (policy.lifetimeDays === 1 ? ' day' : ' days') + '. You have ' + policy.open + ' of ' +
+          policy.maxOpen + ' open invitations.';
+      }
+
+      function submit(e) {
+        e.preventDefault();
+        var errorDiv = document.getElementById('form-error');
+        var button = document.getElementById('submit-btn');
+        var body = {
+          email: document.getElementById('email').value.trim(),
+          role: document.getElementById('role').value
+        };
+        var name = document.getElementById('display-name').value.trim();
+        if (name !== '') body.displayName = name;
+        errorDiv.innerHTML = '';
+        button.disabled = true;
+        request('POST', api, body)
+          .then(function (answer) {
+            button.disabled = false;
+            if (answer.status === 401) return showSignIn();
+            if (answer.status !== 201) {
+              errorDiv.innerHTML = '<div class="error-msg">' + text(errorOf(answer)) + '</div>';
+              return;
+            }
+            link = typeof answer.data.inviteUrl === 'string' && answer.data.inviteUrl.indexOf('https://') === 0
+              ? answer.data.inviteUrl : null;
+            linkId = answer.data.invitation && answer.data.invitation.id;
+            document.getElementById('invite-form').reset();
+            refresh();
+          })
+          .catch(function () {
+            button.disabled = false;
+            errorDiv.innerHTML = '<div class="error-msg">The relay could not be reached.</div>';
+          });
+      }
+
+      function showResult() {
+        var result = document.getElementById('result');
+        if (!result) return;
+        if (link === null) {
+          result.innerHTML = '';
+          return;
+        }
+        result.innerHTML =
+          '<div class="error-msg note-msg">' +
+            '<p>The invitation is ready. Send this link yourself — it is shown only now, and ' +
+            'whoever opens it first can accept it.</p>' +
+          '</div>' +
+          '<div class="field"><div class="row"><input type="text" id="link" readonly>' +
+            '<button type="button" class="btn btn-small" id="copy">Copy</button></div></div>';
+        var input = document.getElementById('link');
+        input.value = link;
+        document.getElementById('copy').addEventListener('click', function () {
+          var button = this;
+          input.select();
+          var done = function () { button.textContent = 'Copied'; };
+          // Where the browser refuses the clipboard, the link stays selected.
+          var fallback = function () {
+            if (document.execCommand && document.execCommand('copy')) done();
+            else button.textContent = 'Selected';
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(link).then(done, fallback);
+          } else {
+            fallback();
+          }
+        });
+      }
+
+      function refresh() {
+        request('GET', api).then(function (answer) {
+          if (answer.status === 200) render(answer.data);
+          else load();
+        });
+      }
+
+      function showList(invitations) {
+        var list = document.getElementById('list');
+        if (invitations.length === 0) {
+          list.innerHTML = '<p class="muted">None yet.</p>';
+          return;
+        }
+        list.innerHTML = '<div class="details-box" id="rows"></div>';
+        var rows = document.getElementById('rows');
+        invitations.forEach(function (inv) {
+          var line = document.createElement('div');
+          line.className = 'detail-row';
+          var who = inv.email || inv.displayName || '—';
+          var when = inv.status === 'accepted' ? formatDate(inv.acceptedAt) : formatDate(inv.expiresAt);
+          line.innerHTML =
+            '<span class="detail-label">' + text(who) + '<br>' + text(inv.roleLabel) + '</span>' +
+            '<span class="detail-value">' + text(STATUS[inv.status] || inv.status) +
+              '<br><span class="muted">' + text(when) + '</span></span>';
+          if (inv.status === 'pending' && ID_RE.test(inv.id)) {
+            var revoke = document.createElement('button');
+            revoke.type = 'button';
+            revoke.className = 'btn btn-outline btn-small';
+            revoke.textContent = 'Revoke';
+            // Two clicks: a revoked invitation cannot be taken back.
+            revoke.addEventListener('click', function () {
+              if (revoke.textContent === 'Revoke') {
+                revoke.textContent = 'Really revoke?';
+                return;
+              }
+              revoke.disabled = true;
+              request('DELETE', api + '/' + inv.id)
+                .then(function (answer) {
+                  if (answer.status === 401) return showSignIn();
+                  if (inv.id === linkId && answer.status === 200) {
+                    link = null;
+                    linkId = null;
+                  }
+                  refresh();
+                })
+                .catch(function () {
+                  revoke.disabled = false;
+                  revoke.textContent = 'Revoke';
+                });
+            });
+            line.appendChild(revoke);
+          }
+          rows.appendChild(line);
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -17,33 +17,36 @@
  * itself (built from `location.origin` and the checked route, never from the
  * query).
  *
- * Rendered like the invitation page (`invite-page.ts`): the stock page and
- * one per branded domain, one script and one style for every brand, named
- * by hash in {@link INVITATIONS_PAGE_HEADERS}.
+ * Rendered like the invitation page (`invite-page.ts`): the stock page
+ * (English) and one per domain with a brand or a language, one script and
+ * one style for every brand and language, named by hash in
+ * {@link INVITATIONS_PAGE_HEADERS}; the words come from the page's data
+ * block, and a refusal is shown in them — by its `code`, else its status —
+ * never in the text the server sent.
  */
 
 import { AUTH_BRANDING_THEMES } from '../auth-branding.js';
-import { authPageHeaders, authPageShell } from './auth-pages.js';
+import { INVITATIONS_PAGE_KEYS, pageMessage, pageMessagesFor } from '../page-messages.js';
+import type { PageLanguage } from '../page-messages.js';
+import { AUTH_PAGE_SCRIPT_WORDS, authPageHeaders, authPageShell } from './auth-pages.js';
 import type { InviteBrand } from './auth-pages.js';
 
-/** The page's script — one text for every brand (its hash is in {@link INVITATIONS_PAGE_HEADERS}). */
+/** The page's script — one text for every brand and language (its hash is in {@link INVITATIONS_PAGE_HEADERS}). */
 export const INVITATIONS_PAGE_SCRIPT = String.raw`
     (function () {
       'use strict';
       var app = document.getElementById('app');
       var ROUTE_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
       var ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-      var STATUS = {
-        pending: 'Pending', expired: 'Expired', accepting: 'Being accepted',
-        accepted: 'Accepted', revoked: 'Revoked'
-      };
-
+      var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      var STATUS_KEYS = { 404: 'error.not_found', 429: 'error.tooManyRequests' };
+${AUTH_PAGE_SCRIPT_WORDS}
       // The route, from the path alone.
       var segments = window.location.pathname.split('/').filter(function (s) { return s !== ''; });
       var route = segments.length === 2 && segments[0] === 'invitations' &&
         segments[1].length <= 64 && ROUTE_RE.test(segments[1]) ? segments[1] : null;
       if (!route) {
-        showMessage('Not Found', 'There is no invitations page here.');
+        showMessage(msg('invitations.notFoundTitle'), msg('invitations.notFound'));
         return;
       }
       var api = '/api/delegated-invitations/' + route;
@@ -68,19 +71,9 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
         });
       }
 
-      function errorOf(answer) {
-        return typeof answer.data.error === 'string' ? answer.data.error : 'The request failed.';
-      }
-
-      function text(value) {
-        var div = document.createElement('div');
-        div.appendChild(document.createTextNode(String(value)));
-        return div.innerHTML;
-      }
-
       function formatDate(iso) {
         var date = new Date(iso);
-        return isNaN(date.getTime()) ? '' : date.toLocaleString(undefined, {
+        return isNaN(date.getTime()) ? '' : date.toLocaleString(LANG, {
           year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
         });
       }
@@ -95,11 +88,10 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
       function showSignIn() {
         app.innerHTML =
           '<div class="icon">🔒</div>' +
-          '<h1>Sign In to Continue</h1>' +
-          '<p class="subtitle">Sign in to invite people.</p>' +
-          '<a id="sign-in" class="btn btn-link">Sign in</a>' +
-          '<p class="muted">If signing in brings you back here again and again, clear this ' +
-          'site’s cookies in your browser and sign in once more.</p>';
+          '<h1>' + text(msg('invitations.signInTitle')) + '</h1>' +
+          '<p class="subtitle">' + text(msg('invitations.signInText')) + '</p>' +
+          '<a id="sign-in" class="btn btn-link">' + text(msg('invitations.signIn')) + '</a>' +
+          '<p class="muted">' + text(msg('invitations.signInLoop')) + '</p>';
         document.getElementById('sign-in').href = signIn;
       }
 
@@ -108,36 +100,36 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
           .then(function (answer) {
             if (answer.status === 401) return showSignIn();
             if (answer.status === 403 || answer.status === 404) {
-              return showMessage('Not Available',
-                'You cannot invite people into this application, or invitations are turned off for it.');
+              return showMessage(msg('invitations.unavailableTitle'), msg('invitations.unavailable'));
             }
-            if (answer.status !== 200) return showMessage('Something Went Wrong', errorOf(answer));
+            if (answer.status !== 200) return showMessage(msg('invitations.errorTitle'), refusal(answer.status, answer.data, STATUS_KEYS));
             render(answer.data);
           })
-          .catch(function () { showMessage('Something Went Wrong', 'The relay could not be reached.'); });
+          .catch(function () { showMessage(msg('invitations.errorTitle'), msg('invitations.unreachable')); });
       }
 
       function render(data) {
         var roles = data.policy.grantableRoles;
         var back = typeof data.plugin.siteUrl === 'string' && data.plugin.siteUrl.indexOf('https://') === 0;
         app.innerHTML =
-          '<h1>Invite People</h1>' +
-          '<p class="subtitle">to <strong class="accent">' + text(data.plugin.displayName) + '</strong></p>' +
+          '<h1>' + text(msg('invitations.title')) + '</h1>' +
+          '<p class="subtitle">' + html('invitations.to', { plugin: [data.plugin.displayName, 'strong', 'accent'] }) + '</p>' +
           (roles.length === 0
-            ? '<div class="error-msg">You may not invite anyone with your role.</div>'
+            ? '<div class="error-msg">' + text(msg('invitations.noRole')) + '</div>'
             : '<div id="form-error"></div>' +
-              '<form id="invite-form">' +
-                '<div class="field"><label for="email">E-mail address</label><input type="email" id="email" required>' +
-                  '<div class="hint">Under ' + text(data.policy.emailDomains.join(', ')) + '</div></div>' +
-                '<div class="field"><label for="display-name">Their name (optional)</label><input type="text" id="display-name"></div>' +
-                '<div class="field"><label for="role">Role</label><select id="role"></select></div>' +
+              '<form id="invite-form" novalidate>' +
+                '<div class="field"><label for="email">' + text(msg('invitations.email')) + '</label><input type="email" id="email" required>' +
+                  '<div class="hint">' + text(format('invitations.emailDomains', { domains: data.policy.emailDomains.join(', ') })) + '</div></div>' +
+                '<div class="field"><label for="display-name">' + text(msg('invitations.theirName')) + '</label><input type="text" id="display-name"></div>' +
+                '<div class="field"><label for="role">' + text(msg('invitations.role')) + '</label><select id="role"></select></div>' +
                 '<p class="muted" id="bounds"></p>' +
-                '<button type="submit" class="btn" id="submit-btn">Create Invitation</button>' +
+                '<button type="submit" class="btn" id="submit-btn">' + text(msg('invitations.create')) + '</button>' +
               '</form>') +
           '<div id="result"></div>' +
-          '<h2>Your invitations</h2>' +
+          '<h2>' + text(msg('invitations.yours')) + '</h2>' +
+          '<div id="list-error"></div>' +
           '<div id="list"></div>' +
-          (back ? '<a id="back" class="back">← Back to ' + text(data.plugin.displayName) + '</a>' : '');
+          (back ? '<a id="back" class="back">' + text(format('invitations.back', { plugin: data.plugin.displayName })) + '</a>' : '');
         if (back) document.getElementById('back').href = data.plugin.siteUrl;
         if (roles.length > 0) {
           var select = document.getElementById('role');
@@ -159,9 +151,9 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
       function showBounds(policy) {
         var bounds = document.getElementById('bounds');
         if (!bounds) return;
-        bounds.textContent = 'A link works once and expires after ' + policy.lifetimeDays +
-          (policy.lifetimeDays === 1 ? ' day' : ' days') + '. You have ' + policy.open + ' of ' +
-          policy.maxOpen + ' open invitations.';
+        bounds.textContent = format(plural('invitations.bounds', policy.lifetimeDays), {
+          days: policy.lifetimeDays, open: policy.open, max: policy.maxOpen
+        });
       }
 
       function submit(e) {
@@ -175,24 +167,30 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
         var name = document.getElementById('display-name').value.trim();
         if (name !== '') body.displayName = name;
         errorDiv.innerHTML = '';
+        var invalid = body.email === '' ? msg('invitations.emailRequired')
+          : !EMAIL_RE.test(body.email) ? msg('invitations.emailInvalid') : null;
+        if (invalid !== null) {
+          errorDiv.innerHTML = '<div class="error-msg">' + text(invalid) + '</div>';
+          return;
+        }
         button.disabled = true;
         request('POST', api, body)
           .then(function (answer) {
             button.disabled = false;
             if (answer.status === 401) return showSignIn();
             if (answer.status !== 201) {
-              errorDiv.innerHTML = '<div class="error-msg">' + text(errorOf(answer)) + '</div>';
+              errorDiv.innerHTML = '<div class="error-msg">' + text(refusal(answer.status, answer.data, STATUS_KEYS)) + '</div>';
               return;
             }
             link = typeof answer.data.inviteUrl === 'string' && answer.data.inviteUrl.indexOf('https://') === 0
               ? answer.data.inviteUrl : null;
             linkId = answer.data.invitation && answer.data.invitation.id;
             document.getElementById('invite-form').reset();
-            refresh();
+            refresh(null);
           })
           .catch(function () {
             button.disabled = false;
-            errorDiv.innerHTML = '<div class="error-msg">The relay could not be reached.</div>';
+            errorDiv.innerHTML = '<div class="error-msg">' + text(msg('invitations.unreachable')) + '</div>';
           });
       }
 
@@ -205,21 +203,20 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
         }
         result.innerHTML =
           '<div class="error-msg note-msg">' +
-            '<p>The invitation is ready. Send this link yourself — it is shown only now, and ' +
-            'whoever opens it first can accept it.</p>' +
+            '<p>' + text(msg('invitations.ready')) + '</p>' +
           '</div>' +
           '<div class="field"><div class="row"><input type="text" id="link" readonly>' +
-            '<button type="button" class="btn btn-small" id="copy">Copy</button></div></div>';
+            '<button type="button" class="btn btn-small" id="copy">' + text(msg('invitations.copy')) + '</button></div></div>';
         var input = document.getElementById('link');
         input.value = link;
         document.getElementById('copy').addEventListener('click', function () {
           var button = this;
           input.select();
-          var done = function () { button.textContent = 'Copied'; };
+          var done = function () { button.textContent = msg('invitations.copied'); };
           // Where the browser refuses the clipboard, the link stays selected.
           var fallback = function () {
             if (document.execCommand && document.execCommand('copy')) done();
-            else button.textContent = 'Selected';
+            else button.textContent = msg('invitations.selected');
           };
           if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(link).then(done, fallback);
@@ -229,17 +226,21 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
         });
       }
 
-      function refresh() {
+      // Render again; a refusal of the last action, if any, above the list.
+      function refresh(notice) {
         request('GET', api).then(function (answer) {
-          if (answer.status === 200) render(answer.data);
-          else load();
+          if (answer.status !== 200) return load();
+          render(answer.data);
+          if (notice) {
+            document.getElementById('list-error').innerHTML = '<div class="error-msg">' + text(notice) + '</div>';
+          }
         });
       }
 
       function showList(invitations) {
         var list = document.getElementById('list');
         if (invitations.length === 0) {
-          list.innerHTML = '<p class="muted">None yet.</p>';
+          list.innerHTML = '<p class="muted">' + text(msg('invitations.none')) + '</p>';
           return;
         }
         list.innerHTML = '<div class="details-box" id="rows"></div>';
@@ -249,19 +250,22 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
           line.className = 'detail-row';
           var who = inv.email || inv.displayName || '—';
           var when = inv.status === 'accepted' ? formatDate(inv.acceptedAt) : formatDate(inv.expiresAt);
+          var status = has('status.' + inv.status) ? msg('status.' + inv.status) : inv.status;
           line.innerHTML =
             '<span class="detail-label">' + text(who) + '<br>' + text(inv.roleLabel) + '</span>' +
-            '<span class="detail-value">' + text(STATUS[inv.status] || inv.status) +
+            '<span class="detail-value">' + text(status) +
               '<br><span class="muted">' + text(when) + '</span></span>';
           if (inv.status === 'pending' && ID_RE.test(inv.id)) {
             var revoke = document.createElement('button');
             revoke.type = 'button';
             revoke.className = 'btn btn-outline btn-small';
-            revoke.textContent = 'Revoke';
-            // Two clicks: a revoked invitation cannot be taken back.
+            revoke.textContent = msg('invitations.revoke');
+            // Two clicks: a revoked invitation cannot be taken back. The
+            // first click sets a flag on the button, never read from its label.
             revoke.addEventListener('click', function () {
-              if (revoke.textContent === 'Revoke') {
-                revoke.textContent = 'Really revoke?';
+              if (revoke.getAttribute('data-confirm') !== 'yes') {
+                revoke.setAttribute('data-confirm', 'yes');
+                revoke.textContent = msg('invitations.reallyRevoke');
                 return;
               }
               revoke.disabled = true;
@@ -272,11 +276,12 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
                     link = null;
                     linkId = null;
                   }
-                  refresh();
+                  refresh(answer.status === 200 ? null : refusal(answer.status, answer.data, STATUS_KEYS));
                 })
                 .catch(function () {
                   revoke.disabled = false;
-                  revoke.textContent = 'Revoke';
+                  revoke.removeAttribute('data-confirm');
+                  revoke.textContent = msg('invitations.revoke');
                 });
             });
             line.appendChild(revoke);
@@ -291,17 +296,23 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
 export const INVITATIONS_PAGE_HEADERS = authPageHeaders(INVITATIONS_PAGE_SCRIPT);
 
 /**
- * The inviter's page: the stock one for `null`, a domain's for its brand.
- * Throws on a brand whose theme is none of Authelia's.
+ * The inviter's page in `language` (English by default): the stock one for
+ * a `null` brand, a domain's for its brand. Throws on a brand whose theme
+ * is none of Authelia's.
  */
-export function renderInvitationsPage(brand: InviteBrand | null): string {
+export function renderInvitationsPage(
+  brand: InviteBrand | null,
+  language: PageLanguage = 'en',
+): string {
   if (brand !== null && !(AUTH_BRANDING_THEMES as readonly string[]).includes(brand.theme)) {
     throw new Error('An invitations page is rendered for one of Authelia’s themes');
   }
   return authPageShell({
     brand,
-    title: 'Invite People',
-    loading: 'Loading…',
+    language,
+    title: pageMessage(language, 'invitations.title'),
+    loading: pageMessage(language, 'invitations.loading'),
+    messages: pageMessagesFor(language, INVITATIONS_PAGE_KEYS),
     script: INVITATIONS_PAGE_SCRIPT,
   });
 }

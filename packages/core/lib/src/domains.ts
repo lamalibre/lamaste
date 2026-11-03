@@ -22,6 +22,8 @@ import {
   RESERVED_SUBDOMAINS,
   isLamasteUsername,
 } from './constants.js';
+import { isPageLanguage } from './page-messages.js';
+import type { PageLanguage } from './page-messages.js';
 
 export {
   AGENT_PANEL_SUBDOMAIN_PREFIX,
@@ -169,11 +171,17 @@ export type MembershipKind = 'member' | 'external';
 /** Every membership kind, in the order the panel lists them. */
 export const MEMBERSHIP_KINDS: readonly MembershipKind[] = ['member', 'external'];
 
-/** One domain of the projection: its active members and active external members (usernames). */
+/**
+ * One domain of the projection: its active members and active external
+ * members (usernames), and the language its pages speak (null: not set —
+ * Gatekeeper's pages in English; packages/core/docs/page-language-design.md §7).
+ */
 export interface DomainsProjectionDomain {
   readonly name: string;
   readonly members: readonly string[];
   readonly externals: readonly string[];
+  /** Optional in the file (a 4.9 panel writes none); always present once parsed. */
+  readonly language?: PageLanguage | null;
 }
 
 /**
@@ -197,7 +205,9 @@ function usernameList(value: unknown): string[] | null {
  * The projection in `parsed` (a parsed `domains.json`), or null when it is
  * not one — Gatekeeper then admits nobody. Domains must be valid and must
  * not overlap; members and external members are Lamaste usernames, and no
- * one is both on one domain.
+ * one is both on one domain. A domain's `language` is read **leniently**:
+ * absent or not a page language means "not set" and never invalidates the
+ * projection — membership fails closed, presentation fails open.
  */
 export function parseDomainsProjection(parsed: unknown): DomainsProjection | null {
   if (!parsed || typeof parsed !== 'object') return null;
@@ -206,7 +216,7 @@ export function parseDomainsProjection(parsed: unknown): DomainsProjection | nul
   const out: DomainsProjectionDomain[] = [];
   for (const entry of domains as unknown[]) {
     if (!entry || typeof entry !== 'object') return null;
-    const { name, members, externals } = entry as Record<string, unknown>;
+    const { name, members, externals, language } = entry as Record<string, unknown>;
     if (typeof name !== 'string' || !HOSTNAME_REGEX.test(name)) return null;
     if (out.some((d) => domainsOverlap(d.name, name))) return null;
     const memberList = usernameList(members);
@@ -214,15 +224,22 @@ export function parseDomainsProjection(parsed: unknown): DomainsProjection | nul
     if (!memberList || !externalList) return null;
     const memberSet = new Set(memberList);
     if (externalList.some((x) => memberSet.has(x))) return null;
-    out.push({ name, members: memberList, externals: externalList });
+    out.push({
+      name,
+      members: memberList,
+      externals: externalList,
+      language: isPageLanguage(language) ? language : null,
+    });
   }
   return { v: 2, domains: out };
 }
 
-/** A projection indexed for lookups: its domain names, each one's people with their kind. */
+/** A projection indexed for lookups: its domain names, each one's people with their kind, and the languages set. */
 export interface DomainsIndex {
   readonly names: readonly string[];
   readonly kinds: ReadonlyMap<string, ReadonlyMap<string, MembershipKind>>;
+  /** The domains with a page language, and that language (a domain absent here has none). */
+  readonly languages: ReadonlyMap<string, PageLanguage>;
 }
 
 /** Index a projection once (Gatekeeper does when it reads `domains.json`). */
@@ -238,7 +255,18 @@ export function indexDomainsProjection(projection: DomainsProjection): DomainsIn
         ]),
       ]),
     ),
+    languages: new Map(
+      projection.domains.flatMap((d) =>
+        d.language === undefined || d.language === null ? [] : [[d.name, d.language] as const],
+      ),
+    ),
   };
+}
+
+/** The page language of the domain `host` is under, or null (none set, or under no domain). */
+export function domainLanguageOfHost(index: DomainsIndex, host: string): PageLanguage | null {
+  const domain = domainOfHost(host, index.names);
+  return (domain !== null && index.languages.get(domain)) || null;
 }
 
 /**

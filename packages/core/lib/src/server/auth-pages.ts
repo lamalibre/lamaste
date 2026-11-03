@@ -5,18 +5,26 @@
  * around their content, one inline stylesheet, and the response headers
  * nginx sends with them.
  *
- * The inline script and style of a page are **one text for every brand**:
- * what a brand changes is markup (the title, the header with its name,
- * tagline and logo) and `/brand.css`, which a branded page links and whose
- * `:root` block sets the pages' colours (`renderAuthPageThemeCss`). So each
- * page's Content-Security-Policy names its script and style by hash, fixed
- * per release, and a brand change never makes a hash stale.
+ * The inline script and style of a page are **one text for every brand
+ * and every language**: what a brand changes is markup (the title, the
+ * header with its name, tagline and logo) and `/brand.css`, which a branded
+ * page links and whose `:root` block sets the pages' colours
+ * (`renderAuthPageThemeCss`); what a language changes is markup too — the
+ * root element's `lang`, the title, the loading text and the page's words
+ * in a JSON data block (`<script type="application/json"
+ * id="lamaste-messages">`, never executed, so the CSP's `script-src` does
+ * not apply to it), which the script reads
+ * (packages/core/docs/page-language-design.md §4). So each page's
+ * Content-Security-Policy names its script and style by hash, fixed per
+ * release, and neither a brand nor a language makes a hash stale.
  */
 
 import crypto from 'node:crypto';
 
 import { AUTH_PAGE_DARK_PALETTE, AUTH_PAGE_DEFAULT_ACCENT } from '../auth-branding.js';
 import type { AuthPagePalette, BrandTheme } from '../auth-branding.js';
+import { escapeHtml, isPageLanguage, pageMessagesJson } from '../page-messages.js';
+import type { PageLanguage } from '../page-messages.js';
 
 /** What the pages take from a domain's brand. */
 export interface InviteBrand {
@@ -145,16 +153,26 @@ export const AUTH_PAGE_STYLE = `
     .back { display: inline-block; margin-top: 1.5rem; font-size: 0.8125rem; color: ${v('accent')}; }
   `;
 
-/** The page's markup around its content: the brand's title, header and stylesheet link. */
+/** The id of a page's data block, which its script reads. */
+export const AUTH_PAGE_MESSAGES_ID = 'lamaste-messages';
+
+/**
+ * The page's markup around its content: `lang`, the brand's title, header
+ * and stylesheet link, the loading text, the data block of the page's
+ * words in `language`, and the script. Every text is escaped where it
+ * enters the markup — the title and loading text come from the catalogue.
+ */
 export function authPageShell(opts: {
   readonly brand: InviteBrand | null;
+  readonly language: PageLanguage;
   readonly title: string;
   readonly loading: string;
+  readonly messages: Readonly<Record<string, string>>;
   readonly script: string;
 }): string {
   const { brand } = opts;
-  const title =
-    brand === null ? `Lamaste — ${opts.title}` : `${escapeHtml(brand.name)} — ${opts.title}`;
+  if (!isPageLanguage(opts.language)) throw new Error('A page is rendered in a page language');
+  const title = `${escapeHtml(brand === null ? 'Lamaste' : brand.name)} — ${escapeHtml(opts.title)}`;
   const brandCss =
     brand === null ? '' : `\n  <link rel="stylesheet" href="${AUTH_PAGE_BRAND_CSS_PATH}">`;
   const header =
@@ -175,7 +193,7 @@ export function authPageShell(opts: {
       }
     </header>`;
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${opts.language}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -187,15 +205,79 @@ export function authPageShell(opts: {
     <div id="app">
       <div class="loading">
         <div class="spinner"></div>
-        ${opts.loading}
+        ${escapeHtml(opts.loading)}
       </div>
     </div>
   </div>
+  <script type="application/json" id="${AUTH_PAGE_MESSAGES_ID}">${pageMessagesJson(opts.language, opts.messages)}</script>
   <script>${opts.script}</script>
 </body>
 </html>
 `;
 }
+
+/**
+ * What both page scripts begin with, inside their function: the page's
+ * words from its data block, and the helpers that put them into the page —
+ * `msg`; `format`, one pass, so a value is never read as a template;
+ * `html`, the same as markup (the text escaped, each value escaped and —
+ * given as `[value, tag, class]` — wrapped in that element); `plural` by
+ * `Intl.PluralRules` in the page's language; `text`, escaping; and
+ * `refusal`, a refusal's words by its `code` (with its `field` or `cap`),
+ * else by its status (`statusKeys`), never the text the server sent — that
+ * is English, for scripts and logs. Part of each script's hashed text.
+ */
+export const AUTH_PAGE_SCRIPT_WORDS = String.raw`
+      // The page's words, in its language: the data block beside this script.
+      var block = JSON.parse(document.getElementById('${AUTH_PAGE_MESSAGES_ID}').textContent);
+      var LANG = block.lang;
+      var M = block.messages;
+      var CODE_RE = /^[a-z_]{1,64}$/;
+      var DETAIL_RE = /^[A-Za-z]{1,32}$/;
+
+      function has(key) { return Object.prototype.hasOwnProperty.call(M, key); }
+      function msg(key) { return has(key) ? M[key] : ''; }
+
+      function text(value) {
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(String(value)));
+        return div.innerHTML;
+      }
+
+      function format(key, values) {
+        return msg(key).replace(/\{([A-Za-z]+)\}/g, function (whole, name) {
+          return Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : whole;
+        });
+      }
+
+      function html(key, values) {
+        return msg(key).split(/(\{[A-Za-z]+\})/).map(function (part) {
+          var m = /^\{([A-Za-z]+)\}$/.exec(part);
+          if (!m || !Object.prototype.hasOwnProperty.call(values, m[1])) return text(part);
+          var v = values[m[1]];
+          if (!Array.isArray(v)) return text(v);
+          return '<' + v[1] + (v[2] ? ' class="' + v[2] + '"' : '') + '>' + text(v[0]) + '</' + v[1] + '>';
+        }).join('');
+      }
+
+      function plural(base, n) {
+        var category = typeof Intl !== 'undefined' && Intl.PluralRules
+          ? new Intl.PluralRules(LANG).select(n) : (n === 1 ? 'one' : 'other');
+        return has(base + '_' + category) ? base + '_' + category : base + '_other';
+      }
+
+      function refusal(status, body, statusKeys) {
+        var keys = [];
+        if (body && typeof body.code === 'string' && CODE_RE.test(body.code)) {
+          if (typeof body.field === 'string' && DETAIL_RE.test(body.field)) keys.push('error.' + body.code + '.' + body.field);
+          if (typeof body.cap === 'string' && DETAIL_RE.test(body.cap)) keys.push('error.' + body.code + '.' + body.cap);
+          keys.push('error.' + body.code);
+        }
+        keys.push(statusKeys[status] || 'error.generic');
+        for (var i = 0; i < keys.length; i++) if (has(keys[i])) return M[keys[i]];
+        return msg('error.generic');
+      }
+`;
 
 /** `'sha256-<base64>'` of an inline element's exact text, as a CSP source. */
 export function cspHashSource(text: string): string {
@@ -231,11 +313,4 @@ export function authPageHeaders(script: string): Readonly<Record<string, string>
   });
 }
 
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+export { escapeHtml };

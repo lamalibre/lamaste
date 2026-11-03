@@ -14,14 +14,18 @@
  * (suggested from the address), the person's name and a password.
  *
  * One rendering for the relay, the **stock page** (`renderInvitePage(null)`,
- * written by serverd to `/var/www/lamaste/invite/index.html`), and one per
- * branded domain (`renderInvitePage(brand)`, `invite/index.html` of the
- * domain's rendering, which the domain's auth vhost serves first —
- * packages/core/docs/auth-branding-design.md). They differ only in markup —
- * the title, a header with the brand's name, tagline and logo, and a link to
- * `/brand.css`, which carries the brand's colours: the inline script and
- * style are the same text for every brand, so the headers nginx sends with
- * the page ({@link INVITE_PAGE_HEADERS}) name them by hash. Nothing loads
+ * English, written by serverd to `/var/www/lamaste/invite/index.html`), and
+ * one per domain with a brand or a language (`renderInvitePage(brand,
+ * language)`, `invite/index.html` of the domain's rendering, which the
+ * domain's auth vhost serves first — packages/core/docs/auth-branding-design.md,
+ * page-language-design.md). They differ only in markup — `lang`, the title,
+ * a header with the brand's name, tagline and logo, a link to `/brand.css`,
+ * which carries the brand's colours, and the data block of the page's
+ * words: the inline script and style are the same text for every brand and
+ * language, so the headers nginx sends with the page
+ * ({@link INVITE_PAGE_HEADERS}) name them by hash. The script never shows
+ * the text of a refusal the server sent: a refusal's `code`, else its
+ * status, picks the page's own words. Nothing loads
  * from another host: the two-factor QR code is an SVG the panel renders
  * into the accept answer.
  */
@@ -29,7 +33,9 @@
 import { AUTH_PAGE_DEFAULT_ACCENT, AUTH_PAGE_DEFAULT_ACCENT_LIGHT } from '../auth-branding.js';
 import { AUTH_BRANDING_THEMES } from '../auth-branding.js';
 import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH } from '../constants.js';
-import { authPageHeaders, authPageShell } from './auth-pages.js';
+import { INVITE_PAGE_KEYS, pageMessage, pageMessagesFor } from '../page-messages.js';
+import type { PageLanguage } from '../page-messages.js';
+import { AUTH_PAGE_SCRIPT_WORDS, authPageHeaders, authPageShell } from './auth-pages.js';
 import type { InviteBrand } from './auth-pages.js';
 
 export type { InviteBrand } from './auth-pages.js';
@@ -40,7 +46,7 @@ export const INVITE_PAGE_DEFAULT_ACCENT = AUTH_PAGE_DEFAULT_ACCENT;
 /** … and on the light one (cyan-600: readable on white). */
 export const INVITE_PAGE_DEFAULT_ACCENT_LIGHT = AUTH_PAGE_DEFAULT_ACCENT_LIGHT;
 
-/** The page's script — one text for every brand (its hash is in {@link INVITE_PAGE_HEADERS}). */
+/** The page's script — one text for every brand and language (its hash is in {@link INVITE_PAGE_HEADERS}). */
 export const INVITE_PAGE_SCRIPT = String.raw`
     (function () {
       'use strict';
@@ -48,7 +54,8 @@ export const INVITE_PAGE_SCRIPT = String.raw`
       var TOKEN_RE = /^[a-f0-9]{64}$/;
       var USERNAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
       var QR_PREFIX = 'data:image/svg+xml;base64,';
-
+      var STATUS_KEYS = { 404: 'error.invitation_not_found', 410: 'error.invitation_closed', 429: 'error.tooManyRequests' };
+${AUTH_PAGE_SCRIPT_WORDS}
       // The token: the link's fragment, or — a 4.8 link — the last segment
       // of /invite/<token>. Nothing else of the URL is read. Then it leaves
       // the address bar and the history: the link is a secret.
@@ -62,7 +69,7 @@ export const INVITE_PAGE_SCRIPT = String.raw`
       }
       try { window.history.replaceState(null, '', '/invite/'); } catch (e) { /* not fatal */ }
       if (!token) {
-        showError('This invitation link is not valid.');
+        showError(msg('invite.invalidLink'));
         return;
       }
 
@@ -71,7 +78,16 @@ export const INVITE_PAGE_SCRIPT = String.raw`
           if (data.kind === 'delegated') showDelegatedForm(data);
           else showAdminForm(data);
         })
-        .catch(function (err) { showError(err.message); });
+        .catch(function (err) { showError(shown(err)); });
+
+      // An error this page raised carries words of its own; anything else
+      // (a script error) is shown as the generic text.
+      function failure(words) {
+        var err = new Error(words);
+        err.lamaste = true;
+        return err;
+      }
+      function shown(err) { return err && err.lamaste ? err.message : msg('error.generic'); }
 
       function post(path, body) {
         return fetch(path, {
@@ -81,20 +97,14 @@ export const INVITE_PAGE_SCRIPT = String.raw`
         }).then(function (res) {
           return res.json().catch(function () { return {}; }).then(function (data) {
             if (res.ok) return data;
-            throw new Error(typeof data.error === 'string' ? data.error : 'The request failed.');
+            throw failure(refusal(res.status, data, STATUS_KEYS));
           });
-        });
-      }
-
-      function text(value) {
-        var div = document.createElement('div');
-        div.appendChild(document.createTextNode(String(value)));
-        return div.innerHTML;
+        }, function () { throw failure(msg('error.generic')); });
       }
 
       function formatDate(iso) {
         var date = new Date(iso);
-        return isNaN(date.getTime()) ? '' : date.toLocaleString(undefined, {
+        return isNaN(date.getTime()) ? '' : date.toLocaleString(LANG, {
           year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
         });
       }
@@ -113,47 +123,50 @@ export const INVITE_PAGE_SCRIPT = String.raw`
       function showError(message) {
         app.innerHTML =
           '<div class="icon">⚠️</div>' +
-          '<h1>Invitation Unavailable</h1>' +
+          '<h1>' + text(msg('invite.unavailableTitle')) + '</h1>' +
           '<p class="subtitle">' + text(message) + '</p>';
       }
 
       function passwordFields() {
-        return field('password', 'Password', 'password', 'At least 8 characters') +
-          field('confirm-password', 'Confirm password', 'password', '');
+        return field('password', msg('invite.password'), 'password', msg('invite.passwordHint')) +
+          field('confirm-password', msg('invite.confirmPassword'), 'password', '');
+      }
+
+      function submitButton() {
+        return '<button type="submit" class="btn" id="submit-btn">' + text(msg('invite.create')) + '</button>';
       }
 
       function showAdminForm(data) {
         app.innerHTML =
           '<div class="icon">✉️</div>' +
-          '<h1>You’ve Been Invited</h1>' +
-          '<p class="subtitle">Set your password to create your account.</p>' +
+          '<h1>' + text(msg('invite.invitedTitle')) + '</h1>' +
+          '<p class="subtitle">' + text(msg('invite.adminSubtitle')) + '</p>' +
           '<div class="details-box">' +
-            row('Username', data.username) + row('Email', data.email) +
-            row('Expires', formatDate(data.expiresAt)) +
+            row(msg('invite.username'), data.username) + row(msg('invite.email'), data.email) +
+            row(msg('invite.expires'), formatDate(data.expiresAt)) +
           '</div>' +
           '<div id="form-error"></div>' +
-          '<form id="accept-form">' + passwordFields() +
-          '<button type="submit" class="btn" id="submit-btn">Create Account</button></form>';
+          '<form id="accept-form" novalidate>' + passwordFields() + submitButton() + '</form>';
         bindForm(function () { return {}; });
       }
 
       function showDelegatedForm(data) {
-        var who = data.invitedBy ? text(data.invitedBy) + ' invited you' : 'You are invited';
+        var plugin = [data.plugin, 'strong', 'accent'];
+        var role = [data.role, 'strong'];
         app.innerHTML =
           '<div class="icon">✉️</div>' +
-          '<h1>You’ve Been Invited</h1>' +
-          '<p class="subtitle">' + who + ' to <strong class="accent">' + text(data.plugin) +
-            '</strong> as <strong>' + text(data.role) + '</strong>.</p>' +
+          '<h1>' + text(msg('invite.invitedTitle')) + '</h1>' +
+          '<p class="subtitle">' + (data.invitedBy
+            ? html('invite.delegatedBy', { inviter: data.invitedBy, plugin: plugin, role: role })
+            : html('invite.delegated', { plugin: plugin, role: role })) + '</p>' +
           '<div class="details-box">' +
-            row('Email', data.email) + row('Expires', formatDate(data.expiresAt)) +
+            row(msg('invite.email'), data.email) + row(msg('invite.expires'), formatDate(data.expiresAt)) +
           '</div>' +
           '<div id="form-error"></div>' +
-          '<form id="accept-form">' +
-            field('username', 'Username', 'text',
-              'You sign in with it. Lower-case letters, digits, - and _; it cannot be changed later.') +
-            field('display-name', 'Your name', 'text', '') +
-            passwordFields() +
-          '<button type="submit" class="btn" id="submit-btn">Create Account</button></form>';
+          '<form id="accept-form" novalidate>' +
+            field('username', msg('invite.username'), 'text', msg('invite.usernameHint')) +
+            field('display-name', msg('invite.yourName'), 'text', '') +
+            passwordFields() + submitButton() + '</form>';
         var username = document.getElementById('username');
         username.value = data.suggestedUsername || '';
         username.setAttribute('autocomplete', 'username');
@@ -163,12 +176,12 @@ export const INVITE_PAGE_SCRIPT = String.raw`
         name.setAttribute('maxlength', '100');
         bindForm(function () {
           var chosen = username.value.trim();
-          var shown = name.value.trim();
+          var shownName = name.value.trim();
           if (!USERNAME_RE.test(chosen) || chosen.length < ${USERNAME_MIN_LENGTH} || chosen.length > ${USERNAME_MAX_LENGTH}) {
-            throw new Error('A username has ${USERNAME_MIN_LENGTH} to ${USERNAME_MAX_LENGTH} lower-case letters, digits, - and _, and starts with a letter or digit.');
+            throw failure(format('invite.usernameRule', { min: ${USERNAME_MIN_LENGTH}, max: ${USERNAME_MAX_LENGTH} }));
           }
-          if (shown.length === 0) throw new Error('Enter your name.');
-          return { username: chosen, displayName: shown };
+          if (shownName.length === 0) throw failure(msg('invite.nameRequired'));
+          return { username: chosen, displayName: shownName };
         });
       }
 
@@ -184,23 +197,23 @@ export const INVITE_PAGE_SCRIPT = String.raw`
           var body;
           try {
             body = extra();
-            if (password.length < 8) throw new Error('A password has at least 8 characters.');
-            if (password.length > 128) throw new Error('A password has at most 128 characters.');
-            if (password !== confirm) throw new Error('The passwords do not match.');
+            if (password.length < 8) throw failure(msg('invite.passwordShort'));
+            if (password.length > 128) throw failure(msg('invite.passwordLong'));
+            if (password !== confirm) throw failure(msg('invite.passwordMismatch'));
           } catch (err) {
-            errorDiv.innerHTML = '<div class="error-msg">' + text(err.message) + '</div>';
+            errorDiv.innerHTML = '<div class="error-msg">' + text(shown(err)) + '</div>';
             return;
           }
           body.token = token;
           body.password = password;
           submitBtn.disabled = true;
-          submitBtn.textContent = 'Creating account…';
+          submitBtn.textContent = msg('invite.creating');
           post('/api/invite/accept', body)
             .then(showSuccess)
             .catch(function (err) {
-              errorDiv.innerHTML = '<div class="error-msg">' + text(err.message) + '</div>';
+              errorDiv.innerHTML = '<div class="error-msg">' + text(shown(err)) + '</div>';
               submitBtn.disabled = false;
-              submitBtn.textContent = 'Create Account';
+              submitBtn.textContent = msg('invite.create');
             });
         });
       }
@@ -208,33 +221,32 @@ export const INVITE_PAGE_SCRIPT = String.raw`
       function showSuccess(result) {
         app.className = 'success-card';
         var login = typeof result.loginUrl === 'string' && result.loginUrl.indexOf('https://') === 0
-          ? '<a id="login" class="btn btn-link">Go to sign-in</a>' : '';
+          ? '<a id="login" class="btn btn-link">' + text(msg('invite.goToSignIn')) + '</a>' : '';
         var pending = result.accessPending
-          ? '<div class="error-msg note-msg">Your access is still being set up — if signing in shows nothing yet, try again in a minute.</div>'
+          ? '<div class="error-msg note-msg">' + text(msg('invite.accessPending')) + '</div>'
           : '';
+        var created = '<p>' + html('invite.created', { username: [result.username, 'strong', 'accent'] }) + '</p>';
         var secret = typeof result.totpUri === 'string' ? (result.totpUri.match(/secret=([A-Z2-7]+)/) || [])[1] : null;
         if (secret) {
           app.innerHTML =
             '<div class="icon">✅</div>' +
-            '<h1>Account Created</h1>' +
-            '<p>Your account <strong class="accent">' + text(result.username) + '</strong> has been created.</p>' +
-            '<p>Scan this QR code with your authenticator app to set up two-factor authentication.</p>' +
+            '<h1>' + text(msg('invite.createdTitle')) + '</h1>' + created +
+            '<p>' + text(msg('invite.scanQr')) + '</p>' +
             '<div id="qr" class="qr"></div>' +
-            '<p class="manual"><strong>Manual entry:</strong> ' + text(secret) + '</p>' +
-            '<div class="error-msg note-msg">⚠️ Save this before you leave the page — it is not shown again.</div>' +
+            '<p class="manual"><strong>' + text(msg('invite.manualEntry')) + '</strong> ' + text(secret) + '</p>' +
+            '<div class="error-msg note-msg">⚠️ ' + text(msg('invite.saveNow')) + '</div>' +
             pending + login;
           if (typeof result.totpQr === 'string' && result.totpQr.indexOf(QR_PREFIX) === 0) {
             var img = document.createElement('img');
-            img.alt = 'Two-factor QR code';
+            img.alt = msg('invite.qrAlt');
             img.src = result.totpQr;
             document.getElementById('qr').appendChild(img);
           }
         } else {
           app.innerHTML =
             '<div class="icon">✅</div>' +
-            '<h1>Account Created</h1>' +
-            '<p>Your account <strong class="accent">' + text(result.username) + '</strong> has been created.</p>' +
-            '<p>Ask your administrator to set up two-factor authentication.</p>' +
+            '<h1>' + text(msg('invite.createdTitle')) + '</h1>' + created +
+            '<p>' + text(msg('invite.askAdminTotp')) + '</p>' +
             pending + login;
         }
         var link = document.getElementById('login');
@@ -247,18 +259,21 @@ export const INVITE_PAGE_SCRIPT = String.raw`
 export const INVITE_PAGE_HEADERS = authPageHeaders(INVITE_PAGE_SCRIPT);
 
 /**
- * The invitation page: the stock one for `null`, a domain's for its brand.
- * Throws on a brand whose theme is none of Authelia's (the rendering is
- * made from a validated record; anything else is a programming error).
+ * The invitation page in `language` (English by default): the stock one for
+ * a `null` brand, a domain's for its brand. Throws on a brand whose theme is
+ * none of Authelia's (the rendering is made from a validated record;
+ * anything else is a programming error).
  */
-export function renderInvitePage(brand: InviteBrand | null): string {
+export function renderInvitePage(brand: InviteBrand | null, language: PageLanguage = 'en'): string {
   if (brand !== null && !(AUTH_BRANDING_THEMES as readonly string[]).includes(brand.theme)) {
     throw new Error('An invitation page is rendered for one of Authelia’s themes');
   }
   return authPageShell({
     brand,
-    title: 'Accept Invitation',
-    loading: 'Loading invitation…',
+    language,
+    title: pageMessage(language, 'invite.title'),
+    loading: pageMessage(language, 'invite.loading'),
+    messages: pageMessagesFor(language, INVITE_PAGE_KEYS),
     script: INVITE_PAGE_SCRIPT,
   });
 }

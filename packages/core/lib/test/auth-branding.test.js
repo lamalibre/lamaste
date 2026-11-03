@@ -536,9 +536,12 @@ test('the stock invitation page carries no brand; a branded one its name, taglin
   assert.doesNotMatch(stock, /\/api\/invite\/' \+/);
   assert.ok(stock.includes('window.location.hash.slice(1)'));
   assert.doesNotMatch(stock, /location\.search|URLSearchParams/, 'nothing from the query');
-  // No external URL, no script but the inline one.
+  // No external URL, no script but the inline one — beside it the data
+  // block of the page's words, which no browser runs.
   assert.equal(stock.match(/https?:\/\/[^'"\s]+/g), null);
-  assert.equal(stock.match(/<script/g).length, 1);
+  assert.equal(stock.match(/<script>/g).length, 1);
+  assert.equal(stock.match(/<script/g).length, 2);
+  assert.equal(stock.match(/<script type="application\/json" id="lamaste-messages">/g).length, 1);
   assert.doesNotMatch(stock, /<script[^>]*src=/);
   assert.doesNotMatch(stock, / on[a-z]+="/, 'no inline event handlers');
 
@@ -634,8 +637,11 @@ test("the inviter's page: the route from its path alone, its own host's API, the
   assert.ok(INVITE_PAGE_SCRIPT.includes(`'maxlength', '${USERNAME_MAX_LENGTH}'`));
   assert.doesNotMatch(INVITE_PAGE_SCRIPT, /2 to 64/);
   assert.ok(INVITATIONS_PAGE_SCRIPT.includes("request('DELETE', api + '/' + inv.id)"));
-  // A revocation takes two clicks, and the link of a revoked invitation goes.
-  assert.ok(INVITATIONS_PAGE_SCRIPT.includes("revoke.textContent = 'Really revoke?'"));
+  // A revocation takes two clicks — a flag on the button, never its label —
+  // and the link of a revoked invitation goes.
+  assert.ok(INVITATIONS_PAGE_SCRIPT.includes("revoke.setAttribute('data-confirm', 'yes')"));
+  assert.ok(INVITATIONS_PAGE_SCRIPT.includes("revoke.getAttribute('data-confirm') !== 'yes'"));
+  assert.doesNotMatch(INVITATIONS_PAGE_SCRIPT, /textContent ===/);
   assert.ok(INVITATIONS_PAGE_SCRIPT.includes('inv.id === linkId'));
   // Nothing from the query or the fragment; fetch's default mode (it sends Origin).
   assert.doesNotMatch(INVITATIONS_PAGE_SCRIPT, /location\.(search|hash)|URLSearchParams/);
@@ -644,7 +650,8 @@ test("the inviter's page: the route from its path alone, its own host's API, the
   assert.ok(INVITATIONS_PAGE_SCRIPT.includes("indexOf('https://') === 0"));
   assert.equal(page.match(/https?:\/\/[^'"\s]+/g), null);
   // The cookie loop is explained.
-  assert.match(INVITATIONS_PAGE_SCRIPT, /clear this ' \+\s*'site(?:\\u2019|’)s cookies/);
+  assert.ok(INVITATIONS_PAGE_SCRIPT.includes("text(msg('invitations.signInLoop'))"));
+  assert.match(page, /clear this site’s cookies/);
   const branded = renderInvitationsPage({
     name: 'Code Lama',
     tagline: null,
@@ -721,10 +728,14 @@ test('a brand is rendered into a directory of its own and served through its dom
       root,
       now: new Date('2026-10-27T10:00:00Z'),
     });
-    assert.deepEqual(rendered, {
+    const { fromEnglish, ...stored } = rendered;
+    assert.deepEqual(fromEnglish, [], 'a brand alone forces no locale');
+    assert.deepEqual(stored, {
       v: 1,
       revision: 1,
+      language: null,
       autheliaVersion: PINNED,
+      autheliaPinned: PINNED,
       pagesDigest: authPagesDigest(),
       renderedAt: '2026-10-27T10:00:00.000Z',
     });
@@ -746,6 +757,7 @@ test('a brand is rendered into a directory of its own and served through its dom
       AUTH_BRANDING_FILES.css,
       AUTH_BRANDING_FILES.invite,
       AUTH_BRANDING_FILES.invitations,
+      AUTH_BRANDING_FILES.unavailable,
       AUTH_BRANDING_FILES.brand,
       AUTH_BRANDING_FILES.rendered,
       'locales/en/portal.json',
@@ -787,7 +799,9 @@ test('a brand is rendered into a directory of its own and served through its dom
     assert.equal(brand.theme, 'dark');
     assert.equal(brand.logo.sha256.length, 64);
     assert.equal(brand.favicon.sha256.length, 64);
-    assert.deepEqual(await readRenderedBrand(domain, root), rendered);
+    assert.deepEqual(await readRenderedBrand(domain, root), stored);
+    // A brand alone: Authelia's own locales, brand-spliced, and no forced file.
+    await assert.rejects(readFile(path.join(link, 'locales/forced/portal.json')));
 
     // Re-rendered without the favicon at revision 2: the link now names a
     // new directory, the old one is gone, and brand.json was readable
@@ -827,6 +841,7 @@ test('a brand is rendered into a directory of its own and served through its dom
       'locales',
       'rendered.json',
       'static',
+      'unavailable',
     ]);
     const brand2 = JSON.parse(await readFile(path.join(link, AUTH_BRANDING_FILES.brand), 'utf-8'));
     assert.equal(brand2.favicon, null);
@@ -905,7 +920,7 @@ test('a brand is rendered into a directory of its own and served through its dom
     // rendered.json behind a link is not ours.
     const dir2 = path.join(root, target2);
     await rm(path.join(dir2, AUTH_BRANDING_FILES.rendered));
-    await writeFile(path.join(root, 'elsewhere.json'), JSON.stringify(rendered));
+    await writeFile(path.join(root, 'elsewhere.json'), JSON.stringify(stored));
     await symlink(path.join(root, 'elsewhere.json'), path.join(dir2, AUTH_BRANDING_FILES.rendered));
     assert.equal(await readRenderedBrand(domain, root), null);
 
