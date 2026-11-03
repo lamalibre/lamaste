@@ -181,23 +181,25 @@ The caller's own invitations only, and never who accepted one.
 
 ### `DELETE /api/delegated-invitations/:route/:id`
 
-Revoke the caller's own open invitation: `{ ok: true }`. One being accepted is marked: it ends revoked, and an account made by then is disabled. Anything else — another's invitation, one that ended, none — is `404`.
+Revoke the caller's own open invitation: `{ ok: true }`. One being accepted is marked: it ends revoked, and an account made by then is disabled. Anything else — another's invitation, one that ended, none — is `404 not_found`.
 
 ### Refusals
 
-| Status | `code`                     | Meaning                                                                                                      |
-| ------ | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| 400    | `invalid_request`          | The body; `field` names which. Never repeats a value                                                         |
-| 400    | `email_domain_not_allowed` | The address is under no domain of the policy                                                                 |
-| 401    |                            | `{ "error": "unauthenticated" }`: no session, or two session cookies. The page links to the sign-in          |
-| 403    | `invitations_unavailable`  | The policy is off, or the surface not ready; which is in the panel's log only                                |
-| 403    | `role_not_grantable`       | The caller's roles may not give it now                                                                       |
-| 403    |                            | `{ "error": "forbidden" }` from nginx, a cross-site request, a wrong `Origin`, or a user who is not entitled |
-| 404    |                            | No such plugin, or no identity                                                                               |
-| 409    | `invitation_cap`           | `cap`: `inviter` (`maxOpenPerInviter`) or `plugin` (`maxJoined`)                                             |
-| 429    | `invitation_rate`          | 30 invitations by one inviter in an hour, revoked ones included                                              |
-| 503    | `grant_reserve`            | Gatekeeper has fewer than 100 free grants (every invitee costs two)                                          |
-| 503    | `gatekeeper_unavailable`   | Gatekeeper did not answer                                                                                    |
+Every answer's `error` is English, for the panel, the CLI, scripts and logs; the inviter's page never shows it. It shows its own words, in the domain's page language ([Domains — Page language](domains.md)): those of the `code` (with its `field` or `cap`), else those of the status.
+
+| Status | `code`                     | Meaning                                                                                                                     |
+| ------ | -------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `invalid_request`          | The body; `field` names which. Never repeats a value                                                                        |
+| 400    | `email_domain_not_allowed` | The address is under no domain of the policy                                                                                |
+| 401    |                            | `{ "error": "unauthenticated" }`: no session, or two session cookies. The page links to the sign-in                         |
+| 403    | `invitations_unavailable`  | The policy is off, or the surface not ready; which is in the panel's log only                                               |
+| 403    | `role_not_grantable`       | The caller's roles may not give it now                                                                                      |
+| 403    |                            | `{ "error": "forbidden" }` from nginx, a cross-site request, a wrong `Origin`, or a user who is not entitled                |
+| 404    | `not_found`                | No such plugin, no identity, or (revoking) no such open invitation of the caller's; `resolveUserCaller`'s `404` has no code |
+| 409    | `invitation_cap`           | `cap`: `inviter` (`maxOpenPerInviter`) or `plugin` (`maxJoined`)                                                            |
+| 429    | `invitation_rate`          | 30 invitations by one inviter in an hour, revoked ones included                                                             |
+| 503    | `grant_reserve`            | Gatekeeper has fewer than 100 free grants (every invitee costs two)                                                         |
+| 503    | `gatekeeper_unavailable`   | Gatekeeper did not answer                                                                                                   |
 
 Making an invitation never says whether the address already has an account.
 
@@ -209,7 +211,7 @@ No certificate, no session; the token is the only credential. 20 requests a minu
 
 `{ "token": "<64 hex>" }` → what the page shows. An administrator's: `{ kind: "admin", username, email, expiresAt }`. A delegated one: `{ kind: "delegated", email, displayName, plugin, role, invitedBy, expiresAt, suggestedUsername }` — `plugin` and `role` are the display name and label, `invitedBy` the inviter's display name or `null`, never their username.
 
-A delegated token is answered only by `auth.<its domain>`, read from the `Host` the vhost writes as a literal: anywhere else, `404`. `404` for no such token; `410` for one used, expired or revoked.
+A delegated token is answered only by `auth.<its domain>`, read from the `Host` the vhost writes as a literal: anywhere else, `404 invitation_not_found` — the same answer as no such token. `410 invitation_used`, `invitation_expired` or `invitation_closed` (revoked) for a link that can no longer be accepted.
 
 ### `POST /api/invite/accept`
 
@@ -217,14 +219,20 @@ An administrator's: `{ token, password }`. A delegated one: `{ token, username, 
 
 `{ ok, username, loginUrl, totpUri, totpQr, accessPending }`: `totpQr` is the TOTP URI as an SVG data URI, `loginUrl` the domain's sign-in (a delegated invitation: the plugin's site), and `accessPending` is true when the account exists but its access is still being completed — the panel keeps completing it.
 
-| Status | `code`                                                   | Meaning                                                                                        |
-| ------ | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| 400    | `invalid_request`                                        | `field` names which                                                                            |
-| 404    |                                                          | No such token, or the wrong host                                                               |
-| 409    | `username_unavailable`                                   | Delegated: the one answer for every reason a username cannot be taken. Counts a failed attempt |
-| 409    | `invitation_accepting`                                   | An acceptance of this link is under way                                                        |
-| 410    |                                                          | Used, expired, revoked, or no longer allowed (below)                                           |
-| 503    | `gatekeeper_unavailable`, `authelia_storage_unavailable` | Try again; nothing was created                                                                 |
+| Status | `code`                                                   | Meaning                                                                                                                                   |
+| ------ | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `invalid_request`                                        | `field` names which                                                                                                                       |
+| 404    | `invitation_not_found`                                   | No such token, or the wrong host                                                                                                          |
+| 409    | `username_unavailable`                                   | Delegated: the one answer for every reason a username cannot be taken. Counts a failed attempt. An administrator's: its username is taken |
+| 409    | `invitation_accepting`                                   | An acceptance of this link is under way                                                                                                   |
+| 410    | `invitation_used`                                        | Accepted already                                                                                                                          |
+| 410    | `invitation_expired`                                     | Past its expiry                                                                                                                           |
+| 410    | `invitation_closed`                                      | Revoked, or no longer allowed (below)                                                                                                     |
+| 410    | `invitation_revoked`                                     | Revoked while this acceptance ran: no account is handed over                                                                              |
+| 503    | `gatekeeper_unavailable`, `authelia_storage_unavailable` | Try again; nothing was created                                                                                                            |
+| 503    | `invitation_unavailable`                                 | The plugin cannot be joined right now (disabled, its surface not served, an operation running)                                            |
+
+As on the inviter's API, `error` is English and the invitation page never shows it: it shows the words of the `code`, else of the status, in the domain's page language.
 
 A username is unavailable when a directory row holds it — active, disabled or removed; an open invitation names it; Gatekeeper holds any grant or group membership under it; a static site's `allowedUsers` or a desktop plugin grant names it; or Authelia holds an OpenID Connect identifier for it. So an invitee inherits nothing, and a stranger's acceptance never starts a principal cleanup.
 

@@ -81,6 +81,7 @@ import {
   finishClaim,
   getInvitation,
   importLegacyInvitations,
+  invitationClosedError,
   pruneEndedInvitations,
   recordCompletion,
   recordFailedAttempt,
@@ -132,12 +133,17 @@ export function hostServesInvitation(host, invitation) {
   return name === `auth.${domain}`;
 }
 
+/** 404 `invitation_not_found`: no invitation, or not one this host may answer for — one answer. */
+function invitationNotFoundError() {
+  return httpError('Invitation not found', 404, { code: 'invitation_not_found' });
+}
+
 /** The invitation a body's token opens, or 404 — a delegated one only on its own sign-in host. */
 async function openedInvitation(input, host) {
   const invitation = isRecord(input) ? await findInvitationByToken(input.token) : null;
-  if (!invitation) throw httpError('Invitation not found', 404);
+  if (!invitation) throw invitationNotFoundError();
   if (invitation.kind === 'delegated' && !hostServesInvitation(host, invitation)) {
-    throw httpError('Invitation not found', 404);
+    throw invitationNotFoundError();
   }
   return invitation;
 }
@@ -145,11 +151,13 @@ async function openedInvitation(input, host) {
 /** 410 for an invitation that cannot be accepted any more, 409 while it is being accepted. */
 function assertOpen(invitation) {
   if (invitation.shownStatus === 'accepted') {
-    throw httpError('This invitation has already been used', 410);
+    throw httpError('This invitation has already been used', 410, { code: 'invitation_used' });
   }
-  if (invitation.shownStatus === 'expired') throw httpError('This invitation has expired', 410);
+  if (invitation.shownStatus === 'expired') {
+    throw httpError('This invitation has expired', 410, { code: 'invitation_expired' });
+  }
   if (invitation.shownStatus === 'revoked') {
-    throw httpError('This invitation is no longer valid', 410);
+    throw httpError('This invitation is no longer valid', 410, { code: 'invitation_closed' });
   }
   if (invitation.shownStatus === 'accepting') {
     throw httpError('This invitation is being accepted right now', 409, {
@@ -607,7 +615,7 @@ async function createInvitedUser(invitation, { username, claimId, vet, create, l
         vetCreates: async (name) => {
           const state = await claimState(invitation.id, claimId);
           if (!state.held || state.revokePendingReason) {
-            throw httpError('This invitation can no longer be accepted', 410);
+            throw invitationClosedError();
           }
           await vet(name);
         },
@@ -633,7 +641,9 @@ async function createInvitedUser(invitation, { username, claimId, vet, create, l
 
 async function acceptAdmin(invitation, { password }, { logger }) {
   const username = invitation.username;
-  if (await usersFileHolds(username)) throw httpError('This username already exists', 409);
+  if (await usersFileHolds(username)) {
+    throw httpError('This username already exists', 409, { code: 'username_unavailable' });
+  }
   const claimId = await claimInvitation(invitation.id, null, username);
   let hashed;
   try {
