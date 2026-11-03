@@ -1,6 +1,6 @@
 # Page Language — Design Document
 
-> **Status:** draft 2026-11-03, reviewed. Wave 0 (inventory and design) only; nothing built. An independent review of the design against the code and Authelia v4.39.28, and an independent reading of the Turkish (§8), are both done and folded in (see _Review findings_ at the end). Decisions D1–D13 await the founders.
+> **Status:** draft 2026-11-03, reviewed. Wave 0 (inventory and design) only; nothing built. An independent review of the design against the code and Authelia v4.39.28, and an independent reading of the Turkish (§8), are both done and folded in (see _Review findings_ at the end). Decisions D1–D13 agreed by the founders on 2026-11-03, all as recommended (D3 the domain decides, D4 Authelia forced with its menu hidden, D11 templates in the domain's language, D13 4.10.0 asked explicitly).
 > **Target:** Lamaste 4.10.0, on top of 4.9.0 (`develop` at `d5bc67f`). The tag `v4.9.0` is not touched. Tagging, publishing and the live relay are the founders'.
 > **Pilot:** a plugin with a Turkish UI whose coordinator invites colleagues (delegated invitations, 4.9.0) on a domain whose people read Turkish. Lamaste holds no client content: every example here and in the tests uses invented domains (`alpha.test`-style names, as the existing specs do).
 > **Companions:** `auth-branding-design.md` (the per-domain rendering this builds on), `delegated-invitations-design.md` (the inviter's and invitee's pages), `multi-domain-relay-design.md` (Gatekeeper's projection), `external-members-design.md`.
@@ -984,7 +984,7 @@ reports; the coordinator verifies and asks before the next.
 Then the PR to `develop`, reviewed and merged by rebase as #1–#4. No tag, no
 publish, no change on the live relay: those are the founders'.
 
-## Decisions (to agree)
+## Decisions (agreed 2026-11-03)
 
 | #   | Question                                                  | Recommendation                                                                                                                                                                                                                                                                                                                  | Alternatives                                                                                       |
 | --- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
