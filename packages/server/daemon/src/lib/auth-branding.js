@@ -1163,9 +1163,12 @@ export async function applyDomainLanguage(name, { logger } = {}) {
 /**
  * The rendering of every domain as the Domains page shows it: what
  * `rendered.json` says, whether it is current, and whether its last
- * rendering or vhost rewrite failed (the reconcile retries both).
+ * rendering or vhost rewrite failed (the reconcile retries both). Null for
+ * a domain with neither a brand nor a language and nothing rendered — there
+ * is no rendering to speak of; one still on disk is listed (not current)
+ * until the reconcile removes it.
  *
- * @returns {Promise<Map<string, { rendered: object | null, current: boolean, renderFailing: boolean, vhostPending: boolean }>>}
+ * @returns {Promise<Map<string, { rendered: object | null, current: boolean, renderFailing: boolean, vhostPending: boolean } | null>>}
  */
 export async function domainRenderings() {
   const [inputs, version] = [renderInputs(await getStateDb()), await knownAutheliaVersion()];
@@ -1173,17 +1176,19 @@ export async function domainRenderings() {
     inputs.map((input) => readRenderedBrand(input.domain, dep('webRoot'))),
   );
   return new Map(
-    inputs.map((input, i) => [
-      input.domain,
-      {
-        rendered: rendered[i],
-        current: wantsRendering(input)
-          ? renderingCurrent(rendered[i], input, version)
-          : rendered[i] === null,
-        renderFailing: renderFailing.get(input.domain) ?? false,
-        vhostPending: vhostPending.has(input.domain),
-      },
-    ]),
+    inputs.map((input, i) => {
+      const wanted = wantsRendering(input);
+      if (!wanted && rendered[i] === null) return [input.domain, null];
+      return [
+        input.domain,
+        {
+          rendered: rendered[i],
+          current: wanted && renderingCurrent(rendered[i], input, version),
+          renderFailing: renderFailing.get(input.domain) ?? false,
+          vhostPending: vhostPending.has(input.domain),
+        },
+      ];
+    }),
   );
 }
 
