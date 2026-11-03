@@ -69,6 +69,27 @@ function readText(html) {
     .trim();
 }
 
+/**
+ * The style's changes since 4.9.0, each on purpose: a message box keeps a
+ * band at its top for the copy button, which covered the end of a message's
+ * first line (more so "Kopyala" than "Copy").
+ */
+const STYLE_CHANGES_SINCE_4_9 = [
+  [
+    'padding: 0.75rem 1rem; margin-bottom: 0.5rem; position: relative;',
+    'padding: 2.25rem 1rem 0.75rem; margin-bottom: 0.5rem; position: relative;',
+  ],
+];
+
+/** 4.9.0's style with the listed changes made, each of which it must have had. */
+function styleSince49(style) {
+  return STYLE_CHANGES_SINCE_4_9.reduce((s, [from, to]) => {
+    if (!s.includes('.template-box')) return s;
+    assert.ok(s.includes(from), `4.9.0 had ${from}`);
+    return s.replace(from, to);
+  }, style);
+}
+
 /** The page's style, links, classes and images — everything but the copy buttons' markup. */
 function shape(html) {
   const style = /<style>([\s\S]*?)<\/style>/.exec(html)?.[1] ?? '';
@@ -88,7 +109,12 @@ test('English, no language set: each page reads as 4.9.0’s, in the same shape,
     const before = fs.readFileSync(path.join(FIXTURES, name), 'utf-8');
     const html = render();
     assert.equal(readText(html), readText(before), `${name}: the text`);
-    assert.deepEqual(shape(html), shape(before), `${name}: style, links, classes`);
+    const old = shape(before);
+    assert.deepEqual(
+      shape(html),
+      { ...old, style: styleSince49(old.style) },
+      `${name}: style, links, classes`,
+    );
     assert.deepEqual(buttonLabels(html), buttonLabels(before), `${name}: the labels`);
   }
   // `language: null` is English too (the projection reads an unknown value as null).
@@ -279,4 +305,16 @@ test('the "not allowed" page (P9): in the domain’s language and brand, naming 
   assert.ok(turkish.includes('<p class="subtitle">Bu sayfayı açma izniniz yok.</p>'));
   assert.ok(turkish.includes('<div class="brand-name">Beta Works</div>'));
   assert.ok(turkish.includes('Yardım: <a href="https://beta.example/help"'));
+});
+
+test('a message box keeps the copy button off its text, in both languages', () => {
+  for (const language of ['en', 'tr']) {
+    const html = buildAccessRequestPage('alice', 'app.alpha.example', { ...SETTINGS, language });
+    const box = /\.template-box \{([^}]*)\}/.exec(html)?.[1] ?? '';
+    const top = Number(/padding: ([\d.]+)rem/.exec(box)?.[1]);
+    const button = /\.copy-btn \{([^}]*)\}/.exec(html)?.[1] ?? '';
+    const offset = Number(/top: ([\d.]+)rem/.exec(button)?.[1]);
+    // The button: its offset, one line of 0.6875rem text and its padding and border.
+    assert.ok(top >= offset + 0.6875 * 1.5 + 0.5 + 0.125, `${language}: padding-top ${top}rem`);
+  }
 });
