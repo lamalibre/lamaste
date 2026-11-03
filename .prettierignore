@@ -20,3 +20,4 @@ packages/core/lib/test/fixtures/authelia-*/internal/
 packages/core/lib/test/fixtures/authelia-*/web/
 # A previous release's rendered pages, byte for byte (regression pins)
 packages/core/lib/test/fixtures/lamaste-*/
+packages/sdks/gatekeeper/test/fixtures/lamaste-*/*.html

@@ -224,12 +224,11 @@ The HTML is self-contained (inline CSS, no external dependencies) so it renders 
 | `packages/sdks/gatekeeper/src/server/routes/groups.ts`             | Group CRUD API                                             |
 | `packages/sdks/gatekeeper/src/server/routes/principals.ts`         | Removing a user principal everywhere                       |
 | `packages/sdks/gatekeeper/src/server/routes/diagnostic.ts`         | Access check, settings, cache bust, access-request log     |
-| `packages/sdks/gatekeeper/src/server/routes/access-request.ts`     | Access request submission and listing                      |
 | `packages/sdks/gatekeeper/src/lib/authz.ts`                        | Authorization logic (grant matching, group expansion)      |
 | `packages/sdks/gatekeeper/src/lib/state-db.ts`                     | `gatekeeper.db` and its migrations                         |
 | `packages/sdks/gatekeeper/src/lib/grants.ts`, `groups.ts`          | Grant and group storage                                    |
 | `packages/sdks/gatekeeper/src/lib/tunnels.ts`                      | What Gatekeeper reads of `tunnels.json`                    |
-| `packages/sdks/gatekeeper/src/lib/templates.ts`                    | Access request HTML page generation                        |
+| `packages/sdks/gatekeeper/src/lib/templates.ts`                    | The pages Gatekeeper serves, in the domain's page language |
 | `packages/server/daemon/src/routes/management/gatekeeper-proxy.js` | Admin panel proxy to Gatekeeper API (role grants checked)  |
 | `packages/server/daemon/src/lib/nginx.js`                          | Vhost generation with Gatekeeper auth_request blocks       |
 

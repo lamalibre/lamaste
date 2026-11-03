@@ -171,14 +171,14 @@ test('fail closed: no projection, or a host under none of its domains', async ()
   // A host under no domain has no sign-in of this relay: the page links to
   // none (auth.app.example.org could be anyone's).
   assert.doesNotMatch(stray.body, /logout|auth\.app\.example\.org/);
-  assert.match(stray.body, /under none of this relay's domains/);
+  assert.match(stray.body, /under none of this relay&#039;s domains/);
 });
 
 test('a static site’s refusal page names the site and its domain, and decides nothing', async () => {
   const res = await app.inject({ method: 'GET', url: '/authz/refusal/docs.codelama.com.tr' });
   assert.equal(res.statusCode, 403);
   assert.match(res.body, /Not allowed on <span class="fqdn">docs\.codelama\.com\.tr<\/span>/);
-  assert.match(res.body, /not a member of\s+codelama\.com\.tr, or not one of the site's users/);
+  assert.match(res.body, /not a member of codelama\.com\.tr, or not one of the site&#039;s users/);
   assert.equal(askedAuthelia.length, 0);
   const bad = await app.inject({ method: 'GET', url: '/authz/refusal/x$host' });
   assert.equal(bad.statusCode, 403);
