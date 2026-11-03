@@ -89,7 +89,9 @@ ${AUTH_PAGE_SCRIPT_WORDS}
       }
       function shown(err) { return err && err.lamaste ? err.message : msg('error.generic'); }
 
-      function post(path, body) {
+      // action: the form that sent it — a refusal's words for that form
+      // come first (an administrator's invitation has no username to change).
+      function post(path, body, action) {
         return fetch(path, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -97,7 +99,7 @@ ${AUTH_PAGE_SCRIPT_WORDS}
         }).then(function (res) {
           return res.json().catch(function () { return {}; }).then(function (data) {
             if (res.ok) return data;
-            throw failure(refusal(res.status, data, STATUS_KEYS));
+            throw failure(refusal(res.status, data, STATUS_KEYS, action));
           });
         }, function () { throw failure(msg('error.generic')); });
       }
@@ -147,7 +149,7 @@ ${AUTH_PAGE_SCRIPT_WORDS}
           '</div>' +
           '<div id="form-error"></div>' +
           '<form id="accept-form" novalidate>' + passwordFields() + submitButton() + '</form>';
-        bindForm(function () { return {}; });
+        bindForm(function () { return {}; }, 'admin');
       }
 
       function showDelegatedForm(data) {
@@ -185,7 +187,7 @@ ${AUTH_PAGE_SCRIPT_WORDS}
         });
       }
 
-      function bindForm(extra) {
+      function bindForm(extra, action) {
         var form = document.getElementById('accept-form');
         var errorDiv = document.getElementById('form-error');
         var submitBtn = document.getElementById('submit-btn');
@@ -208,7 +210,7 @@ ${AUTH_PAGE_SCRIPT_WORDS}
           body.password = password;
           submitBtn.disabled = true;
           submitBtn.textContent = msg('invite.creating');
-          post('/api/invite/accept', body)
+          post('/api/invite/accept', body, action)
             .then(showSuccess)
             .catch(function (err) {
               errorDiv.innerHTML = '<div class="error-msg">' + text(shown(err)) + '</div>';

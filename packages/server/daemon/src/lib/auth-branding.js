@@ -88,6 +88,7 @@ import {
   listRenderedBrands,
   authPagesDigest,
   readRenderedBrand,
+  renderedBrandSha256,
   removeAuthBranding,
   renderAuthBranding,
   sha256Hex,
@@ -268,16 +269,19 @@ function assetView(kind, row) {
 }
 
 /**
- * Whether `rendered` is what the domain's inputs make now: the brand's
- * revision (0 without one), the language, the running Authelia (null when
- * unknown: not current) and this release's pages — nginx sends their CSP
- * hashes, so a page of another release would be blocked by the browser.
+ * Whether `rendered` is what the domain's inputs make now: the brand —
+ * its revision (0 without one) and the digest of its `brand.json`, as a
+ * brand set after a removal starts again at revision 1 —, the language,
+ * the running Authelia (null when unknown: not current) and this release's
+ * pages — nginx sends their CSP hashes, so a page of another release would
+ * be blocked by the browser.
  */
-function renderingCurrent(rendered, { revision, language }, version) {
+function renderingCurrent(rendered, { revision, brandSha256, language }, version) {
   return (
     rendered !== null &&
     version !== null &&
     rendered.revision === revision &&
+    rendered.brandSha256 === brandSha256 &&
     rendered.language === language &&
     rendered.autheliaVersion === version &&
     rendered.pagesDigest === authPagesDigest()
@@ -299,31 +303,49 @@ async function brandingView(row) {
     /** Whether the directory nginx serves is this revision and language, from the running Authelia, with this release's pages. */
     renderedCurrent: renderingCurrent(
       rendered,
-      { revision: row.revision, language: languageOf(db, row.domain) },
+      {
+        revision: row.revision,
+        brandSha256: brandSha256Of(row),
+        language: languageOf(db, row.domain),
+      },
       await knownAutheliaVersion(),
     ),
   };
 }
 
 /**
+ * The digest a rendering of brand record `row` records
+ * (`rendered.json` `brandSha256`, core `renderedBrandSha256`), or null
+ * without a record.
+ */
+function brandSha256Of(row) {
+  if (!row) return null;
+  return renderedBrandSha256(row.domain, rowFields(row), row.revision, {
+    logoSha256: row.logo ? sha256Hex(row.logo) : null,
+    faviconSha256: row.favicon ? sha256Hex(row.favicon) : null,
+  });
+}
+
+/**
  * What each domain's rendering is made from, by name: its brand's revision
- * (0 without a brand) and its page language (null without one).
+ * (0 without a brand) and digest (null without one), and its page language
+ * (null without one).
  *
- * @returns {Array<{ domain: string, revision: number, language: import('@lamalibre/lamaste').PageLanguage | null }>}
+ * @returns {Array<{ domain: string, revision: number, brandSha256: string | null, language: import('@lamalibre/lamaste').PageLanguage | null }>}
  */
 function renderInputs(db) {
   return db
-    .prepare(
-      `SELECT d.name AS domain, d.language AS language, b.revision AS revision
-       FROM domains d LEFT JOIN domain_branding b ON b.domain = d.name
-       ORDER BY d.name`,
-    )
+    .prepare('SELECT name AS domain, language FROM domains ORDER BY name')
     .all()
-    .map((r) => ({
-      domain: r.domain,
-      revision: r.revision ?? 0,
-      language: isPageLanguage(r.language) ? r.language : null,
-    }));
+    .map((r) => {
+      const row = brandingRow(db, r.domain);
+      return {
+        domain: r.domain,
+        revision: row ? row.revision : 0,
+        brandSha256: brandSha256Of(row),
+        language: isPageLanguage(r.language) ? r.language : null,
+      };
+    });
 }
 
 /** Whether a domain has a rendering of its own: a brand or a language. */
@@ -1155,7 +1177,7 @@ export async function applyDomainLanguage(name, { logger } = {}) {
     ...(await convergeAuthVhostWarnings(
       name,
       logger,
-      'The language was saved but the sign-in page keeps its previous language',
+      'The language was saved and rendered, but the sign-in page may mix its previous and new language until its vhost is rewritten',
     )),
   ]);
 }

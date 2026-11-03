@@ -656,6 +656,7 @@ export {
   authPagesDigest,
   renderAuthBranding,
   readRenderedBrand,
+  renderedBrandSha256,
   removeAuthBranding,
   listRenderedBrands,
   sha256Hex,

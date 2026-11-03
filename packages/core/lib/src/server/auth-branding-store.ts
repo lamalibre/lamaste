@@ -345,6 +345,31 @@ export function sha256Hex(bytes: Uint8Array): string {
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
+/** The text of a rendering's `brand.json` (see {@link renderBrandJson}). */
+function brandJsonText(
+  domain: string,
+  brand: BrandFields,
+  revision: number,
+  assets: { readonly logoSha256: string | null; readonly faviconSha256: string | null },
+): string {
+  return `${JSON.stringify(renderBrandJson(domain, brand, revision, assets), null, 2)}\n`;
+}
+
+/**
+ * The `brandSha256` a rendering of this brand records in `rendered.json`
+ * (the digest of its `brand.json`): whoever holds the record compares it
+ * to tell a rendering of this brand from one of an earlier brand at the
+ * same revision.
+ */
+export function renderedBrandSha256(
+  domain: string,
+  brand: BrandFields,
+  revision: number,
+  assets: { readonly logoSha256: string | null; readonly faviconSha256: string | null },
+): string {
+  return sha256Hex(Buffer.from(brandJsonText(domain, brand, revision, assets), 'utf-8'));
+}
+
 /** What {@link renderAuthBranding} rendered: `rendered.json`, and what it could not translate. */
 export interface AuthBrandingRendering extends RenderedBrand {
   /**
@@ -358,9 +383,12 @@ export interface AuthBrandingRendering extends RenderedBrand {
 /**
  * Render a domain's brand and/or language under `root`:
  *
- * - with a brand: the favicon and logo when set, `brand.json`;
- * - with a brand and no language: every Authelia locale file with the brand
- *   name spliced in (`locales/<locale>/<namespace>.json`, as 4.8);
+ * - with a brand: the favicon and logo when set, `brand.json`, and every
+ *   Authelia locale file with the brand name spliced in
+ *   (`locales/<locale>/<namespace>.json`, as 4.8) — with a language too, as
+ *   the vhost of the moment may still be one that serves them (a language
+ *   set or cleared whose vhost rewrite failed): the domain keeps its brand
+ *   while the vhost catches up;
  * - with a language: one forced file per namespace the portal loads
  *   (`locales/forced/<namespace>.json`, {@link renderForcedAutheliaLocale}),
  *   brand-spliced when branded — the auth vhost answers every locale path
@@ -421,6 +449,13 @@ export async function renderAuthBranding(
   const name = `${input.domain}-${input.revision}-${crypto.randomBytes(8).toString('hex')}`;
   const dir = path.join(rendersDir, name);
   await mkdir(dir, { mode: DIR_MODE });
+  const brandJson =
+    brand === null
+      ? null
+      : brandJsonText(input.domain, brand, input.revision, {
+          logoSha256: input.logo ? sha256Hex(input.logo) : null,
+          faviconSha256: input.favicon ? sha256Hex(input.favicon) : null,
+        });
   const rendered: RenderedBrand = {
     v: 1,
     revision: input.revision,
@@ -428,6 +463,7 @@ export async function renderAuthBranding(
     autheliaVersion: input.autheliaVersion,
     autheliaPinned: AUTHELIA_RELEASE.version,
     pagesDigest: authPagesDigest(),
+    brandSha256: brandJson === null ? null : sha256Hex(Buffer.from(brandJson, 'utf-8')),
     renderedAt: (input.now ?? new Date()).toISOString(),
   };
   const json = (value: unknown, indent: string | number): string =>
@@ -436,7 +472,7 @@ export async function renderAuthBranding(
     if (input.favicon)
       await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.favicon), input.favicon);
     if (input.logo) await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.logo), input.logo);
-    if (brand !== null && language === null) {
+    if (brand !== null) {
       for (const file of input.locales.files) {
         const relative = authBrandingLocaleFile(file.locale, file.namespace);
         const messages = renderBrandLocale(file.messages, brand.name);
@@ -470,12 +506,8 @@ export async function renderAuthBranding(
       path.join(dir, AUTH_BRANDING_FILES.unavailable),
       renderUnavailablePage({ brand: pageBrand, language: pageLanguage, domain: input.domain }),
     );
-    if (brand !== null) {
-      const brandJson = renderBrandJson(input.domain, brand, input.revision, {
-        logoSha256: input.logo ? sha256Hex(input.logo) : null,
-        faviconSha256: input.favicon ? sha256Hex(input.favicon) : null,
-      });
-      await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.brand), json(brandJson, 2));
+    if (brandJson !== null) {
+      await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.brand), brandJson);
     }
     await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.rendered), json(rendered, 2));
     await syncDir(dir);
@@ -577,6 +609,7 @@ export async function readRenderedBrand(
         autheliaVersion: parsed.autheliaVersion,
         autheliaPinned: typeof parsed.autheliaPinned === 'string' ? parsed.autheliaPinned : null,
         pagesDigest: typeof parsed.pagesDigest === 'string' ? parsed.pagesDigest : null,
+        brandSha256: typeof parsed.brandSha256 === 'string' ? parsed.brandSha256 : null,
         renderedAt: parsed.renderedAt,
       };
     }

@@ -48,7 +48,7 @@ USER_THREE="e2e39-three"
 PASSWORD="E2e-$(openssl rand -hex 12)"
 FORCED_LOCATION='location ~ "^/locales/[^/]{1,64}/(consent|portal|settings)[.]json$" {'
 # shellcheck disable=SC2016 # nginx's $1, written as the vhost carries it
-FORCED_TRY='try_files /locales/forced/$1.json @authelia;'
+FORCED_TRY='try_files /locales/forced/$1.json $uri @authelia;'
 LANG_FILTER="sub_filter '<html lang=\"' '<html lang=\"tr\" data-authelia-lang=\"';"
 NOSCRIPT_FILTER="sub_filter 'You need to enable JavaScript to run this app.' 'Bu uygulama i&#231;in taray&#305;c&#305;n&#305;zda JavaScript etkin olmal&#305;d&#305;r.';"
 AUDIT_BASE=0

@@ -478,6 +478,9 @@ export async function writeAuthVhost(
  * `/locales/` prefix; `[.]` for the dot, as lamaste-priv refuses a
  * backslash. The locale segment is wider than Authelia's grammar on purpose:
  * a narrower one would let an odd path fall to Authelia's own language.
+ * Without a forced file — a rendering of no language, served while a
+ * cleared language's vhost rewrite is pending — the path's own file comes
+ * next, as from the `/locales/` prefix: a branded domain keeps its brand.
  *
  * @param {string} domain
  * @param {string} fqdn
@@ -502,7 +505,7 @@ function authBrandLocations(domain, fqdn, language) {
     # the portal can ask for is the forced file of its namespace.
     location ~ "^/${AUTH_BRANDING_LOCALES_DIR}/[^/]{1,64}/(${AUTHELIA_FORCED_NAMESPACES.join('|')})[.]json$" {
         root ${root};
-        try_files /${AUTHELIA_FORCED_LOCALES_DIR}/$1.json @authelia;${headers}
+        try_files /${AUTHELIA_FORCED_LOCALES_DIR}/$1.json $uri @authelia;${headers}
     }`;
   return `
     # Brand overrides (packages/core/docs/auth-branding-design.md): the

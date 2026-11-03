@@ -482,6 +482,13 @@ export interface RenderedBrand {
    * blocked by the browser: a different digest re-renders.
    */
   readonly pagesDigest: string | null;
+  /**
+   * The SHA-256 of the `brand.json` it holds, or null (no brand, or a
+   * rendering from before 4.10). A brand set after one was removed starts
+   * again at revision 1, so the revision alone cannot say which brand a
+   * rendering holds.
+   */
+  readonly brandSha256: string | null;
   readonly renderedAt: string;
 }
 

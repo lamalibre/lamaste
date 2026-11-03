@@ -148,7 +148,7 @@ test('accepts a domain’s page language: the forced locale regex, its lang and 
     server(
       ' location ~ "^/locales/[^/]{1,64}/(consent|portal|settings)[.]json$" {\n' +
         '  root /var/www/lamaste/auth/alpha.example;\n' +
-        '  try_files /locales/forced/$1.json @authelia;\n' +
+        '  try_files /locales/forced/$1.json $uri @authelia;\n' +
         '  add_header X-Content-Type-Options nosniff;\n' +
         '  add_header Cache-Control "public, max-age=0, must-revalidate";\n }\n' +
         ' location @authelia {\n  proxy_pass http://127.0.0.1:9091;\n }\n' +
