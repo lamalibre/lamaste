@@ -1,11 +1,12 @@
 # Page Language — Design Document
 
-> **Status:** 2026-11-03, reviewed. Wave 0 (inventory and design) done; waves 1 (core), 2 (serverd, nginx, the Authelia browser spike), 3 (Gatekeeper, the API codes) and 4 (panel, CLI, desktop, docs, 4.10.0) built, wave 5a (the browser pass) and 5b (the Turkish reading of the rendered pages, folded in — see the end) done, rodeo (6) to come. An independent review of the design against the code and Authelia v4.39.28, and an independent reading of the Turkish (§8), are both done and folded in (see _Review findings_ at the end). Decisions D1–D13 agreed by the founders on 2026-11-03, all as recommended (D3 the domain decides, D4 Authelia forced with its menu hidden, D11 templates in the domain's language, D13 4.10.0 asked explicitly).
+> **Status:** 2026-11-03, reviewed. Wave 0 (inventory and design) done; waves 1 (core), 2 (serverd, nginx, the Authelia browser spike), 3 (Gatekeeper, the API codes) and 4 (panel, CLI, desktop, docs, 4.10.0) built, wave 5a (the browser pass) and 5b (the Turkish reading of the rendered pages, folded in — see the end) done, rodeo (6) run on fresh VMs — green (see _Proof (rodeo)_ for the results and what it did not run). An independent review of the design against the code and Authelia v4.39.28, and an independent reading of the Turkish (§8), are both done and folded in (see _Review findings_ at the end). Decisions D1–D13 agreed by the founders on 2026-11-03, all as recommended (D3 the domain decides, D4 Authelia forced with its menu hidden, D11 templates in the domain's language, D13 4.10.0 asked explicitly).
 > **Wave 1 (core) built 2026-11-03:** `page-messages.ts` (subpath `./page-messages`; EN/TR catalogue of §8, typed; per-page key lists; one-pass `formatMessage`/`formatMessageHtml` — the latter also turns the one `[…]` span of `refusal.signOut` into the sign-out link —, `pluralKey`, `htmlAsciiReferences`, `pageMessagesJson`, `escapeHtml`), `authelia-locales.ts` (root, browser-safe: the portal contracts, the supplement and corrections of §8.4, `renderForcedAutheliaLocale`, `autheliaIndexLanguageFilters` — the `sub_filter` pairs wave 2 writes), `server/unavailable-page.ts` (P8: `renderUnavailablePage`, `UNAVAILABLE_PAGE_STYLE_HASH`, `unavailablePageHeaders(domain)` for the vhost), the invite and inviter pages in a language (one script each, its shared helpers `AUTH_PAGE_SCRIPT_WORDS`; never `data.error`; `novalidate`; Revoke by `data-confirm`), `renderAuthBranding` with `brand | null` and `language` (writes `unavailable/index.html` for every rendering), the projection's lenient `language` (`DomainsIndex.languages`, `domainLanguageOfHost`), verbatim Authelia 4.39.28 fixtures and 4.9.0 page fixtures for the regression pin. Built differently from the text below: the data block is `{"lang":…,"messages":{…}}` (not flat); the supplement and corrections live in `authelia-locales.ts`, not beside the catalogue; `renderForcedAutheliaLocale` takes `{ namespace, language, english, embedded }` and returns `{ messages, fromEnglish }` (the brand is spliced by the caller); `rendered.json` records `language` and `autheliaPinned` (the pin) beside `autheliaVersion`, which is whatever the caller passes — wave 2 passes the running version; English `template.chat` keeps 4.9's backticks (`` `{resource}` ``), the Turkish is the reviewed text without them; the inviter's page shows a refused revocation above its list. The auth-vhost pieces stay in serverd (`nginx.js`) for wave 2. Wave 3 note: 4.9's Gatekeeper explanations break a sentence across a line inside the HTML; the catalogue holds each on one line, so the English regression pin compares whitespace-collapsed text.
 > **Wave 2 (serverd, nginx) built 2026-11-03:** migration `0021_domain_language.sql`; `PUT /api/domains/:name/language` (`lib/domains.js` `setDomainLanguage`: domains lock → domain rendering → branding mutex; 400 `invalid_language`, 404 `domain_not_found`, `warnings` `gatekeeper|render|vhost`; audit `domain.language.updated {domain, from, to}`; Authelia never rendered again nor restarted); `GET /api/domains` lists `language`, a `rendering` per domain (`rendered`, `current`, `renderFailing`, `vhostPending`) and `authelia: {running, pinned}`; the projection writer (`writeDomainsProjection`) carries `language` only when set (version stays 2). `lib/auth-branding.js`: the running Authelia's version read from its binary (`authelia --version`, cached with the locales for 10 min, the locales fetched again when it changes), recorded in `rendered.json`, flagged once per version (audit `authelia.version.unpinned {running, pinned}` + one notification, remembered across restarts through the audit log); renderings for a brand **or** a language (`renderInputs`, `renderingCurrent` compares revision, language, running version, pages digest); removing a brand keeps a language-only rendering; `authVhostInputs` (replaces `authVhostBranding`) feeds every auth-vhost writer — branding changes, `applyDomainLanguage`, activation, the start's vhost reconcile, onboarding; a removed domain's language-only rendering goes with it. `lib/nginx.js`: the forced-locale regex location and the `lang`/`noscript` `sub_filter`s exactly as §3, the stylesheet linked for a brand or a language; P8 as §2 (`error_page 503 /internal/lamaste/unavailable`, internal location on the rendering, `@unavailable` on the stock copy — named without a hyphen, lamaste-priv's named-location rule); the stock page written at start and at onboarding (`writeUnavailablePage`). **lamaste-priv needed no change**: its tests now accept the exact lines (the quoted regex, the character-reference `noscript`, the P8 locations) and refuse the raw Turkish, a backslash regex and a variable. Regression pins against 4.9.0's own output (`test/fixtures/lamaste-4.9.0/`, rendered by 4.9.0's code): an unset domain's auth vhost (unbranded and branded) differs only in the CSP hashes; a served web surface is byte for byte the same; a not-served one differs only by the page's lines. **The browser spike passed** (§3, _Spike result_).
 > **Wave 3 (Gatekeeper, API codes) built 2026-11-03:** Gatekeeper's pages from the core catalogue in the language `pageOptions` reads from the projection (`DomainsIndex.languages` of the host's domain; none set, an unknown value or a host under no domain = English): `TemplateOptions.language`; the access-request page (P6: `lang`, title, sentences, `Subject:`, both administrator-name keys, the message templates in the domain's language — D11) and the domain refusal page (P7: the sign-out link by `formatMessageHtml`'s `[…]`); the copy buttons carry `data-label`/`data-copied` and copy the template's own element (`templateBox`), so the script is one text for every language; P9 is `buildForbiddenPage` — every refusal of `/authz/user-surface-shell/:fqdn` but 401 and the access-request page's (`not_served`, a malformed or mismatched request, not a web surface) answers it, in the brand and language of the domain the path names; `GET /access-request` removed (nothing referenced it; `authorization.md` row dropped); `getAccessRequestTemplates` (JSON, `checkAccess`) stays English, built from the English catalogue, Teams' template literal. API codes: `invitation_not_found` (lookup/accept 404), `invitation_used`, `invitation_expired`, `invitation_closed` (revoked; also `claimInvitationSync` and a refused claim — `invitationClosedError`), `username_unavailable` on an administrator's invitation whose username is taken, `not_found` on the inviter's API (route checks, a bad id, revoking none — the inviter's page's key, so not `invitation_not_found` there as §6's table had it). Tests: Gatekeeper `page-language.test.js` (the English pin against 4.9.0's pages rendered by `d5bc67f1`'s code, `test/fixtures/lamaste-4.9.0/`: same text, style, links and classes, the button labels; only the copy buttons' markup and `'` → `&#039;` differ — `formatMessageHtml` escapes every text), `authz-page-language.test.js` (the routes, the lenient projection); serverd `invitation-refusal-codes.test.js` reads every refusal of the two APIs' files from source (`httpError`, `reply.code(…).send`, `resolveUserCaller`) and fails on one whose code its page's catalogue lacks, unless listed as answered by its status or as the administrators' API. Docs: `invitations.md` (codes; the pages never show `error`), `gatekeeper.md` (P9, the language, the removed route).
 > **Wave 4 (operator surfaces, docs, version) built 2026-11-03:** `AdminClient.setDomainLanguage(name, language)` and the listing's types (`DomainView.language`, `DomainRenderingView`, `AutheliaVersionsView` on `getDomains`); the web client (`PUT …/language`), the desktop JS client and Rust `admin_set_domain_language` (body on curl's stdin, registered in `main.rs`). Panel: each domain card's **Language** section (`components/DomainLanguage.jsx`, words in `admin/lib/language.js`: not set / English / Türkçe from `page-messages`, applied by a button, `warnings` as warning toasts, the rendering's state; keyed by the domain's language so a change made elsewhere resets the choice), the card's subtitle names a set language, the Domains page warns when the running Authelia is not the pin (`useDomains` exposes `authelia`). The branding preview speaks the domain's language: serverd `getDomainBrandingPreview` takes the title and footer from the forced portal file (`renderForcedAutheliaLocale`, brand-spliced) and the stylesheet from `renderDomainCss` — `DomainBrandingPreview.locale` is a `PageLanguage`. CLI: `lamaste-server domains language <domain> [en|tr|--unset]` (pure helpers `languageRequest`, `languageText`, `renderingText`, `autheliaVersionText` in `src/domains.js`; the panel decides which languages exist), `domains list` names a set language and the unpinned Authelia. Docs: `domains.md` (Page language, the listing, the rendered files, the preview, the CLI), `nginx-configuration.md` (the forced-locale location, the `lang`/`noscript` filters, the P8 locations), `security-model.md` (A domain's page language), the second-domain guide's step 7, CHANGELOG `[Unreleased]`, the CLAUDE.md bullet. `chore(release): 4.10.0 candidate` mirrors 4.9.0's file set (25 files; the lockfile's 31 version lines edited, not regenerated — this npm would also drop every `"peer": true`).
 > **Wave 5a (browser pass) 2026-11-03:** both page scripts ran in the desktop app's built-in browser (Chromium) against a local preview serving the built pages with their real headers (`INVITE_PAGE_HEADERS`, `INVITATIONS_PAGE_HEADERS`, `unavailablePageHeaders`; Gatekeeper's pages as Gatekeeper sends them), `en` and `tr`, branded and stock, and stubs of `/api/invite/*` and `/api/delegated-invitations/*` answering every code and status the pages map. **The data block passes the CSP**: no violation on any page load, and a control — an inline script injected into a loaded page — was blocked and reported (`script-src-elem`), while a `type="application/json"` element added beside it was not. Seen working in both languages: P2 lookup (delegated with and without an inviter, administrator's), the `novalidate` checks, accept with the QR and the manual code, with access pending, without two-factor, every lookup/accept refusal; P1 list, create, the link and Copy (Kopyalandı), Revoke's two clicks, the bounds sentence with 1 and 7 days, no role, sign-in, unavailable, error, a bad route, every create/revoke refusal; no server `error` text ever shown; dates in the page's language (`8 Kas 2026 17:30`, `Nov 8, 2026, 05:30 PM`); `lang` on every page, and `text-transform: uppercase` under `lang="tr"` gives "İ". P6 (copy buttons copy the template's own text), P7's three variants, P8, P9, and the panel's Language section (against a stub API: the select, Apply, the warning toast, the unpinned-Authelia note). Two layout defects fixed: a detail row's value broke inside "17:30" when Turkish "Davet iptal edilsin mi?" narrowed it (`.detail-value` `overflow-wrap: anywhere`, not `word-break: break-all` — the pages' style hash changes); the copy button covered the end of a message's first line on P6 (`.template-box` keeps a top band); both 4.9.0 regression pins list these changes. Not run: a real panel and Authelia behind them (rodeo, wave 6), a browser that grants the clipboard API (the pane refuses `writeText`; P1 fell back to `execCommand`, P6 has no fallback, as in 4.9).
+> **Wave 6 (rodeo) 2026-11-03:** three-VM 56 `page-language`, single-VM 39 `page-language-validation`, the upgrade spec `01` extended for 4.10 and for a relay on 4.9.0 as well as 4.8.0 — results under _Proof (rodeo)_. One product defect found and fixed: `GET /api/domains` listed a `rendering` object (`rendered: null, current: true`) for a domain with neither a brand nor a language where the API reference and `DomainView.rendering` say `null`, so the Domains page and `lamaste-server domains language` called such a domain "rendering" for ever (`domainRenderings` in serverd `lib/auth-branding.js`; its unit test now expects `null` and fails without the fix). Spec fixes: 56 asserts no Authelia restart around the language changes only (the plugin's OIDC registry credential restarts it mid-spec); 39 reads a refused CLI call's own NDJSON line and checks ASCII outside the vhost's comments (lamaste-priv allows other bytes there).
 > **Target:** Lamaste 4.10.0, on top of 4.9.0 (`develop` at `d5bc67f`). The tag `v4.9.0` is not touched. Tagging, publishing and the live relay are the founders'.
 > **Pilot:** a plugin with a Turkish UI whose coordinator invites colleagues (delegated invitations, 4.9.0) on a domain whose people read Turkish. Lamaste holds no client content: every example here and in the tests uses invented domains (`alpha.test`-style names, as the existing specs do).
 > **Companions:** `auth-branding-design.md` (the per-domain rendering this builds on), `delegated-invitations-design.md` (the inviter's and invitee's pages), `multi-domain-relay-design.md` (Gatekeeper's projection), `external-members-design.md`.
@@ -955,36 +956,79 @@ The `<noscript>` rewrite (§3): "Bu uygulama için tarayıcınızda JavaScript e
 
 ## Proof (rodeo)
 
-- **Three-VM, new spec 56 `page-language`** (on `invitation-harness.sh`, the
-  4.9 fixtures): domain A branded and `tr`, domain B unbranded and `en`,
-  domain C unset. Asserts per domain: P1 and P2 `lang`, title, data block
-  language and a sample of keys; the CSP header equal on A, B, C; Authelia's
-  index `lang="tr" data-authelia-lang=…` on A, untouched on C; `/locales/en/portal.json`,
-  `/locales/de-AT/portal.json` and `/locales/tr/portal.json` on A all Turkish
-  (a supplemented key — "Yükleniyor" — and a correction present), on B all
-  English, on C Authelia's own per locale; `brand.css` on A hides the menu, on
-  C absent; an invitee refused on A gets P6 in Turkish (title, `lang`,
-  templates), on B in English; a non-member on A gets P7 in Turkish; the
-  plugin's site with its surface withdrawn answers P8 in Turkish on A (503,
-  `lang="tr"`, the CSP, `no-store`) and in English on C; a shell request
-  Gatekeeper refuses as not served answers P9 (403, the page, not an empty
-  body) in Turkish on A; a revoked invitation's lookup answers
-  `invitation_closed` (the code, the page is static); changing A to unset
-  re-renders (Authelia's own files again), no Authelia restart in its journal,
-  and the audit has both changes.
-- **Single-VM, new spec 39 `page-language-validation`**: the API's refusals
-  (`invalid_language`, unknown domain), `null` clears, the CLI, the vhost
-  through `lamaste-priv`, the reconcile after a restart and after a tampered
-  `rendered.json`, every new error code on `/api/invite/*` and
-  `/api/delegated-invitations/*`.
-- **Upgrade suite `01`**: after the Panel Update from 4.9.0, an unset domain's
-  pages are English with the new CSP hashes, a 4.9 branded domain re-rendered
-  once, a pending 4.9 invitation still opens.
-- Not proven by rodeo (curl runs no script): the page scripts' rendering of
-  the data block — the wave-5 browser pass covers it against a local preview
-  of both pages in both languages, as 4.9's did against mocks — and the
-  portal's own language choice, which wave 2's spike covers against a real
-  Authelia 4.39.28 (§3).
+As built (wave 6), on the multi-domain harness's three domains: B (the
+plugin's domain, as the inviting harness has it) branded and `tr`, C
+unbranded and `en`, A — the primary — unset.
+
+- **Three-VM 56 `page-language`** (on `invitation-harness.sh`): the language
+  set and set again (unchanged), listed, each rendering current, the running
+  Authelia the pin, no Authelia restart from a language change; Authelia's
+  index `lang="tr" data-authelia-lang=…` with the Turkish `noscript` on B,
+  `lang="en"` on C, untouched on A; `brand.css` hides the menu on B and C;
+  `/locales/en|de-AT|tr/portal.json` on B the forced Turkish ("Yükleniyor",
+  "Altyapı: <brand>"), `settings.json` one file for every locale, `consent`
+  for `ar`; on C the forced English; on A Authelia's own; P1 and P2 on B in
+  Turkish (`lang`, title, the data block and sample keys), on C and A in
+  English, whatever `Accept-Language` says, one script and one CSP for all
+  three; P8 on B before the plugin is approved (503, Turkish, the brand, its
+  style by hash, `no-store`); the refusal codes `invitation_not_found`,
+  `invitation_closed`, `invitation_used` and the inviter's `not_found`, never
+  the page's words; P6 in Turkish for the invitee (external, not granted) on
+  B's authenticated tunnel and for a member on B's restricted one, with
+  Turkish templates, in English on C; P7 in Turkish for a member of A alone
+  on B (the sign-out link on B's sign-in host), in English on C; P9 from
+  Gatekeeper in Turkish for B's site and in English for a host on C; back to
+  unset: B's portal follows the browser again, its pages English with its
+  brand, C's language-only rendering gone, the audit `{domain, from, to}`.
+- **Single-VM 39 `page-language-validation`**: `invalid_language` (`fr`, `TR`,
+  `tr-TR`, an unknown field, no body), `domain_not_found`; a language-only
+  rendering (revision 0, the running Authelia and the pin, the forced files,
+  the pages in Turkish); the auth vhost's forced-locale location and filters
+  as written, ASCII outside its comments, accepted by `lamaste-priv`,
+  `nginx -t`; the reconcile after a panel restart and after a `rendered.json`
+  made to name another language; `lamaste-server domains language` (shown,
+  refused with its code, set, `--unset`, an unknown domain); unset: rendering
+  and vhost lines gone; `/api/invite/*`'s `invitation_not_found`,
+  `invitation_closed` (lookup and accept), `invitation_expired` (its expiry
+  moved into the past in `state.db`), `invitation_used` (lookup and accept);
+  Gatekeeper's `GET /access-request` 404.
+- **Upgrade `01`**, from 4.9.0 and from 4.8.0: migration `0021`, no domain
+  with a language, the running Authelia the pin, the stock pages and the
+  branded domain's rendering English with the data block the candidate
+  writes, the auth vhosts forcing nothing, the stock "not available" page in
+  place, `GET /access-request` gone — beside 4.9's checks, which now read a
+  4.9 relay's state as 4.9 writes it (pages digest, fragment links, the
+  invitation in `state.db`).
+
+Results, 2026-11-03, fresh VMs, the 4.10.0 candidate on the dev Feria only
+(the raw logs read for skips: rodeo counts a skip as passed):
+
+| Suite                   | Specs    | Assertions | Failed | Skipped                                                                                                                                                                        |
+| ----------------------- | -------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| three-VM (56: 172)      | 56 of 56 | 3100       | 0      | 1 — spec 20's Authelia config check, which can never run (it compares `which authelia && echo yes` with `yes`)                                                                 |
+| single-VM (39: 82)      | 38 of 38 | 1845       | 0      | 5 — 11 (no `sites.json` on a fresh relay), 20 (no `lamaste-agent`: nothing past its pre-flight), 23, 24, 27 (no enrolled agent on one VM; three-VM 16, 19, 10 run those paths) |
+| upgrade `01` from 4.9.0 | 1 of 1   | 102        | 0      | 0                                                                                                                                                                              |
+| upgrade `01` from 4.8.0 | 1 of 1   | 102        | 0      | 0                                                                                                                                                                              |
+
+Single-VM 39 failed three of its own assertions in the full run (the spec
+fixes above) and passed on a fresh VM afterwards; the count is the full run's
+37 specs and that rerun. The upgrade runs used the final candidate: the 4.10.0
+packages republished after the relay was provisioned on the previous release
+(4.9.0 from the dev Feria, byte for byte its 4.9 campaign's packages; 4.8.0
+the npmjs tarballs, byte for byte the dev Feria's).
+
+Not run by rodeo:
+
+- the page scripts (curl runs none) — wave 5a's browser pass ran them against
+  a local preview; the portal's own language choice — wave 2's spike, against
+  a real Authelia 4.39.28;
+- P8 in English (C's plugin site), and P9 through nginx: 56 asks Gatekeeper
+  directly for P9 (`/authz/user-surface-shell/<fqdn>` without its original
+  request), so nginx passing that body on is unit-tested only;
+- `username_unavailable` on an administrator's invitation whose username was
+  taken meanwhile (a race; unit-tested), and the inviter's API from one VM
+  (it needs Gatekeeper's assertion for a signed-in user: 56 runs its
+  `not_found`).
 
 ## Waves
 
