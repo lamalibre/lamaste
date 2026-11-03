@@ -354,7 +354,7 @@ export function claimInvitationSync(db, id, username) {
     if (isUniqueViolation(err)) throw usernameUnavailableError();
     throw err;
   }
-  if (claimed.changes !== 1) throw httpError('This invitation can no longer be accepted', 410);
+  if (claimed.changes !== 1) throw invitationClosedError();
   return claimId;
 }
 
@@ -382,9 +382,7 @@ export function claimInvitation(id, plugin, username, { check } = {}) {
     }
     if (reason !== null) {
       inTransaction(db, () => revokeInvitationSync(db, id, { by: 'lamaste', reason }));
-      throw Object.assign(httpError('This invitation can no longer be accepted', 410), {
-        revokedReason: reason,
-      });
+      throw Object.assign(invitationClosedError(), { revokedReason: reason });
     }
     return inTransaction(db, () => claimInvitationSync(db, id, username));
   });
@@ -424,6 +422,13 @@ export async function unfulfilledAcceptances() {
     )
     .all()
     .map(rowToInvitation);
+}
+
+/** 410 `invitation_closed` — the invitation can no longer be accepted, whatever ended it. */
+export function invitationClosedError() {
+  return httpError('This invitation can no longer be accepted', 410, {
+    code: 'invitation_closed',
+  });
 }
 
 /** 409 `username_unavailable` — one answer whatever made the username unavailable. */

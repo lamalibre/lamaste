@@ -701,12 +701,12 @@ export async function revokeOwnInvitation(plugin, caller, id, { logger } = {}) {
         )
         .get(id, plugin.name, caller.userId);
       if (!row || (row.status !== 'pending' && row.status !== 'accepting')) {
-        throw httpError('Invitation not found', 404);
+        throw httpError('Invitation not found', 404, { code: 'not_found' });
       }
       return revokeInvitationSync(db, id, { by: `user:${caller.userId}`, reason: 'inviter' });
     });
   });
-  if (revoked === null) throw httpError('Invitation not found', 404);
+  if (revoked === null) throw httpError('Invitation not found', 404, { code: 'not_found' });
   await recordAuditBestEffort(
     {
       actor: `user:${caller.userId}`,

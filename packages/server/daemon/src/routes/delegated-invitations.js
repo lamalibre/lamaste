@@ -54,6 +54,9 @@ const RESPONSE_HEADERS = Object.freeze({
 
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** A route, plugin or invitation that is not the caller's to see: one answer. */
+const NOT_FOUND = Object.freeze({ error: 'Not found', code: 'not_found' });
+
 /** Whether a request's `Sec-Fetch-Site` lets it in: its own page, or (a read) typed in. */
 function fetchSiteAllowed(request) {
   const site = request.headers['sec-fetch-site'];
@@ -79,12 +82,12 @@ async function inviterOf(request, reply, deps) {
   }
   const plugin = await findPluginByRoute(route);
   if (!plugin?.identity) {
-    reply.code(404).send({ error: 'Not found' });
+    reply.code(404).send(NOT_FOUND);
     return null;
   }
   const domain = await pluginDomainName(plugin);
   if (relay.domain !== domain) {
-    reply.code(404).send({ error: 'Not found' });
+    reply.code(404).send(NOT_FOUND);
     return null;
   }
   if (request.method !== 'GET' && request.headers.origin !== `https://auth.${domain}`) {
@@ -177,7 +180,7 @@ async function inviterRoutes(fastify, { deps }) {
   fastify.delete('/:route/:id', routeOptions, async (request, reply) => {
     const who = await inviterOf(request, reply, deps);
     if (!who) return reply;
-    if (!ID_RE.test(request.params.id)) return reply.code(404).send({ error: 'Not found' });
+    if (!ID_RE.test(request.params.id)) return reply.code(404).send(NOT_FOUND);
     try {
       await revokeOwnInvitation(who.plugin, who.caller, request.params.id, {
         logger: request.log,
