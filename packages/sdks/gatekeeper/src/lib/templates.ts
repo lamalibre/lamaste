@@ -1,5 +1,26 @@
-import { AUTH_BRANDING_ACCENT_RE, brandSupportUrlProblem } from '@lamalibre/lamaste';
+import {
+  AUTH_BRANDING_ACCENT_RE,
+  brandSupportUrlProblem,
+  formatMessage,
+  formatMessageHtml,
+  pageMessage,
+} from '@lamalibre/lamaste';
+import type { PageLanguage, PageMessageKey } from '@lamalibre/lamaste';
 import type { AccessRequestTemplates, PageBrand, TemplateOptions } from './types.js';
+
+/**
+ * The language a page speaks: its domain's (`options.language`, from the
+ * panel's projection), English when the domain has none or the host is
+ * under no domain.
+ */
+function pageLanguage(options: TemplateOptions | undefined): PageLanguage {
+  return options?.language ?? 'en';
+}
+
+/** The catalogue's words in one language (core `page-messages.ts`). */
+function wordsOf(language: PageLanguage): (key: PageMessageKey) => string {
+  return (key) => pageMessage(language, key);
+}
 
 /** The pages' own accent (cyan-400), when the host's domain has no brand or no accent. */
 export const PAGE_DEFAULT_ACCENT = '#22d3ee';
@@ -85,17 +106,18 @@ function contactEmail(options: TemplateOptions | undefined): string {
  * record's rule, checked again), that as a link.
  */
 function contactLines(options: TemplateOptions | undefined): string {
+  const t = wordsOf(pageLanguage(options));
   const email = contactEmail(options);
   const url = options?.brand?.supportUrl ?? null;
   const lines: string[] = [];
   if (email) {
     lines.push(
-      `<p class="contact">Admin: <a href="mailto:${escapeAttr(email)}">${escapeHtml(email)}</a></p>`,
+      `<p class="contact">${escapeHtml(t('contact.admin'))} <a href="mailto:${escapeAttr(email)}">${escapeHtml(email)}</a></p>`,
     );
   }
   if (url !== null && brandSupportUrlProblem(url) === null) {
     lines.push(
-      `<p class="contact">Help: <a href="${escapeAttr(url)}" rel="noopener">${escapeHtml(url)}</a></p>`,
+      `<p class="contact">${escapeHtml(t('contact.help'))} <a href="${escapeAttr(url)}" rel="noopener">${escapeHtml(url)}</a></p>`,
     );
   }
   return lines.join('\n    ');
@@ -106,8 +128,43 @@ function titleSuffix(brand: PageBrand | null | undefined): string {
   return brand ? ` — ${escapeHtml(brand.name)}` : '';
 }
 
+/** The messages the access-request page offers to copy, in one language. */
+interface MessageTemplates {
+  readonly subject: string;
+  readonly body: string;
+  readonly chat: string;
+  readonly whatsapp: string;
+}
+
 /**
- * Generate pre-filled message templates for requesting access to a resource.
+ * The pre-filled messages in `language`, addressed to the settings'
+ * `adminName`, else the catalogue's salutation ("Administrator"; the
+ * Turkish body names nobody).
+ */
+function messageTemplates(
+  language: PageLanguage,
+  username: string,
+  resourceName: string,
+  options: TemplateOptions | undefined,
+): MessageTemplates {
+  const t = wordsOf(language);
+  const values = {
+    resource: resourceName,
+    username,
+    admin: options?.adminName ?? t('access.defaultAdminSalutation'),
+  };
+  return {
+    subject: formatMessage(t('template.subject'), values),
+    body: formatMessage(t('template.body'), values),
+    chat: formatMessage(t('template.chat'), values),
+    whatsapp: formatMessage(t('template.whatsapp'), values),
+  };
+}
+
+/**
+ * Generate pre-filled message templates for requesting access to a resource
+ * — for JSON callers (`checkAccess`), so always in English, whatever the
+ * domain's page language: the page renders its own, in its language.
  *
  * @param username - The authenticated user's username
  * @param resourceName - Human-readable resource name (e.g., FQDN or plugin name)
@@ -119,24 +176,30 @@ export function getAccessRequestTemplates(
   resourceName: string,
   options?: TemplateOptions,
 ): AccessRequestTemplates {
-  const adminName = options?.adminName ?? 'Administrator';
-  const adminContact = contactEmail(options);
-  const contactLine = adminContact ? `\nAdmin contact: ${adminContact}` : '';
-
+  const english = messageTemplates('en', username, resourceName, options);
+  const contact = contactEmail(options);
+  const generic = formatMessage(pageMessage('en', 'template.generic'), {
+    resource: resourceName,
+    username,
+    contact,
+  });
   return {
-    email: {
-      subject: `Access request for ${resourceName}`,
-      body:
-        `Hi ${adminName},\n\n` +
-        `I'd like to request access to ${resourceName}.\n` +
-        `My username is: ${username}\n\n` +
-        `Thank you.`,
-    },
-    slack: `Hi, could I get access to \`${resourceName}\`? My username is \`${username}\`.`,
+    email: { subject: english.subject, body: english.body },
+    slack: english.chat,
     teams: `Hi, could I get access to **${resourceName}**? My username is **${username}**.`,
-    whatsapp: `Hi, I need access to ${resourceName} (username: ${username}). Thanks!`,
-    generic: `Access request for ${resourceName}\n` + `Username: ${username}${contactLine}`,
+    whatsapp: english.whatsapp,
+    // The catalogue's last line names the contact: left out when there is none.
+    generic: contact ? generic : generic.slice(0, generic.lastIndexOf('\n')),
   };
+}
+
+/**
+ * One message to copy: its text in an element of its own — what the
+ * button copies — and the button, its label and its "copied" word in
+ * attributes, so the script needs no word of any language.
+ */
+function templateBox(id: string, text: string, t: (key: PageMessageKey) => string): string {
+  return `<div class="template-box"><div id="${id}">${escapeHtml(text)}</div><button class="copy-btn" data-label="${escapeAttr(t('access.copy'))}" data-copied="${escapeAttr(t('access.copied'))}" onclick="copyTemplate('${id}', this)">${escapeHtml(t('access.copy'))}</button></div>`;
 }
 
 /**
@@ -145,7 +208,8 @@ export function getAccessRequestTemplates(
  * `options.brand`, the brand of the host's domain: its name in the title
  * and a header, its logo from the domain's sign-in host, its accent, its
  * support contact in place of the administrator's e-mail. The message
- * templates stay addressed to `adminName`.
+ * templates stay addressed to `adminName`. In `options.language` (the
+ * domain's page language; English by default), the message templates too.
  *
  * @param username - The authenticated user's username
  * @param resourceFqdn - The tunnel FQDN the user tried to access
@@ -157,16 +221,18 @@ export function buildAccessRequestPage(
   resourceFqdn: string,
   options?: TemplateOptions,
 ): string {
-  const templates = getAccessRequestTemplates(username, resourceFqdn, options);
-  const adminName = options?.adminName ?? 'your administrator';
+  const language = pageLanguage(options);
+  const t = wordsOf(language);
+  const templates = messageTemplates(language, username, resourceFqdn, options);
+  const adminName = options?.adminName ?? t('access.defaultAdmin');
   const brand = options?.brand;
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${language}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Access Required — ${escapeHtml(resourceFqdn)}${titleSuffix(brand)}</title>
+  <title>${escapeHtml(t('access.title'))} — ${escapeHtml(resourceFqdn)}${titleSuffix(brand)}</title>
   <style>
 ${baseCss(brand)}
     .subtitle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1.5rem; }
@@ -202,27 +268,25 @@ ${baseCss(brand)}
 <body>
   <div class="card">${brandHeader(brand)}
     <div class="icon">&#128274;</div>
-    <h1>Access Required</h1>
+    <h1>${escapeHtml(t('access.heading'))}</h1>
     <p class="subtitle">
-      You don't have access to <span class="fqdn">${escapeHtml(resourceFqdn)}</span>
+      ${formatMessageHtml(t('access.noAccess'), { host: { text: resourceFqdn, tag: 'span', className: 'fqdn' } })}
     </p>
     <p class="subtitle">
-      Signed in as <span class="user-badge">${escapeHtml(username)}</span>
+      ${formatMessageHtml(t('access.signedInAs'), { username: { text: username, tag: 'span', className: 'user-badge' } })}
     </p>
     <p class="subtitle">
-      Contact ${escapeHtml(adminName)} to request access. Copy a message template below:
+      ${formatMessageHtml(t('access.contact'), { admin: adminName })}
     </p>
 
-    <div class="section-label">Email</div>
-    <div class="template-box" id="tpl-email">Subject: ${escapeHtml(templates.email.subject)}
-
-${escapeHtml(templates.email.body)}<button class="copy-btn" onclick="copyTemplate('tpl-email', this)">Copy</button></div>
+    <div class="section-label">${escapeHtml(t('access.labelEmail'))}</div>
+    ${templateBox('tpl-email', `${t('access.subjectLabel')} ${templates.subject}\n\n${templates.body}`, t)}
 
     <div class="section-label">Slack / Teams</div>
-    <div class="template-box" id="tpl-slack">${escapeHtml(templates.slack)}<button class="copy-btn" onclick="copyTemplate('tpl-slack', this)">Copy</button></div>
+    ${templateBox('tpl-slack', templates.chat, t)}
 
     <div class="section-label">WhatsApp</div>
-    <div class="template-box" id="tpl-whatsapp">${escapeHtml(templates.whatsapp)}<button class="copy-btn" onclick="copyTemplate('tpl-whatsapp', this)">Copy</button></div>
+    ${templateBox('tpl-whatsapp', templates.whatsapp, t)}
 
     ${contactLines(options)}
   </div>
@@ -230,12 +294,11 @@ ${escapeHtml(templates.email.body)}<button class="copy-btn" onclick="copyTemplat
     function copyTemplate(id, btn) {
       var el = document.getElementById(id);
       if (!el) return;
-      var text = el.textContent.replace(/Copy$/, '').trim();
-      navigator.clipboard.writeText(text).then(function() {
-        btn.textContent = 'Copied';
+      navigator.clipboard.writeText(el.textContent).then(function() {
+        btn.textContent = btn.getAttribute('data-copied');
         btn.classList.add('copied');
         setTimeout(function() {
-          btn.textContent = 'Copy';
+          btn.textContent = btn.getAttribute('data-label');
           btn.classList.remove('copied');
         }, 2000);
       });
@@ -266,35 +329,36 @@ export function buildDomainRefusalPage(
   options: TemplateOptions | undefined,
   { host, site = false }: { host: string; site?: boolean },
 ): string {
-  const adminName = options?.adminName ?? 'your administrator';
+  const language = pageLanguage(options);
+  const t = wordsOf(language);
+  const adminName = options?.adminName ?? t('access.defaultAdmin');
   const brand = options?.brand;
   const heading =
     domain === null || site
-      ? `Not allowed on <span class="fqdn">${escapeHtml(host)}</span>`
-      : `Not a member of <span class="fqdn">${escapeHtml(domain)}</span>`;
+      ? formatMessageHtml(t('refusal.notAllowedOn'), {
+          host: { text: host, tag: 'span', className: 'fqdn' },
+        })
+      : formatMessageHtml(t('refusal.notMember'), {
+          domain: { text: domain, tag: 'span', className: 'fqdn' },
+        });
   const explanation =
     domain === null
-      ? `Your account is signed in, but this host is under none of this relay's domains,
-      so nobody may open it.`
-      : site
-        ? `Your account is signed in, but it may not open this site: it is not a member of
-      ${escapeHtml(domain)}, or not one of the site's users.`
-        : `Your account is signed in, but it is not a member of this domain, so none of its
-      applications are open to it.`;
+      ? formatMessageHtml(t('refusal.noDomain'), {})
+      : formatMessageHtml(t(site ? 'refusal.site' : 'refusal.domain'), { domain });
   // Only a domain of this relay has a sign-in to send the user to; a host
   // under none could name a stranger's.
   const signOut =
     domain === null
       ? ''
       : `<p class="subtitle">
-      <a href="https://auth.${escapeAttr(domain)}/logout">Sign out</a> to sign in with another account.
+      ${formatMessageHtml(t('refusal.signOut'), {}, { href: `https://auth.${domain}/logout` })}
     </p>`;
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${language}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Not allowed — ${escapeHtml(domain ?? host)}${titleSuffix(brand)}</title>
+  <title>${formatMessageHtml(t('refusal.title'), { domain: domain ?? host })}${titleSuffix(brand)}</title>
   <style>
 ${baseCss(brand)}
     .subtitle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1rem; }
@@ -309,9 +373,49 @@ ${baseCss(brand)}
     <div class="icon">&#128683;</div>
     <h1>${heading}</h1>
     <p class="subtitle">
-      ${explanation} Ask ${escapeHtml(adminName)} to add you if you should have access.
+      ${explanation} ${formatMessageHtml(t('refusal.ask'), { admin: adminName })}
     </p>
     ${signOut}
+    ${contactLines(options)}
+  </div>
+</body>
+</html>`;
+}
+
+/**
+ * The page a plugin's site answers when Gatekeeper does not allow the
+ * request at all — its web surface not served (yet, or any more), or a
+ * request no vhost of this version sends: not an access request (there is
+ * nothing to ask for), "not allowed", in the language and brand of the
+ * host's domain. Names nothing of the request.
+ *
+ * @param options - The settings' contact, the domain's brand and language
+ * @returns Full HTML page string
+ */
+export function buildForbiddenPage(options: TemplateOptions | undefined): string {
+  const language = pageLanguage(options);
+  const t = wordsOf(language);
+  const brand = options?.brand;
+  return `<!DOCTYPE html>
+<html lang="${language}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(t('forbidden.title'))}${titleSuffix(brand)}</title>
+  <style>
+${baseCss(brand)}
+    .subtitle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1rem; }
+    .contact { color: #a1a1aa; font-size: 0.8125rem; margin-top: 1.5rem; }
+    .contact + .contact { margin-top: 0.375rem; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">${brandHeader(brand)}
+    <div class="icon">&#128683;</div>
+    <h1>${escapeHtml(t('forbidden.title'))}</h1>
+    <p class="subtitle">${escapeHtml(t('forbidden.text'))}</p>
     ${contactLines(options)}
   </div>
 </body>

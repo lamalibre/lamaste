@@ -35,7 +35,6 @@ import { authzRoutes } from './routes/authz.js';
 import { groupRoutes } from './routes/groups.js';
 import { grantRoutes } from './routes/grants.js';
 import { diagnosticRoutes } from './routes/diagnostic.js';
-import { accessRequestRoutes } from './routes/access-request.js';
 import { principalRoutes } from './routes/principals.js';
 import { secretMatches } from '../lib/secret.js';
 
@@ -331,9 +330,8 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
     }
   }
 
-  // Register routes — authz, access-request, and health are public (nginx subrequests)
+  // Register routes — authz and health are public (nginx subrequests)
   await server.register(authzRoutes);
-  await server.register(accessRequestRoutes);
 
   // Management /api/* routes require the shared secret
   await server.register(async (scope) => {

@@ -83,6 +83,7 @@ export {
   getAccessRequestTemplates,
   buildAccessRequestPage,
   buildDomainRefusalPage,
+  buildForbiddenPage,
   PAGE_DEFAULT_ACCENT,
 } from './lib/templates.js';
 

@@ -1,3 +1,4 @@
+import type { PageLanguage } from '@lamalibre/lamaste';
 import type { PrincipalType, AccessMode } from './constants.js';
 
 /**
@@ -154,6 +155,11 @@ export interface TemplateOptions {
   readonly domain?: string | undefined;
   /** The brand of the host's domain; null or absent for the stock page. */
   readonly brand?: PageBrand | null | undefined;
+  /**
+   * The page language of the host's domain (the panel's projection); null
+   * or absent for English. The pages only: JSON templates stay English.
+   */
+  readonly language?: PageLanguage | null | undefined;
 }
 
 /**

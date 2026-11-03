@@ -632,7 +632,11 @@ test('the shell answers only for a plugin-owned site it serves, named the way th
     ['invalid name', await shell('/', { fqdn: 'webfx.example.com$x' })],
   ]) {
     assert.equal(res.statusCode, 403, label);
-    assert.equal(res.body, '', label);
+    // The "not allowed" page (P9) — nothing to ask for, nothing of the request named.
+    assert.match(res.headers['content-type'], /^text\/html/, label);
+    assert.ok(res.body.includes('<h1>Not Allowed</h1>'), label);
+    assert.doesNotMatch(res.body, /alice|webfx|locked|\$x/, label);
+    assert.equal(res.headers['cache-control'], 'no-store', label);
   }
   assert.deepEqual(askedAuthelia, [], 'refused before Authelia was asked');
 });

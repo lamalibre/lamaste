@@ -20,7 +20,11 @@ import {
 import type { MembershipKind, RelaySigningKey, UserSurfaceHost } from '@lamalibre/lamaste';
 import { AUTHELIA_VERIFY_URL, SESSION_CACHE_TTL_MS } from '../../lib/constants.js';
 import { checkAccess, isPluginAudienceMember } from '../../lib/authz.js';
-import { buildAccessRequestPage, buildDomainRefusalPage } from '../../lib/templates.js';
+import {
+  buildAccessRequestPage,
+  buildDomainRefusalPage,
+  buildForbiddenPage,
+} from '../../lib/templates.js';
 import { logAccessRequest } from '../routes/diagnostic.js';
 import type { AutheliaSession, TemplateOptions, TunnelInfo } from '../../lib/types.js';
 
@@ -565,10 +569,11 @@ function externalRefused(kind: MembershipKind, accessMode: string): boolean {
 }
 
 /**
- * What the pages are built with: the settings' administrator contact and
- * the brand of `domain` (`lib/brand.ts`, fail open: null for the stock
- * page) — none for a host under no domain, which gets no logo and no
- * sign-in link alike.
+ * What the pages are built with: the settings' administrator contact, the
+ * brand of `domain` (`lib/brand.ts`, fail open: null for the stock page)
+ * and its page language (the panel's projection, read leniently: none set
+ * is English) — none for a host under no domain, which gets no logo, no
+ * sign-in link and English alike.
  */
 async function pageOptions(
   fastify: FastifyInstance,
@@ -579,6 +584,7 @@ async function pageOptions(
     adminContact: settings.adminEmail,
     adminName: settings.adminName,
     brand: domain === null ? null : await fastify.readDomainBrand(domain),
+    language: domain === null ? null : (fastify.getDomains()?.languages.get(domain) ?? null),
   };
 }
 
@@ -978,9 +984,18 @@ async function authorizeUserSurfaceShellRequest(
 ): Promise<FastifyReply> {
   const requestId = request.id;
   reply.header('Cache-Control', 'no-store');
-  const refuse = (reason: string, extra: Record<string, unknown> = {}): FastifyReply => {
+  // Nothing to ask for: the "not allowed" page (P9), in the language and
+  // brand of the domain the vhost names in the path — never of the request.
+  const refuse = async (
+    reason: string,
+    extra: Record<string, unknown> = {},
+  ): Promise<FastifyReply> => {
     request.log.info({ requestId, reason, site: fqdn, ...extra }, 'shell authz denied');
-    return reply.code(403).send();
+    const domain = TUNNEL_FQDN_RE.test(fqdn) ? domainShownFor(fastify, fqdn) : null;
+    return reply
+      .code(403)
+      .type('text/html; charset=utf-8')
+      .send(buildForbiddenPage(await pageOptions(fastify, domain)));
   };
 
   if (!TUNNEL_FQDN_RE.test(fqdn)) return refuse('invalid_site_name');
