@@ -133,7 +133,7 @@ function namingClientHost(config, fqdn) {
 
 function fakeDeps(
   installed,
-  { failOn, tunnels, sites = [], linked = [], served, branding = {} } = {},
+  { failOn, tunnels, sites = [], linked = [], served, branding = {}, language = {} } = {},
 ) {
   const writes = [];
   return {
@@ -141,10 +141,10 @@ function fakeDeps(
     deps: {
       readTunnels: async () => tunnels ?? [panel, plugin, current, app, open, internal, missing],
       readSites: async () => sites,
-      // The domain's brand as its record says (lib/auth-branding.js).
-      authVhostBranding: async (domain) => {
+      // The domain's brand and language as its records say (lib/auth-branding.js).
+      authVhostInputs: async (domain) => {
         if (branding[domain] instanceof Error) throw branding[domain];
-        return branding[domain] ?? null;
+        return { branding: branding[domain] ?? null, language: language[domain] ?? null };
       },
       servedUserSurface: async (routes) => (served ? served(routes) : []),
       readInstalledVhost: async (name) => installed[name] ?? null,

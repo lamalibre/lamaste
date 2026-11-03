@@ -147,6 +147,7 @@ before(async () => {
   // is activation's to write here (the fake writeAuthVhost below).
   lib.setAuthBrandingForTests({
     webRoot: path.join(dir, 'www', 'auth'),
+    autheliaVersion: async () => '4.39.28',
     fetchLocales: async () => ({ languages: [], files: [] }),
     ensureBase: async () => ({ logoWritten: false, restarted: false }),
     vhost: {
@@ -329,7 +330,11 @@ test('a domain: added pending, refused when it overlaps or is no domain, activat
   assert.equal(active.json().domain.status, 'active');
   assert.deepEqual(activation, [
     ['cert', 'auth.codelama.com.tr', 'ops@samplepark.tr'],
-    ['vhost', 'codelama.com.tr', { primary: false, branding: { theme: 'dark', logo: false } }],
+    [
+      'vhost',
+      'codelama.com.tr',
+      { primary: false, branding: { theme: 'dark', logo: false }, language: null },
+    ],
   ]);
   assert.deepEqual(await renderedMembers(), {
     'samplepark.tr': ['admin', 'ayse', 'cust', 'onur'],

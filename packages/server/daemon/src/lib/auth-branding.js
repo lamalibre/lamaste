@@ -4,6 +4,25 @@
  * rendering under `/var/www/lamaste/auth/<domain>/`, which nginx serves on
  * `auth.<domain>` for the routes Authelia lets a file override.
  *
+ * **The domain's language** (packages/core/docs/page-language-design.md,
+ * `domains.language`, migration 0021, set by lib/domains.js
+ * `setDomainLanguage`) is the rendering's other input: a domain has a
+ * rendering when it has a brand **or** a language — the forced Authelia
+ * locale files, Lamaste's pages in its language, the stylesheet hiding
+ * Authelia's language menu — and its auth vhost says both
+ * ({@link authVhostInputs}). A language change renders and rewrites the
+ * vhost ({@link applyDomainLanguage}); it never touches Authelia's
+ * configuration.
+ *
+ * **The running Authelia.** The locale files come from the Authelia that
+ * runs, which may be newer than the pinned release (create-lamaste never
+ * downgrades it), so its version is read from its binary and recorded in
+ * each rendering; a change re-renders. One that differs from the pin is
+ * audited (`authelia.version.unpinned`) and raised to the administrators
+ * once per version — the domains are still rendered: the forcing's
+ * contracts are pinned for the pinned release only, and a newer one
+ * degrades to a mix of languages, never to a broken page.
+ *
  * The record is the source of truth. Every change — the fields, the logo,
  * the favicon, the removal — bumps its `revision`, is audited by field
  * names and asset digests (never the bytes or the name), and renders the
@@ -27,7 +46,7 @@
  * **The auth vhost.** `auth.<domain>`'s vhost (lib/nginx.js `renderAuthVhost`)
  * serves the rendering and rewrites Authelia's index HTML for the domain,
  * and two things about a brand are in its text: the theme and whether a
- * logo is served ({@link authVhostBranding}). A change to either on an
+ * logo is served ({@link authVhostInputs}, with the language). A change to either on an
  * active domain rewrites the vhost once the record is committed and the
  * directory rendered ({@link convergeAuthVhostLocked}: the installed text
  * compared with the rendering, written only when it differs, its link
@@ -37,7 +56,7 @@
  * every reconcile until it converges or the domain is gone — the pending
  * set rather than a compare of every vhost at every tick, because the
  * start's vhost reconcile (lib/vhost-reconcile.js, which reads the record
- * through `authVhostBranding`) already compares every auth vhost once, so
+ * through `authVhostInputs`) already compares every auth vhost once, so
  * a restart loses nothing. A brand set on a pending domain waits for its
  * activation, which renders the vhost from the record.
  *
@@ -47,6 +66,8 @@
 import { execa } from 'execa';
 import {
   AUTHELIA_RELEASE,
+  isPageLanguage,
+  normaliseAutheliaVersion,
   AUTH_BRANDING_FAVICON_MAX_BYTES,
   AUTH_BRANDING_LOGO_MAX_BYTES,
   AUTH_BRANDING_WEB_ROOT,
@@ -59,6 +80,7 @@ import {
   validateBrandFields,
 } from '@lamalibre/lamaste';
 import {
+  AUTHELIA_BIN,
   ensureAutheliaBrandingBase,
   fetchAutheliaLocales,
   listRenderedBrands,
@@ -69,7 +91,7 @@ import {
   sha256Hex,
 } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
-import { recordAuditBestEffort } from './audit.js';
+import { listAudit, recordAuditBestEffort } from './audit.js';
 import {
   authVhostName,
   isSiteEnabled,
@@ -84,8 +106,24 @@ import { getStateDb } from './state-db.js';
 /** One change or reconcile of the brands at a time. */
 const brandingMutex = new PromiseChainMutex();
 
-/** How long Authelia's locale files are kept in memory: they change only with its binary. */
+/** How long Authelia's locale files and version are kept in memory: they change only with its binary. */
 const LOCALES_CACHE_MS = 10 * 60_000;
+
+/** How long `authelia --version` may take. */
+const AUTHELIA_VERSION_TIMEOUT_MS = 10_000;
+
+/**
+ * The version of the Authelia that runs, read from its binary (execa,
+ * array arguments): `4.39.28`. Throws when it cannot be read.
+ */
+async function readRunningAutheliaVersion() {
+  const { stdout } = await execa(AUTHELIA_BIN, ['--version'], {
+    timeout: AUTHELIA_VERSION_TIMEOUT_MS,
+  });
+  const version = normaliseAutheliaVersion(stdout);
+  if (version === null) throw new Error('Authelia did not say its version');
+  return version;
+}
 
 /** The two assets a brand may carry, with their checks and limits. */
 const ASSETS = Object.freeze({
@@ -109,7 +147,8 @@ export const BRAND_ASSET_KINDS = Object.freeze(Object.keys(ASSETS));
 
 const realDeps = Object.freeze({
   webRoot: AUTH_BRANDING_WEB_ROOT,
-  autheliaVersion: AUTHELIA_RELEASE.version,
+  /** The running Authelia's version. */
+  autheliaVersion: () => readRunningAutheliaVersion(),
   fetchLocales: () => fetchAutheliaLocales(),
   ensureBase: () => ensureAutheliaBrandingBase(execa),
   /** The installed auth vhost of a domain: read, its link state, written (lib/nginx.js). */
@@ -135,11 +174,13 @@ function dep(key) {
  * cache, the failure streaks and the pending vhosts are forgotten either
  * way.
  *
- * @param {{ webRoot?: string, autheliaVersion?: string, fetchLocales?: () => Promise<object>, ensureBase?: () => Promise<{ logoWritten: boolean, restarted: boolean }>, vhost?: { readInstalled: (domain: string) => Promise<string | null>, isEnabled: (domain: string) => Promise<boolean>, write: (domain: string, opts: { primary: boolean, enabled: boolean, branding: AuthVhostBranding | null }) => Promise<unknown> } } | null} overrides
+ * @param {{ webRoot?: string, autheliaVersion?: () => Promise<string>, fetchLocales?: () => Promise<object>, ensureBase?: () => Promise<{ logoWritten: boolean, restarted: boolean }>, vhost?: { readInstalled: (domain: string) => Promise<string | null>, isEnabled: (domain: string) => Promise<boolean>, write: (domain: string, opts: { primary: boolean, enabled: boolean } & AuthVhostInputs) => Promise<unknown> } } | null} overrides
  */
 export function setAuthBrandingForTests(overrides) {
   overridden = overrides;
   localesCache = null;
+  versionCache = null;
+  flaggedVersion = null;
   renderFailing.clear();
   vhostPending.clear();
   if (overrides === null) {
@@ -224,8 +265,26 @@ function assetView(kind, row) {
   };
 }
 
+/**
+ * Whether `rendered` is what the domain's inputs make now: the brand's
+ * revision (0 without one), the language, the running Authelia (null when
+ * unknown: not current) and this release's pages — nginx sends their CSP
+ * hashes, so a page of another release would be blocked by the browser.
+ */
+function renderingCurrent(rendered, { revision, language }, version) {
+  return (
+    rendered !== null &&
+    version !== null &&
+    rendered.revision === revision &&
+    rendered.language === language &&
+    rendered.autheliaVersion === version &&
+    rendered.pagesDigest === authPagesDigest()
+  );
+}
+
 /** The view of a row: fields, assets without the bytes, revision, and what is rendered. */
 async function brandingView(row) {
+  const db = await getStateDb();
   const rendered = await readRenderedBrand(row.domain, dep('webRoot'));
   return {
     domain: row.domain,
@@ -235,13 +294,46 @@ async function brandingView(row) {
     revision: row.revision,
     updatedAt: row.updated_at,
     rendered,
-    /** Whether the directory nginx serves is this revision, from this Authelia release, with this release's pages. */
-    renderedCurrent:
-      rendered !== null &&
-      rendered.revision === row.revision &&
-      rendered.autheliaVersion === dep('autheliaVersion') &&
-      rendered.pagesDigest === authPagesDigest(),
+    /** Whether the directory nginx serves is this revision and language, from the running Authelia, with this release's pages. */
+    renderedCurrent: renderingCurrent(
+      rendered,
+      { revision: row.revision, language: languageOf(db, row.domain) },
+      await knownAutheliaVersion(),
+    ),
   };
+}
+
+/**
+ * What each domain's rendering is made from, by name: its brand's revision
+ * (0 without a brand) and its page language (null without one).
+ *
+ * @returns {Array<{ domain: string, revision: number, language: import('@lamalibre/lamaste').PageLanguage | null }>}
+ */
+function renderInputs(db) {
+  return db
+    .prepare(
+      `SELECT d.name AS domain, d.language AS language, b.revision AS revision
+       FROM domains d LEFT JOIN domain_branding b ON b.domain = d.name
+       ORDER BY d.name`,
+    )
+    .all()
+    .map((r) => ({
+      domain: r.domain,
+      revision: r.revision ?? 0,
+      language: isPageLanguage(r.language) ? r.language : null,
+    }));
+}
+
+/** Whether a domain has a rendering of its own: a brand or a language. */
+const wantsRendering = ({ revision, language }) => revision > 0 || language !== null;
+
+/**
+ * The page language of domain `domain` (`domains.language`), or null —
+ * none set, no such domain, or a value this release does not know.
+ */
+function languageOf(db, domain) {
+  const value = db.prepare('SELECT language FROM domains WHERE name = ?').get(domain)?.language;
+  return isPageLanguage(value) ? value : null;
 }
 
 /**
@@ -278,21 +370,34 @@ function sameVhostBranding(a, b) {
 }
 
 /**
- * What the auth vhost of `domain` says of its brand — `{ theme, logo }`,
- * or null for a domain without one — read from the record, the source of
- * truth (the rendered files catch up within a minute). For whoever writes
- * the vhost: activation (lib/domains.js), the start's vhost reconcile
- * (lib/vhost-reconcile.js). A domain the relay does not have answers null.
+ * What the auth vhost of a domain says (lib/nginx.js `renderAuthVhost`):
+ * its brand's theme and logo switch, and its page language.
+ *
+ * @typedef {{ branding: AuthVhostBranding | null, language: import('@lamalibre/lamaste').PageLanguage | null }} AuthVhostInputs
+ */
+
+/** The vhost inputs of `domain` from its records. */
+function vhostInputsOf(db, domain) {
+  return {
+    branding: vhostBrandingOf(brandingRow(db, domain)),
+    language: languageOf(db, domain),
+  };
+}
+
+/**
+ * What the auth vhost of `domain` says — `{ branding, language }`: the
+ * brand's `{ theme, logo }` (null for a domain without one) and its page
+ * language (null for none) — read from the records, the source of truth
+ * (the rendered files catch up within a minute). For whoever writes the
+ * vhost: activation (lib/domains.js), the start's vhost reconcile
+ * (lib/vhost-reconcile.js). A domain the relay does not have answers both
+ * null.
  *
  * @param {string} domain
- * @returns {Promise<AuthVhostBranding | null>}
+ * @returns {Promise<AuthVhostInputs>}
  */
-export async function authVhostBranding(domain) {
-  const db = await getStateDb();
-  return vhostBrandingOf(
-    db.prepare('SELECT theme, logo_sha256 FROM domain_branding WHERE domain = ?').get(domain) ??
-      null,
-  );
+export async function authVhostInputs(domain) {
+  return vhostInputsOf(await getStateDb(), domain);
 }
 
 /**
@@ -312,14 +417,93 @@ export async function getDomainBranding(name) {
 // Rendering
 // ---------------------------------------------------------------------------
 
-/** Authelia's locales, fetched at most once per {@link LOCALES_CACHE_MS}. */
+/**
+ * Authelia's locales, fetched at most once per {@link LOCALES_CACHE_MS}
+ * and again whenever the running version changed (`version`: what
+ * {@link runningAutheliaVersion} answered; null when unknown).
+ */
 let localesCache = null;
 
-async function locales() {
-  if (localesCache && localesCache.expiresAt > Date.now()) return localesCache.locales;
+async function locales(version) {
+  if (localesCache && localesCache.expiresAt > Date.now() && localesCache.version === version) {
+    return localesCache.locales;
+  }
   const fetched = await dep('fetchLocales')();
-  localesCache = { locales: fetched, expiresAt: Date.now() + LOCALES_CACHE_MS };
+  localesCache = { locales: fetched, version, expiresAt: Date.now() + LOCALES_CACHE_MS };
   return fetched;
+}
+
+/** The running Authelia's version, read at most once per {@link LOCALES_CACHE_MS}. */
+let versionCache = null;
+
+/** The running Authelia version last raised as differing from the pin (this process). */
+let flaggedVersion = null;
+
+/**
+ * The running Authelia's version — what a rendering records and is
+ * compared with. One that differs from the pin is flagged
+ * ({@link flagUnpinnedAuthelia}). Throws when it cannot be read.
+ *
+ * @param {import('pino').Logger} [logger]
+ */
+async function runningAutheliaVersion(logger) {
+  if (versionCache && versionCache.expiresAt > Date.now()) return versionCache.version;
+  const version = await dep('autheliaVersion')();
+  versionCache = { version, expiresAt: Date.now() + LOCALES_CACHE_MS };
+  await flagUnpinnedAuthelia(version, logger);
+  return version;
+}
+
+/** The running Authelia's version when it can be read, else null (a view: not current). */
+async function knownAutheliaVersion() {
+  try {
+    return await runningAutheliaVersion();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Raise a running Authelia that is not the pinned release: audited
+ * `authelia.version.unpinned` `{ running, pinned }` and notified to the
+ * administrators once per running version — the audit log remembers it
+ * across restarts. Best effort; the rendering goes on either way.
+ */
+async function flagUnpinnedAuthelia(version, logger) {
+  const pinned = AUTHELIA_RELEASE.version;
+  if (version === pinned || flaggedVersion === version) return;
+  flaggedVersion = version;
+  try {
+    const [last] = await listAudit({ action: 'authelia.version.unpinned', limit: 1 });
+    if (last?.details?.running === version) return;
+  } catch (err) {
+    logger?.warn({ err: err.message }, 'Could not read the audit log');
+  }
+  logger?.warn({ running: version, pinned }, 'The running Authelia is not the pinned release');
+  await recordAuditBestEffort(
+    {
+      actor: 'lamaste',
+      action: 'authelia.version.unpinned',
+      details: { running: version, pinned },
+    },
+    logger,
+  );
+  await notifyAdminsBestEffort(
+    {
+      source: 'lamaste',
+      level: 'warning',
+      message: `Authelia ${version} runs on this relay; Lamaste is tested with ${pinned}. Domains with a page language may show some sign-in texts in English or in the browser's language until Lamaste's pin catches up.`,
+    },
+    logger,
+  );
+}
+
+/**
+ * What the Domains page shows of the relay's Authelia: the running
+ * version (null when it cannot be read) and the pinned one.
+ */
+export async function autheliaVersions() {
+  return { running: await knownAutheliaVersion(), pinned: AUTHELIA_RELEASE.version };
 }
 
 /** The domains whose last rendering failed — a streak is audited once. */
@@ -345,7 +529,7 @@ async function recordRenderOutcome(domain, err, logger) {
       {
         source: 'lamaste',
         level: 'warning',
-        message: `The brand of ${domain} could not be rendered for its sign-in page (${err.message}); visitors see the page as it was. The panel retries every minute.`,
+        message: `The brand and language of ${domain} could not be rendered for its sign-in pages (${err.message}); visitors see the pages as they were. The panel retries every minute.`,
       },
       logger,
     );
@@ -353,22 +537,27 @@ async function recordRenderOutcome(domain, err, logger) {
 }
 
 /**
- * Render the brand of `domain` from its record (holding the lock). Throws
+ * Render `domain` from its records — its brand, its language, or both —
+ * (holding the lock). Nothing for a domain with neither (null). Throws
  * when it cannot be rendered; the outcome of the streak is recorded.
  */
 async function renderLocked(domain, logger) {
-  const row = brandingRow(await getStateDb(), domain);
-  if (!row) return null;
+  const db = await getStateDb();
+  const row = brandingRow(db, domain);
+  const language = languageOf(db, domain);
+  if (!row && language === null) return null;
   try {
-    const all = await locales();
+    const version = await runningAutheliaVersion(logger);
+    const all = await locales(version);
     const rendered = await renderAuthBranding({
       domain,
-      brand: rowFields(row),
-      revision: row.revision,
-      logo: row.logo ?? null,
-      favicon: row.favicon ?? null,
+      brand: row ? rowFields(row) : null,
+      language,
+      revision: row ? row.revision : 0,
+      logo: row?.logo ?? null,
+      favicon: row?.favicon ?? null,
       locales: all,
-      autheliaVersion: dep('autheliaVersion'),
+      autheliaVersion: version,
       root: dep('webRoot'),
     });
     await recordRenderOutcome(domain, null, logger);
@@ -377,22 +566,39 @@ async function renderLocked(domain, logger) {
     logger?.info(
       {
         domain,
-        revision: row.revision,
+        revision: rendered.revision,
+        language,
         localeFiles: all.files.length,
         localesMissing: all.missing?.length ?? 0,
       },
-      'Brand rendered',
+      'Sign-in pages rendered',
     );
+    if (rendered.fromEnglish.length > 0) {
+      // A newer Authelia than the pin added texts Lamaste has no translation
+      // of: they read in English (counted, never listed in the log).
+      logger?.warn(
+        {
+          domain,
+          language,
+          keys: rendered.fromEnglish.length,
+          autheliaVersion: rendered.autheliaVersion,
+        },
+        'Some sign-in texts have no translation and stay in English',
+      );
+    }
     return rendered;
   } catch (err) {
-    logger?.warn({ domain, err: err.message }, 'Brand rendering failed');
+    logger?.warn({ domain, err: err.message }, 'Sign-in pages rendering failed');
     await recordRenderOutcome(domain, err, logger);
     throw err;
   }
 }
 
-/** Render after a change: the warning the answer carries when it failed, else none. */
-async function renderAfterChange(domain, logger) {
+/**
+ * Render after a change (`what` was saved: the brand, the language): the
+ * warning the answer carries when it failed, else none.
+ */
+async function renderAfterChange(domain, logger, what = 'brand') {
   try {
     await renderLocked(domain, logger);
     return [];
@@ -400,10 +606,23 @@ async function renderAfterChange(domain, logger) {
     return [
       {
         step: 'render',
-        message: `The brand was saved but not rendered (${err.message}); the panel renders it again within a minute`,
+        message: `The ${what} was saved but not rendered (${err.message}); the panel renders it again within a minute`,
       },
     ];
   }
+}
+
+/**
+ * Bring the rendering of `domain` in line with its records after a change
+ * (holding the lock): rendered when it has a brand or a language, removed
+ * when it has neither. The warnings of a failure.
+ */
+async function rerenderAfterChange(domain, logger, what) {
+  const db = await getStateDb();
+  if (brandingRow(db, domain) || languageOf(db, domain) !== null) {
+    return renderAfterChange(domain, logger, what);
+  }
+  return removeRenderedLocked(domain, logger);
 }
 
 /** Remove the rendering of `domain` (holding the lock), logging a failure. */
@@ -451,7 +670,7 @@ async function recordVhostOutcome(domain, err, logger) {
       {
         source: 'lamaste',
         level: 'warning',
-        message: `The sign-in page of ${domain} could not be switched to its brand's theme and logo (${err.message}); visitors see the page as it was. The panel retries every minute.`,
+        message: `The sign-in page of ${domain} could not be switched to its brand's theme and logo or its language (${err.message}); visitors see the page as it was. The panel retries every minute.`,
       },
       logger,
     );
@@ -487,8 +706,8 @@ async function convergeAuthVhostLocked(domain, logger) {
       vhostPending.delete(domain);
       return 'not_installed';
     }
-    const branding = vhostBrandingOf(brandingRow(db, domain));
-    const expected = renderAuthVhost(domain, certDir, { primary: row.primary, branding });
+    const inputs = vhostInputsOf(db, domain);
+    const expected = renderAuthVhost(domain, certDir, { primary: row.primary, ...inputs });
     if (expected.config === installed) {
       await recordVhostOutcome(domain, null, logger);
       return 'unchanged';
@@ -496,13 +715,19 @@ async function convergeAuthVhostLocked(domain, logger) {
     await vhost.write(domain, {
       primary: row.primary,
       enabled: await vhost.isEnabled(domain),
-      branding,
+      ...inputs,
     });
     await recordVhostOutcome(domain, null, logger);
-    logger?.info({ domain, branded: branding !== null }, 'Auth vhost rewritten for the brand');
+    logger?.info(
+      { domain, branded: inputs.branding !== null, language: inputs.language },
+      'Auth vhost rewritten for the brand and language',
+    );
     return 'written';
   } catch (err) {
-    logger?.warn({ domain, err: err.message }, 'Auth vhost rewrite for the brand failed');
+    logger?.warn(
+      { domain, err: err.message },
+      'Auth vhost rewrite for the brand and language failed',
+    );
     await recordVhostOutcome(domain, err, logger);
     throw err;
   }
@@ -515,6 +740,15 @@ async function convergeAuthVhostLocked(domain, logger) {
  */
 async function convergeAuthVhostAfterChange(domain, before, after, logger) {
   if (sameVhostBranding(before, after)) return [];
+  return convergeAuthVhostWarnings(
+    domain,
+    logger,
+    'The brand was saved but the sign-in page keeps its previous theme and logo switch',
+  );
+}
+
+/** Rewrite the vhost of `domain` (holding the lock): `[{ step: 'vhost', message }]` when it failed. */
+async function convergeAuthVhostWarnings(domain, logger, saved) {
   try {
     await convergeAuthVhostLocked(domain, logger);
     return [];
@@ -522,7 +756,7 @@ async function convergeAuthVhostAfterChange(domain, before, after, logger) {
     return [
       {
         step: 'vhost',
-        message: `The brand was saved but the sign-in page keeps its previous theme and logo switch (${err.message}); the panel retries within a minute`,
+        message: `${saved} (${err.message}); the panel retries within a minute`,
       },
     ];
   }
@@ -546,8 +780,8 @@ async function convergePendingVhostsLocked(logger) {
 }
 
 /**
- * Remove the rendered brand of a domain that was removed (lib/domains.js
- * `removeDomain`, whose transaction deleted the record). Idempotent.
+ * Remove the rendering of a domain that was removed (lib/domains.js
+ * `removeDomain`, whose transaction deleted its records). Idempotent.
  *
  * @param {string} domain
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
@@ -557,9 +791,10 @@ export async function removeRenderedBranding(domain, { logger } = {}) {
 }
 
 /**
- * Bring every rendering in line with the records: render each whose
- * directory is missing, at another revision or from another Authelia
- * release; remove the directories of domains without a record. Nothing
+ * Bring every rendering in line with the records: render each domain with
+ * a brand or a language whose directory is missing, at another revision or
+ * language, from another running Authelia or of another release's pages;
+ * remove the directories of domains with neither. Nothing
  * before {@link ensureBrandingBase} succeeded — tried here again when the
  * start's attempt failed. Then the auth vhosts a change could not rewrite
  * ({@link vhostPending}), base or no base: `vhostsRewritten` and
@@ -593,27 +828,18 @@ export async function reconcileAuthBranding({ logger } = {}) {
 /** The renderings in line with the records (holding the lock); see {@link reconcileAuthBranding}. */
 async function reconcileRenderingsLocked(result, logger) {
   try {
-    const db = await getStateDb();
-    const records = db
-      .prepare('SELECT domain, revision FROM domain_branding ORDER BY domain')
-      .all();
+    // Every domain with a brand or a language — a rendering of its own.
+    const records = renderInputs(await getStateDb()).filter(wantsRendering);
     const known = new Set(records.map((r) => r.domain));
     for (const domain of await listRenderedBrands(dep('webRoot'))) {
       if (known.has(domain)) continue;
       if ((await removeRenderedLocked(domain, logger)).length === 0) result.removed.push(domain);
     }
+    if (records.length === 0) return;
+    const version = await runningAutheliaVersion(logger);
     for (const record of records) {
       const current = await readRenderedBrand(record.domain, dep('webRoot'));
-      if (
-        current &&
-        current.revision === record.revision &&
-        current.autheliaVersion === dep('autheliaVersion') &&
-        // nginx sends this release's CSP hashes: a page of another release
-        // would be blocked by the browser.
-        current.pagesDigest === authPagesDigest()
-      ) {
-        continue;
-      }
+      if (renderingCurrent(current, record, version)) continue;
       try {
         await renderLocked(record.domain, logger);
         result.rendered.push(record.domain);
@@ -746,8 +972,9 @@ export async function removeDomainBranding(name, { actor, logger }) {
       },
       logger,
     );
+    // A domain with a language keeps a rendering of its own, unbranded.
     const warnings = [
-      ...(await removeRenderedLocked(name, logger)),
+      ...(await rerenderAfterChange(name, logger, 'removal')),
       ...(await convergeAuthVhostAfterChange(name, vhostBrandingOf(row), null, logger)),
     ];
     return { removed: true, ...withWarnings(warnings) };
@@ -907,6 +1134,57 @@ export async function removeDomainBrandingAsset(name, kind, { actor, logger }) {
   });
 }
 
+/**
+ * Bring the rendering and the auth vhost of domain `name` in line with its
+ * language after lib/domains.js `setDomainLanguage` committed it (under
+ * its domain lock and the domain rendering's, then this module's): the
+ * domain rendered — or its rendering removed when it has neither a brand
+ * nor a language — and its vhost rewritten. Nothing of Authelia's
+ * configuration changes, so Authelia never restarts. The warnings of what
+ * failed (`render`, `vhost`); the reconcile retries both.
+ *
+ * @param {string} name
+ * @param {{ logger?: import('pino').Logger }} [opts]
+ * @returns {Promise<Array<{ step: string, message: string }>>}
+ */
+export async function applyDomainLanguage(name, { logger } = {}) {
+  return brandingMutex.run(async () => [
+    ...(await rerenderAfterChange(name, logger, 'language')),
+    ...(await convergeAuthVhostWarnings(
+      name,
+      logger,
+      'The language was saved but the sign-in page keeps its previous language',
+    )),
+  ]);
+}
+
+/**
+ * The rendering of every domain as the Domains page shows it: what
+ * `rendered.json` says, whether it is current, and whether its last
+ * rendering or vhost rewrite failed (the reconcile retries both).
+ *
+ * @returns {Promise<Map<string, { rendered: object | null, current: boolean, renderFailing: boolean, vhostPending: boolean }>>}
+ */
+export async function domainRenderings() {
+  const [inputs, version] = [renderInputs(await getStateDb()), await knownAutheliaVersion()];
+  const rendered = await Promise.all(
+    inputs.map((input) => readRenderedBrand(input.domain, dep('webRoot'))),
+  );
+  return new Map(
+    inputs.map((input, i) => [
+      input.domain,
+      {
+        rendered: rendered[i],
+        current: wantsRendering(input)
+          ? renderingCurrent(rendered[i], input, version)
+          : rendered[i] === null,
+        renderFailing: renderFailing.get(input.domain) ?? false,
+        vhostPending: vhostPending.has(input.domain),
+      },
+    ]),
+  );
+}
+
 function noBranding(name) {
   return httpError(`Domain '${name}' has no brand yet — set its fields first`, 404, {
     code: 'no_branding',
@@ -926,7 +1204,7 @@ export async function getDomainBrandingPreview(name) {
   if (!row) throw noBranding(name);
   let all;
   try {
-    all = await locales();
+    all = await locales(await knownAutheliaVersion());
   } catch (err) {
     throw httpError(`Authelia's texts could not be read: ${err.message}`, 503, {
       code: 'authelia_unavailable',

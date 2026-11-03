@@ -35,6 +35,12 @@
  * new user becomes its member (decision 1); with two or more, a new user is
  * given the domains they are created with.
  *
+ * **Language** (`domains.language`, state.db 0021,
+ * packages/core/docs/page-language-design.md): the language every page on
+ * the domain speaks, or none. Set by {@link setDomainLanguage}, which
+ * renders the domain's pages and auth vhost (lib/auth-branding.js) and the
+ * projection Gatekeeper reads its pages' language from.
+ *
  * Audit entries name domains and user ids, never a username.
  */
 
@@ -54,6 +60,7 @@ import {
   isRelayHost,
   isIdentityUuid,
   isLamasteUsername,
+  isPageLanguage,
   reachedOidcClients,
 } from '@lamalibre/lamaste';
 import {
@@ -65,7 +72,7 @@ import {
 } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
-import { authVhostBranding, removeRenderedBranding } from './auth-branding.js';
+import { applyDomainLanguage, authVhostInputs, removeRenderedBranding } from './auth-branding.js';
 import {
   autheliaWatchesUsers,
   heldOwnedGroups,
@@ -99,6 +106,7 @@ const renderMutex = new PromiseChainMutex();
  * @property {'pending' | 'active'} status
  * @property {string} createdAt
  * @property {string | null} activatedAt
+ * @property {import('@lamalibre/lamaste').PageLanguage | null} language the language its pages speak, null for none
  */
 
 /** @returns {Domain} */
@@ -109,6 +117,7 @@ function rowToDomain(row) {
     status: row.status,
     createdAt: row.created_at,
     activatedAt: row.activated_at,
+    language: isPageLanguage(row.language) ? row.language : null,
   };
 }
 
@@ -796,13 +805,13 @@ let loggedIneligible = 0;
  * anything from it.
  *
  * @param {import('pino').Logger} [logger]
- * @returns {Promise<Array<{ name: string, groupKey: string, members: string[], externals: string[] }>>}
+ * @returns {Promise<Array<{ name: string, groupKey: string, language: import('@lamalibre/lamaste').PageLanguage | null, members: string[], externals: string[] }>>}
  */
 async function domainsWithMembers(logger) {
   const db = await getStateDb();
   const domains = db
     .prepare(
-      "SELECT name, group_key FROM domains WHERE status = 'active' ORDER BY is_primary DESC, name",
+      "SELECT name, group_key, language FROM domains WHERE status = 'active' ORDER BY is_primary DESC, name",
     )
     .all();
   const rows = db
@@ -831,7 +840,12 @@ async function domainsWithMembers(logger) {
       logger?.warn({ ineligible }, 'Members whose username Authelia cannot be told are left out');
     }
   }
-  return domains.map((d) => ({ name: d.name, groupKey: d.group_key, ...byDomain.get(d.name) }));
+  return domains.map((d) => ({
+    name: d.name,
+    groupKey: d.group_key,
+    language: isPageLanguage(d.language) ? d.language : null,
+    ...byDomain.get(d.name),
+  }));
 }
 
 /**
@@ -842,12 +856,39 @@ async function domainsWithMembers(logger) {
  * access, the projection and the OIDC provider goes through here.
  *
  * @template T
- * @param {(domains: Array<{ name: string, groupKey: string, members: string[], externals: string[] }>) => Promise<T>} fn
+ * @param {(domains: Array<{ name: string, groupKey: string, language: import('@lamalibre/lamaste').PageLanguage | null, members: string[], externals: string[] }>) => Promise<T>} fn
  * @param {{ logger?: import('pino').Logger }} [opts]
  * @returns {Promise<T>}
  */
 export function withDomainRendering(fn, { logger } = {}) {
   return renderMutex.run(async () => fn(await domainsWithMembers(logger)));
+}
+
+/**
+ * Write Gatekeeper's projection (`domains.json`, v2, 0600; written only
+ * when it changed): each active domain's members and external members and,
+ * when it has one, its page language — the language of Gatekeeper's pages
+ * on its hosts. The language is optional and read leniently (core
+ * `parseDomainsProjection`): a Gatekeeper of 4.9 ignores it, so the
+ * version stays 2. Call it under {@link withDomainRendering} with the
+ * domains read there.
+ *
+ * @param {Array<{ name: string, language: import('@lamalibre/lamaste').PageLanguage | null, members: string[], externals: string[] }>} domains
+ */
+async function writeDomainsProjection(domains) {
+  await atomicWriteJSONIfChanged(
+    path.join(STATE_DIR, DOMAINS_PROJECTION_FILE),
+    {
+      v: 2,
+      domains: domains.map(({ name, members, externals, language }) => ({
+        name,
+        members,
+        externals,
+        ...(language === null ? {} : { language }),
+      })),
+    },
+    { mode: 0o600 },
+  );
 }
 
 /**
@@ -923,14 +964,7 @@ export async function syncDomainAccess({ logger, sites } = {}) {
         failures.push({ step: 'groups', message: err.message });
       }
       try {
-        await atomicWriteJSONIfChanged(
-          path.join(STATE_DIR, DOMAINS_PROJECTION_FILE),
-          {
-            v: 2,
-            domains: domains.map(({ name, members, externals }) => ({ name, members, externals })),
-          },
-          { mode: 0o600 },
-        );
+        await writeDomainsProjection(domains);
       } catch (err) {
         failures.push({ step: 'gatekeeper', message: err.message });
       }
@@ -1647,11 +1681,9 @@ export async function activateDomain(name, { actor, logger }) {
     if (domain.status === 'active') return null;
     await assertRelayHostsFree(name);
     try {
-      // A brand set while the domain was pending is in the vhost from the start.
-      await deps.writeAuthVhost(name, {
-        primary: false,
-        branding: await authVhostBranding(name),
-      });
+      // A brand or a language set while the domain was pending is in the
+      // vhost from the start.
+      await deps.writeAuthVhost(name, { primary: false, ...(await authVhostInputs(name)) });
     } catch (err) {
       throw httpError(`nginx refused the vhost of ${fqdn}: ${err.message}`, 502, {
         code: 'nginx_failed',
@@ -1682,6 +1714,66 @@ export async function activateDomain(name, { actor, logger }) {
   const { bustGatekeeperSessions } = await import('./gatekeeper-client.js');
   await bustGatekeeperSessions();
   return activated;
+}
+
+/**
+ * Set the language every page on domain `name` speaks (core
+ * `PAGE_LANGUAGES`), or clear it (`null`: Lamaste's pages in English and
+ * Authelia's portal following each browser, as before languages): 400
+ * `invalid_language`, 404 `domain_not_found`. `changed: false` when it was
+ * that already. Audited `domain.language.updated` `{ domain, from, to }`.
+ *
+ * Under the domains lock, then the domain rendering's (the projection),
+ * then the branding module's (lib/auth-branding.js
+ * {@link applyDomainLanguage}: the domain's rendering and auth vhost — a
+ * pending domain's vhost waits for its activation). Nothing of Authelia's
+ * configuration changes, so Authelia never restarts. What could not be
+ * brought along is answered as `warnings` (`gatekeeper`, `render`,
+ * `vhost`) and retried: the projection at the next rendering (every
+ * minute), the rendering and vhost by the branding reconcile.
+ *
+ * @param {string} name
+ * @param {unknown} language
+ * @param {{ actor: string, logger?: import('pino').Logger }} opts
+ * @returns {Promise<{ domain: Domain, changed: boolean, warnings?: Array<{ step: string, message: string }> }>}
+ */
+export async function setDomainLanguage(name, language, { actor, logger }) {
+  if (language !== null && !isPageLanguage(language)) {
+    throw httpError('Not a page language', 400, { code: 'invalid_language' });
+  }
+  return domainsMutex.run(() =>
+    withDomainRendering(
+      async (domains) => {
+        const db = await getStateDb();
+        const domain = domainOr404(db, name);
+        if (domain.language === language) return { domain, changed: false };
+        db.prepare('UPDATE domains SET language = ? WHERE name = ?').run(language, name);
+        await recordAuditBestEffort(
+          {
+            actor,
+            action: 'domain.language.updated',
+            details: { domain: name, from: domain.language, to: language },
+          },
+          logger,
+        );
+        const warnings = [];
+        try {
+          // The domains read under the lock, this one's language as just set.
+          await writeDomainsProjection(
+            domains.map((d) => (d.name === name ? { ...d, language } : d)),
+          );
+        } catch (err) {
+          warnings.push({
+            step: 'gatekeeper',
+            message: `The language was saved but Gatekeeper's pages keep their previous language (${err.message}); the panel retries within a minute`,
+          });
+        }
+        warnings.push(...(await applyDomainLanguage(name, { logger })));
+        return { domain: domainRow(db, name), changed: true, ...withWarnings(warnings) };
+      },
+      { logger },
+    ),
+  );
 }
 
 /**
@@ -1763,7 +1855,12 @@ export async function removeDomain(name, { actor, logger }) {
       ).run(name, new Date().toISOString());
       return { members: ended, branded: brand.changes > 0 };
     });
-    return { active: domain.status === 'active', members, branded };
+    return {
+      active: domain.status === 'active',
+      members,
+      branded,
+      rendered: branded || domain.language !== null,
+    };
   });
   if (removed.branded) {
     await recordAuditBestEffort(
@@ -1774,8 +1871,9 @@ export async function removeDomain(name, { actor, logger }) {
       },
       logger,
     );
-    await removeRenderedBranding(name, { actor, logger });
   }
+  // A domain with a brand or a language had a rendering of its own.
+  if (removed.rendered) await removeRenderedBranding(name, { actor, logger });
   for (const userId of removed.members) {
     await recordAuditBestEffort(
       {
