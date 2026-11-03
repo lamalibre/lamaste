@@ -242,7 +242,7 @@ ${baseCss(brand)}
     }
     .template-box {
       background: #0f0f12; border: 1px solid #27272a; border-radius: 0.5rem;
-      padding: 0.75rem 1rem; margin-bottom: 0.5rem; position: relative;
+      padding: 2.25rem 1rem 0.75rem; margin-bottom: 0.5rem; position: relative;
       font-size: 0.8125rem; line-height: 1.5; white-space: pre-wrap;
       word-break: break-word; color: #d4d4d8;
     }
