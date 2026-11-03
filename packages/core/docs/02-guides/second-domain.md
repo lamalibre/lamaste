@@ -59,6 +59,16 @@ sudo lamaste-server domains branding codelama.com.tr preview
 
 The brand reaches every page a visitor of the domain can meet: the sign-in (its title "Login - Code Lama" in every language Authelia has, the logo, the favicon, the theme, the accent on buttons and focus rings; the "Powered by" footer is hidden), the invitation page (`auth.codelama.com.tr/invite#…`), and the access-request and refusal pages on the domain's hosts, where the support e-mail is the contact. A brand may be set while the domain is still pending; it is served from the activation. Nothing an operator types reaches the sign-in as code: the name cannot carry `<`, `>`, `{` or `}`, the colour is a regex, the images are parsed — no CSS, HTML or SVG. **Remove brand** puts the stock pages back.
 
+## 7. Choose its language
+
+Until a language is set, Lamaste's pages on the domain are English and the sign-in follows each visitor's browser — a Turkish browser reads Authelia's partial Turkish, an English one English. When the domain's people read one language, set it: on the domain's card, **Language** → Türkçe (or English) → **Apply**, or
+
+```bash
+sudo lamaste-server domains language codelama.com.tr tr
+```
+
+Every page a person meets on the domain then speaks it, whatever their browser prefers: the sign-in and second-factor pages (Authelia's language menu is hidden), the invitation page and the inviter's page, the access-request and refusal pages, and the "not available" page of a plugin site. Lamaste fills the strings Authelia's own Turkish lacks. A plugin's own pages and the names it brings — its role labels, say — are the plugin's. Nothing restarts; `--unset` (or **Not set**) puts things back as they were.
+
 ## What members see
 
 - A member signs in at `auth.<domain>` once per domain (browsers never share cookies between domains), with the same password and TOTP.
@@ -102,6 +112,6 @@ Delete or move what uses it first (the card lists it), then **Remove**. Its memb
 
 ## Related
 
-- [Domains API](../04-api-reference/domains.md) — [Branding](../04-api-reference/domains.md#branding)
+- [Domains API](../04-api-reference/domains.md) — [Branding](../04-api-reference/domains.md#branding), [Page language](../04-api-reference/domains.md#page-language)
 - [DNS & Domains](../01-concepts/dns-and-domains.md#multiple-domains)
 - [Authorization](../01-concepts/authorization.md)

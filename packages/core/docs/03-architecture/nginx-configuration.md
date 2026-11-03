@@ -371,6 +371,28 @@ No mTLS requirement — end users access this to authenticate. Protected by Auth
 
 An **unbranded domain's** vhost differs in `location /` alone: `data-theme="light"` stays `light`, `data-logooverride` becomes `"false"`, and there is no stylesheet line — the visitor gets exactly the stock page, the placeholder logo never shown. A **branded domain without a logo** gets its theme and stylesheet with `data-logooverride="false"`: Authelia's generic icon, never Lamaste's placeholder.
 
+**A domain with a page language** (4.10, [Domains — Page language](../04-api-reference/domains.md#page-language), design `page-language-design.md`) gets two more things. A regex location answers **every** locale file the portal can ask for — whatever language Authelia's detection picked from the visitor's choice or browser, a variant Authelia itself would answer with a sibling (`de-AT` → German) included — with the one rendered file of its namespace, in the domain's language:
+
+```nginx
+    # Every locale file the portal can ask for is the forced file of its namespace
+    location ~ "^/locales/[^/]{1,64}/(consent|portal|settings)[.]json$" {
+        root /var/www/lamaste/auth/example.com;
+        try_files /locales/forced/$1.json @authelia;
+        add_header X-Content-Type-Options nosniff;
+        add_header Cache-Control "public, max-age=0, must-revalidate";
+    }
+```
+
+nginx checks regex locations after the prefix ones not marked `^~`, so this one wins over `/locales/`; the portal's language list (`GET /locales`, no second segment) still reaches Authelia. `[.]` stands for the dot because `lamaste-priv` refuses a backslash. And `location /` rewrites the index page's `lang` and its `<noscript>` sentence, and links the stylesheet (which hides Authelia's language menu) even without a brand:
+
+```nginx
+        sub_filter '<html lang="' '<html lang="tr" data-authelia-lang="';
+        sub_filter 'You need to enable JavaScript to run this app.' 'Bu uygulama i&#231;in taray&#305;c&#305;n&#305;zda JavaScript etkin olmal&#305;d&#305;r.';
+        sub_filter '</head>' '<link rel="stylesheet" href="/brand.css"></head>';
+```
+
+Authelia writes the cookie's language into `lang` (`<html lang="{{ .Language }}">`); the filter puts the domain's first and moves Authelia's into a harmless `data-` attribute. Everything Lamaste writes into a vhost is printable ASCII without `$` — `lamaste-priv` refuses anything else, Turkish in a quoted string included — so the Turkish sentence travels as numeric character references (core `autheliaIndexLanguageFilters`), which the browser shows as the letters. A domain without a language keeps the vhost it had; one with a language and no brand gets the stock theme and logo switch plus these lines.
+
 The vhost says two things about a brand — the theme and whether a logo is served — and the panel rewrites it when either changes (`lib/auth-branding.js`: after the record is committed and the directory rendered, through the write-with-rollback pattern, its link state kept; a change to the name, the tagline, the accent, the support contact or the favicon touches nginx not at all). A rewrite nginx or `lamaste-priv` refused keeps the record, answers the change with a `vhost` warning, is audited `domain.branding.vhost.failed` and raised to the administrators, and is retried every minute until it converges (`domain.branding.vhost.recovered`); the startup reconcile compares every auth vhost against its record, so a restart loses nothing. A brand set on a pending domain is in its vhost from activation. The relay's nginx must be built with the sub module (`--with-http_sub_module` in `nginx -V`, static — Ubuntu 24.04's `nginx` package is): `create-lamaste` checks it on a fresh install right after installing nginx and first on a redeploy, before anything on the relay changes.
 
 ### 4. Tunnel Vhost (`lamalibre-lamaste-tunnel`)
@@ -588,7 +610,25 @@ server {
 }
 ```
 
-`auth_request` sits at server level so every location of the shell asks Gatekeeper — the API's locations name their own subrequest, and the internal ones turn it `off`. The API's prefix location is `^~`, so the subresource regex never takes an API path. The shell's headers are set in its locations only: the API's answers are the panel's to head. A document, an SVG or a manifest is never served from the previous tree, and a service worker's script (`Service-Worker: script`) is always `404` — a worker would outlive the tree that installed it. The `types` block names each extension's content type from core's list (`lamaste-priv` accepts a `types` block in a location — `media/type ext…` entries only, no `include`) rather than trust the host's `mime.types`, which differs between nginx versions. `current` and `previous` are links the panel switches with a rename (see [Serving the tree](../04-api-reference/agent-hosted-plugins.md#serving-the-tree)); nginx follows them per request. While the surface is not served, the vhost answers everything with `503` (`Cache-Control: no-store`, a worker's script `404`) — and, once the plugin is uninstalled, `Clear-Site-Data: "storage"`.
+`auth_request` sits at server level so every location of the shell asks Gatekeeper — the API's locations name their own subrequest, and the internal ones turn it `off`. The API's prefix location is `^~`, so the subresource regex never takes an API path. The shell's headers are set in its locations only: the API's answers are the panel's to head. A document, an SVG or a manifest is never served from the previous tree, and a service worker's script (`Service-Worker: script`) is always `404` — a worker would outlive the tree that installed it. The `types` block names each extension's content type from core's list (`lamaste-priv` accepts a `types` block in a location — `media/type ext…` entries only, no `include`) rather than trust the host's `mime.types`, which differs between nginx versions. `current` and `previous` are links the panel switches with a rename (see [Serving the tree](../04-api-reference/agent-hosted-plugins.md#serving-the-tree)); nginx follows them per request. While the surface is not served, the vhost answers everything with `503` (`Cache-Control: no-store`, a worker's script `404`) — and, once the plugin is uninstalled, `Clear-Site-Data: "storage"`. Since 4.10 the `503` carries Lamaste's **"not available" page** in the domain's [page language](../04-api-reference/domains.md#page-language) and brand instead of nginx's own:
+
+```nginx
+    error_page 503 /internal/lamaste/unavailable;
+    location = /internal/lamaste/unavailable {
+        internal;
+        root /var/www/lamaste/auth/example.com;      # the domain's rendering
+        try_files /unavailable/index.html @unavailable;
+        # core's headers for the page (unavailablePageHeaders): its inline style
+        # by hash, the logo from https://auth.example.com, no-store; Clear-Site-Data
+    }
+    location @unavailable {
+        root /var/www/lamaste/unavailable;           # the stock English page
+        try_files /index.html =503;
+        # the same headers
+    }
+```
+
+`error_page` without `=` keeps the status 503. The page has no script and one inline style, the same text for every language and brand; it links nothing on the plugin's host (every path there answers 503), so its logo comes from the domain's sign-in host. A domain without a rendering falls through to the stock copy the panel writes at start and at onboarding. Gatekeeper's other refusals on the shell — the site not a web surface, not served, names that disagree — get its "not allowed" page in the same language ([Gatekeeper](../04-api-reference/gatekeeper.md)).
 
 Moving a bound tunnel's host to a web surface hands the hostname over in **one reload**: the tunnel's vhost is unlinked, the site's written and linked, `nginx -t` run, nginx reloaded once; the tunnel's file stays installed, unlinked, so the tunnel can be enabled again once the site is deleted. On a failed test both are put back.
 

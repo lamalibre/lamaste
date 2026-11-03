@@ -16,16 +16,18 @@ Every endpoint requires an admin certificate (mTLS) — agents never manage doma
 
 ## Domain Object
 
-| Field             | Type           | Description                                                                                               |
-| ----------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
-| `name`            | string         | Lower case, two labels or more (`codelama.com.tr`)                                                        |
-| `primary`         | boolean        | The panel's domain; exactly one; never removed                                                            |
-| `status`          | string         | `pending` (added, sign-in not served) or `active` (`auth.<name>` issued, members admitted)                |
-| `createdAt`       | string         | ISO 8601                                                                                                  |
-| `activatedAt`     | string \| null | ISO 8601, once active                                                                                     |
-| `members`         | number         | Members of kind `member`, disabled users included (`GET /api/domains` only)                               |
-| `externalMembers` | number         | External members, disabled users included (`GET /api/domains` only)                                       |
-| `usedBy`          | object         | `{ tunnels, sites, plugins, registry }` — hostnames, plugin names, whether the registry trusts its issuer |
+| Field             | Type           | Description                                                                                                                                                |
+| ----------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`            | string         | Lower case, two labels or more (`codelama.com.tr`)                                                                                                         |
+| `primary`         | boolean        | The panel's domain; exactly one; never removed                                                                                                             |
+| `status`          | string         | `pending` (added, sign-in not served) or `active` (`auth.<name>` issued, members admitted)                                                                 |
+| `createdAt`       | string         | ISO 8601                                                                                                                                                   |
+| `activatedAt`     | string \| null | ISO 8601, once active                                                                                                                                      |
+| `members`         | number         | Members of kind `member`, disabled users included (`GET /api/domains` only)                                                                                |
+| `externalMembers` | number         | External members, disabled users included (`GET /api/domains` only)                                                                                        |
+| `usedBy`          | object         | `{ tunnels, sites, plugins, registry }` — hostnames, plugin names, whether the registry trusts its issuer                                                  |
+| `language`        | string \| null | The [page language](#page-language) of every page on the domain — `en`, `tr` — or `null` (not set)                                                         |
+| `rendering`       | object \| null | Its sign-in pages' rendering (a brand or a language): `{ rendered, current, renderFailing, vhostPending }` — `null` with neither (`GET /api/domains` only) |
 
 Domains never overlap: `a.samplepark.tr` cannot be added beside `samplepark.tr` (a browser sends a domain's cookies to every host under it).
 
@@ -33,7 +35,7 @@ Domains never overlap: `a.samplepark.tr` cannot be added beside `samplepark.tr` 
 
 ### `GET /api/domains`
 
-Every domain, the primary first, with its member count and what uses it, and `newUsersNeedDomains` — whether users and invitations must name their domains (the relay has two or more; clients ask for domains only then).
+Every domain, the primary first, with its member count, what uses it, its language and its rendering; `newUsersNeedDomains` — whether users and invitations must name their domains (the relay has two or more; clients ask for domains only then); and `authelia` — the version of the Authelia running on the relay (read from its binary, `null` when it cannot be read) and the release this Lamaste pins. A running Authelia that is not the pin is flagged once per version (audit `authelia.version.unpinned`, a notification): the domains' renderings are made from its texts, but anything it added since the pin stays English on a domain with a language, and the portal contracts the forcing relies on are unchecked.
 
 ```json
 {
@@ -51,10 +53,26 @@ Every domain, the primary first, with its member count and what uses it, and `ne
         "sites": [],
         "plugins": [],
         "registry": false
+      },
+      "language": "tr",
+      "rendering": {
+        "rendered": {
+          "v": 1,
+          "revision": 0,
+          "language": "tr",
+          "autheliaVersion": "4.39.28",
+          "autheliaPinned": "4.39.28",
+          "pagesDigest": "…",
+          "renderedAt": "…"
+        },
+        "current": true,
+        "renderFailing": false,
+        "vhostPending": false
       }
     }
   ],
-  "newUsersNeedDomains": false
+  "newUsersNeedDomains": false,
+  "authelia": { "running": "4.39.28", "pinned": "4.39.28" }
 }
 ```
 
@@ -221,7 +239,7 @@ Back to the stock page: the record and the rendered directory go, and the domain
 
 ### `GET /api/domains/:name/branding/preview`
 
-What a client previews without the page: `{ locale: "en", css, title, footer, theme, logo, favicon }` — the rendered `brand.css` and the English title and footer as the sign-in will show them (`Login - Code Lama`, `Powered by Code Lama`). **404** `no_branding`; **503** `authelia_unavailable` when Authelia's texts cannot be read.
+What a client previews without the page: `{ locale, css, title, footer, theme, logo, favicon }` — the domain's `brand.css` and the title and footer as the sign-in will show them, in the domain's [page language](#page-language) (`locale` `tr`: `Giriş - Code Lama`, `Altyapı: Code Lama`), else in English (`locale` `en`: `Login - Code Lama`, `Powered by Code Lama`). **404** `no_branding`; **503** `authelia_unavailable` when Authelia's texts cannot be read.
 
 ### In the panel
 
@@ -235,18 +253,45 @@ Each rendering is a directory of its own, `/var/www/lamaste/auth/.renders/<domai
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `favicon.ico`                       | the favicon's bytes, when set (ICO or PNG; the content type comes from the extension, never from the bytes)                                                                                                                                                                                                                                                                                                   |
 | `static/media/logo.png`             | the logo, when set                                                                                                                                                                                                                                                                                                                                                                                            |
-| `locales/<locale>/<namespace>.json` | every locale file Authelia lists (`GET 127.0.0.1:9091/locales`: ~60 languages, parents such as `tr` beside `tr-TR`, and every namespace — `portal`, `settings`, `consent`), with the brand name in place of `{{authelia}}` in every value that carries it: "Giriş - Code Lama"                                                                                                                                |
+| `locales/forced/<namespace>.json`   | with a [page language](#page-language) only: one file per namespace in the domain's language, which the auth vhost answers for every locale path the portal can ask                                                                                                                                                                                                                                           |
+| `locales/<locale>/<namespace>.json` | with a brand and no language: every locale file Authelia lists (`GET 127.0.0.1:9091/locales`: ~60 languages, parents such as `tr` beside `tr-TR`, and every namespace — `portal`, `settings`, `consent`), with the brand name in place of `{{authelia}}` in every value that carries it: "Giriş - Code Lama"                                                                                                  |
 | `brand.css`                         | generated from `accent`: `--primary`, `--primary-foreground` (black or white by contrast), `--ring`, `--custom-icon`, `--custom-loading-bar` on `[data-theme]` — Authelia 4.39.28's theme contract, pinned by a unit test — the hidden "Powered by Authelia" footer link, and a `:root` block of `--lamaste-page-*` properties (the accent, and the light palette for theme `light`) for the invitation pages |
 | `invite/index.html`                 | the invitation page (`@lamalibre/lamaste/server` `renderInvitePage`): the name in the title and a header, the tagline, the logo (`/static/media/logo.png`, the same origin) when set, linking `/brand.css`; the same script and style as the stock page, so one CSP hash pair holds for every brand                                                                                                           |
 | `invitations/index.html`            | the inviter's page of delegated invitations (`renderInvitationsPage`), likewise                                                                                                                                                                                                                                                                                                                               |
+| `unavailable/index.html`            | the "not available" page of the domain's plugin sites (`renderUnavailablePage`): no script, one inline style by hash; nginx serves it on a web surface that is not served (503)                                                                                                                                                                                                                               |
 | `brand.json`                        | the fields, `logo` / `favicon` digests, for Gatekeeper's pages — read back with `BrandJsonSchema`, so a file that is not a rendering of ours is refused whole                                                                                                                                                                                                                                                 |
-| `rendered.json`                     | `{ v: 1, revision, autheliaVersion, renderedAt }`                                                                                                                                                                                                                                                                                                                                                             |
+| `rendered.json`                     | `{ v: 1, revision, language, autheliaVersion, autheliaPinned, pagesDigest, renderedAt }` — `revision` 0 for a language alone, `autheliaVersion` the running Authelia's                                                                                                                                                                                                                                        |
 
-Every language is rendered because an override file replaces the whole language for Authelia — a partial `tr` would lose its translations. The locale files come from the running Authelia, so a pin bump re-renders every brand at the next start (`autheliaVersion` differs).
+Every language is rendered because an override file replaces the whole language for Authelia — a partial `tr` would lose its translations. The locale files come from the running Authelia, so an Authelia of another version re-renders every domain at the next start (`autheliaVersion` differs); so does a release whose pages changed (`pagesDigest`). The invitation, inviter's and "not available" pages are in the domain's [page language](#page-language) — English without one. The text of this section speaks of brands; everything in it holds for a domain with a language and no brand as well (a rendering of revision 0, without `brand.json`, favicon or logo).
 
 **Removal and reconcile.** Removing the brand removes the link, then its directory; the reconcile also prunes renderings nothing links to. At the panel's start — after Authelia has its asset path, placeholder logo and explicit theme (one restart, once, audited `authelia.restarted` with reason `branding-base`) — and every minute: every record whose directory is missing, at another revision or from another Authelia release is rendered; directories of domains without a record are removed. A relay restored from a backup of `state.db` renders its brands again by itself. Removing a domain removes its brand and directory in the same operation.
 
 **Audit.** `domain.branding.updated` (`fields` — the names that changed — or `asset` with `sha256`, `format`, `width`, `height`, `bytes`, or `removed: true`; always `revision`), `domain.branding.removed` (`reason: domain-removed` when the domain went), `domain.branding.render.failed` / `domain.branding.render.recovered` (once per streak, with a warning to the administrators). Never the bytes, never the name.
+
+## Page language
+
+The language every page a person meets on the domain speaks (design: `packages/core/docs/page-language-design.md`): the **sign-in** and every Authelia page under `auth.<domain>` (second factor, settings, consent), the **invitation page** and the **inviter's page**, Gatekeeper's **access-request and refusal pages** on the domain's hosts ([Gatekeeper — Page language](gatekeeper.md)), and the **"not available" page** of a plugin site whose surface is not served. One value per domain, `domains.language` in `state.db` (migration `0021`): `en`, `tr` (core `PAGE_LANGUAGES`), or not set.
+
+- **Not set** (every domain after an upgrade): nothing changes — Lamaste's pages in English, Authelia's sign-in following the visitor's browser as before 4.10.
+- **Set:** every page on the domain speaks it, Authelia's included, whatever the visitor's browser prefers; `en` forces English too. `Accept-Language` plays no part: the operator, who knows the domain's people, decides once, and one domain's pages never disagree.
+- **Authelia, forced.** Authelia cannot be told a language, so the rendering holds one file per namespace (`portal`, `settings`, `consent`) in the domain's language — Authelia's own translation, Lamaste's supplement of the strings it lacks (84 for Turkish in 4.39.28) and a few corrections, the brand name spliced in — and the auth vhost answers **every** locale path the portal can ask for with it. The index page's `lang` and `<noscript>` sentence are rewritten, and `brand.css` hides Authelia's language menu (it could change nothing). Known gaps: the dates on Authelia's settings page follow the browser's language; a visitor who does not read the domain's language has no switch.
+- **Lamaste's pages** carry their words as a JSON data block in the page; their one script and style stay the same text in every language and brand, so nginx keeps one CSP hash pair per page per release. The scripts never show an API's `error` text: they show their own words for its `code`, else for the status ([Invitations — refusal codes](invitations.md)).
+- **Plugins** translate their own UI; names that come from elsewhere — a plugin's display name and role labels, usernames, the brand's name — are shown as they are.
+
+### `PUT /api/domains/:name/language`
+
+`{ "language": "tr" }`, or `{ "language": null }` to clear it. The domain's rendering, its auth vhost and Gatekeeper's projection (`domains.json`, an optional `language` per domain) follow in the same operation; Authelia is neither re-rendered nor restarted. A pending domain takes a language too: its vhost has it from the activation. **200** `{ domain, changed, warnings? }` — `changed: false` for the language it has. `warnings` (`{ step, message }`) when a part could not follow — `gatekeeper` (the projection), `render` (the rendering), `vhost` (nginx refused the rewrite); the language is saved and the panel retries every minute.
+
+| Status | `code`             | When                                    |
+| ------ | ------------------ | --------------------------------------- |
+| 400    | `invalid_language` | Anything but a page language, or `null` |
+| 404    | `domain_not_found` |                                         |
+
+**Audit.** `domain.language.updated` `{ domain, from, to }`; `authelia.version.unpinned` `{ running, pinned }` once per running version.
+
+### In the panel
+
+The Domains page has a **Language** section on each domain's card, beside Branding: a select — _Not set — English pages, sign-in follows the browser_, English, Türkçe (the names from `@lamalibre/lamaste/page-messages`) — applied by its button, the change's `warnings` as toasts, and the state of the domain's rendering in words (rendered and served; rendering; the vhost waiting for a retry; the last rendering failed). The card's subtitle names a set language; the page warns when the relay runs another Authelia than the pinned release. The branding preview shows the sign-in's title and footer in the domain's language. The desktop app shows the same section.
 
 ## Memberships
 
@@ -305,8 +350,18 @@ lamaste-server domains branding codelama.com.tr remove
 - `branding <domain>` prints the fields, the logo and favicon (format, dimensions, size, digest), the revision and whether the rendering nginx serves is current.
 - `set` reads the brand first and sends every field: a field not named keeps its value, `--clear <tagline|accent|support-email|support-url>` sends `null`, and `ifRevision` is the revision read unless `--if-revision <n>` is given — a change made elsewhere in between is refused (`revision_mismatch`, with the current revision), never overwritten. A domain without a brand needs `--name`. The values are passed as given; the panel applies the rules and the refusal names each field.
 - `logo <file.png>` and `favicon <file.ico|.png>` check the file's size against the limit before the request (the limit named), then send it as base64 in the JSON body on curl's stdin; the bytes are never printed. `--remove` deletes the asset.
-- `preview` prints the English title and footer (with a note that the footer is hidden), the theme, whether the logo and favicon are served, and the generated `brand.css`.
+- `preview` prints the title and footer in the domain's page language (with a note that the footer is hidden), the theme, whether the logo and favicon are served, and the generated `brand.css`.
 - Refusals are explained in words — `invalid_branding` by field, `invalid_image` by its `reason`, `asset_too_large` with the limit, `no_branding` with the command to set a name, `revision_mismatch` with the current revision, `authelia_unavailable` — never with a value; the panel's `warnings` are printed as warnings.
+
+The language of a domain's pages:
+
+```
+lamaste-server domains language alpha.test
+lamaste-server domains language alpha.test tr
+lamaste-server domains language alpha.test --unset
+```
+
+Without an argument it prints the language (or that it is not set) and the state of the domain's rendering; with one it sets or clears it and prints the panel's `warnings`. The panel decides which languages exist (`invalid_language`). `domains list` names a set language beside each domain, and the relay's Authelia when it is not the pinned release.
 
 ## Related
 
@@ -314,4 +369,4 @@ lamaste-server domains branding codelama.com.tr remove
 - [Tunnels API](tunnels.md), [Sites API](sites.md) — `domain` on creation
 - [Registry and OIDC](registry-and-oidc.md) — one issuer per domain, `issuerDomain`
 - [Gatekeeper](gatekeeper.md) — the membership check and refusal page
-- Design: `packages/core/docs/multi-domain-relay-design.md`, `packages/core/docs/external-members-design.md`, `packages/core/docs/auth-branding-design.md` (branding)
+- Design: `packages/core/docs/multi-domain-relay-design.md`, `packages/core/docs/external-members-design.md`, `packages/core/docs/auth-branding-design.md` (branding), `packages/core/docs/page-language-design.md` (page language)
