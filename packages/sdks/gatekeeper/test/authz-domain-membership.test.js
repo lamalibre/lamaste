@@ -167,7 +167,10 @@ test('fail closed: no projection, or a host under none of its domains', async ()
   projection = BOTH();
   const stray = await check('app.example.org', 'onur');
   assert.equal(stray.statusCode, 403);
-  assert.match(stray.body, /Not allowed on <span class="fqdn">app\.example\.org<\/span>/);
+  // Nobody's to open: no permission of this user's, nothing to be added to.
+  assert.match(stray.body, /<span class="fqdn">app\.example\.org<\/span> is not available/);
+  assert.match(stray.body, /if this address should work\./);
+  assert.doesNotMatch(stray.body, /to add you/);
   // A host under no domain has no sign-in of this relay: the page links to
   // none (auth.app.example.org could be anyone's).
   assert.doesNotMatch(stray.body, /logout|auth\.app\.example\.org/);

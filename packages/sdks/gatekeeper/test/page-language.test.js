@@ -72,22 +72,54 @@ function readText(html) {
 /**
  * The style's changes since 4.9.0, each on purpose: a message box keeps a
  * band at its top for the copy button, which covered the end of a message's
- * first line (more so "Kopyala" than "Copy").
+ * first line (more so "Kopyala" than "Copy"); a heading breaks into lines
+ * of even length, never leaving one word alone on the last.
  */
 const STYLE_CHANGES_SINCE_4_9 = [
-  [
-    'padding: 0.75rem 1rem; margin-bottom: 0.5rem; position: relative;',
-    'padding: 2.25rem 1rem 0.75rem; margin-bottom: 0.5rem; position: relative;',
-  ],
+  {
+    only: '.template-box',
+    from: 'padding: 0.75rem 1rem; margin-bottom: 0.5rem; position: relative;',
+    to: 'padding: 2.25rem 1rem 0.75rem; margin-bottom: 0.5rem; position: relative;',
+  },
+  {
+    from: 'h1 { font-size: 1.25rem; color: #f4f4f5; margin-bottom: 0.5rem; }',
+    to: 'h1 { font-size: 1.25rem; color: #f4f4f5; margin-bottom: 0.5rem; text-wrap: balance; }',
+  },
 ];
 
 /** 4.9.0's style with the listed changes made, each of which it must have had. */
 function styleSince49(style) {
-  return STYLE_CHANGES_SINCE_4_9.reduce((s, [from, to]) => {
-    if (!s.includes('.template-box')) return s;
+  return STYLE_CHANGES_SINCE_4_9.reduce((s, { only, from, to }) => {
+    if (only && !s.includes(only)) return s;
     assert.ok(s.includes(from), `4.9.0 had ${from}`);
     return s.replace(from, to);
   }, style);
+}
+
+/**
+ * The English text changed since 4.9.0, each on purpose (the reading of the
+ * rendered pages): a host under none of the relay's domains is nobody's to
+ * open — not a permission of the user's, nothing to be added to — and a
+ * static site's refusal names the site in its title, as its heading does.
+ */
+const TEXT_CHANGES_SINCE_4_9 = {
+  'refusal-no-domain.html': [
+    ['Not allowed — stray.example', 'stray.example is not available'],
+    ['Not allowed on stray.example', 'stray.example is not available'],
+    [
+      'Ask your administrator to add you if you should have access.',
+      'Tell your administrator if this address should work.',
+    ],
+  ],
+  'refusal-site-branded.html': [['Not allowed — beta.example', 'Not allowed — site.beta.example']],
+};
+
+/** 4.9.0's text with the listed changes made, each of which it must have had. */
+function textSince49(name, text) {
+  return (TEXT_CHANGES_SINCE_4_9[name] ?? []).reduce((t, [from, to]) => {
+    assert.ok(t.includes(from), `${name}: 4.9.0 had ${from}`);
+    return t.replace(from, to);
+  }, text);
 }
 
 /** The page's style, links, classes and images — everything but the copy buttons' markup. */
@@ -108,7 +140,7 @@ test('English, no language set: each page reads as 4.9.0’s, in the same shape,
   for (const [name, render] of Object.entries(ENGLISH)) {
     const before = fs.readFileSync(path.join(FIXTURES, name), 'utf-8');
     const html = render();
-    assert.equal(readText(html), readText(before), `${name}: the text`);
+    assert.equal(readText(html), textSince49(name, readText(before)), `${name}: the text`);
     const old = shape(before);
     assert.deepEqual(
       shape(html),
@@ -155,8 +187,8 @@ test('a Turkish domain: the access-request page in Turkish — lang, title, sent
     language: 'tr',
   });
   assert.match(html, /<html lang="tr">/);
-  assert.match(html, /<title>Erişim gerekli — app\.alpha\.example<\/title>/);
-  assert.ok(html.includes('<h1>Erişim gerekli</h1>'));
+  assert.match(html, /<title>Erişim izni gerekiyor — app\.alpha\.example<\/title>/);
+  assert.ok(html.includes('<h1>Erişim izni gerekiyor</h1>'));
   assert.ok(html.includes('<span class="fqdn">app.alpha.example</span> adresine erişiminiz yok'));
   assert.ok(html.includes('Giriş yapılan hesap: <span class="user-badge">alice</span>'));
   assert.ok(html.includes('Erişim istemek için Ops ile iletişime geçin.'));
@@ -187,7 +219,7 @@ test('a Turkish domain: the access-request page in Turkish — lang, title, sent
   }
   // The default administrator in a sentence, when the settings name none.
   const unnamed = buildAccessRequestPage('alice', 'app.alpha.example', { language: 'tr' });
-  assert.ok(unnamed.includes('Erişim istemek için yöneticiniz ile iletişime geçin.'));
+  assert.ok(unnamed.includes('Erişim istemek için yöneticinizle iletişime geçin.'));
   // The brand's support link label.
   const branded = buildAccessRequestPage('alice', 'app.beta.example', {
     ...SETTINGS,
@@ -195,7 +227,7 @@ test('a Turkish domain: the access-request page in Turkish — lang, title, sent
     language: 'tr',
   });
   assert.ok(branded.includes('<p class="contact">Yardım: <a href="https://beta.example/help"'));
-  assert.match(branded, /<title>Erişim gerekli — app\.beta\.example — Beta Works<\/title>/);
+  assert.match(branded, /<title>Erişim izni gerekiyor — app\.beta\.example — Beta Works<\/title>/);
 });
 
 test('the JSON templates stay English whatever the page language', () => {
@@ -233,9 +265,7 @@ test('a Turkish domain: the refusal pages in Turkish, the sign-out link built ar
   );
   assert.match(member, /<html lang="tr">/);
   assert.match(member, /<title>İzin verilmiyor — alpha\.example<\/title>/);
-  assert.ok(
-    member.includes('<h1><span class="fqdn">alpha.example</span> üyeleri arasında değilsiniz</h1>'),
-  );
+  assert.ok(member.includes('<h1><span class="fqdn">alpha.example</span> üyesi değilsiniz</h1>'));
   assert.ok(member.includes(PAGE_MESSAGES_TR['refusal.domain']));
   assert.ok(
     member.includes(
@@ -262,12 +292,28 @@ test('a Turkish domain: the refusal pages in Turkish, the sign-out link built ar
     ),
   );
   assert.ok(
-    site.includes('Giriş yaptınız, ancak bu siteyi açma izniniz yok: alpha.example üyeleri'),
+    site.includes(
+      'Giriş yaptınız, ancak bu siteyi açma izniniz yok: alpha.example üyesi değilsiniz',
+    ),
   );
-  assert.ok(site.includes('yöneticiniz ile iletişime geçip'));
+  assert.ok(site.includes('yöneticinizle iletişime geçip'));
+  assert.match(site, /<title>İzin verilmiyor — site\.alpha\.example<\/title>/);
 
   const none = buildDomainRefusalPage(null, { language: 'tr' }, { host: 'stray.example' });
   assert.ok(none.includes(PAGE_MESSAGES_TR['refusal.noDomain']));
+  // Nobody's to open: no personal permission, no request to be added.
+  assert.match(none, /<title>stray\.example adresi kullanılamıyor<\/title>/);
+  assert.ok(
+    none.includes('<h1><span class="fqdn">stray.example</span> adresi kullanılamıyor</h1>'),
+  );
+  assert.ok(none.includes('Bu adresin çalışması gerekiyorsa yöneticinize bildirin.'));
+  assert.doesNotMatch(none, /eklemesini isteyin/);
+  const named = buildDomainRefusalPage(
+    null,
+    { ...SETTINGS, language: 'tr' },
+    { host: 'stray.example' },
+  );
+  assert.ok(named.includes('Bu adresin çalışması gerekiyorsa Ops ile iletişime geçin.'));
   assert.doesNotMatch(none, /logout/, 'no sign-in link for a host under no domain');
 });
 

@@ -96,6 +96,7 @@ export const PAGE_MESSAGES_EN = {
   'invitations.unavailable':
     'You cannot invite people into this application, or invitations are turned off for it.',
   'invitations.errorTitle': 'Something Went Wrong',
+  'invitations.loadFailed': 'The page could not be loaded — try again later.',
   'invitations.unreachable': 'The relay could not be reached.',
   'invitations.to': 'to {plugin}',
   'invitations.noRole': 'You may not invite anyone with your role.',
@@ -152,6 +153,8 @@ export const PAGE_MESSAGES_EN = {
   'error.gatekeeper_unavailable': 'The service is not answering — try again shortly.',
   'error.authelia_storage_unavailable': 'The service is not answering — try again shortly.',
   'error.not_found': 'Invitation not found.',
+  // `not_found` answering a new invitation: the application, not an invitation
+  'error.not_found.create': 'Application not found.',
   'error.tooManyRequests': 'Too many requests — wait a moment and try again.',
   'error.generic': 'Something went wrong — try again later.',
 
@@ -168,7 +171,10 @@ export const PAGE_MESSAGES_EN = {
   'access.noAccess': "You don't have access to {host}",
   'access.signedInAs': 'Signed in as {username}',
   'access.contact': 'Contact {admin} to request access. Copy a message template below:',
-  'access.defaultAdmin': 'your administrator',
+  // The `…Default` texts name no one: no operator-set name, so no placeholder
+  // a language would have to put a suffix on.
+  'access.contactDefault':
+    'Contact your administrator to request access. Copy a message template below:',
   'access.defaultAdminSalutation': 'Administrator',
   'access.subjectLabel': 'Subject:',
   'access.labelEmail': 'Email',
@@ -187,6 +193,7 @@ export const PAGE_MESSAGES_EN = {
   // Gatekeeper's domain refusal page (P7); `[…]` marks the sign-out link
   'refusal.title': 'Not allowed — {domain}',
   'refusal.notAllowedOn': 'Not allowed on {host}',
+  'refusal.noDomainTitle': '{host} is not available',
   'refusal.notMember': 'Not a member of {domain}',
   'refusal.noDomain':
     "Your account is signed in, but this host is under none of this relay's domains, so nobody may open it.",
@@ -195,6 +202,10 @@ export const PAGE_MESSAGES_EN = {
   'refusal.domain':
     'Your account is signed in, but it is not a member of this domain, so none of its applications are open to it.',
   'refusal.ask': 'Ask {admin} to add you if you should have access.',
+  'refusal.askDefault': 'Ask your administrator to add you if you should have access.',
+  // A host under none of the relay's domains: adding the person cannot help
+  'refusal.noDomainAsk': 'Tell {admin} if this address should work.',
+  'refusal.noDomainAskDefault': 'Tell your administrator if this address should work.',
   'refusal.signOut': '[Sign out] to sign in with another account.',
 } as const satisfies Record<string, string>;
 
@@ -219,7 +230,7 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'invite.delegated': '{plugin} uygulamasına {role} olarak davet edildiniz.',
   'invite.username': 'Kullanıcı adı',
   'invite.usernameHint':
-    'Giriş yaparken bu adı kullanacaksınız. Küçük harf, rakam, - ve _ içerebilir; ç, ğ, ı, ö, ş, ü kullanılamaz. Daha sonra değiştirilemez.',
+    'Giriş yaparken bu adı kullanacaksınız. Küçük harf, rakam, kısa çizgi (-) ve alt çizgi (_) içerebilir; ç, ğ, ı, ö, ş, ü kullanılamaz. Daha sonra değiştirilemez.',
   'invite.email': 'E-posta',
   'invite.expires': 'Son geçerlilik tarihi',
   'invite.yourName': 'Adınız soyadınız',
@@ -229,7 +240,7 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'invite.create': 'Hesap oluştur',
   'invite.creating': 'Hesap oluşturuluyor…',
   'invite.usernameRule':
-    'Kullanıcı adı {min}–{max} karakter uzunluğunda olmalı; yalnızca küçük harf, rakam, - ve _ içerebilir (ç, ğ, ı, ö, ş, ü kullanılamaz) ve bir harf ya da rakamla başlamalıdır.',
+    'Kullanıcı adı {min}–{max} karakter uzunluğunda olmalıdır; yalnızca küçük harf, rakam, kısa çizgi (-) ve alt çizgi (_) içerebilir (ç, ğ, ı, ö, ş, ü kullanılamaz) ve bir harf ya da rakamla başlamalıdır.',
   'invite.nameRequired': 'Adınızı ve soyadınızı girin.',
   'invite.passwordShort': 'Şifre en az 8 karakter olmalıdır.',
   'invite.passwordLong': 'Şifre en fazla 128 karakter olabilir.',
@@ -240,7 +251,8 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
     'İki faktörlü kimlik doğrulamayı kurmak için bu QR kodunu kimlik doğrulama uygulamanızla tarayın.',
   'invite.qrAlt': 'İki faktörlü kimlik doğrulama QR kodu',
   'invite.manualEntry': 'Elle girilecek kod:',
-  'invite.saveNow': 'Sayfadan ayrılmadan önce kodu kaydedin; bir daha gösterilmeyecek.',
+  'invite.saveNow':
+    'Sayfadan ayrılmadan önce kodu kimlik doğrulama uygulamanıza ekleyin; bir daha gösterilmeyecek.',
   'invite.askAdminTotp': 'İki faktörlü kimlik doğrulamanın kurulması için yöneticinize başvurun.',
   'invite.accessPending':
     'Erişiminiz hâlâ hazırlanıyor. Giriş yaptığınızda henüz bir şey görmüyorsanız bir dakika sonra yeniden deneyin.',
@@ -248,17 +260,18 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
 
   'invitations.title': 'Kişi davet edin',
   'invitations.loading': 'Yükleniyor…',
-  'invitations.notFoundTitle': 'Bulunamadı',
+  'invitations.notFoundTitle': 'Sayfa bulunamadı',
   'invitations.notFound': 'Burada bir davet sayfası yok.',
-  'invitations.signInTitle': 'Devam etmek için giriş yapın',
+  'invitations.signInTitle': 'Hesabınızla devam edin',
   'invitations.signInText': 'Kişi davet etmek için giriş yapın.',
   'invitations.signIn': 'Giriş yap',
   'invitations.signInLoop':
-    'Giriş yaptıktan sonra tekrar tekrar bu sayfaya dönüyorsanız tarayıcınızda bu sitenin çerezlerini temizleyip yeniden giriş yapın.',
-  'invitations.unavailableTitle': 'Kullanılamıyor',
+    'Giriş yaptıktan sonra sürekli bu sayfaya geri dönüyorsanız tarayıcınızda bu sitenin çerezlerini temizleyip yeniden giriş yapın.',
+  'invitations.unavailableTitle': 'Davetler kullanılamıyor',
   'invitations.unavailable':
     'Bu uygulamaya kişi davet etme yetkiniz yok ya da uygulamada davetler kapalı.',
   'invitations.errorTitle': 'Bir sorun oluştu',
+  'invitations.loadFailed': 'Sayfa yüklenemedi. Lütfen daha sonra yeniden deneyin.',
   'invitations.unreachable': 'Sunucuya ulaşılamadı.',
   'invitations.to': 'Uygulama: {plugin}',
   'invitations.noRole': 'Rolünüz kimseyi davet etmenize izin vermiyor.',
@@ -267,12 +280,12 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'invitations.theirName': 'Kişinin adı soyadı (isteğe bağlı)',
   'invitations.role': 'Rol',
   'invitations.bounds_one':
-    'Her bağlantı yalnızca bir kez kullanılabilir ve {days} gün sonra süresi dolar. Açık davetleriniz: {open}/{max}.',
+    'Her bağlantı yalnızca bir kez kullanılabilir; süresi {days} gün sonra dolar. Açık davetleriniz: {open}/{max}.',
   'invitations.bounds_other':
-    'Her bağlantı yalnızca bir kez kullanılabilir ve {days} gün sonra süresi dolar. Açık davetleriniz: {open}/{max}.',
+    'Her bağlantı yalnızca bir kez kullanılabilir; süresi {days} gün sonra dolar. Açık davetleriniz: {open}/{max}.',
   'invitations.create': 'Davet oluştur',
   'invitations.ready':
-    'Davet hazır. Bu bağlantıyı kişiye kendiniz gönderin: yalnızca şimdi gösteriliyor ve bağlantıyı ilk açan kişi daveti kabul edebilir.',
+    'Davet hazır. Bu bağlantıyı kişiye kendiniz gönderin. Bağlantı yalnızca şimdi gösteriliyor ve onu ilk açan kişi daveti kabul edebilir.',
   'invitations.copy': 'Kopyala',
   'invitations.copied': 'Kopyalandı',
   'invitations.selected': 'Seçildi',
@@ -280,12 +293,12 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'invitations.none': 'Henüz davet yok.',
   'invitations.back': '← {plugin} uygulamasına dön',
   'invitations.revoke': 'İptal et',
-  'invitations.reallyRevoke': 'Davet iptal edilsin mi?',
+  'invitations.reallyRevoke': 'İptal edilsin mi?',
   'invitations.emailRequired': 'Bir e-posta adresi girin.',
   'invitations.emailInvalid': 'Geçerli bir e-posta adresi girin.',
   'status.pending': 'Bekliyor',
   'status.expired': 'Süresi doldu',
-  'status.accepting': 'Kabul ediliyor',
+  'status.accepting': 'Kabul işlemi sürüyor',
   'status.accepted': 'Kabul edildi',
   'status.revoked': 'İptal edildi',
 
@@ -294,7 +307,8 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'error.invitation_expired': 'Bu davetin süresi dolmuş.',
   'error.invitation_closed': 'Bu davet artık geçerli değil.',
   'error.invitation_revoked': 'Bu davet, kabul edilirken iptal edildi.',
-  'error.invitation_accepting': 'Bu davet şu anda kabul ediliyor.',
+  'error.invitation_accepting':
+    'Bu davet şu anda başka bir yerde kabul ediliyor. Birkaç dakika sonra sayfayı yenileyin.',
   'error.invitation_unavailable':
     'Bu davet şu anda kabul edilemiyor. Lütfen daha sonra yeniden deneyin.',
   'error.username_unavailable': 'Bu kullanıcı adı kullanılamıyor. Başka bir kullanıcı adı deneyin.',
@@ -305,34 +319,37 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'error.invalid_request.role': 'Rol geçersiz.',
   'error.invalid_request': 'Girdiğiniz bilgilerden biri geçersiz.',
   'error.invitations_unavailable': 'Bu uygulamada davetler kullanılamıyor.',
-  'error.email_domain_not_allowed': 'Bu alan adındaki e-posta adreslerine davet oluşturulamaz.',
+  'error.email_domain_not_allowed': 'Bu alan adındaki e-posta adresleri için davet oluşturulamaz.',
   'error.role_not_grantable': 'Bu rolle kişi davet edemezsiniz.',
   'error.invitation_rate':
     'Son bir saatte çok fazla davet oluşturdunuz. Lütfen daha sonra yeniden deneyin.',
   'error.invitation_cap.inviter':
     'Açık davet sınırınıza ulaştınız. Bir daveti iptal edin ya da davetlerden birinin kabul edilmesini bekleyin.',
   'error.invitation_cap.plugin': 'Bu uygulamaya davetle daha fazla kişi eklenemiyor.',
-  'error.grant_reserve': 'Şu anda davetle yeni kişi eklenemiyor.',
+  'error.grant_reserve':
+    'Şu anda davetle yeni kişi eklenemiyor. Lütfen daha sonra yeniden deneyin.',
   'error.gatekeeper_unavailable':
     'Hizmet şu anda yanıt vermiyor. Lütfen biraz sonra yeniden deneyin.',
   'error.authelia_storage_unavailable':
     'Hizmet şu anda yanıt vermiyor. Lütfen biraz sonra yeniden deneyin.',
   'error.not_found': 'Davet bulunamadı.',
+  'error.not_found.create': 'Uygulama bulunamadı.',
   'error.tooManyRequests': 'Çok fazla istek gönderildi. Lütfen biraz bekleyip yeniden deneyin.',
   'error.generic': 'Bir sorun oluştu. Lütfen daha sonra yeniden deneyin.',
 
-  'unavailable.title': 'Şu anda kullanılamıyor',
-  'unavailable.text': 'Bu uygulama şu anda kullanılamıyor. Lütfen daha sonra yeniden deneyin.',
+  'unavailable.title': 'Uygulama şu anda kullanılamıyor',
+  'unavailable.text': 'Lütfen birkaç dakika sonra yeniden deneyin.',
   'forbidden.title': 'İzin verilmiyor',
   'forbidden.text': 'Bu sayfayı açma izniniz yok.',
 
-  'access.title': 'Erişim gerekli',
-  'access.heading': 'Erişim gerekli',
+  'access.title': 'Erişim izni gerekiyor',
+  'access.heading': 'Erişim izni gerekiyor',
   'access.noAccess': '{host} adresine erişiminiz yok',
   'access.signedInAs': 'Giriş yapılan hesap: {username}',
   'access.contact':
     'Erişim istemek için {admin} ile iletişime geçin. Aşağıdaki mesaj şablonlarından birini kopyalayabilirsiniz:',
-  'access.defaultAdmin': 'yöneticiniz',
+  'access.contactDefault':
+    'Erişim istemek için yöneticinizle iletişime geçin. Aşağıdaki mesaj şablonlarından birini kopyalayabilirsiniz:',
   // Unused in Turkish: the e-mail body has no name (below).
   'access.defaultAdminSalutation': 'Yönetici',
   'access.subjectLabel': 'Konu:',
@@ -355,15 +372,20 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
 
   'refusal.title': 'İzin verilmiyor — {domain}',
   'refusal.notAllowedOn': '{host} adresine erişim izniniz yok',
-  'refusal.notMember': '{domain} üyeleri arasında değilsiniz',
+  'refusal.noDomainTitle': '{host} adresi kullanılamıyor',
+  'refusal.notMember': '{domain} üyesi değilsiniz',
   'refusal.noDomain':
     'Giriş yaptınız, ancak bu adres sunucunun hiçbir alan adına bağlı olmadığından kimse tarafından açılamaz.',
   'refusal.site':
-    'Giriş yaptınız, ancak bu siteyi açma izniniz yok: {domain} üyeleri arasında değilsiniz ya da bu sitenin kullanıcıları arasında yer almıyorsunuz.',
+    'Giriş yaptınız, ancak bu siteyi açma izniniz yok: {domain} üyesi değilsiniz ya da bu sitenin kullanıcıları arasında yer almıyorsunuz.',
   'refusal.domain':
     'Giriş yaptınız, ancak bu alan adının üyesi olmadığınız için buradaki uygulamaların hiçbirine erişemezsiniz.',
   'refusal.ask':
     'Erişiminiz olması gerekiyorsa {admin} ile iletişime geçip sizi eklemesini isteyin.',
+  'refusal.askDefault':
+    'Erişiminiz olması gerekiyorsa yöneticinizle iletişime geçip sizi eklemesini isteyin.',
+  'refusal.noDomainAsk': 'Bu adresin çalışması gerekiyorsa {admin} ile iletişime geçin.',
+  'refusal.noDomainAskDefault': 'Bu adresin çalışması gerekiyorsa yöneticinize bildirin.',
   'refusal.signOut': 'Başka bir hesapla giriş yapmak için [oturumu kapatın].',
 });
 
@@ -427,6 +449,7 @@ export const INVITATIONS_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
   'error.grant_reserve',
   'error.gatekeeper_unavailable',
   'error.not_found',
+  'error.not_found.create',
   'error.tooManyRequests',
   'error.generic',
 ]);
@@ -453,7 +476,6 @@ export const ACCESS_REQUEST_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze
 /** Gatekeeper's domain refusal page (P7). */
 export const DOMAIN_REFUSAL_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
   ...PAGE_MESSAGE_KEYS.filter((key) => key.startsWith('refusal.') || key.startsWith('contact.')),
-  'access.defaultAdmin',
 ]);
 
 /** One text of a language's catalogue. */

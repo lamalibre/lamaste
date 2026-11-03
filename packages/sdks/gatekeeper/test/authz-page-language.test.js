@@ -130,7 +130,7 @@ test('the access-request page: Turkish on a Turkish domain, English on one with 
   const turkish = await ask('tunnel', 'app.alpha.example', 'alice');
   assert.equal(turkish.statusCode, 403);
   assert.match(turkish.body, /<html lang="tr">/);
-  assert.ok(turkish.body.includes('<h1>Erişim gerekli</h1>'));
+  assert.ok(turkish.body.includes('<h1>Erişim izni gerekiyor</h1>'));
   assert.ok(turkish.body.includes('Konu: app.alpha.example için erişim talebi'));
 
   for (const fqdn of ['app.beta.example', 'app.stray.example']) {
@@ -150,9 +150,7 @@ test('the domain refusal page follows the language of the host’s domain', asyn
   const turkish = await ask('tunnel', 'app.alpha.example', 'zed');
   assert.equal(turkish.statusCode, 403);
   assert.match(turkish.body, /<html lang="tr">/);
-  assert.ok(
-    turkish.body.includes('<span class="fqdn">alpha.example</span> üyeleri arasında değilsiniz'),
-  );
+  assert.ok(turkish.body.includes('<span class="fqdn">alpha.example</span> üyesi değilsiniz'));
   assert.ok(
     turkish.body.includes('<a href="https://auth.alpha.example/logout">oturumu kapatın</a>'),
   );

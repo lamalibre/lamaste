@@ -32,6 +32,7 @@ Page language: each of the relay's domains may carry a language — English or T
 
 - **`GET /api/domains/:name/branding/preview`** answers in the domain's language (`locale` `tr` with Turkish title and footer) and with the domain's stylesheet.
 - **Gatekeeper's copy buttons** keep their words in `data-` attributes and copy the template's own element, so the access-request page's script is one text for every language.
+- **Gatekeeper's refusal for a host under none of the relay's domains** says the address is not available and asks the administrator to make it work ("{host} is not available", "Tell … if this address should work"), instead of "Not allowed on {host}" and asking to be added — nobody can be added to a host no domain holds. A static site's refusal names the site, not its domain, in its title, and the pages' headings balance their lines.
 
 ### Removed
 
