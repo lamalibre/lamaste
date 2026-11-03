@@ -1026,6 +1026,30 @@ packages republished after the relay was provisioned on the previous release
 (4.9.0 from the dev Feria, byte for byte its 4.9 campaign's packages; 4.8.0
 the npmjs tarballs, byte for byte the dev Feria's).
 
+**Rerun after the review fixes** (`259b72db`: the brand's locale files kept
+beside the forced ones, `$uri` in the forced location, `brandSha256`, the
+administrator form's `username_unavailable`), 2026-11-03, fresh VMs, the
+16 packages packed from that commit and republished to the dev Feria only.
+Specs covering what the fixes touch: the rendering, the auth vhost, the
+invitation pages and the upgrade.
+
+| Spec                                       | Assertions | Failed | Skipped |
+| ------------------------------------------ | ---------- | ------ | ------- |
+| three-VM 52 `auth-branding`                | 141        | 0      | 0       |
+| three-VM 53 `delegated-invitation-inviter` | 159        | 0      | 0       |
+| three-VM 56 `page-language`                | 172        | 0      | 0       |
+| single-VM 37 `auth-branding-validation`    | 95         | 0      | 0       |
+| single-VM 38 `delegated-invitation-store`  | 142        | 0      | 0       |
+| single-VM 39 `page-language-validation`    | 82         | 0      | 0       |
+| upgrade `01` from 4.9.0                    | 103        | 0      | 0       |
+| upgrade `01` from 4.8.0                    | 103        | 0      | 0       |
+
+Upgrade `01` gained one assertion, `rendered.json`'s `brandSha256` equal to
+the digest of `brand.json` after the update. Its order was kept: the relay
+was provisioned while the dev Feria's latest was the previous release (for
+4.8.0, 4.9.0 was set aside and republished byte for byte afterwards), then
+the candidate was published. Nothing failed, so nothing was fixed.
+
 Not run by rodeo:
 
 - the page scripts (curl runs none) — wave 5a's browser pass ran them against
