@@ -218,13 +218,9 @@ test('migration 0021: every domain without a language, as before languages', asy
   );
   const listed = (await call('GET', '/api/domains')).json();
   assert.equal(listed.domains[0].language, null);
-  // No rendering, none wanted: current.
-  assert.deepEqual(listed.domains[0].rendering, {
-    rendered: null,
-    current: true,
-    renderFailing: false,
-    vhostPending: false,
-  });
+  // No rendering, none wanted: none listed (the API reference's null), so the
+  // Domains page and the CLI say nothing of one rather than "rendering".
+  assert.equal(listed.domains[0].rendering, null);
   assert.deepEqual(listed.authelia, { running: PINNED, pinned: PINNED });
   assert.equal(await exists(renderedDir(PRIMARY)), false);
   assert.equal((await projection()).domains[0].language, null);
