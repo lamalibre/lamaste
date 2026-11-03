@@ -40,6 +40,8 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
       var ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
       var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       var STATUS_KEYS = { 404: 'error.not_found', 429: 'error.tooManyRequests' };
+      // Loading the page: a refusal no code names is the page's, not an action's.
+      var LOAD_KEYS = { 429: 'error.tooManyRequests', fallback: 'invitations.loadFailed' };
 ${AUTH_PAGE_SCRIPT_WORDS}
       // The route, from the path alone.
       var segments = window.location.pathname.split('/').filter(function (s) { return s !== ''; });
@@ -102,7 +104,7 @@ ${AUTH_PAGE_SCRIPT_WORDS}
             if (answer.status === 403 || answer.status === 404) {
               return showMessage(msg('invitations.unavailableTitle'), msg('invitations.unavailable'));
             }
-            if (answer.status !== 200) return showMessage(msg('invitations.errorTitle'), refusal(answer.status, answer.data, STATUS_KEYS));
+            if (answer.status !== 200) return showMessage(msg('invitations.errorTitle'), refusal(answer.status, answer.data, LOAD_KEYS));
             render(answer.data);
           })
           .catch(function () { showMessage(msg('invitations.errorTitle'), msg('invitations.unreachable')); });
@@ -179,7 +181,7 @@ ${AUTH_PAGE_SCRIPT_WORDS}
             button.disabled = false;
             if (answer.status === 401) return showSignIn();
             if (answer.status !== 201) {
-              errorDiv.innerHTML = '<div class="error-msg">' + text(refusal(answer.status, answer.data, STATUS_KEYS)) + '</div>';
+              errorDiv.innerHTML = '<div class="error-msg">' + text(refusal(answer.status, answer.data, STATUS_KEYS, 'create')) + '</div>';
               return;
             }
             link = typeof answer.data.inviteUrl === 'string' && answer.data.inviteUrl.indexOf('https://') === 0

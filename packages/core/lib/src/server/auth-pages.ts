@@ -266,14 +266,18 @@ export const AUTH_PAGE_SCRIPT_WORDS = String.raw`
         return has(base + '_' + category) ? base + '_' + category : base + '_other';
       }
 
-      function refusal(status, body, statusKeys) {
+      // A refusal's words: by its code (the action's own text first, e.g.
+      // 'error.not_found.create'), else by status, else the page's fallback.
+      function refusal(status, body, statusKeys, action) {
         var keys = [];
         if (body && typeof body.code === 'string' && CODE_RE.test(body.code)) {
           if (typeof body.field === 'string' && DETAIL_RE.test(body.field)) keys.push('error.' + body.code + '.' + body.field);
           if (typeof body.cap === 'string' && DETAIL_RE.test(body.cap)) keys.push('error.' + body.code + '.' + body.cap);
+          if (action) keys.push('error.' + body.code + '.' + action);
           keys.push('error.' + body.code);
         }
-        keys.push(statusKeys[status] || 'error.generic');
+        if (action && statusKeys[status]) keys.push(statusKeys[status] + '.' + action);
+        keys.push(statusKeys[status] || statusKeys.fallback || 'error.generic');
         for (var i = 0; i < keys.length; i++) if (has(keys[i])) return M[keys[i]];
         return msg('error.generic');
       }

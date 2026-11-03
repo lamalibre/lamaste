@@ -22,6 +22,23 @@ function wordsOf(language: PageLanguage): (key: PageMessageKey) => string {
   return (key) => pageMessage(language, key);
 }
 
+/**
+ * A sentence naming who to ask: the operator's name in `named`, else
+ * `unnamed`, which says "your administrator" in the language's own grammar
+ * (a placeholder could not take the suffix Turkish puts on it).
+ */
+function adminText(
+  t: (key: PageMessageKey) => string,
+  named: PageMessageKey,
+  unnamed: PageMessageKey,
+  options: TemplateOptions | undefined,
+): string {
+  const admin = options?.adminName;
+  return admin === undefined
+    ? formatMessageHtml(t(unnamed), {})
+    : formatMessageHtml(t(named), { admin });
+}
+
 /** The pages' own accent (cyan-400), when the host's domain has no brand or no accent. */
 export const PAGE_DEFAULT_ACCENT = '#22d3ee';
 
@@ -63,7 +80,7 @@ function baseCss(brand: PageBrand | null | undefined): string {
         : ''
     }
     .icon { font-size: 2.5rem; margin-bottom: 1rem; }
-    h1 { font-size: 1.25rem; color: #f4f4f5; margin-bottom: 0.5rem; }
+    h1 { font-size: 1.25rem; color: #f4f4f5; margin-bottom: 0.5rem; text-wrap: balance; }
     .fqdn { color: var(--accent); }`;
 }
 
@@ -224,7 +241,6 @@ export function buildAccessRequestPage(
   const language = pageLanguage(options);
   const t = wordsOf(language);
   const templates = messageTemplates(language, username, resourceFqdn, options);
-  const adminName = options?.adminName ?? t('access.defaultAdmin');
   const brand = options?.brand;
 
   return `<!DOCTYPE html>
@@ -276,7 +292,7 @@ ${baseCss(brand)}
       ${formatMessageHtml(t('access.signedInAs'), { username: { text: username, tag: 'span', className: 'user-badge' } })}
     </p>
     <p class="subtitle">
-      ${formatMessageHtml(t('access.contact'), { admin: adminName })}
+      ${adminText(t, 'access.contact', 'access.contactDefault', options)}
     </p>
 
     <div class="section-label">${escapeHtml(t('access.labelEmail'))}</div>
@@ -331,16 +347,24 @@ export function buildDomainRefusalPage(
 ): string {
   const language = pageLanguage(options);
   const t = wordsOf(language);
-  const adminName = options?.adminName ?? t('access.defaultAdmin');
   const brand = options?.brand;
+  const fqdn = (text: string) => ({ text, tag: 'span', className: 'fqdn' }) as const;
+  // A host under no domain is nobody's to open: not a permission of this
+  // user's, and nothing an administrator can add them to.
   const heading =
-    domain === null || site
-      ? formatMessageHtml(t('refusal.notAllowedOn'), {
-          host: { text: host, tag: 'span', className: 'fqdn' },
-        })
-      : formatMessageHtml(t('refusal.notMember'), {
-          domain: { text: domain, tag: 'span', className: 'fqdn' },
-        });
+    domain === null
+      ? formatMessageHtml(t('refusal.noDomainTitle'), { host: fqdn(host) })
+      : site
+        ? formatMessageHtml(t('refusal.notAllowedOn'), { host: fqdn(host) })
+        : formatMessageHtml(t('refusal.notMember'), { domain: fqdn(domain) });
+  const title =
+    domain === null
+      ? formatMessageHtml(t('refusal.noDomainTitle'), { host })
+      : formatMessageHtml(t('refusal.title'), { domain: site ? host : domain });
+  const ask =
+    domain === null
+      ? adminText(t, 'refusal.noDomainAsk', 'refusal.noDomainAskDefault', options)
+      : adminText(t, 'refusal.ask', 'refusal.askDefault', options);
   const explanation =
     domain === null
       ? formatMessageHtml(t('refusal.noDomain'), {})
@@ -358,7 +382,7 @@ export function buildDomainRefusalPage(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${formatMessageHtml(t('refusal.title'), { domain: domain ?? host })}${titleSuffix(brand)}</title>
+  <title>${title}${titleSuffix(brand)}</title>
   <style>
 ${baseCss(brand)}
     .subtitle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1rem; }
@@ -373,7 +397,7 @@ ${baseCss(brand)}
     <div class="icon">&#128683;</div>
     <h1>${heading}</h1>
     <p class="subtitle">
-      ${explanation} ${formatMessageHtml(t('refusal.ask'), { admin: adminName })}
+      ${explanation} ${ask}
     </p>
     ${signOut}
     ${contactLines(options)}

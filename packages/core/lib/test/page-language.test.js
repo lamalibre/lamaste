@@ -200,7 +200,15 @@ test('each page carries its own keys; Gatekeeper’s pages have theirs', () => {
   assert.ok(INVITATIONS_PAGE_KEYS.includes('status.revoked'));
   assert.ok(INVITATIONS_PAGE_KEYS.includes('invitations.bounds_one'));
   assert.ok(ACCESS_REQUEST_PAGE_KEYS.includes('template.body'));
-  assert.ok(DOMAIN_REFUSAL_PAGE_KEYS.includes('access.defaultAdmin'));
+  assert.ok(DOMAIN_REFUSAL_PAGE_KEYS.includes('refusal.askDefault'));
+  assert.ok(DOMAIN_REFUSAL_PAGE_KEYS.includes('refusal.noDomainAskDefault'));
+  assert.ok(ACCESS_REQUEST_PAGE_KEYS.includes('access.contactDefault'));
+  assert.ok(INVITATIONS_PAGE_KEYS.includes('error.not_found.create'));
+  assert.ok(INVITATIONS_PAGE_KEYS.includes('invitations.loadFailed'));
+  // A text naming no one has no placeholder a suffix would have to follow.
+  for (const key of PAGE_MESSAGE_KEYS.filter((k) => k.endsWith('Default'))) {
+    assert.deepEqual(messagePlaceholders(PAGE_MESSAGES.en[key]), [], key);
+  }
   assert.deepEqual(Object.keys(pageMessagesFor('tr', UNAVAILABLE_PAGE_KEYS)), [
     'unavailable.title',
     'unavailable.text',
@@ -336,6 +344,45 @@ test('the scripts never show a refusal’s own text, and take their words from t
   assert.ok(INVITATIONS_PAGE_SCRIPT.includes('new Intl.PluralRules(LANG)'));
 });
 
+test('the inviter’s page words a refusal by its action, its code, its status, then its fallback', () => {
+  // The script's own functions, run on the Turkish data block.
+  const take = (re) => {
+    const m = re.exec(INVITATIONS_PAGE_SCRIPT);
+    assert.ok(m, String(re));
+    return m[0];
+  };
+  const source = [
+    take(/var STATUS_KEYS = [^\n]*\n/),
+    take(/var LOAD_KEYS = [^\n]*\n/),
+    take(/var CODE_RE = [^\n]*\n/),
+    take(/var DETAIL_RE = [^\n]*\n/),
+    take(/function has\(key\) [^\n]*\n/),
+    take(/function msg\(key\) [^\n]*\n/),
+    take(/function refusal\(status, body, statusKeys, action\) \{[\s\S]*?\n {6}\}\n/),
+    'return { refusal, STATUS_KEYS, LOAD_KEYS };',
+  ].join('');
+  const M = pageMessagesFor('tr', INVITATIONS_PAGE_KEYS);
+  const { refusal, STATUS_KEYS, LOAD_KEYS } = new Function('M', source)(M);
+  const notFound = { code: 'not_found', error: 'Not found' };
+  // `not_found` answering a new invitation: the application was not found …
+  assert.equal(refusal(404, notFound, STATUS_KEYS, 'create'), 'Uygulama bulunamadı.');
+  assert.equal(refusal(404, {}, STATUS_KEYS, 'create'), 'Uygulama bulunamadı.');
+  // … answering a revocation: the invitation.
+  assert.equal(refusal(404, notFound, STATUS_KEYS), 'Davet bulunamadı.');
+  // A code without an action's own text keeps its words.
+  assert.equal(
+    refusal(400, { code: 'email_domain_not_allowed' }, STATUS_KEYS, 'create'),
+    M['error.email_domain_not_allowed'],
+  );
+  // Loading: the page's own fallback, not the heading said twice.
+  assert.equal(
+    refusal(500, {}, LOAD_KEYS),
+    'Sayfa yüklenemedi. Lütfen daha sonra yeniden deneyin.',
+  );
+  assert.equal(refusal(500, {}, STATUS_KEYS), M['error.generic']);
+  assert.notEqual(M['invitations.loadFailed'], M['invitations.errorTitle']);
+});
+
 test('the shell escapes its title and loading text', () => {
   const html = authPageShell({
     brand: null,
@@ -416,7 +463,7 @@ test('the "not available" page: one style for every brand and language, no scrip
   }
   const branded = renderUnavailablePage({ brand: BRANDS[2], language: 'tr', domain: 'beta.test' });
   assert.ok(branded.includes('<div class="brand-name">Beta &amp; Co</div>'));
-  assert.ok(branded.includes('<title>Beta &amp; Co — Şu anda kullanılamıyor</title>'));
+  assert.ok(branded.includes('<title>Beta &amp; Co — Uygulama şu anda kullanılamıyor</title>'));
   assert.throws(() => renderUnavailablePage({ brand: BRANDS[1], language: 'en', domain: null }));
   assert.throws(() => renderUnavailablePage({ brand: null, language: 'en', domain: '../x' }));
 
