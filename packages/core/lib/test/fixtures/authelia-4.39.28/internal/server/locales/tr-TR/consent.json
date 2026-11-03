@@ -1,0 +1,42 @@
+{
+	"Claim": "Talep {{name}}",
+	"Client ID": "Müşteri Kimliği: {{client_id}}",
+	"Consent Request": "Onay Talebi",
+	"Remember Consent": "Onayı Hatırla",
+	"Scope": "Kapsam {{name}}",
+	"The above application is requesting the following permissions": "Yukarıdaki uygulama aşağıdaki izinleri talep ediyor",
+	"This saves this consent as a pre-configured consent for future use": "Bu onay, gelecekte kullanılmak üzere önceden yapılandırılmış bir onay olarak kaydedilir",
+	"claims": {
+		"address": "Posta Adresi",
+		"birthdate": "Doğum Tarihi",
+		"email": "E-posta Adresi",
+		"email_verified": "E-posta Adresi (Doğrulanmış)",
+		"family_name": "Soyad",
+		"gender": "Cinsiyet",
+		"given_name": "Verilen Ad",
+		"groups": "Grup Üyeliği",
+		"locale": "Yerel / Dil",
+		"middle_name": "İkinci Ad",
+		"name": "Gösterim Adı",
+		"nickname": "Takma Ad",
+		"phone_number": "Telefon Numarası",
+		"phone_number_verified": "Telefon Numarası (Doğrulanmış)",
+		"picture": "Resim URL'si",
+		"preferred_username": "Tercih Edilen Kullanıcı Adı",
+		"profile": "Profil URL'si",
+		"sub": "Benzersiz Tanımlayıcı",
+		"updated_at": "Profil Güncelleme Zamanı",
+		"website": "Web Sitesi URL'si",
+		"zoneinfo": "Zaman Dilimi"
+	},
+	"scopes": {
+		"address": "Adresinize erişin",
+		"authelia.bearer.authz": "Sizin gibi oturum açmış korumalı kaynaklara erişin",
+		"email": "E-posta adreslerinize erişin",
+		"groups": "Grup üyeliklerinize erişin",
+		"offline_access": "Bu izinleri kullanıcı etkileşimi olmadan otomatik olarak yenileyin",
+		"openid": "Kimliğinizi doğrulamak için OpenID kullanın",
+		"phone": "Telefon numaranıza erişin",
+		"profile": "Profil bilgilerinize erişin"
+	}
+}
