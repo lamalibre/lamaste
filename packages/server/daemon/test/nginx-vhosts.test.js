@@ -15,8 +15,16 @@ import { fileURLToPath } from 'node:url';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { SITE_UPLOAD_MAX_REQUEST_MIB } from '@lamalibre/lamaste';
-import { INVITATIONS_PAGE_HEADERS, INVITE_PAGE_HEADERS } from '@lamalibre/lamaste/server';
+import {
+  AUTHELIA_NOSCRIPT_TEXT,
+  SITE_UPLOAD_MAX_REQUEST_MIB,
+  autheliaIndexLanguageFilters,
+} from '@lamalibre/lamaste';
+import {
+  INVITATIONS_PAGE_HEADERS,
+  INVITE_PAGE_HEADERS,
+  UNAVAILABLE_PAGE_STYLE_HASH,
+} from '@lamalibre/lamaste/server';
 
 const require = createRequire(import.meta.url);
 const { validateVhost, PANEL_SITE_RE } = require(
@@ -875,4 +883,161 @@ test('the panel vhost admits a large body at the site upload location alone', ()
   ]) {
     assert.ok(!re.test(other), other);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Page languages (packages/core/docs/page-language-design.md)
+// ---------------------------------------------------------------------------
+
+const FIXTURES_49 = new URL('./fixtures/lamaste-4.9.0/', import.meta.url);
+const fixture49 = (name) => readFile(new URL(name, FIXTURES_49), 'utf8');
+/** Every line of `text` but its comments is printable ASCII (lamaste-priv's tokenizer refuses anything else). */
+function assertAsciiDirectives(text, label) {
+  for (const line of text.split('\n')) {
+    if (line.trimStart().startsWith('#')) continue;
+    assert.match(line, /^[\x20-\x7e]*$/, label);
+  }
+}
+
+/** A vhost with every CSP hash replaced by one placeholder: what may differ between releases. */
+const withoutHashes = (text) => text.replace(/'sha256-[A-Za-z0-9+/=]{44}'/g, "'sha256-…'");
+
+test('a domain without a page language keeps its 4.9.0 auth vhost but for the pages’ CSP hashes (regression pin)', async () => {
+  for (const [name, domain, opts] of [
+    ['auth-primary-unbranded.conf', 'alpha.example', { primary: true, branding: null }],
+    [
+      'auth-branded.conf',
+      'beta.example',
+      { primary: false, branding: { theme: 'dark', logo: true } },
+    ],
+  ]) {
+    const before = await fixture49(name);
+    const now = nginx.renderAuthVhost(domain, `/etc/letsencrypt/live/auth.${domain}`, {
+      ...opts,
+      language: null,
+    }).config;
+    assert.notEqual(now, before, `${name}: the pages' hashes changed with their scripts`);
+    assert.equal(withoutHashes(now), withoutHashes(before), name);
+    // `language` absent is `language: null`.
+    assert.equal(
+      nginx.renderAuthVhost(domain, `/etc/letsencrypt/live/auth.${domain}`, opts).config,
+      now,
+    );
+  }
+});
+
+test('a served web surface keeps its 4.9.0 vhost byte for byte (regression pin)', async () => {
+  const now = nginx.renderWebSurfaceVhost(
+    { id: 'demo-site', fqdn: 'app.beta.example' },
+    '/etc/letsencrypt/live/app.beta.example',
+    'beta.example',
+    { route: 'demo', maxBodySizeMb: 10, treesDir: '/var/www/lamaste/apps/demo', served: true },
+  ).config;
+  assert.equal(now, await fixture49('web-surface-served.conf'));
+});
+
+test('a domain with a page language: every locale file forced, the index in its language, the menu hidden — all through lamaste-priv', () => {
+  for (const branding of [null, { theme: 'dark', logo: true }]) {
+    const { config } = nginx.renderAuthVhost('alpha.example', undefined, {
+      primary: false,
+      branding,
+      language: 'tr',
+    });
+    assert.doesNotThrow(() => validateVhost(config), JSON.stringify(branding));
+    assertAsciiDirectives(config, JSON.stringify(branding));
+    // Its braces are the regex's: read up to the location's own end.
+    const opening = 'location ~ "^/locales/[^/]{1,64}/(consent|portal|settings)[.]json$" {';
+    assert.ok(config.includes(opening));
+    const forced = config.slice(
+      config.indexOf(opening),
+      config.indexOf('\n    }', config.indexOf(opening)),
+    );
+    assert.ok(forced.includes('root /var/www/lamaste/auth/alpha.example;'));
+    assert.ok(forced.includes('try_files /locales/forced/$1.json @authelia;'));
+    assert.doesNotMatch(forced, /\\/);
+    const index = locationBody(config, '/');
+    for (const [from, to] of autheliaIndexLanguageFilters('tr')) {
+      assert.ok(index.includes(`sub_filter '${from}' '${to}';`), from);
+    }
+    assert.ok(
+      index.includes(
+        `sub_filter '${AUTHELIA_NOSCRIPT_TEXT}' 'Bu uygulama i&#231;in taray&#305;c&#305;n&#305;zda JavaScript etkin olmal&#305;d&#305;r.';`,
+      ),
+    );
+    assert.ok(index.includes(`sub_filter '<html lang="' '<html lang="tr" data-authelia-lang="';`));
+    // The stylesheet (the menu rule), branded or not.
+    assert.ok(
+      index.includes(`sub_filter '</head>' '<link rel="stylesheet" href="/brand.css"></head>';`),
+    );
+    // The theme and logo switch as the brand says.
+    assert.ok(
+      index.includes(
+        `sub_filter 'data-theme="light"' 'data-theme="${branding?.theme ?? 'light'}"';`,
+      ),
+    );
+  }
+  // English forced too: its lang, no noscript rewrite (Authelia's own sentence).
+  const en = nginx.renderAuthVhost('alpha.example', undefined, { language: 'en' }).config;
+  assert.doesNotThrow(() => validateVhost(en));
+  assert.ok(en.includes(`sub_filter '<html lang="' '<html lang="en" data-authelia-lang="';`));
+  assert.ok(!en.includes(`sub_filter '${AUTHELIA_NOSCRIPT_TEXT}'`));
+  assert.match(en, /location ~ "\^\/locales\//);
+  // Without a language: no forced location, no lang rewrite.
+  const none = nginx.renderAuthVhost('alpha.example', undefined, {}).config;
+  assert.doesNotMatch(none, /locales\/forced|data-authelia-lang/);
+  // Only a page language reaches a root-validated file.
+  for (const language of ['de', 'TR', 'tr"', '', 1, {}]) {
+    assert.throws(
+      () => nginx.renderAuthVhost('alpha.example', undefined, { language }),
+      /Invalid auth vhost language/,
+      JSON.stringify(language),
+    );
+  }
+});
+
+test('a web surface not served answers 503 with Lamaste’s "not available" page, in the domain’s rendering or the stock one', async () => {
+  const site = { id: 'demo-site', fqdn: 'app.beta.example' };
+  const opts = { route: 'demo', maxBodySizeMb: 10, treesDir: '/var/www/lamaste/apps/demo' };
+  for (const clearSiteData of [false, true]) {
+    const { config } = nginx.renderWebSurfaceVhost(
+      site,
+      '/etc/letsencrypt/live/app.beta.example',
+      'beta.example',
+      { ...opts, served: false, clearSiteData },
+    );
+    assert.doesNotThrow(() => validateVhost(config), String(clearSiteData));
+    assertAsciiDirectives(config, String(clearSiteData));
+    // Every request still 503 (the status kept: error_page without `=`).
+    assert.match(config, /\n {4}error_page 503 \/internal\/lamaste\/unavailable;\n/);
+    assert.match(locationBody(config, '/'), /return 503;/);
+    const page = locationBody(config, '= /internal/lamaste/unavailable');
+    assert.match(page, /\n {8}internal;\n/);
+    assert.ok(page.includes('root /var/www/lamaste/auth/beta.example;'));
+    assert.ok(page.includes('try_files /unavailable/index.html @unavailable;'));
+    const stock = locationBody(config, '@unavailable');
+    assert.ok(stock.includes('root /var/www/lamaste/unavailable;'));
+    assert.ok(stock.includes('try_files /index.html =503;'));
+    // Both carry the page's headers: its style by hash, the domain's logo host, no caching.
+    for (const body of [page, stock]) {
+      assert.ok(body.includes(`style-src ${UNAVAILABLE_PAGE_STYLE_HASH}`));
+      assert.ok(body.includes('img-src https://auth.beta.example;'));
+      assert.ok(body.includes('add_header Cache-Control "no-store" always;'));
+      assert.equal(body.includes(`Clear-Site-Data '"storage"'`), clearSiteData);
+    }
+  }
+  // 4.9.0's not-served vhost, the page added: nothing else changed.
+  const before = await fixture49('web-surface-not-served.conf');
+  const now = nginx.renderWebSurfaceVhost(
+    site,
+    '/etc/letsencrypt/live/app.beta.example',
+    'beta.example',
+    { ...opts, served: false, clearSiteData: true },
+  ).config;
+  const added = now
+    .replace(/\n {4}error_page 503 \/internal\/lamaste\/unavailable;/, '')
+    .replace(
+      /\n\n {4}# Lamaste's "not available" page[\s\S]*?\n {4}location @unavailable \{[\s\S]*?\n {4}\}/,
+      '',
+    );
+  assert.equal(added, before);
 });

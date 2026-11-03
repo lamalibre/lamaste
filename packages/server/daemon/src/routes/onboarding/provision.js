@@ -7,7 +7,11 @@ import * as chisel from '../../lib/chisel.js';
 import * as authelia from '../../lib/authelia.js';
 import * as certbot from '../../lib/certbot.js';
 import * as nginx from '../../lib/nginx.js';
-import { writeInvitationsPage, writeInvitePage } from '../../lib/invite-page.js';
+import {
+  writeInvitationsPage,
+  writeInvitePage,
+  writeUnavailablePage,
+} from '../../lib/invite-page.js';
 import { migrateChiselCredentialsIfNeeded } from '../../lib/chisel-users.js';
 import { loadAgentRegistry } from '../../lib/mtls.js';
 import { setChiselRunningPinnedRelease } from '../../lib/chisel-runtime.js';
@@ -164,8 +168,8 @@ async function runProvisioning(log) {
     await nginx.writePanelVhost(domain);
 
     emitProgress('configure-nginx', 'running', 'Writing auth vhost...');
-    // A fresh relay: no brand yet.
-    await nginx.writeAuthVhost(domain, { primary: true, branding: null });
+    // A fresh relay: no brand, no language yet.
+    await nginx.writeAuthVhost(domain, { primary: true, branding: null, language: null });
 
     emitProgress('configure-nginx', 'running', 'Writing tunnel vhost...');
     await nginx.writeTunnelVhost(domain);
@@ -173,6 +177,7 @@ async function runProvisioning(log) {
     emitProgress('configure-nginx', 'running', 'Writing invitation pages...');
     await writeInvitePage();
     await writeInvitationsPage();
+    await writeUnavailablePage();
 
     emitProgress('configure-nginx', 'running', 'Enabling sites...');
     await nginx.enableSite('lamalibre-lamaste-panel-domain');

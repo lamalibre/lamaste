@@ -52,7 +52,7 @@ import {
 } from './lib/vhost-reconcile.js';
 import { activeDomains, ensurePrimaryDomain, syncDomainAccess } from './lib/domains.js';
 import { ensureBrandingBase, reconcileAuthBranding } from './lib/auth-branding.js';
-import { writeInvitationsPage, writeInvitePage } from './lib/invite-page.js';
+import { writeInvitationsPage, writeInvitePage, writeUnavailablePage } from './lib/invite-page.js';
 import { touchUsersFile } from './lib/authelia.js';
 import { reconcileWebSurfaces } from './lib/web-surface.js';
 import {
@@ -255,6 +255,10 @@ async function start() {
       // The stock inviter's page of delegated invitations, the same way.
       await writeInvitationsPage({ logger: server.log }).catch((err) => {
         server.log.warn({ err: err.message }, 'Startup write of the inviter page failed');
+      });
+      // The stock "not available" page of plugin sites, the same way.
+      await writeUnavailablePage({ logger: server.log }).catch((err) => {
+        server.log.warn({ err: err.message }, 'Startup write of the "not available" page failed');
       });
       // First what the branded sign-in needs from Authelia — its asset
       // path, the placeholder logo and an explicit theme: the one

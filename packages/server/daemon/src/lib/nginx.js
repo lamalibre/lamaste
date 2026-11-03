@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { access, lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  AUTHELIA_FORCED_NAMESPACES,
   AUTH_BRANDING_FILES,
   AUTH_BRANDING_LOCALES_DIR,
   AUTH_BRANDING_THEMES,
@@ -15,11 +16,16 @@ import {
   labelUnder,
   userSurfaceApiPath,
   WEB_TREE_CONTENT_TYPES,
+  autheliaIndexLanguageFilters,
+  AUTHELIA_FORCED_LOCALES_DIR,
+  isPageLanguage,
 } from '@lamalibre/lamaste';
 import {
   INVITATIONS_PAGE_HEADERS,
   INVITE_PAGE_HEADERS,
+  UNAVAILABLE_PAGE_STOCK_DIR,
   authBrandingDir,
+  unavailablePageHeaders,
 } from '@lamalibre/lamaste/server';
 import { INVITATIONS_DIR, INVITE_DIR } from './invite-page.js';
 
@@ -433,20 +439,24 @@ export const LEGACY_AUTH_VHOST = 'lamalibre-lamaste-auth';
 /**
  * Write the Authelia auth portal vhost of one of the relay's domains
  * (`primary`: the panel's; `branding`: what the vhost says of the domain's
- * brand, null for none — see {@link renderAuthVhost}).
+ * brand, null for none; `language`: the domain's page language, null for
+ * none — see {@link renderAuthVhost}).
  *
  * @param {string} domain
- * @param {{ primary: boolean, enabled?: boolean, branding?: AuthVhostBranding | null }} opts
+ * @param {{ primary: boolean, enabled?: boolean, branding?: AuthVhostBranding | null, language?: import('@lamalibre/lamaste').PageLanguage | null }} opts
  */
-export async function writeAuthVhost(domain, { primary, enabled = true, branding = null }) {
-  const { name, config } = renderAuthVhost(domain, undefined, { primary, branding });
+export async function writeAuthVhost(
+  domain,
+  { primary, enabled = true, branding = null, language = null },
+) {
+  const { name, config } = renderAuthVhost(domain, undefined, { primary, branding, language });
   await safeWriteVhost(name, config, `auth.${domain}`, { enabled });
   return path.join(SITES_AVAILABLE, name);
 }
 
 /**
  * What the auth vhost says of a domain's brand (lib/auth-branding.js
- * `authVhostBranding`): Authelia's theme for the page and whether the
+ * `authVhostInputs`): Authelia's theme for the page and whether the
  * domain serves a logo of its own. Everything else about the brand is a
  * file nginx serves when it exists.
  *
@@ -457,13 +467,23 @@ export async function writeAuthVhost(domain, { primary, enabled = true, branding
  * The brand-override locations of an auth vhost: the three routes Authelia
  * lets a file override, answered from the domain's rendered directory when
  * the file is there and by Authelia otherwise, and the generated stylesheet.
- * Same for a branded and an unbranded domain — a domain without a brand has
- * no directory, so every request falls through.
+ * Same for a branded and an unbranded domain — a domain without a rendering
+ * has no directory, so every request falls through.
+ *
+ * A domain with a page language also answers **every** locale file the
+ * portal can ask for — whatever language its detection picked, a variant
+ * Authelia would answer with a sibling included — with the one forced file
+ * of its namespace (packages/core/docs/page-language-design.md §3). A regex
+ * location, checked after the prefix locations, so it wins over the
+ * `/locales/` prefix; `[.]` for the dot, as lamaste-priv refuses a
+ * backslash. The locale segment is wider than Authelia's grammar on purpose:
+ * a narrower one would let an odd path fall to Authelia's own language.
  *
  * @param {string} domain
  * @param {string} fqdn
+ * @param {import('@lamalibre/lamaste').PageLanguage | null} language
  */
-function authBrandLocations(domain, fqdn) {
+function authBrandLocations(domain, fqdn, language) {
   const root = authBrandingDir(domain);
   const headers = `
         add_header X-Content-Type-Options nosniff;
@@ -473,13 +493,24 @@ function authBrandLocations(domain, fqdn) {
         root ${root};
         try_files $uri ${fallback};${headers}
     }`;
+  const forced =
+    language === null
+      ? ''
+      : `
+
+    # The domain's language (page-language-design.md §3): every locale file
+    # the portal can ask for is the forced file of its namespace.
+    location ~ "^/${AUTH_BRANDING_LOCALES_DIR}/[^/]{1,64}/(${AUTHELIA_FORCED_NAMESPACES.join('|')})[.]json$" {
+        root ${root};
+        try_files /${AUTHELIA_FORCED_LOCALES_DIR}/$1.json @authelia;${headers}
+    }`;
   return `
     # Brand overrides (packages/core/docs/auth-branding-design.md): the
     # domain's file when it has one, else Authelia's own. The root is a link
     # to the rendering that serves, switched by rename — disable_symlinks
     # stays off. The headers apply to a file served from here alone: the
     # fallback is produced in @authelia, which adds none. The content type
-    # comes from the extension, never from the bytes.${override(`= /${AUTH_BRANDING_FILES.favicon}`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.logo}`, '@authelia')}${override(`/${AUTH_BRANDING_LOCALES_DIR}/`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.css}`, '=404')}
+    # comes from the extension, never from the bytes.${override(`= /${AUTH_BRANDING_FILES.favicon}`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.logo}`, '@authelia')}${override(`/${AUTH_BRANDING_LOCALES_DIR}/`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.css}`, '=404')}${forced}
 
     # Authelia's own answer for an override the domain lacks (a location
     # that sets any header inherits none of the server's).
@@ -510,16 +541,36 @@ function autheliaProxyHeaders(fqdn) {
  * Authelia renders the page once for every domain with the global theme
  * (`theme: light`, written explicitly) and `data-logooverride="true"` (its
  * asset directory always holds Lamaste's placeholder logo); the vhost makes
- * it the domain's. An unbranded domain keeps the light theme, gets no
- * stylesheet, and `data-logooverride="false"`: exactly the stock page, the
- * placeholder never shown. A branded domain without a logo keeps Authelia's
- * generic icon the same way.
+ * it the domain's. An unbranded domain keeps the light theme and
+ * `data-logooverride="false"`: exactly the stock page, the placeholder
+ * never shown. A branded domain without a logo keeps Authelia's generic
+ * icon the same way.
+ *
+ * A domain with a page language also gets the page's `lang` and its
+ * `<noscript>` sentence in that language (core
+ * `autheliaIndexLanguageFilters`: printable ASCII without `$`, the Turkish
+ * as character references — lamaste-priv refuses anything else in a vhost).
+ * A domain with a brand or a language links its stylesheet: the brand's
+ * colours, and the rule hiding the language menu.
  *
  * @param {AuthVhostBranding | null} branding
+ * @param {import('@lamalibre/lamaste').PageLanguage | null} language
  */
-function autheliaIndexRewrite(branding) {
+function autheliaIndexRewrite(branding, language) {
   const theme = branding === null ? 'light' : branding.theme;
   const logo = branding !== null && branding.logo;
+  const languageFilters =
+    language === null
+      ? ''
+      : `
+        # The domain's language: the page's lang, its noscript sentence${autheliaIndexLanguageFilters(
+          language,
+        )
+          .map(
+            ([from, to]) => `
+        sub_filter '${from}' '${to}';`,
+          )
+          .join('')}`;
   return `
         # The index HTML, as Authelia renders it for every domain, made this
         # domain's: its theme, its stylesheet, its logo switch. Uncompressed
@@ -528,12 +579,19 @@ function autheliaIndexRewrite(branding) {
         proxy_set_header Accept-Encoding "";
         sub_filter_once off;
         sub_filter 'data-theme="light"' 'data-theme="${theme}"';
-        sub_filter 'data-logooverride="true"' 'data-logooverride="${logo ? 'true' : 'false'}"';${
-          branding === null
+        sub_filter 'data-logooverride="true"' 'data-logooverride="${logo ? 'true' : 'false'}"';${languageFilters}${
+          branding === null && language === null
             ? ''
             : `
         sub_filter '</head>' '<link rel="stylesheet" href="/${AUTH_BRANDING_FILES.css}"></head>';`
         }`;
+}
+
+/** Refuse a language the vhost cannot say (the value is interpolated into a root-validated file). */
+function assertAuthVhostLanguage(language) {
+  if (language !== null && !isPageLanguage(language)) {
+    throw new Error('Invalid auth vhost language: not a page language');
+  }
 }
 
 /** Refuse what the vhost cannot say: anything but a known theme (the value is interpolated into a root-validated file). */
@@ -706,16 +764,23 @@ function delegatedInvitationsLocations(domain, fqdn) {
  * the primary's — the panel's domain, which the desktop's user login
  * exchanges at — serves `/api/user-access/authorize` and declares its rate
  * limit zone (an http-level name, declared once). Every portal serves the
- * domain's brand ({@link authBrandLocations}, {@link autheliaIndexRewrite}):
- * `branding` is null for a domain without one.
+ * domain's brand and language ({@link authBrandLocations},
+ * {@link autheliaIndexRewrite}): `branding` is null for a domain without a
+ * brand, `language` null for one without a page language — a domain with
+ * neither keeps the vhost it had before languages.
  *
  * @param {string} domain
  * @param {string} [certPath] - certificate directory (default: the portal's own lineage)
- * @param {{ primary?: boolean, branding?: AuthVhostBranding | null }} [opts]
+ * @param {{ primary?: boolean, branding?: AuthVhostBranding | null, language?: import('@lamalibre/lamaste').PageLanguage | null }} [opts]
  * @returns {{ name: string, fqdn: string, config: string }}
  */
-export function renderAuthVhost(domain, certPath, { primary = true, branding = null } = {}) {
+export function renderAuthVhost(
+  domain,
+  certPath,
+  { primary = true, branding = null, language = null } = {},
+) {
   assertAuthVhostBranding(branding);
+  assertAuthVhostLanguage(language);
   const fqdn = `auth.${domain}`;
   let certDirClean = certPath || `/etc/letsencrypt/live/${fqdn}`;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
@@ -824,14 +889,14 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
         proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
         client_max_body_size 16k;
     }
-${delegatedInvitationsLocations(domain, fqdn)}${userAccess}${authBrandLocations(domain, fqdn)}
+${delegatedInvitationsLocations(domain, fqdn)}${userAccess}${authBrandLocations(domain, fqdn, language)}
     # Default — proxy to Authelia. Authelia takes the OIDC issuer and the
     # session cookie's domain from X-Forwarded-Host / -Proto: this portal's
     # own name, never what the client sent. (A location that sets any
     # header inherits none of the server's.)
     location / {
         proxy_pass http://127.0.0.1:9091;${autheliaProxyHeaders(fqdn)}
-${autheliaIndexRewrite(branding)}
+${autheliaIndexRewrite(branding, language)}
     }
 }
 `;
@@ -1640,6 +1705,41 @@ const NO_SERVICE_WORKER = `
             return 404;
         }`;
 
+/** The internal location of the "not available" page on a plugin's site (P8). */
+const UNAVAILABLE_PAGE_LOCATION = '/internal/lamaste/unavailable';
+
+/**
+ * The "not available" page of a plugin's site that is not served
+ * (packages/core/docs/page-language-design.md §2, P8): `error_page 503`
+ * (without `=`, so the status stays 503 and the method becomes GET) names
+ * an internal location serving `unavailable/index.html` of the domain's
+ * rendering — in its language and brand — else the stock English page.
+ * The root is the rendering's link, so a rendering that appears or goes
+ * needs no rewrite of this vhost. Both locations carry core's headers for
+ * the page (its inline style by hash, the logo from the domain's sign-in
+ * host, no caching) and `clear` (the site's `Clear-Site-Data`, when it
+ * applies): an internal redirect keeps none of the first location's.
+ * Nothing in the language reaches the vhost — the page is a file.
+ *
+ * @param {string} domain
+ * @param {string} clear
+ */
+function unavailablePageLocations(domain, clear) {
+  const lines = `${pageHeaderLines(unavailablePageHeaders(domain))}${clear}`;
+  return `
+    # Lamaste's "not available" page in the domain's language
+    location = ${UNAVAILABLE_PAGE_LOCATION} {
+        internal;
+        root ${authBrandingDir(domain)};
+        try_files /${AUTH_BRANDING_FILES.unavailable} @unavailable;${lines}
+    }
+
+    location @unavailable {
+        root ${UNAVAILABLE_PAGE_STOCK_DIR};
+        try_files /index.html =503;${lines}
+    }`;
+}
+
 /**
  * Render the vhost of a plugin's web surface — a site the plugin owns
  * (`site.owner`). Pure; the startup reconcile renders it again to compare.
@@ -1663,7 +1763,9 @@ const NO_SERVICE_WORKER = `
  *
  * While it is not served the host answers every request with 503 — and,
  * once its plugin is no longer installed (`opts.clearSiteData`), tells
- * browsers to clear the site's storage.
+ * browsers to clear the site's storage. The 503 carries Lamaste's "not
+ * available" page ({@link unavailablePageLocations}), in the domain's
+ * language, instead of nginx's own.
  *
  * @param {{ id: string, fqdn: string }} site
  * @param {string} certDir
@@ -1708,10 +1810,12 @@ export function renderWebSurfaceVhost(site, certDir, domain, opts) {
       config: `${head}
     # The web surface of plugin "${route}" is not served now (not installed,
     # not approved, not hosted, or its version declares no web surface)
+    error_page 503 ${UNAVAILABLE_PAGE_LOCATION};
     location / {${NO_SERVICE_WORKER}
         add_header Cache-Control no-store always;${clear}
         return 503;
     }
+${unavailablePageLocations(domain, clear)}
 }
 `,
     };
