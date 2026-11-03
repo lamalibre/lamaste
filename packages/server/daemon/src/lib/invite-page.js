@@ -18,7 +18,12 @@ import { constants } from 'node:fs';
 import { mkdir, open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
-import { renderInvitationsPage, renderInvitePage } from '@lamalibre/lamaste/server';
+import {
+  UNAVAILABLE_PAGE_STOCK_DIR,
+  renderInvitationsPage,
+  renderInvitePage,
+  renderUnavailablePage,
+} from '@lamalibre/lamaste/server';
 
 /** Where the stock page lives: the auth vhost's `@invite` fallback root. */
 export const INVITE_DIR = '/var/www/lamaste/invite';
@@ -101,4 +106,22 @@ export function writeInvitePage({ dir = INVITE_DIR, logger } = {}) {
  */
 export function writeInvitationsPage({ dir = INVITATIONS_DIR, logger } = {}) {
   return writeStockPage(renderInvitationsPage(null), dir, 'Stock inviter page', logger);
+}
+
+/**
+ * Write the stock "not available" page of plugin sites unless the installed
+ * one is already it — what a not-served web surface on a domain without a
+ * rendering answers its 503 with (packages/core/docs/page-language-design.md
+ * §2, P8): English, no brand.
+ *
+ * @param {{ dir?: string, logger?: { info: (obj: object, msg: string) => void } }} [opts]
+ * @returns {Promise<{ written: boolean }>}
+ */
+export function writeUnavailablePage({ dir = UNAVAILABLE_PAGE_STOCK_DIR, logger } = {}) {
+  return writeStockPage(
+    renderUnavailablePage({ brand: null, language: 'en', domain: null }),
+    dir,
+    'Stock "not available" page',
+    logger,
+  );
 }

@@ -141,6 +141,72 @@ test('accepts the auth portal’s brand overrides and index rewrite: single-quot
   assert.throws(() => validateVhost(location("  sub_filter it's x;")));
 });
 
+test('accepts a domain’s page language: the forced locale regex, its lang and its noscript sentence as character references', () => {
+  // The exact lines the auth vhost of a Turkish domain carries
+  // (packages/core/docs/page-language-design.md §3).
+  validateVhost(
+    server(
+      ' location ~ "^/locales/[^/]{1,64}/(consent|portal|settings)[.]json$" {\n' +
+        '  root /var/www/lamaste/auth/alpha.example;\n' +
+        '  try_files /locales/forced/$1.json @authelia;\n' +
+        '  add_header X-Content-Type-Options nosniff;\n' +
+        '  add_header Cache-Control "public, max-age=0, must-revalidate";\n }\n' +
+        ' location @authelia {\n  proxy_pass http://127.0.0.1:9091;\n }\n' +
+        ' location / {\n  proxy_pass http://127.0.0.1:9091;\n  sub_filter_once off;\n' +
+        `  sub_filter '<html lang="' '<html lang="tr" data-authelia-lang="';\n` +
+        "  sub_filter 'You need to enable JavaScript to run this app.' 'Bu uygulama i&#231;in taray&#305;c&#305;n&#305;zda JavaScript etkin olmal&#305;d&#305;r.';\n" +
+        `  sub_filter '</head>' '<link rel="stylesheet" href="/brand.css"></head>';\n }`,
+    ),
+  );
+  // The sentence itself, the regex with a backslash, or a variable: refused.
+  assert.throws(
+    () =>
+      validateVhost(
+        location(
+          "  sub_filter 'You need to enable JavaScript to run this app.' 'Bu uygulama için tarayıcınızda JavaScript etkin olmalıdır.';",
+        ),
+      ),
+    /non-ASCII/,
+  );
+  assert.throws(
+    () =>
+      validateVhost(
+        server(
+          String.raw` location ~ "^/locales/[^/]{1,64}/(portal)\.json$" {` +
+            '\n  try_files /locales/forced/$1.json @authelia;\n }',
+        ),
+      ),
+    /backslash/,
+  );
+  assert.throws(() =>
+    validateVhost(location("  sub_filter '<html lang=\"' '<html lang=\"$http_accept_language\"';")),
+  );
+});
+
+test('accepts a plugin site’s "not available" page: error_page to an internal location, a stock fallback', () => {
+  const headers =
+    "  add_header Content-Security-Policy \"default-src 'none'; style-src 'sha256-Kz6ppXnTABsRnLPVRiGb0XXMUiW1rl80bXFSpeRQrbA='; img-src https://auth.beta.example; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\" always;\n" +
+    '  add_header Cache-Control "no-store" always;\n' +
+    '  add_header X-Content-Type-Options "nosniff" always;\n' +
+    `  add_header Clear-Site-Data '"storage"' always;\n`;
+  validateVhost(
+    server(
+      ' error_page 503 /internal/lamaste/unavailable;\n' +
+        ' location / {\n  if ($http_service_worker) {\n   return 404;\n  }\n' +
+        '  add_header Cache-Control no-store always;\n  return 503;\n }\n' +
+        ' location = /internal/lamaste/unavailable {\n  internal;\n' +
+        '  root /var/www/lamaste/auth/beta.example;\n' +
+        `  try_files /unavailable/index.html @unavailable;\n${headers} }\n` +
+        ` location @unavailable {\n  root /var/www/lamaste/unavailable;\n  try_files /index.html =503;\n${headers} }`,
+    ),
+  );
+  // A named location with a hyphen, a root outside the web root: refused.
+  assert.throws(() =>
+    validateVhost(location('  try_files /unavailable/index.html @lamaste-unavailable;')),
+  );
+  assert.throws(() => validateVhost(server(' location @unavailable {\n  root /etc/nginx;\n }')));
+});
+
 test('site names: only the vhosts the panel writes', () => {
   for (const name of [
     'lamalibre-lamaste-panel-domain',
