@@ -145,8 +145,13 @@ admin_invitation() {
   api_post "invitations" "{\"username\":\"$1\",\"email\":\"$1@example.test\"}" | jq -r '"\(.invitation.id) \(.token)"' 2>/dev/null || echo " "
 }
 
-# cli_json <args...> — lamaste-server <args> --json: its last JSON line
-cli_json() { sudo lamaste-server "$@" --json 2>/dev/null | grep -E '^\{' | tail -n 1 || echo '{}'; }
+# cli_json <args...> — lamaste-server <args> --json: its last JSON line (a
+# refusal exits 1 after its error line: that line is the answer)
+cli_json() {
+  local out
+  out=$({ sudo lamaste-server "$@" --json 2>/dev/null || true; } | grep -E '^\{' | tail -n 1 || true)
+  if [ -n "${out}" ]; then printf '%s\n' "${out}"; else echo '{}'; fi
+}
 
 # ---------------------------------------------------------------------------
 log_section "Pre-flight: onboarding complete"
@@ -217,7 +222,7 @@ VHOST=$(auth_vhost)
 assert_contains "${VHOST}" "${FORCED_TRY}" "…serving one file per namespace, Authelia behind it" || true
 assert_contains "${VHOST}" "${LANG_FILTER}" "…the lang filter" || true
 assert_contains "${VHOST}" "${NOSCRIPT_FILTER}" "…the noscript sentence as ASCII character references" || true
-assert_eq "$(printf '%s' "${VHOST}" | LC_ALL=C grep -c '[^[:print:][:space:]]' || true)" "0" "…every byte printable ASCII" || true
+assert_eq "$(printf '%s\n' "${VHOST}" | grep -v '^[[:space:]]*#' | LC_ALL=C grep -c '[^[:print:][:space:]]' || true)" "0" "…every byte outside its comments printable ASCII (lamaste-priv allows other bytes in comments only)" || true
 AUTH_NAME=$(vhost_name auth "${DOMAIN}")
 if sudo cat "${AVAILABLE}/${AUTH_NAME}" | sudo /usr/local/sbin/lamaste-priv nginx-site write "${AUTH_NAME}" > /dev/null 2>&1; then
   log_pass "lamaste-priv nginx-site write accepts the auth vhost as installed"
