@@ -1,0 +1,1859 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 57,
+    "name": "Web surface site grants",
+    "suite": "e2e-three-vm",
+    "description": "57 — Web surface site grants (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    }
+  },
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-sitegrant"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-sitegrant-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-sitegrant-agent"
+    },
+    "SUB_W": {
+      "value": "e2e57web"
+    },
+    "STATIC_SITE": {
+      "value": "e2e57static"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-57"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-57-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "MEMBER": {
+      "value": "e2e57-member"
+    },
+    "GROUPIE": {
+      "value": "e2e57-groupie"
+    },
+    "TEAM": {
+      "value": "e2e57-team"
+    },
+    "JAR_MEMBER": {
+      "value": "/tmp/e2e-57-member.cookies"
+    },
+    "JAR_GROUPIE": {
+      "value": "/tmp/e2e-57-groupie.cookies"
+    },
+    "AUDIT_BASE": {
+      "value": "0"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE sites/${STATIC_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "sites/${STATIC_ID}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE gatekeeper/groups/${TEAM}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "gatekeeper/groups/${TEAM}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE users/${id}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${id}?erase=true"
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "POST identity/directory/${id}/erase",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "identity/directory/${id}/erase",
+        "body": {}
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, web surface ${FQDN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, web surface ${FQDN}"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run"
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "The visitor VM has oathtool (Authelia's second factor)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The visitor VM has oathtool (Authelia's second factor)"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "The visitor VM has no oathtool: no one can sign in to reach the web surface",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The visitor VM has no oathtool: no one can sign in to reach the web surface"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "DELETE /api/plugins/${PLUGIN}/web-surface",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}/web-surface"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-9",
+          "label": "DELETE /api/gatekeeper/groups/${TEAM}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "gatekeeper/groups/${TEAM}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-11",
+          "label": "DELETE /api/sites/${id}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "sites/${id}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-14",
+          "label": "DELETE /api/users/${user}?erase=true",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "users/${user}?erase=true"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-16",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nFQDN=\"${SUB_W}.${DOMAIN}\"\nlog_info \"Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, web surface ${FQDN}\"\nif agent_has_node_sqlite; then\n  log_pass \"The agent VM's Node.js has node:sqlite, which the agent half's projection needs\"\nelse\n  log_fail \"The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run\"\n  end_test\n  exit $?\nfi\nif visitor_has_oathtool; then\n  log_pass \"The visitor VM has oathtool (Authelia's second factor)\"\nelse\n  log_fail \"The visitor VM has no oathtool: no one can sign in to reach the web surface\"\n  end_test\n  exit $?\nfi\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\nhost_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\ndrop_plugin_grants \"${PLUGIN}\"\nhost_api_delete \"gatekeeper/groups/${TEAM}\" > /dev/null 2>&1 || true\nfor id in $(host_api_get \"sites?limit=500\" 2>/dev/null | jq -r --arg n \"${STATIC_SITE}\" '.sites[]? | select(.name == $n) | .id' 2>/dev/null || true); do\n  host_api_delete \"sites/${id}\" > /dev/null 2>&1 || true\ndone\nfor user in \"${MEMBER}\" \"${GROUPIE}\"; do\n  host_api_delete \"users/${user}?erase=true\" > /dev/null 2>&1 || true\ndone\nAUDIT_BASE=$(host_api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 1. A restricted surface; a user and a group entitled, no site grant\n# ==========================================================================="
+    },
+    {
+      "id": "fixtures-users-and-a-group-a-restricted-web-surface-served",
+      "label": "Fixtures, users and a group; a restricted web surface, served",
+      "steps": [
+        {
+          "id": "step-17",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-57-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "FIXTURES",
+            "value": "built"
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Fixture built: ${SERVER_PACKAGE} 1.0.0 with a web tree",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixture built: ${SERVER_PACKAGE} 1.0.0 with a web tree"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${MEMBER}\\\",\\\"displayname\\\":\\\"E2E Member\\\",\\\"email\\\":\\\"${MEMBER}@example.test\\\",\\\"password\\\":\\\"${MEMBER_PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "User ${MEMBER} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${MEMBER} created"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Set MEMBER_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "MEMBER_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${GROUPIE}\\\",\\\"displayname\\\":\\\"E2E Groupie\\\",\\\"email\\\":\\\"${GROUPIE}@example.test\\\",\\\"password\\\":\\\"${GROUPIE_PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "User ${GROUPIE} created — to reach the plugin through a Lamaste group",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${GROUPIE} created — to reach the plugin through a Lamaste group"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set GROUPIE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "GROUPIE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${TEAM}\\\",\\\"description\\\":\\\"Spec 57\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "Lamaste group ${TEAM} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "Lamaste group ${TEAM} created"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"gatekeeper/groups/${TEAM}/members\" \"{\\\"usernames\\\":[\\\"${GROUPIE}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "…with ${GROUPIE} in it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…with ${GROUPIE} in it"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Installed ${SERVER_PACKAGE}@1.0.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed ${SERVER_PACKAGE}@1.0.0"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Set DIGEST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(host_api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.approval.digest // empty'"
+          },
+          "capture": [
+            {
+              "variable": "DIGEST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PLUGIN}/web-surface\" '{\"accessMode\":\"restricted\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Its web surface created, restricted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "Its web surface created, restricted"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Set SITE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "SITE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "…on ${FQDN}, with no grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.webSurface.site.fqdn) \\(.webSurface.site.accessMode) \\(.webSurface.site.grants | length)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${FQDN} restricted 0"
+              },
+              "message": "…on ${FQDN}, with no grant"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "Approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPROVED"
+              },
+              "path": ".hooks.approval.state",
+              "expected": {
+                "kind": "literal",
+                "value": "approved"
+              },
+              "message": "Approved"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "POST /api/plugins/${PLUGIN}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/enable",
+            "body": {}
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 300 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Served: approved, hosted, its tree current",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Served: approved, hosted, its tree current"
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "Not served: $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not served: $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')"
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Ready: its agent half's first complete sync ended at the head",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Ready: its agent half's first complete sync ended at the head"
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')"
+          }
+        }
+      ],
+      "bash": "log_section \"Fixtures, users and a group; a restricted web surface, served\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-57-app-plugin-XXXXXXXX)\nFIXTURES=\"built\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v100\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none wide v1 \"${SUB_W}\" || FIXTURES=\"failed\"\nif [ \"$FIXTURES\" != \"built\" ]; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE} 1.0.0 with a web tree\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/v100/server fixtures/v100/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${MEMBER}\\\",\\\"displayname\\\":\\\"E2E Member\\\",\\\"email\\\":\\\"${MEMBER}@example.test\\\",\\\"password\\\":\\\"${MEMBER_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${MEMBER} created\" || true\nMEMBER_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${GROUPIE}\\\",\\\"displayname\\\":\\\"E2E Groupie\\\",\\\"email\\\":\\\"${GROUPIE}@example.test\\\",\\\"password\\\":\\\"${GROUPIE_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${GROUPIE} created — to reach the plugin through a Lamaste group\" || true\nGROUPIE_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nRESP=$(host_api_call POST \"gatekeeper/groups\" \"{\\\"name\\\":\\\"${TEAM}\\\",\\\"description\\\":\\\"Spec 57\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Lamaste group ${TEAM} created\" || true\nRESP=$(host_api_call POST \"gatekeeper/groups/${TEAM}/members\" \"{\\\"usernames\\\":[\\\"${GROUPIE}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"…with ${GROUPIE} in it\" || true\n\nINSTALL=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${SERVER_PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0\" || true\nDIGEST=$(json_get \"$(host_api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.approval.digest // empty')\nRESP=$(host_api_call POST \"plugins/${PLUGIN}/web-surface\" '{\"accessMode\":\"restricted\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Its web surface created, restricted\" || true\nSITE_ID=$(json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty')\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.webSurface.site.fqdn) \\(.webSurface.site.accessMode) \\(.webSurface.site.grants | length)\"' \"${FQDN} restricted 0\" \"…on ${FQDN}, with no grant\" || true\nvisitor_exec \"grep -q '${FQDN}' /etc/hosts || echo '${HOST_IP} ${FQDN}' >> /etc/hosts\" > /dev/null 2>&1 || true\n\nAPPROVED=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"${DIGEST}\\\"}\")\nassert_json_field \"$APPROVED\" '.hooks.approval.state' 'approved' \"Approved\" || true\nhost_api_post \"plugins/${PLUGIN}/enable\" '{}' > /dev/null\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nif wait_for 120 web_served \"${PLUGIN}\"; then\n  log_pass \"Served: approved, hosted, its tree current\"\nelse\n  log_fail \"Not served: $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')\"\nfi\nif wait_for 120 identity_ready \"${PLUGIN}\"; then\n  log_pass \"Ready: its agent half's first complete sync ended at the head\"\nelse\n  log_fail \"Not ready: $(identity_view \"${PLUGIN}\" | jq -c '.readiness')\"\nfi"
+    },
+    {
+      "id": "entitled-no-site-grant-the-status-names-them-gatekeeper-refuses-them",
+      "label": "Entitled, no site grant: the status names them, Gatekeeper refuses them",
+      "steps": [
+        {
+          "id": "step-53",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${MEMBER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "${MEMBER} entitled as viewer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${MEMBER} entitled as viewer"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${TEAM}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Group ${TEAM} entitled as viewer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Group ${TEAM} entitled as viewer"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Both are active members of the audience",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Both are active members of the audience"
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "The audience: $(audience_row \"${PLUGIN}\" \"${MEMBER_ID}\") / $(audience_row \"${PLUGIN}\" \"${GROUPIE_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The audience: $(audience_row \"${PLUGIN}\" \"${MEMBER_ID}\") / $(audience_row \"${PLUGIN}\" \"${GROUPIE_ID}\")"
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "GET /api/plugins/${PLUGIN}/web-surface: no grant on the site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(grants_of)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "GET /api/plugins/${PLUGIN}/web-surface: no grant on the site"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "…membersWithoutGrant names both, by username",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(without_grant)"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "${GROUPIE},${MEMBER}"
+              },
+              "message": "…membersWithoutGrant names both, by username"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "…each with their directory id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(site_view | jq -r --arg id \"${MEMBER_ID}\" '[.membersWithoutGrant[]? | select(.userId == $id)] | length')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…each with their directory id"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "Set SECRET_M",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${MEMBER}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_M",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-63",
+          "label": "Set SECRET_G",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${GROUPIE}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_G",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "${MEMBER} signed in from the visitor VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sign_in \"${MEMBER}\" \"${MEMBER_PASSWORD}\" \"${SECRET_M}\" \"${JAR_MEMBER}\" \"${FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${MEMBER} signed in from the visitor VM"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "${GROUPIE} signed in",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sign_in \"${GROUPIE}\" \"${GROUPIE_PASSWORD}\" \"${SECRET_G}\" \"${JAR_GROUPIE}\" \"${FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${GROUPIE} signed in"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "page \"${JAR_MEMBER}\" /"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "${MEMBER}, entitled without a site grant: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${MEMBER}, entitled without a site grant: 403"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "…the access-request page, never the shell",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "E2E_WEB_"
+              },
+              "message": "…the access-request page, never the shell"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "${GROUPIE}, entitled through ${TEAM} without a site grant: 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(shell_status \"${JAR_GROUPIE}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${GROUPIE}, entitled through ${TEAM} without a site grant: 403"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Entitled, no site grant: the status names them, Gatekeeper refuses them\"\n\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${MEMBER}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${MEMBER} entitled as viewer\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${TEAM}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Group ${TEAM} entitled as viewer\" || true\nif wait_for 30 in_audience \"${MEMBER_ID}\" && wait_for 30 in_audience \"${GROUPIE_ID}\"; then\n  log_pass \"Both are active members of the audience\"\nelse\n  log_fail \"The audience: $(audience_row \"${PLUGIN}\" \"${MEMBER_ID}\") / $(audience_row \"${PLUGIN}\" \"${GROUPIE_ID}\")\"\nfi\nassert_eq \"$(grants_of)\" \"\" \"GET /api/plugins/${PLUGIN}/web-surface: no grant on the site\" || true\nassert_eq \"$(without_grant)\" \"${GROUPIE},${MEMBER}\" \"…membersWithoutGrant names both, by username\" || true\nassert_eq \"$(site_view | jq -r --arg id \"${MEMBER_ID}\" '[.membersWithoutGrant[]? | select(.userId == $id)] | length')\" \"1\" \"…each with their directory id\" || true\n\nSECRET_M=$(reset_totp \"${MEMBER}\")\nSECRET_G=$(reset_totp \"${GROUPIE}\")\nwait_for_next_totp_window\nassert_eq \"$(sign_in \"${MEMBER}\" \"${MEMBER_PASSWORD}\" \"${SECRET_M}\" \"${JAR_MEMBER}\" \"${FQDN}\")\" \"OK OK\" \"${MEMBER} signed in from the visitor VM\" || true\nassert_eq \"$(sign_in \"${GROUPIE}\" \"${GROUPIE_PASSWORD}\" \"${SECRET_G}\" \"${JAR_GROUPIE}\" \"${FQDN}\")\" \"OK OK\" \"${GROUPIE} signed in\" || true\nRESP=$(page \"${JAR_MEMBER}\" /)\nassert_eq \"$(visit_status \"$RESP\")\" \"403\" \"${MEMBER}, entitled without a site grant: 403\" || true\nassert_not_contains \"$(visit_body \"$RESP\")\" \"E2E_WEB_\" \"…the access-request page, never the shell\" || true\nassert_eq \"$(shell_status \"${JAR_GROUPIE}\")\" \"403\" \"${GROUPIE}, entitled through ${TEAM} without a site grant: 403\" || true\n\n# ===========================================================================\n# 2. What the proxy refuses\n# ==========================================================================="
+    },
+    {
+      "id": "the-proxy-refuses-a-grant-on-no-site-and-on-a-static-site",
+      "label": "The proxy refuses a grant on no site, and on a static site",
+      "steps": [
+        {
+          "id": "step-71",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${MEMBER}\\\",\\\"resourceType\\\":\\\"site\\\",\\\"resourceId\\\":\\\"no-such-site-57\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "A site grant naming no site: 400 unknown_site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 unknown_site"
+              },
+              "message": "A site grant naming no site: 400 unknown_site"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "POST /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "sites",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CREATED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "Set STATIC_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$CREATED\" '.site.id // .id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "STATIC_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "A static site ${STATIC_SITE} created",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "A static site ${STATIC_SITE} created"
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "The static site was not created: $(printf '%s' \"$CREATED\" | head -c 300)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The static site was not created: $(printf '%s' \"$CREATED\" | head -c 300)"
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${MEMBER}\\\",\\\"resourceType\\\":\\\"site\\\",\\\"resourceId\\\":\\\"${STATIC_ID:-none}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-78",
+          "label": "A site grant on a static site: 400 site_not_grantable — its access is its allowed users",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 site_not_grantable"
+              },
+              "message": "A site grant on a static site: 400 site_not_grantable — its access is its allowed users"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "…nothing reached Gatekeeper",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_api_get \"gatekeeper/grants?resourceType=site&resourceId=${STATIC_ID:-none}\" | jq '.grants | length' 2>/dev/null || echo \"?\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…nothing reached Gatekeeper"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "The static site deleted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_delete \"sites/${STATIC_ID}\")"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The static site deleted"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The proxy refuses a grant on no site, and on a static site\"\n\nRESP=$(host_api_call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${MEMBER}\\\",\\\"resourceType\\\":\\\"site\\\",\\\"resourceId\\\":\\\"no-such-site-57\\\"}\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')\" \"400 unknown_site\" \"A site grant naming no site: 400 unknown_site\" || true\nCREATED=$(host_api_post \"sites\" \"{\\\"name\\\":\\\"${STATIC_SITE}\\\",\\\"type\\\":\\\"managed\\\",\\\"spaMode\\\":false,\\\"autheliaProtected\\\":true}\")\nSTATIC_ID=$(json_get \"$CREATED\" '.site.id // .id // empty')\nif [ -n \"${STATIC_ID}\" ]; then\n  log_pass \"A static site ${STATIC_SITE} created\"\nelse\n  log_fail \"The static site was not created: $(printf '%s' \"$CREATED\" | head -c 300)\"\nfi\nRESP=$(host_api_call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${MEMBER}\\\",\\\"resourceType\\\":\\\"site\\\",\\\"resourceId\\\":\\\"${STATIC_ID:-none}\\\"}\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')\" \"400 site_not_grantable\" \"A site grant on a static site: 400 site_not_grantable — its access is its allowed users\" || true\nassert_eq \"$(host_api_get \"gatekeeper/grants?resourceType=site&resourceId=${STATIC_ID:-none}\" | jq '.grants | length' 2>/dev/null || echo \"?\")\" \"0\" \"…nothing reached Gatekeeper\" || true\nif [ -n \"${STATIC_ID}\" ]; then\n  assert_json_field \"$(host_api_delete \"sites/${STATIC_ID}\")\" '.ok' 'true' \"The static site deleted\" || true\n  STATIC_ID=\"\"\nfi\n\n# ===========================================================================\n# 3. Granting the site\n# ==========================================================================="
+    },
+    {
+      "id": "granted-the-cli-to-a-user-the-proxy-to-a-group",
+      "label": "Granted: the CLI to a user, the proxy to a group",
+      "steps": [
+        {
+          "id": "step-82",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli plugins web-surface \"${PLUGIN}\" grant --user \"${MEMBER}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "\")\"",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.event) \\(.changed) \\(.grant.resourceType) \\(.grant.resourceId == \"",
+              "expected": {
+                "kind": "var",
+                "name": "SITE_ID"
+              },
+              "message": "\")\""
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "${MEMBER} reaches the shell (200)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${MEMBER} reaches the shell (200)"
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "${MEMBER} after the grant: $(shell_status \"${JAR_MEMBER}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${MEMBER} after the grant: $(shell_status \"${JAR_MEMBER}\")"
+          }
+        },
+        {
+          "id": "step-86",
+          "label": "…index.html of the plugin's tree",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$(page \"${JAR_MEMBER}\" /)\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "E2E_WEB_v1"
+              },
+              "message": "…index.html of the plugin's tree"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "${GROUPIE} is still refused: the grant names ${MEMBER} alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(shell_status \"${JAR_GROUPIE}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${GROUPIE} is still refused: the grant names ${MEMBER} alone"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "The status lists the grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(grants_of)"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "user:${MEMBER}"
+              },
+              "message": "The status lists the grant"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "…and only ${GROUPIE} without one",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…and only ${GROUPIE} without one"
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "membersWithoutGrant: $(without_grant)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "membersWithoutGrant: $(without_grant)"
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli plugins web-surface \"${PLUGIN}\" grant --user \"${MEMBER}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-92",
+          "label": "A second grant to ${MEMBER} changes nothing (changed: false)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.event) \\(.changed) \\(.grantIds | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "complete false 1"
+              },
+              "message": "A second grant to ${MEMBER} changes nothing (changed: false)"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${TEAM}\\\",\\\"resourceType\\\":\\\"site\\\",\\\"resourceId\\\":\\\"${SITE_ID}\\\",\\\"context\\\":{}}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-94",
+          "label": "POST /api/gatekeeper/grants: the site to group ${TEAM}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "POST /api/gatekeeper/grants: the site to group ${TEAM}"
+            }
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "${GROUPIE} reaches the shell through ${TEAM} (200)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${GROUPIE} reaches the shell through ${TEAM} (200)"
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "${GROUPIE} after the group grant: $(shell_status \"${JAR_GROUPIE}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${GROUPIE} after the group grant: $(shell_status \"${JAR_GROUPIE}\")"
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "Nobody of the audience is without a grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(without_grant)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Nobody of the audience is without a grant"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli plugins web-surface \"${PLUGIN}\" grants"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "\") \\([.grants[] | \"\\(.principalType):\\(.principalId)\"] | sort | join(\",\")) \\(.membersWithoutGrant | length)\"",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.accessMode) \\(.siteId == \"",
+              "expected": {
+                "kind": "var",
+                "name": "SITE_ID"
+              },
+              "message": "\") \\([.grants[] | \"\\(.principalType):\\(.principalId)\"] | sort | join(\",\")) \\(.membersWithoutGrant | length)\""
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "Audited twice: plugin.web-surface.grant.created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(site_audits created)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "Audited twice: plugin.web-surface.grant.created"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "…the group by name",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(site_audits created \".principalType == \\\"group\\\" and .group == \\\"${TEAM}\\\"\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…the group by name"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Granted: the CLI to a user, the proxy to a group\"\n\nOUT=$(cli plugins web-surface \"${PLUGIN}\" grant --user \"${MEMBER}\")\nassert_json_field \"$OUT\" '\"\\(.event) \\(.changed) \\(.grant.resourceType) \\(.grant.resourceId == \"'\"${SITE_ID}\"'\")\"' \"complete true site true\" \"lamaste-server plugins web-surface ${PLUGIN} grant --user ${MEMBER}\" || true\nif wait_for 30 shell_answers \"${JAR_MEMBER}\" 200; then\n  log_pass \"${MEMBER} reaches the shell (200)\"\nelse\n  log_fail \"${MEMBER} after the grant: $(shell_status \"${JAR_MEMBER}\")\"\nfi\nassert_contains \"$(visit_body \"$(page \"${JAR_MEMBER}\" /)\")\" \"E2E_WEB_v1\" \"…index.html of the plugin's tree\" || true\nassert_eq \"$(shell_status \"${JAR_GROUPIE}\")\" \"403\" \"${GROUPIE} is still refused: the grant names ${MEMBER} alone\" || true\nassert_eq \"$(grants_of)\" \"user:${MEMBER}\" \"The status lists the grant\" || true\nif wait_for 15 without_grant_is \"${GROUPIE}\"; then\n  log_pass \"…and only ${GROUPIE} without one\"\nelse\n  log_fail \"membersWithoutGrant: $(without_grant)\"\nfi\n\nOUT=$(cli plugins web-surface \"${PLUGIN}\" grant --user \"${MEMBER}\")\nassert_json_field \"$OUT\" '\"\\(.event) \\(.changed) \\(.grantIds | length)\"' \"complete false 1\" \"A second grant to ${MEMBER} changes nothing (changed: false)\" || true\n\nRESP=$(host_api_call POST \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"group\\\",\\\"principalId\\\":\\\"${TEAM}\\\",\\\"resourceType\\\":\\\"site\\\",\\\"resourceId\\\":\\\"${SITE_ID}\\\",\\\"context\\\":{}}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"POST /api/gatekeeper/grants: the site to group ${TEAM}\" || true\nif wait_for 30 shell_answers \"${JAR_GROUPIE}\" 200; then\n  log_pass \"${GROUPIE} reaches the shell through ${TEAM} (200)\"\nelse\n  log_fail \"${GROUPIE} after the group grant: $(shell_status \"${JAR_GROUPIE}\")\"\nfi\nassert_eq \"$(without_grant)\" \"\" \"Nobody of the audience is without a grant\" || true\n\nOUT=$(cli plugins web-surface \"${PLUGIN}\" grants)\nassert_json_field \"$OUT\" '\"\\(.accessMode) \\(.siteId == \"'\"${SITE_ID}\"'\") \\([.grants[] | \"\\(.principalType):\\(.principalId)\"] | sort | join(\",\")) \\(.membersWithoutGrant | length)\"' \"restricted true group:${TEAM},user:${MEMBER} 0\" \"lamaste-server plugins web-surface ${PLUGIN} grants --json\" || true\n\nassert_eq \"$(site_audits created)\" \"2\" \"Audited twice: plugin.web-surface.grant.created\" || true\nassert_eq \"$(site_audits created \".principalType == \\\"user\\\" and .userId == \\\"${MEMBER_ID}\\\" and .siteId == \\\"${SITE_ID}\\\" and (has(\\\"username\\\") | not)\")\" \"1\" \"…the user by directory id, never by username\" || true\nassert_eq \"$(site_audits created \".principalType == \\\"group\\\" and .group == \\\"${TEAM}\\\"\")\" \"1\" \"…the group by name\" || true\n\n# ===========================================================================\n# 4. Revoking it\n# ==========================================================================="
+    },
+    {
+      "id": "revoked-the-cli-for-the-group-the-bulk-route-for-the-user",
+      "label": "Revoked: the CLI for the group, the bulk route for the user",
+      "steps": [
+        {
+          "id": "step-103",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli plugins web-surface \"${PLUGIN}\" revoke --group \"${TEAM}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-104",
+          "label": "lamaste-server plugins web-surface ${PLUGIN} revoke --group ${TEAM}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.event) \\(.revoked)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "complete 1"
+              },
+              "message": "lamaste-server plugins web-surface ${PLUGIN} revoke --group ${TEAM}"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "${GROUPIE} is refused again (403)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${GROUPIE} is refused again (403)"
+          }
+        },
+        {
+          "id": "step-106",
+          "label": "${GROUPIE} after the revocation: $(shell_status \"${JAR_GROUPIE}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${GROUPIE} after the revocation: $(shell_status \"${JAR_GROUPIE}\")"
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "${MEMBER} keeps the site: their own grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(shell_status \"${JAR_MEMBER}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${MEMBER} keeps the site: their own grant"
+            }
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "The status names ${GROUPIE} without a grant again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(without_grant)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "GROUPIE"
+              },
+              "message": "The status names ${GROUPIE} without a grant again"
+            }
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "Audited: plugin.web-surface.grant.revoked, the group",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(site_audits revoked \".principalType == \\\"group\\\" and .group == \\\"${TEAM}\\\"\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Audited: plugin.web-surface.grant.revoked, the group"
+            }
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli plugins web-surface \"${PLUGIN}\" revoke --group \"${TEAM}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-111",
+          "label": "Revoking a grant the group no longer holds: refused (no_grant)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.event) \\(.code)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "error no_grant"
+              },
+              "message": "Revoking a grant the group no longer holds: refused (no_grant)"
+            }
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"gatekeeper/grants?principalType=user&principalId=${MEMBER}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-113",
+          "label": "DELETE /api/gatekeeper/grants?principalType=user&principalId=${MEMBER}: every grant of the user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "DELETE /api/gatekeeper/grants?principalType=user&principalId=${MEMBER}: every grant of the user"
+            }
+          }
+        },
+        {
+          "id": "step-114",
+          "label": "${MEMBER} is refused (403)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${MEMBER} is refused (403)"
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "${MEMBER} after the bulk revocation: $(shell_status \"${JAR_MEMBER}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${MEMBER} after the bulk revocation: $(shell_status \"${JAR_MEMBER}\")"
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "Audited: the site grant among them, by directory id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(site_audits revoked \".principalType == \\\"user\\\" and .userId == \\\"${MEMBER_ID}\\\" and .siteId == \\\"${SITE_ID}\\\"\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Audited: the site grant among them, by directory id"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "No grant left on the site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(grants_of)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "No grant left on the site"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Revoked: the CLI for the group, the bulk route for the user\"\n\nOUT=$(cli plugins web-surface \"${PLUGIN}\" revoke --group \"${TEAM}\")\nassert_json_field \"$OUT\" '\"\\(.event) \\(.revoked)\"' \"complete 1\" \"lamaste-server plugins web-surface ${PLUGIN} revoke --group ${TEAM}\" || true\nif wait_for 30 shell_answers \"${JAR_GROUPIE}\" 403; then\n  log_pass \"${GROUPIE} is refused again (403)\"\nelse\n  log_fail \"${GROUPIE} after the revocation: $(shell_status \"${JAR_GROUPIE}\")\"\nfi\nassert_eq \"$(shell_status \"${JAR_MEMBER}\")\" \"200\" \"${MEMBER} keeps the site: their own grant\" || true\nassert_eq \"$(without_grant)\" \"${GROUPIE}\" \"The status names ${GROUPIE} without a grant again\" || true\nassert_eq \"$(site_audits revoked \".principalType == \\\"group\\\" and .group == \\\"${TEAM}\\\"\")\" \"1\" \"Audited: plugin.web-surface.grant.revoked, the group\" || true\n\nOUT=$(cli plugins web-surface \"${PLUGIN}\" revoke --group \"${TEAM}\")\nassert_json_field \"$OUT\" '\"\\(.event) \\(.code)\"' \"error no_grant\" \"Revoking a grant the group no longer holds: refused (no_grant)\" || true\n\nRESP=$(host_api_call DELETE \"gatekeeper/grants?principalType=user&principalId=${MEMBER}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"DELETE /api/gatekeeper/grants?principalType=user&principalId=${MEMBER}: every grant of the user\" || true\nif wait_for 30 shell_answers \"${JAR_MEMBER}\" 403; then\n  log_pass \"${MEMBER} is refused (403)\"\nelse\n  log_fail \"${MEMBER} after the bulk revocation: $(shell_status \"${JAR_MEMBER}\")\"\nfi\nassert_eq \"$(site_audits revoked \".principalType == \\\"user\\\" and .userId == \\\"${MEMBER_ID}\\\" and .siteId == \\\"${SITE_ID}\\\"\")\" \"1\" \"Audited: the site grant among them, by directory id\" || true\nassert_eq \"$(grants_of)\" \"\" \"No grant left on the site\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 57 — Web surface site grants (Three-VM)\n# ============================================================================\n# A restricted web surface admits a member of the plugin's audience only\n# with a Gatekeeper `site` grant on its site — to them, or to a Lamaste group\n# they are in. A role alone lets nobody in. The administrator gives and\n# revokes these grants through the panel's Gatekeeper proxy and\n# `lamaste-server plugins web-surface <name> grants|grant|revoke`, and the\n# web surface's status names the entitled members no grant admits. The\n# fixture (@lamalibre/e2e-sitegrant-server, helpers.sh:\n# write_app_install_fixture … wide v1) declares identity and\n# `userSurface.web` on e2e57web. From the visitor VM:\n#\n# 1. A restricted surface, a user and a Lamaste group entitled: the status\n#    lists no grant and both members without one; both get the\n#    access-request page.\n# 2. The proxy refuses a site grant on no site (unknown_site) and on a\n#    static site (site_not_grantable).\n# 3. `grant --user` through the CLI admits the user, not the group's member;\n#    a group grant through the proxy admits the member; a second grant\n#    changes nothing; both are audited, the user by directory id.\n# 4. `revoke --group` through the CLI shuts the member out again; revoking\n#    every grant of the user (the bulk route) audits the site grant among\n#    them; a revocation of a grant nobody holds is refused.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-sitegrant\"\nSERVER_PACKAGE=\"@lamalibre/e2e-sitegrant-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-sitegrant-agent\"\nSUB_W=\"e2e57web\"\nSTATIC_SITE=\"e2e57static\"\nPOLICY_ID=\"e2e-apphost-57\"\nREMOTE_DIR=\"/var/tmp/e2e-57-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nMEMBER=\"e2e57-member\"\nGROUPIE=\"e2e57-groupie\"\nTEAM=\"e2e57-team\"\n# Test credentials for this run only, never printed\nMEMBER_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nGROUPIE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR_MEMBER=\"/tmp/e2e-57-member.cookies\"\nJAR_GROUPIE=\"/tmp/e2e-57-groupie.cookies\"\nFQDN=\"\"\nMEMBER_ID=\"\"\nGROUPIE_ID=\"\"\nSITE_ID=\"\"\nSTATIC_ID=\"\"\nAUDIT_BASE=0\n\n# shell_status <jar> — what GET / on the web surface answers that visitor\nshell_status() { page_status \"$1\" /; }\nshell_answers() { [ \"$(shell_status \"$1\")\" = \"$2\" ]; }\nsite_answers() { [ \"$(page_status - /)\" = \"$1\" ]; }\n\n# in_audience <userId> — the audience holds the user as an active member\nin_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"$1\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\n# site_view — the web surface's site, with its grants ('null' when none)\nsite_view() { web_surface \"${PLUGIN}\" | jq -c '.site // null' 2>/dev/null || echo \"null\"; }\n\n# without_grant — the usernames of the members no grant admits, comma-separated\nwithout_grant() { site_view | jq -r '[.membersWithoutGrant[]?.username] | join(\",\")' 2>/dev/null || echo \"?\"; }\nwithout_grant_is() { [ \"$(without_grant)\" = \"$1\" ]; }\n\n# grants_of — the site's grants as `type:id`, sorted, comma-separated\ngrants_of() { site_view | jq -r '[.grants[]? | \"\\(.principalType):\\(.principalId)\"] | sort | join(\",\")' 2>/dev/null || echo \"?\"; }\n\n# cli <arguments> — lamaste-server on the host VM with --json; its last line\ncli() {\n  timed_exec 90 multipass exec \"${HOST_VM}\" -- sudo bash -c \"lamaste-server $* --json 2>&1\" 2>/dev/null | tail -n 1\n}\n\n# site_audits <action> [jq filter on details] — the spec's site-grant audit entries\nsite_audits() { audit_count \"${PLUGIN}\" \"plugin.web-surface.grant.$1\" \"${2:-true}\"; }\n\nbegin_test \"57 — Web surface site grants (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  drop_plugin_grants \"${PLUGIN}\"\n  if [ -n \"${STATIC_ID}\" ]; then\n    host_api_delete \"sites/${STATIC_ID}\" > /dev/null 2>&1 || true\n  fi\n  host_api_delete \"gatekeeper/groups/${TEAM}\" > /dev/null 2>&1 || true\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR_MEMBER} ${JAR_GROUPIE}; sed -i '/${SUB_W}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  for id in \"${MEMBER}\" \"${GROUPIE}\"; do\n    host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true\n  done\n  for id in ${MEMBER_ID} ${GROUPIE_ID}; do\n    host_api_post \"identity/directory/${id}/erase\" '{}' > /dev/null 2>&1 || true\n  done\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}
