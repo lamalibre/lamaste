@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.10.0] - 2026-11-04
 
 Page language: each of the relay's domains may carry a language — English or Turkish — that every page a person meets on it speaks: Authelia's sign-in, second-factor, settings and consent pages, the invitation page, the inviter's page of delegated invitations, Gatekeeper's access-request and refusal pages, and the "not available" page of a plugin's site. A domain without one keeps 4.9's pages: Lamaste's in English, Authelia's following the visitor's browser. Design: `packages/core/docs/page-language-design.md`; reference: `04-api-reference/domains.md#page-language`.
 
