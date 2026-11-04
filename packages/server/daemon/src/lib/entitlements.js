@@ -108,7 +108,7 @@ async function roleGrantsOf(plugin, principalType, principalId) {
 }
 
 /** How an audit entry names a principal: a user by directory id, a group by name. */
-async function auditedPrincipal(principalType, principalId) {
+export async function auditedPrincipal(principalType, principalId) {
   if (principalType === 'group') return { principalType, group: principalId };
   const user = await findDirectoryUser(principalId);
   return { principalType, userId: user?.userId ?? null };

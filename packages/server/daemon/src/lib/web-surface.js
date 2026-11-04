@@ -26,6 +26,10 @@
  * **Locks.** Giving a site a hostname takes core's tunnel lock, then the
  * sites lock (`withSitesLock`), as every such workflow does.
  *
+ * **Grants.** A restricted site admits only the members of the plugin's
+ * audience a `site` grant names (`lib/site-grants.js`); its status lists
+ * them and the members no grant admits.
+ *
  * Audit: `plugin.web-surface.created`, `.deleted`, `.moved`,
  * `plugin.web-tree.switched`.
  */
@@ -75,6 +79,7 @@ import {
 import { installedVersionApproved } from './plugin-hooks.js';
 import { installedWebTreeDir } from './plugin-packages.js';
 import { findPluginByRoute } from './plugins.js';
+import { siteGrantsView } from './site-grants.js';
 import { readSites, readTunnels, withSitesLock, writeSites, writeTunnels } from './state.js';
 import { hostingAgentOf, internalTunnelBodyLimit } from './user-surface.js';
 
@@ -317,8 +322,9 @@ export async function reconcileWebSurfaces(logger) {
 /**
  * Plugin `route`'s web surface as the panel shows it: what its installed
  * version declares, the site it owns, whether it is served (and why not),
- * the trees the store holds, and — when it owns no site — the subdomain
- * Lamaste offers and whether it is free.
+ * the grants on its site and the members of its audience no grant admits
+ * (`lib/site-grants.js`), the trees the store holds, and — when it owns no
+ * site — the subdomain Lamaste offers and whether it is free.
  *
  * @param {string} route
  */
@@ -350,6 +356,11 @@ export async function webSurfaceStatus(route) {
       available: (await hostnameTaken(subdomain, domain, sites, tunnels)) === null,
     };
   }
+  // Who the site's grants admit, and the members of the audience they do
+  // not — the audience of the plugin it was created for, none otherwise.
+  const access = site
+    ? await siteGrantsView(site, plugin && siteOwnedBy(site, plugin) ? plugin.name : null)
+    : null;
   return {
     declared,
     site: site
@@ -359,6 +370,8 @@ export async function webSurfaceStatus(route) {
           fqdn: site.fqdn,
           accessMode: site.accessMode ?? null,
           ownerPackage: site.owner?.package ?? null,
+          grants: access.grants,
+          membersWithoutGrant: access.membersWithoutGrant,
         }
       : null,
     served: serving.served,

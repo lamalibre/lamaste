@@ -8,6 +8,8 @@ export { OidcSecretRevealProvider, useOidcSecretReveal } from './components/Oidc
 export { default as TwoFaVerifyModal } from './components/TwoFaVerifyModal.jsx';
 export { default as FileBrowser } from './components/FileBrowser.jsx';
 export { default as PluginLoader } from './components/PluginLoader.jsx';
+// The queries' retry rule under the panel's rate limit, for each host's QueryClient.
+export { retryQuery } from './lib/query-refresh.js';
 
 // Pages
 export { default as DashboardPage } from './pages/Dashboard.jsx';

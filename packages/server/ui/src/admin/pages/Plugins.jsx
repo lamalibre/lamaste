@@ -31,7 +31,9 @@ import { declaresInvitingRole } from '../lib/invitations.js';
 import PushInstallSection from '../components/PushInstallSection.jsx';
 import { PluginRetainedData, UninstalledRetainedData } from '../components/RetainedData.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
+import RefreshNote from '../components/RefreshNote.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
+import { failedWithoutData } from '../lib/query-refresh.js';
 import { hostingOutage, outageMessage } from '../lib/hostingState.js';
 import { refusalText } from '../lib/pluginRefusal.js';
 import { withoutSecrets } from '../lib/oidcSecrets.js';
@@ -967,7 +969,8 @@ export default function Plugins() {
         {installMutation.isPending && <p className="text-xs text-zinc-500 mt-2">Installing...</p>}
       </div>
 
-      {/* Plugin list */}
+      {/* Plugin list — a failed refresh keeps the cards, with a note */}
+      <RefreshNote query={pluginsQuery} />
       {pluginsQuery.isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {Array.from({ length: 2 }).map((_, i) => (
@@ -977,7 +980,7 @@ export default function Plugins() {
             />
           ))}
         </div>
-      ) : pluginsQuery.isError ? (
+      ) : failedWithoutData(pluginsQuery) ? (
         <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6">
           <div className="flex items-center gap-2 text-red-400 text-sm">
             <AlertCircle size={16} />

@@ -152,7 +152,8 @@ Key conventions:
 
 - `queryKey` is a descriptive array (e.g., `['tunnels']`, `['services']`, `['system', 'stats']`)
 - `queryFn` uses the native `fetch` API (no axios or custom wrapper)
-- `refetchInterval` is used for data that changes independently of user actions (service status, system stats)
+- `refetchInterval` is used for data that changes independently of user actions (service status, system stats); nothing polls by default — in the desktop app either, which renders the same pages. Every page shares the panel's rate limit (100 requests a minute per client), so a section polls quickly only while it is open or something runs (a plugin card's operations: every 2 s while one runs, 30 s otherwise)
+- A refresh that fails keeps what was shown, with a note beside it (`RefreshNote`; for the rate limit: "the panel is limiting requests"); only a section that never loaded shows the error
 - `staleTime` defaults to 0 (always refetch on mount) except for the onboarding status (30 seconds)
 
 ### Mutations (writing data)
@@ -177,7 +178,7 @@ Key conventions:
 
 - Mutations always invalidate the relevant query on success (triggers an immediate refetch)
 - Error handling extracts the `error` field from the JSON response body
-- The `QueryClient` is configured with `retry: 1` globally
+- The `QueryClient` retries a failed query once, never a refusal (`4xx`) nor the panel's rate limit (`retryQuery` from `@lamalibre/lamaste-server-ui`, which the desktop app uses too)
 
 ### WebSocket Connections
 
@@ -349,7 +350,7 @@ The app root wraps all content in five providers:
 </QueryClientProvider>
 ```
 
-1. **QueryClientProvider** — react-query cache with global defaults (`retry: 1`, `refetchOnWindowFocus: false`)
+1. **QueryClientProvider** — react-query cache with global defaults (`retry: retryQuery`, `refetchOnWindowFocus: false`, no default polling)
 2. **AdminClientProvider** — from `@lamalibre/lamaste-server-ui`, supplies the host-specific data client (`webAdminClient` for browser fetch, Tauri `invoke` for desktop)
 3. **ToastProvider** — from `@lamalibre/lamaste-server-ui`, notification toast system
 4. **TwoFaProvider** — from `@lamalibre/lamaste-server-ui`, handles 2FA verification prompts when the panel has 2FA enabled

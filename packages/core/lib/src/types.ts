@@ -180,6 +180,15 @@ export interface OidcClientGrantView {
   readonly createdAt: string;
 }
 
+/** A Gatekeeper grant on the site of a plugin's web surface, as its view lists it. */
+export interface SiteGrantView {
+  readonly grantId: string;
+  readonly principalType: 'user' | 'group';
+  /** A username, or a Lamaste (Gatekeeper) group's name. */
+  readonly principalId: string;
+  readonly createdAt: string;
+}
+
 /** An OIDC client a plugin declares, as `GET /api/plugins/:name/oidc-clients` lists it. */
 export interface PluginOidcClientView {
   readonly id: string;
@@ -458,6 +467,23 @@ export interface PluginWebSurfaceView {
     readonly accessMode: 'authenticated' | 'restricted' | null;
     /** The server package the site was created for; a site naming none is served to no plugin. */
     readonly ownerPackage: string | null;
+    /**
+     * The Gatekeeper `site` grants on it — made with
+     * {@link AdminClient.createGatekeeperGrant} (`resourceType: 'site'`,
+     * `resourceId`: the site's id). A restricted surface (a missing access
+     * mode reads as one) admits only the members of the plugin's audience
+     * one names, directly or through a Lamaste group. Null when Gatekeeper
+     * could not be read.
+     */
+    readonly grants: readonly SiteGrantView[] | null;
+    /**
+     * The active members of the plugin's audience no grant admits — always
+     * empty on an authenticated surface. Null when Gatekeeper could not be
+     * read.
+     */
+    readonly membersWithoutGrant:
+      | readonly { readonly userId: string; readonly username: string }[]
+      | null;
   } | null;
   readonly served: boolean;
   readonly reason: WebSurfaceNotServedReason | null;

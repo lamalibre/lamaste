@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Site grants for plugin web surfaces: an administrator lets an entitled user reach a `restricted` web surface from the panel or the CLI, and the panel shows who holds a role but cannot reach the site. Before, a role made the panel say a user "can access" the plugin while Gatekeeper showed them the access-request page, and the only way to grant the site was the raw API.
+
+### Added
+
+- **Who may reach a restricted web surface**, on the plugin card's **Web surface** section: the grants on its site (users and Lamaste groups, each revocable), a user or group picker to add one, and the members of the plugin's audience no grant admits, each with a one-click grant; the section's header counts them.
+- **The gap made visible.** **People** marks each entitlement whose user, or whose group's members, no site grant admits ("no site access") with a one-click **Grant the site**, and giving roles grants the site too unless _Also grant the site_ is unticked. The **Gatekeeper → Grants** page creates `site` grants among the sites plugins own (each named with its plugin), shows a site grant as its hostname and plugin, filters _Sites_, says "holds roles on" for an entitlement instead of "can access", and marks an entitlement whose principal cannot reach its plugin's restricted site, with the same one-click grant.
+- **`GET /api/plugins/:name/web-surface`** lists `site.grants` (`{ grantId, principalType, principalId, createdAt }`) and `site.membersWithoutGrant` (`{ userId, username }`, always `[]` on an `authenticated` site), both `null` when Gatekeeper could not be read. Core types `SiteGrantView`.
+- **CLI:** `lamaste-server plugins web-surface <name> grants | grant --user <u> | --group <g> | revoke --user <u> | --group <g>`, with `--json`; the web surface's status prints the grants and the members without one.
+- **Audit:** `plugin.web-surface.grant.created` and `plugin.web-surface.grant.revoked` for site grants given or revoked through the Gatekeeper proxy (`siteId`, `grantId`, the user's directory id or the group's name).
+
+### Changed
+
+- **The Gatekeeper proxy checks a site grant**: `resourceId` must be a site (`400`, `code: "unknown_site"`) that a plugin owns (`400`, `code: "site_not_grantable"` — a static site's access is its allowed users, never a grant). Gatekeeper's authorization rules are unchanged.
+- **A site with no access mode is shown as `restricted`** on the plugin card, as Gatekeeper reads it (it was shown as `authenticated`).
+
+### Fixed
+
+- **The desktop app polled every query every five seconds** — a default meant for its own screens that reached every server page it renders — so a page of plugin cards went past the panel's rate limit (100 requests a minute) and its sections turned into errors. Nothing polls by default any more (each query that should poll says so, as in the web panel), and window focus no longer refetches everything.
+- **A refresh that fails no longer hides a section.** The Plugins page, a plugin's People, Web surface and Settings keep what they showed, with a note ("the panel is limiting requests; this refreshes again shortly"); only a section that never loaded shows the error. A query is not retried after a refusal or the rate limit, which a retry only spends more of (`retryQuery`, shared by both hosts).
+- **A plugin card's operations** are polled every 30 s while none runs (15 s before), every 2 s while one does.
+
 ## [4.10.0] - 2026-11-04
 
 Page language: each of the relay's domains may carry a language — English or Turkish — that every page a person meets on it speaks: Authelia's sign-in, second-factor, settings and consent pages, the invitation page, the inviter's page of delegated invitations, Gatekeeper's access-request and refusal pages, and the "not available" page of a plugin's site. A domain without one keeps 4.9's pages: Lamaste's in English, Authelia's following the visitor's browser. Design: `packages/core/docs/page-language-design.md`; reference: `04-api-reference/domains.md#page-language`.

@@ -104,6 +104,7 @@ export type {
   DomainMembership,
   DomainMembershipInput,
   OidcClientGrantView,
+  SiteGrantView,
   PluginOidcClientView,
   DomainDnsCheck,
   DomainDnsRecord,

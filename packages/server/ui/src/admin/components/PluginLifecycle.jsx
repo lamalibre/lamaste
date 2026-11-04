@@ -73,7 +73,9 @@ export function PluginOperation({ plugin }) {
   const query = useQuery({
     queryKey: ['plugin-operations', plugin],
     queryFn: () => client.getPluginOperations(plugin),
-    refetchInterval: (q) => (q.state.data?.operations?.[0]?.status === 'running' ? 2000 : 15000),
+    // Every card polls this: fast only while an operation runs (one this
+    // page starts is fetched at once — its mutation invalidates the query).
+    refetchInterval: (q) => (q.state.data?.operations?.[0]?.status === 'running' ? 2000 : 30000),
   });
   const operations = query.data?.operations;
   const op = operations?.[0];
