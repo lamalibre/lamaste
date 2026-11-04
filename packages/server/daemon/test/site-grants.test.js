@@ -348,6 +348,36 @@ test('a revoked grant on anything but a site is not audited as a site grant', as
   );
 });
 
+test('revoking all of a principal’s grants audits each site grant among them', async () => {
+  const before = (await lib.listAudit({ action: 'plugin.web-surface.grant.revoked' })).length;
+  const site = gatekeeper.addGrant({
+    principalType: 'user',
+    principalId: 'mehmet',
+    resourceType: 'site',
+    resourceId: SITES.corral.id,
+  });
+  gatekeeper.addGrant({
+    principalType: 'user',
+    principalId: 'mehmet',
+    resourceType: 'tunnel',
+    resourceId: 't-2',
+  });
+  const res = await call('DELETE', '/api/gatekeeper/grants?principalType=user&principalId=mehmet');
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal(
+    gatekeeper.grants.some((g) => g.principalId === 'mehmet' && g.resourceType !== 'plugin'),
+    false,
+  );
+  const audited = await lib.listAudit({ action: 'plugin.web-surface.grant.revoked' });
+  assert.equal(audited.length, before + 1, 'the site grant only');
+  assert.deepEqual(audited[0].details, {
+    siteId: SITES.corral.id,
+    grantId: site.grantId,
+    principalType: 'user',
+    userId: await userId('mehmet'),
+  });
+});
+
 test('Gatekeeper unreadable: grants and the members without one are null, not empty', async () => {
   gatekeeper.state.unreachable = true;
   try {

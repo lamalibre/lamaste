@@ -23,6 +23,7 @@ import {
   siteGrantBody,
   siteGrantLines,
   siteGrantsDecide,
+  stillAdmitted,
 } from '../src/plugin-web-surface.js';
 
 const SHA_A = 'a'.repeat(64);
@@ -176,6 +177,29 @@ test('grants on the site: the body, who holds one, and the lines the terminal sh
     grants: [],
     withoutGrant: [],
     note: 'Gatekeeper could not be read: unknown',
+  });
+});
+
+test('after a revocation: what still admits the user, or which of the group’s members', () => {
+  const groups = [
+    { name: 'ops', members: ['ayse', 'mehmet'] },
+    { name: 'sales', members: ['ali', 'zeynep', 'mehmet'] },
+  ];
+  const left = [
+    { principalType: 'group', principalId: 'ops' },
+    { principalType: 'user', principalId: 'zeynep' },
+  ];
+  assert.deepEqual(stillAdmitted({ principalType: 'user', principalId: 'ayse' }, left, groups), {
+    admittedBy: ['group:ops'],
+    membersStillAdmitted: [],
+  });
+  assert.deepEqual(stillAdmitted({ principalType: 'user', principalId: 'ali' }, left, groups), {
+    admittedBy: [],
+    membersStillAdmitted: [],
+  });
+  assert.deepEqual(stillAdmitted({ principalType: 'group', principalId: 'sales' }, left, groups), {
+    admittedBy: [],
+    membersStillAdmitted: ['mehmet', 'zeynep'],
   });
 });
 

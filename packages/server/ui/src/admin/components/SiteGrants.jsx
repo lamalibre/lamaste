@@ -53,8 +53,10 @@ export function useSiteGrantMutations(pluginName, site) {
     mutationFn: (g) => client.revokeGatekeeperGrant(g.grantId),
     onSuccess: (data, g) => {
       invalidateSiteGrants(queryClient, pluginName);
+      // Another grant may still admit them (a group of theirs, their own):
+      // the list of members without a grant says who lost the site.
       addToast(
-        `${g.principalType === 'group' ? `Group ${g.principalId}` : g.principalId} no longer reaches ${site.fqdn}`,
+        `The grant on ${site.fqdn} to ${g.principalType === 'group' ? `group ${g.principalId}` : g.principalId} is revoked`,
       );
       toastWarnings(addToast, data);
     },
