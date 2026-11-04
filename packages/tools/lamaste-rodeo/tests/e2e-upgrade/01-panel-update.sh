@@ -207,6 +207,9 @@ else
   assert_eq "$(sudo jq -r '.pagesDigest // "none" | test("^[0-9a-f]{64}$")' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null || echo "false")" "true" "${BEFORE_VERSION}'s rendering records its pages digest" || true
 fi
 BRANDED_PAGE_BEFORE=$(sudo sha256sum "${WEB_ROOT}/${DOMAIN_2}/invite/index.html" | cut -d' ' -f1)
+# The pages the release before rendered ("none" before 4.9): the candidate
+# renders them again only when its own pages differ.
+PAGES_BEFORE=$(sudo jq -r '.pagesDigest // "none"' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null || echo "none")
 
 # Pending invitations made on the release before: one on each domain.
 RESP=$(api_post "invitations" "{\"username\":\"${INVITEE}\",\"email\":\"${INVITEE}@example.test\",\"domains\":[\"${DOMAIN}\"]}")
@@ -445,7 +448,15 @@ assert_contains "${BRANDED_BODY}" "<title>${BRAND} — Accept Invitation</title>
 assert_contains "${BRANDED_BODY}" 'href="/brand.css"' "…its colours from /brand.css" || true
 assert_contains "$(curl -sk --max-time 15 --resolve "auth.${DOMAIN_2}:443:127.0.0.1" "https://auth.${DOMAIN_2}/brand.css")" "--lamaste-page-accent: ${ACCENT};" "…which carries the accent" || true
 assert_page_runs "auth.${DOMAIN_2}" "/invitations/e2e" "The new inviter's page on ${DOMAIN_2}, branded"
-assert_not_eq "$(sudo sha256sum "${WEB_ROOT}/${DOMAIN_2}/invite/index.html" | cut -d' ' -f1)" "${BRANDED_PAGE_BEFORE}" "The branded page was rendered again by the candidate" || true
+# The candidate's own pages digest, from the core library its panel runs.
+CANDIDATE_PAGES=$(sudo bash -c 'cd /opt/lamalibre/lamaste/serverd && node --input-type=module -e "const m = await import(\"@lamalibre/lamaste/server\"); process.stdout.write(m.authPagesDigest());"' 2>/dev/null || echo "unknown")
+assert_eq "$(sudo jq -r '.pagesDigest // "none"' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null || echo "missing")" "${CANDIDATE_PAGES}" "The branded rendering holds the candidate's pages (rendered.json's pagesDigest is ${CANDIDATE}'s)" || true
+BRANDED_PAGE_AFTER=$(sudo sha256sum "${WEB_ROOT}/${DOMAIN_2}/invite/index.html" | cut -d' ' -f1)
+if [ "${PAGES_BEFORE}" != "${CANDIDATE_PAGES}" ]; then
+  assert_not_eq "${BRANDED_PAGE_AFTER}" "${BRANDED_PAGE_BEFORE}" "…rendered again: ${BEFORE_VERSION}'s pages are not the candidate's" || true
+else
+  assert_eq "${BRANDED_PAGE_AFTER}" "${BRANDED_PAGE_BEFORE}" "…the page as it was: ${BEFORE_VERSION}'s pages are the candidate's" || true
+fi
 assert_eq "$(sudo jq -r '.pagesDigest // "none" | test("^[0-9a-f]{64}$")' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null || echo "false")" "true" "rendered.json holds the pages' digest" || true
 assert_eq "$(sudo jq -r '.brandSha256 // "none"' "${WEB_ROOT}/${DOMAIN_2}/rendered.json" 2>/dev/null)" "$(sudo sha256sum "${WEB_ROOT}/${DOMAIN_2}/brand.json" | cut -d' ' -f1)" "…and names the brand it holds by brand.json's digest" || true
 
