@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.11.0] - 2026-11-04
 
 Site grants for plugin web surfaces: an administrator lets an entitled user reach a `restricted` web surface from the panel or the CLI, and the panel shows who holds a role but cannot reach the site. Before, a role made the panel say a user "can access" the plugin while Gatekeeper showed them the access-request page, and the only way to grant the site was the raw API.
 
