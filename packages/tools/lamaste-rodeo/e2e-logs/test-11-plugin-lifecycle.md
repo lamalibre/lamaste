@@ -1,50 +1,50 @@
 # Lamaste E2E: 11 — Plugin Lifecycle (Three-VM)
 
-> Started at `2026-11-03 09:28:02 UTC`
+> Started at `2026-11-04 13:32:37 UTC`
 
 
 ## Pre-flight: check onboarding is complete
 
-✅ `09:28:02` Onboarding is complete  
+✅ `13:32:37` Onboarding is complete  
 
 ## Plugin list is initially empty
 
-✅ `09:28:02` Initial plugin list is empty on host VM  
+✅ `13:32:38` Initial plugin list is empty on host VM  
 
 ## Push-install config defaults
 
-✅ `09:28:02` Push install is disabled by default  
-✅ `09:28:02` Default policy is 'default'  
+✅ `13:32:38` Push install is disabled by default  
+✅ `13:32:38` Default policy is 'default'  
 
 ## Create push install policy
 
-✅ `09:28:03` Policy creation returned ok: true  
-✅ `09:28:03` Policy ID matches  
+✅ `13:32:38` Policy creation returned ok: true  
+✅ `13:32:38` Policy ID matches  
 
 ## Delete test policy
 
-✅ `09:28:03` Policy deletion returned ok: true  
+✅ `13:32:38` Policy deletion returned ok: true  
 
 ## Push install for agent
 
-ℹ️ `09:28:03` Found agent: test-agent  
-✅ `09:28:03` Push install enabled for agent  
-✅ `09:28:03` pushInstallEnabledUntil is set  
-ℹ️ `09:28:03` Agent status response: {"pushInstallEnabled":false}  
-✅ `09:28:03` Push install disabled for agent  
+ℹ️ `13:32:39` Found agent: test-agent  
+✅ `13:32:39` Push install enabled for agent  
+✅ `13:32:39` pushInstallEnabledUntil is set  
+ℹ️ `13:32:39` Agent status response: {"pushInstallEnabled":false}  
+✅ `13:32:39` Push install disabled for agent  
 
 ## Push install guard: global toggle off
 
-✅ `09:28:04` Cannot enable push install when globally disabled  
+✅ `13:32:40` Cannot enable push install when globally disabled  
 
 ## Sessions audit log
 
-✅ `09:28:04` Push install sessions is an array  
+✅ `13:32:40` Push install sessions is an array  
 
 ## Cleanup
 
-✅ `09:28:04` Push install disabled globally for cleanup  
-✅ `09:28:04` Cleanup complete — plugin state restored  
+✅ `13:32:40` Push install disabled globally for cleanup  
+✅ `13:32:40` Cleanup complete — plugin state restored  
 
 ---
 
