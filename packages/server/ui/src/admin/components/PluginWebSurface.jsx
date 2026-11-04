@@ -15,7 +15,11 @@ import {
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { useToast } from './Toast.jsx';
 import CopyableId from './CopyableId.jsx';
+import RefreshNote from './RefreshNote.jsx';
+import SiteGrantsSection from './SiteGrants.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
+import { failedWithoutData } from '../lib/query-refresh.js';
+import { siteGrantsDecide } from '../lib/site-grants.js';
 import {
   WEB_SURFACE_ACCESS_MODES,
   accessModeText,
@@ -95,7 +99,8 @@ function StatusSection({ view }) {
               </a>
               <span className="text-zinc-500">
                 {' '}
-                · {accessModeText(view.site.accessMode ?? 'authenticated')}
+                {/* A missing access mode reads as restricted, as Gatekeeper reads it. */}·{' '}
+                {accessModeText(view.site.accessMode ?? 'restricted')}
               </span>
             </>
           ) : (
@@ -402,8 +407,10 @@ function DeleteSection({ plugin, view }) {
  * The *Web surface* of an agent-hosted plugin: what its installed version
  * declares (`userSurface.web`), the site it owns and whether that site
  * serves the shell and the API (and why not), the web trees the relay
- * holds, and the actions — create the site on the offered subdomain, move
- * the hostname of the tunnel bound as its user surface, delete the site.
+ * holds, who may reach a restricted site (its grants, and the members of
+ * the plugin's audience no grant admits), and the actions — create the
+ * site on the offered subdomain, move the hostname of the tunnel bound as
+ * its user surface, grant and revoke the site, delete the site.
  */
 export default function PluginWebSurface({ plugin }) {
   const client = useAdminClient();
@@ -417,7 +424,9 @@ export default function PluginWebSurface({ plugin }) {
     refetchInterval: open ? 10000 : 60000,
   });
   if (!supported) return null;
-  if (query.isError) {
+  // A refresh that fails keeps what was shown, with a note; only a section
+  // that never loaded shows the error.
+  if (failedWithoutData(query)) {
     return (
       <div className="rounded border border-zinc-800 bg-zinc-950/60 p-3 mb-4 text-xs text-red-400">
         Web surface: {errorMessage(query.error)}
@@ -427,6 +436,8 @@ export default function PluginWebSurface({ plugin }) {
   const view = query.data?.webSurface;
   if (!view || (!view.declared && !view.site)) return null;
   const served = servedText(view);
+  const grantsDecide = view.site !== null && siteGrantsDecide(view.site);
+  const withoutGrant = grantsDecide ? (view.site.membersWithoutGrant?.length ?? 0) : 0;
 
   return (
     <div className="rounded border border-zinc-800 bg-zinc-950/60 p-3 mb-4 text-xs">
@@ -457,7 +468,16 @@ export default function PluginWebSurface({ plugin }) {
         {!view.site && view.boundTunnel && (
           <span className="text-zinc-500">served by tunnel {view.boundTunnel.fqdn}</span>
         )}
+        {withoutGrant > 0 && (
+          <span
+            className="text-yellow-400"
+            title="Members of its audience no site grant admits: they cannot reach the site"
+          >
+            {withoutGrant} member{withoutGrant === 1 ? '' : 's'} without site access
+          </span>
+        )}
       </button>
+      <RefreshNote query={query} className="mt-2" />
 
       {open && (
         <div className="mt-3 space-y-4">
@@ -471,6 +491,9 @@ export default function PluginWebSurface({ plugin }) {
               plugin={plugin}
               view={view}
             />
+          )}
+          {grantsDecide && (
+            <SiteGrantsSection plugin={plugin} site={view.site} now={query.dataUpdatedAt} />
           )}
           {view.site && <DeleteSection plugin={plugin} view={view} />}
         </div>

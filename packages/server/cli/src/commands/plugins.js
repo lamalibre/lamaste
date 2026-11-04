@@ -70,6 +70,9 @@
  *                        The site an agent-hosted plugin owns for its web surface: what it
  *                        declares, whether it is served, its trees; create, move a bound
  *                        tunnel's host to it, delete it
+ *   web-surface <name> grants | grant --user <u> | --group <g> | revoke --user <u> | --group <g>
+ *                        Who may reach its site (a restricted one admits only the members a
+ *                        grant names); give or revoke it
  *
  * Every subcommand goes through the running panel (`/api/plugins/*`, admin
  * certificate): the panel owns the plugin registry (SQLite `state.db`), runs
@@ -266,6 +269,11 @@ ${b('Subcommands:')}
                        Hand the host of the tunnel bound as its user surface to its site
   ${c('web-surface <name> delete [--yes]')}
                        Delete its site, its trees and the grants on it (typed confirmation)
+  ${c('web-surface <name> grants')}
+                       Who may reach its site, and the entitled members no grant admits
+  ${c('web-surface <name> grant|revoke --user <u> | --group <g>')}
+                       Let a user or a Lamaste group reach a restricted site (a role alone
+                       lets nobody in), or no longer
 `);
 }
 

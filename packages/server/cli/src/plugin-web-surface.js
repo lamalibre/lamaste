@@ -1,6 +1,6 @@
 /**
  * A plugin's web surface at the terminal — the arguments of
- * `lamaste-server plugins web-surface <name> [create|move|delete]`, the
+ * `lamaste-server plugins web-surface <name> [create|move|delete|grants|grant|revoke]`, the
  * words its output is made of, and how `sites list` marks a site a plugin
  * owns (what an approval shows about a web tree is in `plugin-approval.js`). Pure — no output, no
  * panel — so they are tested as they are. Every string from the panel goes
@@ -9,6 +9,7 @@
  */
 
 import { WEB_SURFACE_ACCESS_MODES, isWebSurfaceSubdomain } from '@lamalibre/lamaste';
+import { principalText } from './oidc-client-grants.js';
 import { terminalText } from './plugin-settings.js';
 
 // ---------------------------------------------------------------------------
@@ -17,7 +18,7 @@ import { terminalText } from './plugin-settings.js';
 
 /** How `plugins web-surface` is called. */
 export const WEB_SURFACE_USAGE =
-  'Usage: lamaste-server plugins web-surface <name> [create [--subdomain <label>] [--access-mode authenticated|restricted] | move --tunnel <id | subdomain | fqdn> | delete [--yes]]';
+  'Usage: lamaste-server plugins web-surface <name> [create [--subdomain <label>] [--access-mode authenticated|restricted] | move --tunnel <id | subdomain | fqdn> | delete [--yes] | grants | grant --user <u> | --group <g> | revoke --user <u> | --group <g>]';
 
 /** The flags each action takes, and whether each takes a value. */
 const ACTION_FLAGS = {
@@ -25,7 +26,13 @@ const ACTION_FLAGS = {
   create: { '--subdomain': true, '--access-mode': true },
   move: { '--tunnel': true },
   delete: { '--yes': false },
+  grants: {},
+  grant: { '--user': true, '--group': true },
+  revoke: { '--user': true, '--group': true },
 };
+
+/** The actions after the plugin's name. */
+const ACTIONS = Object.keys(ACTION_FLAGS).filter((action) => action !== 'status');
 
 /** Every flag that takes a value, whichever action it belongs to. */
 const VALUE_FLAGS = new Set(
@@ -40,14 +47,18 @@ const VALUE_FLAGS = new Set(
  * The arguments of `plugins web-surface …` after the subcommand: the
  * plugin, then an action — none (its status), `create` (with `--subdomain`
  * and `--access-mode`, each defaulting to what the plugin declares),
- * `move --tunnel <ref>` (a tunnel's id, subdomain or FQDN), or `delete`
- * (`--yes` skips the typed confirmation).
+ * `move --tunnel <ref>` (a tunnel's id, subdomain or FQDN), `delete`
+ * (`--yes` skips the typed confirmation), `grants` (who may reach its
+ * site), or `grant` / `revoke` with exactly one of `--user <username>` and
+ * `--group <name>`.
  *
  * @param {string[]} args
  * @returns {{ ok: true, name: string, action: 'status' }
  *   | { ok: true, name: string, action: 'create', subdomain: string | null, accessMode: string | null }
  *   | { ok: true, name: string, action: 'move', tunnel: string }
  *   | { ok: true, name: string, action: 'delete', yes: boolean }
+ *   | { ok: true, name: string, action: 'grants' }
+ *   | { ok: true, name: string, action: 'grant' | 'revoke', principal: { principalType: 'user' | 'group', principalId: string } }
  *   | { ok: false, error: string }}
  */
 export function parseWebSurfaceArgs(args) {
@@ -78,7 +89,7 @@ export function parseWebSurfaceArgs(args) {
     return { ok: false, error: `Unexpected argument "${positional[2]}" — ${usage}` };
   }
   const [name, action = 'status'] = positional;
-  if (positional.length === 2 && !['create', 'move', 'delete'].includes(action)) {
+  if (positional.length === 2 && !ACTIONS.includes(action)) {
     return { ok: false, error: `Unknown action "${action}" — ${usage}` };
   }
   const allowed = ACTION_FLAGS[action];
@@ -124,6 +135,24 @@ export function parseWebSurfaceArgs(args) {
     }
     case 'delete':
       return { ok: true, name, action, yes: flags.has('--yes') };
+    case 'grants':
+      return { ok: true, name, action };
+    case 'grant':
+    case 'revoke': {
+      const user = flags.get('--user');
+      const group = flags.get('--group');
+      if ((user === undefined) === (group === undefined)) {
+        return {
+          ok: false,
+          error: `${action} names exactly one of --user <username> and --group <name> — ${usage}`,
+        };
+      }
+      const principal =
+        user !== undefined
+          ? { principalType: 'user', principalId: user }
+          : { principalType: 'group', principalId: group };
+      return { ok: true, name, action, principal };
+    }
     default:
       return { ok: true, name, action: 'status' };
   }
@@ -250,6 +279,67 @@ export function webTreeRows(tree) {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// Grants on the site
+// ---------------------------------------------------------------------------
+
+/**
+ * The body of `POST /api/gatekeeper/grants` giving `principal` site `siteId`.
+ *
+ * @param {{ principalType: 'user' | 'group', principalId: string }} principal
+ * @param {string} siteId
+ */
+export function siteGrantBody({ principalType, principalId }, siteId) {
+  return { principalType, principalId, resourceType: 'site', resourceId: siteId, context: {} };
+}
+
+/** Whether a site's grants decide who reaches it: every access mode but `authenticated`. */
+export function siteGrantsDecide(site) {
+  return site?.accessMode !== 'authenticated';
+}
+
+/**
+ * Every grant on the site (the web surface view's `site`) that names
+ * `principal` — revoking means revoking them all — or why there is none:
+ * `no_site`, `unreadable` (Gatekeeper could not be read), `no_grant`.
+ *
+ * @param {Record<string, any> | null} site
+ * @param {{ principalType: string, principalId: string }} principal
+ * @returns {{ grantIds: string[] } | { error: 'no_site' | 'unreadable' | 'no_grant' }}
+ */
+export function findSiteGrants(site, principal) {
+  if (!site) return { error: 'no_site' };
+  if (!Array.isArray(site.grants)) return { error: 'unreadable' };
+  const grantIds = site.grants
+    .filter(
+      (g) => g.principalType === principal.principalType && g.principalId === principal.principalId,
+    )
+    .map((g) => g.grantId);
+  return grantIds.length > 0 ? { grantIds } : { error: 'no_grant' };
+}
+
+/**
+ * Who may reach the site, as lines: each grant (`ayse`, `group:ops`), then
+ * the members of the audience no grant admits — or why there is nothing to
+ * list. Every name goes through `terminalText`.
+ *
+ * @param {Record<string, any>} site the web surface view's
+ * @returns {{ grants: string[], withoutGrant: string[], note: string | null }}
+ */
+export function siteGrantLines(site) {
+  if (!Array.isArray(site.grants)) {
+    return { grants: [], withoutGrant: [], note: 'Gatekeeper could not be read: unknown' };
+  }
+  const grants = site.grants.map((g) => principalText(g));
+  const withoutGrant = Array.isArray(site.membersWithoutGrant)
+    ? site.membersWithoutGrant.map((m) => terminalText(m.username))
+    : [];
+  const note = siteGrantsDecide(site)
+    ? null
+    : 'authenticated: every member of its audience reaches it, grants count for nothing';
+  return { grants, withoutGrant, note };
+}
+
 /** What each refusal of the web-surface routes asks of the administrator, beside its message. */
 const REFUSAL_HINTS = {
   no_web_surface: () =>
@@ -273,6 +363,11 @@ const REFUSAL_HINTS = {
   web_tree: () =>
     "The approved web tree could not be put in place; nothing changed. The panel's log names the file.",
   gatekeeper: () => 'Gatekeeper could not be reached; nothing changed. Try again once it runs.',
+  unknown_site: (name) => `Its site is gone: lamaste-server plugins web-surface ${name}`,
+  username_deleted: () =>
+    'That username belonged to a deleted user: create a user under it before giving it anything.',
+  gatekeeper_unavailable: () =>
+    'Gatekeeper is not reachable; nothing changed. Try again once it runs.',
 };
 
 /**

@@ -18,10 +18,20 @@
  *   web-surface <name> delete [--yes]
  *                         Delete its site, its trees and the grants on it,
  *                         after typing the site's FQDN (--yes skips it)
+ *   web-surface <name> grants
+ *                         Who may reach its site: the grants on it, and the
+ *                         members of its audience no grant admits
+ *   web-surface <name> grant --user <u> | --group <g>
+ *                         Let a user or a Lamaste group reach its site — on a
+ *                         restricted surface a role alone lets nobody in
+ *   web-surface <name> revoke --user <u> | --group <g>
+ *                         Revoke every grant on its site naming them
  *
  * The plugin is named by its name or its route (as `sites list` shows a
  * site's owner). Every action goes through the running panel
- * (`/api/plugins/:name/web-surface[/move]`, admin certificate). What the
+ * (`/api/plugins/:name/web-surface[/move]`, and `/api/gatekeeper/grants`
+ * for the grants on its site — `resourceType: 'site'`; admin certificate).
+ * What the
  * panel says is printed only as `terminalText`; `--json` emits it as it
  * came.
  */
@@ -33,9 +43,14 @@ import { readTunnels } from '../state.js';
 import { emit, emitComplete, emitError } from '../ndjson.js';
 import { findHostTunnel, findPluginByNameOrRoute } from '../plugin-identity.js';
 import { terminalText } from '../plugin-settings.js';
+import { principalText } from '../oidc-client-grants.js';
 import {
   createBody,
+  findSiteGrants,
   parseWebSurfaceArgs,
+  siteGrantBody,
+  siteGrantLines,
+  siteGrantsDecide,
   webSurfaceRefusalHint,
   webSurfaceServedText,
   webTreeRows,
@@ -117,6 +132,7 @@ function printWebSurface(name, view) {
   );
   const served = webSurfaceServedText(view, name);
   row('served', served.served ? chalk.green(served.text) : chalk.yellow(served.text));
+  if (view.site) printSiteGrantRows(view.site);
   for (const [label, value] of webTreeRows(view.tree)) row(label, value);
   if (view.boundTunnel) {
     const host = terminalText(view.boundTunnel.fqdn ?? view.boundTunnel.id);
@@ -155,6 +171,157 @@ function printWebSurface(name, view) {
 }
 
 /**
+ * Who may reach the site: its grants and, on a restricted surface, the
+ * members of the audience no grant admits.
+ */
+function printSiteGrantRows(site) {
+  const { grants, withoutGrant, note } = siteGrantLines(site);
+  if (!Array.isArray(site.grants)) {
+    row('grants', chalk.yellow(note));
+    return;
+  }
+  row('grants', grants.length > 0 ? grants.join(', ') : chalk.dim('none'));
+  if (note) console.log(`  ${' '.repeat(16)}${chalk.dim(note)}`);
+  if (withoutGrant.length > 0) {
+    row(
+      'no site access',
+      chalk.yellow(
+        `${withoutGrant.join(', ')} — entitled, but no grant names them or a group they are in`,
+      ),
+    );
+  }
+}
+
+/** The web surface's site, or a refusal: the plugin owns none. */
+async function ownedSite(json, name) {
+  const current = await request(json, name, 'GET', webSurfacePath(name));
+  const site = current.webSurface?.site ?? null;
+  if (!site) {
+    fail(
+      `Plugin "${name}" owns no site — create its web surface first: lamaste-server plugins web-surface ${name} create`,
+      json,
+      { code: 'no_site' },
+      name,
+    );
+  }
+  return site;
+}
+
+/** Print the warnings a grant change's answer carries (the domains' rendering). */
+function printGrantWarnings(result) {
+  for (const warning of Array.isArray(result?.warnings) ? result.warnings : []) {
+    if (typeof warning?.message === 'string') {
+      console.log(`  ${chalk.yellow('!')} ${terminalText(warning.message)}`);
+    }
+  }
+}
+
+/**
+ * `web-surface <name> grants | grant | revoke`: who may reach the site,
+ * and giving or revoking it — Gatekeeper grants with `resourceType:
+ * 'site'`, through the panel's Gatekeeper proxy (which refuses a site no
+ * plugin owns and audits each change).
+ */
+async function siteGrantsCmd(name, parsed, { json }) {
+  const site = await ownedSite(json, name);
+  const plugin = terminalText(name);
+  const fqdn = terminalText(site.fqdn);
+
+  if (parsed.action === 'grants') {
+    if (json) {
+      emit({
+        name,
+        siteId: site.id,
+        fqdn: site.fqdn,
+        accessMode: site.accessMode,
+        grants: site.grants,
+        membersWithoutGrant: site.membersWithoutGrant,
+      });
+      return;
+    }
+    console.log('');
+    console.log(chalk.bold(`  Who may reach ${fqdn} (web surface of ${plugin})`));
+    console.log(chalk.dim('  ' + '─'.repeat(40)));
+    row('access', terminalText(site.accessMode ?? 'restricted (no mode stored)'));
+    printSiteGrantRows(site);
+    console.log('');
+    if (siteGrantsDecide(site)) {
+      console.log(
+        chalk.dim(
+          `  Grant one: lamaste-server plugins web-surface ${plugin} grant --user <username> | --group <name>`,
+        ),
+      );
+      console.log('');
+    }
+    return;
+  }
+
+  const who = principalText(parsed.principal);
+  if (parsed.action === 'grant') {
+    const held = findSiteGrants(site, parsed.principal);
+    if ('grantIds' in held) {
+      if (json) emitComplete({ name, siteId: site.id, changed: false, grantIds: held.grantIds });
+      else
+        console.log(`
+  ${who} already holds a grant on ${chalk.cyan(fqdn)}
+`);
+      return;
+    }
+    const result = await request(
+      json,
+      name,
+      'POST',
+      '/api/gatekeeper/grants',
+      siteGrantBody(parsed.principal, site.id),
+    );
+    if (json) {
+      emitComplete({ name, siteId: site.id, changed: true, ...result });
+      return;
+    }
+    console.log(`
+  ${chalk.green('✓')} ${who} may reach ${chalk.cyan(fqdn)}`);
+    if (!siteGrantsDecide(site)) {
+      console.log(
+        chalk.dim(
+          '  Its web surface is authenticated: every member of its audience reaches it already',
+        ),
+      );
+    }
+    printGrantWarnings(result);
+    console.log('');
+    return;
+  }
+
+  // revoke — every grant naming the principal: one left behind would still
+  // let them in.
+  const found = findSiteGrants(site, parsed.principal);
+  if ('error' in found) {
+    fail(
+      found.error === 'unreadable'
+        ? "Gatekeeper's grants could not be read — try again"
+        : `${who} holds no grant on ${site.fqdn}`,
+      json,
+      { code: found.error },
+      name,
+    );
+  }
+  const results = [];
+  for (const grantId of found.grantIds) {
+    results.push(
+      await request(json, name, 'DELETE', `/api/gatekeeper/grants/${encodeURIComponent(grantId)}`),
+    );
+  }
+  if (json) {
+    emitComplete({ name, siteId: site.id, revoked: found.grantIds.length, results });
+    return;
+  }
+  console.log(`
+  ${chalk.green('✓')} ${who} no longer reaches ${chalk.cyan(fqdn)}`);
+  for (const result of results) printGrantWarnings(result);
+  console.log('');
+}
+
+/**
  * Ask for the site's FQDN before deleting it — or refuse where nobody can
  * answer (no terminal, `--json`) without `--yes`.
  *
@@ -186,7 +353,7 @@ async function confirmDelete(name, site, { yes, json }) {
 }
 
 /**
- * `plugins web-surface <name> [create|move|delete]`.
+ * `plugins web-surface <name> [create|move|delete|grants|grant|revoke]`.
  *
  * @param {string[]} args  what follows the subcommand
  * @param {{ json: boolean }} options
@@ -205,6 +372,11 @@ export async function webSurfaceCmd(args, { json }) {
     const result = await request(json, name, 'GET', webSurfacePath(name));
     if (json) emit(result);
     else printWebSurface(name, result.webSurface);
+    return;
+  }
+
+  if (parsed.action === 'grants' || parsed.action === 'grant' || parsed.action === 'revoke') {
+    await siteGrantsCmd(name, parsed, { json });
     return;
   }
 

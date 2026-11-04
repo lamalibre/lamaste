@@ -18,7 +18,9 @@ import {
 } from 'lucide-react';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { useToast } from './Toast.jsx';
+import RefreshNote from './RefreshNote.jsx';
 import { errorMessage, refusalOf } from '../lib/errorMessage.js';
+import { failedWithoutData } from '../lib/query-refresh.js';
 import { settingsHostingOutage, settingsReadOnlyReason } from '../lib/hostingState.js';
 import {
   CREDENTIAL_HINT,
@@ -516,7 +518,10 @@ function SettingsPanel({ pluginName }) {
       </div>
     );
   }
-  if (query.isError) {
+  // A refresh that fails keeps what was shown, with a note (a change still
+  // carries the revision it was read at: one made on stale settings is
+  // refused, never applied); only settings that never loaded show the error.
+  if (failedWithoutData(query)) {
     return (
       <div className="mt-3 flex flex-wrap items-center gap-2 text-red-400">
         <AlertCircle size={12} />
@@ -537,6 +542,7 @@ function SettingsPanel({ pluginName }) {
   return (
     <div className="mt-3 space-y-3">
       <p className="text-zinc-600">{settingsSourceText(view, now)}</p>
+      <RefreshNote query={query} />
       {readOnlyReason && (
         <div
           className={`flex items-start gap-1.5 rounded border p-2 ${offline ? 'border-red-500/30 text-red-400' : 'border-zinc-700 text-zinc-400'}`}

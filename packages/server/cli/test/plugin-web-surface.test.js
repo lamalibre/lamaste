@@ -19,6 +19,10 @@ import {
   webSurfaceRefusalHint,
   webSurfaceServedText,
   webTreeRows,
+  findSiteGrants,
+  siteGrantBody,
+  siteGrantLines,
+  siteGrantsDecide,
 } from '../src/plugin-web-surface.js';
 
 const SHA_A = 'a'.repeat(64);
@@ -92,6 +96,87 @@ test('web-surface arguments: what is refused, and why', () => {
   for (const subdomain of ['panel', 'auth', 'agent-x', 'Market', '-a', 'a_b', 'a.b']) {
     refused(['piyasa', 'create', '--subdomain', subdomain], /cannot be a web surface's subdomain/);
   }
+});
+
+test('web-surface arguments: grants, and grant / revoke with exactly one principal', () => {
+  assert.deepEqual(parseWebSurfaceArgs(['corral', 'grants']), {
+    ok: true,
+    name: 'corral',
+    action: 'grants',
+  });
+  assert.deepEqual(parseWebSurfaceArgs(['corral', 'grant', '--user', 'ayse']), {
+    ok: true,
+    name: 'corral',
+    action: 'grant',
+    principal: { principalType: 'user', principalId: 'ayse' },
+  });
+  assert.deepEqual(parseWebSurfaceArgs(['corral', '--group', 'ops', 'revoke']), {
+    ok: true,
+    name: 'corral',
+    action: 'revoke',
+    principal: { principalType: 'group', principalId: 'ops' },
+  });
+  const refused = (args, re) => {
+    const parsed = parseWebSurfaceArgs(args);
+    assert.equal(parsed.ok, false, JSON.stringify(args));
+    assert.match(parsed.error, re, JSON.stringify(args));
+  };
+  refused(['corral', 'grant'], /^grant names exactly one of --user <username> and --group <name>/);
+  refused(
+    ['corral', 'revoke', '--user', 'a', '--group', 'g'],
+    /^revoke names exactly one of --user/,
+  );
+  refused(['corral', 'grant', '--user'], /^--user needs a value/);
+  refused(['corral', 'grants', '--user', 'a'], /^grants takes no --user/);
+  refused(['corral', 'delete', '--group', 'g'], /^delete takes no --group/);
+  refused(['corral', '--user', 'a'], /^Unknown option --user/);
+});
+
+test('grants on the site: the body, who holds one, and the lines the terminal shows', () => {
+  assert.deepEqual(siteGrantBody({ principalType: 'user', principalId: 'ayse' }, 'site-1'), {
+    principalType: 'user',
+    principalId: 'ayse',
+    resourceType: 'site',
+    resourceId: 'site-1',
+    context: {},
+  });
+  assert.equal(siteGrantsDecide({ accessMode: 'restricted' }), true);
+  assert.equal(siteGrantsDecide({ accessMode: null }), true);
+  assert.equal(siteGrantsDecide({ accessMode: 'authenticated' }), false);
+
+  const site = {
+    id: 'site-1',
+    fqdn: 'corral.example.com',
+    accessMode: 'restricted',
+    grants: [
+      { grantId: 'g1', principalType: 'user', principalId: 'ayse', createdAt: 't' },
+      { grantId: 'g2', principalType: 'group', principalId: 'ops', createdAt: 't' },
+      { grantId: 'g3', principalType: 'user', principalId: 'ayse', createdAt: 't' },
+    ],
+    membersWithoutGrant: [{ userId: 'u1', username: 'meh\u001b[2Jmet' }],
+  };
+  const ayse = { principalType: 'user', principalId: 'ayse' };
+  assert.deepEqual(findSiteGrants(site, ayse), { grantIds: ['g1', 'g3'] });
+  assert.deepEqual(findSiteGrants(site, { principalType: 'group', principalId: 'ayse' }), {
+    error: 'no_grant',
+  });
+  assert.deepEqual(findSiteGrants({ ...site, grants: null }, ayse), { error: 'unreadable' });
+  assert.deepEqual(findSiteGrants(null, ayse), { error: 'no_site' });
+
+  assert.deepEqual(siteGrantLines(site), {
+    grants: ['ayse', 'group:ops', 'ayse'],
+    withoutGrant: ['meh[2Jmet'],
+    note: null,
+  });
+  assert.equal(
+    siteGrantLines({ ...site, accessMode: 'authenticated' }).note,
+    'authenticated: every member of its audience reaches it, grants count for nothing',
+  );
+  assert.deepEqual(siteGrantLines({ ...site, grants: null }), {
+    grants: [],
+    withoutGrant: [],
+    note: 'Gatekeeper could not be read: unknown',
+  });
 });
 
 test('the create body carries only what was given', () => {

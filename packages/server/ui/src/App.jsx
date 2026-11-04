@@ -20,6 +20,7 @@ import {
   DomainsPage,
 } from './admin/index.js';
 import { webAdminClient } from './lib/web-admin-client.js';
+import { retryQuery } from './admin/lib/query-refresh.js';
 import { pluginAnchorId } from './admin/lib/web-surface.js';
 import Layout from './components/layout/Layout.jsx';
 import LoadingScreen from './components/LoadingScreen.jsx';
@@ -31,7 +32,9 @@ import DocsPage from './pages/docs/DocsPage.jsx';
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
+      // Once — never a refusal, nor the panel's rate limit, which a retry
+      // only spends more of.
+      retry: retryQuery,
       refetchOnWindowFocus: false,
     },
   },

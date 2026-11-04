@@ -1,8 +1,46 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
-import { Key, Plus, Trash2, Loader2, User, Users, Globe, Puzzle, UsersRound } from 'lucide-react';
-import { errorMessage } from '../lib/errorMessage.js';
+import {
+  AlertTriangle,
+  AppWindow,
+  Key,
+  KeyRound,
+  Plus,
+  Trash2,
+  Loader2,
+  User,
+  Users,
+  Globe,
+  Puzzle,
+  UsersRound,
+} from 'lucide-react';
+import {
+  SITE_RESOURCE,
+  explainSiteGrantRefusal,
+  grantableSites,
+  missingSiteAccessText,
+  siteAccessOf,
+  siteGrantBody,
+  siteGrantsDecide,
+  siteOfRoute,
+} from '../lib/site-grants.js';
+import { siteOwnerRoute } from '../lib/web-surface.js';
+
+/** What a grant change may change beyond the grants: plugins' people and web surfaces. */
+function invalidateGrantViews(queryClient) {
+  queryClient.invalidateQueries({ queryKey: ['gatekeeper-grants'] });
+  queryClient.invalidateQueries({ queryKey: ['plugin-entitlements'] });
+  queryClient.invalidateQueries({ queryKey: ['plugin-audience'] });
+  queryClient.invalidateQueries({ queryKey: ['plugin-identity'] });
+  queryClient.invalidateQueries({ queryKey: ['plugin-web-surface'] });
+}
+
+const RESOURCE_TYPES = [
+  { type: 'tunnel', label: 'Tunnel', plural: 'Tunnels' },
+  { type: SITE_RESOURCE, label: 'Site', plural: 'Sites' },
+  { type: 'plugin', label: 'Plugin', plural: 'Plugins' },
+];
 
 /** Whether a grant is an entitlement: a plugin grant whose context names roles. */
 function isEntitlement(grant) {
@@ -55,14 +93,19 @@ function CreateGrantModal({ onClose }) {
     queryFn: () => client.getGatekeeperGroups(),
   });
   const tunnelsQuery = useQuery({ queryKey: ['tunnels'], queryFn: () => client.getTunnels() });
+  const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: () => client.getSites() });
+  const pluginsQuery = useQuery({ queryKey: ['plugins'], queryFn: () => client.getPlugins() });
 
   const mutation = useMutation({
     mutationFn: (data) => client.createGatekeeperGrant(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['gatekeeper-grants'] });
+      invalidateGrantViews(queryClient);
       onClose();
     },
-    onError: (err) => setApiError(errorMessage(err)),
+    onError: (err) => {
+      const { message, hint } = explainSiteGrantRefusal(err);
+      setApiError(hint ? `${message} — ${hint}` : message);
+    },
   });
 
   const handleSubmit = useCallback(
@@ -70,6 +113,10 @@ function CreateGrantModal({ onClose }) {
       e.preventDefault();
       setApiError(null);
       if (!principalId || !resourceId) return;
+      if (resourceType === SITE_RESOURCE) {
+        mutation.mutate(siteGrantBody({ principalType, principalId }, resourceId));
+        return;
+      }
       const context = {};
       if (resourceType === 'plugin' && target) context.target = target;
       mutation.mutate({ principalType, principalId, resourceType, resourceId, context });
@@ -80,6 +127,8 @@ function CreateGrantModal({ onClose }) {
   const users = usersQuery.data?.users || [];
   const groups = groupsQuery.data?.groups || [];
   const tunnels = (tunnelsQuery.data?.tunnels || []).filter((t) => t.type !== 'panel');
+  const sites = grantableSites(sitesQuery.data?.sites, pluginsQuery.data?.plugins);
+  const chosenSite = resourceType === SITE_RESOURCE ? sites.find((x) => x.id === resourceId) : null;
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
@@ -133,28 +182,48 @@ function CreateGrantModal({ onClose }) {
           <div>
             <label className="block text-sm text-zinc-400 mb-2">Resource</label>
             <div className="flex gap-2 mb-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setResourceType('tunnel');
-                  setResourceId('');
-                }}
-                className={`px-3 py-1 text-xs rounded ${resourceType === 'tunnel' ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}
-              >
-                Tunnel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setResourceType('plugin');
-                  setResourceId('');
-                }}
-                className={`px-3 py-1 text-xs rounded ${resourceType === 'plugin' ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}
-              >
-                Plugin
-              </button>
+              {RESOURCE_TYPES.map(({ type, label }) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => {
+                    setResourceType(type);
+                    setResourceId('');
+                  }}
+                  className={`px-3 py-1 text-xs rounded ${resourceType === type ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            {resourceType === 'tunnel' ? (
+            {resourceType === SITE_RESOURCE ? (
+              <div className="space-y-2">
+                <select
+                  value={resourceId}
+                  onChange={(e) => setResourceId(e.target.value)}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-100"
+                >
+                  <option value="">Select a plugin’s site...</option>
+                  {sites.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-zinc-500">
+                  A plugin’s web surface in restricted mode admits a member of its audience only
+                  with a grant on its site — to them, or to a Lamaste group they are in. Their roles
+                  come from the plugin’s People panel. A static site takes no grant: its access is
+                  its allowed users (Sites).
+                </p>
+                {chosenSite && !chosenSite.restricted && (
+                  <p className="text-xs text-yellow-400">
+                    This web surface is authenticated: every member of its audience reaches it, so a
+                    grant on it counts for nothing.
+                  </p>
+                )}
+              </div>
+            ) : resourceType === 'tunnel' ? (
               <select
                 value={resourceId}
                 onChange={(e) => setResourceId(e.target.value)}
@@ -228,7 +297,20 @@ function PrincipalBadge({ type, id }) {
   );
 }
 
-function ResourceBadge({ type, id, tunnels }) {
+function ResourceBadge({ type, id, tunnels, sites }) {
+  if (type === SITE_RESOURCE) {
+    const site = sites.find((x) => x.id === id);
+    const route = site ? siteOwnerRoute(site) : null;
+    return (
+      <span className="inline-flex items-center gap-1 text-xs">
+        <AppWindow className="w-3 h-3 text-cyan-400" />
+        <span className="text-zinc-200">{site ? site.fqdn : id}</span>
+        <span className="text-zinc-500">
+          {route ? `site — web surface of ${route}` : site ? 'site' : 'site (deleted)'}
+        </span>
+      </span>
+    );
+  }
   if (type === 'tunnel') {
     const tunnel = tunnels.find((t) => t.id === id);
     const label = tunnel ? tunnel.fqdn : id;
@@ -248,17 +330,53 @@ function ResourceBadge({ type, id, tunnels }) {
 }
 
 /**
+ * What an entitlement lacks on its plugin's restricted web surface — a
+ * site grant admitting its principal — with a one-click grant; nothing when
+ * the plugin has no such site, or the principal reaches it.
+ */
+function MissingSiteAccess({ grant, site, siteGrants, groups, onGrant, busy }) {
+  const access = siteAccessOf(grant, siteGrants, groups);
+  const text = missingSiteAccessText(grant, access, site.fqdn);
+  if (!text) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5 text-xs">
+      <span
+        className="inline-flex items-center gap-1 rounded-full bg-yellow-500/15 px-2 py-0.5 text-yellow-400"
+        title={text}
+      >
+        <AlertTriangle className="w-3 h-3" />
+        {grant.principalType === 'user'
+          ? 'no site access'
+          : `${access.without.length} without site access`}
+      </span>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onGrant}
+        title={`${text}. Grant ${site.fqdn}.`}
+        className="inline-flex items-center gap-1 rounded bg-cyan-600/20 px-1.5 py-0.5 text-cyan-300 hover:bg-cyan-600/40 disabled:opacity-50"
+      >
+        <KeyRound className="w-3 h-3" /> Grant the site
+      </button>
+    </span>
+  );
+}
+
+/**
  * Gatekeeper's grants. A plugin grant with `context.roles` is an
  * entitlement on an agent-hosted plugin (who is in its audience, with which
  * roles): it is shown here with its roles and managed in the plugin's
  * People panel — `onOpenPlugins`, when the host passes it, opens the
- * Plugins page.
+ * Plugins page. On a plugin whose web surface is restricted, an entitlement
+ * whose principal holds no grant on its site is marked: the roles let them
+ * in nowhere. A site grant names a plugin's site (its web surface).
  */
 export default function GatekeeperGrantsPage({ onOpenPlugins }) {
   const client = useAdminClient();
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [filterType, setFilterType] = useState('');
+  const [grantError, setGrantError] = useState(null);
 
   const grantsQuery = useQuery({
     queryKey: ['gatekeeper-grants'],
@@ -270,24 +388,48 @@ export default function GatekeeperGrantsPage({ onOpenPlugins }) {
     queryKey: ['tunnels'],
     queryFn: () => client.getTunnels(),
   });
+  const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: () => client.getSites() });
+  const groupsQuery = useQuery({
+    queryKey: ['gatekeeper-groups'],
+    queryFn: () => client.getGatekeeperGroups(),
+  });
 
   const revokeMutation = useMutation({
     mutationFn: (grantId) => client.revokeGatekeeperGrant(grantId),
+    // A revoked role or site grant changes a plugin's people and web surface.
+    onSuccess: () => invalidateGrantViews(queryClient),
+  });
+  const grantSiteMutation = useMutation({
+    mutationFn: ({ principal, siteId }) =>
+      client.createGatekeeperGrant(siteGrantBody(principal, siteId)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['gatekeeper-grants'] });
-      // A revoked role grant changes a plugin's people.
-      queryClient.invalidateQueries({ queryKey: ['plugin-entitlements'] });
-      queryClient.invalidateQueries({ queryKey: ['plugin-audience'] });
-      queryClient.invalidateQueries({ queryKey: ['plugin-identity'] });
+      setGrantError(null);
+      invalidateGrantViews(queryClient);
+    },
+    onError: (err) => {
+      const { message, hint } = explainSiteGrantRefusal(err);
+      setGrantError(hint ? `${message} — ${hint}` : message);
     },
   });
 
-  let grants = grantsQuery.data?.grants || [];
+  const allGrants = grantsQuery.data?.grants || [];
   const tunnels = tunnelsQuery.data?.tunnels || [];
+  const sites = sitesQuery.data?.sites || [];
+  const groups = groupsQuery.data?.groups;
+  const grants = filterType ? allGrants.filter((g) => g.resourceType === filterType) : allGrants;
 
-  if (filterType) {
-    grants = grants.filter((g) => g.resourceType === filterType);
-  }
+  /** The restricted site of the plugin an entitlement names, with its grants; null otherwise. */
+  const restrictedSiteOf = (grant) => {
+    if (!isEntitlement(grant) || !groups) return null;
+    const site = siteOfRoute(sites, grant.resourceId);
+    if (!site || !siteGrantsDecide(site)) return null;
+    return {
+      site,
+      siteGrants: allGrants.filter(
+        (g) => g.resourceType === SITE_RESOURCE && g.resourceId === site.id,
+      ),
+    };
+  };
 
   return (
     <div className="space-y-6">
@@ -305,16 +447,18 @@ export default function GatekeeperGrantsPage({ onOpenPlugins }) {
       </div>
 
       <div className="flex gap-2">
-        {['', 'tunnel', 'plugin'].map((type) => (
+        {[{ type: '', plural: 'All' }, ...RESOURCE_TYPES].map(({ type, plural }) => (
           <button
             key={type}
             onClick={() => setFilterType(type)}
             className={`px-3 py-1 text-xs rounded ${filterType === type ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
           >
-            {type === '' ? 'All' : type === 'tunnel' ? 'Tunnels' : 'Plugins'}
+            {plural}
           </button>
         ))}
       </div>
+
+      {grantError && <p className="text-sm text-red-400">{grantError}</p>}
 
       {grantsQuery.isLoading ? (
         <div className="flex items-center gap-2 text-zinc-400">
@@ -326,47 +470,75 @@ export default function GatekeeperGrantsPage({ onOpenPlugins }) {
         </div>
       ) : (
         <div className="space-y-2">
-          {grants.map((grant) => (
-            <div
-              key={grant.grantId}
-              className="flex items-center justify-between p-3 bg-zinc-900 border border-zinc-800 rounded-lg"
-            >
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                <PrincipalBadge type={grant.principalType} id={grant.principalId} />
-                <span className="text-zinc-600 text-xs">can access</span>
-                <ResourceBadge type={grant.resourceType} id={grant.resourceId} tunnels={tunnels} />
-                <GrantContext context={grant.context} />
-                {isEntitlement(grant) && (
-                  <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
-                    <UsersRound className="w-3 h-3" />
-                    plugin roles — managed in its People panel
-                    {onOpenPlugins && (
-                      <button
-                        type="button"
-                        onClick={onOpenPlugins}
-                        className="text-cyan-400 hover:text-cyan-300"
-                      >
-                        (open Plugins)
-                      </button>
-                    )}
+          {grants.map((grant) => {
+            const restricted = restrictedSiteOf(grant);
+            return (
+              <div
+                key={grant.grantId}
+                className="flex items-center justify-between p-3 bg-zinc-900 border border-zinc-800 rounded-lg"
+              >
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <PrincipalBadge type={grant.principalType} id={grant.principalId} />
+                  <span className="text-zinc-600 text-xs">
+                    {isEntitlement(grant) ? 'holds roles on' : 'can access'}
                   </span>
-                )}
+                  <ResourceBadge
+                    type={grant.resourceType}
+                    id={grant.resourceId}
+                    tunnels={tunnels}
+                    sites={sites}
+                  />
+                  <GrantContext context={grant.context} />
+                  {isEntitlement(grant) && (
+                    <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
+                      <UsersRound className="w-3 h-3" />
+                      plugin roles — managed in its People panel
+                      {onOpenPlugins && (
+                        <button
+                          type="button"
+                          onClick={onOpenPlugins}
+                          className="text-cyan-400 hover:text-cyan-300"
+                        >
+                          (open Plugins)
+                        </button>
+                      )}
+                    </span>
+                  )}
+                  {restricted && (
+                    <MissingSiteAccess
+                      grant={grant}
+                      site={restricted.site}
+                      siteGrants={restricted.siteGrants}
+                      groups={groups}
+                      busy={grantSiteMutation.isPending}
+                      onGrant={() =>
+                        grantSiteMutation.mutate({
+                          principal: {
+                            principalType: grant.principalType,
+                            principalId: grant.principalId,
+                          },
+                          siteId: restricted.site.id,
+                        })
+                      }
+                    />
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-zinc-600">
+                    {new Date(grant.createdAt).toLocaleDateString()}
+                  </span>
+                  <button
+                    onClick={() => {
+                      if (confirm('Revoke this grant?')) revokeMutation.mutate(grant.grantId);
+                    }}
+                    className="text-zinc-500 hover:text-red-400"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-zinc-600">
-                  {new Date(grant.createdAt).toLocaleDateString()}
-                </span>
-                <button
-                  onClick={() => {
-                    if (confirm('Revoke this grant?')) revokeMutation.mutate(grant.grantId);
-                  }}
-                  className="text-zinc-500 hover:text-red-400"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

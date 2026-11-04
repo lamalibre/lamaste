@@ -30,6 +30,11 @@
  * rendering that fails is answered with `warnings` and tried again within
  * seconds. A grant on an OIDC client (`resourceType: 'oidc-client'`) must
  * name a user-facing client an installed plugin declares.
+ *
+ * A grant on a site (`resourceType: 'site'`) must name a site a plugin owns
+ * — its web surface, where a restricted one admits only the members of its
+ * audience a grant names — and is audited when it is given and revoked
+ * (`lib/site-grants.js`).
  */
 
 import { recomputeAudiences } from '../../lib/audience.js';
@@ -39,6 +44,7 @@ import { checkProxiedGrant } from '../../lib/entitlements.js';
 import { actorFromRequest } from '../../lib/actor.js';
 import { gatekeeperRequest } from '../../lib/gatekeeper-client.js';
 import { checkOidcClientGrant } from '../../lib/owned-groups.js';
+import { auditSiteGrantChange, checkSiteGrant } from '../../lib/site-grants.js';
 
 /** Gatekeeper's `path`, with the request's query string when it has one. */
 function withQuery(path, request) {
@@ -196,11 +202,14 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
   });
 
   // A plugin grant with `context.roles` is an entitlement: its roles must be
-  // the plugin's (400 otherwise), and go on sorted, without repeats.
+  // the plugin's (400 otherwise), and go on sorted, without repeats. A grant
+  // on an OIDC client or a site must name one a plugin holds.
   fastify.post('/gatekeeper/grants', async (request, reply) => {
     let body;
     try {
-      body = await checkOidcClientGrant(await checkProxiedGrant(request.body));
+      body = await checkSiteGrant(
+        await checkOidcClientGrant(await checkProxiedGrant(request.body)),
+      );
     } catch (err) {
       if (!Number.isInteger(err.statusCode)) throw err;
       return reply.code(err.statusCode).send({
@@ -214,6 +223,12 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
         ? [body.principalId]
         : [];
     const { statusCode, data } = await proxyGive(request, usernames, 'POST', '/api/grants', body);
+    if (statusCode < 400) {
+      await auditSiteGrantChange('created', data?.grant, {
+        actor: actorFromRequest(request),
+        logger: request.log,
+      });
+    }
     return reply.code(statusCode).send(data);
   });
 
@@ -230,6 +245,13 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
       'DELETE',
       `/api/grants/${encodeURIComponent(grantId)}`,
     );
+    if (statusCode < 400) {
+      // Gatekeeper answers a revocation with the grant it revoked.
+      await auditSiteGrantChange('revoked', data?.grant, {
+        actor: actorFromRequest(request),
+        logger: request.log,
+      });
+    }
     return reply.code(statusCode).send(data);
   });
 

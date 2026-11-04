@@ -17,8 +17,17 @@ import {
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { useToast } from './Toast.jsx';
 import CopyableId from './CopyableId.jsx';
+import RefreshNote from './RefreshNote.jsx';
+import { GrantSiteButton, useSiteGrantMutations } from './SiteGrants.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 import { relativeTime } from '../lib/formatters.js';
+import { failedWithoutData } from '../lib/query-refresh.js';
+import {
+  missingSiteAccessText,
+  principalKey,
+  siteAccessOf,
+  siteGrantsDecide,
+} from '../lib/site-grants.js';
 import { externalUserIds } from '../lib/domains.js';
 import { ExternalBadge } from './DomainChoice.jsx';
 import {
@@ -93,8 +102,13 @@ function DeclaredSection({ view }) {
   );
 }
 
-/** One principal's roles: a checkbox per declared role, the undeclared ones it still carries, removal. */
-function EntitlementRow({ entitlement, roles, onSet, onRemove, busy }) {
+/**
+ * One principal's roles: a checkbox per declared role, the undeclared ones
+ * it still carries, removal — and, on a restricted web surface, whether a
+ * site grant lets them reach it (`siteGap`: what is missing, with a
+ * one-click grant).
+ */
+function EntitlementRow({ entitlement, roles, onSet, onRemove, busy, siteGap }) {
   const [confirming, setConfirming] = useState(false);
   const declaredHeld = entitlement.roles.filter((role) => roles.some((r) => r.id === role));
   const Icon = entitlement.principalType === 'user' ? User : Users;
@@ -145,6 +159,21 @@ function EntitlementRow({ entitlement, roles, onSet, onRemove, busy }) {
             </span>
           ))}
         </span>
+        {siteGap && (
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-yellow-500/15 px-2 py-0.5 text-yellow-400"
+              title={siteGap.text}
+            >
+              <AlertTriangle size={10} /> {siteGap.label}
+            </span>
+            <GrantSiteButton
+              busy={siteGap.busy}
+              onGrant={siteGap.onGrant}
+              title={`${siteGap.text}. Grant ${entitlement.principalType === 'group' ? 'the group' : 'them'} ${siteGap.fqdn}.`}
+            />
+          </span>
+        )}
         <span className="ml-auto">
           {confirming ? (
             <span className="flex items-center gap-1.5">
@@ -185,12 +214,17 @@ function EntitlementRow({ entitlement, roles, onSet, onRemove, busy }) {
   );
 }
 
-/** Give a user or a Lamaste group roles on the plugin. */
-function AddEntitlement({ roles, taken, onSet, busy }) {
+/**
+ * Give a user or a Lamaste group roles on the plugin — and, on a restricted
+ * web surface (`site`), its site too unless unticked: a role alone lets
+ * nobody reach it.
+ */
+function AddEntitlement({ roles, taken, onSet, busy, site }) {
   const client = useAdminClient();
   const [principalType, setPrincipalType] = useState('user');
   const [principalId, setPrincipalId] = useState('');
   const [chosen, setChosen] = useState([]);
+  const [withSite, setWithSite] = useState(true);
 
   const usersQuery = useQuery({ queryKey: ['users'], queryFn: () => client.getUsers() });
   const groupsQuery = useQuery({
@@ -220,7 +254,7 @@ function AddEntitlement({ roles, taken, onSet, busy }) {
   const submit = (e) => {
     e.preventDefault();
     if (!principalId || chosen.length === 0) return;
-    onSet({ principalType, principalId, roles: [...chosen].sort() }, () => {
+    onSet({ principalType, principalId, roles: [...chosen].sort() }, site && withSite, () => {
       setPrincipalId('');
       setChosen([]);
     });
@@ -278,6 +312,19 @@ function AddEntitlement({ roles, taken, onSet, busy }) {
           <Plus size={11} /> Give roles
         </button>
       </div>
+      {site && (
+        <label className="flex items-center gap-1.5 text-zinc-300">
+          <input
+            type="checkbox"
+            checked={withSite}
+            onChange={(e) => setWithSite(e.target.checked)}
+          />
+          Also grant the site <span className="font-mono">{site.fqdn}</span>
+          <span className="text-zinc-600">
+            — its web surface is restricted: without a grant the roles let them in nowhere
+          </span>
+        </label>
+      )}
       {listError && <p className="text-red-400">{listError}</p>}
       {principalType === 'group' && (
         <p className="text-zinc-600">
@@ -292,6 +339,10 @@ function AddEntitlement({ roles, taken, onSet, busy }) {
  * Who may use the plugin, with which of its roles: Gatekeeper plugin grants
  * with roles, to users or Lamaste groups. Grants without roles (desktop
  * installs, migrated legacy grants) never make anyone a member.
+ *
+ * When the plugin's web surface is restricted, a role alone lets nobody in:
+ * each entitlement whose principal no site grant admits is marked, with a
+ * one-click grant, and giving roles grants the site too unless unticked.
  */
 function EntitlementsSection({ plugin, roles }) {
   const client = useAdminClient();
@@ -301,6 +352,26 @@ function EntitlementsSection({ plugin, roles }) {
     queryKey: ['plugin-entitlements', plugin.name],
     queryFn: () => client.getPluginEntitlements(plugin.name),
   });
+  // The web surface's site and its grants (the Web surface panel's query),
+  // and the Lamaste groups, to tell who reaches a restricted site.
+  const webSurfaceQuery = useQuery({
+    queryKey: ['plugin-web-surface', plugin.name],
+    queryFn: () => client.getPluginWebSurface(plugin.name),
+    enabled: typeof client.getPluginWebSurface === 'function' && Boolean(plugin.userSurface?.web),
+  });
+  const groupsQuery = useQuery({
+    queryKey: ['gatekeeper-groups'],
+    queryFn: () => client.getGatekeeperGroups(),
+    retry: false,
+  });
+  const site = webSurfaceQuery.data?.webSurface?.site ?? null;
+  // Only a restricted site whose grants and groups are known is judged.
+  const siteGrants =
+    site && siteGrantsDecide(site) && Array.isArray(site.grants) && groupsQuery.data
+      ? site.grants
+      : null;
+  const groups = groupsQuery.data?.groups ?? [];
+  const siteGrant = useSiteGrantMutations(plugin.name, site);
   const toastWarnings = (warnings) => {
     for (const warning of warnings ?? []) addToast(warningText(warning), 'error');
   };
@@ -328,14 +399,36 @@ function EntitlementsSection({ plugin, roles }) {
   });
   const busy = set.isPending || remove.isPending;
   const entitlements = query.data?.entitlements ?? [];
-  const taken = new Set(entitlements.map((e) => `${e.principalType}:${e.principalId}`));
+  const taken = new Set(entitlements.map(principalKey));
+
+  /** What an entitlement lacks on the restricted site, for its row; null when nothing. */
+  const siteGapOf = (entitlement) => {
+    if (!siteGrants) return null;
+    const access = siteAccessOf(entitlement, siteGrants, groups);
+    const text = missingSiteAccessText(entitlement, access, site.fqdn);
+    if (!text) return null;
+    return {
+      text,
+      fqdn: site.fqdn,
+      label:
+        entitlement.principalType === 'user'
+          ? 'no site access'
+          : `${access.without.length} without site access`,
+      busy: siteGrant.busy,
+      onGrant: () =>
+        siteGrant.grant.mutate({
+          principalType: entitlement.principalType,
+          principalId: entitlement.principalId,
+        }),
+    };
+  };
 
   return (
     <div className="space-y-2">
       <SectionTitle>Entitlements — who may use it, with which roles:</SectionTitle>
       {query.isLoading ? (
         <Loader2 size={12} className="animate-spin text-zinc-500" />
-      ) : query.isError ? (
+      ) : failedWithoutData(query) ? (
         <p className="text-red-400">{errorMessage(query.error)}</p>
       ) : entitlements.length === 0 ? (
         <p className="text-zinc-600">Nobody yet — give a user or a Lamaste group a role below.</p>
@@ -343,10 +436,11 @@ function EntitlementsSection({ plugin, roles }) {
         <ul className="space-y-1">
           {entitlements.map((entitlement) => (
             <EntitlementRow
-              key={`${entitlement.principalType}:${entitlement.principalId}`}
+              key={principalKey(entitlement)}
               entitlement={entitlement}
               roles={roles}
               busy={busy}
+              siteGap={siteGapOf(entitlement)}
               onSet={(e, next) =>
                 set.mutate({
                   principalType: e.principalType,
@@ -361,6 +455,7 @@ function EntitlementsSection({ plugin, roles }) {
           ))}
         </ul>
       )}
+      <RefreshNote query={query} />
       {query.data?.roleless > 0 && (
         <p className="text-zinc-600">
           {query.data.roleless} grant{query.data.roleless === 1 ? '' : 's'} on this plugin carr
@@ -371,8 +466,24 @@ function EntitlementsSection({ plugin, roles }) {
       <AddEntitlement
         roles={roles}
         taken={taken}
-        busy={busy}
-        onSet={(entitlement, done) => set.mutate(entitlement, { onSuccess: done })}
+        busy={busy || siteGrant.busy}
+        site={siteGrants ? site : null}
+        onSet={(entitlement, withSite, done) =>
+          set.mutate(entitlement, {
+            onSuccess: () => {
+              done();
+              const principal = {
+                principalType: entitlement.principalType,
+                principalId: entitlement.principalId,
+              };
+              // A group is granted the site itself; a user only when no
+              // grant admits them already (theirs, or a group's).
+              if (withSite && !siteAccessOf(principal, siteGrants, groups).granted) {
+                siteGrant.grant.mutate(principal);
+              }
+            },
+          })
+        }
       />
     </div>
   );
@@ -451,7 +562,7 @@ function AudienceSection({ plugin }) {
       </SectionTitle>
       {query.isLoading ? (
         <Loader2 size={12} className="animate-spin text-zinc-500" />
-      ) : query.isError ? (
+      ) : failedWithoutData(query) ? (
         <p className="text-red-400">{errorMessage(query.error)}</p>
       ) : views.length === 0 ? (
         <p className="text-zinc-600">No members yet.</p>
@@ -496,6 +607,7 @@ function AudienceSection({ plugin }) {
           )}
         </>
       )}
+      <RefreshNote query={query} className="mt-1" />
     </div>
   );
 }
@@ -650,7 +762,9 @@ export default function PluginIdentity({ plugin }) {
     refetchInterval: open ? 10000 : 60000,
   });
   const view = query.data?.identity;
-  if (query.isError) {
+  // A refresh that fails keeps what was shown, with a note; only a section
+  // that never loaded shows the error.
+  if (failedWithoutData(query)) {
     return (
       <div className="rounded border border-zinc-800 bg-zinc-950/60 p-3 mb-4 text-xs text-red-400">
         People: {errorMessage(query.error)}
@@ -702,6 +816,7 @@ export default function PluginIdentity({ plugin }) {
           </span>
         )}
       </button>
+      <RefreshNote query={query} className="mt-2" />
 
       {open && (
         <div className="mt-3 space-y-4">

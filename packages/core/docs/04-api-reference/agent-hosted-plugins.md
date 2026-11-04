@@ -1027,6 +1027,18 @@ A plugin owns at most one site, in `sites.json` with `owner: { plugin: <route>, 
 - serves the **API** at `/api/<route>/app*` exactly as a [bound tunnel's host](#the-user-surface) does;
 - answers **`503`** to everything while the surface is not served — no plugin is installed under the route, the installed version does not declare identity or a web surface, the site was created for another package (`not_owner`), the version is not approved, not hosted, or its tree is not current yet. Once its plugin is **uninstalled** the `503` also carries `Clear-Site-Data: "storage"`: whatever takes the hostname next does not inherit the plugin's browser storage, caches or workers. Never while the plugin is only unhosted or waiting for approval — its users' data stays.
 
+### Who reaches a restricted site
+
+On a `restricted` site a **role is not enough**: Gatekeeper admits a member of the plugin's audience only when a Gatekeeper grant on the site (`resourceType: "site"`, `resourceId: <site id>`) names them or a Lamaste group they are in. A site with no access mode reads as `restricted`, as Gatekeeper reads it; on an `authenticated` site every member gets in and a grant counts for nothing. A [delegated invitation](#delegated-invitations) and a [move from a restricted tunnel](#moving-from-a-bound-tunnel) create these grants themselves; an administrator gives and revokes them through the Gatekeeper proxy — `POST /api/gatekeeper/grants` with `{ principalType, principalId, resourceType: "site", resourceId: <site id> }`, `DELETE /api/gatekeeper/grants/:grantId` — which refuses a grant naming no site (`400`, `code: "unknown_site"`) or a site no plugin owns (`400`, `code: "site_not_grantable"`: a static site's access is its allowed users), and audits each one, by user id or group name, never a username: `plugin.web-surface.grant.created` and `plugin.web-surface.grant.revoked` (`siteId`, `grantId`, the principal). [Gatekeeper → grants](gatekeeper.md#post-apigatekeepergrants).
+
+So that an entitlement can never look sufficient on its own, the web surface's status lists the site's **grants** and the **members of the audience no grant admits** (`site.grants`, `site.membersWithoutGrant`, below). In the panel:
+
+- the plugin card's **Web surface** section shows who may reach a restricted site — its grants, each revocable; a user or a Lamaste group to add; and the members without access, each with a one-click grant. Its header counts them ("2 members without site access");
+- **People** marks each entitlement whose user, or whose group's members, no site grant admits ("no site access", "3 without site access") with a one-click **Grant the site**, and giving roles grants the site too unless _Also grant the site_ is unticked;
+- the **Gatekeeper → Grants** page creates `site` grants (among the sites plugins own, each named with its plugin), shows them as the site's hostname and plugin, filters them under _Sites_, and marks a plugin entitlement whose principal cannot reach that plugin's restricted site, with the same one-click grant.
+
+`lamaste-server plugins web-surface <name> grants | grant --user <u> | --group <g> | revoke --user <u> | --group <g>` does the same at the terminal ([CLI](#cli)).
+
 The panel's user-surface context takes a plugin-owned site as the route's host (its `Origin`, its open responses), and Gatekeeper reads `sites.json` beside `tunnels.json`; a route two hosts would serve is served by neither. A plugin that owns a site cannot have its user surface bound to a tunnel, and a tunnel cannot be created on, or enabled for, a hostname a site serves. Uninstalling the plugin keeps the site, answering `503`, until it is deleted — `DELETE /api/plugins/<name>/web-surface` works without the plugin, and the Sites page offers it. A site records the **package** it was created for (`owner: { plugin, package }`): another package installed later under the same route is not served from it (`not_owner`) — it inherits neither the hostname nor the grants nor the old tree; delete the site, then create one for it.
 
 ### Moving from a bound tunnel
@@ -1047,7 +1059,17 @@ All admin only.
       "id": "…",
       "name": "piyasa",
       "fqdn": "piyasa.example.com",
-      "accessMode": "authenticated"
+      "accessMode": "restricted",
+      "ownerPackage": "@lamalibre/piyasa-server",
+      "grants": [
+        {
+          "grantId": "…",
+          "principalType": "group",
+          "principalId": "traders",
+          "createdAt": "2026-11-04T10:00:00.000Z"
+        }
+      ],
+      "membersWithoutGrant": [{ "userId": "…", "username": "ayse" }]
     },
     "served": true,
     "reason": null,
@@ -1058,7 +1080,7 @@ All admin only.
 }
 ```
 
-`reason` while not served: `not_installed`, `no_identity`, `no_web_surface`, `not_owner`, `not_approved`, `not_hosted`, `tree_not_current`. `site.ownerPackage` is the package the site was created for. `boundTunnel` names a tunnel bound as the plugin's user surface (`{ id, fqdn, enabled, routes }`) — enabled or not, creating a site is refused while it is bound. The status of a site whose plugin is no longer installed stays readable (`reason: "not_installed"`); `404` only when neither a plugin nor a site holds the route. `offer` — while the plugin owns no site, declares a web surface and has no tunnel bound as its user surface (then moving is the way) — is `{ subdomain, accessMode, available }`: what the panel offers to create, and whether the name is free.
+`reason` while not served: `not_installed`, `no_identity`, `no_web_surface`, `not_owner`, `not_approved`, `not_hosted`, `tree_not_current`. `site.ownerPackage` is the package the site was created for. `site.grants` are the Gatekeeper grants on the site, users and Lamaste groups; `site.membersWithoutGrant` the active members of the plugin's audience none of them admits — always `[]` on an `authenticated` site, and on a site whose plugin is not the one it was created for; both `null` when Gatekeeper could not be read ([Who reaches a restricted site](#who-reaches-a-restricted-site)). `boundTunnel` names a tunnel bound as the plugin's user surface (`{ id, fqdn, enabled, routes }`) — enabled or not, creating a site is refused while it is bound. The status of a site whose plugin is no longer installed stays readable (`reason: "not_installed"`); `404` only when neither a plugin nor a site holds the route. `offer` — while the plugin owns no site, declares a web surface and has no tunnel bound as its user surface (then moving is the way) — is `{ subdomain, accessMode, available }`: what the panel offers to create, and whether the name is free.
 
 #### `POST /api/plugins/:name/web-surface`
 
@@ -1097,6 +1119,10 @@ lamaste-server plugins identity <name>                    # its users: roles, re
 lamaste-server plugins audience <name>                    # members and tombstones
 lamaste-server plugins entitlements <name> [--user <u>|--group <g> --roles a,b] [--revoke --user <u>|--group <g>]
 lamaste-server plugins identity-sync <name> [--reconcile] # send its audience to the agent half now
+lamaste-server plugins web-surface <name> [create|move|delete]   # its site: see Web surface
+lamaste-server plugins web-surface <name> grants              # who may reach its site; entitled members no grant admits
+lamaste-server plugins web-surface <name> grant --user <u> | --group <g>
+lamaste-server plugins web-surface <name> revoke --user <u> | --group <g>
 lamaste-server tunnels bind-user-surface <tunnel> <plugin>   # serve the plugin's user surface on the tunnel's host
 lamaste-server tunnels unbind-user-surface <tunnel> <plugin>
 lamaste-server push-install status|on|off                 # the switch, policies, every agent's window
@@ -1105,7 +1131,7 @@ lamaste-server push-install close <agent>
 lamaste-server push-install default-policy <id>
 ```
 
-`lamaste-server plugins list` shows where each hosted plugin runs, its health and the agent half version. `host` and `unhost` follow the operation step by step and exit non-zero unless it succeeded. A refusal is explained: `agent_not_eligible` lists the reasons (and points at `eligibility`), `push_install_refused` says which gates a push passes — `lamaste-server` calls the panel from `127.0.0.1`, so the agent's policy must allow that address. `--purge` names the data directory it deletes before it starts. `retained-data` lists every agent's records — marking those of uninstalled plugins — or one plugin's, with the data directory and account of each; `purge-data` says which directory and account it deletes, follows the operation and exits non-zero unless it succeeded; `forget-data` says that nothing on the agent changed and how to remove the data there. `hooks` prints the approval digest, the relay hook set and the agent half (package and version, integrity, entry and memory limit, the account and unit it runs as, its data directory, its system packages), and a pending update's — with why it waits (`approvalRequired`; a secret turned plain in red) and the `approve-hooks` command that approves it, naming its version (`--digest <sha256> --version <v>`, or `--version <v>` alone when it has no digest) — and the identity block, an update's identity diff and the `identity.changed` reason; `update` prints the same for an update that waits. The identity commands are described under [Users and identity](#in-the-panel-and-the-cli). `settings` and `configure` — interactive in a terminal, a secret only from a masked prompt or stdin, never an argument — are described under [Settings](#from-the-cli). `push-install status` lists the switch, the default policy, each policy's actions, packages and addresses, and each enrolled machine agent's window (`open until …` with its policy, or `closed`); `open` checks the minutes against the bounds the panel reports (default 30).
+`lamaste-server plugins list` shows where each hosted plugin runs, its health and the agent half version. `web-surface <name>` lists its site's grants and the members without one; `web-surface <name> grants` prints only that (`--json`: `{ name, siteId, fqdn, accessMode, grants, membersWithoutGrant }`); `grant` creates a grant unless the principal holds one already (`changed: false`), and says so when the site is `authenticated`; `revoke` revokes every grant on the site naming the principal. `host` and `unhost` follow the operation step by step and exit non-zero unless it succeeded. A refusal is explained: `agent_not_eligible` lists the reasons (and points at `eligibility`), `push_install_refused` says which gates a push passes — `lamaste-server` calls the panel from `127.0.0.1`, so the agent's policy must allow that address. `--purge` names the data directory it deletes before it starts. `retained-data` lists every agent's records — marking those of uninstalled plugins — or one plugin's, with the data directory and account of each; `purge-data` says which directory and account it deletes, follows the operation and exits non-zero unless it succeeded; `forget-data` says that nothing on the agent changed and how to remove the data there. `hooks` prints the approval digest, the relay hook set and the agent half (package and version, integrity, entry and memory limit, the account and unit it runs as, its data directory, its system packages), and a pending update's — with why it waits (`approvalRequired`; a secret turned plain in red) and the `approve-hooks` command that approves it, naming its version (`--digest <sha256> --version <v>`, or `--version <v>` alone when it has no digest) — and the identity block, an update's identity diff and the `identity.changed` reason; `update` prints the same for an update that waits. The identity commands are described under [Users and identity](#in-the-panel-and-the-cli). `settings` and `configure` — interactive in a terminal, a secret only from a masked prompt or stdin, never an argument — are described under [Settings](#from-the-cli). `push-install status` lists the switch, the default policy, each policy's actions, packages and addresses, and each enrolled machine agent's window (`open until …` with its policy, or `closed`); `open` checks the minutes against the bounds the panel reports (default 30).
 
 ## State
 
