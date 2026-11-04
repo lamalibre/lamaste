@@ -2052,18 +2052,20 @@ pub async fn admin_get_gatekeeper_grants(filter: Option<serde_json::Value>) -> R
 }
 
 #[tauri::command]
-pub async fn admin_create_gatekeeper_grant(data: serde_json::Value) -> Result<serde_json::Value, String> {
-    tokio::task::spawn_blocking(move || admin_post("/api/gatekeeper/grants", Some(&data.to_string())))
-        .await.map_err(|e| format!("Task failed: {}", e))?
+pub async fn admin_create_gatekeeper_grant(
+    data: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    // A refusal keeps its status and `code` (`unknown_site`, `site_not_grantable`,
+    // `unknown_roles`, `username_deleted`, …) for the page to explain.
+    admin_refusable_task("POST", "/api/gatekeeper/grants".to_string(), Some(data.to_string())).await
 }
 
 #[tauri::command]
-pub async fn admin_revoke_gatekeeper_grant(grant_id: String) -> Result<serde_json::Value, String> {
-    tokio::task::spawn_blocking(move || {
-        let path = format!("/api/gatekeeper/grants/{}", url_encode(&grant_id));
-        admin_delete(&path, None)
-    })
-        .await.map_err(|e| format!("Task failed: {}", e))?
+pub async fn admin_revoke_gatekeeper_grant(
+    grant_id: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = format!("/api/gatekeeper/grants/{}", url_encode(&grant_id));
+    admin_refusable_task("DELETE", path, None).await
 }
 
 // --- Gatekeeper Diagnostics ---

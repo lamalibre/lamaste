@@ -3,7 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Clock, Loader2, Lock, Power, PowerOff, Shield, Unlock } from 'lucide-react';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { useToast } from './Toast.jsx';
+import RefreshNote from './RefreshNote.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
+import { failedWithoutData } from '../lib/query-refresh.js';
 
 /** The element id of the push-install section — the host dialog links to it. */
 const PUSH_INSTALL_SECTION_ID = 'push-install';
@@ -235,7 +237,9 @@ export default function PushInstallSection({ children }) {
           every push is refused, open windows included.
         </p>
 
-        {configQuery.isError ? (
+        {/* A failed refresh keeps the policy and the windows, with a note. */}
+        <RefreshNote query={configQuery} className="mb-3" />
+        {failedWithoutData(configQuery) ? (
           <p className="mb-4 text-sm text-red-400">{errorMessage(configQuery.error)}</p>
         ) : !config ? (
           <div className="mb-4 h-24 animate-pulse rounded-lg border border-zinc-800 bg-zinc-900" />

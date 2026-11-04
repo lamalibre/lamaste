@@ -44,7 +44,11 @@ import { checkProxiedGrant } from '../../lib/entitlements.js';
 import { actorFromRequest } from '../../lib/actor.js';
 import { gatekeeperRequest } from '../../lib/gatekeeper-client.js';
 import { checkOidcClientGrant } from '../../lib/owned-groups.js';
-import { auditSiteGrantChange, checkSiteGrant } from '../../lib/site-grants.js';
+import {
+  auditSiteGrantChange,
+  checkSiteGrant,
+  siteGrantsOfPrincipal,
+} from '../../lib/site-grants.js';
 
 /** Gatekeeper's `path`, with the request's query string when it has one. */
 function withQuery(path, request) {
@@ -258,11 +262,26 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
   // Bulk-revoke every grant for a principal. Forwarded to gatekeeper as
   // DELETE /api/grants?principalType=...&principalId=...
   fastify.delete('/gatekeeper/grants', async (request, reply) => {
+    // Gatekeeper answers with a count: the site grants it is about to take
+    // are listed first, for their audit.
+    const siteGrants = await siteGrantsOfPrincipal(
+      request.query?.principalType,
+      request.query?.principalId,
+      request.log,
+    );
     const { statusCode, data } = await proxyChange(
       request,
       'DELETE',
       withQuery('/api/grants', request),
     );
+    if (statusCode < 400) {
+      for (const grant of siteGrants) {
+        await auditSiteGrantChange('revoked', grant, {
+          actor: actorFromRequest(request),
+          logger: request.log,
+        });
+      }
+    }
     return reply.code(statusCode).send(data);
   });
 

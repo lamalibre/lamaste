@@ -513,6 +513,9 @@ function LocalPluginPanel({ pluginName, hostPort, onBack }) {
   const queryClient = useQueryClient();
   const desktopInstallMutation = useMutation({
     mutationFn: () => client.installDesktopApp(pluginName),
+    // Nothing polls the status: the installed app shows once this refetches.
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['local-desktop-app-status', pluginName] }),
   });
   const desktopOpenMutation = useMutation({
     mutationFn: () => client.openDesktopApp(pluginName),

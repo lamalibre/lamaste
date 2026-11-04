@@ -15,12 +15,13 @@ Site grants for plugin web surfaces: an administrator lets an entitled user reac
 - **The gap made visible.** **People** marks each entitlement whose user, or whose group's members, no site grant admits ("no site access") with a one-click **Grant the site**, and giving roles grants the site too unless _Also grant the site_ is unticked. The **Gatekeeper → Grants** page creates `site` grants among the sites plugins own (each named with its plugin), shows a site grant as its hostname and plugin, filters _Sites_, says "holds roles on" for an entitlement instead of "can access", and marks an entitlement whose principal cannot reach its plugin's restricted site, with the same one-click grant.
 - **`GET /api/plugins/:name/web-surface`** lists `site.grants` (`{ grantId, principalType, principalId, createdAt }`) and `site.membersWithoutGrant` (`{ userId, username }`, always `[]` on an `authenticated` site), both `null` when Gatekeeper could not be read. Core types `SiteGrantView`.
 - **CLI:** `lamaste-server plugins web-surface <name> grants | grant --user <u> | --group <g> | revoke --user <u> | --group <g>`, with `--json`; the web surface's status prints the grants and the members without one.
-- **Audit:** `plugin.web-surface.grant.created` and `plugin.web-surface.grant.revoked` for site grants given or revoked through the Gatekeeper proxy (`siteId`, `grantId`, the user's directory id or the group's name).
+- **Audit:** `plugin.web-surface.grant.created` and `plugin.web-surface.grant.revoked` for site grants given or revoked through the Gatekeeper proxy, one by one or with all of a principal's grants (`siteId`, `grantId`, the user's directory id or the group's name). An audit that fails is logged; it never fails a change Gatekeeper took.
 
 ### Changed
 
 - **The Gatekeeper proxy checks a site grant**: `resourceId` must be a site (`400`, `code: "unknown_site"`) that a plugin owns (`400`, `code: "site_not_grantable"` — a static site's access is its allowed users, never a grant). Gatekeeper's authorization rules are unchanged.
 - **A site with no access mode is shown as `restricted`** on the plugin card, as Gatekeeper reads it (it was shown as `authenticated`).
+- **Desktop:** `admin_create_gatekeeper_grant` and `admin_revoke_gatekeeper_grant` reject with the panel's refusal (`status`, `code`), as the web client does, so a refused grant is explained the same way in both.
 
 ### Fixed
 

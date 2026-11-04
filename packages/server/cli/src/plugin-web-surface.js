@@ -319,6 +319,42 @@ export function findSiteGrants(site, principal) {
 }
 
 /**
+ * After the grants naming `principal` went: the grants left on the site
+ * (the view's `site.grants`) that still admit it — a user through a
+ * Lamaste group of theirs (`groups`: every group with its members); a group
+ * never through another grant, but its members holding a grant of their
+ * own (or another group's) keep the site. Names as the terminal shows them.
+ *
+ * @param {{ principalType: 'user' | 'group', principalId: string }} principal
+ * @param {ReadonlyArray<{ principalType: string, principalId: string }>} grants
+ * @param {ReadonlyArray<{ name: string, members: readonly string[] }>} groups
+ * @returns {{ admittedBy: string[], membersStillAdmitted: string[] }}
+ */
+export function stillAdmitted(principal, grants, groups) {
+  const members = new Map(groups.map((g) => [g.name, g.members ?? []]));
+  const grantedGroups = grants.filter((g) => g.principalType === 'group').map((g) => g.principalId);
+  if (principal.principalType === 'user') {
+    return {
+      admittedBy: grantedGroups
+        .filter((name) => (members.get(name) ?? []).includes(principal.principalId))
+        .map((name) => terminalText(`group:${name}`)),
+      membersStillAdmitted: [],
+    };
+  }
+  const admitted = new Set(
+    grants.filter((g) => g.principalType === 'user').map((g) => g.principalId),
+  );
+  for (const name of grantedGroups) for (const m of members.get(name) ?? []) admitted.add(m);
+  return {
+    admittedBy: [],
+    membersStillAdmitted: (members.get(principal.principalId) ?? [])
+      .filter((m) => admitted.has(m))
+      .sort()
+      .map((m) => terminalText(m)),
+  };
+}
+
+/**
  * Who may reach the site, as lines: each grant (`ayse`, `group:ops`), then
  * the members of the audience no grant admits — or why there is nothing to
  * list. Every name goes through `terminalText`.

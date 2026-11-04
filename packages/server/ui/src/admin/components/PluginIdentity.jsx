@@ -46,6 +46,8 @@ function invalidatePeople(queryClient, name) {
   queryClient.invalidateQueries({ queryKey: ['plugin-entitlements', name] });
   // Entitlements are Gatekeeper grants.
   queryClient.invalidateQueries({ queryKey: ['gatekeeper-grants'] });
+  // The web surface lists the members no site grant admits: the audience's.
+  queryClient.invalidateQueries({ queryKey: ['plugin-web-surface', name] });
 }
 
 /** `14:05 (12m ago)`, measured against `now` (when the data was fetched); a dash for none. */

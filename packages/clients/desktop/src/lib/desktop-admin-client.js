@@ -340,8 +340,9 @@ export const desktopAdminClient = {
 
   // --- Gatekeeper Grants ---
   getGatekeeperGrants: (filter) => invoke('admin_get_gatekeeper_grants', { filter }),
-  createGatekeeperGrant: (data) => invoke('admin_create_gatekeeper_grant', { data }),
-  revokeGatekeeperGrant: (grantId) => invoke('admin_revoke_gatekeeper_grant', { grantId }),
+  // Refusals keep their status and `code` (`unknown_site`, `username_deleted`, …).
+  createGatekeeperGrant: (data) => invokeRefusable('admin_create_gatekeeper_grant', { data }),
+  revokeGatekeeperGrant: (grantId) => invokeRefusable('admin_revoke_gatekeeper_grant', { grantId }),
 
   // --- Gatekeeper Diagnostics ---
   checkGatekeeperAccess: (username, resourceType, resourceId) =>

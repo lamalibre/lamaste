@@ -47,6 +47,7 @@ import { principalText } from '../oidc-client-grants.js';
 import {
   createBody,
   findSiteGrants,
+  stillAdmitted,
   parseWebSurfaceArgs,
   siteGrantBody,
   siteGrantLines,
@@ -315,9 +316,26 @@ async function siteGrantsCmd(name, parsed, { json }) {
     emitComplete({ name, siteId: site.id, revoked: found.grantIds.length, results });
     return;
   }
-  console.log(`
-  ${chalk.green('✓')} ${who} no longer reaches ${chalk.cyan(fqdn)}`);
+  console.log(
+    `\n  ${chalk.green('✓')} The grant${found.grantIds.length === 1 ? '' : 's'} on ${chalk.cyan(fqdn)} to ${who} ${found.grantIds.length === 1 ? 'is' : 'are'} revoked`,
+  );
   for (const result of results) printGrantWarnings(result);
+  // Another grant may still admit them: say so, from the site as it is now.
+  const after = await ownedSite(json, name);
+  const groups = await request(json, name, 'GET', '/api/gatekeeper/groups');
+  if (Array.isArray(after.grants) && Array.isArray(groups?.groups)) {
+    const still = stillAdmitted(parsed.principal, after.grants, groups.groups);
+    if (still.admittedBy.length > 0) {
+      console.log(chalk.yellow(`  ${who} still reaches it through ${still.admittedBy.join(', ')}`));
+    }
+    if (still.membersStillAdmitted.length > 0) {
+      console.log(
+        chalk.yellow(
+          `  Members who still reach it through another grant: ${still.membersStillAdmitted.join(', ')}`,
+        ),
+      );
+    }
+  }
   console.log('');
 }
 

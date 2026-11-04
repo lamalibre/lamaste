@@ -21,7 +21,9 @@
  * themselves (`lib/invitation-acceptance.js`, `lib/web-surface.js`).
  *
  * Audit: `plugin.web-surface.grant.created`, `.grant.revoked` — a user
- * principal by directory id, never by username.
+ * principal by directory id, never by username — for a grant given or
+ * revoked through the proxy, one by one or with all of a principal's
+ * grants ({@link siteGrantsOfPrincipal}).
  */
 
 import { siteUserSurfaceRoute } from '@lamalibre/lamaste';
@@ -29,7 +31,11 @@ import { httpError } from './app-error.js';
 import { recordAuditBestEffort } from './audit.js';
 import { listAudience } from './audience.js';
 import { auditedPrincipal } from './entitlements.js';
-import { listGatekeeperGroups, listResourceGrants } from './gatekeeper-client.js';
+import {
+  gatekeeperRequest,
+  listGatekeeperGroups,
+  listResourceGrants,
+} from './gatekeeper-client.js';
 import { findPluginByRoute } from './plugins.js';
 import { readSites } from './state.js';
 
@@ -153,7 +159,9 @@ export async function checkSiteGrant(body) {
 /**
  * Record a site grant the proxy created or revoked — `grant` as Gatekeeper
  * answered with it — under the plugin that owns the site (the route when
- * no installed plugin holds it). Nothing for any other grant.
+ * no installed plugin holds it). Nothing for any other grant. Never
+ * throws: Gatekeeper took the change, so a failure here is logged, not
+ * answered.
  *
  * @param {'created' | 'revoked'} change
  * @param {unknown} grant
@@ -163,20 +171,57 @@ export async function auditSiteGrantChange(change, grant, { actor, logger }) {
   if (!isRecord(grant) || grant.resourceType !== SITE_RESOURCE) return;
   if (grant.principalType !== 'user' && grant.principalType !== 'group') return;
   if (typeof grant.principalId !== 'string' || typeof grant.resourceId !== 'string') return;
-  const site = (await readSites()).find((s) => s.id === grant.resourceId);
-  const route = site ? siteUserSurfaceRoute(site) : null;
-  const plugin = route ? await findPluginByRoute(route) : null;
-  await recordAuditBestEffort(
-    {
-      actor,
-      action: `plugin.web-surface.grant.${change}`,
-      plugin: plugin?.name ?? route,
-      details: {
-        siteId: grant.resourceId,
-        ...(typeof grant.grantId === 'string' ? { grantId: grant.grantId } : {}),
-        ...(await auditedPrincipal(grant.principalType, grant.principalId)),
+  try {
+    const site = (await readSites()).find((s) => s.id === grant.resourceId);
+    const route = site ? siteUserSurfaceRoute(site) : null;
+    const plugin = route ? await findPluginByRoute(route) : null;
+    await recordAuditBestEffort(
+      {
+        actor,
+        action: `plugin.web-surface.grant.${change}`,
+        plugin: plugin?.name ?? route,
+        details: {
+          siteId: grant.resourceId,
+          ...(typeof grant.grantId === 'string' ? { grantId: grant.grantId } : {}),
+          ...(await auditedPrincipal(grant.principalType, grant.principalId)),
+        },
       },
-    },
-    logger,
+      logger,
+    );
+  } catch (err) {
+    logger?.warn?.(
+      { err: err instanceof Error ? err.message : String(err), siteId: grant.resourceId },
+      'Could not audit a grant on a web surface',
+    );
+  }
+}
+
+/**
+ * The site grants a principal holds — what a bulk revocation of its grants
+ * (`DELETE /api/gatekeeper/grants?principalType=&principalId=`) is about to
+ * take, for its audit (Gatekeeper answers that one with a count only).
+ * Empty when there are none, or Gatekeeper could not list them (the
+ * revocation then goes on unaudited, logged).
+ *
+ * @param {unknown} principalType
+ * @param {unknown} principalId
+ * @param {import('pino').Logger} [logger]
+ * @returns {Promise<Array<Record<string, unknown>>>}
+ */
+export async function siteGrantsOfPrincipal(principalType, principalId, logger) {
+  if (principalType !== 'user' && principalType !== 'group') return [];
+  if (typeof principalId !== 'string' || principalId.length === 0) return [];
+  const qs = new URLSearchParams({ principalType, principalId, resourceType: SITE_RESOURCE });
+  const listed = await gatekeeperRequest('GET', `/api/grants?${qs}`);
+  if (!listed.ok || !isRecord(listed.data) || !Array.isArray(listed.data.grants)) {
+    logger?.warn?.('Could not list the site grants of a principal before revoking its grants');
+    return [];
+  }
+  return listed.data.grants.filter(
+    (g) =>
+      isRecord(g) &&
+      g.resourceType === SITE_RESOURCE &&
+      g.principalType === principalType &&
+      g.principalId === principalId,
   );
 }
