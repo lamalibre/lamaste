@@ -40,7 +40,7 @@ import { readTunnels, readSites } from '../../lib/state.js';
 import { getAgentHostFactsHash, loadAgentRegistry } from '../../lib/mtls.js';
 import { getChiselCredentialIssuedAt } from '../../lib/chisel-users.js';
 import { buildChiselArgs } from '../../lib/chisel-args.js';
-import { listAgentPluginAssignments } from '../../lib/plugin-hosting.js';
+import { listAgentPluginAssignments, withEffectiveBodyLimit } from '../../lib/plugin-hosting.js';
 import { pendingAgentJobs } from '../../lib/agent-jobs.js';
 import { recordAgentContact } from '../../lib/agent-presence.js';
 import { actorFromRequest } from '../../lib/actor.js';
@@ -412,7 +412,9 @@ export default async function tunnelRoutes(fastify, _opts) {
 
       const total = tunnels.length;
       const windowed = await Promise.all(
-        tunnels.slice(offset, offset + limit).map((t) => withUserSurfaceStatus(t)),
+        tunnels
+          .slice(offset, offset + limit)
+          .map(async (t) => withUserSurfaceStatus(await withEffectiveBodyLimit(t))),
       );
 
       return { tunnels: windowed, total, limit, offset };

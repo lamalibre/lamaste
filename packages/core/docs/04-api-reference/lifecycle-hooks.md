@@ -52,7 +52,7 @@ Only a plugin with `"hosting": "agent"` and an `agent` block may declare hooks. 
 | `tunnel` `timeoutMs`            | default 2 000, at most 10 000                                                                                                                                     |
 | request `timeoutMs`             | default 500, at most 2 000                                                                                                                                        |
 | agent stage `timeoutMs`         | default 60 000, at most 300 000                                                                                                                                   |
-| request `body.maxBytes`         | at most 10 MiB (and the tunnel's body limit). Without `body` the hook sees headers only.                                                                          |
+| request `body.maxBytes`         | at most 10 MiB (and the plugin's request body limit, `agent.maxBodySizeMb`). Without `body` the hook sees headers only.                                           |
 | request `onError`               | `pre-forward`: `reject` (default, 503) or `continue`; `post-forward`: `block` (default, 502) or `pass`                                                            |
 | request `onOversize`            | the same values: what happens when the body is larger than `maxBytes`. Defaults fail closed (413 / 502).                                                          |
 | request `routes`                | 1–20 patterns per hook, at most 20 hooks                                                                                                                          |

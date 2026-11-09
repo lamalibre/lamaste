@@ -78,6 +78,31 @@ export const AgentServiceMemoryMaxSchema = z
   .string()
   .regex(/^[1-9][0-9]{0,5}[KMG]$/, 'memoryMax is a size such as "512M" (K, M or G)');
 
+/**
+ * The largest request body, in MiB, the relay passes on to an agent half:
+ * the manifest's `agent.maxBodySizeMb`, `default` when it declares none.
+ * nginx applies it in the locations of the plugin's user surface (on a
+ * tunnel and on the site of its web surface) and the panel's forwarder in
+ * front of the agent half — every request it forwards, whoever sends it.
+ *
+ * `max` is what an agent may set on a tunnel of its own
+ * (`TUNNEL_MAX_BODY_MB.agentMax`), and `default` a tunnel's default: a
+ * plugin's agent half runs on an agent, and its publisher gets no more than
+ * that agent could open for itself. A plugin that needs more streams its
+ * data in requests under the limit.
+ */
+export const AGENT_HALF_MAX_BODY_MB = Object.freeze({ default: 10, min: 1, max: 100 });
+
+/** `agent.maxBodySizeMb`: a whole number of MiB within {@link AGENT_HALF_MAX_BODY_MB}. */
+export const AgentHalfMaxBodySizeSchema = z
+  .number()
+  .int('maxBodySizeMb is a whole number of MiB')
+  .min(AGENT_HALF_MAX_BODY_MB.min, `maxBodySizeMb must be at least ${AGENT_HALF_MAX_BODY_MB.min}`)
+  .max(
+    AGENT_HALF_MAX_BODY_MB.max,
+    `maxBodySizeMb must be at most ${AGENT_HALF_MAX_BODY_MB.max} (MiB)`,
+  );
+
 /** A version of an agent half: semver without build metadata. */
 export const AgentHalfVersionSchema = z
   .string()
@@ -143,6 +168,19 @@ export function agentHalfOf(manifest: Pick<ParsedManifest, 'agent'>): AgentHalfD
     service: { entry: agent.service.entry, memoryMax: agent.service.memoryMax ?? null },
     systemPackages: [...new Set(agent.requires?.systemPackages ?? [])].sort(),
   };
+}
+
+/**
+ * The request body limit of a plugin's agent half, in MiB: its
+ * `agent.maxBodySizeMb`, or {@link AGENT_HALF_MAX_BODY_MB}`.default` when
+ * it declares none (or has no agent block). Read from the installed
+ * version's record, so the limit follows the version being served — the
+ * one its approval covers.
+ */
+export function agentHalfMaxBodyMb(manifest: {
+  readonly agent?: { readonly maxBodySizeMb?: number | undefined } | null | undefined;
+}): number {
+  return manifest.agent?.maxBodySizeMb ?? AGENT_HALF_MAX_BODY_MB.default;
 }
 
 // ---------------------------------------------------------------------------

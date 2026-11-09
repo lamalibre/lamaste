@@ -51,11 +51,13 @@ let halfConfigPath;
 let half; // the fake agent half (http.Server)
 let halfPort;
 let halfSeen; // last request the half received
+let echoReceived = 0; // bytes /admin/echo has received of the request it is reading
 let brokenHalf; // answers 500 to everything, without authenticating it — a squatter
 let brokenPort;
 
 const PLUGIN = 'fx';
 const MAX_BODY = 64 * 1024;
+const MIB = 1024 * 1024;
 
 function listen(server) {
   return new Promise((resolve) =>
@@ -104,7 +106,11 @@ async function startFakeHalf() {
     }
     if (url.pathname === '/admin/echo') {
       let bytes = 0;
-      req.on('data', (c) => (bytes += c.length));
+      echoReceived = 0;
+      req.on('data', (c) => {
+        bytes += c.length;
+        echoReceived = bytes;
+      });
       req.on('end', () => {
         head(200, {
           'content-type': 'application/json',
@@ -437,6 +443,9 @@ async function forwarderApp() {
           if (route === 'broken')
             return { plugin: PLUGIN, port: brokenPort, secret, maxBodyBytes: MAX_BODY };
           if (route === 'dead') return { plugin: PLUGIN, port: 1, secret, maxBodyBytes: MAX_BODY };
+          // A plugin declaring agent.maxBodySizeMb 26 (corral's documents: 25 MiB).
+          if (route === 'big')
+            return { plugin: PLUGIN, port: halfPort, secret, maxBodyBytes: 26 * MIB };
           if (route === 'off') return { kind: 'disabled' };
           if (route === 'nohost') return { kind: 'not_hosted' };
           return { kind: 'not_found' };
@@ -778,6 +787,90 @@ test('forwarder: bodies stream through, the body limit holds, set-cookie never r
       req.end();
     });
     assert.equal(chunked.status, 413, chunked.body);
+  } finally {
+    await app.close();
+  }
+});
+
+test('forwarder: a 25 MiB upload streams through to the agent half under a 26 MiB limit', async () => {
+  const app = await forwarderApp();
+  try {
+    const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    const post = (headers, send) =>
+      new Promise((resolve, reject) => {
+        const req = http.request(
+          `${address}/api/big/echo`,
+          {
+            method: 'POST',
+            headers: {
+              'x-test-role': 'admin',
+              'content-type': 'application/octet-stream',
+              ...headers,
+            },
+          },
+          (res) => {
+            let text = '';
+            res.on('data', (c) => (text += c));
+            res.on('end', () => resolve({ status: res.statusCode, body: text }));
+          },
+        );
+        req.on('error', reject);
+        send(req).catch(reject);
+      });
+    /** Until the agent half has received some of the body — or fail after `ms`. */
+    const halfReceives = async (ms) => {
+      const until = Date.now() + ms;
+      while (echoReceived === 0) {
+        if (Date.now() > until) throw new Error('the agent half received nothing yet');
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    };
+
+    // 25 MiB with its Content-Length — far above Fastify's own 1 MiB
+    // default, which never applies: nothing parses a forwarded body. The
+    // half receives the first MiB while the client has not sent the rest:
+    // the body is piped, never held whole.
+    const length = 25 * MIB;
+    echoReceived = 0;
+    const declared = await post({ 'content-length': String(length) }, async (req) => {
+      req.write(Buffer.alloc(MIB, 'a'));
+      await halfReceives(5_000);
+      assert.ok(echoReceived <= MIB, 'only what the client has sent so far');
+      for (let sent = MIB; sent < length; sent += MIB) req.write(Buffer.alloc(MIB, 'a'));
+      req.end();
+    });
+    assert.equal(declared.status, 200, declared.body);
+    assert.equal(JSON.parse(declared.body).bytes, length);
+
+    // Chunked, without a length: up to the limit it passes, past it it is cut.
+    const chunkedAt = (total) =>
+      post({ 'transfer-encoding': 'chunked' }, async (req) => {
+        for (let sent = 0; sent < total; sent += MIB) {
+          req.write(Buffer.alloc(Math.min(MIB, total - sent), 'c'));
+        }
+        req.end();
+      });
+    const atLimit = await chunkedAt(26 * MIB);
+    assert.equal(atLimit.status, 200, atLimit.body);
+    assert.equal(JSON.parse(atLimit.body).bytes, 26 * MIB);
+    const over = await chunkedAt(26 * MIB + 1);
+    assert.equal(over.status, 413, over.body);
+    assert.equal(JSON.parse(over.body).maxBodyBytes, 26 * MIB);
+
+    // A declared length past the limit is refused before anything is sent.
+    halfSeen = null;
+    const tooLarge = await app.inject({
+      method: 'POST',
+      url: '/api/big/echo',
+      headers: {
+        'x-test-role': 'admin',
+        'content-type': 'application/octet-stream',
+        'content-length': String(26 * MIB + 1),
+      },
+      payload: Buffer.alloc(26 * MIB + 1),
+    });
+    assert.equal(tooLarge.statusCode, 413);
+    assert.equal(halfSeen, null);
   } finally {
     await app.close();
   }

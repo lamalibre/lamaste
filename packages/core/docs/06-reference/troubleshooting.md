@@ -634,6 +634,16 @@ curl -s --cert client.p12:password \
 
 ---
 
+## A Plugin's Users Cannot Upload Large Files (413, or 500 Before 4.12)
+
+**Symptom:** On an agent-hosted plugin's site or user surface (`/api/<route>/app/…`), an upload fails with `413`. Before 4.12, an upload above 1 MiB on a plugin's site failed with `500`, and nginx's error log said `auth request unexpected status: 413`.
+
+**Cause:** The request is larger than the plugin's request body limit: its manifest's `agent.maxBodySizeMb`, 10 MiB when it declares none. The `500` was nginx's own 1 MiB in the site's Gatekeeper check, which 4.12 lifts: the internal locations check no body limit, only the location serving the request does.
+
+**Fix:** The limit is the plugin's to declare (at most 100 MiB) and an administrator's to approve: a version declaring a higher one waits for approval, auto-approve or not. The tunnels API cannot change it — an internal tunnel has none of its own. See [Request body limit](../04-api-reference/agent-hosted-plugins.md#request-body-limit).
+
+---
+
 ## Agent Panel or Plugin Tunnel Answers 401 Through the Relay
 
 **Symptom:** `https://agent-<label>.<domain>/` (with a valid certificate) or a plugin tunnel (after the Authelia login) answers `401 {"error":"Unauthorized"}`, while the agent's own desktop app works.

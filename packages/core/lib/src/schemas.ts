@@ -11,6 +11,7 @@ import semver from 'semver';
 import { z } from 'zod';
 import {
   APPHOST_ROUTE_RE,
+  AgentHalfMaxBodySizeSchema,
   AgentHalfPackageNameSchema,
   AgentServiceEntrySchema,
   AgentServiceMemoryMaxSchema,
@@ -398,6 +399,12 @@ export const AgentBlockSchema = z
     package: AgentHalfPackageNameSchema.optional(),
     /** How the agent half runs; required with `package`, and only with it. */
     service: AgentServiceSchema.optional(),
+    /**
+     * The largest request body the relay passes on to the agent half, in
+     * MiB (`AGENT_HALF_MAX_BODY_MB`: 1–100, default 10). Covered by the
+     * plugin's approval when declared.
+     */
+    maxBodySizeMb: AgentHalfMaxBodySizeSchema.optional(),
   })
   .strict()
   .superRefine((block, ctx) => {

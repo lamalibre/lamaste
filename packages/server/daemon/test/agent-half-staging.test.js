@@ -232,6 +232,7 @@ test('an update whose agent half changed waits for approval and is pinned again 
     'agentHalf',
     'approvalRequired',
     'autoApproveWithheld',
+    'body',
     'digest',
     'identity',
     'relay',

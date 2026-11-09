@@ -23,6 +23,7 @@
 import {
   AGENT_LABEL_REGEX,
   PLUGIN_AGENT_CN_PREFIX,
+  agentHalfMaxBodyMb,
   agentHookSetOf,
   derivePluginRoute,
   hasAgentHalf,
@@ -30,7 +31,6 @@ import {
   pluginHostCapability,
 } from '@lamalibre/lamaste';
 import {
-  TUNNEL_MAX_BODY_MB,
   getPluginHosting,
   pluginHostingOwner,
   readPluginHostings,
@@ -47,7 +47,6 @@ import {
 } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { getConfig } from './config.js';
-import { readTunnels } from './state.js';
 import {
   getAgentHostFacts,
   loadAgentRegistry,
@@ -626,6 +625,22 @@ export async function acknowledgeAgentPluginConfig(label, route, issuedAt) {
 // ---------------------------------------------------------------------------
 
 /**
+ * A tunnel as the tunnels API shows it, with the body limit that applies to
+ * it: an internal tunnel has none of its own, so it shows its plugin's
+ * (`agentHalfMaxBodyMb` of the installed version; the default when the
+ * plugin is gone). A 4.3–4.11 internal tunnel's stored 10 is not shown.
+ *
+ * @param {object} tunnel
+ * @returns {Promise<object>}
+ */
+export async function withEffectiveBodyLimit(tunnel) {
+  if (tunnel.exposure !== 'internal') return tunnel;
+  const { findPluginByRoute } = await import('./plugins.js');
+  const plugin = tunnel.pluginRoute ? await findPluginByRoute(tunnel.pluginRoute) : null;
+  return { ...tunnel, maxBodySizeMb: agentHalfMaxBodyMb(plugin ?? {}) };
+}
+
+/**
  * Resolve a route to a forward target — of the admin forwarder
  * (`agentForwarderPlugin`) and the user surface alike.
  *
@@ -651,14 +666,12 @@ export async function resolveForwardTarget(route) {
   if (record.health?.state === 'down') {
     return { kind: 'down', reason: record.health.reason === 'app' ? 'app' : 'tunnel' };
   }
-  const tunnels = await readTunnels();
-  const tunnel = tunnels.find((t) => t.id === record.tunnelId);
-  const maxBodyMb = tunnel?.maxBodySizeMb ?? TUNNEL_MAX_BODY_MB.default;
   return {
     plugin: route,
     port: record.port,
     secret: signingSecretFor(record),
-    maxBodyBytes: maxBodyMb * 1024 * 1024,
+    // The installed version's limit — the version its approval covers.
+    maxBodyBytes: agentHalfMaxBodyMb(plugin) * 1024 * 1024,
   };
 }
 

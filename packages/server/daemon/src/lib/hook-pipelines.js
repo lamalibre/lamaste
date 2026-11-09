@@ -53,7 +53,6 @@ import {
   pluginHostCapability,
 } from '@lamalibre/lamaste';
 import {
-  TUNNEL_MAX_BODY_MB,
   TunnelError,
   PluginHostingError,
   callAgentHalfHook,
@@ -235,7 +234,6 @@ const coreTunnelOps = Object.freeze({
       pluginName: ctx.plugin.packageName,
       agentLabel: ctx.agentLabel,
       description: `Internal tunnel of plugin ${ctx.plugin.name}`,
-      maxBodySizeMb: TUNNEL_MAX_BODY_MB.default,
       enabled: false,
       domain: ctx.domain,
       email: ctx.email,

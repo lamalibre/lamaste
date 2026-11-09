@@ -25,7 +25,7 @@
 
 import crypto from 'node:crypto';
 
-import { AgentHalfSpecSchema } from './agent-half.js';
+import { AgentHalfMaxBodySizeSchema, AgentHalfSpecSchema } from './agent-half.js';
 import type { AgentHalfSpec } from './agent-half.js';
 import { normalizeIdentityBlock } from './identity.js';
 import type { IdentityBlockInput } from './identity.js';
@@ -210,20 +210,28 @@ export interface ApprovalSubject {
    * `sha256`); null or omitted when it declares none.
    */
   readonly web?: { readonly treeSha256: string } | null | undefined;
+  /**
+   * The agent half's request body limit as the manifest declares it
+   * (`agent.maxBodySizeMb`, MiB); null or omitted when it declares none —
+   * the default then applies, and nothing about it is approved.
+   */
+  readonly maxBodySizeMb?: number | null | undefined;
 }
 
 /**
  * The digest an approval names: SHA-256 (hex) of the canonical JSON (keys
  * sorted at every level) of
- * `{ v: 2, relay: { set, entrySha256 } | null, agentHalf: { package, version, integrity, service: { entry, memoryMax }, systemPackages } | null, identity?: { roles, attributes }, web?: { treeSha256 } }`,
+ * `{ v: 2, relay: { set, entrySha256 } | null, agentHalf: { package, version, integrity, service: { entry, memoryMax }, systemPackages } | null, identity?: { roles, attributes }, web?: { treeSha256 }, body?: { maxBodySizeMb } }`,
  * with the agent half's system packages sorted and without repeats,
  * `identity` — the block as {@link normalizeIdentityBlock} returns it —
- * only when the plugin declares one, and `web` only when it declares a web
- * surface: a digest without them is the digest of the same subject before
- * they existed, byte for byte. Throws on an entry or tree digest that is
- * not SHA-256 hex, an agent half that is not a valid {@link AgentHalfSpec}
- * (`AgentHalfSpecSchema`, which refuses unknown keys) or an identity block
- * that is not valid — none can be approved.
+ * only when the plugin declares one, `web` only when it declares a web
+ * surface and `body` only when it declares a request body limit: a digest
+ * without them is the digest of the same subject before they existed, byte
+ * for byte. Throws on an entry or tree digest that is not SHA-256 hex, an
+ * agent half that is not a valid {@link AgentHalfSpec}
+ * (`AgentHalfSpecSchema`, which refuses unknown keys), an identity block
+ * that is not valid or a body limit outside `AgentHalfMaxBodySizeSchema` —
+ * none can be approved.
  */
 export function approvalDigest(subject: ApprovalSubject): string {
   const { relay } = subject;
@@ -257,12 +265,17 @@ export function approvalDigest(subject: ApprovalSubject): string {
   if (web && !/^[a-f0-9]{64}$/.test(web.treeSha256)) {
     throw new Error('web.treeSha256 must be a SHA-256 hex digest');
   }
+  const maxBodySizeMb = subject.maxBodySizeMb ?? null;
+  if (maxBodySizeMb !== null && !AgentHalfMaxBodySizeSchema.safeParse(maxBodySizeMb).success) {
+    throw new Error('maxBodySizeMb is not a request body limit an agent half may declare');
+  }
   const doc = canonical({
     v: HOOK_SET_DIGEST_VERSION,
     relay: relay ? { set: relay.set, entrySha256: relay.entrySha256 } : null,
     agentHalf,
     ...(identity ? { identity } : {}),
     ...(web ? { web: { treeSha256: web.treeSha256 } } : {}),
+    ...(maxBodySizeMb !== null ? { body: { maxBodySizeMb } } : {}),
   });
   return crypto.createHash('sha256').update(JSON.stringify(doc)).digest('hex');
 }

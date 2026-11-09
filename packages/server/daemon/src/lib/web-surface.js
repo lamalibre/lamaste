@@ -36,14 +36,15 @@
 
 import crypto from 'node:crypto';
 import {
+  AGENT_HALF_MAX_BODY_MB,
   KeyedPromiseChainMutex,
+  agentHalfMaxBodyMb,
   isWebSurfaceSubdomain,
   siteUserSurfaceRoute,
   tunnelUserSurfaceRoutes,
   WebTreeError,
 } from '@lamalibre/lamaste';
 import {
-  TUNNEL_MAX_BODY_MB,
   WEB_TREES_ROOT,
   hostnameHolder,
   readWebTreeStore,
@@ -81,7 +82,7 @@ import { installedWebTreeDir } from './plugin-packages.js';
 import { findPluginByRoute } from './plugins.js';
 import { siteGrantsView } from './site-grants.js';
 import { readSites, readTunnels, withSitesLock, writeSites, writeTunnels } from './state.js';
-import { hostingAgentOf, internalTunnelBodyLimit } from './user-surface.js';
+import { hostingAgentOf } from './user-surface.js';
 
 /** Where the web trees live (a test points it elsewhere). */
 const TREES_ROOT = process.env.LAMALIBRE_LAMASTE_WEB_TREES_ROOT || WEB_TREES_ROOT;
@@ -232,13 +233,12 @@ async function siteDomain(site) {
  */
 async function renderOwnedSite(site, route, certDir, tunnels, domain) {
   const serving = await webSurfaceServing(route, tunnels);
-  const maxBodySizeMb = serving.plugin
-    ? await internalTunnelBodyLimit(serving.plugin, tunnels)
-    : undefined;
   return renderWebSurfaceVhost(site, certDir, domain, {
     route,
     served: serving.served,
-    maxBodySizeMb: maxBodySizeMb ?? TUNNEL_MAX_BODY_MB.default,
+    maxBodySizeMb: serving.plugin
+      ? agentHalfMaxBodyMb(serving.plugin)
+      : AGENT_HALF_MAX_BODY_MB.default,
     treesDir: webTreesDir(route),
     clearSiteData: !serving.served && serving.reason === 'not_installed',
   });
@@ -745,7 +745,7 @@ export function moveWebSurfaceFromTunnel(route, tunnelId, { actor, logger }) {
         await deps.moveAppVhostToWebSurface(tunnel.fqdn, site, certDir, domain, {
           route,
           served: (await webSurfaceServing(route, movedTunnels)).served,
-          maxBodySizeMb: await internalTunnelBodyLimit(plugin, movedTunnels),
+          maxBodySizeMb: agentHalfMaxBodyMb(plugin),
           treesDir: webTreesDir(route),
         });
       } catch (err) {
