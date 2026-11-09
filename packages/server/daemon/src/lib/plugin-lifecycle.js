@@ -26,6 +26,7 @@
  */
 
 import {
+  AGENT_HALF_MAX_BODY_MB,
   ManifestValidationError,
   agentHalfMaxBodyMb,
   agentHalfPreview,
@@ -635,15 +636,18 @@ function bodyLimitPreview(plugin, staged) {
  * Why auto-approve may not stand in for an administrator on a staged
  * version's request body limit: it rises — the relay would let larger
  * requests through to the agent half than an administrator agreed to. A
- * limit that stays or falls is covered.
+ * version bringing an agent half where there was none rises from the
+ * default. A limit that stays or falls is covered.
  */
 function bodyLimitWithheld(plugin, staged) {
   const body = bodyLimitPreview(plugin, staged);
-  if (body === null || body.before === null || body.after <= body.before) return [];
+  if (body === null) return [];
+  const before = body.before ?? AGENT_HALF_MAX_BODY_MB.default;
+  if (body.after <= before) return [];
   return [
     {
       code: 'body.raised',
-      message: `its request body limit rises (${body.before} → ${body.after} MiB)`,
+      message: `its request body limit rises (${before} → ${body.after} MiB)`,
     },
   ];
 }

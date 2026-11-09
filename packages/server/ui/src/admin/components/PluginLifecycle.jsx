@@ -664,17 +664,19 @@ function ApprovalContents({ relay, agentHalf, identity, web, body }) {
 }
 
 /**
- * What an update changes in the agent half's request body limit
+ * What an update brings for the agent half's request body limit
  * (`pendingUpdate.body`: `{ before, after, declared }` in MiB, part of the
- * digest when declared). Nothing when it stays the same.
+ * digest when declared). Nothing when it stays the default, undeclared.
  */
 function BodyLimitChange({ body }) {
-  if (!body || body.before === body.after) return null;
+  if (!body || (body.before === body.after && !body.declared)) return null;
   return (
     <div className="text-zinc-400">
       <span className="text-zinc-500">request body limit </span>
       <span className="font-mono text-zinc-300">
-        {body.before === null ? 'none' : `${body.before} MiB`} → {body.after} MiB
+        {body.before === body.after
+          ? `${body.after} MiB, unchanged`
+          : `${body.before === null ? 'none' : `${body.before} MiB`} → ${body.after} MiB`}
       </span>
       {!body.declared && <span className="text-zinc-500"> (the default)</span>}
     </div>
