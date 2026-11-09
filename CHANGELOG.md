@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.12.0] - 2026-11-09
 
 A plugin's request body limit: an agent-hosted plugin declares how large a request its agent half takes — `agent.maxBodySizeMb` in its manifest, up to 100 MiB — and an administrator approves it with the plugin. Before, every agent half took at most 10 MiB, which nothing could raise, and a plugin's site refused anything above 1 MiB with a `500`. Reference: `04-api-reference/agent-hosted-plugins.md#request-body-limit`.
 
