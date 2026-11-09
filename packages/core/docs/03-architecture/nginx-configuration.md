@@ -578,12 +578,17 @@ server {
     location = /internal/lamaste/shell-authz {
         internal;
         auth_request off;
+        # Never reads the body: the location serving the request owns the limit
+        client_max_body_size 0;
         proxy_pass http://127.0.0.1:9294/authz/user-surface-shell/piyasa.example.com;
         # ... as every Gatekeeper subrequest
     }
 
-    # /internal/lamaste/user-surface-authz, -401 and the /api/market-indicators/app
-    # locations — exactly the user-surface locations of a bound tunnel
+    # /internal/lamaste/user-surface-authz, -401, -403 and the
+    # /api/market-indicators/app locations — exactly the user-surface
+    # locations of a bound tunnel. No client_max_body_size at server level:
+    # the shell takes no body (nginx's 1 MiB, and 405 for anything but GET
+    # and HEAD); the API's locations carry the plugin's limit.
 
     # A script, style, font or image the current tree lacks: the previous
     # tree's (a page still running the old shell), else 404
@@ -830,6 +835,9 @@ An `authenticated` or `restricted` app tunnel bound as the user surface of agent
     # vouches for the session's user to the panel, for one request each.
     location = /internal/lamaste/user-surface-authz {
         internal;
+        auth_request off;
+        # Never reads the body: the location serving the request owns the limit
+        client_max_body_size 0;
 
         proxy_pass http://127.0.0.1:9294/authz/user-surface/app.example.com;
         proxy_pass_request_body off;
@@ -848,6 +856,8 @@ An `authenticated` or `restricted` app tunnel bound as the user surface of agent
 
     location = /internal/lamaste/user-surface-401 {
         internal;
+        auth_request off;
+        client_max_body_size 0;
 
         proxy_pass http://127.0.0.1:9294/authz/user-surface-unauthenticated;
         proxy_pass_request_body off;
@@ -893,7 +903,7 @@ An `authenticated` or `restricted` app tunnel bound as the user surface of agent
         proxy_pass http://127.0.0.1:3100;
         proxy_http_version 1.1;
 
-        client_max_body_size 10m;      # the plugin's internal tunnel's maxBodySizeMb
+        client_max_body_size 26m;      # the plugin's agent.maxBodySizeMb (default 10)
         # No response lives longer (the panel ends one then)
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
@@ -905,7 +915,7 @@ An `authenticated` or `restricted` app tunnel bound as the user surface of agent
 
 - **Gatekeeper attests, the panel identifies.** The subrequest names the tunnel as the tunnel's own does; Gatekeeper answers with a single-use relay assertion for the panel (never cached) and no `Remote-*` headers. The location passes that assertion to the panel and **nothing else of the browser's credentials**: the panel serves other contexts on the same listener, so everything any of them trusts — the client-certificate headers, `Remote-*`, a desktop session's `Authorization`, an administrator's 2FA `Cookie`, `X-Forwarded-Host` — is cleared. `X-Forwarded-For` is the client's address alone: the panel trusts one loopback hop, and the user surface's rate limit keys on it.
 - **`proxy_pass` names no URI**, so the panel receives `$request_uri` unchanged — the raw target the assertion is bound to and the panel compares byte for byte. A normalized path would differ from what Gatekeeper signed.
-- **The body limit is the plugin's** (its internal tunnel's `maxBodySizeMb`), not the tunnel's. The timeouts are one hour (`USER_SURFACE_MAX_RESPONSE_SECONDS`), the longest a user-surface response lives: long enough for server-sent events, which the panel streams unbuffered, and no longer than the panel lets any response stay open — it ends one after an hour, and at once when its user loses access.
+- **The body limit is the plugin's** (its manifest's `agent.maxBodySizeMb`, 1–100 MiB, default 10 — [Request body limit](../04-api-reference/agent-hosted-plugins.md#request-body-limit)), not the tunnel's, and only these two locations carry it. **The internal locations check none** (`client_max_body_size 0`): the Gatekeeper subrequest, and the `401` and `403` locations a refusal is redirected to. nginx checks a request's `Content-Length` against the limit of every location it enters — a subrequest and an internal redirect keep the main request's headers — so without it these locations would keep the server block's limit: the tunnel's, or nginx's own 1 MiB on a plugin's site, which sets none. An upload above it failed Gatekeeper's check with `413`, which `auth_request` answers as `500`, and a refusal became `413`. `0` is exact: the location serving the request applied its limit before any of them is entered, and none reads a byte of the body (`proxy_pass_request_body off`, or a fixed answer). The tunnel's own Gatekeeper location (`/internal/lamaste/authz`) carries the same line. The timeouts are one hour (`USER_SURFACE_MAX_RESPONSE_SECONDS`), the longest a user-surface response lives: long enough for server-sent events, which the panel streams unbuffered, and no longer than the panel lets any response stay open — it ends one after an hour, and at once when its user loses access.
 - **The panel's answer steers nothing.** It never carries `X-Accel-*` from an agent half (nginx obeys `X-Accel-Redirect` from 3100); the panel sets `X-Accel-Buffering: no` itself on an event stream. Every answer carries `Cross-Origin-Resource-Policy: same-origin`, `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`, and no `Access-Control-*`.
 - **`= /api/<route>/app`** and **`/api/<route>/app/`** are both needed: a prefix location `/api/<route>/app` would also match `/api/<route>/apps`, which belongs to the tunnel.
 
