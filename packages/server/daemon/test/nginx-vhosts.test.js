@@ -926,14 +926,80 @@ test('a domain without a page language keeps its 4.9.0 auth vhost but for the pa
   }
 });
 
-test('a served web surface keeps its 4.9.0 vhost byte for byte (regression pin)', async () => {
+test('a body above the server block’s limit passes the Gatekeeper checks it meets: only the serving location limits it', () => {
+  /** Every `client_max_body_size` of location `matcher` in `text`. */
+  const limits = (text, matcher) =>
+    locationBody(text, matcher).match(/client_max_body_size \S+;/g) ?? [];
+  const internal = [
+    '/internal/lamaste/authz',
+    '= /internal/lamaste/user-surface-authz',
+    '= /internal/lamaste/user-surface-401',
+    '= /internal/lamaste/user-surface-403',
+  ];
+  // A tunnel of 20 MiB serving a plugin of 50 MiB: the plugin's upload
+  // passes the tunnel's own limit only where it is served.
+  for (const mode of ['restricted', 'authenticated']) {
+    const { config } = nginx.renderTunnelVhost(
+      mode,
+      'kamera.example.com',
+      'example.com',
+      20020,
+      undefined,
+      { maxBodySizeMb: 20, userSurface: [{ route: 'camwatch', maxBodySizeMb: 50 }] },
+    );
+    assert.match(config, /^ {4}client_max_body_size 20m;$/m, mode);
+    for (const matcher of internal) {
+      assert.deepEqual(limits(config, matcher), ['client_max_body_size 0;'], `${mode} ${matcher}`);
+      assert.match(locationBody(config, matcher), /^\s*internal;$/m, `${mode} ${matcher}`);
+    }
+    for (const matcher of ['= /api/camwatch/app', '^~ /api/camwatch/app/']) {
+      assert.deepEqual(limits(config, matcher), ['client_max_body_size 50m;'], matcher);
+    }
+    assert.deepEqual(limits(config, '/'), [], 'the tunnel’s own locations keep its 20 MiB');
+    assert.doesNotThrow(() => validateVhost(config), mode);
+  }
+
+  // A plugin's site sets no limit of its own (nginx's 1 MiB): a 26 MiB
+  // upload to its API meets four internal locations, none of which limits it.
+  const { config } = nginx.renderWebSurfaceVhost(
+    { id: 'corral-site', fqdn: 'portal.beta.example' },
+    '/etc/letsencrypt/live/portal.beta.example',
+    'beta.example',
+    { route: 'corral', maxBodySizeMb: 26, treesDir: '/var/www/lamaste/apps/corral', served: true },
+  );
+  assert.doesNotMatch(config, /^ {4}client_max_body_size/m);
+  for (const matcher of [
+    '= /internal/lamaste/shell-authz',
+    '= /internal/lamaste/user-surface-authz',
+    '= /internal/lamaste/user-surface-401',
+    '= /internal/lamaste/user-surface-403',
+  ]) {
+    assert.deepEqual(limits(config, matcher), ['client_max_body_size 0;'], matcher);
+  }
+  for (const matcher of ['= /api/corral/app', '^~ /api/corral/app/']) {
+    assert.deepEqual(limits(config, matcher), ['client_max_body_size 26m;'], matcher);
+  }
+  // The shell takes no body: nginx's 1 MiB, and 405 for anything but GET and HEAD.
+  assert.deepEqual(limits(config, '/'), []);
+  assert.doesNotThrow(() => validateVhost(config));
+});
+
+/** The lines 4.12 adds to the internal locations that never read the body. */
+const BODY_NOT_READ_LINES =
+  /\n {8}# Never reads the body: the location serving the request owns the limit\n {8}client_max_body_size 0;/g;
+
+test('a served web surface keeps its 4.9.0 vhost but for its internal locations’ body limit (regression pin)', async () => {
   const now = nginx.renderWebSurfaceVhost(
     { id: 'demo-site', fqdn: 'app.beta.example' },
     '/etc/letsencrypt/live/app.beta.example',
     'beta.example',
     { route: 'demo', maxBodySizeMb: 10, treesDir: '/var/www/lamaste/apps/demo', served: true },
   ).config;
-  assert.equal(now, await fixture49('web-surface-served.conf'));
+  const before = await fixture49('web-surface-served.conf');
+  // The shell's and the API's Gatekeeper checks, the API's 401 and 403.
+  assert.equal(now.match(BODY_NOT_READ_LINES)?.length, 4);
+  assert.notEqual(now, before, 'the start’s reconcile rewrites it');
+  assert.equal(now.replace(BODY_NOT_READ_LINES, ''), before);
 });
 
 test('a domain with a page language: every locale file forced, the index in its language, the menu hidden — all through lamaste-priv', () => {

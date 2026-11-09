@@ -254,7 +254,12 @@ test('outdated tunnel vhosts are rewritten on the certificate they name', async 
     /proxy_set_header X-Original-URL https:\/\/app\.example\.com\$request_uri;/,
   );
   assert.match(appWrite.config, /proxy_set_header Host app\.example\.com;/);
-  assert.doesNotMatch(appWrite.config, /\$http_host|client_max_body_size/);
+  assert.doesNotMatch(appWrite.config, /\$http_host/);
+  // No limit of its own: only the Gatekeeper check, which never reads the
+  // body, says it checks none.
+  assert.deepEqual(appWrite.config.match(/client_max_body_size \S+;/g), [
+    'client_max_body_size 0;',
+  ]);
 });
 
 test('a rewrite never adds or removes authentication on a tunnel', async () => {

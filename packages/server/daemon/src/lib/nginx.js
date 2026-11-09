@@ -1048,10 +1048,29 @@ const USER_SURFACE_PROXY_HEADERS = `
         proxy_set_header Connection "";`;
 
 /**
+ * The body limit of an internal location that never reads the request
+ * body: a Gatekeeper subrequest (`proxy_pass_request_body off`) and the
+ * places a refused request is redirected to (`error_page`). nginx checks
+ * `client_max_body_size` against the client's `Content-Length` in every
+ * location a request enters — a subrequest and an internal redirect
+ * included, which keep the main request's headers — so without this line
+ * such a location keeps the limit of the server block (nginx's own 1 MiB
+ * where it sets none): Gatekeeper's check of a larger upload failed with
+ * 413, which `auth_request` answers as 500, and a refusal turned into 413.
+ * `0` (no check) is exact here: the location that serves the request has
+ * already applied its own limit before any of these is entered, and none
+ * of them reads a byte of the body.
+ */
+const BODY_NOT_READ = `
+        # Never reads the body: the location serving the request owns the limit
+        client_max_body_size 0;`;
+
+/**
  * The body of a tunnel vhost's Gatekeeper subrequest location,
  * `/authz/<check>/<fqdn>`: the tunnel is named in the path, in
  * `X-Original-URL` and in `Host` — never by the client's `Host` header (see
- * {@link originalUrl}) — and the session cookie is passed on.
+ * {@link originalUrl}) — and the session cookie is passed on. The body is
+ * never passed, and never limited here ({@link BODY_NOT_READ}).
  *
  * @param {'tunnel'|'user-surface'|'user-surface-shell'} check
  * @param {string} fqdn
@@ -1060,7 +1079,7 @@ const USER_SURFACE_PROXY_HEADERS = `
 function gatekeeperSubrequest(check, fqdn) {
   return `internal;
         # A subrequest is never authorized itself (a host may authorize at server level)
-        auth_request off;
+        auth_request off;${BODY_NOT_READ}
 
         proxy_pass http://127.0.0.1:9294/authz/${check}/${fqdn};
         proxy_pass_request_body off;
@@ -1101,7 +1120,9 @@ function gatekeeperSubrequest(check, fqdn) {
  * browser's credentials ({@link USER_SURFACE_PROXY_HEADERS}), to the panel
  * with `proxy_pass` naming no URI: the panel receives the request target
  * exactly as the browser sent it — the target the assertion is bound to.
- * The body limit is the plugin's (its internal tunnel's); the timeouts are
+ * The body limit is the plugin's (`agent.maxBodySizeMb`, `agentHalfMaxBodyMb`),
+ * and the internal locations a request may enter on its way check none
+ * ({@link BODY_NOT_READ}); the timeouts are
  * the longest a user-surface response lives (`USER_SURFACE_MAX_RESPONSE_SECONDS`,
  * one hour — the panel ends one still open then, and ends it at once when
  * its user loses access), long enough for server-sent events, which the
@@ -1156,7 +1177,7 @@ ${USER_SURFACE_PROXY_HEADERS}
     }
 
     location = /internal/lamaste/user-surface-403 {
-        internal;
+        internal;${BODY_NOT_READ}
         default_type application/json;
         add_header Cache-Control "no-store" always;
         add_header X-Content-Type-Options "nosniff" always;
@@ -1168,7 +1189,7 @@ ${USER_SURFACE_PROXY_HEADERS}
 
     location = /internal/lamaste/user-surface-401 {
         internal;
-        auth_request off;
+        auth_request off;${BODY_NOT_READ}
 
         proxy_pass http://127.0.0.1:9294/authz/user-surface-unauthenticated;
         proxy_pass_request_body off;
