@@ -20,6 +20,7 @@ import {
   TunnelError,
   createTunnel,
   reconfigureTunnel,
+  updateTunnel,
 } from '@lamalibre/lamaste/server';
 
 const manifest = (agent) => ({ name: 'corral', version: '1.0.0', hosting: 'agent', agent });
@@ -147,5 +148,16 @@ test('an internal tunnel has no body limit of its own: none is stored, none can 
     (err) => err instanceof TunnelError && err.code === 'INVALID_SETTING',
   );
   assert.equal((await reconfigureTunnel(opts)).tunnel.id, 't1', 'nothing asked: nothing done');
+  // Combined with a move, refused before the move runs: never half applied.
+  await assert.rejects(
+    updateTunnel({
+      ...opts,
+      agentLabel: 'vm2',
+      maxBodySizeMb: 26,
+      chisel: unreachable,
+      agents: unreachable,
+    }),
+    (err) => err instanceof TunnelError && err.code === 'INVALID_SETTING',
+  );
   assert.equal(writes, 0);
 });

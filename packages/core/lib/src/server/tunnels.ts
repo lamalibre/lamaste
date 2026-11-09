@@ -146,7 +146,7 @@ export interface VhostOptions {
 /** One plugin's user surface as a tunnel's vhost serves it. */
 export interface UserSurfaceVhostRoute {
   readonly route: string;
-  /** `client_max_body_size` of its locations, in MiB: the plugin's internal tunnel's body limit. */
+  /** `client_max_body_size` of its locations, in MiB: the plugin's (`agentHalfMaxBodyMb`). */
   readonly maxBodySizeMb: number;
 }
 
@@ -1021,6 +1021,13 @@ export function updateTunnel(
       throw new TunnelError('Tunnel not found', 'NOT_FOUND');
     }
     opts.authorize?.(current);
+    // Refused before any step runs, so a combined request is never half applied.
+    if (current.exposure === 'internal' && opts.maxBodySizeMb !== undefined) {
+      throw new TunnelError(
+        "An internal tunnel has no body limit of its own — its plugin's manifest sets it (agent.maxBodySizeMb)",
+        'INVALID_SETTING',
+      );
+    }
 
     let result: { ok: true; tunnel: TunnelEntry } = { ok: true as const, tunnel: current };
     if (opts.agentLabel !== undefined) {

@@ -176,3 +176,29 @@ test('a limit that stays or falls is covered by auto-approve', async () => {
   assert.equal((await lib.waitForPluginOperation('bl')).status, 'succeeded');
   assert.equal(agentHalfMaxBodyMb(await lib.findPlugin('bl')), 10);
 });
+
+test('a version bringing an agent half where there was none rises from the default: auto-approve withholds it', async () => {
+  const pkg = '@lamalibre/io-server';
+  // Identity only: no agent block, nothing to approve.
+  await npm.publish(pkg, '1.0.0', {
+    'lamaste-plugin.json': JSON.stringify({ name: 'io', version: '1.0.0', hosting: 'agent' }),
+  });
+  await lib.installPlugin(pkg, logger);
+  await lib.setAutoApprove('io', true, actor);
+  // Its next version adds an agent half installed by hand, declaring 100 MiB.
+  await npm.publish(pkg, '1.1.0', {
+    'lamaste-plugin.json': JSON.stringify({
+      name: 'io',
+      version: '1.1.0',
+      hosting: 'agent',
+      agent: { maxBodySizeMb: 100 },
+    }),
+  });
+  const staged = await lib.updatePlugin('io', '1.1.0', actor);
+  assert.ok(staged.pendingUpdate, 'waits for an administrator despite auto-approve');
+  assert.deepEqual(staged.pendingUpdate.body, { before: null, after: 100, declared: true });
+  assert.deepEqual(staged.pendingUpdate.autoApproveWithheld, [
+    'its request body limit rises (10 → 100 MiB)',
+  ]);
+  assert.equal((await lib.findPlugin('io')).version, '1.0.0');
+});
