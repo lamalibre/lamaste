@@ -400,8 +400,8 @@ function updateRefusalText(err, plugin) {
 /**
  * What the installed version brings that an approval covers — its relay
  * hook set, the agent half Lamaste installs, its identity block, its web
- * tree (`{ treeSha256, surface }`; each null when it brings none) — from
- * the hook status.
+ * tree (`{ treeSha256, surface }`), the request body limit it declares
+ * (MiB); each null when it brings none — from the hook status.
  */
 function installedBrings(hooks) {
   return {
@@ -411,6 +411,7 @@ function installedBrings(hooks) {
     web: hooks.web?.declared
       ? { treeSha256: hooks.web.treeSha256, surface: hooks.web.surface ?? null }
       : null,
+    body: hooks.body?.declared ? hooks.body.maxBodySizeMb : null,
   };
 }
 
@@ -424,6 +425,7 @@ function updateBrings(update) {
     agentHalf: update.agentHalf ?? null,
     identity: update.identity?.after ?? null,
     web: update.web?.after ?? null,
+    body: update.body?.declared ? update.body.after : null,
   };
 }
 
@@ -435,27 +437,29 @@ function listed(parts) {
 }
 
 /** What an approval covers, in words, and the verb that goes with it. */
-function approvalSubject({ relay, agentHalf, identity, web }) {
+function approvalSubject({ relay, agentHalf, identity, web, body }) {
   const parts = [
     relay && 'relay hooks',
     agentHalf && 'agent half',
     identity && 'identity',
     web && 'web surface',
+    body && 'request body limit',
   ].filter(Boolean);
   if (parts.length === 0) return { subject: 'relay hooks', plural: true };
   return { subject: listed(parts), plural: parts.length > 1 || parts[0] === 'relay hooks' };
 }
 
 /** The question before approving: what approving lets Lamaste do. */
-function approvalQuestion({ relay, agentHalf, identity, web }) {
+function approvalQuestion({ relay, agentHalf, identity, web, body }) {
   const parts = [
     relay && 'run this code on the relay',
     agentHalf &&
-      (relay || identity || web
+      (relay || identity || web || body
         ? 'install this agent half'
         : 'install this agent half on the hosting agent'),
     identity && 'send it its users with these roles and attributes',
     web && 'serve this web tree to its users',
+    body && `pass it requests of up to ${body} MiB`,
   ].filter(Boolean);
   const question = listed(parts.length > 0 ? parts : ['run this code on the relay']);
   return `${question.charAt(0).toUpperCase()}${question.slice(1)}?`;
@@ -606,10 +610,10 @@ function WebTreeView({ web }) {
  * What a version brings that needs approval — its relay hook set (code
  * Lamaste runs on the relay, in a sandbox), the agent half Lamaste
  * installs on the hosting agent, its identity block (who its users are
- * and what it learns about them) and its web tree (the shell the relay
- * serves to them).
+ * and what it learns about them), its web tree (the shell the relay
+ * serves to them) and the request body limit it declares (MiB).
  */
-function ApprovalContents({ relay, agentHalf, identity, web }) {
+function ApprovalContents({ relay, agentHalf, identity, web, body }) {
   return (
     <>
       {relay && (
@@ -646,7 +650,34 @@ function ApprovalContents({ relay, agentHalf, identity, web }) {
           <WebTreeView web={web} />
         </div>
       )}
+      {body && (
+        <div>
+          <p className="mb-1 text-zinc-500">
+            Request body limit — the largest request the relay passes on to its agent half, an
+            upload included:
+          </p>
+          <div className="font-mono text-zinc-300">{body} MiB</div>
+        </div>
+      )}
     </>
+  );
+}
+
+/**
+ * What an update changes in the agent half's request body limit
+ * (`pendingUpdate.body`: `{ before, after, declared }` in MiB, part of the
+ * digest when declared). Nothing when it stays the same.
+ */
+function BodyLimitChange({ body }) {
+  if (!body || body.before === body.after) return null;
+  return (
+    <div className="text-zinc-400">
+      <span className="text-zinc-500">request body limit </span>
+      <span className="font-mono text-zinc-300">
+        {body.before === null ? 'none' : `${body.before} MiB`} → {body.after} MiB
+      </span>
+      {!body.declared && <span className="text-zinc-500"> (the default)</span>}
+    </div>
   );
 }
 
@@ -1029,6 +1060,7 @@ export function PluginHooks({ plugin, isActing }) {
               <ApprovalContents relay={pendingUpdate.relay} agentHalf={pendingUpdate.agentHalf} />
               <IdentityChanges diff={pendingUpdate.identity} />
               <WebTreeChanges web={pendingUpdate.web} />
+              <BodyLimitChange body={pendingUpdate.body} />
               <SettingsSchemaChanges diff={pendingUpdate.settings} />
               <AutoApproveWithheld reasons={notCovered} />
               <div className="flex items-center gap-2">

@@ -27,6 +27,7 @@
 
 import {
   ManifestValidationError,
+  agentHalfMaxBodyMb,
   agentHalfPreview,
   derivePluginRoute,
   hasAgentHalf,
@@ -317,8 +318,8 @@ function identityApprovalRequired(identity) {
  * in for an administrator on the first reason alone:
  *
  * - `digest.unapproved` — what it brings (relay hooks, the agent half
- *   Lamaste installs, its identity block, its web tree) is not what was
- *   approved;
+ *   Lamaste installs, its identity block, its web tree, its declared
+ *   request body limit) is not what was approved;
  * - `settings.secret-to-plain` — {@link settingsApprovalRequired};
  * - `identity.changed` — {@link identityApprovalRequired}.
  *
@@ -339,6 +340,7 @@ function approvalRequiredFor(staged, state, settings, identity) {
             agentHalf: staged.agentHalf,
             identity: staged.identity,
             web: staged.webTree,
+            body: staged.maxBodySizeMb,
           }),
         ]),
     ...settingsApprovalRequired(settings),
@@ -483,6 +485,8 @@ async function stageVersion(plugin, requestedVersion, record) {
     identity: approval.identity,
     // The staged web tree's manifest (null: it declares no web surface).
     webTree,
+    // The request body limit it declares, MiB (null: it declares none).
+    maxBodySizeMb: approval.maxBodySizeMb,
     // The relay hook set's own digest — what the runner holds.
     relayDigest: approval.relay?.digest ?? null,
     approvalRequired: approval.required,
@@ -609,6 +613,42 @@ async function webTreeChanges(plugin, stagedTree) {
 }
 
 /**
+ * How a staged version changes the agent half's request body limit, for
+ * the update's preview: the installed version's limit (`before`) and the
+ * staged one's (`after`), in MiB, each the declared limit or the default,
+ * and whether the staged version declares it (`declared`) — null when the
+ * staged version has no agent half.
+ *
+ * @param {object} plugin the installed registry entry
+ * @param {{ entry: object }} staged
+ */
+function bodyLimitPreview(plugin, staged) {
+  if (!hasAgentHalf(staged.entry)) return null;
+  return {
+    before: hasAgentHalf(plugin) ? agentHalfMaxBodyMb(plugin) : null,
+    after: agentHalfMaxBodyMb(staged.entry),
+    declared: staged.maxBodySizeMb !== null,
+  };
+}
+
+/**
+ * Why auto-approve may not stand in for an administrator on a staged
+ * version's request body limit: it rises — the relay would let larger
+ * requests through to the agent half than an administrator agreed to. A
+ * limit that stays or falls is covered.
+ */
+function bodyLimitWithheld(plugin, staged) {
+  const body = bodyLimitPreview(plugin, staged);
+  if (body === null || body.before === null || body.after <= body.before) return [];
+  return [
+    {
+      code: 'body.raised',
+      message: `its request body limit rises (${body.before} → ${body.after} MiB)`,
+    },
+  ];
+}
+
+/**
  * Why auto-approve may not stand in for an administrator on a staged
  * version's web tree: it changes (or appears) — publisher code served to
  * every user of the plugin on the relay's own domain is approved by a
@@ -684,14 +724,16 @@ export async function updatePlugin(
     approvedBy = actor;
   } else if (approvalRequired.length > 0) {
     // Auto-approve stands in for an administrator on a digest that changed,
-    // when the agent half changes nothing that runs as root on the agent and
-    // the web tree does not change — and on nothing else: every other reason (a secret setting turned
+    // when the agent half changes nothing that runs as root on the agent,
+    // the web tree does not change and the request body limit does not
+    // rise — and on nothing else: every other reason (a secret setting turned
     // plain, a role added or removed, an attribute widened) withholds it.
     const digestChanged = approvalRequired.some((reason) => reason.code === DIGEST_UNAPPROVED);
     const withheldReasons = state?.autoApprove
       ? [
           ...(digestChanged ? agentHalfWithheld(installedAgentHalf(plugin), staged.agentHalf) : []),
           ...(digestChanged ? webTreeWithheld(plugin, staged) : []),
+          ...(digestChanged ? bodyLimitWithheld(plugin, staged) : []),
           ...approvalRequired
             .filter((reason) => reason.code !== DIGEST_UNAPPROVED)
             .map(({ code, reason }) => ({ code, message: reason })),
@@ -803,6 +845,7 @@ async function awaitApproval({
     settings,
     identity,
     web,
+    body: bodyLimitPreview(plugin, staged),
     approvalRequired,
     ...(withheld.length > 0 ? { autoApproveWithheld: withheld } : {}),
   };

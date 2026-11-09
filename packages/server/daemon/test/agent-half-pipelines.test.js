@@ -31,6 +31,7 @@ import {
   CALLER_ASSERTION_HEADER,
   NonceStore,
   RESPONDER_HEADER,
+  approvalDigest,
   hostFactsHash,
   parseRelayVerifyKey,
   pluginHostCapability,
@@ -85,6 +86,8 @@ const manifests = {
   }),
   ux: (version) => ({ name: 'ux', version, hosting: 'agent', agent: agentBlock('ux') }),
   hand: (version) => ({ name: 'hand', version, hosting: 'agent', agent: {} }),
+  // A hand-installed agent half that takes uploads of 25 MiB.
+  big: (version) => ({ name: 'big', version, hosting: 'agent', agent: { maxBodySizeMb: 26 } }),
   zx: (version) => ({ name: 'zx', version, hosting: 'agent', agent: agentBlock('zx') }),
 };
 
@@ -204,7 +207,7 @@ async function publish(name, version) {
   await npm.publish(`@lamalibre/${name}-server`, version, {
     'lamaste-plugin.json': JSON.stringify(manifests[name](version)),
   });
-  if (name !== 'hand') {
+  if (name !== 'hand' && name !== 'big') {
     await npm.setIntegrity(`@lamalibre/${name}-agent@${version}`, integrity(`${name}-${version}`));
   }
 }
@@ -1116,6 +1119,59 @@ test('a hand-installed agent half: no gates, no app jobs, purge refused (2a/2b u
     lib.uninstallPluginWithHosting('ux', { ...actor, purge: true, sourceIp: IP }),
     (err) => err.statusCode === 400 && /is not hosted/.test(err.message),
   );
+});
+
+test('a declared body limit: approved with the plugin, then the forwarder’s and the tunnels’ view', async () => {
+  await lib.updatePushInstallConfigFields({ enabled: false });
+  try {
+    await publish('big', '1.0.0');
+    await lib.installPlugin('@lamalibre/big-server', logger);
+    const plugin = await lib.findPlugin('big');
+    // Nothing else to approve — the declared limit alone needs an approval,
+    // and hosting waits for it.
+    const status = await lib.hookStatus(plugin);
+    assert.equal(status.approval.required, true);
+    assert.equal(status.approval.state, 'pending');
+    assert.equal(
+      status.approval.digest,
+      approvalDigest({ relay: null, agentHalf: null, maxBodySizeMb: 26 }),
+    );
+    assert.deepEqual(status.body, { declared: true, maxBodySizeMb: 26 });
+    assert.equal(await lib.installedVersionApproved(plugin), false);
+    await approve('big');
+    await lib.enablePlugin('big', logger);
+
+    agent = startAgent('vm2');
+    await lib.hostPlugin('big', 'vm2', { ...actor, sourceIp: IP });
+    const done = await settle('big');
+    assert.equal(done.status, 'succeeded', JSON.stringify(done));
+
+    // The forwarder applies the plugin's limit, not a tunnel's.
+    const target = await lib.resolveForwardTarget('big');
+    assert.equal(target.maxBodyBytes, 26 * 1024 * 1024, JSON.stringify(target));
+    // The tunnels API shows an internal tunnel with its plugin's limit,
+    // whatever an older version stored on it; any other tunnel as it is.
+    const internal = {
+      id: 'tunnel-big',
+      exposure: 'internal',
+      pluginRoute: 'big',
+      maxBodySizeMb: 10,
+    };
+    assert.equal((await lib.withEffectiveBodyLimit(internal)).maxBodySizeMb, 26);
+    assert.equal(
+      (await lib.withEffectiveBodyLimit({ ...internal, pluginRoute: 'gone' })).maxBodySizeMb,
+      10,
+    );
+    const app = { id: 'a', exposure: 'public', maxBodySizeMb: 50 };
+    assert.equal(await lib.withEffectiveBodyLimit(app), app);
+    // A plugin without a declared limit has the default.
+    assert.equal((await lib.hookStatus(await lib.findPlugin('hand'))).body.maxBodySizeMb, 10);
+
+    await lib.unhostPlugin('big', { ...actor, sourceIp: IP });
+    assert.equal((await settle('big')).status, 'succeeded');
+  } finally {
+    await lib.updatePushInstallConfigFields({ enabled: true });
+  }
 });
 
 // ---------------------------------------------------------------------------

@@ -85,7 +85,10 @@ export interface TunnelEntry {
    * Largest request body nginx accepts for this tunnel, in MiB. Written into
    * the vhost as `client_max_body_size`. `undefined` only on tunnels created
    * before the setting existed, whose vhost carries no directive and therefore
-   * nginx's built-in 1 MiB limit until the tunnel is reconfigured.
+   * nginx's built-in 1 MiB limit until the tunnel is reconfigured — and on
+   * an internal tunnel, which has none of its own: its plugin's manifest
+   * sets the limit (`agent.maxBodySizeMb`, `agentHalfMaxBodyMb`). One
+   * written by 4.3–4.11 still carries 10, which nothing reads.
    */
   maxBodySizeMb?: number | undefined;
   /**
@@ -553,7 +556,10 @@ export interface CreateTunnelOptions {
   pluginName?: string | undefined;
   /** The agent that will carry the tunnel. Must be enrolled and not revoked. */
   agentLabel: string;
-  /** Request body limit in MiB; defaults to `TUNNEL_MAX_BODY_MB.default`. */
+  /**
+   * Request body limit in MiB; defaults to `TUNNEL_MAX_BODY_MB.default`.
+   * Refused on an internal tunnel: its plugin's manifest sets its limit.
+   */
   maxBodySizeMb?: number | undefined;
   /**
    * Internal tunnels only: `false` creates the tunnel without its chisel
@@ -613,7 +619,6 @@ async function createInternalTunnelLocked(opts: CreateTunnelOptions): Promise<Tu
     type = 'plugin',
     pluginName,
     agentLabel,
-    maxBodySizeMb = TUNNEL_MAX_BODY_MB.default,
     chisel,
     state,
     agents,
@@ -637,7 +642,12 @@ async function createInternalTunnelLocked(opts: CreateTunnelOptions): Promise<Tu
       'INVALID_SETTING',
     );
   }
-  assertMaxBodySize(maxBodySizeMb);
+  if (opts.maxBodySizeMb !== undefined) {
+    throw new TunnelError(
+      "An internal tunnel has no body limit of its own — its plugin's manifest sets it (agent.maxBodySizeMb)",
+      'INVALID_SETTING',
+    );
+  }
   await assertAssignableAgent(agentLabel, agents);
   const pluginRoute = derivePluginRoute(pluginName);
   if ((RESERVED_PLUGIN_ROUTES as readonly string[]).includes(pluginRoute)) {
@@ -680,7 +690,6 @@ async function createInternalTunnelLocked(opts: CreateTunnelOptions): Promise<Tu
     createdAt: new Date().toISOString(),
     exposure: 'internal',
     agentLabel,
-    maxBodySizeMb,
     pluginName,
     pluginRoute,
   };
@@ -1257,9 +1266,9 @@ async function reconfigureTunnelLocked(
     );
   }
 
-  // An internal tunnel has no vhost: it cannot be given an access mode, and
-  // its body limit is enforced by the panel's forwarder, so only the state
-  // changes.
+  // An internal tunnel has no vhost and nothing to reconfigure: no access
+  // mode, and no body limit of its own — its plugin's manifest sets that
+  // (`agent.maxBodySizeMb`), approved with the plugin.
   const host = vhostTunnelHost(tunnel);
   if (host === null) {
     if (opts.accessMode !== undefined) {
@@ -1268,16 +1277,12 @@ async function reconfigureTunnelLocked(
         'INVALID_SETTING',
       );
     }
-    if (opts.maxBodySizeMb === undefined || opts.maxBodySizeMb === tunnel.maxBodySizeMb) {
-      return { ok: true as const, tunnel };
+    if (opts.maxBodySizeMb !== undefined) {
+      throw new TunnelError(
+        "An internal tunnel has no body limit of its own — its plugin's manifest sets it (agent.maxBodySizeMb)",
+        'INVALID_SETTING',
+      );
     }
-    const previousLimit = tunnel.maxBodySizeMb;
-    tunnel.maxBodySizeMb = opts.maxBodySizeMb;
-    await state.writeTunnels(tunnels);
-    logger.info(
-      { tunnel: tunnelLabel(tunnel), from: previousLimit ?? null, to: opts.maxBodySizeMb },
-      'Internal plugin tunnel body limit changed',
-    );
     return { ok: true as const, tunnel };
   }
   const before = {

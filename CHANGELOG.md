@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+A plugin's request body limit: an agent-hosted plugin declares how large a request its agent half takes — `agent.maxBodySizeMb` in its manifest, up to 100 MiB — and an administrator approves it with the plugin. Before, every agent half took at most 10 MiB, which nothing could raise, and a plugin's site refused anything above 1 MiB with a `500`. Reference: `04-api-reference/agent-hosted-plugins.md#request-body-limit`.
+
+### Added
+
+- **`agent.maxBodySizeMb`** in a plugin's manifest: the largest request body, in MiB, the relay passes on to its agent half — a whole number from 1 to 100 (the most an agent may set on a tunnel of its own), 10 when it declares none. nginx applies it in the plugin's user-surface locations, on a bound tunnel and on the plugin's site, and the panel's forwarder in front of the agent half. Core `AGENT_HALF_MAX_BODY_MB`, `AgentHalfMaxBodySizeSchema`, `agentHalfMaxBodyMb`.
+- **The approval covers it.** A declared limit is part of the approval digest (`body: { maxBodySizeMb }`, only when declared); `GET /api/plugins/:name/hooks` shows `body: { declared, maxBodySizeMb }`, a pending update `body: { before, after, declared }`, and the plugin card shows it beside what else the approval covers. Auto-approve never covers a limit that rises (`body.raised`, "its request body limit rises (10 → 26 MiB)").
+
+### Changed
+
+- **An internal plugin tunnel has no body limit of its own.** Its plugin's manifest sets it: core `createTunnel` and `reconfigureTunnel` refuse a `maxBodySizeMb` for an internal tunnel (`INVALID_SETTING`), none is stored, and `GET /api/tunnels` shows the plugin's limit on it. Neither could be changed through the panel before.
+- **The forwarder's `413`** says `Request body exceeds the plugin's body limit` (was `… the plugin tunnel body limit`).
+
+### Fixed
+
+- **Uploads above 1 MiB to a plugin's site failed with `500`.** nginx checks a request's `Content-Length` in every location it enters, an `auth_request` subrequest and an `error_page` redirect included; the site sets no limit of its own, so its Gatekeeper check kept nginx's 1 MiB, failed with `413`, and `auth_request` answered `500`. A signed-out or refused upload got `413` instead of its JSON `401` or `403`. Every internal location a request may enter on its way — the Gatekeeper checks of a tunnel, of a site's shell and of a user surface, and the user surface's `401` and `403` — now sets `client_max_body_size 0`: none reads the body, and the location serving the request has applied its own limit before. Gatekeeper still never sees a body. The same held on a bound tunnel whose plugin's limit was above the tunnel's.
+
+### Upgrade notes
+
+- **Every tunnel and plugin-site vhost is rewritten once** by the start's reconcile: their internal locations gain `client_max_body_size 0`. `lamaste-priv` needs no change (it accepts `client_max_body_size 0` in a location).
+- **Approvals stand.** A plugin that declares no limit keeps its approval digest, byte for byte, and its 10 MiB. A plugin version that declares one is refused by Lamaste 4.11 and earlier (the `agent` block is strict): a plugin that needs it requires Lamaste ≥ 4.12.
+- **Administrators' requests** through the panel to an agent half's admin API still pass the panel vhost's 1 MiB first.
+
 ## [4.11.0] - 2026-11-04
 
 Site grants for plugin web surfaces: an administrator lets an entitled user reach a `restricted` web surface from the panel or the CLI, and the panel shows who holds a role but cannot reach the site. Before, a role made the panel say a user "can access" the plugin while Gatekeeper showed them the access-request page, and the only way to grant the site was the raw API.

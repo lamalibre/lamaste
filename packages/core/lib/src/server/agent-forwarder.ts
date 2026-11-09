@@ -46,9 +46,11 @@
  * are piped, never buffered, so uploads, downloads and server-sent events
  * pass through as they arrive. What the forwarder enforces:
  *
- * - the plugin's body limit (the internal tunnel's `maxBodySizeMb`): a
- *   larger `Content-Length` is refused with 413 before anything is sent,
- *   and a chunked body that grows past it is cut off;
+ * - the plugin's body limit (`maxBodyBytes`: its manifest's
+ *   `agent.maxBodySizeMb`, `agentHalfMaxBodyMb`): a larger `Content-Length`
+ *   is refused with 413 before anything is sent, and a chunked body that
+ *   grows past it is cut off. The body is counted as it streams through,
+ *   never held: a limit of any size costs no memory;
  * - a headers timeout (default 30 s) — 504 when the agent half has not
  *   answered by then; and an idle timeout on the response body, except for
  *   `text/event-stream`, which may stay quiet as long as the application
@@ -153,6 +155,7 @@ export interface AgentForwardTarget {
   readonly port: number;
   /** The installation secret the forwarder signs with. */
   readonly secret: string;
+  /** The plugin's request body limit, in bytes (`agentHalfMaxBodyMb` × 1 MiB). */
   readonly maxBodyBytes: number;
 }
 
@@ -589,7 +592,7 @@ class BodyLimit extends Transform {
     this.#seen += chunk.length;
     if (this.#seen > this.limit) {
       this.exceeded = true;
-      callback(new Error('Request body exceeds the plugin tunnel body limit'));
+      callback(new Error("Request body exceeds the plugin's body limit"));
       return;
     }
     callback(null, chunk);
@@ -727,7 +730,7 @@ function openUpstream(params: {
     const limit = new BodyLimit(target.maxBodyBytes);
     pipeline(source, limit, upstream).catch((err: Error) => {
       if (limit.exceeded) {
-        fail(413, 'Request body exceeds the plugin tunnel body limit', {
+        fail(413, "Request body exceeds the plugin's body limit", {
           maxBodyBytes: target.maxBodyBytes,
         });
         return;
@@ -1073,7 +1076,7 @@ async function forward(
     }
     if (length > target.maxBodyBytes) {
       return answer(reply, surface, 413, {
-        error: 'Request body exceeds the plugin tunnel body limit',
+        error: "Request body exceeds the plugin's body limit",
         maxBodyBytes: target.maxBodyBytes,
       });
     }
@@ -1115,7 +1118,7 @@ async function forward(
           };
       if (!read.complete && wanted >= target.maxBodyBytes) {
         writeError(res, surface, 413, {
-          error: 'Request body exceeds the plugin tunnel body limit',
+          error: "Request body exceeds the plugin's body limit",
           maxBodyBytes: target.maxBodyBytes,
         });
         return { status: 413 };

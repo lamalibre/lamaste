@@ -28,11 +28,13 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { execa } from 'execa';
 import {
+  agentHalfMaxBodyMb,
   agentHalfOf,
   agentHalfPreview,
   agentHookSetOf,
   approvalDigest,
   derivePluginRoute,
+  hasAgentHalf,
   hookEntrySha256,
   relayHookSetDigest,
   relayHookSetNeedsEntry,
@@ -232,11 +234,23 @@ function installedWebTree(plugin) {
 }
 
 /**
+ * The request body limit a plugin version declares for its agent half
+ * (`agent.maxBodySizeMb`, MiB), or null when it declares none — the
+ * default then applies and is nothing to approve.
+ *
+ * @returns {number | null}
+ */
+export function declaredMaxBodySizeMb(plugin) {
+  return plugin.agent?.maxBodySizeMb ?? null;
+}
+
+/**
  * What approving a plugin version covers — its relay hook set, the agent
  * half Lamaste installs, its identity block (normalized, as the registry
- * stores it) and its web tree — and the digest the approval names.
- * `digest` is null when there is nothing to approve. A plugin without an
- * identity block or a web surface has the digest it had before they
+ * stores it), its web tree and the request body limit it declares
+ * (`maxBodySizeMb`) — and the digest the approval names. `digest` is null
+ * when there is nothing to approve. A plugin without an identity block, a
+ * web surface or a declared body limit has the digest it had before they
  * existed.
  */
 export function installedApproval(plugin) {
@@ -244,12 +258,19 @@ export function installedApproval(plugin) {
   const agentHalf = installedAgentHalf(plugin);
   const identity = plugin.identity ?? null;
   const web = installedWebTree(plugin);
-  const required = relay !== null || agentHalf !== null || identity !== null || web !== null;
+  const maxBodySizeMb = declaredMaxBodySizeMb(plugin);
+  const required =
+    relay !== null ||
+    agentHalf !== null ||
+    identity !== null ||
+    web !== null ||
+    maxBodySizeMb !== null;
   return {
     relay,
     agentHalf,
     identity,
     web,
+    maxBodySizeMb,
     required,
     digest: required
       ? approvalDigest({
@@ -257,6 +278,7 @@ export function installedApproval(plugin) {
           agentHalf,
           identity,
           web,
+          maxBodySizeMb,
         })
       : null,
   };
@@ -313,6 +335,14 @@ export async function hookStatus(plugin) {
       treeSha256: web?.treeSha256 ?? null,
       surface: plugin.userSurface?.web ?? null,
     },
+    // The largest request body the relay passes on to the agent half (MiB):
+    // the declared one, else the default. Null without an agent half.
+    body: hasAgentHalf(plugin)
+      ? {
+          declared: approval.maxBodySizeMb !== null,
+          maxBodySizeMb: agentHalfMaxBodyMb(plugin),
+        }
+      : null,
     approval: {
       required: approval.required,
       state: !approval.required ? 'not-required' : approved ? 'approved' : 'pending',
@@ -342,17 +372,25 @@ export const IDENTITY_CHANGED = 'identity.changed';
 /**
  * The reason a staged version waits because what it brings — its relay
  * hooks (`relay`), the agent half Lamaste installs (`agentHalf`), its
- * identity block (`identity`), its web tree (`web`); each truthy when it
- * brings one — is not what was approved.
+ * identity block (`identity`), its web tree (`web`), the request body
+ * limit it declares (`body`); each truthy when it brings one — is not what
+ * was approved.
  *
  * @returns {{ code: string, reason: string }}
  */
-export function digestUnapprovedReason({ relay, agentHalf, identity = null, web = null }) {
+export function digestUnapprovedReason({
+  relay,
+  agentHalf,
+  identity = null,
+  web = null,
+  body = null,
+}) {
   const parts = [
-    ...(relay || (!agentHalf && !identity && !web) ? ['relay hooks'] : []),
+    ...(relay || (!agentHalf && !identity && !web && !body) ? ['relay hooks'] : []),
     ...(agentHalf ? ['agent half'] : []),
     ...(identity ? ['identity'] : []),
     ...(web ? ['web surface'] : []),
+    ...(body ? ['request body limit'] : []),
   ];
   const named =
     parts.length === 1
@@ -376,6 +414,7 @@ function pendingApprovalRequired(pending) {
         agentHalf: pending.agentHalf,
         identity: pending.identity?.after ?? null,
         web: pending.web?.after ?? null,
+        body: pending.body?.declared ?? null,
       }),
     ]
   );
@@ -397,7 +436,11 @@ function pendingApprovalRequired(pending) {
  * declares one — part of the digest), its web tree (`web`: `{ before,
  * after }`, the installed version's tree digest and the staged one's
  * `{ sha256, files, totalBytes }`, null when neither declares a web
- * surface — part of the digest), why it waits for an administrator
+ * surface — part of the digest), its request body limit (`body`:
+ * `{ before, after, declared }`, the installed version's limit and the
+ * staged one's in MiB, `declared` whether the staged version declares it;
+ * null without an agent half — part of the digest when declared), why it
+ * waits for an administrator
  * (`approvalRequired`: `[{ code, reason }]`, `digest.unapproved`,
  * `settings.secret-to-plain` and `identity.changed`; never empty), and —
  * when the plugin has auto-approve on — why auto-approve did not cover it
@@ -414,6 +457,7 @@ export function pendingUpdateView(pending) {
     settings: pending.settings ?? null,
     identity: pending.identity ?? null,
     web: pending.web ?? null,
+    body: pending.body ?? null,
     approvalRequired: pendingApprovalRequired(pending),
     autoApproveWithheld: pending.autoApproveWithheld ?? null,
   };

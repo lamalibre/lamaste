@@ -44,6 +44,7 @@ import {
   RELAY_ASSERTION_HEADER,
   RELAY_PANEL_AUDIENCE,
   RELAY_PANEL_PORT,
+  agentHalfMaxBodyMb,
   isAgentHostedPlugin,
   isRelayInvitationsTarget,
   isRelayUserSurfaceTarget,
@@ -55,7 +56,6 @@ import {
   verifyRelayAssertion,
 } from '@lamalibre/lamaste';
 import {
-  TUNNEL_MAX_BODY_MB,
   TunnelError,
   bindUserSurface,
   releaseUserSurfaceRoute,
@@ -162,23 +162,9 @@ async function routeServing(route, agentLabel, tunnels) {
 }
 
 /**
- * The body limit of the plugin's internal tunnel, in MiB — the default while it is not hosted.
- *
- * @param {object} plugin
- * @param {readonly object[]} tunnels the tunnel state
- */
-export async function internalTunnelBodyLimit(plugin, tunnels) {
-  const { ownHosting } = await import('./plugin-hosting.js');
-  const record = await ownHosting(plugin);
-  if (!record) return TUNNEL_MAX_BODY_MB.default;
-  const tunnel = tunnels.find((t) => t.id === record.tunnelId);
-  return tunnel?.maxBodySizeMb ?? TUNNEL_MAX_BODY_MB.default;
-}
-
-/**
  * Of `routes` (bound to `tunnel`), the ones its vhost serves, in order,
- * each with the body limit of its locations (the plugin's internal
- * tunnel's). Core's `UserSurfaceDeps.servedRoutes` — called under the
+ * each with the body limit of its locations (the plugin's:
+ * `agent.maxBodySizeMb` of its installed version, `agentHalfMaxBodyMb`). Core's `UserSurfaceDeps.servedRoutes` — called under the
  * tunnel lock, so it reads the tunnel state without taking it.
  *
  * @param {readonly string[]} routes
@@ -192,7 +178,7 @@ export async function servedUserSurfaceRoutes(routes, tunnel) {
   for (const route of routes) {
     const serving = await routeServing(route, tunnel?.agentLabel, tunnels);
     if (!serving.served) continue;
-    served.push({ route, maxBodySizeMb: await internalTunnelBodyLimit(serving.plugin, tunnels) });
+    served.push({ route, maxBodySizeMb: agentHalfMaxBodyMb(serving.plugin) });
   }
   return served;
 }
@@ -449,8 +435,8 @@ export async function refreshTunnelUserSurfaceVhosts(ids, logger) {
 
 /**
  * Whether plugin `route`'s user surface is served may have changed — its
- * version was approved, updated or reverted, it was hosted or unhosted (the
- * body limit is its internal tunnel's): bring the vhosts of the tunnels it
+ * version was approved, updated or reverted, it was hosted or unhosted (its
+ * body limit follows the installed version): bring the vhosts of the tunnels it
  * is bound to in line, and its web surface — the approved tree served, the
  * vhost of the site it owns (`lib/web-surface.js`). Best effort — logged, never thrown; the panel's
  * start reconciles every vhost again.
