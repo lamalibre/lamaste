@@ -205,6 +205,52 @@ wait in a table: tokens are stored only as SHA-256 (invitations, resets).
 A failed send is recorded on what it was for (`invitations.mail_status`)
 and answered; sending again means a new link (§6.1).
 
+### 3.7 Sending budget
+
+Google stops an account that passes a limit from sending **anything for up
+to 24 hours** ([Gmail sending limits in Google Workspace](https://knowledge.workspace.google.com/admin/gmail/gmail-sending-limits-in-google-workspace)):
+2,000 messages a day per user, **500 on a trial** (not raised during it;
+raised once the domain has paid $100, which can take weeks), counted over
+a rolling 24 hours. SMTP providers have limits of their own. The relay
+must never be the one that reaches them — least of all through
+`/reset`, which anyone can call.
+
+- **Count**: every delivery attempt through a transport is a row in
+  `mail_sends (id, transport_id, class, sent_at, outcome)` (migration
+  0022; no address, no subject; swept after 48 h). Usage = rows of the
+  last 24 h for that transport.
+- **Limit**: `mail_transports.daily_limit` (1–100000), set by the
+  administrator on the transport (`PUT`/`PATCH`, panel, CLI `--daily-limit`);
+  default **500** for `gmail-api` (the trial value — the safe one) and
+  **500** for `smtp`. Settings → Mail says to raise it to 2,000 once the
+  Workspace is paid.
+- **Ceiling**: Lamaste sends at most **90 %** of the limit in 24 h.
+- **Classes and reserve**: each mail has a class —
+  `essential` (Authelia's mail through the listener, password-changed
+  notices, test mails), `admin` (administrator's invitations and
+  reissues), `public` (reset mails, delegated invitations and their
+  reissues). `public` may use the ceiling minus a **20 % reserve**;
+  `essential` and `admin` the whole ceiling. On top, reset mails are
+  capped relay-wide at **30 an hour** per transport. Over a cap: a
+  reset start still answers its 202 (nothing reveals the cap); an
+  invitation answers `mail.status: 'deferred-budget'` with the link (the
+  inviter shares it another way); the listener answers Authelia a 4xx.
+- **Warnings**: usage crossing **70 %** of the ceiling → notification
+  `mail.budget.warning`; the `public` cap or the ceiling reached →
+  `mail.budget.exhausted` with the time sending resumes (the oldest
+  counted row + 24 h). Each once per crossing; audited.
+- **Google's own refusal** (Gmail API 403/429 with reason
+  `dailyLimitExceeded`, `userRateLimitExceeded` or a "sending limit
+  exceeded" message; SMTP 4.5.3/5.4.5/550 5.7.x limit replies): the
+  transport is marked **limited until** now + 24 h — no retries, no sends,
+  every mail answered as over the ceiling — notification
+  `mail.transport.limited`. Administrators may clear it early
+  (`POST …/mail/resume`) once Google's admin console shows the account
+  sending again. Per-second rate limits (`rateLimitExceeded`) stay a
+  transient failure with one retry.
+- `GET /api/settings/mail` adds `budget: { dailyLimit, ceiling, sent24h,
+byClass, limitedUntil, resumesAt }`.
+
 ## 4. Users' addresses
 
 Reset and change need an address the user owns. users.yml carries `email`
@@ -476,7 +522,8 @@ before the next starts.
    `invitations.mail_status|mail_sent_at`), `lib/mail.js`,
    `lib/mail-gmail.js`, SMTP delivery with `caPem`, admission checks,
    consent start + callback, `/api/settings/mail*` and
-   `/api/domains/:name/mail*`, health monitor, audit and notifications,
+   `/api/domains/:name/mail*`, the sending budget (§3.7), health monitor,
+   audit and notifications,
    D6 in tunnels/sites/aliases. Unit tests with a fake Google and an SMTP
    sink.
 3. **serverd — Authelia's mail and the auth host**: the submission
