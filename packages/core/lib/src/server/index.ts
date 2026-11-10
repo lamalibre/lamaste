@@ -297,7 +297,10 @@ export type {
 export {
   purgeAutheliaSecondFactors,
   autheliaHoldsOpaqueIdentifier,
+  verifyAutheliaTotp,
+  TOTP_CODE_RE,
 } from './authelia-user-storage.js';
+export type { AutheliaTotpVerdict } from './authelia-user-storage.js';
 
 // --- OIDC client secrets (confidential clients) ---
 export {

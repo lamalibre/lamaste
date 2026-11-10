@@ -23,7 +23,8 @@ import crypto from 'node:crypto';
 
 import { AUTH_PAGE_DARK_PALETTE, AUTH_PAGE_DEFAULT_ACCENT } from '../auth-branding.js';
 import type { AuthPagePalette, BrandTheme } from '../auth-branding.js';
-import { escapeHtml, isPageLanguage, pageMessagesJson } from '../page-messages.js';
+import { AUTH_ACCOUNT_PASSWORD_PATH } from '../account.js';
+import { escapeHtml, isPageLanguage, pageMessage, pageMessagesJson } from '../page-messages.js';
 import type { PageLanguage } from '../page-messages.js';
 
 /** What the pages take from a domain's brand. */
@@ -60,7 +61,8 @@ export const AUTH_PAGE_STYLE = `
     body {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       background: ${v('background')}; color: ${v('text')};
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
       padding: 1.5rem;
     }
     .card {
@@ -151,6 +153,9 @@ export const AUTH_PAGE_STYLE = `
     #bounds { margin-bottom: 1rem; }
     #result:not(:empty) { margin-top: 1rem; }
     .back { display: inline-block; margin-top: 1.5rem; font-size: 0.8125rem; color: ${v('accent')}; }
+    .page-links { margin-top: 1rem; font-size: 0.75rem; }
+    .page-links a { color: ${v('muted')}; }
+    .page-links a:hover { color: ${v('heading')}; }
   `;
 
 /** The id of a page's data block, which its script reads. */
@@ -169,6 +174,8 @@ export function authPageShell(opts: {
   readonly loading: string;
   readonly messages: Readonly<Record<string, string>>;
   readonly script: string;
+  /** The "Change password" link under the card (default: shown; off on that page itself). */
+  readonly accountLink?: boolean;
 }): string {
   return pageDocument(
     opts.brand,
@@ -181,7 +188,7 @@ export function authPageShell(opts: {
         ${escapeHtml(opts.loading)}
       </div>
     </div>
-  </div>
+  </div>${opts.accountLink === false ? '' : accountLinkFooter(opts.language)}
   <script type="application/json" id="${AUTH_PAGE_MESSAGES_ID}">${pageMessagesJson(opts.language, opts.messages)}</script>
   <script>${opts.script}</script>`,
   );
@@ -206,6 +213,18 @@ export function authPageStaticShell(opts: {
     </div>
   </div>`,
   );
+}
+
+/**
+ * The "Change password" link under a page's card
+ * (packages/core/docs/mail-design.md §6.3, Q3): a plain link — no script —
+ * to the auth host's own change-password page.
+ */
+function accountLinkFooter(language: PageLanguage): string {
+  return `
+  <nav class="page-links"><a href="${AUTH_ACCOUNT_PASSWORD_PATH}">${escapeHtml(
+    pageMessage(language, 'account.changePasswordLink'),
+  )}</a></nav>`;
 }
 
 /** The document around a page's body: `lang`, the title, the brand's header and stylesheet link. */

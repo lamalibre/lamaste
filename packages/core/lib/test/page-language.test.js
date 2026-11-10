@@ -456,6 +456,19 @@ function shellOf(html) {
  */
 const STYLE_CHANGES_SINCE_4_9 = [
   ['text-align: right; word-break: break-all; }', 'text-align: right; overflow-wrap: anywhere; }'],
+  // 4.13: the "Change password" link under the card (mail-design.md §6.3).
+  [
+    'min-height: 100vh; display: flex; align-items: center; justify-content: center;',
+    'min-height: 100vh; display: flex; flex-direction: column;\n      align-items: center; justify-content: center;',
+  ],
+  [
+    'color: var(--lamaste-page-accent, #22d3ee); }\n  </style>',
+    'color: var(--lamaste-page-accent, #22d3ee); }\n    .page-links { margin-top: 1rem; font-size: 0.75rem; }\n    .page-links a { color: var(--lamaste-page-muted, #71717a); }\n    .page-links a:hover { color: var(--lamaste-page-heading, #f4f4f5); }\n  </style>',
+  ],
+  [
+    '\n  </div>\n  <script>',
+    '\n  </div>\n  <nav class="page-links"><a href="/account/password">Change password</a></nav>\n  <script>',
+  ],
 ];
 
 test('an unset domain’s pages are 4.9.0’s but for the data block, the script and the listed style changes (regression pin)', async () => {

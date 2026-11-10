@@ -259,6 +259,7 @@ function renderAccountPage(
     loadingKey: PageMessageKey;
     keys: readonly PageMessageKey[];
     script: string;
+    accountLink: boolean;
   },
 ): string {
   assertBrand(brand);
@@ -269,6 +270,7 @@ function renderAccountPage(
     loading: pageMessage(language, page.loadingKey),
     messages: pageMessagesFor(language, page.keys),
     script: page.script,
+    accountLink: page.accountLink,
   });
 }
 
@@ -279,6 +281,7 @@ export function renderResetPage(brand: InviteBrand | null, language: PageLanguag
     loadingKey: 'reset.loading',
     keys: RESET_PAGE_KEYS,
     script: RESET_PAGE_SCRIPT,
+    accountLink: true,
   });
 }
 
@@ -292,5 +295,6 @@ export function renderAccountPasswordPage(
     loadingKey: 'password.loading',
     keys: ACCOUNT_PASSWORD_PAGE_KEYS,
     script: ACCOUNT_PASSWORD_PAGE_SCRIPT,
+    accountLink: false,
   });
 }
