@@ -809,7 +809,7 @@
         },
         {
           "id": "step-45",
-          "label": "A disabled provider takes no call: 503 peer_unavailable ($(json_get \"$OUT\" '.error.reason'))",
+          "label": "A disabled provider's edges are pending: a call is 403 not_granted",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -823,14 +823,35 @@
               "path": "\"\\(.error.code) \\(.error.status)\"",
               "expected": {
                 "kind": "literal",
-                "value": "peer_unavailable 503"
+                "value": "not_granted 403"
               },
-              "message": "A disabled provider takes no call: 503 peer_unavailable ($(json_get \"$OUT\" '.error.reason'))"
+              "message": "A disabled provider's edges are pending: a call is 403 not_granted"
             }
           }
         },
         {
           "id": "step-46",
+          "label": "…GET /api/peers shows the edge pending ($(peers_view | jq -r --arg s \"${SCOPE_READ}\" '[.shelves[]?.edges[]? | select(.scope == $s) | .reason] | first // ",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(edge_state \"${SCOPE_READ}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "pending"
+              },
+              "message": "…GET /api/peers shows the edge pending ($(peers_view | jq -r --arg s \"${SCOPE_READ}\" '[.shelves[]?.edges[]? | select(.scope == $s) | .reason] | first // "
+            }
+          }
+        },
+        {
+          "id": "step-47",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -847,7 +868,7 @@
           ]
         },
         {
-          "id": "step-47",
+          "id": "step-48",
           "label": "Uninstalling the provider: 409, even with force",
           "target": "local",
           "continueOnError": true,
@@ -868,7 +889,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-49",
           "label": "…peer_dependents",
           "target": "local",
           "continueOnError": true,
@@ -890,7 +911,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-50",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -907,7 +928,7 @@
           ]
         },
         {
-          "id": "step-50",
+          "id": "step-51",
           "label": "Enabled again",
           "target": "local",
           "continueOnError": true,
@@ -928,7 +949,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-52",
           "label": "…and it answers again",
           "target": "local",
           "op": {
@@ -938,7 +959,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-53",
           "label": "After enabling: $(consumer_call \"${SCOPE_READ}\" GET /units/9)",
           "target": "local",
           "op": {
@@ -948,11 +969,11 @@
           }
         }
       ],
-      "bash": "log_section \"The provider cannot go while the consumer depends on it\"\n\nRESP=$(host_api_call DELETE \"plugins/${PROVIDER}/hosting?force=true\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Unhosting the provider: 409, even with force\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.code) \\([.consumers[]? | if type == \"object\" then .consumer // .name else . end] | join(\",\"))\"' \"peer_dependents ${CONSUMER}\" \"…peer_dependents, naming ${CONSUMER}\" || true\nRESP=$(host_api_call POST \"plugins/${PROVIDER}/disable\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The provider disabled (an uninstall needs it)\" || true\nOUT=$(consumer_call \"${SCOPE_READ}\" GET /units/9)\nassert_json_field \"$OUT\" '\"\\(.error.code) \\(.error.status)\"' 'peer_unavailable 503' \"A disabled provider takes no call: 503 peer_unavailable ($(json_get \"$OUT\" '.error.reason'))\" || true\nRESP=$(host_api_call DELETE \"plugins/${PROVIDER}?force=true\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Uninstalling the provider: 409, even with force\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'peer_dependents' \"…peer_dependents\" || true\nRESP=$(host_api_call POST \"plugins/${PROVIDER}/enable\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Enabled again\" || true\nif wait_for 60 eval '[ \"$(call_code \"${SCOPE_READ}\" GET /units/9)\" = \"200\" ]'; then\n  log_pass \"…and it answers again\"\nelse\n  log_fail \"After enabling: $(consumer_call \"${SCOPE_READ}\" GET /units/9)\"\nfi"
+      "bash": "log_section \"The provider cannot go while the consumer depends on it\"\n\nRESP=$(host_api_call DELETE \"plugins/${PROVIDER}/hosting?force=true\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Unhosting the provider: 409, even with force\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.code) \\([.consumers[]? | if type == \"object\" then .consumer // .name else . end] | join(\",\"))\"' \"peer_dependents ${CONSUMER}\" \"…peer_dependents, naming ${CONSUMER}\" || true\nRESP=$(host_api_call POST \"plugins/${PROVIDER}/disable\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The provider disabled (an uninstall needs it)\" || true\nOUT=$(consumer_call \"${SCOPE_READ}\" GET /units/9)\nassert_json_field \"$OUT\" '\"\\(.error.code) \\(.error.status)\"' 'not_granted 403' \"A disabled provider's edges are pending: a call is 403 not_granted\" || true\nassert_eq \"$(edge_state \"${SCOPE_READ}\")\" \"pending\" \"…GET /api/peers shows the edge pending ($(peers_view | jq -r --arg s \"${SCOPE_READ}\" '[.shelves[]?.edges[]? | select(.scope == $s) | .reason] | first // \"\"'))\" || true\nRESP=$(host_api_call DELETE \"plugins/${PROVIDER}?force=true\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Uninstalling the provider: 409, even with force\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'peer_dependents' \"…peer_dependents\" || true\nRESP=$(host_api_call POST \"plugins/${PROVIDER}/enable\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Enabled again\" || true\nif wait_for 60 eval '[ \"$(call_code \"${SCOPE_READ}\" GET /units/9)\" = \"200\" ]'; then\n  log_pass \"…and it answers again\"\nelse\n  log_fail \"After enabling: $(consumer_call \"${SCOPE_READ}\" GET /units/9)\"\nfi"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 58 — Calls between app plugins on two agents (Three-VM)\n# ============================================================================\n# Slice 8: one app plugin's agent half calls another's through the relay. The\n# provider e2e-pdir is hosted on the agent VM's agent, the consumer e2e-pcons\n# on a second agent the visitor VM runs (peers-harness.sh:\n# ensure_second_agent) — two agents, two VMs, one relay. The consumer's half\n# calls through the peer channel the relay opened to it\n# (POST /admin/e2e/call, an administrator's request through the forwarder):\n#\n# 1. Nothing applied: every call is 403 not_granted; GET /api/peers shows\n#    both declarations and no shelf.\n# 2. Applying a shelf: a scope named for another plugin and an edge the\n#    consumer does not declare are refused; the shelf granting\n#    e2e-pdir:read to e2e-pcons is applied and its edge is effective.\n# 3. A granted call reaches the provider's handler with the `peer` caller\n#    the relay signed — consumer, scope, major, the endpoint pattern the\n#    relay matched, one hop, no user.\n# 4. Denied: a scope the shelf does not grant (403 not_granted); a path the\n#    provider serves but does not declare (403 endpoint_not_allowed, never\n#    reaching it); a static sibling route the declared `:unitId` pattern\n#    matches — the provider's SDK refuses it, since its route is not the\n#    endpoint the relay matched (403, no handler ran). Refusals are audited.\n# 5. The shelf widened to e2e-pdir:write: the POST endpoint answers, with\n#    its body.\n# 6. The provider cannot be uninstalled or unhosted while the consumer's\n#    edges use it (409 peer_dependents naming e2e-pcons), unless the\n#    administrator breaks them on purpose (the cleanup does).\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 58 — Calls between app plugins on two agents (Three-VM)\n# ============================================================================\n# Slice 8: one app plugin's agent half calls another's through the relay. The\n# provider e2e-pdir is hosted on the agent VM's agent, the consumer e2e-pcons\n# on a second agent the visitor VM runs (peers-harness.sh:\n# ensure_second_agent) — two agents, two VMs, one relay. The consumer's half\n# calls through the peer channel the relay opened to it\n# (POST /admin/e2e/call, an administrator's request through the forwarder):\n#\n# 1. Nothing applied: every call is 403 not_granted; GET /api/peers shows\n#    both declarations and no shelf.\n# 2. Applying a shelf: a scope named for another plugin and an edge the\n#    consumer does not declare are refused; the shelf granting\n#    e2e-pdir:read to e2e-pcons is applied and its edge is effective.\n# 3. A granted call reaches the provider's handler with the `peer` caller\n#    the relay signed — consumer, scope, major, the endpoint pattern the\n#    relay matched, one hop, no user.\n# 4. Denied: a scope the shelf does not grant (403 not_granted); a path the\n#    provider serves but does not declare (403 endpoint_not_allowed, never\n#    reaching it); a static sibling route the declared `:unitId` pattern\n#    matches — the provider's SDK refuses it, since its route is not the\n#    endpoint the relay matched (403, no handler ran). Refusals are audited.\n# 5. The shelf widened to e2e-pdir:write: the POST endpoint answers, with\n#    its body.\n# 6. The provider cannot be unhosted while the consumer's edges use it (409\n#    peer_dependents naming e2e-pcons), even with force; disabled, its edges\n#    are pending (a call is 403 not_granted) — and an uninstall is still\n#    refused while the shelf grants them; enabled again, it answers. Only\n#    an administrator breaking them on purpose removes it (the cleanup).\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=peers-harness.sh\nsource \"${SCRIPT_DIR}/peers-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\nPOLICY_ID=\"e2e-apphost-58\"\nREMOTE_DIR=\"/var/tmp/e2e-58-peers\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${CONSUMER} ${PROVIDER}\"\nCLEAN_ROUTES=\"${PROVIDER}\"\nPURGE_PACKAGES=\"\"\n\nbegin_test \"58 — Calls between app plugins on two agents (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  peers_cleanup\n}\ntrap cleanup EXIT\n\n# call_code <scope> <method> <path> — the relay's code of a refused call, or the provider's status\ncall_code() {\n  local out\n  out=$(consumer_call \"$1\" \"$2\" \"$3\")\n  echo \"$out\" | jq -r '.error.code // (.status | tostring)' 2>/dev/null || echo \"unreadable\"\n}\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

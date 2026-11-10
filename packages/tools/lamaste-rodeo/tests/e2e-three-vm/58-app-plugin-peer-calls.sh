@@ -24,9 +24,11 @@
 #    endpoint the relay matched (403, no handler ran). Refusals are audited.
 # 5. The shelf widened to e2e-pdir:write: the POST endpoint answers, with
 #    its body.
-# 6. The provider cannot be uninstalled or unhosted while the consumer's
-#    edges use it (409 peer_dependents naming e2e-pcons), unless the
-#    administrator breaks them on purpose (the cleanup does).
+# 6. The provider cannot be unhosted while the consumer's edges use it (409
+#    peer_dependents naming e2e-pcons), even with force; disabled, its edges
+#    are pending (a call is 403 not_granted) — and an uninstall is still
+#    refused while the shelf grants them; enabled again, it answers. Only
+#    an administrator breaking them on purpose removes it (the cleanup).
 # ============================================================================
 
 set -euo pipefail
@@ -159,7 +161,8 @@ assert_json_field "$(body_of "$RESP")" '"\(.code) \([.consumers[]? | if type == 
 RESP=$(host_api_call POST "plugins/${PROVIDER}/disable" '{}')
 assert_eq "$(status_of "$RESP")" "200" "The provider disabled (an uninstall needs it)" || true
 OUT=$(consumer_call "${SCOPE_READ}" GET /units/9)
-assert_json_field "$OUT" '"\(.error.code) \(.error.status)"' 'peer_unavailable 503' "A disabled provider takes no call: 503 peer_unavailable ($(json_get "$OUT" '.error.reason'))" || true
+assert_json_field "$OUT" '"\(.error.code) \(.error.status)"' 'not_granted 403' "A disabled provider's edges are pending: a call is 403 not_granted" || true
+assert_eq "$(edge_state "${SCOPE_READ}")" "pending" "…GET /api/peers shows the edge pending ($(peers_view | jq -r --arg s "${SCOPE_READ}" '[.shelves[]?.edges[]? | select(.scope == $s) | .reason] | first // ""'))" || true
 RESP=$(host_api_call DELETE "plugins/${PROVIDER}?force=true")
 assert_eq "$(status_of "$RESP")" "409" "Uninstalling the provider: 409, even with force" || true
 assert_json_field "$(body_of "$RESP")" '.code' 'peer_dependents' "…peer_dependents" || true
