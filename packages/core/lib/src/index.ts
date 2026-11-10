@@ -312,8 +312,12 @@ export {
   isNativeGrantEndReason,
   nativeDeviceName,
   nativeUserAgentSummary,
+  NATIVE_APPS_PROJECTION_FILE,
+  parseNativeAppsProjection,
+  nativeClientOfHost,
 } from './native-apps.js';
 export type {
+  NativeAppsProjectionClient,
   NativeAssociations,
   NativeClientHostKind,
   NativeClientCreateInput,

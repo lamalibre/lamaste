@@ -432,3 +432,67 @@ function printableSummary(raw: unknown, max: number): string | null {
   if (cleaned.length === 0) return null;
   return Array.from(cleaned).slice(0, max).join('').trim();
 }
+
+// ---------------------------------------------------------------------------
+// Gatekeeper's projection
+// ---------------------------------------------------------------------------
+
+/**
+ * The panel's projection of the served native clients for Gatekeeper
+ * (`<stateDir>/native-apps.json`, 0600): which client belongs to which
+ * host. Gatekeeper admits a bearer token on a host only for the client the
+ * projection names there.
+ */
+export const NATIVE_APPS_PROJECTION_FILE = 'native-apps.json';
+
+/** One served native client as the projection lists it. */
+export interface NativeAppsProjectionClient {
+  readonly clientId: string;
+  /** The application host's name, lower case. */
+  readonly fqdn: string;
+  /** The relay domain the host is under (its issuer is `https://auth.<domain>`). */
+  readonly domain: string;
+}
+
+const PROJECTION_HOST_RE =
+  /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/**
+ * The projection, read defensively: `{ v: 1, clients: [...] }` with every
+ * entry a native client id, a host under its domain, `enabled: true`; null
+ * for anything else — a missing or malformed projection refuses every
+ * bearer token. A host or client id listed twice is left out (two answers
+ * to "whose host is this" mean no one's).
+ */
+export function parseNativeAppsProjection(parsed: unknown): NativeAppsProjectionClient[] | null {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const p = parsed as { v?: unknown; clients?: unknown };
+  if (p.v !== 1 || !Array.isArray(p.clients)) return null;
+  const out: NativeAppsProjectionClient[] = [];
+  for (const entry of p.clients as unknown[]) {
+    if (!entry || typeof entry !== 'object') continue;
+    const e = entry as Record<string, unknown>;
+    const { clientId, fqdn, domain, enabled } = e;
+    if (enabled !== true || !isNativeClientId(clientId)) continue;
+    if (typeof fqdn !== 'string' || typeof domain !== 'string') continue;
+    const host = fqdn.toLowerCase();
+    const base = domain.toLowerCase();
+    if (!PROJECTION_HOST_RE.test(host) || !PROJECTION_HOST_RE.test(base)) continue;
+    if (!host.endsWith(`.${base}`)) continue;
+    out.push({ clientId, fqdn: host, domain: base });
+  }
+  const count = (key: (c: NativeAppsProjectionClient) => string, value: string): number =>
+    out.filter((c) => key(c) === value).length;
+  return out.filter(
+    (c) => count((x) => x.fqdn, c.fqdn) === 1 && count((x) => x.clientId, c.clientId) === 1,
+  );
+}
+
+/** The served native client of the host `fqdn` (any case), or null. */
+export function nativeClientOfHost(
+  clients: readonly NativeAppsProjectionClient[],
+  fqdn: string,
+): NativeAppsProjectionClient | null {
+  const name = fqdn.toLowerCase();
+  return clients.find((c) => c.fqdn === name) ?? null;
+}

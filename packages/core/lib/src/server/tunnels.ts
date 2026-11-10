@@ -151,11 +151,17 @@ export interface VhostOptions {
   userSurface?: readonly UserSurfaceVhostRoute[];
 }
 
-/** One plugin's user surface as a tunnel's vhost serves it. */
+/** One plugin's user surface as a tunnel's vhost renders it. */
 export interface UserSurfaceVhostRoute {
   readonly route: string;
   /** `client_max_body_size` of its locations, in MiB: the plugin's (`agentHalfMaxBodyMb`). */
   readonly maxBodySizeMb: number;
+  /**
+   * `false`: bound, not served now — nginx answers its paths itself (503),
+   * so nothing of a request for it (a native app's bearer token above all)
+   * reaches the tunnel's backend (native-apps-design.md R2). Absent: served.
+   */
+  readonly served?: false | undefined;
 }
 
 /**
@@ -165,13 +171,14 @@ export interface UserSurfaceVhostRoute {
  */
 export interface UserSurfaceDeps {
   /**
-   * Of `routes` (bound to `tunnel`), the ones served — an installed plugin
+   * `routes` (bound to `tunnel`) as its vhost renders them, in the order
+   * given: those served — an installed plugin
    * holds the route, its installed, approved version declares `identity`,
    * and its hosting agent is the agent carrying `tunnel`, or the binding is
    * cross-agent and `tunnel` is still carried by its `originAgent`
-   * (`tunnelRouteServable` in `user-surface.ts`) — each with its
-   * body limit, in the order given. Called under the tunnel lock: it must
-   * not take it.
+   * (`tunnelUserSurfaceRouteState` in `user-surface.ts`) — each with its
+   * body limit; the others with `served: false` (nginx answers them, R2).
+   * Called under the tunnel lock: it must not take it.
    */
   servedRoutes(
     routes: readonly string[],
@@ -1606,7 +1613,12 @@ function sameServedRoutes(
 ): boolean {
   return (
     a.length === b.length &&
-    a.every((r, i) => r.route === b[i]?.route && r.maxBodySizeMb === b[i]?.maxBodySizeMb)
+    a.every(
+      (r, i) =>
+        r.route === b[i]?.route &&
+        r.maxBodySizeMb === b[i]?.maxBodySizeMb &&
+        (r.served ?? true) === (b[i]?.served ?? true),
+    )
   );
 }
 

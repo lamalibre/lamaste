@@ -11,11 +11,20 @@ import {
   DOMAINS_PROJECTION_FILE,
   indexDomainsProjection,
   logRequestMetadata,
+  NATIVE_APPS_PROJECTION_FILE,
   parseDomainsProjection,
+  parseNativeAppsProjection,
   RELAY_SIGNING_KEY_FILE,
   userSurfaceHosts,
 } from '@lamalibre/lamaste';
-import type { DomainsIndex, RelaySigner, UserSurfaceHost } from '@lamalibre/lamaste';
+import type {
+  DomainsIndex,
+  NativeAppsProjectionClient,
+  RelaySigner,
+  UserSurfaceHost,
+} from '@lamalibre/lamaste';
+import { createIssuerKeyCache } from '../lib/issuer-keys.js';
+import type { IssuerKeyCache } from '../lib/issuer-keys.js';
 import {
   DEFAULT_DATA_DIR,
   GROUPS_FILE,
@@ -43,6 +52,7 @@ const tunnelsPath = path.join(dataDir, TUNNELS_FILE);
 const sitesPath = path.join(dataDir, SITES_FILE);
 const settingsPath = path.join(dataDir, SETTINGS_FILE);
 const domainsPath = path.join(dataDir, DOMAINS_PROJECTION_FILE);
+const nativeAppsPath = path.join(dataDir, NATIVE_APPS_PROJECTION_FILE);
 
 /**
  * The relay's assertion signing key, created by the panel (never here). A
@@ -72,6 +82,13 @@ let settingsCache: GatekeeperSettings = {};
  * projection — every authorization is refused then.
  */
 let domainsCache: DomainsIndex | null = null;
+
+/**
+ * The served native clients, as the panel last wrote them
+ * (`native-apps.json`); null while it is missing or malformed — every
+ * bearer token is refused then.
+ */
+let nativeClientsCache: NativeAppsProjectionClient[] | null = null;
 
 /** Authelia session cache: cookie hash → session data */
 const sessionCache = new Map<string, AutheliaSession>();
@@ -114,6 +131,10 @@ const DOMAINS_RELOAD_INTERVAL_MS = 60_000;
 async function loadDomains(): Promise<void> {
   const projection = parseDomainsProjection(await readStateFile(domainsPath));
   domainsCache = projection ? indexDomainsProjection(projection) : null;
+}
+
+async function loadNativeClients(): Promise<void> {
+  nativeClientsCache = parseNativeAppsProjection(await readStateFile(nativeAppsPath));
 }
 
 async function loadSettings(): Promise<GatekeeperSettings> {
@@ -218,12 +239,18 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   // Load initial state
   await loadHostState();
   await loadDomains();
+  await loadNativeClients();
   settingsCache = await loadSettings();
+  const issuerKeys = createIssuerKeyCache({
+    onError: (message) => server.log.warn({ err: message }, 'Could not read the issuer key set'),
+  });
 
   // Decorate server with shared state accessors
   server.decorate('getTunnels', () => tunnelsCache);
   server.decorate('getUserSurfaceHosts', () => userSurfaceHostsCache);
   server.decorate('getDomains', () => domainsCache);
+  server.decorate('getNativeClients', () => nativeClientsCache);
+  server.decorate('getIssuerKeys', () => issuerKeys);
   server.decorate('getSettings', () => settingsCache);
   server.decorate('getSessionCache', () => sessionCache);
   server.decorate('getCacheVersion', () => cacheVersion);
@@ -247,12 +274,16 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   watchFile(tunnelsPath, loadHostState, server.log);
   watchFile(sitesPath, loadHostState, server.log);
   watchFile(domainsPath, loadDomains, server.log);
+  watchFile(nativeAppsPath, loadNativeClients, server.log);
   // A watch event can be missed, and the panel never rewrites an unchanged
   // projection: read it again every minute too (and on every cache bust —
   // the panel busts after each membership change).
   const domainsTimer = setInterval(() => {
     loadDomains().catch((err: unknown) =>
       server.log.warn({ err: (err as Error).message }, 'Could not reload domains.json'),
+    );
+    loadNativeClients().catch((err: unknown) =>
+      server.log.warn({ err: (err as Error).message }, 'Could not reload native-apps.json'),
     );
   }, DOMAINS_RELOAD_INTERVAL_MS);
   domainsTimer.unref();
@@ -391,6 +422,10 @@ declare module 'fastify' {
     getUserSurfaceHosts(): UserSurfaceHost[];
     /** The domains and their members (`domains.json`); null: refuse everyone. */
     getDomains(): DomainsIndex | null;
+    /** The served native clients (`native-apps.json`); null: refuse every bearer token. */
+    getNativeClients(): NativeAppsProjectionClient[] | null;
+    /** The relay issuer's signing keys, for native apps' bearer tokens. */
+    getIssuerKeys(): IssuerKeyCache;
     getSettings(): GatekeeperSettings;
     getSessionCache(): Map<string, AutheliaSession>;
     getCacheVersion(): number;
