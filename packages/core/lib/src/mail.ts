@@ -534,3 +534,13 @@ export interface MailSendResult {
   /** A class of failure, never a provider's message. */
   readonly error?: string;
 }
+
+/**
+ * What became of the mail of an invitation's current link (§6.1): its
+ * status (null before 4.13, or while it is being sent) and when it was
+ * sent.
+ */
+export interface InvitationMailState {
+  readonly status: MailSendStatus | null;
+  readonly sentAt: string | null;
+}

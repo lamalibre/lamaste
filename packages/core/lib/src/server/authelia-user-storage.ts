@@ -77,19 +77,22 @@ export async function autheliaHoldsOpaqueIdentifier(
 /**
  * What {@link verifyAutheliaTotp} found: `ok` with the time step the code
  * matched (the caller refuses a step it already accepted — Authelia's own
- * replay history is not consulted), or `no` — a wrong code, or no TOTP
- * configuration for the user at all (the two are not told apart).
+ * replay history is not consulted); `wrong` — a code that is none of the
+ * user's; `none` — the user has no TOTP configuration at all, so no code
+ * can be right (a reset by mail cannot be finished: an administrator
+ * helps). The helper answers only to the panel, which tells `none` only
+ * to the holder of a reset link.
  */
 export type AutheliaTotpVerdict =
   | { readonly ok: true; readonly step: number }
-  | { readonly ok: false };
+  | { readonly ok: false; readonly reason: 'wrong' | 'none' };
 
 /**
  * Check a TOTP `code` against `username`'s configuration in Authelia's
  * storage (one step either side of now, the configuration's own
  * algorithm, digits and period). The root helper reads the configuration
- * with Authelia's CLI as the Authelia account and answers `ok <step>` or
- * `no`; the secret never leaves it and the code travels on stdin. Throws
+ * with Authelia's CLI as the Authelia account and answers `ok <step>`,
+ * `no` or `none`; the secret never leaves it and the code travels on stdin. Throws
  * when the helper fails or answers anything else.
  */
 export async function verifyAutheliaTotp(
@@ -97,17 +100,18 @@ export async function verifyAutheliaTotp(
   code: string,
   exec: ExecFn,
 ): Promise<AutheliaTotpVerdict> {
-  if (!TOTP_CODE_RE.test(code)) return { ok: false };
+  if (!TOTP_CODE_RE.test(code)) return { ok: false, reason: 'wrong' };
   const result = await exec(
     'sudo',
     [PRIV, AUTHELIA_USER_PRIV_VERB, AUTHELIA_VERIFY_TOTP_ACTION, username],
     { timeout: 60_000, input: code },
   );
   const answer = (result.stdout ?? '').trim();
-  if (answer === 'no') return { ok: false };
+  if (answer === 'no') return { ok: false, reason: 'wrong' };
+  if (answer === 'none') return { ok: false, reason: 'none' };
   const match = /^ok ([0-9]{1,15})$/.exec(answer);
   if (match?.[1] === undefined) {
-    throw new Error('lamaste-priv answered the TOTP check with neither ok nor no');
+    throw new Error('lamaste-priv answered the TOTP check with neither ok, no nor none');
   }
   return { ok: true, step: Number(match[1]) };
 }

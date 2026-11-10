@@ -29,6 +29,7 @@ import {
   IDENTITY_EMAIL_MAX_LENGTH,
   IDENTITY_ROLE_ID_REGEX,
 } from './identity.js';
+import type { InvitationMailState } from './mail.js';
 import { displayText } from './plugin-settings.js';
 
 // ---------------------------------------------------------------------------
@@ -272,6 +273,10 @@ export interface InvitationAdminView {
   readonly fulfilled: boolean;
   /** 4.8's field: accepted. */
   readonly used: boolean;
+  /** The mail of its current link (mail-design.md §6.1). */
+  readonly mail: InvitationMailState;
+  /** When a new link last replaced the old one, or null. */
+  readonly reissuedAt: string | null;
 }
 
 /** Filters of `GET /api/invitations`. */
@@ -296,6 +301,8 @@ export interface InvitationInviterView {
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly acceptedAt: string | null;
+  /** The mail of its current link (mail-design.md §6.1). */
+  readonly mail: InvitationMailState;
 }
 
 /** `GET /api/delegated-invitations/<route>` — what the inviter's page shows. */

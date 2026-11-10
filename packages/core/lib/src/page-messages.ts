@@ -150,6 +150,8 @@ export const PAGE_MESSAGES_EN = {
   'error.invitation_cap.inviter':
     'You have reached your limit of open invitations — revoke one or wait for one to be accepted.',
   'error.invitation_cap.plugin': 'This application takes no more people by invitation.',
+  'error.invitation_not_pending':
+    'This invitation is no longer open — it was accepted or revoked, so it cannot get a new link.',
   'error.grant_reserve': 'No more people can be added by invitation right now.',
   'error.gatekeeper_unavailable': 'The service is not answering — try again shortly.',
   'error.authelia_storage_unavailable': 'The service is not answering — try again shortly.',
@@ -426,6 +428,8 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'error.invitation_cap.inviter':
     'Açık davet sınırınıza ulaştınız. Bir daveti iptal edin ya da davetlerden birinin kabul edilmesini bekleyin.',
   'error.invitation_cap.plugin': 'Bu uygulamaya davetle daha fazla kişi eklenemiyor.',
+  'error.invitation_not_pending':
+    'Bu davet artık açık değil; kabul edilmiş ya da iptal edilmiş olduğu için yeni bağlantı oluşturulamaz.',
   'error.grant_reserve':
     'Şu anda davetle yeni kişi eklenemiyor. Lütfen daha sonra yeniden deneyin.',
   'error.gatekeeper_unavailable':
@@ -639,6 +643,7 @@ export const INVITATIONS_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
   'error.invitation_rate',
   'error.invitation_cap.inviter',
   'error.invitation_cap.plugin',
+  'error.invitation_not_pending',
   'error.grant_reserve',
   'error.gatekeeper_unavailable',
   'error.not_found',

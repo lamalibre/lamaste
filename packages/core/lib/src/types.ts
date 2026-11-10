@@ -164,6 +164,12 @@ export interface AdminUser {
    * Authelia groups.
    */
   readonly domains: readonly DomainMembership[];
+  /**
+   * Whether `email` can receive mail (mail-design.md §4): not under
+   * `.local`, `.invalid`, `.test` or `.example`. A user without one cannot
+   * reset their own password.
+   */
+  readonly emailDeliverable: boolean;
 }
 
 /**

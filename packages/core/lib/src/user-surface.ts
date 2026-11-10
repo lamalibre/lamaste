@@ -230,8 +230,9 @@ export function isUserSurfaceUrl(url: string, route: string): boolean {
 
 /**
  * Where the panel answers an inviter, on `auth.<the plugin's domain>`:
- * `/api/delegated-invitations/<route>` and `…/<route>/<invitation id>`
- * (`delegated-invitations-design.md` §5). Gatekeeper vouches for the
+ * `/api/delegated-invitations/<route>`, `…/<route>/<invitation id>` and
+ * `…/<route>/<invitation id>/reissue` (`delegated-invitations-design.md`
+ * §5; mail-design.md §6.1). Gatekeeper vouches for the
  * session's user there as on a user surface, with a target of its own
  * kind (`relay-assertion.ts`).
  */
@@ -243,6 +244,9 @@ export const DELEGATED_INVITATIONS_PAGE_PREFIX = '/invitations';
 /** A delegated invitation's id: a lower-case UUID. */
 const INVITATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** What follows an invitation's id to ask for a new link: `…/<route>/<id>/reissue`. */
+export const DELEGATED_INVITATION_REISSUE_SUFFIX = '/reissue';
+
 /** `/api/delegated-invitations/<route>`. Throws on a route no user surface can have. */
 export function delegatedInvitationsApiPath(route: string): string {
   if (!isUserSurfaceRoute(route)) throw new Error(`Invalid plugin route: "${route}"`);
@@ -251,8 +255,9 @@ export function delegatedInvitationsApiPath(route: string): string {
 
 /**
  * Whether `url` (the raw request target, with its query string) is the
- * inviter's API of `route`: exactly `/api/delegated-invitations/<route>` or
- * `/api/delegated-invitations/<route>/<invitation id>`, read literally —
+ * inviter's API of `route`: exactly `/api/delegated-invitations/<route>`,
+ * `/api/delegated-invitations/<route>/<invitation id>` or that followed by
+ * {@link DELEGATED_INVITATION_REISSUE_SUFFIX}, read literally —
  * nothing longer, no trailing `/`, no unsafe segment
  * ({@link hasUnsafePathSegments}). False for a route no user surface can
  * have.
@@ -264,7 +269,11 @@ export function isDelegatedInvitationsUrl(url: string, route: string): boolean {
   const base = `${DELEGATED_INVITATIONS_API_PREFIX}/${route}`;
   if (pathPart === base) return true;
   if (!pathPart.startsWith(`${base}/`)) return false;
-  return INVITATION_ID_RE.test(pathPart.slice(base.length + 1));
+  const rest = pathPart.slice(base.length + 1);
+  const id = rest.endsWith(DELEGATED_INVITATION_REISSUE_SUFFIX)
+    ? rest.slice(0, -DELEGATED_INVITATION_REISSUE_SUFFIX.length)
+    : rest;
+  return INVITATION_ID_RE.test(id);
 }
 
 /**

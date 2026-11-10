@@ -308,6 +308,7 @@ export {
   isUserSurfaceRoute,
   isUserSurfaceUrl,
   DELEGATED_INVITATIONS_API_PREFIX,
+  DELEGATED_INVITATION_REISSUE_SUFFIX,
   DELEGATED_INVITATIONS_PAGE_PREFIX,
   delegatedInvitationsApiPath,
   isDelegatedInvitationsUrl,
@@ -994,6 +995,7 @@ export type {
   MailTransportHealth,
   MailTransportView,
   MailSendResult,
+  InvitationMailState,
 } from './mail.js';
 export {
   AUTH_RESET_PATH,
