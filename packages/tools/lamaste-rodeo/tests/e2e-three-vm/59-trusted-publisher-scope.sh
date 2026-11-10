@@ -62,9 +62,20 @@ PURGE_PACKAGES=""
 
 begin_test "59 — A trusted publisher scope: an app plugin of a second scope (Three-VM)"
 
+# drop_dev_feria_fixtures — remove this spec's fixture packages from the
+# development Feria, so every run publishes its own 1.0.0 and none is left behind.
+drop_dev_feria_fixtures() {
+  local dir
+  for dir in server agent; do
+    curl -s --max-time 10 -o /dev/null -X DELETE -H "Authorization: Bearer feria-dev" \
+      "${DEV_FERIA_URL}/api/packages/${SCOPE}/e2e-scoped-${dir}" || true
+  done
+}
+
 cleanup() {
   log_info "Cleaning up test resources..."
   app_plugin_cleanup
+  drop_dev_feria_fixtures
 }
 trap cleanup EXIT
 
@@ -118,6 +129,7 @@ log_pass "Fixture built: ${SERVER_PACKAGE} and its bundled agent half ${AGENT_PA
 # registry, and no token of this machine's own ~/.npmrc, is ever used.
 printf '%s:registry=%s/\n@other-e2e:registry=%s/\n//%s/:_authToken=feria-dev\n' \
   "${SCOPE}" "${DEV_FERIA_URL}" "${DEV_FERIA_URL}" "${DEV_FERIA_URL#http://}" > "${LOCAL_TMP}/npmrc"
+drop_dev_feria_fixtures
 for dir in server agent; do
   OUT=$(NPM_CONFIG_USERCONFIG="${LOCAL_TMP}/npmrc" npm publish "${LOCAL_TMP}/ship/fixtures/v1/${dir}" --access public --ignore-scripts 2>&1 || true)
   assert_contains "$OUT" "+ ${SCOPE}/e2e-scoped-${dir}@1.0.0" "npm publish ${SCOPE}/e2e-scoped-${dir}@1.0.0 to the development Feria" || true
@@ -131,6 +143,9 @@ if echo "$OUT" | grep -q '+ @other-e2e/x@1.0.0'; then
 else
   log_pass "A package of a scope the development Feria does not host is not accepted"
 fi
+
+# The probe that reads the agent half's unit and process on the agent VM.
+ship_agent_facts_probe
 
 # The bytes the stand-in serves are the ones published to Feria: fetched on
 # the host VM through the bridge.
@@ -171,13 +186,15 @@ assert_eq "$(status_of "$REFUSED")" "409" "Trusting ${SCOPE} while the registry 
 assert_json_field "$(body_of "$REFUSED")" '.code' 'registry_lacks_scope' "…registry_lacks_scope" || true
 
 stub_config "{\"hostedScopes\":[\"@lamalibre\",\"${SCOPE}\"]}" > /dev/null
+# Notifications outlive a run: count only those after this one.
+NOTE_BASE=$(host_api_get "notifications?limit=1" | jq ".notifications[0].id // 0" 2>/dev/null || echo "0")
 ADD_OUT=$(timed_exec 60 multipass exec "${HOST_VM}" -- sudo bash -c "lamaste-server trusted-scopes add ${SCOPE} --json 2>&1")
 CLEAN_TRUSTED_SCOPES="${SCOPE}"
 ADD_JSON=$(echo "$ADD_OUT" | grep -E '^\{' | tail -n 1 || echo '{}')
 assert_json_field "$ADD_JSON" '.effective | join(",")' "@lamalibre,${SCOPE}" "lamaste-server trusted-scopes add ${SCOPE} ($(echo "$ADD_OUT" | tail -c 160))" || true
 assert_json_field "$(trusted_scopes)" '.additional | join(",")' "${SCOPE}" "GET /api/settings/trusted-scopes lists it" || true
 assert_eq "$(scope_audit_count settings.trusted-scope.added)" "1" "Audit: settings.trusted-scope.added" || true
-NOTE=$(host_api_get "notifications" | jq -c "[.notifications[]? | select(.message | contains(\"${SCOPE} is now a trusted publisher scope\"))] | length" 2>/dev/null || echo 0)
+NOTE=$(host_api_get "notifications" | jq -c "[.notifications[]? | select(.id > ${NOTE_BASE}) | select(.message | contains(\"${SCOPE} is now a trusted publisher scope\"))] | length" 2>/dev/null || echo 0)
 assert_eq "$NOTE" "1" "The administrators are told" || true
 
 agent_trusts_scope() {
@@ -234,7 +251,7 @@ assert_json_field "$OWNER" '.package' "${AGENT_PACKAGE}" "The app host helper re
 PING=$(host_api_get "${PLUGIN}/ping")
 assert_json_field "$PING" '"\(.pong) \(.version) \(.user)"' "true 1.0.0 ${SERVICE_USER}" "GET /api/${PLUGIN}/ping reaches the installed version through the tunnel" || true
 
-REQUESTS=$(stub_get "-/e2e/requests" | jq -c "[.requests[]? | select(.method == \"GET\" and (.path | endswith(\"/e2e-scoped-agent-1.0.0.tgz\")) and .status == 200) | .owner] | unique | join(\",\")" 2>/dev/null || echo "")
+REQUESTS=$(stub_get "-/e2e/requests" | jq -r "[.requests[]? | select(.method == \"GET\" and (.path | endswith(\"/e2e-scoped-agent-1.0.0.tgz\")) and .status == 200) | .owner] | unique | join(\",\")" 2>/dev/null || echo "")
 assert_eq "$REQUESTS" "agent:${HOST_AGENT_LABEL}" "The agent pulled ${AGENT_PACKAGE} from the relay's registry with its brokered token (${SCOPE} routed there)" || true
 
 # ===========================================================================

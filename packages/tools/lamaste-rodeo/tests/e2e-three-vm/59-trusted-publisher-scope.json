@@ -193,7 +193,7 @@
           }
         },
         {
-          "id": "step-13",
+          "id": "step-14",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -210,7 +210,7 @@
           ]
         },
         {
-          "id": "step-14",
+          "id": "step-15",
           "label": "npm publish ${SCOPE}/e2e-scoped-${dir}@1.0.0 to the development Feria",
           "target": "local",
           "continueOnError": true,
@@ -231,7 +231,7 @@
           }
         },
         {
-          "id": "step-18",
+          "id": "step-19",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -248,7 +248,7 @@
           ]
         },
         {
-          "id": "step-19",
+          "id": "step-20",
           "label": "The development Feria accepted a package of a scope it does not host",
           "target": "local",
           "op": {
@@ -258,7 +258,7 @@
           }
         },
         {
-          "id": "step-20",
+          "id": "step-21",
           "label": "A package of a scope the development Feria does not host is not accepted",
           "target": "local",
           "op": {
@@ -268,7 +268,7 @@
           }
         },
         {
-          "id": "step-22",
+          "id": "step-24",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -285,7 +285,7 @@
           ]
         },
         {
-          "id": "step-23",
+          "id": "step-25",
           "label": "The VMs reach the development Feria at ${VM_FERIA}",
           "target": "local",
           "continueOnError": true,
@@ -306,7 +306,7 @@
           }
         },
         {
-          "id": "step-25",
+          "id": "step-27",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -323,7 +323,7 @@
           ]
         },
         {
-          "id": "step-26",
+          "id": "step-28",
           "label": "Set FILE",
           "target": "local",
           "op": {
@@ -340,7 +340,7 @@
           ]
         },
         {
-          "id": "step-27",
+          "id": "step-29",
           "label": "Set FROM_FERIA",
           "target": "local",
           "op": {
@@ -357,7 +357,7 @@
           ]
         },
         {
-          "id": "step-28",
+          "id": "step-30",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -379,7 +379,7 @@
           ]
         },
         {
-          "id": "step-29",
+          "id": "step-31",
           "label": "${pkg}@1.0.0 fetched from the development Feria and served by the stand-in",
           "target": "local",
           "continueOnError": true,
@@ -401,7 +401,7 @@
           }
         },
         {
-          "id": "step-30",
+          "id": "step-32",
           "label": "…byte for byte (integrity ${FROM_FERIA:0:20}…)",
           "target": "local",
           "continueOnError": true,
@@ -423,7 +423,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-34",
           "label": "Set PINNED",
           "target": "local",
           "op": {
@@ -440,14 +440,14 @@
           ]
         }
       ],
-      "bash": "log_section \"Published to the development Feria\"\n\nDEV_SCOPES=$(curl -s --max-time 10 \"${DEV_FERIA_URL}/-/feria/scopes\" || echo '{}')\nif [ \"$(json_get \"$DEV_SCOPES\" \"[.scopes[]? | select(.scope == \\\"${SCOPE}\\\" and (.retired // false) == false)] | length\")\" != \"1\" ]; then\n  log_fail \"The development Feria at ${DEV_FERIA_URL} does not host ${SCOPE} (feria-server scopes add ${SCOPE} --any-publisher, Feria 0.5+): ${DEV_SCOPES}\"\n  end_test\n  exit $?\nfi\nlog_pass \"The development Feria hosts ${SCOPE} ($(json_get \"$DEV_SCOPES\" '[.scopes[].scope] | join(\", \")'))\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-59-trusted-scope-XXXXXXXX)\nif ! FIXTURE_SCOPE=\"${SCOPE}\" write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v1\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]'; then\n  log_fail \"The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE} and its bundled agent half ${AGENT_PACKAGE} 1.0.0\"\n\n# An isolated userconfig naming only the development Feria: no other\n# registry, and no token of this machine's own ~/.npmrc, is ever used.\nprintf '%s:registry=%s/\\n@other-e2e:registry=%s/\\n//%s/:_authToken=feria-dev\\n' \\\n  \"${SCOPE}\" \"${DEV_FERIA_URL}\" \"${DEV_FERIA_URL}\" \"${DEV_FERIA_URL#http://}\" > \"${LOCAL_TMP}/npmrc\"\nfor dir in server agent; do\n  OUT=$(NPM_CONFIG_USERCONFIG=\"${LOCAL_TMP}/npmrc\" npm publish \"${LOCAL_TMP}/ship/fixtures/v1/${dir}\" --access public --ignore-scripts 2>&1 || true)\n  assert_contains \"$OUT\" \"+ ${SCOPE}/e2e-scoped-${dir}@1.0.0\" \"npm publish ${SCOPE}/e2e-scoped-${dir}@1.0.0 to the development Feria\" || true\ndone\n# A scope the registry does not host is not stored there (Feria proxies it).\nmkdir -p \"${LOCAL_TMP}/unhosted\"\nprintf '{ \"name\": \"@other-e2e/x\", \"version\": \"1.0.0\" }\\n' > \"${LOCAL_TMP}/unhosted/package.json\"\nOUT=$(NPM_CONFIG_USERCONFIG=\"${LOCAL_TMP}/npmrc\" npm publish \"${LOCAL_TMP}/unhosted\" --access public --ignore-scripts 2>&1 || true)\nif echo \"$OUT\" | grep -q '+ @other-e2e/x@1.0.0'; then\n  log_fail \"The development Feria accepted a package of a scope it does not host\"\nelse\n  log_pass \"A package of a scope the development Feria does not host is not accepted\"\nfi\n\n# The bytes the stand-in serves are the ones published to Feria: fetched on\n# the host VM through the bridge.\n# shellcheck disable=SC2119 # no fixture directories: the packages come from Feria\nstart_stand_in_feria\nVM_FERIA=$(host_exec \"npm config get @lamalibre:registry 2>/dev/null\" 2>/dev/null | tr -d '\\r' | sed 's#/$##')\nassert_contains \"$VM_FERIA\" \"http\" \"The VMs reach the development Feria at ${VM_FERIA}\" || true\nfor pkg in \"${SERVER_PACKAGE}\" \"${AGENT_PACKAGE}\"; do\n  PACK=$(host_exec \"mkdir -p ${REMOTE_DIR}/from-feria && cd ${REMOTE_DIR}/from-feria && npm pack ${pkg}@1.0.0 --${SCOPE}:registry=${VM_FERIA}/ --json 2>/dev/null\" 2>/dev/null || echo '[]')\n  FILE=$(json_get \"$PACK\" '.[0].filename')\n  FROM_FERIA=$(json_get \"$PACK\" '.[0].integrity')\n  PUT=$(host_exec \"curl -s --max-time 30 -X PUT -H 'Authorization: Bearer ${STUB_ADMIN_TOKEN}' --data-binary @${REMOTE_DIR}/from-feria/${FILE} http://127.0.0.1:${STUB_PORT}/-/e2e/packages\")\n  assert_json_field \"$PUT\" '.name' \"${pkg}\" \"${pkg}@1.0.0 fetched from the development Feria and served by the stand-in\" || true\n  assert_json_field \"$PUT\" '.integrity' \"${FROM_FERIA}\" \"…byte for byte (integrity ${FROM_FERIA:0:20}…)\" || true\ndone\nPINNED=$(feria_integrity \"${AGENT_PACKAGE}\" 1.0.0)\n\n# ===========================================================================\n# 2. Not trusted: refused. Trusted only while the registry hosts the scope.\n# ==========================================================================="
+      "bash": "log_section \"Published to the development Feria\"\n\nDEV_SCOPES=$(curl -s --max-time 10 \"${DEV_FERIA_URL}/-/feria/scopes\" || echo '{}')\nif [ \"$(json_get \"$DEV_SCOPES\" \"[.scopes[]? | select(.scope == \\\"${SCOPE}\\\" and (.retired // false) == false)] | length\")\" != \"1\" ]; then\n  log_fail \"The development Feria at ${DEV_FERIA_URL} does not host ${SCOPE} (feria-server scopes add ${SCOPE} --any-publisher, Feria 0.5+): ${DEV_SCOPES}\"\n  end_test\n  exit $?\nfi\nlog_pass \"The development Feria hosts ${SCOPE} ($(json_get \"$DEV_SCOPES\" '[.scopes[].scope] | join(\", \")'))\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-59-trusted-scope-XXXXXXXX)\nif ! FIXTURE_SCOPE=\"${SCOPE}\" write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v1\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]'; then\n  log_fail \"The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE} and its bundled agent half ${AGENT_PACKAGE} 1.0.0\"\n\n# An isolated userconfig naming only the development Feria: no other\n# registry, and no token of this machine's own ~/.npmrc, is ever used.\nprintf '%s:registry=%s/\\n@other-e2e:registry=%s/\\n//%s/:_authToken=feria-dev\\n' \\\n  \"${SCOPE}\" \"${DEV_FERIA_URL}\" \"${DEV_FERIA_URL}\" \"${DEV_FERIA_URL#http://}\" > \"${LOCAL_TMP}/npmrc\"\ndrop_dev_feria_fixtures\nfor dir in server agent; do\n  OUT=$(NPM_CONFIG_USERCONFIG=\"${LOCAL_TMP}/npmrc\" npm publish \"${LOCAL_TMP}/ship/fixtures/v1/${dir}\" --access public --ignore-scripts 2>&1 || true)\n  assert_contains \"$OUT\" \"+ ${SCOPE}/e2e-scoped-${dir}@1.0.0\" \"npm publish ${SCOPE}/e2e-scoped-${dir}@1.0.0 to the development Feria\" || true\ndone\n# A scope the registry does not host is not stored there (Feria proxies it).\nmkdir -p \"${LOCAL_TMP}/unhosted\"\nprintf '{ \"name\": \"@other-e2e/x\", \"version\": \"1.0.0\" }\\n' > \"${LOCAL_TMP}/unhosted/package.json\"\nOUT=$(NPM_CONFIG_USERCONFIG=\"${LOCAL_TMP}/npmrc\" npm publish \"${LOCAL_TMP}/unhosted\" --access public --ignore-scripts 2>&1 || true)\nif echo \"$OUT\" | grep -q '+ @other-e2e/x@1.0.0'; then\n  log_fail \"The development Feria accepted a package of a scope it does not host\"\nelse\n  log_pass \"A package of a scope the development Feria does not host is not accepted\"\nfi\n\n# The probe that reads the agent half's unit and process on the agent VM.\nship_agent_facts_probe\n\n# The bytes the stand-in serves are the ones published to Feria: fetched on\n# the host VM through the bridge.\n# shellcheck disable=SC2119 # no fixture directories: the packages come from Feria\nstart_stand_in_feria\nVM_FERIA=$(host_exec \"npm config get @lamalibre:registry 2>/dev/null\" 2>/dev/null | tr -d '\\r' | sed 's#/$##')\nassert_contains \"$VM_FERIA\" \"http\" \"The VMs reach the development Feria at ${VM_FERIA}\" || true\nfor pkg in \"${SERVER_PACKAGE}\" \"${AGENT_PACKAGE}\"; do\n  PACK=$(host_exec \"mkdir -p ${REMOTE_DIR}/from-feria && cd ${REMOTE_DIR}/from-feria && npm pack ${pkg}@1.0.0 --${SCOPE}:registry=${VM_FERIA}/ --json 2>/dev/null\" 2>/dev/null || echo '[]')\n  FILE=$(json_get \"$PACK\" '.[0].filename')\n  FROM_FERIA=$(json_get \"$PACK\" '.[0].integrity')\n  PUT=$(host_exec \"curl -s --max-time 30 -X PUT -H 'Authorization: Bearer ${STUB_ADMIN_TOKEN}' --data-binary @${REMOTE_DIR}/from-feria/${FILE} http://127.0.0.1:${STUB_PORT}/-/e2e/packages\")\n  assert_json_field \"$PUT\" '.name' \"${pkg}\" \"${pkg}@1.0.0 fetched from the development Feria and served by the stand-in\" || true\n  assert_json_field \"$PUT\" '.integrity' \"${FROM_FERIA}\" \"…byte for byte (integrity ${FROM_FERIA:0:20}…)\" || true\ndone\nPINNED=$(feria_integrity \"${AGENT_PACKAGE}\" 1.0.0)\n\n# ===========================================================================\n# 2. Not trusted: refused. Trusted only while the registry hosts the scope.\n# ==========================================================================="
     },
     {
       "id": "not-trusted-the-install-is-refused",
       "label": "Not trusted: the install is refused",
       "steps": [
         {
-          "id": "step-33",
+          "id": "step-35",
           "label": "Set REFUSED",
           "target": "local",
           "op": {
@@ -464,7 +464,7 @@
           ]
         },
         {
-          "id": "step-34",
+          "id": "step-36",
           "label": "Installing ${SERVER_PACKAGE} on a relay that does not trust ${SCOPE} is refused (400)",
           "target": "local",
           "continueOnError": true,
@@ -485,7 +485,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-37",
           "label": "…untrusted_scope",
           "target": "local",
           "continueOnError": true,
@@ -507,7 +507,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-38",
           "label": "…and nothing is installed",
           "target": "local",
           "continueOnError": true,
@@ -528,7 +528,7 @@
           }
         },
         {
-          "id": "step-38",
+          "id": "step-40",
           "label": "Set REFUSED",
           "target": "local",
           "op": {
@@ -545,7 +545,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-41",
           "label": "A look-alike of the built-in scope (${lookalike}) is refused",
           "target": "local",
           "continueOnError": true,
@@ -573,7 +573,7 @@
       "label": "Trusting the scope: only while the registry hosts it",
       "steps": [
         {
-          "id": "step-42",
+          "id": "step-44",
           "label": "Set REFUSED",
           "target": "local",
           "op": {
@@ -590,7 +590,7 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-45",
           "label": "Trusting ${SCOPE} while the registry does not host it is refused (409)",
           "target": "local",
           "continueOnError": true,
@@ -611,7 +611,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-46",
           "label": "…registry_lacks_scope",
           "target": "local",
           "continueOnError": true,
@@ -633,7 +633,25 @@
           }
         },
         {
-          "id": "step-46",
+          "id": "step-48",
+          "label": "GET /api/notifications?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "notifications?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "NOTE_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
           "label": "Set ADD_OUT",
           "target": "local",
           "op": {
@@ -650,7 +668,7 @@
           ]
         },
         {
-          "id": "step-48",
+          "id": "step-51",
           "label": "Set ADD_JSON",
           "target": "local",
           "op": {
@@ -667,7 +685,7 @@
           ]
         },
         {
-          "id": "step-49",
+          "id": "step-52",
           "label": "lamaste-server trusted-scopes add ${SCOPE} ($(echo \"$ADD_OUT\" | tail -c 160))",
           "target": "local",
           "continueOnError": true,
@@ -689,7 +707,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-53",
           "label": "GET /api/settings/trusted-scopes lists it",
           "target": "local",
           "continueOnError": true,
@@ -711,7 +729,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-54",
           "label": "Audit: settings.trusted-scope.added",
           "target": "local",
           "continueOnError": true,
@@ -732,7 +750,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-55",
           "label": "GET /api/notifications",
           "target": "host",
           "op": {
@@ -750,7 +768,7 @@
           ]
         },
         {
-          "id": "step-53",
+          "id": "step-56",
           "label": "The administrators are told",
           "target": "local",
           "continueOnError": true,
@@ -771,7 +789,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-61",
           "label": "The agent's sync recorded the relay's list: @lamalibre,${SCOPE}",
           "target": "local",
           "op": {
@@ -781,7 +799,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-62",
           "label": "The agent did not record ${SCOPE}: $(agent_exec \"jq -c '.trustedScopes' ${AGENT_DIR}/config.json\" 2>/dev/null)",
           "target": "local",
           "op": {
@@ -791,14 +809,14 @@
           }
         }
       ],
-      "bash": "log_section \"Trusting the scope: only while the registry hosts it\"\n\nstub_config '{\"hostedScopes\":[\"@lamalibre\"]}' > /dev/null\nREFUSED=$(host_api_call POST \"settings/trusted-scopes\" \"{\\\"scope\\\":\\\"${SCOPE}\\\"}\")\nassert_eq \"$(status_of \"$REFUSED\")\" \"409\" \"Trusting ${SCOPE} while the registry does not host it is refused (409)\" || true\nassert_json_field \"$(body_of \"$REFUSED\")\" '.code' 'registry_lacks_scope' \"…registry_lacks_scope\" || true\n\nstub_config \"{\\\"hostedScopes\\\":[\\\"@lamalibre\\\",\\\"${SCOPE}\\\"]}\" > /dev/null\nADD_OUT=$(timed_exec 60 multipass exec \"${HOST_VM}\" -- sudo bash -c \"lamaste-server trusted-scopes add ${SCOPE} --json 2>&1\")\nCLEAN_TRUSTED_SCOPES=\"${SCOPE}\"\nADD_JSON=$(echo \"$ADD_OUT\" | grep -E '^\\{' | tail -n 1 || echo '{}')\nassert_json_field \"$ADD_JSON\" '.effective | join(\",\")' \"@lamalibre,${SCOPE}\" \"lamaste-server trusted-scopes add ${SCOPE} ($(echo \"$ADD_OUT\" | tail -c 160))\" || true\nassert_json_field \"$(trusted_scopes)\" '.additional | join(\",\")' \"${SCOPE}\" \"GET /api/settings/trusted-scopes lists it\" || true\nassert_eq \"$(scope_audit_count settings.trusted-scope.added)\" \"1\" \"Audit: settings.trusted-scope.added\" || true\nNOTE=$(host_api_get \"notifications\" | jq -c \"[.notifications[]? | select(.message | contains(\\\"${SCOPE} is now a trusted publisher scope\\\"))] | length\" 2>/dev/null || echo 0)\nassert_eq \"$NOTE\" \"1\" \"The administrators are told\" || true\n\nagent_trusts_scope() {\n  nudge_sync\n  [ \"$(agent_exec \"jq -r '(.trustedScopes // []) | join(\\\",\\\")' ${AGENT_DIR}/config.json\" 2>/dev/null)\" = \"@lamalibre,${SCOPE}\" ]\n}\nif wait_for 120 agent_trusts_scope; then\n  log_pass \"The agent's sync recorded the relay's list: @lamalibre,${SCOPE}\"\nelse\n  log_fail \"The agent did not record ${SCOPE}: $(agent_exec \"jq -c '.trustedScopes' ${AGENT_DIR}/config.json\" 2>/dev/null)\"\nfi\n\n# ===========================================================================\n# 3. Installed, approved and hosted on the agent VM\n# ==========================================================================="
+      "bash": "log_section \"Trusting the scope: only while the registry hosts it\"\n\nstub_config '{\"hostedScopes\":[\"@lamalibre\"]}' > /dev/null\nREFUSED=$(host_api_call POST \"settings/trusted-scopes\" \"{\\\"scope\\\":\\\"${SCOPE}\\\"}\")\nassert_eq \"$(status_of \"$REFUSED\")\" \"409\" \"Trusting ${SCOPE} while the registry does not host it is refused (409)\" || true\nassert_json_field \"$(body_of \"$REFUSED\")\" '.code' 'registry_lacks_scope' \"…registry_lacks_scope\" || true\n\nstub_config \"{\\\"hostedScopes\\\":[\\\"@lamalibre\\\",\\\"${SCOPE}\\\"]}\" > /dev/null\n# Notifications outlive a run: count only those after this one.\nNOTE_BASE=$(host_api_get \"notifications?limit=1\" | jq \".notifications[0].id // 0\" 2>/dev/null || echo \"0\")\nADD_OUT=$(timed_exec 60 multipass exec \"${HOST_VM}\" -- sudo bash -c \"lamaste-server trusted-scopes add ${SCOPE} --json 2>&1\")\nCLEAN_TRUSTED_SCOPES=\"${SCOPE}\"\nADD_JSON=$(echo \"$ADD_OUT\" | grep -E '^\\{' | tail -n 1 || echo '{}')\nassert_json_field \"$ADD_JSON\" '.effective | join(\",\")' \"@lamalibre,${SCOPE}\" \"lamaste-server trusted-scopes add ${SCOPE} ($(echo \"$ADD_OUT\" | tail -c 160))\" || true\nassert_json_field \"$(trusted_scopes)\" '.additional | join(\",\")' \"${SCOPE}\" \"GET /api/settings/trusted-scopes lists it\" || true\nassert_eq \"$(scope_audit_count settings.trusted-scope.added)\" \"1\" \"Audit: settings.trusted-scope.added\" || true\nNOTE=$(host_api_get \"notifications\" | jq -c \"[.notifications[]? | select(.id > ${NOTE_BASE}) | select(.message | contains(\\\"${SCOPE} is now a trusted publisher scope\\\"))] | length\" 2>/dev/null || echo 0)\nassert_eq \"$NOTE\" \"1\" \"The administrators are told\" || true\n\nagent_trusts_scope() {\n  nudge_sync\n  [ \"$(agent_exec \"jq -r '(.trustedScopes // []) | join(\\\",\\\")' ${AGENT_DIR}/config.json\" 2>/dev/null)\" = \"@lamalibre,${SCOPE}\" ]\n}\nif wait_for 120 agent_trusts_scope; then\n  log_pass \"The agent's sync recorded the relay's list: @lamalibre,${SCOPE}\"\nelse\n  log_fail \"The agent did not record ${SCOPE}: $(agent_exec \"jq -c '.trustedScopes' ${AGENT_DIR}/config.json\" 2>/dev/null)\"\nfi\n\n# ===========================================================================\n# 3. Installed, approved and hosted on the agent VM\n# ==========================================================================="
     },
     {
       "id": "installed-from-the-trusted-scope-the-agent-half-pinned",
       "label": "Installed from the trusted scope; the agent half pinned",
       "steps": [
         {
-          "id": "step-61",
+          "id": "step-64",
           "label": "POST /api/plugins/install",
           "target": "host",
           "op": {
@@ -817,7 +835,7 @@
           ]
         },
         {
-          "id": "step-62",
+          "id": "step-65",
           "label": "Installed ${SERVER_PACKAGE}@1.0.0",
           "target": "local",
           "continueOnError": true,
@@ -839,7 +857,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-66",
           "label": "…the plugin ${PLUGIN}, named by its route",
           "target": "local",
           "continueOnError": true,
@@ -861,7 +879,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-67",
           "label": "Its agent half is ${AGENT_PACKAGE}",
           "target": "local",
           "continueOnError": true,
@@ -883,7 +901,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-68",
           "label": "…pinned at the integrity the registry publishes",
           "target": "local",
           "continueOnError": true,
@@ -905,7 +923,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-69",
           "label": "Set DIGEST",
           "target": "local",
           "op": {
@@ -922,7 +940,7 @@
           ]
         },
         {
-          "id": "step-67",
+          "id": "step-70",
           "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
           "target": "host",
           "op": {
@@ -941,7 +959,7 @@
           ]
         },
         {
-          "id": "step-68",
+          "id": "step-71",
           "label": "Approved",
           "target": "local",
           "continueOnError": true,
@@ -963,7 +981,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-72",
           "label": "POST /api/plugins/${PLUGIN}/enable",
           "target": "host",
           "op": {
@@ -981,7 +999,7 @@
       "label": "Hosted through the app host helper (protocol 3)",
       "steps": [
         {
-          "id": "step-71",
+          "id": "step-74",
           "label": "Host facts: the helper speaks protocol 3 (any trusted scope)",
           "target": "local",
           "continueOnError": true,
@@ -1003,7 +1021,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-75",
           "label": "GET /api/plugins/${PLUGIN}/hosting/eligibility",
           "target": "host",
           "op": {
@@ -1021,7 +1039,7 @@
           ]
         },
         {
-          "id": "step-73",
+          "id": "step-76",
           "label": "Eligibility: ${HOST_AGENT_LABEL} can host it",
           "target": "local",
           "continueOnError": true,
@@ -1043,7 +1061,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-78",
           "label": "The agent's window is open, under a policy naming ${AGENT_PACKAGE}",
           "target": "local",
           "continueOnError": true,
@@ -1065,7 +1083,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-79",
           "label": "POST /api/plugins/${PLUGIN}/hosting",
           "target": "host",
           "op": {
@@ -1084,7 +1102,7 @@
           ]
         },
         {
-          "id": "step-77",
+          "id": "step-80",
           "label": "Set OP_ID",
           "target": "local",
           "op": {
@@ -1101,7 +1119,7 @@
           ]
         },
         {
-          "id": "step-78",
+          "id": "step-81",
           "label": "Hosting did not start: ${HOSTED}",
           "target": "local",
           "op": {
@@ -1118,7 +1136,7 @@
           }
         },
         {
-          "id": "step-79",
+          "id": "step-82",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -1135,7 +1153,7 @@
           ]
         },
         {
-          "id": "step-80",
+          "id": "step-83",
           "label": "The hosting operation succeeded ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -1157,7 +1175,7 @@
           }
         },
         {
-          "id": "step-81",
+          "id": "step-84",
           "label": "Step: install the agent half",
           "target": "local",
           "continueOnError": true,
@@ -1178,7 +1196,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-85",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -1195,7 +1213,7 @@
           ]
         },
         {
-          "id": "step-83",
+          "id": "step-86",
           "label": "The agent half runs on the agent VM",
           "target": "local",
           "continueOnError": true,
@@ -1217,7 +1235,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-87",
           "label": "…as ${SERVICE_USER}",
           "target": "local",
           "continueOnError": true,
@@ -1239,7 +1257,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-88",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1256,7 +1274,7 @@
           ]
         },
         {
-          "id": "step-86",
+          "id": "step-89",
           "label": "The app host helper records ${AGENT_PACKAGE} as the route's owner",
           "target": "local",
           "continueOnError": true,
@@ -1278,7 +1296,7 @@
           }
         },
         {
-          "id": "step-87",
+          "id": "step-90",
           "label": "GET /api/${PLUGIN}/ping",
           "target": "host",
           "op": {
@@ -1296,7 +1314,7 @@
           ]
         },
         {
-          "id": "step-88",
+          "id": "step-91",
           "label": "GET /api/${PLUGIN}/ping reaches the installed version through the tunnel",
           "target": "local",
           "continueOnError": true,
@@ -1318,12 +1336,12 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-92",
           "label": "Set REQUESTS",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "stub_get \"-/e2e/requests\" | jq -c \"[.requests[]? | select(.method == \\\"GET\\\" and (.path | endswith(\\\"/e2e-scoped-agent-1.0.0.tgz\\\")) and .status == 200) | .owner] | unique | join(\\\",\\\")\" 2>/dev/null || echo \"\""
+            "command": "stub_get \"-/e2e/requests\" | jq -r \"[.requests[]? | select(.method == \\\"GET\\\" and (.path | endswith(\\\"/e2e-scoped-agent-1.0.0.tgz\\\")) and .status == 200) | .owner] | unique | join(\\\",\\\")\" 2>/dev/null || echo \"\""
           },
           "capture": [
             {
@@ -1335,7 +1353,7 @@
           ]
         },
         {
-          "id": "step-90",
+          "id": "step-93",
           "label": "The agent pulled ${AGENT_PACKAGE} from the relay's registry with its brokered token (${SCOPE} routed there)",
           "target": "local",
           "continueOnError": true,
@@ -1356,14 +1374,14 @@
           }
         }
       ],
-      "bash": "log_section \"Hosted through the app host helper (protocol 3)\"\n\nensure_app_host_helper\nassert_json_field \"$(agent_host_facts)\" '.apphost.version' '3' \"Host facts: the helper speaks protocol 3 (any trusted scope)\" || true\nELIGIBILITY=$(host_api_get \"plugins/${PLUGIN}/hosting/eligibility\" | jq -c \".agents[]? | select(.label == \\\"${HOST_AGENT_LABEL}\\\")\" 2>/dev/null || echo '{}')\nassert_json_field \"$ELIGIBILITY\" '\"\\(.eligible) \\(.reasons | length)\"' 'true 0' \"Eligibility: ${HOST_AGENT_LABEL} can host it\" || true\n\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\nassert_json_field \"${PUSH_WINDOW_RESPONSE}\" '.pushInstallPolicy' \"${POLICY_ID}\" \"The agent's window is open, under a policy naming ${AGENT_PACKAGE}\" || true\nHOSTED=$(host_api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nOP_ID=$(json_get \"$HOSTED\" '.operation.id // empty')\nif [ -z \"$OP_ID\" ]; then\n  log_fail \"Hosting did not start: ${HOSTED}\"\n  end_test\n  exit $?\nfi\nOP=$(wait_operation \"${PLUGIN}\" \"${OP_ID}\" 360 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The hosting operation succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_eq \"$(step_status \"$OP\" 'install the agent half')\" \"done\" \"Step: install the agent half\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '.unit.props.ActiveState' 'active' \"The agent half runs on the agent VM\" || true\nassert_json_field \"$FACTS\" '.unit.processUser' \"${SERVICE_USER}\" \"…as ${SERVICE_USER}\" || true\nOWNER=$(agent_exec \"cat /var/lib/lamalibre/apps/.owners/${PLUGIN}.json\" 2>/dev/null || echo '{}')\nassert_json_field \"$OWNER\" '.package' \"${AGENT_PACKAGE}\" \"The app host helper records ${AGENT_PACKAGE} as the route's owner\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '\"\\(.pong) \\(.version) \\(.user)\"' \"true 1.0.0 ${SERVICE_USER}\" \"GET /api/${PLUGIN}/ping reaches the installed version through the tunnel\" || true\n\nREQUESTS=$(stub_get \"-/e2e/requests\" | jq -c \"[.requests[]? | select(.method == \\\"GET\\\" and (.path | endswith(\\\"/e2e-scoped-agent-1.0.0.tgz\\\")) and .status == 200) | .owner] | unique | join(\\\",\\\")\" 2>/dev/null || echo \"\")\nassert_eq \"$REQUESTS\" \"agent:${HOST_AGENT_LABEL}\" \"The agent pulled ${AGENT_PACKAGE} from the relay's registry with its brokered token (${SCOPE} routed there)\" || true\n\n# ===========================================================================\n# 4. In use: not removable; uninstalled: removed, refused again\n# ==========================================================================="
+      "bash": "log_section \"Hosted through the app host helper (protocol 3)\"\n\nensure_app_host_helper\nassert_json_field \"$(agent_host_facts)\" '.apphost.version' '3' \"Host facts: the helper speaks protocol 3 (any trusted scope)\" || true\nELIGIBILITY=$(host_api_get \"plugins/${PLUGIN}/hosting/eligibility\" | jq -c \".agents[]? | select(.label == \\\"${HOST_AGENT_LABEL}\\\")\" 2>/dev/null || echo '{}')\nassert_json_field \"$ELIGIBILITY\" '\"\\(.eligible) \\(.reasons | length)\"' 'true 0' \"Eligibility: ${HOST_AGENT_LABEL} can host it\" || true\n\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\nassert_json_field \"${PUSH_WINDOW_RESPONSE}\" '.pushInstallPolicy' \"${POLICY_ID}\" \"The agent's window is open, under a policy naming ${AGENT_PACKAGE}\" || true\nHOSTED=$(host_api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nOP_ID=$(json_get \"$HOSTED\" '.operation.id // empty')\nif [ -z \"$OP_ID\" ]; then\n  log_fail \"Hosting did not start: ${HOSTED}\"\n  end_test\n  exit $?\nfi\nOP=$(wait_operation \"${PLUGIN}\" \"${OP_ID}\" 360 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The hosting operation succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_eq \"$(step_status \"$OP\" 'install the agent half')\" \"done\" \"Step: install the agent half\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '.unit.props.ActiveState' 'active' \"The agent half runs on the agent VM\" || true\nassert_json_field \"$FACTS\" '.unit.processUser' \"${SERVICE_USER}\" \"…as ${SERVICE_USER}\" || true\nOWNER=$(agent_exec \"cat /var/lib/lamalibre/apps/.owners/${PLUGIN}.json\" 2>/dev/null || echo '{}')\nassert_json_field \"$OWNER\" '.package' \"${AGENT_PACKAGE}\" \"The app host helper records ${AGENT_PACKAGE} as the route's owner\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '\"\\(.pong) \\(.version) \\(.user)\"' \"true 1.0.0 ${SERVICE_USER}\" \"GET /api/${PLUGIN}/ping reaches the installed version through the tunnel\" || true\n\nREQUESTS=$(stub_get \"-/e2e/requests\" | jq -r \"[.requests[]? | select(.method == \\\"GET\\\" and (.path | endswith(\\\"/e2e-scoped-agent-1.0.0.tgz\\\")) and .status == 200) | .owner] | unique | join(\\\",\\\")\" 2>/dev/null || echo \"\")\nassert_eq \"$REQUESTS\" \"agent:${HOST_AGENT_LABEL}\" \"The agent pulled ${AGENT_PACKAGE} from the relay's registry with its brokered token (${SCOPE} routed there)\" || true\n\n# ===========================================================================\n# 4. In use: not removable; uninstalled: removed, refused again\n# ==========================================================================="
     },
     {
       "id": "in-use-the-scope-stays-trusted-the-registry-stays-configured",
       "label": "In use: the scope stays trusted, the registry stays configured",
       "steps": [
         {
-          "id": "step-91",
+          "id": "step-94",
           "label": "Set REFUSED",
           "target": "local",
           "op": {
@@ -1380,7 +1398,7 @@
           ]
         },
         {
-          "id": "step-92",
+          "id": "step-95",
           "label": "Removing ${SCOPE} while its plugin is installed is refused (409)",
           "target": "local",
           "continueOnError": true,
@@ -1401,7 +1419,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-96",
           "label": "…scope_in_use",
           "target": "local",
           "continueOnError": true,
@@ -1423,7 +1441,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-97",
           "label": "…naming ${SERVER_PACKAGE}",
           "target": "local",
           "continueOnError": true,
@@ -1445,7 +1463,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-98",
           "label": "Set REFUSED",
           "target": "local",
           "op": {
@@ -1462,7 +1480,7 @@
           ]
         },
         {
-          "id": "step-96",
+          "id": "step-99",
           "label": "Clearing the registry credential while ${SCOPE} is trusted is refused (409)",
           "target": "local",
           "continueOnError": true,
@@ -1483,7 +1501,7 @@
           }
         },
         {
-          "id": "step-97",
+          "id": "step-100",
           "label": "…trusted_scopes_need_registry",
           "target": "local",
           "continueOnError": true,
@@ -1512,7 +1530,7 @@
       "label": "Uninstalled with purge; the scope removed and refused again",
       "steps": [
         {
-          "id": "step-98",
+          "id": "step-101",
           "label": "POST /api/plugins/${PLUGIN}/disable",
           "target": "host",
           "op": {
@@ -1523,7 +1541,7 @@
           }
         },
         {
-          "id": "step-99",
+          "id": "step-102",
           "label": "DELETE /api/plugins/${PLUGIN}?purge=true",
           "target": "host",
           "op": {
@@ -1541,7 +1559,7 @@
           ]
         },
         {
-          "id": "step-100",
+          "id": "step-103",
           "label": "Set UNINSTALL_ID",
           "target": "local",
           "op": {
@@ -1558,7 +1576,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-104",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -1579,7 +1597,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-105",
           "label": "Uninstalled with purge ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -1605,7 +1623,7 @@
           }
         },
         {
-          "id": "step-104",
+          "id": "step-107",
           "label": "${PLUGIN} is gone from the relay",
           "target": "local",
           "op": {
@@ -1615,7 +1633,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-108",
           "label": "${PLUGIN} is still installed",
           "target": "local",
           "op": {
@@ -1625,7 +1643,7 @@
           }
         },
         {
-          "id": "step-106",
+          "id": "step-109",
           "label": "DELETE /api/plugins/push-install/policies/${POLICY_ID}",
           "target": "host",
           "op": {
@@ -1636,7 +1654,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-108",
+          "id": "step-111",
           "label": "Set REMOVED",
           "target": "local",
           "op": {
@@ -1653,7 +1671,7 @@
           ]
         },
         {
-          "id": "step-109",
+          "id": "step-112",
           "label": "${SCOPE} is no longer trusted",
           "target": "local",
           "continueOnError": true,
@@ -1674,7 +1692,7 @@
           }
         },
         {
-          "id": "step-110",
+          "id": "step-113",
           "label": "…@lamalibre alone again",
           "target": "local",
           "continueOnError": true,
@@ -1696,7 +1714,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-115",
           "label": "Audit: settings.trusted-scope.removed",
           "target": "local",
           "continueOnError": true,
@@ -1717,7 +1735,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-116",
           "label": "Set REFUSED",
           "target": "local",
           "op": {
@@ -1734,7 +1752,7 @@
           ]
         },
         {
-          "id": "step-114",
+          "id": "step-117",
           "label": "Installing ${SERVER_PACKAGE} is refused again (untrusted_scope)",
           "target": "local",
           "continueOnError": true,
@@ -1756,7 +1774,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-122",
           "label": "The agent's sync dropped ${SCOPE}",
           "target": "local",
           "op": {
@@ -1766,7 +1784,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-123",
           "label": "The agent still trusts ${SCOPE}: $(agent_exec \"jq -c '.trustedScopes' ${AGENT_DIR}/config.json\" 2>/dev/null)",
           "target": "local",
           "op": {
@@ -1781,7 +1799,7 @@
   ],
   "apiHelpers": [],
   "headerRaw": "# ============================================================================\n# 59 — A trusted publisher scope: an app plugin of a second scope (Three-VM)\n# ============================================================================\n# The proof of trusted publisher scopes (packages/core/docs/\n# trusted-publisher-scopes-design.md). An invented agent-hosted app plugin of\n# a second first-party scope — @example/e2e-scoped-server, with its bundled\n# agent half @example/e2e-scoped-agent (helpers.sh, write_app_install_fixture\n# with FIXTURE_SCOPE) — goes the whole way:\n#\n# 1. Published to the development Feria (which must host @example —\n#    `feria-server scopes add @example --any-publisher` on the Mac, Feria\n#    0.5+); a scope it does not host is not accepted. The host VM fetches\n#    both packages from it through the read-only bridge and the stand-in\n#    Feria (the panel's registry credential) serves those very bytes.\n# 2. The relay does not trust @example: installing is refused\n#    (`untrusted_scope`), nothing is installed. Trusting it is refused while\n#    the registry does not host the scope (`registry_lacks_scope`), then\n#    allowed (audited, announced). The agent's sync records the relay's list.\n# 3. Installed, approved, hosted on the agent VM through the app host helper\n#    (protocol 3 — the one that takes any scope): the relay pinned and signed\n#    a package of @example, and the agent fetched it through the brokered\n#    credential, which routes @example to the registry. The forwarded admin\n#    API answers from the installed version.\n# 4. While the plugin is installed the scope cannot stop being trusted\n#    (`scope_in_use`) and the registry credential cannot be cleared\n#    (`trusted_scopes_need_registry`). Uninstalled with purge, the scope is\n#    removed (audited) and the package is refused again.\n#\n# @lamalibre plugins are unaffected: specs 34–36 run the same path with the\n# built-in scope in the same campaign.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nSCOPE=\"@example\"\nPLUGIN=\"e2e-scoped\"\nSERVER_PACKAGE=\"${SCOPE}/e2e-scoped-server\"\nAGENT_PACKAGE=\"${SCOPE}/e2e-scoped-agent\"\nSERVICE_USER=\"lamaste-app-e2e-scoped\"\nPOLICY_ID=\"e2e-scoped-59\"\nREMOTE_DIR=\"/var/tmp/e2e-59-trusted-scope\"\n# The development Feria, from this machine (its loopback) — the VMs reach it\n# through the read-only bridge their npm configuration names.\nDEV_FERIA_URL=\"${DEV_FERIA_URL:-http://127.0.0.1:4873}\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nCLEAN_TRUSTED_SCOPES=\"\"\nPURGE_PACKAGES=\"\"\n\nbegin_test \"59 — A trusted publisher scope: an app plugin of a second scope (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n\ntrusted_scopes() { host_api_get \"settings/trusted-scopes\"; }\n# scope_audit_count <action> — this run's audit entries of <action> for SCOPE\n# (trust changes name no plugin)\nscope_audit_count() {\n  host_api_get \"audit?action=$1&limit=200\" | jq \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.scope == \\\"${SCOPE}\\\")] | length\" 2>/dev/null || echo \"0\"\n}\nstub_config() {\n  host_exec \"curl -s --max-time 15 -X POST -H 'Authorization: Bearer ${STUB_ADMIN_TOKEN}' -H 'Content-Type: application/json' -d '$1' http://127.0.0.1:${STUB_PORT}/-/e2e/config\"\n}\n",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nSCOPE=\"@example\"\nPLUGIN=\"e2e-scoped\"\nSERVER_PACKAGE=\"${SCOPE}/e2e-scoped-server\"\nAGENT_PACKAGE=\"${SCOPE}/e2e-scoped-agent\"\nSERVICE_USER=\"lamaste-app-e2e-scoped\"\nPOLICY_ID=\"e2e-scoped-59\"\nREMOTE_DIR=\"/var/tmp/e2e-59-trusted-scope\"\n# The development Feria, from this machine (its loopback) — the VMs reach it\n# through the read-only bridge their npm configuration names.\nDEV_FERIA_URL=\"${DEV_FERIA_URL:-http://127.0.0.1:4873}\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nCLEAN_TRUSTED_SCOPES=\"\"\nPURGE_PACKAGES=\"\"\n\nbegin_test \"59 — A trusted publisher scope: an app plugin of a second scope (Three-VM)\"\n\n# drop_dev_feria_fixtures — remove this spec's fixture packages from the\n# development Feria, so every run publishes its own 1.0.0 and none is left behind.\ndrop_dev_feria_fixtures() {\n  local dir\n  for dir in server agent; do\n    curl -s --max-time 10 -o /dev/null -X DELETE -H \"Authorization: Bearer feria-dev\" \\\n      \"${DEV_FERIA_URL}/api/packages/${SCOPE}/e2e-scoped-${dir}\" || true\n  done\n}\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n  drop_dev_feria_fixtures\n}\ntrap cleanup EXIT\n\ntrusted_scopes() { host_api_get \"settings/trusted-scopes\"; }\n# scope_audit_count <action> — this run's audit entries of <action> for SCOPE\n# (trust changes name no plugin)\nscope_audit_count() {\n  host_api_get \"audit?action=$1&limit=200\" | jq \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.scope == \\\"${SCOPE}\\\")] | length\" 2>/dev/null || echo \"0\"\n}\nstub_config() {\n  host_exec \"curl -s --max-time 15 -X POST -H 'Authorization: Bearer ${STUB_ADMIN_TOKEN}' -H 'Content-Type: application/json' -d '$1' http://127.0.0.1:${STUB_PORT}/-/e2e/config\"\n}\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }
