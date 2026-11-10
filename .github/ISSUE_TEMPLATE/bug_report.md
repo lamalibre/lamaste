@@ -12,7 +12,7 @@ labels: bug
 
 - Ubuntu version:
 - Node.js version (`node --version`):
-- Lamaste version (`npx @lamalibre/create-lamaste --version`):
+- Lamaste version (`npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --version`):
 - DigitalOcean droplet size:
 
 ## Steps to reproduce

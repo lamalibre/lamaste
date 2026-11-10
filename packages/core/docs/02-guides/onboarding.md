@@ -113,7 +113,7 @@ Chisel is the tunneling engine. The installer already put the pinned Chisel rele
 
 Authelia provides two-factor authentication for your tunneled apps. The installer already put the pinned Authelia release, its systemd unit and its `lamaste-authelia` service account in place; the provisioner checks the binary is there, writes the configuration file (using your domain), creates the initial admin user with a random password, and starts the service. Authelia listens on `127.0.0.1:9091`.
 
-Onboarding downloads nothing. If either task fails with "… is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation.", re-run the installer on the server (it is idempotent) and start provisioning again.
+Onboarding downloads nothing. If either task fails with "… is not installed. Run `sudo npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` on the server to repair the installation.", re-run the installer on the server (it is idempotent) and start provisioning again.
 
 Authelia uses **bcrypt** for password hashing (not argon2id) because argon2id uses approximately 93 MB per hash, which causes out-of-memory kills on a 512 MB droplet.
 

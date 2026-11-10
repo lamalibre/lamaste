@@ -6,7 +6,7 @@
 
 Lamaste has three main pieces:
 
-1. **The Installer** (`npx @lamalibre/create-lamaste`) — a one-shot script you run once on a fresh VPS. It sets up nginx, generates security certificates, and deploys a web-based control panel. After it finishes, you never SSH into the server again.
+1. **The Installer** (`npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste`) — a one-shot script you run once on a fresh VPS. It sets up nginx, generates security certificates, and deploys a web-based control panel. After it finishes, you never SSH into the server again.
 
 2. **The Panel** (browser UI + backend API) — a management interface protected by a client certificate. Through it, you configure your domain, create tunnels, manage users, and monitor services.
 
@@ -483,7 +483,7 @@ The Panel Server runs as the `lamaste` user with minimal privileges and cannot b
 The full lifecycle of a Lamaste installation:
 
 ```
-Phase 1: Installation (npx @lamalibre/create-lamaste)
+Phase 1: Installation (npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste)
   └─ OS hardening, Node.js, mTLS certs, nginx, panel deploy
   └─ Result: Panel accessible at https://<ip>:9292
 

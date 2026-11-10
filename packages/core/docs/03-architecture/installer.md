@@ -4,14 +4,14 @@
 
 ## In Plain English
 
-When you run `npx @lamalibre/create-lamaste` on a fresh VPS, the installer takes over and does everything automatically: hardens the OS, installs dependencies, generates security certificates, configures nginx, deploys the panel, and starts the service. It prints a summary with instructions for downloading your client certificate and accessing the panel. No prompts, no questions, no configuration files to edit.
+When you run `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` on a fresh VPS, the installer takes over and does everything automatically: hardens the OS, installs dependencies, generates security certificates, configures nginx, deploys the panel, and starts the service. It prints a summary with instructions for downloading your client certificate and accessing the panel. No prompts, no questions, no configuration files to edit.
 
 The installer is deliberately limited in scope. It sets up just enough to serve the panel UI over a secure connection. Everything else — domain configuration, tunnel setup, user management — happens through the browser-based onboarding wizard after the installer finishes.
 
 ## Overview
 
 ```
-npx @lamalibre/create-lamaste
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste
   │
   ├── bin/create-lamaste.js          ← CLI entry point
   │     └── calls main() from src/index.js
@@ -192,6 +192,7 @@ Every write root makes in a directory `lamaste` can write to (its config directo
 
 - Copies `package.json` and `src/` from `vendor/lamaste-serverd/`
 - Runs `npm install --production --ignore-scripts` in the deployment directory (root-owned)
+- Every `npm install` the installer runs (panel server, `lamaste-server` CLI, gatekeeper, a fallback UI build) takes `@lamalibre/*` from the registry npm's configuration names for `@lamalibre` (`@lamalibre:registry` as root — a development Feria, such as the one `feria-server setup` configures), refuses one that names a public registry (`registry.npmjs.org` and its mirrors), and otherwise uses the hosted Feria (`LAMALIBRE_REGISTRY_URL` in core's `branding.ts`, `https://feria.codelama.com.tr/`); the choice is passed to npm explicitly (`lib/registry.js`). See [Where Lamaste's packages come from](../05-operations/upgrades.md#where-lamastes-packages-come-from)
 
 **Client deployment:**
 
@@ -251,9 +252,9 @@ The mTLS certificate skip guard is especially important: regenerating certificat
 
 When the installer detects an existing Lamaste installation (`/etc/lamalibre/lamaste/panel.json` exists) and the `--force-full` flag is not set, it enters **redeploy mode** instead of running the full installation.
 
-Redeploy mode stops the panel and gatekeeper, secures the install directory (a non-root-owned tree is moved aside and removed at the end), redeploys the panel server, `lamaste-server` CLI, UI, docs, gatekeeper and cert help page, merges `panel.json`, runs the same Chisel/Authelia step as a fresh install (stopping a running Authelia while its files change hands), rewrites the panel's systemd unit, the root-owned programs and the sudoers rules, ensures the port-80 redirect, then restarts Chisel if its binary or unit changed, starts Authelia and the gatekeeper if they were running, and restarts the panel. It does not touch OS hardening, mTLS certificates or the panel's vhosts. The panel's self-update (`sudo lamaste-priv self-update <version>`) runs this path as root, so it never writes through a path the `lamaste` user controls.
+Redeploy mode stops the panel and gatekeeper, secures the install directory (a non-root-owned tree is moved aside and removed at the end), redeploys the panel server, `lamaste-server` CLI, UI, docs, gatekeeper and cert help page, merges `panel.json`, runs the same Chisel/Authelia step as a fresh install (stopping a running Authelia while its files change hands), rewrites the panel's systemd unit, the root-owned programs and the sudoers rules, ensures the port-80 redirect, then restarts Chisel if its binary or unit changed, starts Authelia and the gatekeeper if they were running, and restarts the panel. It does not touch OS hardening, mTLS certificates or the panel's vhosts. Like a fresh install, it deploys the panel server from this installer's own `vendor/` directory, so `create-lamaste@<version>` installs exactly `<version>` of the panel. The panel's self-update (`sudo lamaste-priv self-update <version>`) runs this path as root, so it never writes through a path the `lamaste` user controls.
 
-This provides a fast upgrade path: re-running `npx @lamalibre/create-lamaste` on an existing installation updates the code and the pinned services while preserving all configuration and certificates. Use `--force-full` to bypass this and run the complete installer.
+This provides a fast upgrade path: re-running `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` on an existing installation updates the code and the pinned services while preserving all configuration and certificates. Use `--force-full` to bypass this and run the complete installer.
 
 The redeploy logic lives in `tasks/redeploy.js`, with shared systemd unit and sudoers content generators in `lib/service-config.js`.
 

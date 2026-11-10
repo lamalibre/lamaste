@@ -165,7 +165,7 @@ Approving a pending update approves everything it waits for (`approvalRequired`)
 
 ### `POST /api/plugins/:name/update`
 
-`{ "version"?: "1.2.3" | "latest" }` (default `latest`). For agent-hosted plugins. The panel fetches the version with `npm pack` (from the registry its [registry credential](registry-and-oidc.md) names, authenticated as the panel, when one is configured) and reads its manifest and relay module **in memory** — nothing of it is installed yet. Then:
+`{ "version"?: "1.2.3" | "latest" }` (default `latest`). For agent-hosted plugins. The panel fetches the version with `npm pack` (from the registry its [registry credential](registry-and-oidc.md) names, authenticated as the panel, when one is configured; otherwise `@lamalibre` comes from npm's configured `@lamalibre:registry` or the hosted Feria) and reads its manifest and relay module **in memory** — nothing of it is installed yet. Then:
 
 - `200 { upToDate: true }` — nothing to do;
 - `202 { pendingUpdate }` — what it brings (relay hook set, agent half, identity block) differs from what was approved and auto-approve is off or withheld, or it turns a secret setting into a plain one or adds or removes a role or widens the attributes (always); `approvalRequired` says which, and the administrators are notified. Approve it with the digest shown, or by its version;

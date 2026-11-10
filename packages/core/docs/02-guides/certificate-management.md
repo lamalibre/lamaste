@@ -196,7 +196,7 @@ The admin certificate (`CN=admin`) has unrestricted access to all panel endpoint
 
 ### Distribute to the Agent Machine
 
-Send the `.p12` file and password to the agent machine (macOS or Linux) securely, and install the agent there with `npm install -g @lamalibre/lamaste-agent` and run `lamaste-agent setup --label <label>` — or import it into the Desktop App. An enrollment token is preferable where possible, because the private key is then generated on the agent and never travels. See [Agent Setup](agent-setup.md) for details.
+Send the `.p12` file and password to the agent machine (macOS or Linux) securely, and install the agent there with `npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent` and run `lamaste-agent setup --label <label>` — or import it into the Desktop App. An enrollment token is preferable where possible, because the private key is then generated on the agent and never travels. See [Agent Setup](agent-setup.md) for details.
 
 ### Update Capabilities
 

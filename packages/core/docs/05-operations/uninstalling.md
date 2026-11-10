@@ -29,7 +29,7 @@ It stops and disables the panel, gatekeeper, Chisel and Authelia; removes their 
 The manual guide is also available from the CLI:
 
 ```bash
-npx @lamalibre/create-lamaste --uninstall
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --uninstall
 ```
 
 This prints the same steps listed below.

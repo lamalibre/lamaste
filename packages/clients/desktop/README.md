@@ -5,7 +5,7 @@ Tauri v2 desktop application for managing Lamaste servers and tunnels on macOS a
 ## Install
 
 ```bash
-npx @lamalibre/create-lamaste-desktop
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop
 ```
 
 Downloads the latest release from GitHub, installs to `/Applications` (macOS) or `~/.local/bin` (Linux), and launches the app. See the [Desktop App Setup guide](../lamaste-server-ui/public/docs/02-guides/desktop-app-setup.md) for details.

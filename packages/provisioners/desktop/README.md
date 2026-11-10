@@ -3,7 +3,7 @@
 Download and install the [Lamaste Desktop](https://github.com/lamalibre/lamaste) app with one command.
 
 ```bash
-npx @lamalibre/create-lamaste-desktop
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop
 ```
 
 ## What It Does
@@ -29,7 +29,7 @@ The desktop app provides a native GUI for managing Lamaste tunnels with:
 
 ## Prerequisites
 
-- A Lamaste server set up via `npx @lamalibre/create-lamaste`
+- A Lamaste server set up via `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste`
 - An agent certificate (generated from the panel's Certificates page)
 - Node.js >= 20
 

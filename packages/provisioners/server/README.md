@@ -5,7 +5,7 @@ One-command setup for secure reverse tunnels with a management dashboard.
 ## Quick Start
 
 ```bash
-ssh root@<droplet-ip> "apt install -y npm && npx @lamalibre/create-lamaste"
+ssh root@<droplet-ip> "apt install -y npm && npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste"
 ```
 
 The installer runs unattended on a fresh Ubuntu 24.04 droplet and provisions
@@ -23,7 +23,7 @@ For programmatic use (e.g. from the Lamaste desktop app), pass `--json` to
 replace the interactive Listr2 terminal UI with NDJSON progress lines on stdout:
 
 ```bash
-npx @lamalibre/create-lamaste --json
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --json
 ```
 
 The `--json` flag implies `--yes` (no prompts) and `--dev` (accept private IPs).

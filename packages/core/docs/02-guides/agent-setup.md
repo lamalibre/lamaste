@@ -59,8 +59,10 @@ The token is single-use and expires after 10 minutes. `tunnels:read` is enough f
 Install the agent **globally** first:
 
 ```bash
-npm install -g @lamalibre/lamaste-agent
+npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 ```
+
+Lamaste's packages are published to the hosted Feria registry, `https://feria.codelama.com.tr/`, not to npmjs. The `--@lamalibre:registry=` option sends only the `@lamalibre` scope there; to avoid typing it, set it once with `npm config set @lamalibre:registry https://feria.codelama.com.tr/` — the agent's own plugin installs follow that setting too. See [Where Lamaste's packages come from](../05-operations/upgrades.md#where-lamastes-packages-come-from).
 
 A global install is required, not a convenience. Setup installs a sync timer (see [How tunnel changes reach the agent](#how-tunnel-changes-reach-the-agent)) that runs the installed `lamaste-agent` every 30 seconds for as long as the agent exists. An `npx` copy lives in npm's cache, which npm may clear at any time — the timer would silently stop. `setup` and `update` therefore refuse to run from `npx`, and they check this **before** an enrollment token is spent. For an installation npm does not manage, set `LAMALIBRE_LAMASTE_AGENT_CLI_PATH` to the absolute path of the `lamaste-agent` script the timer should run.
 
@@ -148,7 +150,7 @@ Each agent authenticates to the relay with its own chisel credential, stored in 
 Upgrade agents **before** the server. Agents from before this version reject the new shape of the relay's Chisel arguments; a current agent works against an older server, keeping its credential until the server offers rotation.
 
 ```bash
-npm install -g @lamalibre/lamaste-agent
+npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 lamaste-agent update
 ```
 
@@ -172,7 +174,7 @@ lamaste-agent uninstall --label <l>  # stop and remove one agent, including its 
 To let the panel install the agent halves of app plugins on this machine — their accounts, units and directories — enable the app host helper once, from a root-owned install:
 
 ```bash
-sudo npm install -g @lamalibre/lamaste-agent
+sudo npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 sudo lamaste-agent apphost enable              # the agent runs as the user who ran sudo
 lamaste-agent apphost status                   # helper, pinned relay keys, installed agent halves
 sudo lamaste-agent apphost pin                 # after the relay rotated its signing key
@@ -184,7 +186,7 @@ The agent reports it on its next sync, and the panel can then host plugins whose
 
 | Symptom                                                     | Cause and fix                                                                                                                                                                                                                       |
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setup` says the agent must be installed globally           | It was run through `npx`. Run `npm install -g @lamalibre/lamaste-agent`, then `lamaste-agent setup ...` again. The enrollment token was not spent.                                                                                  |
+| `setup` says the agent must be installed globally           | It was run through `npx`. Run `npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent`, then `lamaste-agent setup ...` again. The enrollment token was not spent.                             |
 | Log shows a TLS / x509 error                                | `tunnel.<domain>` does not present a valid certificate for its name. Check the relay's certificate (`Certificates` page) and that the agent's clock is correct.                                                                     |
 | Log shows authentication failed                             | The credential was rotated on the panel. The next sync picks it up; `lamaste-agent chisel refresh-credential` applies it now.                                                                                                       |
 | Log shows `access denied` for a remote                      | The relay no longer grants this agent that port: the tunnel was disabled, deleted, or moved to another agent. The next sync drops it. If it persists, check `lamaste-agent status` — the sync timer may not be running.             |
@@ -196,7 +198,7 @@ The agent reports it on its next sync, and the panel can then host plugins whose
 | New tunnel returns 502                                      | The agent has not synced yet (up to ~30 s), or nothing listens on `127.0.0.1:<port>` on the agent. Run `lamaste-agent update` to apply at once.                                                                                     |
 | Upload fails with 413                                       | The request is larger than the tunnel's body limit. Raise **Largest request body** on the tunnel (`maxBodySizeMb`).                                                                                                                 |
 | `uninstall` refuses: agent halves are installed             | Agent halves run here for this agent. Unhost or uninstall those plugins on the panel (the next sync removes them), or `sudo lamaste-agent apphost disable --force` (data is kept).                                                  |
-| `apphost enable` says the install is not root-owned         | Root installs the helper only from code no other user can change: `sudo npm install -g @lamalibre/lamaste-agent`, then `sudo lamaste-agent apphost enable` from that install.                                                       |
+| `apphost enable` says the install is not root-owned         | Root installs the helper only from code no other user can change: `sudo npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent`, then `sudo lamaste-agent apphost enable` from that install.  |
 | `apphost enable` says the helper serves another user        | App hosting serves one OS user per machine. Unhost or uninstall the plugins that user's agents host (`sudo lamaste-agent apphost status` lists their agent halves), then `sudo lamaste-agent apphost enable --user <name> --force`. |
 | `apphost pin` says a label is not an agent of the user      | Root pins only labels the agent user's registry lists. Pin as the user the agent runs as (`--user <name>`; `--user root` for an agent running as root).                                                                             |
 | Hosting refused: the helper trusts another relay key        | The relay's signing key was replaced, or the agent enrolled again. Run `sudo lamaste-agent apphost pin`; compare the key id with the relay's ([App Host](../04-api-reference/app-host.md#pinning-the-relay-key)).                   |

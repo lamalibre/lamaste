@@ -36,7 +36,7 @@ Lamaste solves the problem of exposing local services to the internet securely. 
 **Option A: Manual setup (SSH)**
 
 1. Create a fresh Ubuntu 24.04 droplet on DigitalOcean
-2. SSH in once and run `npx @lamalibre/create-lamaste`
+2. SSH in once and run `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste`
 3. Download the client certificate it prints
 4. Import the certificate into your browser
 5. Open `https://<droplet-ip>:9292` — you are in the admin panel
@@ -46,7 +46,7 @@ Lamaste solves the problem of exposing local services to the internet securely. 
 
 **Option B: Desktop app cloud provisioning**
 
-1. Install the desktop app (`npx @lamalibre/create-lamaste-desktop`)
+1. Install the desktop app (`npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop`)
 2. Go to the Servers tab and click "Create a new server"
 3. Enter your DigitalOcean API token — the app validates scopes and stores it securely in your OS credential store
 4. Pick a region (the app measures latency to each) and a domain name
@@ -93,20 +93,20 @@ All backend services bind `127.0.0.1` only — nginx is the sole public-facing s
 
 State is stored in JSON files (`/etc/lamalibre/lamaste/panel.json`, `tunnels.json`) with atomic writes (write to temp → fsync → rename). No database is needed at this scale.
 
-The installer (`npx @lamalibre/create-lamaste`) is completely non-interactive — it detects the environment, provisions everything, and prints a summary. All configuration happens through the browser-based onboarding wizard after installation.
+The installer (`npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste`) is completely non-interactive — it detects the environment, provisions everything, and prints a summary. All configuration happens through the browser-based onboarding wizard after installation.
 
 ## Quick Reference
 
-| Item                 | Value                           |
-| -------------------- | ------------------------------- |
-| **Minimum VPS**      | 512MB RAM, Ubuntu 24.04         |
-| **Install command**  | `npx @lamalibre/create-lamaste` |
-| **Admin panel**      | `https://<ip>:9292` (mTLS)      |
-| **Auth for admin**   | Client certificate (zero-login) |
-| **Auth for apps**    | TOTP 2FA via Authelia           |
-| **Tunnel protocol**  | WebSocket-over-HTTPS (Chisel)   |
-| **TLS certificates** | Let's Encrypt (auto-renewing)   |
-| **State storage**    | JSON files (no database)        |
-| **RAM usage**        | ~245MB total (all services)     |
-| **npm package**      | `@lamalibre/create-lamaste`     |
-| **License**          | Polyform Noncommercial 1.0.0    |
+| Item                 | Value                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------ |
+| **Minimum VPS**      | 512MB RAM, Ubuntu 24.04                                                                    |
+| **Install command**  | `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` |
+| **Admin panel**      | `https://<ip>:9292` (mTLS)                                                                 |
+| **Auth for admin**   | Client certificate (zero-login)                                                            |
+| **Auth for apps**    | TOTP 2FA via Authelia                                                                      |
+| **Tunnel protocol**  | WebSocket-over-HTTPS (Chisel)                                                              |
+| **TLS certificates** | Let's Encrypt (auto-renewing)                                                              |
+| **State storage**    | JSON files (no database)                                                                   |
+| **RAM usage**        | ~245MB total (all services)                                                                |
+| **npm package**      | `@lamalibre/create-lamaste`                                                                |
+| **License**          | Polyform Noncommercial 1.0.0                                                               |
