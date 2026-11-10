@@ -88,6 +88,7 @@ export async function apiFetch(url, opts) {
       ...(Array.isArray(data.reasons) ? { reasons: data.reasons } : {}),
       ...(data.usedBy && typeof data.usedBy === 'object' ? { usedBy: data.usedBy } : {}),
       ...(typeof data.operationId === 'string' ? { operationId: data.operationId } : {}),
+      ...(Array.isArray(data.consumers) ? { consumers: data.consumers } : {}),
       ...(errors ? { errors } : {}),
       ...(typeof data.reason === 'string' ? { reason: data.reason } : {}),
       ...(Number.isSafeInteger(data.revision) && data.revision >= 0

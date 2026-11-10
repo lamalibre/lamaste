@@ -25,6 +25,7 @@ import { refusalText } from '../lib/pluginRefusal.js';
 import { markSecretsRead, operationSecretsAction, withoutSecrets } from '../lib/oidcSecrets.js';
 import { settingsDiffRows } from '../lib/pluginSettings.js';
 import { IDENTITY_CHANGED, attributeLabel, identityDiffRows } from '../lib/identity.js';
+import { PeersBlockView, PeersChanges } from './PluginPeers.jsx';
 import {
   accessModeText,
   shortDigest as short,
@@ -412,6 +413,7 @@ function installedBrings(hooks) {
       ? { treeSha256: hooks.web.treeSha256, surface: hooks.web.surface ?? null }
       : null,
     body: hooks.body?.declared ? hooks.body.maxBodySizeMb : null,
+    peers: hooks.peers?.declared ? hooks.peers.block : null,
   };
 }
 
@@ -426,6 +428,7 @@ function updateBrings(update) {
     identity: update.identity?.after ?? null,
     web: update.web?.after ?? null,
     body: update.body?.declared ? update.body.after : null,
+    peers: update.peers?.after ?? null,
   };
 }
 
@@ -437,29 +440,31 @@ function listed(parts) {
 }
 
 /** What an approval covers, in words, and the verb that goes with it. */
-function approvalSubject({ relay, agentHalf, identity, web, body }) {
+function approvalSubject({ relay, agentHalf, identity, web, body, peers }) {
   const parts = [
     relay && 'relay hooks',
     agentHalf && 'agent half',
     identity && 'identity',
     web && 'web surface',
     body && 'request body limit',
+    peers && 'peers block',
   ].filter(Boolean);
   if (parts.length === 0) return { subject: 'relay hooks', plural: true };
   return { subject: listed(parts), plural: parts.length > 1 || parts[0] === 'relay hooks' };
 }
 
 /** The question before approving: what approving lets Lamaste do. */
-function approvalQuestion({ relay, agentHalf, identity, web, body }) {
+function approvalQuestion({ relay, agentHalf, identity, web, body, peers }) {
   const parts = [
     relay && 'run this code on the relay',
     agentHalf &&
-      (relay || identity || web || body
+      (relay || identity || web || body || peers
         ? 'install this agent half'
         : 'install this agent half on the hosting agent'),
     identity && 'send it its users with these roles and attributes',
     web && 'serve this web tree to its users',
     body && `pass it requests of up to ${body} MiB`,
+    peers && 'let it exchange these calls and events with other plugins',
   ].filter(Boolean);
   const question = listed(parts.length > 0 ? parts : ['run this code on the relay']);
   return `${question.charAt(0).toUpperCase()}${question.slice(1)}?`;
@@ -470,17 +475,23 @@ function approvalQuestion({ relay, agentHalf, identity, web, body }) {
  * half is installed, its users are sent to it and reach it, its web tree
  * is served.
  */
-function approvalGate({ relay, agentHalf, identity, web }) {
+function approvalGate({ relay, agentHalf, identity, web, peers }) {
   const parts = [
     relay && 'runs its relay hooks',
     agentHalf && 'installs its agent half',
     identity && 'sends it its users (and lets them reach it)',
     web && 'serves its web tree',
+    peers && 'carries its calls and events to and from other plugins',
     'hosts the plugin',
   ].filter(Boolean);
-  const what = relay && !agentHalf && !identity && !web ? 'they are' : 'this is';
+  const what = relay && !agentHalf && !identity && !web && !peers ? 'they are' : 'this is';
   return `Lamaste ${listed(parts)} only once ${what} approved.`;
 }
+
+/** A pending update widens what the plugin exchanges with other plugins. */
+const PEERS_CHANGED = 'peers.changed';
+/** A pending update ends or narrows what granted consumers rely on. */
+const PEERS_BREAKS = 'peers.breaks';
 
 /** The reason a pending update turns secret settings into plain ones. */
 const SECRET_TO_PLAIN = 'settings.secret-to-plain';
@@ -537,6 +548,9 @@ function ApprovalReasons({ reasons }) {
           className={reason.code === SECRET_TO_PLAIN ? 'text-red-400' : 'text-yellow-400/90'}
         >
           {reason.reason}
+          {(reason.code === PEERS_CHANGED || reason.code === PEERS_BREAKS) && (
+            <span className="text-zinc-500"> — auto-approve never covers it</span>
+          )}
           {reason.code === IDENTITY_CHANGED && (
             <span className="text-zinc-500">
               {' '}
@@ -613,7 +627,7 @@ function WebTreeView({ web }) {
  * and what it learns about them), its web tree (the shell the relay
  * serves to them) and the request body limit it declares (MiB).
  */
-function ApprovalContents({ relay, agentHalf, identity, web, body }) {
+function ApprovalContents({ relay, agentHalf, identity, web, body, peers }) {
   return (
     <>
       {relay && (
@@ -657,6 +671,15 @@ function ApprovalContents({ relay, agentHalf, identity, web, body }) {
             upload included:
           </p>
           <div className="font-mono text-zinc-300">{body} MiB</div>
+        </div>
+      )}
+      {peers && (
+        <div>
+          <p className="mb-1 text-zinc-500">
+            Peers — the endpoints and events it offers other plugins, and the ones it uses; an
+            applied shelf decides who may:
+          </p>
+          <PeersBlockView block={peers} />
         </div>
       )}
     </>
@@ -923,6 +946,7 @@ export function PluginHooks({ plugin, isActing }) {
       !hooks.agentHalf &&
       !hooks.identity?.declared &&
       !hooks.web?.declared &&
+      !hooks.peers?.declared &&
       !hooks.pendingUpdate)
   ) {
     return null;
@@ -1063,6 +1087,7 @@ export function PluginHooks({ plugin, isActing }) {
               <IdentityChanges diff={pendingUpdate.identity} />
               <WebTreeChanges web={pendingUpdate.web} />
               <BodyLimitChange body={pendingUpdate.body} />
+              <PeersChanges peers={pendingUpdate.peers} />
               <SettingsSchemaChanges diff={pendingUpdate.settings} />
               <AutoApproveWithheld reasons={notCovered} />
               <div className="flex items-center gap-2">

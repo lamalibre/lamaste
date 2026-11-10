@@ -271,6 +271,22 @@ A person holding a plugin role the manifest marks as inviting may invite colleag
 - **Whether a username is taken.** An inviter or a link holder can learn it, across the relay's clients, a removed user's included: four probes a link, about 120 an hour for an inviter. The answer does not say why; usernames are not secrets.
 - **A same-site cookie.** A plugin's shell can toss a second `authelia_session` for the parent domain: Gatekeeper refuses two (`401`), so the worst is a sign-in loop on the inviter's page, which explains it — never a wrong user.
 
+#### 5h. Calls and events between app plugins (peers)
+
+A plugin's agent half may call another's and receive its events ([Calls and Events Between Plugins](../04-api-reference/peers.md)). What holds:
+
+1. **Only what a shelf grants and the provider declares.** A call reaches only `/peer/*` of a provider, only the handler of an endpoint its approved manifest declares — the relay names the matched pattern in the assertion and the provider's SDK refuses a request whose own route is not that pattern, so a `:param` never opens a sibling route —, only through the provider's approved request hooks, and only along an edge an applied shelf grants. Applying a shelf is an administrator's act (admin certificate), never a plugin's. A refusal does not tell a consumer which plugins are installed.
+2. **Nothing listens.** The relay opens every peer channel, through the consumer's own internal tunnel, and the half proves itself with its responder signature (the installation secret); after that, every HTTP/2 stream on the connection is the consumer's. No relay port, no agent port, no chisel grant and no public location was added; nothing else on the consumer's agent can open a channel, since systemd holds the half's port.
+3. **A person only with a recent request of theirs, and only to a plugin that knows them.** The relay gives a plugin a delegation with each request a person makes through its user surface (5 minutes, bound to the plugin it was given to, verified only by the relay). A call presenting it names the person to the provider only while they are active, still in the audience of the plugin they used, and held by the provider's own audience — which only a provider declaring `identity` has. Nothing about a person reaches a plugin without `identity`, or one whose erasure feed would never reach that record (5f).
+4. **The relay keeps no event and no payload.** Events stay in the provider's outbox and the consumer's tables; the relay checks the grant and passes them on. A consumer receives events of a scope only from the moment of its grant (a new or renewed grant starts with a gap at the head), never what it had no grant for.
+
+**What remains:**
+
+- **A delegation is a capability for minutes.** Within its 5 minutes the plugin holding it — and a provider it passes onward to, if that provider also calls others — may call as the person, from background code too. It cannot be used through any other plugin's channel, and the checks of the moment (active, both audiences) apply to every call.
+- **The hop count is advisory.** It guards against call loops between plugins that pass on their request's context; a plugin that calls onward without it starts at 0 again. Required edges are acyclic; optional cycles are allowed.
+- **Bodies in clear on held loopback ports.** A call's body and the events travel through chisel (TLS) and are in clear only on the loopback ends of internal tunnels, which systemd holds for the halves. As for the admin forwarder (5e), a body forwarded to a provider in the seconds before its hosting is marked down can reach a squatter on its relay-loopback port; the answer cannot, without the provider's secret.
+- **Same-agent calls go through the relay** — two tunnel legs — on purpose: one place enforces everything.
+
 #### 6. TOTP 2FA for app access
 
 Visitors to your tunneled apps authenticate through Authelia with a password and a TOTP code from their phone. See [Authentication](authentication.md) for full details.

@@ -32,6 +32,7 @@ import {
   Key,
   MessageSquare,
   Globe2,
+  Cable,
 } from 'lucide-react';
 import {
   AdminClientProvider,
@@ -48,6 +49,7 @@ import {
   SettingsPage as AdminSettingsPage,
   StoragePage,
   AuditPage,
+  PeersPage,
   DomainsPage,
   UserPluginAccessPage,
   GatekeeperDashboardPage,
@@ -99,6 +101,7 @@ const SERVER_ADMIN_TABS = [
   { id: 'server-certificates', label: 'Certificates', icon: ShieldCheck },
   { id: 'server-tickets', label: 'Tickets', icon: Ticket },
   { id: 'server-plugins', label: 'Plugins', icon: Package },
+  { id: 'server-peers', label: 'Peers', icon: Cable },
   { id: 'server-storage', label: 'Storage', icon: HardDrive },
   { id: 'server-audit', label: 'Audit', icon: ScrollText },
   { id: 'server-user-access', label: 'User Plugin Access', icon: UserCheck },
@@ -369,6 +372,8 @@ export default function App() {
         return <PluginsPage />;
       case 'server-storage':
         return <StoragePage />;
+      case 'server-peers':
+        return <PeersPage />;
       case 'server-audit':
         return <AuditPage />;
       case 'server-user-access':

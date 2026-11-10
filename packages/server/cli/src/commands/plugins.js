@@ -6,10 +6,11 @@
  *   install <package>    Install a plugin by npm package name
  *   enable <name>        Enable a plugin
  *   disable <name>       Disable a plugin
- *   uninstall <name> [--force] [--purge]
+ *   uninstall <name> [--force] [--purge] [--break-peers]
  *                        Remove a plugin (must be disabled first); a hosted one
  *                        through its uninstall pipeline (an operation); --purge also
- *                        deletes the data of the agent half Lamaste installed
+ *                        deletes the data of the agent half Lamaste installed;
+ *                        --break-peers removes one other plugins' peer edges consume
  *   invitations <name> [set …]    Delegated invitations: its policy and invitations
  *   oidc-clients <name> [grants]
  *                        The OIDC clients a plugin declares on Authelia, and who is
@@ -25,9 +26,10 @@
  *                        Host the plugin on an agent: the install pipeline (its hooks,
  *                        the agent half Lamaste installs, internal tunnel, secret,
  *                        capability), followed to its end
- *   unhost <name> [--force] [--purge]
+ *   unhost <name> [--force] [--purge] [--break-peers]
  *                        Remove the hosting: the uninstall pipeline; --purge also deletes
- *                        the agent half's data directory and service account
+ *                        the agent half's data directory and service account;
+ *                        --break-peers as for uninstall
  *   rotate-hosting-secret <name>
  *                        New installation secret; the agent picks it up on its next sync
  *   hooks <name>         The plugin's lifecycle hooks and what needs approval: the relay
@@ -201,9 +203,10 @@ ${b('Subcommands:')}
   ${c('install <package>')}    Install a plugin (e.g. @lamalibre/herd-server)
   ${c('enable <name>')}        Enable a plugin
   ${c('disable <name>')}       Disable a plugin
-  ${c('uninstall <name> [--force] [--purge]')}
+  ${c('uninstall <name> [--force] [--purge] [--break-peers]')}
                        Remove a disabled plugin (a hosted one through its uninstall pipeline;
-                       --purge deletes the data of the agent half Lamaste installed)
+                       --purge deletes the data of the agent half Lamaste installed;
+                       --break-peers removes one other plugins call, their calls stop)
   ${c('oidc-clients <name> [grants]')}
                        OIDC clients the plugin declares on Authelia (no secrets), with grants
   ${c('oidc-clients <name> grant|revoke <clientId> --user <u>|--group <g>')}
@@ -219,9 +222,10 @@ ${b('Subcommands:')}
   ${c('eligibility <name>')}   Which agents can host the plugin, and why the others cannot
   ${c('host <name> --agent <label>')}
                        Host an agent-hosted plugin on an agent (install pipeline)
-  ${c('unhost <name> [--force] [--purge]')}
+  ${c('unhost <name> [--force] [--purge] [--break-peers]')}
                        Remove the hosting (uninstall pipeline; --force passes failing hooks,
-                       --purge deletes the agent half's data and service account)
+                       --purge deletes the agent half's data and service account,
+                       --break-peers removes one other plugins call)
   ${c('rotate-hosting-secret <name>')}
                        New installation secret (the agent fetches it on its next sync)
   ${c('hooks <name>')}         Lifecycle hooks and what needs approval: relay hooks, agent half
@@ -451,14 +455,17 @@ async function hostCmd(name, rest, { json }) {
  * @param {{ json: boolean }} options
  */
 async function unhostCmd(name, rest, { json }) {
-  if (!name) fail('Usage: lamaste-server plugins unhost <name> [--force] [--purge]', json);
+  if (!name) {
+    fail('Usage: lamaste-server plugins unhost <name> [--force] [--purge] [--break-peers]', json);
+  }
   const force = rest.includes('--force');
   const purge = rest.includes('--purge');
+  const breakPeers = rest.includes('--break-peers');
   let result;
   try {
     result = await panelRequest(
       'DELETE',
-      `/api/plugins/${encodeURIComponent(name)}/hosting${removalQuery({ force, purge })}`,
+      `/api/plugins/${encodeURIComponent(name)}/hosting${removalQuery({ force, purge, breakPeers })}`,
     );
   } catch (err) {
     failRefused(err, json, { name, action: 'uninstall' });
@@ -1233,7 +1240,7 @@ const PUSH_VERB = { install: 'installs', update: 'updates', uninstall: 'removes'
  * cannot host the plugin, and what lifts a refusal the administrator can
  * lift. NDJSON carries the refusal's `code` and `reasons`.
  *
- * @param {Error & { code?: string, reasons?: string[] }} err  from panelRequest
+ * @param {Error & { code?: string, reasons?: string[], consumers?: Array<{ consumer: string, scopes: string[], required: boolean }> }} err  from panelRequest
  * @param {boolean} json
  * @param {{ step?: string, name: string, agentLabel?: string, action: 'install' | 'update' | 'uninstall' }} context
  * @returns {never}
@@ -1245,6 +1252,7 @@ function failRefused(err, json, { step, name, agentLabel, action }) {
     emitError(err.message, false, {
       ...(err.code ? { code: err.code } : {}),
       ...(err.reasons ? { reasons } : {}),
+      ...(err.consumers ? { consumers: err.consumers } : {}),
     });
     process.exit(1);
   }
@@ -1266,6 +1274,18 @@ function failRefused(err, json, { step, name, agentLabel, action }) {
           `\n  this relay and enabled for ${agent} with its window open, and the agent's policy must` +
           `\n  allow "${action}" of the agent package from this address (the CLI calls the panel` +
           `\n  from 127.0.0.1).`,
+      ),
+    );
+  } else if (err.code === 'peer_dependents') {
+    for (const consumer of err.consumers ?? []) {
+      console.error(
+        `    - ${consumer.consumer}: ${consumer.scopes.join(', ')}${consumer.required ? ' (required)' : ''}`,
+      );
+    }
+    console.error(
+      d(
+        `\n  Their calls and events into ${name} stop. Remove the edges from the applied shelves` +
+          `\n  (lamaste-server peers), or add --break-peers to go on anyway.`,
       ),
     );
   } else if (err.code === 'hooks_not_approved') {
@@ -1296,16 +1316,19 @@ async function agentHalfDataDir(name) {
 }
 
 /**
- * `?force=true&purge=true` for removing a plugin's hosting, with only the
- * flags that are set: `force` lets failing pre-teardown hooks pass, `purge`
- * deletes the data and service account of the agent half Lamaste installed.
+ * `?force=true&purge=true&breakPeers=true` for removing a plugin or its
+ * hosting, with only the flags that are set: `force` lets failing
+ * pre-teardown hooks pass, `purge` deletes the data and service account of
+ * the agent half Lamaste installed, `breakPeers` removes a plugin other
+ * plugins' peer edges consume. Pure, exported for tests.
  *
- * @param {{ force: boolean, purge: boolean }} flags
+ * @param {{ force?: boolean, purge?: boolean, breakPeers?: boolean }} flags
  */
-function removalQuery({ force, purge }) {
+export function removalQuery({ force = false, purge = false, breakPeers = false }) {
   const params = new URLSearchParams();
   if (force) params.set('force', 'true');
   if (purge) params.set('purge', 'true');
+  if (breakPeers) params.set('breakPeers', 'true');
   const text = params.toString();
   return text ? `?${text}` : '';
 }
@@ -1426,9 +1449,15 @@ async function disablePluginCmd(name, { json }) {
  * @param {{ json: boolean }} options
  */
 async function uninstallPluginCmd(name, rest, { json }) {
-  if (!name) fail('Usage: lamaste-server plugins uninstall <name> [--force] [--purge]', json);
+  if (!name) {
+    fail(
+      'Usage: lamaste-server plugins uninstall <name> [--force] [--purge] [--break-peers]',
+      json,
+    );
+  }
   const force = rest.includes('--force');
   const purge = rest.includes('--purge');
+  const breakPeers = rest.includes('--break-peers');
 
   if (json) emitStep('uninstall', 'running', `Uninstalling ${name}`);
   else {
@@ -1442,7 +1471,7 @@ async function uninstallPluginCmd(name, rest, { json }) {
     // once it is disabled, so no restart follows.
     result = await panelRequest(
       'DELETE',
-      `/api/plugins/${encodeURIComponent(name)}${removalQuery({ force, purge })}`,
+      `/api/plugins/${encodeURIComponent(name)}${removalQuery({ force, purge, breakPeers })}`,
       null,
       { timeoutMs: NPM_CALL_TIMEOUT_MS },
     );

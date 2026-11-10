@@ -125,6 +125,10 @@ export type {
   EntitlementPrincipal,
   IdentitySyncResult,
   UserSurfaceRouteStatus,
+  PluginRemovalOptions,
+  PeerShelfScopes,
+  PeerShelfEdge,
+  PeersView,
   AdminClient,
   AgentClient,
 } from './types.js';
