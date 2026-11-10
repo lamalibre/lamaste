@@ -87,7 +87,7 @@ docker compose up -d
 # Wait for healthcheck, then run tests
 docker compose exec lamaste bash -c "
   cd /opt/lamalibre/lamaste/project
-  npx @lamalibre/create-lamaste  # install on the container
+  npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste  # install on the container
   SKIP_DNS_TESTS=1 bash tests/e2e/run-all.sh
 "
 
@@ -104,7 +104,7 @@ docker compose down
 ## Real Droplet Testing
 
 1. Provision a fresh Ubuntu 24.04 droplet
-2. Run the installer: `npx @lamalibre/create-lamaste`
+2. Run the installer: `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste`
 3. Copy test scripts to the droplet or clone the repo
 4. Run tests directly on the droplet:
 

@@ -45,13 +45,17 @@
 #    the auth vhosts force no locale; the running Authelia is the pin; the
 #    stock "not available" page is in place; Gatekeeper's GET
 #    /access-request is gone.
+# 6. Where Lamaste's packages came from (upgrades.md, "Where Lamaste's
+#    packages come from"): the candidate's root helper names the registry
+#    for the self-update; npm's caches and logs hold @lamalibre requests to
+#    the development Feria only — none to npmjs or the hosted Feria.
 # ============================================================================
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/helpers.sh"
 
-require_commands curl jq nginx npm sha256sum oathtool python3 node sqlite3
+require_commands curl jq nginx npm sha256sum oathtool python3 node sqlite3 find
 
 begin_test "01 — Panel Update from the previous release to the candidate"
 
@@ -506,6 +510,28 @@ for D in "${DOMAIN}" "${DOMAIN_2}"; do
 done
 assert_not_contains "$(curl -sk --max-time 15 --resolve "${AUTH_FQDN}:443:127.0.0.1" "https://${AUTH_FQDN}/")" "data-authelia-lang" "https://${AUTH_FQDN}/: Authelia's own <html lang>" || true
 assert_eq "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:9294/access-request 2>/dev/null || echo 000)" "404" "Gatekeeper's GET /access-request is gone (404)" || true
+
+# ===========================================================================
+# 6. Where Lamaste's packages came from (4.14)
+# ===========================================================================
+
+log_section "Lamaste's packages came from the development Feria, never npmjs"
+
+# The previous release reached the candidate through its own Update action:
+# its root helper's npx read root's npmrc (the development Feria — what a
+# relay before 4.14 needs once, upgrades.md "Upgrading to 4.14"). The
+# candidate's helper names the registry itself.
+assert_contains "$(sudo cat /usr/local/sbin/lamaste-priv 2>/dev/null || echo "")" '`--@lamalibre:registry=${registry}`' "The candidate's lamaste-priv runs the self-update's npx with --@lamalibre:registry=" || true
+EVIDENCE=$(sudo bash -c "$(npm_fetch_evidence_script)")
+PUBLIC=$(public_registry_fetches "${EVIDENCE}")
+log_info "$(printf '%s' "${EVIDENCE}" | grep -c . || true) @lamalibre URLs in npm's caches and logs, $(dev_feria_fetches "${EVIDENCE}" | grep -c . || true) from the development Feria"
+assert_not_eq "$(dev_feria_fetches "${EVIDENCE}" | grep -c . || true)" "0" "npm's caches hold @lamalibre requests to the development Feria (the evidence is there to read)" || true
+assert_contains "${EVIDENCE}" "create-lamaste-${CANDIDATE}.tgz" "…among them the candidate's installer, fetched by the update" || true
+if [ -n "${PUBLIC}" ]; then
+  log_fail "@lamalibre was asked of a public registry or the hosted Feria: $(printf '%s' "${PUBLIC}" | head -5 | tr '\n' ' ')"
+else
+  log_pass "No @lamalibre request to npmjs, its mirrors or the hosted Feria — before the update or after"
+fi
 
 log_section "The panel logged no error since the update"
 

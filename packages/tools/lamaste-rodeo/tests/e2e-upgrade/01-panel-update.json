@@ -15,7 +15,8 @@
       "oathtool",
       "python3",
       "node",
-      "sqlite3"
+      "sqlite3",
+      "find"
     ]
   },
   "env": {},
@@ -2951,14 +2952,148 @@
           }
         }
       ],
-      "bash": "log_section \"The page language: migration 0021, no domain has one, every page English\"\n\nassert_eq \"$(sudo sqlite3 \"${STATE_DIR}/state.db\" \"SELECT COUNT(*) FROM pragma_table_info('domains') WHERE name = 'language'\")\" \"1\" \"state.db's domains carry a language column (migration 0021)\" || true\nDOMAINS=$(api_get \"domains\" 2>/dev/null || echo '{}')\nassert_json_field \"$DOMAINS\" '[.domains[] | select(.language != null)] | length' '0' \"No domain has a language\" || true\nassert_json_field \"$DOMAINS\" '(.authelia.running != null) and (.authelia.running == .authelia.pinned)' 'true' \"The running Authelia is the pin ($(echo \"$DOMAINS\" | jq -c '.authelia // {}' 2>/dev/null))\" || true\nassert_json_field \"$DOMAINS\" \"[.domains[] | select(.name == \\\"${DOMAIN_2}\\\")] | first | \\\"\\\\(.rendering.current) \\\\(.rendering.rendered.language)\\\"\" 'true null' \"${DOMAIN_2}'s rendering is current, of its brand alone\" || true\nSTOCK_INVITE=$(sudo cat /var/www/lamaste/invite/index.html 2>/dev/null || echo \"\")\nassert_contains \"${STOCK_INVITE}\" '<html lang=\"en\">' \"The stock invitation page: lang=\\\"en\\\"\" || true\nassert_contains \"${STOCK_INVITE}\" '<script type=\"application/json\" id=\"lamaste-messages\">' \"…its words in the data block the candidate writes\" || true\nassert_contains \"$(sudo cat \"${WEB_ROOT}/${DOMAIN_2}/invite/index.html\" 2>/dev/null || echo \"\")\" '<html lang=\"en\">' \"${DOMAIN_2}'s branded invitation page: lang=\\\"en\\\"\" || true\nassert_contains \"$(sudo cat /var/www/lamaste/unavailable/index.html 2>/dev/null || echo \"\")\" '<html lang=\"en\">' \"The stock \\\"not available\\\" page is in place, in English\" || true\nfor D in \"${DOMAIN}\" \"${DOMAIN_2}\"; do\n  AUTH_VHOST=$(sudo cat \"${AVAILABLE}/$(vhost_name auth \"${D}\")\" 2>/dev/null || echo \"\")\n  assert_not_contains \"${AUTH_VHOST}\" \"locales/forced\" \"The auth vhost of ${D} forces no locale\" || true\n  assert_not_contains \"${AUTH_VHOST}\" \"data-authelia-lang\" \"…and leaves Authelia's lang alone\" || true\ndone\nassert_not_contains \"$(curl -sk --max-time 15 --resolve \"${AUTH_FQDN}:443:127.0.0.1\" \"https://${AUTH_FQDN}/\")\" \"data-authelia-lang\" \"https://${AUTH_FQDN}/: Authelia's own <html lang>\" || true\nassert_eq \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:9294/access-request 2>/dev/null || echo 000)\" \"404\" \"Gatekeeper's GET /access-request is gone (404)\" || true"
+      "bash": "log_section \"The page language: migration 0021, no domain has one, every page English\"\n\nassert_eq \"$(sudo sqlite3 \"${STATE_DIR}/state.db\" \"SELECT COUNT(*) FROM pragma_table_info('domains') WHERE name = 'language'\")\" \"1\" \"state.db's domains carry a language column (migration 0021)\" || true\nDOMAINS=$(api_get \"domains\" 2>/dev/null || echo '{}')\nassert_json_field \"$DOMAINS\" '[.domains[] | select(.language != null)] | length' '0' \"No domain has a language\" || true\nassert_json_field \"$DOMAINS\" '(.authelia.running != null) and (.authelia.running == .authelia.pinned)' 'true' \"The running Authelia is the pin ($(echo \"$DOMAINS\" | jq -c '.authelia // {}' 2>/dev/null))\" || true\nassert_json_field \"$DOMAINS\" \"[.domains[] | select(.name == \\\"${DOMAIN_2}\\\")] | first | \\\"\\\\(.rendering.current) \\\\(.rendering.rendered.language)\\\"\" 'true null' \"${DOMAIN_2}'s rendering is current, of its brand alone\" || true\nSTOCK_INVITE=$(sudo cat /var/www/lamaste/invite/index.html 2>/dev/null || echo \"\")\nassert_contains \"${STOCK_INVITE}\" '<html lang=\"en\">' \"The stock invitation page: lang=\\\"en\\\"\" || true\nassert_contains \"${STOCK_INVITE}\" '<script type=\"application/json\" id=\"lamaste-messages\">' \"…its words in the data block the candidate writes\" || true\nassert_contains \"$(sudo cat \"${WEB_ROOT}/${DOMAIN_2}/invite/index.html\" 2>/dev/null || echo \"\")\" '<html lang=\"en\">' \"${DOMAIN_2}'s branded invitation page: lang=\\\"en\\\"\" || true\nassert_contains \"$(sudo cat /var/www/lamaste/unavailable/index.html 2>/dev/null || echo \"\")\" '<html lang=\"en\">' \"The stock \\\"not available\\\" page is in place, in English\" || true\nfor D in \"${DOMAIN}\" \"${DOMAIN_2}\"; do\n  AUTH_VHOST=$(sudo cat \"${AVAILABLE}/$(vhost_name auth \"${D}\")\" 2>/dev/null || echo \"\")\n  assert_not_contains \"${AUTH_VHOST}\" \"locales/forced\" \"The auth vhost of ${D} forces no locale\" || true\n  assert_not_contains \"${AUTH_VHOST}\" \"data-authelia-lang\" \"…and leaves Authelia's lang alone\" || true\ndone\nassert_not_contains \"$(curl -sk --max-time 15 --resolve \"${AUTH_FQDN}:443:127.0.0.1\" \"https://${AUTH_FQDN}/\")\" \"data-authelia-lang\" \"https://${AUTH_FQDN}/: Authelia's own <html lang>\" || true\nassert_eq \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:9294/access-request 2>/dev/null || echo 000)\" \"404\" \"Gatekeeper's GET /access-request is gone (404)\" || true\n\n# ===========================================================================\n# 6. Where Lamaste's packages came from (4.14)\n# ==========================================================================="
+    },
+    {
+      "id": "lamaste-s-packages-came-from-the-development-feria-never-npmjs",
+      "label": "Lamaste's packages came from the development Feria, never npmjs",
+      "steps": [
+        {
+          "id": "step-217",
+          "label": "The candidate's lamaste-priv runs the self-update's npx with --@lamalibre:registry=",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo cat /usr/local/sbin/lamaste-priv 2>/dev/null || echo \"\")"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "`--@lamalibre:registry=${registry}`"
+              },
+              "message": "The candidate's lamaste-priv runs the self-update's npx with --@lamalibre:registry="
+            }
+          }
+        },
+        {
+          "id": "step-218",
+          "label": "Set EVIDENCE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo bash -c \"$(npm_fetch_evidence_script)\""
+          },
+          "capture": [
+            {
+              "variable": "EVIDENCE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-219",
+          "label": "Set PUBLIC",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "public_registry_fetches \"${EVIDENCE}\""
+          },
+          "capture": [
+            {
+              "variable": "PUBLIC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-220",
+          "label": "$(printf '%s' \"${EVIDENCE}\" | grep -c . || true) @lamalibre URLs in npm's caches and logs, $(dev_feria_fetches \"${EVIDENCE}\" | grep -c . || true) from the development Feria",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "$(printf '%s' \"${EVIDENCE}\" | grep -c . || true) @lamalibre URLs in npm's caches and logs, $(dev_feria_fetches \"${EVIDENCE}\" | grep -c . || true) from the development Feria"
+          }
+        },
+        {
+          "id": "step-221",
+          "label": "npm's caches hold @lamalibre requests to the development Feria (the evidence is there to read)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(dev_feria_fetches \"${EVIDENCE}\" | grep -c . || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "npm's caches hold @lamalibre requests to the development Feria (the evidence is there to read)"
+            }
+          }
+        },
+        {
+          "id": "step-222",
+          "label": "…among them the candidate's installer, fetched by the update",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "EVIDENCE"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "create-lamaste-${CANDIDATE}.tgz"
+              },
+              "message": "…among them the candidate's installer, fetched by the update"
+            }
+          }
+        },
+        {
+          "id": "step-223",
+          "label": "@lamalibre was asked of a public registry or the hosted Feria: $(printf '%s' \"${PUBLIC}\" | head -5 | tr '\\n' ' ')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "@lamalibre was asked of a public registry or the hosted Feria: $(printf '%s' \"${PUBLIC}\" | head -5 | tr '\\n' ' ')"
+          }
+        },
+        {
+          "id": "step-224",
+          "label": "No @lamalibre request to npmjs, its mirrors or the hosted Feria — before the update or after",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "No @lamalibre request to npmjs, its mirrors or the hosted Feria — before the update or after"
+          }
+        }
+      ],
+      "bash": "log_section \"Lamaste's packages came from the development Feria, never npmjs\"\n\n# The previous release reached the candidate through its own Update action:\n# its root helper's npx read root's npmrc (the development Feria — what a\n# relay before 4.14 needs once, upgrades.md \"Upgrading to 4.14\"). The\n# candidate's helper names the registry itself.\nassert_contains \"$(sudo cat /usr/local/sbin/lamaste-priv 2>/dev/null || echo \"\")\" '`--@lamalibre:registry=${registry}`' \"The candidate's lamaste-priv runs the self-update's npx with --@lamalibre:registry=\" || true\nEVIDENCE=$(sudo bash -c \"$(npm_fetch_evidence_script)\")\nPUBLIC=$(public_registry_fetches \"${EVIDENCE}\")\nlog_info \"$(printf '%s' \"${EVIDENCE}\" | grep -c . || true) @lamalibre URLs in npm's caches and logs, $(dev_feria_fetches \"${EVIDENCE}\" | grep -c . || true) from the development Feria\"\nassert_not_eq \"$(dev_feria_fetches \"${EVIDENCE}\" | grep -c . || true)\" \"0\" \"npm's caches hold @lamalibre requests to the development Feria (the evidence is there to read)\" || true\nassert_contains \"${EVIDENCE}\" \"create-lamaste-${CANDIDATE}.tgz\" \"…among them the candidate's installer, fetched by the update\" || true\nif [ -n \"${PUBLIC}\" ]; then\n  log_fail \"@lamalibre was asked of a public registry or the hosted Feria: $(printf '%s' \"${PUBLIC}\" | head -5 | tr '\\n' ' ')\"\nelse\n  log_pass \"No @lamalibre request to npmjs, its mirrors or the hosted Feria — before the update or after\"\nfi"
     },
     {
       "id": "the-panel-logged-no-error-since-the-update",
       "label": "The panel logged no error since the update",
       "steps": [
         {
-          "id": "step-217",
+          "id": "step-225",
           "label": "Set ERRORS",
           "target": "local",
           "op": {
@@ -2975,7 +3110,7 @@
           ]
         },
         {
-          "id": "step-218",
+          "id": "step-226",
           "label": "No level ≥ 50 line in the panel's journal since ${UPDATE_STARTED}",
           "target": "local",
           "continueOnError": true,
@@ -3000,8 +3135,8 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 01 — A relay on the previous release takes the Panel Update to the candidate\n# ============================================================================\n# The relay was installed from the registry while the release before the\n# candidate was the latest (tier installed-previous); the campaign then\n# published the candidate, now the registry's latest create-lamaste. Here,\n# the path a live relay takes:\n#\n# 1. State written by the previous release: a user beside the admin, two\n#    tunnels (one enabled, one disabled), their vhosts under that release's\n#    names, how every host answers, the root helper as installed.\n# 2. POST /api/system/update { version: <candidate> }: lamaste-priv starts\n#    create-lamaste@<candidate> --yes in a transient unit; the panel comes\n#    back on the candidate.\n# 3. After: the unit succeeded; lamaste-priv is the candidate's (it refuses\n#    what only the old one allowed); the panel's migrations ran on the old\n#    state; the vhosts carry the candidate's names with their link state;\n#    every host answers as before; one domain, every user its member (kind\n#    member); Authelia denies by default, watches its users file (refresh\n#    always, its own password change and reset off — external-members-\n#    design.md) and every user holds the domain's member group there;\n#    Gatekeeper has its member file (v2); the branded sign-in's base is in\n#    place with the page pixel-for-pixel stock (auth-branding-design.md,\n#    \"Upgrade and reconcile\": the override locations in the auth vhost,\n#    data-theme=\"light\", data-logooverride=\"false\", no stylesheet; theme\n#    and server.asset_path in Authelia's configuration — one restart,\n#    audited; no brand; nginx built with the sub module; the stock\n#    invitation page rewritten); the user signed in before the update,\n#    signed in again after it, reaches what they reached; the panel logged\n#    no error since the update.\n# 4. The invitations of the release before (delegated-invitations-design.md\n#    §11): a pending invitation made there, its link naming the token in its\n#    path, and a domain with a brand. After the update the old link's page\n#    opens and runs — on the stock page and the branded one the script served\n#    is the one the served CSP names, because the rendering was rebuilt\n#    (`pagesDigest` in rendered.json); the invitation was imported from\n#    invitations.json, which is gone, with no clear token left in state.db;\n#    it is looked up and accepted by POST. From 4.9 on the invitation is in\n#    state.db already and its link names the token in its fragment.\n# 5. The page language (page-language-design.md, \"Upgrade in place\"): the\n#    panel's migration 0021 ran (domains.language), no domain has a\n#    language, the pages are English — the stock pages and the branded\n#    domain's rendering, written again by the candidate with its data block;\n#    the auth vhosts force no locale; the running Authelia is the pin; the\n#    stock \"not available\" page is in place; Gatekeeper's GET\n#    /access-request is gone.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq nginx npm sha256sum oathtool python3 node sqlite3\n\nbegin_test \"01 — Panel Update from the previous release to the candidate\"\n\nRUN_ID=\"$(date +%s)\"\nAGENT_LABEL=\"upgrade-e2e-${RUN_ID}\"\nSUB_ON=\"e2eup1on\"\nSUB_OFF=\"e2eup1off\"\nPORT_ON=19941\nPORT_OFF=19942\nUSERNAME=\"e2eupgrade\"\n# Test credentials for this run only, never printed\nUSER_PASSWORD=\"Upgrade-${RUN_ID}-pass\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-upgrade-01\"\nTUNNEL_ON=\"\"\nTUNNEL_OFF=\"\"\nAVAILABLE=\"/etc/nginx/sites-available\"\nENABLED=\"/etc/nginx/sites-enabled\"\nPRIV=/usr/local/sbin/lamaste-priv\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWEB_ROOT=\"/var/www/lamaste/auth\"\nINVITEE=\"e2eupinvited\"\n# Test credentials for this run only, never printed\nINVITEE_PASSWORD=\"Upgrade-${RUN_ID}-invitee\"\nBRAND=\"E2E Upgrade Brand\"\nACCENT=\"#0f766e\"\nDOMAIN_2=\"\"\nINVITE_TOKEN=\"\"\nINVITE_ID=\"\"\nBRANDED_TOKEN=\"\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${TUNNEL_ON} ${TUNNEL_OFF}; do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"users/${USERNAME}\" > /dev/null 2>&1 || true\n  api_delete \"users/${INVITEE}\" > /dev/null 2>&1 || true\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# inline_hash <script|style> — the CSP source of a page's inline element, from stdin\ninline_hash() {\n  node -e 'const h=require(\"fs\").readFileSync(0,\"utf8\");const t=process.argv[1];const m=h.match(new RegExp(\"<\"+t+\">([\\\\s\\\\S]*?)</\"+t+\">\"));process.stdout.write(m?\"sha256-\"+require(\"crypto\").createHash(\"sha256\").update(m[1],\"utf8\").digest(\"base64\"):\"none\")' \"$1\"\n}\n\n# assert_page_runs <host> <path> <what> — the page answers 200 and its CSP names\n# the served inline script and style: a browser runs it\nassert_page_runs() {\n  local dir=\"${WORK_DIR}/page\" csp\n  mkdir -p \"$dir\"\n  curl -sk --max-time 15 --resolve \"$1:443:127.0.0.1\" -D \"$dir/headers\" -o \"$dir/body\" -w '%{http_code}' \"https://$1$2\" > \"$dir/status\" 2>/dev/null || echo 000 > \"$dir/status\"\n  assert_eq \"$(cat \"$dir/status\")\" \"200\" \"$3: 200\" || true\n  csp=$(tr -d '\\r' < \"$dir/headers\" | sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p')\n  assert_contains \"${csp}\" \"script-src '$(inline_hash script < \"$dir/body\")'\" \"…its CSP names the script served\" || true\n  assert_contains \"${csp}\" \"'$(inline_hash style < \"$dir/body\")'\" \"…and the style served\" || true\n  assert_contains \"${csp}\" \"frame-ancestors 'none'\" \"…nothing frames it\" || true\n}\n\n# host_status <hostname> — how nginx answers https://<hostname>/ on this VM\nhost_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve \"$1:443:127.0.0.1\" \"https://$1/\" 2>/dev/null || echo \"000\"\n}\n\n# link_state <site name> — \"available linked\" / \"available unlinked\" / \"gone …\"\nlink_state() {\n  local a=gone e=unlinked\n  if sudo test -e \"${AVAILABLE}/$1\"; then a=available; fi\n  if sudo test -L \"${ENABLED}/$1\"; then e=linked; fi\n  echo \"$a $e\"\n}\n\n# signed_status <jar> <hostname> — how nginx answers https://<hostname>/ to the session in <jar>\nsigned_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 -b \"$1\" --resolve \"$2:443:127.0.0.1\" \"https://$2/\" 2>/dev/null || echo \"000\"\n}\n\n# panel_version — the version the panel reports, or \"down\"\npanel_version() {\n  api_get \"health\" 2>/dev/null | jq -r '.version // \"down\"' 2>/dev/null || echo \"down\"\n}\n\n# version_before <a> <b> — whether release <a> is older than <b> (x.y.z)\nversion_before() {\n  [ \"$1\" != \"$2\" ] && [ \"$(printf '%s\\n%s\\n' \"$1\" \"$2\" | sort -V | head -n 1)\" = \"$1\" ]\n}\n",
+  "headerRaw": "# ============================================================================\n# 01 — A relay on the previous release takes the Panel Update to the candidate\n# ============================================================================\n# The relay was installed from the registry while the release before the\n# candidate was the latest (tier installed-previous); the campaign then\n# published the candidate, now the registry's latest create-lamaste. Here,\n# the path a live relay takes:\n#\n# 1. State written by the previous release: a user beside the admin, two\n#    tunnels (one enabled, one disabled), their vhosts under that release's\n#    names, how every host answers, the root helper as installed.\n# 2. POST /api/system/update { version: <candidate> }: lamaste-priv starts\n#    create-lamaste@<candidate> --yes in a transient unit; the panel comes\n#    back on the candidate.\n# 3. After: the unit succeeded; lamaste-priv is the candidate's (it refuses\n#    what only the old one allowed); the panel's migrations ran on the old\n#    state; the vhosts carry the candidate's names with their link state;\n#    every host answers as before; one domain, every user its member (kind\n#    member); Authelia denies by default, watches its users file (refresh\n#    always, its own password change and reset off — external-members-\n#    design.md) and every user holds the domain's member group there;\n#    Gatekeeper has its member file (v2); the branded sign-in's base is in\n#    place with the page pixel-for-pixel stock (auth-branding-design.md,\n#    \"Upgrade and reconcile\": the override locations in the auth vhost,\n#    data-theme=\"light\", data-logooverride=\"false\", no stylesheet; theme\n#    and server.asset_path in Authelia's configuration — one restart,\n#    audited; no brand; nginx built with the sub module; the stock\n#    invitation page rewritten); the user signed in before the update,\n#    signed in again after it, reaches what they reached; the panel logged\n#    no error since the update.\n# 4. The invitations of the release before (delegated-invitations-design.md\n#    §11): a pending invitation made there, its link naming the token in its\n#    path, and a domain with a brand. After the update the old link's page\n#    opens and runs — on the stock page and the branded one the script served\n#    is the one the served CSP names, because the rendering was rebuilt\n#    (`pagesDigest` in rendered.json); the invitation was imported from\n#    invitations.json, which is gone, with no clear token left in state.db;\n#    it is looked up and accepted by POST. From 4.9 on the invitation is in\n#    state.db already and its link names the token in its fragment.\n# 5. The page language (page-language-design.md, \"Upgrade in place\"): the\n#    panel's migration 0021 ran (domains.language), no domain has a\n#    language, the pages are English — the stock pages and the branded\n#    domain's rendering, written again by the candidate with its data block;\n#    the auth vhosts force no locale; the running Authelia is the pin; the\n#    stock \"not available\" page is in place; Gatekeeper's GET\n#    /access-request is gone.\n# 6. Where Lamaste's packages came from (upgrades.md, \"Where Lamaste's\n#    packages come from\"): the candidate's root helper names the registry\n#    for the self-update; npm's caches and logs hold @lamalibre requests to\n#    the development Feria only — none to npmjs or the hosted Feria.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq nginx npm sha256sum oathtool python3 node sqlite3 find\n\nbegin_test \"01 — Panel Update from the previous release to the candidate\"\n\nRUN_ID=\"$(date +%s)\"\nAGENT_LABEL=\"upgrade-e2e-${RUN_ID}\"\nSUB_ON=\"e2eup1on\"\nSUB_OFF=\"e2eup1off\"\nPORT_ON=19941\nPORT_OFF=19942\nUSERNAME=\"e2eupgrade\"\n# Test credentials for this run only, never printed\nUSER_PASSWORD=\"Upgrade-${RUN_ID}-pass\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-upgrade-01\"\nTUNNEL_ON=\"\"\nTUNNEL_OFF=\"\"\nAVAILABLE=\"/etc/nginx/sites-available\"\nENABLED=\"/etc/nginx/sites-enabled\"\nPRIV=/usr/local/sbin/lamaste-priv\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWEB_ROOT=\"/var/www/lamaste/auth\"\nINVITEE=\"e2eupinvited\"\n# Test credentials for this run only, never printed\nINVITEE_PASSWORD=\"Upgrade-${RUN_ID}-invitee\"\nBRAND=\"E2E Upgrade Brand\"\nACCENT=\"#0f766e\"\nDOMAIN_2=\"\"\nINVITE_TOKEN=\"\"\nINVITE_ID=\"\"\nBRANDED_TOKEN=\"\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${TUNNEL_ON} ${TUNNEL_OFF}; do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"users/${USERNAME}\" > /dev/null 2>&1 || true\n  api_delete \"users/${INVITEE}\" > /dev/null 2>&1 || true\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# inline_hash <script|style> — the CSP source of a page's inline element, from stdin\ninline_hash() {\n  node -e 'const h=require(\"fs\").readFileSync(0,\"utf8\");const t=process.argv[1];const m=h.match(new RegExp(\"<\"+t+\">([\\\\s\\\\S]*?)</\"+t+\">\"));process.stdout.write(m?\"sha256-\"+require(\"crypto\").createHash(\"sha256\").update(m[1],\"utf8\").digest(\"base64\"):\"none\")' \"$1\"\n}\n\n# assert_page_runs <host> <path> <what> — the page answers 200 and its CSP names\n# the served inline script and style: a browser runs it\nassert_page_runs() {\n  local dir=\"${WORK_DIR}/page\" csp\n  mkdir -p \"$dir\"\n  curl -sk --max-time 15 --resolve \"$1:443:127.0.0.1\" -D \"$dir/headers\" -o \"$dir/body\" -w '%{http_code}' \"https://$1$2\" > \"$dir/status\" 2>/dev/null || echo 000 > \"$dir/status\"\n  assert_eq \"$(cat \"$dir/status\")\" \"200\" \"$3: 200\" || true\n  csp=$(tr -d '\\r' < \"$dir/headers\" | sed -n 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: //p')\n  assert_contains \"${csp}\" \"script-src '$(inline_hash script < \"$dir/body\")'\" \"…its CSP names the script served\" || true\n  assert_contains \"${csp}\" \"'$(inline_hash style < \"$dir/body\")'\" \"…and the style served\" || true\n  assert_contains \"${csp}\" \"frame-ancestors 'none'\" \"…nothing frames it\" || true\n}\n\n# host_status <hostname> — how nginx answers https://<hostname>/ on this VM\nhost_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve \"$1:443:127.0.0.1\" \"https://$1/\" 2>/dev/null || echo \"000\"\n}\n\n# link_state <site name> — \"available linked\" / \"available unlinked\" / \"gone …\"\nlink_state() {\n  local a=gone e=unlinked\n  if sudo test -e \"${AVAILABLE}/$1\"; then a=available; fi\n  if sudo test -L \"${ENABLED}/$1\"; then e=linked; fi\n  echo \"$a $e\"\n}\n\n# signed_status <jar> <hostname> — how nginx answers https://<hostname>/ to the session in <jar>\nsigned_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 -b \"$1\" --resolve \"$2:443:127.0.0.1\" \"https://$2/\" 2>/dev/null || echo \"000\"\n}\n\n# panel_version — the version the panel reports, or \"down\"\npanel_version() {\n  api_get \"health\" 2>/dev/null | jq -r '.version // \"down\"' 2>/dev/null || echo \"down\"\n}\n\n# version_before <a> <b> — whether release <a> is older than <b> (x.y.z)\nversion_before() {\n  [ \"$1\" != \"$2\" ] && [ \"$(printf '%s\\n%s\\n' \"$1\" \"$2\" | sort -V | head -n 1)\" = \"$1\" ]\n}\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }
