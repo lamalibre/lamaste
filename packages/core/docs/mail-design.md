@@ -124,9 +124,15 @@ no mail (§7).
   nodemailer's `MailComposer` (no transport needed). Port 443 only.
 - **From**: Gmail sends as the account or a _send-as_ alias the account
   holds. `no-reply@notify.codelama.com.tr` must be an alias of the relay user
-  (the subdomain added to the Workspace, §9). The verification step checks
-  `GET users/me/settings/sendAs` lists the sender, so a wrong sender is
-  refused at setup, not at the first invitation.
+  (the subdomain added to the Workspace, §9). **The relay cannot check
+  that**: listing send-as addresses (`users.settings.sendAs.list`) needs
+  `gmail.settings.basic`, `gmail.readonly`, `gmail.modify` or
+  `mail.google.com` — each lets a leaked token read the mailbox or change
+  its settings (filters, forwarding, send-as). The relay keeps
+  `gmail.send openid email` (decided 2026-11-10). When the sender is not
+  the account itself, the answer that stores it carries a warning: send a
+  test mail and check its From — Gmail sends as an alias only when it is a
+  send-as address of that account.
 - **Revocation**: `invalid_grant` on refresh (password change, admin
   revoke, the user suspended) marks the transport down (§5.1) — the
   operator consents again.
@@ -160,8 +166,16 @@ senderAddress, senderName? }` (admin) → a PKCE pair and a 32-byte
 Every store verifies first (the registry-credential pattern), sending
 nothing:
 
-- `gmail-api`: refresh → access token; `GET users/me/profile`;
-  `GET users/me/settings/sendAs` contains the sender.
+- `gmail-api`: refresh → access token; the token response's `scope`
+  includes `gmail.send` (Google's granular consent lets the user untick
+  it); the account is the `id_token`'s `email` with `email_verified`
+  true. The `id_token` comes straight from Google's token endpoint over
+  TLS in answer to the client's authenticated request, so — as OpenID
+  Connect Core §3.1.3.7 allows — the TLS server check stands in for the
+  signature check; `iss` (`https://accounts.google.com` or
+  `accounts.google.com`), `aud` = the client id and `exp` are checked.
+  No `users.getProfile`, no `sendAs` call (§3.2): a sender other than the
+  account comes with the test-mail warning.
 - `smtp`: connect, TLS, EHLO with the panel hostname, AUTH when a
   username is given, `MAIL FROM:<sender>`, `RSET`, `QUIT`. A timeout says
   "the host may block outbound SMTP (DigitalOcean does on new accounts) —
@@ -215,11 +229,17 @@ a rolling 24 hours. SMTP providers have limits of their own. The relay
 must never be the one that reaches them — least of all through
 `/reset`, which anyone can call.
 
-- **Count**: every delivery attempt through a transport is a row in
-  `mail_sends (id, transport_id, class, sent_at, outcome)` (migration
-  0022; no address, no subject; swept after 48 h). Usage = rows of the
-  last 24 h for that transport.
-- **Limit**: `mail_transports.daily_limit` (1–100000), set by the
+- **Count**: every delivery attempt is a row in
+  `mail_sends (id, account_key, class, kind, sent_at, outcome)` (migration
+  0022; no address, no subject; swept after 48 h). Google's limit is per
+  mailbox, and the relay's row and a domain's may send through the same
+  one — or a transport may be removed and set again: usage is counted per
+  **sending account**, `account_key` = `gmail:<account>` or
+  `smtp:<host>:<username or ->`. Usage = rows of the last 24 h for that
+  account; `kind` (`authelia`, `invitation`, `reset`, `password-changed`,
+  `test`) serves the reset cap.
+- **Limit**: `mail_transports.daily_limit` (1–100000) — the row's own,
+  against its account's usage — set by the
   administrator on the transport (`PUT`/`PATCH`, panel, CLI `--daily-limit`);
   default **500** for `gmail-api` (the trial value — the safe one) and
   **500** for `smtp`. Settings → Mail says to raise it to 2,000 once the
@@ -231,7 +251,7 @@ must never be the one that reaches them — least of all through
   reissues), `public` (reset mails, delegated invitations and their
   reissues). `public` may use the ceiling minus a **20 % reserve**;
   `essential` and `admin` the whole ceiling. On top, reset mails are
-  capped relay-wide at **30 an hour** per transport. Over a cap: a
+  capped relay-wide at **30 an hour** per sending account. Over a cap: a
   reset start still answers its 202 (nothing reveals the cap); an
   invitation answers `mail.status: 'deferred-budget'` with the link (the
   inviter shares it another way); the listener answers Authelia a 4xx.
@@ -242,7 +262,8 @@ must never be the one that reaches them — least of all through
 - **Google's own refusal** (Gmail API 403/429 with reason
   `dailyLimitExceeded`, `userRateLimitExceeded` or a "sending limit
   exceeded" message; SMTP 4.5.3/5.4.5/550 5.7.x limit replies): the
-  transport is marked **limited until** now + 24 h — no retries, no sends,
+  transport — and every row on the same sending account — is marked
+  **limited until** now + 24 h — no retries, no sends,
   every mail answered as over the ceiling — notification
   `mail.transport.limited`. Administrators may clear it early
   (`POST …/mail/resume`) once Google's admin console shows the account
@@ -434,7 +455,8 @@ notice; Authelia keeps the file notifier.
 ## 8. Tests
 
 - Unit: transport resolution; Gmail API client against a fake (refresh,
-  send, `invalid_grant`, sendAs check); consent state (single use,
+  send, `invalid_grant`, the granted scope and the `id_token` checks,
+  limit refusals); consent state (single use,
   expiry, PKCE); the listener (AUTH, sender lock, one RCPT, size, rate);
   Authelia rendering (template lines, sentinel round trip,
   `usersFileWatched` with `custom_url`, never Authelia's own reset);
@@ -447,7 +469,7 @@ notice; Authelia keeps the file notifier.
   password, Authelia's elevation code arrives through the listener, sink
   down → Authelia still signs in and invitations answer `failed`. The
   Gmail API path is tested against a **fake Google** on the VM (token +
-  send + sendAs endpoints) with its base URLs overridable only through a
+  send endpoints) with its base URLs overridable only through a
   test-only environment variable in a unit drop-in.
 
 ## 9. Google Workspace — operator guide (docs)
@@ -471,7 +493,8 @@ For sending as `no-reply@notify.codelama.com.tr` over the Gmail API:
    `https://auth.codelama.com.tr/mail/google/callback`.
 5. Panel → Settings → Mail → Google: client id and secret, sender
    `no-reply@notify.codelama.com.tr`, name "Code Lama" → _Connect_, sign in
-   as `relay@codelama.com.tr`, consent. Send a test.
+   as `relay@codelama.com.tr`, consent. Send a test and check its From:
+   the relay cannot check the send-as alias itself (§3.2).
 
 Hosts with open SMTP ports may use the `smtp` kind instead
 (`smtp-relay.gmail.com:587`, STARTTLS, SMTP AUTH with an app password, the
