@@ -12,6 +12,7 @@ import type {
   MailGoogleStartRequest,
   MailSendResult,
   MailSenderRequest,
+  MailTransportPatchRequest,
   MailTransportView,
   SmtpTransportRequest,
 } from './mail.js';
@@ -893,10 +894,16 @@ export interface AdminClient {
   startMailGoogleConsent(
     input: MailGoogleStartRequest,
   ): Promise<{ authorizeUrl: string; expiresAt: string }>;
-  /** Change the sender only (a `gmail-api` sender is checked against the account's send-as addresses). */
+  /**
+   * Change the sender, its name or the daily limit. A `gmail-api` sender
+   * other than the account answers a `sender` warning: Gmail sends as it
+   * only when it is a send-as address of the account — send a test.
+   */
   setMailSender(
-    input: MailSenderRequest,
+    input: MailTransportPatchRequest,
   ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  /** End a provider's limit refusal early, once its console shows the account sending again. */
+  resumeMail(): Promise<{ transport: MailTransportView }>;
   /** Remove the relay's transport: Authelia back to its file notifier, Google's token revoked (best effort). */
   clearMailSettings(): Promise<{ removed: boolean; warnings?: AdminWarning[] }>;
   /** Send a test mail in the primary domain's language and brand. */
@@ -911,11 +918,17 @@ export interface AdminClient {
     name: string,
     input: MailGoogleStartRequest,
   ): Promise<{ authorizeUrl: string; expiresAt: string }>;
-  /** A sender of the domain's own over the relay's transport (or its own transport's sender). */
+  /** A sender of the domain's own over the relay's transport (`PUT …/mail/sender`). */
   setDomainMailSender(
     name: string,
     input: MailSenderRequest,
   ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  /** Change the domain row's sender, name or (own transport only) daily limit. */
+  updateDomainMail(
+    name: string,
+    input: MailTransportPatchRequest,
+  ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  resumeDomainMail(name: string): Promise<{ transport: MailTransportView }>;
   clearDomainMail(name: string): Promise<{ removed: boolean; warnings?: AdminWarning[] }>;
   /** Send a test mail in the domain's language and brand, through what its mail resolves to. */
   sendDomainTestMail(name: string, to: string): Promise<{ mail: MailSendResult }>;

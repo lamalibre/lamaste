@@ -43,9 +43,120 @@ export const MAIL_ADDRESS_MAX_LENGTH = 254;
 /** A sender's display name is at most this long. */
 export const MAIL_SENDER_NAME_MAX_LENGTH = 64;
 
-/** What a mail send ended in, as an invitation records it. */
-export const MAIL_SEND_STATUSES = ['sent', 'failed', 'not-configured'] as const;
+/**
+ * What a mail send ended in, as an invitation records it:
+ * `deferred-budget` — not sent, the sending budget (§3.7) or the
+ * provider's own limit held it back.
+ */
+export const MAIL_SEND_STATUSES = ['sent', 'failed', 'not-configured', 'deferred-budget'] as const;
 export type MailSendStatus = (typeof MAIL_SEND_STATUSES)[number];
+
+// ---------------------------------------------------------------------------
+// Sending budget (§3.7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Who a mail is for, in the order the budget protects them: `essential`
+ * (Authelia's mail, password-changed notices, test mails) and `admin`
+ * (an administrator's invitations) may use the whole ceiling; `public`
+ * (reset mails, delegated invitations — what anyone can make the relay
+ * send) stops short of a reserve.
+ */
+export const MAIL_SEND_CLASSES = ['essential', 'admin', 'public'] as const;
+export type MailSendClass = (typeof MAIL_SEND_CLASSES)[number];
+
+/** What a mail is — recorded with each send (no address, no subject); the reset cap counts `reset`. */
+export const MAIL_KINDS = ['authelia', 'invitation', 'reset', 'password-changed', 'test'] as const;
+export type MailKind = (typeof MAIL_KINDS)[number];
+
+/** A transport's daily limit: the provider's per-account limit the administrator enters. */
+export const MAIL_DAILY_LIMIT = Object.freeze({
+  min: 1,
+  max: 100_000,
+  /** Google Workspace's trial limit — the safe default for every kind. */
+  default: 500,
+});
+
+/** The budget's fixed ratios and caps (§3.7). */
+export const MAIL_BUDGET = Object.freeze({
+  /** Lamaste sends at most this share of the daily limit in 24 h. */
+  ceilingRatio: 0.9,
+  /** The share of the ceiling `public` mails never use. */
+  publicReserveRatio: 0.2,
+  /** Usage at this share of the ceiling warns the administrators. */
+  warningRatio: 0.7,
+  /** Reset mails per sending account per hour. */
+  resetsPerHour: 30,
+  /** How long a provider's limit refusal stops a sending account. */
+  limitedHours: 24,
+  /** The window usage is counted over (rolling, as Google's). */
+  windowHours: 24,
+});
+
+/** The thresholds of a daily limit: what may be sent, what `public` may, where the warning is. */
+export function mailBudgetThresholds(dailyLimit: number): {
+  ceiling: number;
+  publicCap: number;
+  warningAt: number;
+} {
+  if (!Number.isInteger(dailyLimit) || dailyLimit < MAIL_DAILY_LIMIT.min) {
+    throw new Error('A daily limit is a positive integer');
+  }
+  const ceiling = Math.max(1, Math.floor(dailyLimit * MAIL_BUDGET.ceilingRatio));
+  const reserve = Math.ceil(ceiling * MAIL_BUDGET.publicReserveRatio);
+  return {
+    ceiling,
+    publicCap: Math.max(0, ceiling - reserve),
+    warningAt: Math.ceil(ceiling * MAIL_BUDGET.warningRatio),
+  };
+}
+
+/** Why the budget holds a mail back. */
+export type MailBudgetRefusal = 'limited' | 'ceiling' | 'public-cap' | 'reset-cap';
+
+/**
+ * Whether one more mail of `sendClass`/`kind` may go through a sending
+ * account that sent `sent24h` mails in the last 24 h and `resetsLastHour`
+ * reset mails in the last hour, `limitedUntil` the end of a provider's
+ * refusal (ISO, or null). Pure.
+ */
+export function mailBudgetDecision(input: {
+  readonly dailyLimit: number;
+  readonly sent24h: number;
+  readonly resetsLastHour: number;
+  readonly sendClass: MailSendClass;
+  readonly kind: MailKind;
+  readonly limitedUntil: string | null;
+  readonly now: Date;
+}): { ok: true } | { ok: false; reason: MailBudgetRefusal } {
+  if (input.limitedUntil !== null && Date.parse(input.limitedUntil) > input.now.getTime()) {
+    return { ok: false, reason: 'limited' };
+  }
+  const { ceiling, publicCap } = mailBudgetThresholds(input.dailyLimit);
+  if (input.sent24h >= ceiling) return { ok: false, reason: 'ceiling' };
+  if (input.sendClass === 'public' && input.sent24h >= publicCap) {
+    return { ok: false, reason: 'public-cap' };
+  }
+  if (input.kind === 'reset' && input.resetsLastHour >= MAIL_BUDGET.resetsPerHour) {
+    return { ok: false, reason: 'reset-cap' };
+  }
+  return { ok: true };
+}
+
+/** What `GET /api/settings/mail` shows of a sending account's budget. */
+export interface MailBudgetView {
+  readonly dailyLimit: number;
+  readonly ceiling: number;
+  readonly publicCap: number;
+  /** Delivery attempts through the sending account in the last 24 h (every row on it). */
+  readonly sent24h: number;
+  readonly byClass: Readonly<Record<MailSendClass, number>>;
+  readonly resetsLastHour: number;
+  /** A provider's limit refusal stops the account until then (ISO), or null. */
+  readonly limitedUntil: string | null;
+  /** When the oldest counted mail leaves the window while at the ceiling (ISO), or null. */
+  readonly resumesAt: string | null;
+}
 
 /**
  * Top-level names no mail is delivered to (RFC 2606, RFC 6761, and
@@ -305,6 +416,9 @@ export function mailSenderDomains(records: readonly MailTransportRecord[]): stri
 // API bodies and views
 // ---------------------------------------------------------------------------
 
+/** A daily limit as a body field. */
+const DailyLimitSchema = z.number().int().min(MAIL_DAILY_LIMIT.min).max(MAIL_DAILY_LIMIT.max);
+
 /** A secret as typed: 1–1024 characters, no control characters. */
 const SecretInputSchema = z
   .string()
@@ -325,6 +439,8 @@ const SenderFields = {
  */
 export const SmtpTransportInputSchema = SmtpTransportSettingsSchema.extend({
   password: SecretInputSchema.optional(),
+  /** Omitted: the stored one, else {@link MAIL_DAILY_LIMIT}'s default. */
+  dailyLimit: DailyLimitSchema.optional(),
   ...SenderFields,
 }).strict();
 export type SmtpTransportInput = z.output<typeof SmtpTransportInputSchema>;
@@ -341,16 +457,39 @@ export const MailGoogleStartInputSchema = z
       .min(8)
       .max(256)
       .regex(/^[\x21-\x7e]+$/),
+    /** Omitted: the stored one, else {@link MAIL_DAILY_LIMIT}'s default. */
+    dailyLimit: DailyLimitSchema.optional(),
     ...SenderFields,
   })
   .strict();
 export type MailGoogleStartInput = z.output<typeof MailGoogleStartInputSchema>;
 export type MailGoogleStartRequest = z.input<typeof MailGoogleStartInputSchema>;
 
-/** `PATCH /api/settings/mail` — and a domain's sender-only override (`PUT /api/domains/:name/mail`). */
+/** A domain's sender-only override (`PUT /api/domains/:name/mail/sender`). */
 export const MailSenderInputSchema = z.object(SenderFields).strict();
 export type MailSenderInput = z.output<typeof MailSenderInputSchema>;
 export type MailSenderRequest = z.input<typeof MailSenderInputSchema>;
+
+/**
+ * `PATCH /api/settings/mail` (and a domain's): the sender, its name or the
+ * daily limit — at least one; a sender's address only with its field.
+ */
+export const MailTransportPatchSchema = z
+  .object({
+    senderAddress: MailAddressSchema.optional(),
+    senderName: MailSenderNameSchema.nullable().optional(),
+    dailyLimit: DailyLimitSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (body) =>
+      body.senderAddress !== undefined ||
+      body.senderName !== undefined ||
+      body.dailyLimit !== undefined,
+    'Nothing to change',
+  );
+export type MailTransportPatch = z.output<typeof MailTransportPatchSchema>;
+export type MailTransportPatchRequest = z.input<typeof MailTransportPatchSchema>;
 
 /** `POST /api/settings/mail/test`. */
 export const MailTestInputSchema = z.object({ to: MailAddressSchema }).strict();
@@ -385,6 +524,8 @@ export interface MailTransportView {
   readonly verifiedAt: string;
   readonly updatedAt: string;
   readonly health: MailTransportHealth | null;
+  /** The sending account's budget; null on a domain row that sets a sender only. */
+  readonly budget: MailBudgetView | null;
 }
 
 /** What a send did, as invitation answers carry it. */
