@@ -1644,16 +1644,117 @@
               "message": "…Authelia's own answer, passed through"
             }
           }
+        },
+        {
+          "id": "step-198",
+          "label": "A multipart refresh for the native client: 400 invalid_request, never forwarded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(broker_says -F grant_type=refresh_token -F \"refresh_token=e2e-unknown-${MARK}\" -F \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/token\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "A multipart refresh for the native client: 400 invalid_request, never forwarded"
+            }
+          }
+        },
+        {
+          "id": "step-199",
+          "label": "A multipart request of another client: 400 invalid_request too",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(broker_says -F grant_type=client_credentials -F scope=lamaste.registry -F client_id=lamaste-server \"https://auth.${DOMAIN}/api/oidc/token\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "A multipart request of another client: 400 invalid_request too"
+            }
+          }
+        },
+        {
+          "id": "step-200",
+          "label": "A text/plain body: 400 invalid_request",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(broker_says -H 'Content-Type: text/plain' --data-binary \"grant_type=refresh_token&client_id=${CLIENT}&refresh_token=e2e-x\" \"https://auth.${DOMAIN}/api/oidc/token\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "A text/plain body: 400 invalid_request"
+            }
+          }
+        },
+        {
+          "id": "step-201",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PATCH \"tunnels/${TUNNEL_ID}\" '{\"accessMode\":\"public\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-202",
+          "label": "Making the host's tunnel public while it has a native client: 409 native_client_conflict",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409 native_client_conflict"
+              },
+              "message": "Making the host's tunnel public while it has a native client: 409 native_client_conflict"
+            }
+          }
         }
       ],
-      "bash": "log_section \"The token broker\"\n\nassert_eq \"$(broker_says -H \"Authorization: Basic $(printf '%s:' \"${CLIENT}\" | base64)\" --data-urlencode grant_type=refresh_token --data-urlencode refresh_token=e2e-x \"https://auth.${DOMAIN}/api/oidc/token\")\" \"401 invalid_client\" \"Basic client authentication naming the native client: 401 invalid_client\" || true\nassert_eq \"$(broker_says --data-urlencode grant_type=authorization_code --data-urlencode code=e2e-x --data-urlencode \"redirect_uri=https://${FQDN}${REDIRECT}\" --data-urlencode code_verifier=e2e-x --data-urlencode client_id=lamaste-native-e2e40nosuch \"https://auth.${DOMAIN}/api/oidc/token\")\" \"401 invalid_client\" \"A code for a native id that is not registered: 401 invalid_client, never forwarded\" || true\nassert_eq \"$(broker_says --data-urlencode grant_type=refresh_token --data-urlencode \"refresh_token=e2e-unknown-${MARK}\" --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/token\")\" \"400 invalid_grant\" \"An unknown refresh token: 400 invalid_grant\" || true\nassert_eq \"$(broker_says --data-urlencode grant_type=client_credentials --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/token\")\" \"400 unsupported_grant_type\" \"A grant a native client never uses: 400 unsupported_grant_type\" || true\nassert_eq \"$(broker_says --data-urlencode \"token=e2e-unknown-${MARK}\" --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/revocation\" | cut -d' ' -f1)\" \"200\" \"Revoking an unknown token: 200 (RFC 7009)\" || true\nOUT=$(broker -H \"Authorization: Basic $(printf '%s' 'lamaste-server:e2e-wrong-secret' | base64)\" --data-urlencode grant_type=client_credentials --data-urlencode scope=lamaste.registry \"https://auth.${DOMAIN}/api/oidc/token\")\nassert_eq \"$(status_of \"$OUT\") $(json_get \"$(body_of \"$OUT\")\" '.error')\" \"401 invalid_client\" \"A confidential client with a wrong secret: 401 invalid_client…\" || true\nassert_contains \"$(json_get \"$(body_of \"$OUT\")\" '.error_description')\" \"Client authentication failed\" \"…Authelia's own answer, passed through\" || true\n\n# ===========================================================================\n# 5. The CLI\n# ==========================================================================="
+      "bash": "log_section \"The token broker\"\n\nassert_eq \"$(broker_says -H \"Authorization: Basic $(printf '%s:' \"${CLIENT}\" | base64)\" --data-urlencode grant_type=refresh_token --data-urlencode refresh_token=e2e-x \"https://auth.${DOMAIN}/api/oidc/token\")\" \"401 invalid_client\" \"Basic client authentication naming the native client: 401 invalid_client\" || true\nassert_eq \"$(broker_says --data-urlencode grant_type=authorization_code --data-urlencode code=e2e-x --data-urlencode \"redirect_uri=https://${FQDN}${REDIRECT}\" --data-urlencode code_verifier=e2e-x --data-urlencode client_id=lamaste-native-e2e40nosuch \"https://auth.${DOMAIN}/api/oidc/token\")\" \"401 invalid_client\" \"A code for a native id that is not registered: 401 invalid_client, never forwarded\" || true\nassert_eq \"$(broker_says --data-urlencode grant_type=refresh_token --data-urlencode \"refresh_token=e2e-unknown-${MARK}\" --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/token\")\" \"400 invalid_grant\" \"An unknown refresh token: 400 invalid_grant\" || true\nassert_eq \"$(broker_says --data-urlencode grant_type=client_credentials --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/token\")\" \"400 unsupported_grant_type\" \"A grant a native client never uses: 400 unsupported_grant_type\" || true\nassert_eq \"$(broker_says --data-urlencode \"token=e2e-unknown-${MARK}\" --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/revocation\" | cut -d' ' -f1)\" \"200\" \"Revoking an unknown token: 200 (RFC 7009)\" || true\nOUT=$(broker -H \"Authorization: Basic $(printf '%s' 'lamaste-server:e2e-wrong-secret' | base64)\" --data-urlencode grant_type=client_credentials --data-urlencode scope=lamaste.registry \"https://auth.${DOMAIN}/api/oidc/token\")\nassert_eq \"$(status_of \"$OUT\") $(json_get \"$(body_of \"$OUT\")\" '.error')\" \"401 invalid_client\" \"A confidential client with a wrong secret: 401 invalid_client…\" || true\nassert_contains \"$(json_get \"$(body_of \"$OUT\")\" '.error_description')\" \"Client authentication failed\" \"…Authelia's own answer, passed through\" || true\n# Only a form body reaches Authelia (Authelia also reads multipart, which the\n# broker would not classify): every other media type is refused, any client.\nassert_eq \"$(broker_says -F grant_type=refresh_token -F \"refresh_token=e2e-unknown-${MARK}\" -F \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/token\")\" \"400 invalid_request\" \"A multipart refresh for the native client: 400 invalid_request, never forwarded\" || true\nassert_eq \"$(broker_says -F grant_type=client_credentials -F scope=lamaste.registry -F client_id=lamaste-server \"https://auth.${DOMAIN}/api/oidc/token\")\" \"400 invalid_request\" \"A multipart request of another client: 400 invalid_request too\" || true\nassert_eq \"$(broker_says -H 'Content-Type: text/plain' --data-binary \"grant_type=refresh_token&client_id=${CLIENT}&refresh_token=e2e-x\" \"https://auth.${DOMAIN}/api/oidc/token\")\" \"400 invalid_request\" \"A text/plain body: 400 invalid_request\" || true\n# A host with a native client never turns public (its tokens would reach the backend).\nRESP=$(call PATCH \"tunnels/${TUNNEL_ID}\" '{\"accessMode\":\"public\"}')\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')\" \"409 native_client_conflict\" \"Making the host's tunnel public while it has a native client: 409 native_client_conflict\" || true\n\n# ===========================================================================\n# 5. The CLI\n# ==========================================================================="
     },
     {
       "id": "lamaste-server-native-apps",
       "label": "lamaste-server native-apps",
       "steps": [
         {
-          "id": "step-198",
+          "id": "step-203",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1670,7 +1771,7 @@
           ]
         },
         {
-          "id": "step-200",
+          "id": "step-205",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1687,7 +1788,7 @@
           ]
         },
         {
-          "id": "step-201",
+          "id": "step-206",
           "label": "native-apps update --access-minutes 10",
           "target": "local",
           "continueOnError": true,
@@ -1709,7 +1810,7 @@
           }
         },
         {
-          "id": "step-202",
+          "id": "step-207",
           "label": "…Authelia's lifespan follows: 10 minutes",
           "target": "local",
           "op": {
@@ -1719,7 +1820,7 @@
           }
         },
         {
-          "id": "step-203",
+          "id": "step-208",
           "label": "Authelia's lifespan did not follow the update",
           "target": "local",
           "op": {
@@ -1729,7 +1830,7 @@
           }
         },
         {
-          "id": "step-204",
+          "id": "step-209",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1746,7 +1847,7 @@
           ]
         },
         {
-          "id": "step-205",
+          "id": "step-210",
           "label": "native-apps grants --json: none yet",
           "target": "local",
           "continueOnError": true,
@@ -1768,7 +1869,7 @@
           }
         },
         {
-          "id": "step-206",
+          "id": "step-211",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -1787,7 +1888,7 @@
           ]
         },
         {
-          "id": "step-207",
+          "id": "step-212",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1804,7 +1905,7 @@
           ]
         },
         {
-          "id": "step-208",
+          "id": "step-213",
           "label": "users native-grants ${FIRST_USER} --json: a list",
           "target": "local",
           "continueOnError": true,
@@ -1826,7 +1927,7 @@
           }
         },
         {
-          "id": "step-209",
+          "id": "step-214",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1843,7 +1944,7 @@
           ]
         },
         {
-          "id": "step-210",
+          "id": "step-215",
           "label": "native-apps disable",
           "target": "local",
           "continueOnError": true,
@@ -1865,7 +1966,7 @@
           }
         },
         {
-          "id": "step-211",
+          "id": "step-216",
           "label": "…Authelia's configuration no longer holds it",
           "target": "local",
           "op": {
@@ -1875,7 +1976,7 @@
           }
         },
         {
-          "id": "step-212",
+          "id": "step-217",
           "label": "A disabled client is still in Authelia's configuration",
           "target": "local",
           "op": {
@@ -1885,7 +1986,7 @@
           }
         },
         {
-          "id": "step-213",
+          "id": "step-218",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1902,7 +2003,7 @@
           ]
         },
         {
-          "id": "step-214",
+          "id": "step-219",
           "label": "native-apps enable",
           "target": "local",
           "continueOnError": true,
@@ -1924,7 +2025,7 @@
           }
         },
         {
-          "id": "step-215",
+          "id": "step-220",
           "label": "…rendered again",
           "target": "local",
           "op": {
@@ -1934,7 +2035,7 @@
           }
         },
         {
-          "id": "step-216",
+          "id": "step-221",
           "label": "The enabled client is not rendered",
           "target": "local",
           "op": {
@@ -1944,7 +2045,7 @@
           }
         },
         {
-          "id": "step-217",
+          "id": "step-222",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1961,7 +2062,7 @@
           ]
         },
         {
-          "id": "step-218",
+          "id": "step-223",
           "label": "native-apps delete --yes",
           "target": "local",
           "continueOnError": true,
@@ -1983,7 +2084,7 @@
           }
         },
         {
-          "id": "step-219",
+          "id": "step-224",
           "label": "…gone from Authelia's configuration",
           "target": "local",
           "op": {
@@ -1993,7 +2094,7 @@
           }
         },
         {
-          "id": "step-220",
+          "id": "step-225",
           "label": "A deleted client is still in Authelia's configuration",
           "target": "local",
           "op": {
@@ -2003,7 +2104,7 @@
           }
         },
         {
-          "id": "step-221",
+          "id": "step-226",
           "label": "…its files are gone",
           "target": "local",
           "continueOnError": true,
@@ -2024,7 +2125,7 @@
           }
         },
         {
-          "id": "step-223",
+          "id": "step-228",
           "label": "…the host's vhost no longer serves its redirect path",
           "target": "local",
           "op": {
@@ -2034,7 +2135,7 @@
           }
         },
         {
-          "id": "step-224",
+          "id": "step-229",
           "label": "The host's vhost still serves the deleted client's redirect path",
           "target": "local",
           "op": {

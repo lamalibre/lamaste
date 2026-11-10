@@ -357,6 +357,14 @@ assert_eq "$(broker_says --data-urlencode "token=e2e-unknown-${MARK}" --data-url
 OUT=$(broker -H "Authorization: Basic $(printf '%s' 'lamaste-server:e2e-wrong-secret' | base64)" --data-urlencode grant_type=client_credentials --data-urlencode scope=lamaste.registry "https://auth.${DOMAIN}/api/oidc/token")
 assert_eq "$(status_of "$OUT") $(json_get "$(body_of "$OUT")" '.error')" "401 invalid_client" "A confidential client with a wrong secret: 401 invalid_client…" || true
 assert_contains "$(json_get "$(body_of "$OUT")" '.error_description')" "Client authentication failed" "…Authelia's own answer, passed through" || true
+# Only a form body reaches Authelia (Authelia also reads multipart, which the
+# broker would not classify): every other media type is refused, any client.
+assert_eq "$(broker_says -F grant_type=refresh_token -F "refresh_token=e2e-unknown-${MARK}" -F "client_id=${CLIENT}" "https://auth.${DOMAIN}/api/oidc/token")" "400 invalid_request" "A multipart refresh for the native client: 400 invalid_request, never forwarded" || true
+assert_eq "$(broker_says -F grant_type=client_credentials -F scope=lamaste.registry -F client_id=lamaste-server "https://auth.${DOMAIN}/api/oidc/token")" "400 invalid_request" "A multipart request of another client: 400 invalid_request too" || true
+assert_eq "$(broker_says -H 'Content-Type: text/plain' --data-binary "grant_type=refresh_token&client_id=${CLIENT}&refresh_token=e2e-x" "https://auth.${DOMAIN}/api/oidc/token")" "400 invalid_request" "A text/plain body: 400 invalid_request" || true
+# A host with a native client never turns public (its tokens would reach the backend).
+RESP=$(call PATCH "tunnels/${TUNNEL_ID}" '{"accessMode":"public"}')
+assert_eq "$(status_of "$RESP") $(json_get "$(body_of "$RESP")" '.code')" "409 native_client_conflict" "Making the host's tunnel public while it has a native client: 409 native_client_conflict" || true
 
 # ===========================================================================
 # 5. The CLI
