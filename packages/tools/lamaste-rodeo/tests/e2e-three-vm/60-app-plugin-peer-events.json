@@ -413,6 +413,28 @@
         },
         {
           "id": "step-33",
+          "label": "The consumer will hold its next reconcile open",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(consumer_gap_hold true)"
+              },
+              "path": ".gapHold",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The consumer will hold its next reconcile open"
+            }
+          }
+        },
+        {
+          "id": "step-34",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -429,7 +451,7 @@
           ]
         },
         {
-          "id": "step-34",
+          "id": "step-35",
           "label": "The shelf applied again",
           "target": "local",
           "continueOnError": true,
@@ -450,17 +472,17 @@
           }
         },
         {
-          "id": "step-35",
-          "label": "Granted again: a 'granted' gap (a new epoch), onGap ran",
+          "id": "step-36",
+          "label": "Granted again: a 'granted' gap (a new epoch), onGap running",
           "target": "local",
           "op": {
             "type": "log",
             "level": "pass",
-            "message": "Granted again: a 'granted' gap (a new epoch), onGap ran"
+            "message": "Granted again: a 'granted' gap (a new epoch), onGap running"
           }
         },
         {
-          "id": "step-36",
+          "id": "step-37",
           "label": "Gaps: $(gap_reasons)",
           "target": "local",
           "op": {
@@ -471,46 +493,6 @@
         },
         {
           "id": "step-38",
-          "label": "Only what came after the new grant is delivered: d-1, never c-1 or c-2",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "Only what came after the new grant is delivered: d-1, never c-1 or c-2"
-          }
-        },
-        {
-          "id": "step-39",
-          "label": "Recorded: $(events_tags)",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "Recorded: $(events_tags)"
-          }
-        },
-        {
-          "id": "step-40",
-          "label": "Still each exactly once, in order",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "Still each exactly once, in order"
-          }
-        },
-        {
-          "id": "step-41",
-          "label": "Seqs: $(consumer_state | jq -c '[.events[]?.seq]')",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "Seqs: $(consumer_state | jq -c '[.events[]?.seq]')"
-          }
-        },
-        {
-          "id": "step-42",
           "label": "Set CURSOR",
           "target": "local",
           "op": {
@@ -527,12 +509,12 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-39",
           "label": "Set EPOCH",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "json_get \"$CURSOR\" '.epoch // empty'"
+            "command": "json_get \"$CURSOR\" '.gap_epoch // empty'"
           },
           "capture": [
             {
@@ -544,12 +526,12 @@
           ]
         },
         {
-          "id": "step-44",
+          "id": "step-40",
           "label": "Set STREAM",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "json_get \"$CURSOR\" '.stream_id // empty'"
+            "command": "json_get \"$CURSOR\" '.gap_stream_id // empty'"
           },
           "capture": [
             {
@@ -561,28 +543,29 @@
           ]
         },
         {
-          "id": "step-45",
-          "label": "The consumer's cursor of ${SCOPE_READ}: epoch and stream after the granted gap ($(json_get \"$CURSOR\" '.cursor'))",
+          "id": "step-41",
+          "label": "The pending gap: granted, resuming from $(json_get \"$CURSOR\" '.gap_resume_from') — past c-1 and c-2",
           "target": "local",
           "continueOnError": true,
           "op": {
             "type": "assert",
             "check": {
-              "kind": "not_eq",
-              "actual": {
+              "kind": "json_field",
+              "source": {
                 "kind": "var",
-                "name": "EPOCH"
+                "name": "CURSOR"
               },
+              "path": "\"\\(.gap_reason) \\(.gap_resume_from > 0)\"",
               "expected": {
                 "kind": "literal",
-                "value": ""
+                "value": "granted true"
               },
-              "message": "The consumer's cursor of ${SCOPE_READ}: epoch and stream after the granted gap ($(json_get \"$CURSOR\" '.cursor'))"
+              "message": "The pending gap: granted, resuming from $(json_get \"$CURSOR\" '.gap_resume_from') — past c-1 and c-2"
             }
           }
         },
         {
-          "id": "step-46",
+          "id": "step-42",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -599,8 +582,8 @@
           ]
         },
         {
-          "id": "step-47",
-          "label": "A pull by hand with that epoch and stream from position 0: answered",
+          "id": "step-43",
+          "label": "A pull by hand with the gap's epoch and stream from position 0: answered ($(json_get \"$OUT\" '.error.code // \"\"'))",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -616,13 +599,13 @@
                 "kind": "literal",
                 "value": "200"
               },
-              "message": "A pull by hand with that epoch and stream from position 0: answered"
+              "message": "A pull by hand with the gap's epoch and stream from position 0: answered ($(json_get \"$OUT\" '.error.code // \"\"'))"
             }
           }
         },
         {
-          "id": "step-48",
-          "label": "…with a gap and no events: c-1 and c-2, published without a grant, stay out of reach ($(json_get \"$OUT\" '.body.gap.reason // \"\"'))",
+          "id": "step-44",
+          "label": "…with a gap and no events: c-1 and c-2, published without a grant, stay out of reach",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -638,17 +621,79 @@
                 "kind": "literal",
                 "value": "true 0"
               },
-              "message": "…with a gap and no events: c-1 and c-2, published without a grant, stay out of reach ($(json_get \"$OUT\" '.body.gap.reason // \"\"'))"
+              "message": "…with a gap and no events: c-1 and c-2, published without a grant, stay out of reach"
             }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "The reconcile released",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(consumer_gap_hold false)"
+              },
+              "path": ".gapHold",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "The reconcile released"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Only what came after the new grant is delivered: d-1, never c-1 or c-2",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Only what came after the new grant is delivered: d-1, never c-1 or c-2"
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Recorded: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Recorded: $(events_tags)"
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Still each exactly once, in order",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Still each exactly once, in order"
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "Seqs: $(consumer_state | jq -c '[.events[]?.seq]')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Seqs: $(consumer_state | jq -c '[.events[]?.seq]')"
           }
         }
       ],
-      "bash": "log_section \"The grant removed, events meanwhile, granted again\"\n\nRESP=$(host_api_call DELETE \"peers/shelves/${SHELF_ID}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The shelf removed\" || true\nprovider_publish 2 c > /dev/null\nsleep 20\nassert_eq \"$(events_tags)\" \"a-1,a-2,a-3,b-1,b-2,b-3,b-4\" \"Events published without a grant are not delivered\" || true\nRESP=$(apply_shelf)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The shelf applied again\" || true\nif wait_for 60 gaps_are \"initial,granted\"; then\n  log_pass \"Granted again: a 'granted' gap (a new epoch), onGap ran\"\nelse\n  log_fail \"Gaps: $(gap_reasons)\"\nfi\nprovider_publish 1 d > /dev/null\nif wait_for 60 tags_are \"a-1,a-2,a-3,b-1,b-2,b-3,b-4,d-1\"; then\n  log_pass \"Only what came after the new grant is delivered: d-1, never c-1 or c-2\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\nif events_seq_ok; then\n  log_pass \"Still each exactly once, in order\"\nelse\n  log_fail \"Seqs: $(consumer_state | jq -c '[.events[]?.seq]')\"\nfi\nCURSOR=$(consumer_state | jq -c --arg s \"${SCOPE_READ}\" '[.cursors[]? | select(.scope == $s)] | first // {}')\nEPOCH=$(json_get \"$CURSOR\" '.epoch // empty')\nSTREAM=$(json_get \"$CURSOR\" '.stream_id // empty')\nassert_not_eq \"${EPOCH}\" \"\" \"The consumer's cursor of ${SCOPE_READ}: epoch and stream after the granted gap ($(json_get \"$CURSOR\" '.cursor'))\" || true\nOUT=$(consumer_rawpull \"${SCOPE_READ}\" 0 \"${EPOCH}\" \"${STREAM}\")\nassert_json_field \"$OUT\" '.status' '200' \"A pull by hand with that epoch and stream from position 0: answered\" || true\nassert_json_field \"$OUT\" '\"\\(.body.gap != null) \\((.body.events // []) | length)\"' 'true 0' \"…with a gap and no events: c-1 and c-2, published without a grant, stay out of reach ($(json_get \"$OUT\" '.body.gap.reason // \"\"'))\" || true"
+      "bash": "log_section \"The grant removed, events meanwhile, granted again\"\n\nRESP=$(host_api_call DELETE \"peers/shelves/${SHELF_ID}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The shelf removed\" || true\nprovider_publish 2 c > /dev/null\nsleep 20\nassert_eq \"$(events_tags)\" \"a-1,a-2,a-3,b-1,b-2,b-3,b-4\" \"Events published without a grant are not delivered\" || true\nassert_json_field \"$(consumer_gap_hold true)\" '.gapHold' 'true' \"The consumer will hold its next reconcile open\" || true\nRESP=$(apply_shelf)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The shelf applied again\" || true\nif wait_for 60 gaps_are \"initial,granted\"; then\n  log_pass \"Granted again: a 'granted' gap (a new epoch), onGap running\"\nelse\n  log_fail \"Gaps: $(gap_reasons)\"\nfi\n# While the reconcile is open the SDK pulls nothing: a pull by hand, with\n# the gap's own epoch and stream, from below the floor the relay gave it.\nCURSOR=$(consumer_state | jq -c --arg s \"${SCOPE_READ}\" '[.cursors[]? | select(.scope == $s)] | first // {}')\nEPOCH=$(json_get \"$CURSOR\" '.gap_epoch // empty')\nSTREAM=$(json_get \"$CURSOR\" '.gap_stream_id // empty')\nassert_json_field \"$CURSOR\" '\"\\(.gap_reason) \\(.gap_resume_from > 0)\"' 'granted true' \"The pending gap: granted, resuming from $(json_get \"$CURSOR\" '.gap_resume_from') — past c-1 and c-2\" || true\nOUT=$(consumer_rawpull \"${SCOPE_READ}\" 0 \"${EPOCH}\" \"${STREAM}\")\nassert_json_field \"$OUT\" '.status' '200' \"A pull by hand with the gap's epoch and stream from position 0: answered ($(json_get \"$OUT\" '.error.code // \"\"'))\" || true\nassert_json_field \"$OUT\" '\"\\(.body.gap != null) \\((.body.events // []) | length)\"' 'true 0' \"…with a gap and no events: c-1 and c-2, published without a grant, stay out of reach\" || true\nassert_json_field \"$(consumer_gap_hold false)\" '.gapHold' 'false' \"The reconcile released\" || true\nprovider_publish 1 d > /dev/null\nif wait_for 60 tags_are \"a-1,a-2,a-3,b-1,b-2,b-3,b-4,d-1\"; then\n  log_pass \"Only what came after the new grant is delivered: d-1, never c-1 or c-2\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\nif events_seq_ok; then\n  log_pass \"Still each exactly once, in order\"\nelse\n  log_fail \"Seqs: $(consumer_state | jq -c '[.events[]?.seq]')\"\nfi"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 60 — Events between app plugins across a consumer restart (Three-VM)\n# ============================================================================\n# Slice 8's events. The provider e2e-pdir (agent VM) writes events into its\n# outbox in the transaction of each change; the consumer e2e-pcons (visitor\n# VM's second agent), subscribed to unit.changed, pulls them over its peer\n# channel and applies each in the transaction that moves its cursor; its\n# handler records every event it is given (no uniqueness: a duplicate would\n# show):\n#\n# 1. First contact: the consumer starts with an `initial` gap (onGap runs)\n#    and then receives every event published after it, in order.\n# 2. The consumer's agent half stopped (its socket and service on the\n#    visitor VM): events published meanwhile wait in the provider's outbox;\n#    started again, the relay attaches anew and the consumer catches up\n#    from its cursor — each event exactly once, in order.\n# 3. The grant removed (the shelf deleted): events published meanwhile are\n#    never delivered — the consumer had no grant for them. Granted again,\n#    the subscription has a new epoch: a `granted` gap, then only what comes\n#    after it. A pull made by hand with that epoch and stream from an older\n#    position (0) is answered a gap, never the events the consumer had no\n#    grant for: the relay keeps the floor it gave the gap with.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 60 — Events between app plugins across a consumer restart (Three-VM)\n# ============================================================================\n# Slice 8's events. The provider e2e-pdir (agent VM) writes events into its\n# outbox in the transaction of each change; the consumer e2e-pcons (visitor\n# VM's second agent), subscribed to unit.changed, pulls them over its peer\n# channel and applies each in the transaction that moves its cursor; its\n# handler records every event it is given (no uniqueness: a duplicate would\n# show):\n#\n# 1. First contact: the consumer starts with an `initial` gap (onGap runs)\n#    and then receives every event published after it, in order.\n# 2. The consumer's agent half stopped (its socket and service on the\n#    visitor VM): events published meanwhile wait in the provider's outbox;\n#    started again, the relay attaches anew and the consumer catches up\n#    from its cursor — each event exactly once, in order.\n# 3. The grant removed (the shelf deleted): events published meanwhile are\n#    never delivered — the consumer had no grant for them. Granted again,\n#    the subscription has a new epoch: a `granted` gap, then only what comes\n#    after it. While that gap's reconcile is held open (the SDK pulls\n#    nothing then), a pull made by hand with the gap's epoch and stream from\n#    position 0 is answered a gap, never the events the consumer had no\n#    grant for: the relay keeps the floor it gave the gap with.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=peers-harness.sh\nsource \"${SCRIPT_DIR}/peers-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\nPOLICY_ID=\"e2e-apphost-60\"\nREMOTE_DIR=\"/var/tmp/e2e-60-peers\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${CONSUMER} ${PROVIDER}\"\nCLEAN_ROUTES=\"${PROVIDER}\"\nPURGE_PACKAGES=\"\"\nCONSUMER_UNITS=\"lamalibre-app-${CONSUMER}.socket lamalibre-app-${CONSUMER}.service\"\n\nbegin_test \"60 — Events between app plugins across a consumer restart (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"systemctl start ${CONSUMER_UNITS} > /dev/null 2>&1; true\" > /dev/null 2>&1\n  peers_cleanup\n}\ntrap cleanup EXIT\n\n# events_tags — the consumer's recorded events as \"<tag>-<n>\" in the order recorded\nevents_tags() { consumer_state | jq -r '[.events[]? | \"\\(.tag)-\\(.n)\"] | join(\",\")' 2>/dev/null || echo \"?\"; }\n# events_seq_ok — the recorded seqs strictly increase (in order, no duplicate)\nevents_seq_ok() {\n  consumer_state | jq -e '[.events[]?.seq] as $s | ($s | length) == ($s | unique | length) and $s == ($s | sort)' > /dev/null 2>&1\n}\ngap_reasons() { consumer_state | jq -r '[.gaps[]?.reason] | join(\",\")' 2>/dev/null || echo \"?\"; }\ntags_are() { [ \"$(events_tags)\" = \"$1\" ]; }\ngaps_are() { [ \"$(gap_reasons)\" = \"$1\" ]; }\nconsumer_health() { hosting_field \"${CONSUMER}\" '.hosting.health.state'; }\nconsumer_down() { [ \"$(consumer_health)\" = \"down\" ]; }\nconsumer_up() { [ \"$(consumer_health)\" = \"up\" ]; }\n",
   "cleanupRaw": "",
-  "trailerRaw": "\nend_test\n"
+  "trailerRaw": "end_test\n"
 }

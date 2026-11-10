@@ -18,8 +18,9 @@
 # 3. The grant removed (the shelf deleted): events published meanwhile are
 #    never delivered — the consumer had no grant for them. Granted again,
 #    the subscription has a new epoch: a `granted` gap, then only what comes
-#    after it. A pull made by hand with that epoch and stream from an older
-#    position (0) is answered a gap, never the events the consumer had no
+#    after it. While that gap's reconcile is held open (the SDK pulls
+#    nothing then), a pull made by hand with the gap's epoch and stream from
+#    position 0 is answered a gap, never the events the consumer had no
 #    grant for: the relay keeps the floor it gave the gap with.
 # ============================================================================
 
@@ -140,13 +141,24 @@ assert_eq "$(status_of "$RESP")" "200" "The shelf removed" || true
 provider_publish 2 c > /dev/null
 sleep 20
 assert_eq "$(events_tags)" "a-1,a-2,a-3,b-1,b-2,b-3,b-4" "Events published without a grant are not delivered" || true
+assert_json_field "$(consumer_gap_hold true)" '.gapHold' 'true' "The consumer will hold its next reconcile open" || true
 RESP=$(apply_shelf)
 assert_eq "$(status_of "$RESP")" "200" "The shelf applied again" || true
 if wait_for 60 gaps_are "initial,granted"; then
-  log_pass "Granted again: a 'granted' gap (a new epoch), onGap ran"
+  log_pass "Granted again: a 'granted' gap (a new epoch), onGap running"
 else
   log_fail "Gaps: $(gap_reasons)"
 fi
+# While the reconcile is open the SDK pulls nothing: a pull by hand, with
+# the gap's own epoch and stream, from below the floor the relay gave it.
+CURSOR=$(consumer_state | jq -c --arg s "${SCOPE_READ}" '[.cursors[]? | select(.scope == $s)] | first // {}')
+EPOCH=$(json_get "$CURSOR" '.gap_epoch // empty')
+STREAM=$(json_get "$CURSOR" '.gap_stream_id // empty')
+assert_json_field "$CURSOR" '"\(.gap_reason) \(.gap_resume_from > 0)"' 'granted true' "The pending gap: granted, resuming from $(json_get "$CURSOR" '.gap_resume_from') — past c-1 and c-2" || true
+OUT=$(consumer_rawpull "${SCOPE_READ}" 0 "${EPOCH}" "${STREAM}")
+assert_json_field "$OUT" '.status' '200' "A pull by hand with the gap's epoch and stream from position 0: answered ($(json_get "$OUT" '.error.code // ""'))" || true
+assert_json_field "$OUT" '"\(.body.gap != null) \((.body.events // []) | length)"' 'true 0' "…with a gap and no events: c-1 and c-2, published without a grant, stay out of reach" || true
+assert_json_field "$(consumer_gap_hold false)" '.gapHold' 'false' "The reconcile released" || true
 provider_publish 1 d > /dev/null
 if wait_for 60 tags_are "a-1,a-2,a-3,b-1,b-2,b-3,b-4,d-1"; then
   log_pass "Only what came after the new grant is delivered: d-1, never c-1 or c-2"
@@ -158,12 +170,4 @@ if events_seq_ok; then
 else
   log_fail "Seqs: $(consumer_state | jq -c '[.events[]?.seq]')"
 fi
-CURSOR=$(consumer_state | jq -c --arg s "${SCOPE_READ}" '[.cursors[]? | select(.scope == $s)] | first // {}')
-EPOCH=$(json_get "$CURSOR" '.epoch // empty')
-STREAM=$(json_get "$CURSOR" '.stream_id // empty')
-assert_not_eq "${EPOCH}" "" "The consumer's cursor of ${SCOPE_READ}: epoch and stream after the granted gap ($(json_get "$CURSOR" '.cursor'))" || true
-OUT=$(consumer_rawpull "${SCOPE_READ}" 0 "${EPOCH}" "${STREAM}")
-assert_json_field "$OUT" '.status' '200' "A pull by hand with that epoch and stream from position 0: answered" || true
-assert_json_field "$OUT" '"\(.body.gap != null) \((.body.events // []) | length)"' 'true 0' "…with a gap and no events: c-1 and c-2, published without a grant, stay out of reach ($(json_get "$OUT" '.body.gap.reason // ""'))" || true
-
 end_test

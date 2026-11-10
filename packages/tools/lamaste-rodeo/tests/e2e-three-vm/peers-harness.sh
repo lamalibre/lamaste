@@ -172,7 +172,9 @@ open_agent2_push_install() {
 #     answers {status, body} or {error: {code, status, reason}};
 #     GET /admin/e2e/state answers {connected, events, gaps, cursors};
 #     POST /admin/e2e/rawpull {scope, after, epoch, streamId} makes an events
-#     pull by hand on the channel (what a half could send past the SDK); the user
+#     pull by hand on the channel (what a half could send past the SDK);
+#     POST /admin/e2e/gap-hold {on} keeps onGap from resolving (the SDK pulls
+#     nothing for a scope while its gap is pending); the user
 #     surface GET /app/me-via-peer calls the provider's
 #     /people/<the user's id>/info on behalf of the user.
 #
@@ -328,6 +330,7 @@ if (MODE === 'provider') outbox = await createPeerOutbox({ db, dbPath, peers: MA
 
 // --- consumer ---------------------------------------------------------------
 let peers = null;
+let gapHold = false;
 if (MODE === 'consumer') {
   db.exec('CREATE TABLE IF NOT EXISTS e2e_events (id INTEGER PRIMARY KEY AUTOINCREMENT, seq INTEGER NOT NULL, key TEXT, tag TEXT, n INTEGER, at TEXT NOT NULL)');
   db.exec('CREATE TABLE IF NOT EXISTS e2e_gaps (id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL)');
@@ -337,9 +340,12 @@ if (MODE === 'consumer') {
     verifier,
     db,
     logger,
-    onGap: ({ scope, reason }) => {
+    // The reconcile: recorded, then — while a spec holds gaps — kept open
+    // (the SDK pulls nothing for the scope until it resolves).
+    onGap: async ({ scope, reason }) => {
       recordGap.run(scope, reason, new Date().toISOString());
       log(`gap ${scope} ${reason}`);
+      while (gapHold) await new Promise((resolve) => setTimeout(resolve, 200));
     },
   });
   peers.on(`${Object.keys(MANIFEST.peers.consumes)[0]}`, 'unit.changed', (event, tx) => {
@@ -482,8 +488,15 @@ if (peers) {
       connected: peers.connected(),
       events: db.prepare('SELECT seq, key, tag, n FROM e2e_events ORDER BY id').all(),
       gaps: db.prepare('SELECT scope, reason FROM e2e_gaps ORDER BY id').all(),
-      cursors: db.prepare('SELECT scope, provider, stream_id, epoch, cursor, gap_reason FROM lamaste_peer_cursors ORDER BY scope').all(),
+      cursors: db.prepare('SELECT scope, provider, stream_id, epoch, cursor, gap_reason, gap_resume_from, gap_epoch, gap_stream_id FROM lamaste_peer_cursors ORDER BY scope').all(),
+      gapHold,
     });
+  });
+  app.post('/admin/e2e/gap-hold', async (request, reply) => {
+    const verified = await adminCaller(request, reply);
+    if (!verified) return reply;
+    gapHold = request.body?.on === true;
+    return signed(reply, verified, 200, { gapHold });
   });
   // An events pull as the consumer's half could make it by hand, past the
   // SDK's inbox: what the relay answers a pull from another position.
@@ -530,6 +543,7 @@ consumer_call() {
 }
 
 consumer_state() { host_api_get "${CONSUMER}/e2e/state"; }
+consumer_gap_hold() { host_api_post "${CONSUMER}/e2e/gap-hold" "{\"on\":$1}"; }
 
 # consumer_rawpull <scope> <after> <epoch> <streamId> — an events pull the
 # consumer's half makes by hand on its channel; prints {status, body} or {error}
