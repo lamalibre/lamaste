@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 4.13.0 candidate
+## [4.13.0] - 2026-11-10
 
 Calls and events between app plugins: an application made of many agent-hosted plugins — a few platform plugins (a directory, audiences, notices, media, search, reporting) used by many domain plugins, on one agent or several behind one relay — lets their agent halves call each other's declared endpoints, on their own or on behalf of the person they serve, and receive each other's events, only along the edges a shelf grants. Design: `plugin-development/design/agent-hosted-app-plugins.md`, _Slice 8 as planned_; reference: `packages/core/docs/04-api-reference/peers.md`.
 
