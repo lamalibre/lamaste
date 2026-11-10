@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 59 — A trusted publisher scope: an app plugin of a second scope (Three-VM)
+# 62 — A trusted publisher scope: an app plugin of a second scope (Three-VM)
 # ============================================================================
 # The proof of trusted publisher scopes (packages/core/docs/
 # trusted-publisher-scopes-design.md). An invented agent-hosted app plugin of
@@ -49,8 +49,8 @@ PLUGIN="e2e-scoped"
 SERVER_PACKAGE="${SCOPE}/e2e-scoped-server"
 AGENT_PACKAGE="${SCOPE}/e2e-scoped-agent"
 SERVICE_USER="lamaste-app-e2e-scoped"
-POLICY_ID="e2e-scoped-59"
-REMOTE_DIR="/var/tmp/e2e-59-trusted-scope"
+POLICY_ID="e2e-scoped-62"
+REMOTE_DIR="/var/tmp/e2e-62-trusted-scope"
 # The development Feria, from this machine (its loopback) — the VMs reach it
 # through the read-only bridge their npm configuration names.
 DEV_FERIA_URL="${DEV_FERIA_URL:-http://127.0.0.1:4873}"
@@ -60,7 +60,7 @@ CLEAN_ROUTES="${PLUGIN}"
 CLEAN_TRUSTED_SCOPES=""
 PURGE_PACKAGES=""
 
-begin_test "59 — A trusted publisher scope: an app plugin of a second scope (Three-VM)"
+begin_test "62 — A trusted publisher scope: an app plugin of a second scope (Three-VM)"
 
 # drop_dev_feria_fixtures — remove this spec's fixture packages from the
 # development Feria, so every run publishes its own 1.0.0 and none is left behind.
@@ -117,7 +117,7 @@ if [ "$(json_get "$DEV_SCOPES" "[.scopes[]? | select(.scope == \"${SCOPE}\" and 
 fi
 log_pass "The development Feria hosts ${SCOPE} ($(json_get "$DEV_SCOPES" '[.scopes[].scope] | join(", ")'))"
 
-LOCAL_TMP=$(mktemp -d /tmp/e2e-59-trusted-scope-XXXXXXXX)
+LOCAL_TMP=$(mktemp -d /tmp/e2e-62-trusted-scope-XXXXXXXX)
 if ! FIXTURE_SCOPE="${SCOPE}" write_app_install_fixture "${LOCAL_TMP}/ship/fixtures/v1" "${PLUGIN}" 1.0.0 main "r$(date +%s)-$$" '[]'; then
   log_fail "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
   end_test

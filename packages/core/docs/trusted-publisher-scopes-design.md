@@ -348,7 +348,7 @@ accepts publishes for.
 
 ## Proof (rodeo, fresh VMs)
 
-- **Lamaste three-VM spec 59 `trusted-publisher-scope`** (shares `app-plugin-harness.sh`):
+- **Lamaste three-VM spec 62 `trusted-publisher-scope` (numbered 59 until slice 8 took 58–61)** (shares `app-plugin-harness.sh`):
   an invented `@example/e2e-scoped-server` agent-hosted plugin with an agent half
   `@example/e2e-scoped-agent`, **published to the development Feria** (this branch, `@example`
   hosted) before the run and fetched by the host VM through the read-only bridge, then served by
@@ -470,12 +470,12 @@ reference only).
 - The single-VM specs the plan named as 11 and 19 are 15 (plugin lifecycle) and 23 (agent plugin
   CRUD). Spec 23 skips itself in the single-VM suite as it always has (the suite installs no
   `lamaste-agent` on the host); agentd's install checks are covered by its unit tests and, end to
-  end, by spec 59's agent half.
-- Spec 59 does not host a `@lamalibre` plugin in the same run: specs 34–36 do that on the same
+  end, by spec 62's agent half.
+- Spec 62 does not host a `@lamalibre` plugin in the same run: specs 34–36 do that on the same
   candidate, VMs and relay, right after it.
 - Spec 34 pinned the helper's protocol at 2 and now expects 3 — the one existing assertion this
   change alters.
-- Spec 59 owns its development-Feria state: it removes its fixture packages before publishing and on
+- Spec 62 owns its development-Feria state: it removes its fixture packages before publishing and on
   exit (every run publishes fresh bytes, so npm's cache cannot answer the agent's fetch), and counts
   only the notifications of its own run.
 - The agent CLI's `plugin install|update` takes the brokered registry credential like agentd (the
@@ -489,14 +489,14 @@ run only), published to the development Feria, which ran this Feria branch with 
 | Spec | Result |
 | --- | --- |
 | three-VM 01 onboarding | 55 of 55 |
-| three-VM 59 trusted publisher scope | 60 of 60 (third run; the first two found the spec issues above) |
+| three-VM 59 (now 62) trusted publisher scope | 60 of 60 (third run; the first two found the spec issues above) |
 | three-VM 34 app plugin install (`@lamalibre`) | 217 of 217 |
 | three-VM 35 app plugin operate (`@lamalibre`) | 100 of 100 |
 | three-VM 36 app plugin removal (`@lamalibre`) | 83 of 83 |
 | single-VM 01, 03, 15 (fresh host) | 12, 4, 41 — none failed |
 | single-VM 23 | skipped (no agent on the host, as before) |
 
-Spec 59 covers: the built-in scope reported; `untrusted_scope` for `@example` (nothing staged) and
+Spec 62 (then 59) covers: the built-in scope reported; `untrusted_scope` for `@example` (nothing staged) and
 for look-alikes of `@lamalibre`; `registry_lacks_scope` while the registry does not host `@example`;
 `lamaste-server trusted-scopes add` (audit entry, one notification); the agent's `config.json`
 following the relay's list at its next sync; the packages published to the development Feria with

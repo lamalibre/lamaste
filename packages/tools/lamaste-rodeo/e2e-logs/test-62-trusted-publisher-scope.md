@@ -1,4 +1,4 @@
-# Lamaste E2E: 59 — A trusted publisher scope: an app plugin of a second scope (Three-VM)
+# Lamaste E2E: 62 — A trusted publisher scope: an app plugin of a second scope (Three-VM)
 
 > Started at `2026-11-10 08:58:51 UTC`
 
