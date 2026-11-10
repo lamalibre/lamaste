@@ -368,23 +368,25 @@ export async function hostPlugin(name, agentLabel, { actor, logger, sourceIp }) 
  * operation. `force` lets failing pre-teardown stages pass (reported and
  * audited) — for an agent that is gone or a half that no longer answers.
  * `purge` removes the data directory and service account of an agent half
- * Lamaste installed (kept by default).
+ * Lamaste installed (kept by default). `breakPeers` removes the hosting of
+ * a plugin other plugins' effective peer edges consume; without it that is
+ * `409 peer_dependents` (`force` never implies it).
  *
  * @param {string} name
- * @param {{ actor: string, logger: import('pino').Logger, force?: boolean, purge?: boolean, sourceIp: string }} opts
+ * @param {{ actor: string, logger: import('pino').Logger, force?: boolean, purge?: boolean, breakPeers?: boolean, sourceIp: string }} opts
  * @returns {Promise<object>} the operation
  */
 export async function unhostPlugin(
   name,
-  { actor, logger, force = false, purge = false, sourceIp },
+  { actor, logger, force = false, purge = false, breakPeers = false, sourceIp },
 ) {
   const plugin = await requireHostablePlugin(name);
   const record = await ownHosting(plugin);
   if (!record) {
     throw httpError(`Plugin "${name}" is not hosted on an agent`, 404);
   }
-  // Other plugins' calls and events into it stop: only with force.
-  await assertNoPeerDependents(plugin, force);
+  // Other plugins' calls and events into it stop: only with breakPeers.
+  await assertNoPeerDependents(plugin, breakPeers);
   const push = await prepareHostingRemoval(plugin, record, { purge, sourceIp });
   const { operation } = await startPluginOperation({
     plugin: plugin.name,

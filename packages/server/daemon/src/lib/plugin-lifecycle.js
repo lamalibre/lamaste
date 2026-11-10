@@ -134,10 +134,13 @@ async function syncOidcBestEffort(logger) {
  * (a hosted plugin whose agent half Lamaste installed) removes the agent
  * half's data directory and service account too; `sourceIp` is the
  * admin's, for the push-install gates of removing that agent half.
+ * `breakPeers` uninstalls a plugin other plugins' effective peer edges
+ * consume (their calls and events into it stop); without it such an
+ * uninstall answers `409 peer_dependents` — `force` never implies it.
  */
 export async function uninstallPluginWithHosting(
   name,
-  { actor, logger, force = false, purge = false, sourceIp },
+  { actor, logger, force = false, purge = false, breakPeers = false, sourceIp },
 ) {
   const plugin = await findPlugin(name);
   if (!plugin) throw httpError(`Plugin "${name}" not found`, 404);
@@ -147,8 +150,8 @@ export async function uninstallPluginWithHosting(
   if (isPluginOperationRunning(name)) {
     throw httpError(`Plugin "${name}" has an operation in progress — wait for it to finish`, 409);
   }
-  // Other plugins' calls and events into it stop: only with force.
-  await assertNoPeerDependents(plugin, force);
+  // Other plugins' calls and events into it stop: only with breakPeers.
+  await assertNoPeerDependents(plugin, breakPeers);
   // Only the plugin's own hosting: never one another plugin holds on its route.
   const record = hasAgentHalf(plugin) ? await ownHosting(plugin) : null;
   if (!record) {

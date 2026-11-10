@@ -23,7 +23,13 @@ import yaml from 'js-yaml';
 import Fastify from 'fastify';
 import { DatabaseSync } from 'node:sqlite';
 
-import { approvalDigest, normalizePeersBlock, peerSubscriptionEpoch } from '@lamalibre/lamaste';
+import {
+  approvalDigest,
+  normalizePeersBlock,
+  peerSubscriptionEpoch,
+  verifyPeerDelegation,
+} from '@lamalibre/lamaste';
+import { userSurfacePlugin } from '@lamalibre/lamaste/server';
 import {
   createCallerAssertionVerifier,
   createIdentityHandlers,
@@ -33,6 +39,7 @@ import {
   PeerCallError,
   peerRoute,
   peerSurface,
+  responderHeaderFor,
 } from '@lamalibre/lamaste/agent';
 
 import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
@@ -182,6 +189,18 @@ async function startHalf(route) {
       peerRoute(async (_request, caller) => ({ user: caller.user ?? null })),
     );
   }
+  if (route === 'leave' || route === 'dir') {
+    // What a person's request through the user surface brings the half.
+    app.get('/app/whoami', async (request, reply) => {
+      const verified = await verifier.verify(request.headers, request.method, request.url);
+      if (!verified.ok) return reply.code(401).send({ error: verified.reason });
+      reply.headers(responderHeaderFor(verified, 200));
+      return {
+        caller: verified.payload.caller,
+        delegation: request.headers['x-lamalibre-delegation'] ?? null,
+      };
+    });
+  }
   if (route === 'notes') {
     app.post(
       '/peer/send',
@@ -286,6 +305,7 @@ before(async () => {
     ...(await import('../src/lib/peers.js')),
     ...(await import('../src/lib/peer-runtime.js')),
     ...(await import('../src/lib/peer-delegation.js')),
+    ...(await import('../src/lib/user-caller.js')),
   };
   core = await import('@lamalibre/lamaste/server');
   await lib.loadConfig();
@@ -565,6 +585,64 @@ test('on behalf of a user: a delegation, both audiences, roles in the provider',
   );
 });
 
+test('the user surface: a person’s request to a plugin that calls others carries a fresh delegation; one to a plugin that calls none, nothing', async () => {
+  const app = Fastify();
+  const hostings = {};
+  for (const route of ['leave', 'dir']) {
+    hostings[route] = (await core.getPluginHosting(stateDir, route)).current.secret;
+  }
+  await app.register(
+    async (api) => {
+      await api.register(userSurfacePlugin, {
+        // The relay attests the session's username (Gatekeeper, in production).
+        verifyRelay: async (request) => ({
+          ok: true,
+          route: request.params.route ?? request.url.split('/')[2],
+          username: 'ayse',
+        }),
+        resolveTarget: async (route) => ({
+          plugin: route,
+          port: halves[route].port,
+          secret: hostings[route],
+          maxBodyBytes: 1024 * 1024,
+        }),
+        resolveUserCaller: lib.resolveUserCaller,
+        delegationFor: lib.delegationForUserRequest,
+        originFor: async () => null,
+        logger,
+      });
+    },
+    { prefix: '/api' },
+  );
+  await app.ready();
+  try {
+    const ayse = await userId('ayse');
+    const before = Date.now();
+    const leave = await app.inject({ method: 'GET', url: '/api/leave/app/whoami' });
+    assert.equal(leave.statusCode, 200, leave.body);
+    const seen = leave.json();
+    assert.equal(seen.caller.userId, ayse);
+    assert.ok(seen.delegation, 'leave has an outgoing edge: the half gets a delegation');
+    const verified = verifyPeerDelegation(seen.delegation, {
+      keys: await lib.delegationVerifyKeys(),
+      holder: 'leave',
+    });
+    assert.ok(verified.ok, JSON.stringify(verified));
+    assert.equal(verified.payload.holder, 'leave');
+    assert.equal(verified.payload.root, 'leave');
+    assert.equal(verified.payload.userId, ayse);
+    assert.equal(verified.payload.depth, 0);
+    assert.ok(verified.payload.iat >= before - 1000, 'issued for this request');
+    assert.ok(verified.payload.exp - verified.payload.iat <= 5 * 60_000, 'five minutes at most');
+
+    const dirSeen = await app.inject({ method: 'GET', url: '/api/dir/app/whoami' });
+    assert.equal(dirSeen.statusCode, 200, dirSeen.body);
+    assert.equal(dirSeen.json().delegation, null, 'dir calls no one: no delegation');
+  } finally {
+    await app.close();
+  }
+});
+
 test('events: a gap at first contact, then delivery; a renewed grant starts with a gap again', async () => {
   await waitFor(
     () => halves.leave.gaps.some((g) => g.scope === 'dir:read' && g.reason === 'initial'),
@@ -618,19 +696,27 @@ test('the provider offline: 503 with the reason, at once', async () => {
   }, 'the provider back');
 });
 
-test('dependents: unhosting or uninstalling a provider others rely on needs force', async () => {
+test('dependents: unhosting or uninstalling a provider others rely on needs breakPeers, never force', async () => {
   const dependents = await lib.peerDependents('dir');
   assert.deepEqual(dependents, [{ consumer: 'leave', scopes: ['dir:read'], required: true }]);
   await assert.rejects(
     lib.unhostPlugin('dir', { actor: 'admin', logger, sourceIp: IP }),
     (err) => err.code === 'peer_dependents' && err.consumers[0].consumer === 'leave',
   );
+  // force lets failing pre-teardown stages pass; it does not break peers.
+  await assert.rejects(
+    lib.unhostPlugin('dir', { actor: 'admin', logger, force: true, sourceIp: IP }),
+    (err) => err.code === 'peer_dependents',
+  );
   await lib.disablePlugin('dir', logger);
   await assert.rejects(
-    lib.uninstallPluginWithHosting('dir', { actor: 'admin', logger, sourceIp: IP }),
+    lib.uninstallPluginWithHosting('dir', { actor: 'admin', logger, force: true, sourceIp: IP }),
     (err) => err.code === 'peer_dependents',
   );
   await lib.enablePlugin('dir', logger);
+  const dir = await lib.findPlugin('dir');
+  await assert.rejects(lib.assertNoPeerDependents(dir, false), (err) => err.statusCode === 409);
+  await lib.assertNoPeerDependents(dir, true);
 });
 
 test('an update that narrows what a consumer relies on waits, whatever auto-approve says', async () => {

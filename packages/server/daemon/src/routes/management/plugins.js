@@ -97,6 +97,8 @@ const ForceQuerySchema = z.object({
   force: z.enum(['true', 'false']).optional(),
   // Remove the data directory and service account of an agent half Lamaste installed.
   purge: z.enum(['true', 'false']).optional(),
+  // Remove a plugin other plugins' peer edges consume (409 peer_dependents otherwise).
+  breakPeers: z.enum(['true', 'false']).optional(),
 });
 
 /**
@@ -450,7 +452,7 @@ export default async function pluginRoutes(fastify, _opts) {
   );
 
   // ------------------------------------------------------------------
-  // DELETE /plugins/:name/hosting?force=&purge= — remove tunnel, secret,
+  // DELETE /plugins/:name/hosting?force=&purge=&breakPeers= — remove tunnel, secret,
   // capability and the agent half Lamaste installed (a push: `uninstall`);
   // `purge=true` removes the agent half's data and service account too
   // ------------------------------------------------------------------
@@ -468,6 +470,7 @@ export default async function pluginRoutes(fastify, _opts) {
           logger: request.log,
           force: query.force === 'true',
           purge: query.purge === 'true',
+          breakPeers: query.breakPeers === 'true',
           sourceIp: request.ip,
         });
         return reply.code(202).send({ ok: true, operation });
@@ -926,7 +929,7 @@ export default async function pluginRoutes(fastify, _opts) {
   );
 
   // ------------------------------------------------------------------
-  // DELETE /plugins/:name?force=&purge= — uninstall a plugin (must be
+  // DELETE /plugins/:name?force=&purge=&breakPeers= — uninstall a plugin (must be
   // disabled); a hosted one's hosting is removed first (see
   // DELETE /plugins/:name/hosting)
   // ------------------------------------------------------------------
@@ -947,6 +950,7 @@ export default async function pluginRoutes(fastify, _opts) {
           logger: request.log,
           force: query.force === 'true',
           purge: query.purge === 'true',
+          breakPeers: query.breakPeers === 'true',
           sourceIp: request.ip,
         });
         if (result.operation)

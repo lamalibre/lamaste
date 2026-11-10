@@ -308,13 +308,13 @@ export async function peerDependents(route) {
  * @param {{ name: string, route: string | null }} plugin
  * @param {boolean} force
  */
-export async function assertNoPeerDependents(plugin, force) {
-  if (force || !plugin.route) return;
+export async function assertNoPeerDependents(plugin, breakPeers) {
+  if (breakPeers || !plugin.route) return;
   const dependents = await peerDependents(plugin.route);
   if (dependents.length === 0) return;
   const named = dependents.map((d) => `${d.consumer}${d.required ? ' (required)' : ''}`).join(', ');
   throw httpError(
-    `Plugin "${plugin.name}" provides scopes other plugins rely on: ${named} — their calls and events stop. Remove the edges from the applied shelves first, or confirm with force`,
+    `Plugin "${plugin.name}" provides scopes other plugins rely on: ${named} — their calls and events stop. Remove the edges from the applied shelves first, or confirm with breakPeers`,
     409,
     { code: 'peer_dependents', consumers: dependents },
   );
