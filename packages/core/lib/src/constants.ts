@@ -37,6 +37,7 @@ export const RESERVED_API_PREFIXES = [
   'domains',
   'delegated-invitations',
   'peers',
+  'native-apps',
 ] as const;
 
 export type ReservedApiPrefix = (typeof RESERVED_API_PREFIXES)[number];

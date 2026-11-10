@@ -158,6 +158,8 @@ test('a role added waits with identity.changed, which auto-approve never covers'
     labelsChanged: [],
     invitesAdded: [],
     invitesRemoved: [],
+    signInEventsAdded: false,
+    signInEventsRemoved: false,
   });
   assert.equal((await lib.findPlugin('ax')).version, '1.0.0');
   const [withheld] = await lib.listAudit({ plugin: 'ax', action: 'hooks.auto-approve.withheld' });

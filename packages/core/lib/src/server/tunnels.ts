@@ -104,6 +104,14 @@ export interface TunnelEntry {
 export interface TunnelUserSurface {
   /** Plugin routes, each a valid user-surface route (`isUserSurfaceRoute`). */
   routes: string[];
+  /**
+   * The agent that carried the tunnel when an administrator bound a route
+   * whose plugin another agent hosts (`crossAgent`, native-apps-design.md
+   * D1): such routes are served only while the tunnel's agent is still this
+   * one. Cleared whenever the tunnel's agent changes or is dropped, so a
+   * re-enrolled label never revives it (R3). Absent: no cross-agent binding.
+   */
+  originAgent?: string | undefined;
 }
 
 export interface TunnelLogger {
@@ -159,13 +167,15 @@ export interface UserSurfaceDeps {
   /**
    * Of `routes` (bound to `tunnel`), the ones served — an installed plugin
    * holds the route, its installed, approved version declares `identity`,
-   * and its hosting agent is the agent carrying `tunnel` — each with its
+   * and its hosting agent is the agent carrying `tunnel`, or the binding is
+   * cross-agent and `tunnel` is still carried by its `originAgent`
+   * (`tunnelRouteServable` in `user-surface.ts`) — each with its
    * body limit, in the order given. Called under the tunnel lock: it must
    * not take it.
    */
   servedRoutes(
     routes: readonly string[],
-    tunnel: Pick<TunnelEntry, 'agentLabel'>,
+    tunnel: Pick<TunnelEntry, 'agentLabel' | 'userSurface'>,
   ): Promise<UserSurfaceVhostRoute[]>;
   /**
    * The agent hosting the plugin of `route` — the agent half and its
@@ -1202,13 +1212,16 @@ async function assignTunnelLocked(
     restoreVhost = await rewriteServedRoutes(
       tunnel,
       host,
-      await opts.userSurface.servedRoutes(bound, { agentLabel: previous }),
+      await opts.userSurface.servedRoutes(bound, tunnel),
       await opts.userSurface.servedRoutes(bound, { agentLabel }),
       opts,
     );
   }
 
   tunnel.agentLabel = agentLabel;
+  // A cross-agent binding was confirmed for the agent that carried the
+  // tunnel then — never for this one (R3).
+  dropOriginAgent(tunnel);
   await saveTunnelsOrRestoreVhost(state, tunnels, restoreVhost, logger);
   logger.info(
     { tunnel: tunnelLabel(tunnel), from: previous ?? null, to: agentLabel },
@@ -1357,6 +1370,13 @@ export interface UserSurfaceBindingOptions {
 
 export interface BindUserSurfaceOptions extends UserSurfaceBindingOptions {
   /**
+   * Bind a route whose plugin another agent than the tunnel's hosts — the
+   * administrator's explicit confirmation that the tunnel's agent, which
+   * serves the rest of the host's origin, may front that plugin's users
+   * (native-apps-design.md D1). Recorded as the binding's `originAgent`.
+   */
+  crossAgent?: boolean | undefined;
+  /**
    * Called under the lock before anything changes: throw to refuse the
    * route (the panel requires an installed, agent-hosted plugin to hold it).
    */
@@ -1379,13 +1399,17 @@ export interface UserSurfaceBindingResult {
  *
  * Only an enabled app tunnel, `authenticated` or `restricted`, carried by
  * the agent that hosts the plugin (`INVALID_SETTING` otherwise — the host
- * whose sessions reach the plugin's users is never another agent's); a
+ * whose sessions reach the plugin's users is never another agent's, unless
+ * the administrator binds it `crossAgent`, which records the tunnel's agent
+ * as the binding's `originAgent`); a
  * route on one host at most (`USER_SURFACE_CONFLICT`); at most
  * {@link USER_SURFACE_MAX_ROUTES_PER_HOST} routes on a host. Idempotent.
  * Under the tunnel lock: the vhost is rewritten first (when what it serves
  * changes), then the state saved; a failed save restores the previous
  * vhost. The binding stays when the tunnel moves to another agent or the
- * plugin to another host, but is served only while the two agree.
+ * plugin to another host, but is served only while the two agree — or,
+ * for a cross-agent binding, while the tunnel's agent is its `originAgent`
+ * (cleared when the tunnel moves).
  */
 export function bindUserSurface(opts: BindUserSurfaceOptions): Promise<UserSurfaceBindingResult> {
   return withTunnelLock(async () => {
@@ -1412,9 +1436,10 @@ export function bindUserSurface(opts: BindUserSurfaceOptions): Promise<UserSurfa
         'INVALID_SETTING',
       );
     }
-    if (hostingAgent !== tunnel.agentLabel) {
+    const crossAgent = hostingAgent !== tunnel.agentLabel;
+    if (crossAgent && opts.crossAgent !== true) {
       throw new TunnelError(
-        `Plugin '${route}' is hosted on agent '${hostingAgent}', but this tunnel is carried by '${tunnel.agentLabel}' — a plugin's user surface is served only from a tunnel its hosting agent carries`,
+        `Plugin '${route}' is hosted on agent '${hostingAgent}', but this tunnel is carried by '${tunnel.agentLabel}' — bind it across agents (crossAgent) to let '${tunnel.agentLabel}' front its users`,
         'INVALID_SETTING',
       );
     }
@@ -1432,8 +1457,15 @@ export function bindUserSurface(opts: BindUserSurfaceOptions): Promise<UserSurfa
       );
     }
 
-    await rebindUserSurfaceLocked(tunnels, tunnel, host, [...current, route], opts);
-    logger.info({ tunnel: tunnelLabel(tunnel), route }, 'User surface bound');
+    await rebindUserSurfaceLocked(
+      tunnels,
+      tunnel,
+      host,
+      [...current, route],
+      opts,
+      crossAgent ? tunnel.agentLabel : undefined,
+    );
+    logger.info({ tunnel: tunnelLabel(tunnel), route, crossAgent }, 'User surface bound');
     return { ok: true as const, tunnel, changed: true };
   });
 }
@@ -1551,10 +1583,21 @@ function userSurfaceTunnelHost(tunnel: TunnelEntry): TunnelHost {
   return host;
 }
 
-/** Store `routes` as the tunnel's binding — none leaves no `userSurface` at all. */
-function setBoundRoutes(tunnel: TunnelEntry, routes: string[]): void {
-  if (routes.length > 0) tunnel.userSurface = { routes };
-  else delete tunnel.userSurface;
+/**
+ * Store `routes` as the tunnel's binding — none leaves no `userSurface` at
+ * all — with `originAgent` (undefined: the one it has).
+ */
+function setBoundRoutes(tunnel: TunnelEntry, routes: string[], originAgent?: string): void {
+  const origin = originAgent ?? tunnel.userSurface?.originAgent;
+  if (routes.length > 0) {
+    tunnel.userSurface = origin !== undefined ? { routes, originAgent: origin } : { routes };
+  } else delete tunnel.userSurface;
+}
+
+/** Forget a binding's cross-agent confirmation (its agent changed or went). */
+function dropOriginAgent(tunnel: TunnelEntry): void {
+  if (tunnel.userSurface?.originAgent === undefined) return;
+  tunnel.userSurface = { routes: tunnel.userSurface.routes };
 }
 
 function sameServedRoutes(
@@ -1639,15 +1682,20 @@ async function rebindUserSurfaceLocked(
   host: TunnelHost,
   next: string[],
   opts: UserSurfaceBindingOptions,
+  originAgent?: string,
 ): Promise<void> {
+  const origin = originAgent ?? tunnel.userSurface?.originAgent;
   const restoreVhost = await rewriteServedRoutes(
     tunnel,
     host,
     await opts.userSurface.servedRoutes(tunnelUserSurfaceRoutes(tunnel), tunnel),
-    await opts.userSurface.servedRoutes(next, tunnel),
+    await opts.userSurface.servedRoutes(next, {
+      agentLabel: tunnel.agentLabel,
+      userSurface: origin !== undefined ? { routes: next, originAgent: origin } : { routes: next },
+    }),
     opts,
   );
-  setBoundRoutes(tunnel, next);
+  setBoundRoutes(tunnel, next, originAgent);
   await saveTunnelsOrRestoreVhost(opts.state, tunnels, restoreVhost, opts.logger);
 }
 
@@ -1707,6 +1755,7 @@ export function releaseAgentTunnels(
         released.push(tunnelLabel(t));
         releasedIds.push(t.id);
         const { agentLabel: _dropped, ...rest } = t;
+        dropOriginAgent(rest);
         next.push(rest);
         continue;
       }

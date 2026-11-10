@@ -141,6 +141,7 @@ export type {
   SiteType,
   SiteEntry,
   SiteOwner,
+  SiteUserSurface,
   SiteLogger,
   CertResult as SiteCertResult,
   SiteNginxDeps,
@@ -234,6 +235,10 @@ export {
   renderGroupAccessControl,
   externalHostRegex,
   renderOidcClientPolicies,
+  renderNativeClient,
+  renderNativeClientLifespans,
+  renderNativeClientPolicies,
+  HOST_ACCESS_FACTOR,
   oidcClientPolicyName,
   ensureUsersFileWatched,
   usersFileWatched,
@@ -272,6 +277,7 @@ export type {
   BcryptHashFn,
   ExecFn as AutheliaExecFn,
   AutheliaOidcClient,
+  AutheliaNativeClient,
   OidcClientSecretDigests,
   OidcScopeDefinitions,
   OidcProviderOptions,
@@ -729,5 +735,8 @@ export {
   renderUnavailablePage,
   unavailablePageHeaders,
   unavailablePageLogoUrl,
+  unavailablePageBrandHeader,
 } from './unavailable-page.js';
+// The page at a native client's redirect path (native-apps-design.md D6)
+export { nativeRedirectPageHeaders, renderNativeRedirectPage } from './native-redirect-page.js';
 export type { UnavailablePageBrand } from './unavailable-page.js';

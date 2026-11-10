@@ -82,6 +82,32 @@ export function unavailablePageHeaders(domain: string | null): Readonly<Record<s
 }
 
 /**
+ * The brand header of the page (and of its siblings that share its style):
+ * the logo from the domain's sign-in host when the brand has one, the name
+ * and the tagline; empty for no brand.
+ */
+export function unavailablePageBrandHeader(
+  brand: UnavailablePageBrand | null,
+  domain: string | null,
+): string {
+  if (brand === null) return '';
+  return `
+    <header class="brand">${
+      brand.logo && domain !== null
+        ? `
+      <img class="brand-logo" src="${escapeHtml(unavailablePageLogoUrl(domain))}" alt="">`
+        : ''
+    }
+      <div class="brand-name">${escapeHtml(brand.name)}</div>${
+        brand.tagline === null
+          ? ''
+          : `
+      <div class="brand-tagline">${escapeHtml(brand.tagline)}</div>`
+      }
+    </header>`;
+}
+
+/**
  * The page in `language`, for a domain's brand (its logo when it serves
  * one, from `https://auth.<domain>`), or the stock one (`brand` null).
  */
@@ -96,23 +122,7 @@ export function renderUnavailablePage(opts: {
   if (brand?.logo && domain === null)
     throw new Error('A logo is loaded from a domain’s sign-in host');
   const title = pageMessage(language, 'unavailable.title');
-  const header =
-    brand === null
-      ? ''
-      : `
-    <header class="brand">${
-      brand.logo && domain !== null
-        ? `
-      <img class="brand-logo" src="${escapeHtml(unavailablePageLogoUrl(domain))}" alt="">`
-        : ''
-    }
-      <div class="brand-name">${escapeHtml(brand.name)}</div>${
-        brand.tagline === null
-          ? ''
-          : `
-      <div class="brand-tagline">${escapeHtml(brand.tagline)}</div>`
-      }
-    </header>`;
+  const header = unavailablePageBrandHeader(brand, domain);
   return `<!DOCTYPE html>
 <html lang="${language}">
 <head>

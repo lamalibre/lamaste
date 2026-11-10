@@ -185,6 +185,12 @@ export const IdentityBlockSchema = z
         message: 'attributes must not repeat',
       })
       .default(() => [...DEFAULT_IDENTITY_ATTRIBUTES]),
+    /**
+     * Whether the plugin is told when one of its users signs in with a
+     * native client of the host serving it — the user, the time and the
+     * client (`sign-in-events.ts`). Absent: it is not.
+     */
+    signInEvents: z.boolean().optional(),
   })
   .strict();
 
@@ -196,10 +202,14 @@ export type IdentityBlock = z.output<typeof IdentityBlockSchema>;
 
 export type IdentityRole = z.output<typeof IdentityRoleSchema>;
 
-/** The canonical form: roles sorted by id, attributes sorted, the default applied. */
+/**
+ * The canonical form: roles sorted by id, attributes sorted, the default
+ * applied, `signInEvents` only when it is `true`.
+ */
 export interface NormalizedIdentityBlock {
   readonly roles: readonly IdentityRole[];
   readonly attributes: readonly IdentityAttribute[];
+  readonly signInEvents?: true;
 }
 
 /**
@@ -207,7 +217,9 @@ export interface NormalizedIdentityBlock {
  * the approval preview work from: roles sorted by id (a description and
  * `invites`, sorted, only where one is declared — a block without them
  * keeps the digest it had before they existed), attributes sorted, the
- * default applied when the block declares none. Throws when `block` is not a valid identity block —
+ * default applied when the block declares none, `signInEvents: true` only
+ * when declared so (`false` and absent are one, and keep the digest a block
+ * had before the field existed). Throws when `block` is not a valid identity block —
  * such a block cannot be approved.
  */
 export function normalizeIdentityBlock(block: IdentityBlockInput): NormalizedIdentityBlock {
@@ -230,7 +242,9 @@ export function normalizeIdentityBlock(block: IdentityBlockInput): NormalizedIde
     )
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const attributes = IDENTITY_ATTRIBUTES.filter((a) => parsed.data.attributes.includes(a));
-  return { roles, attributes };
+  return parsed.data.signInEvents === true
+    ? { roles, attributes, signInEvents: true }
+    : { roles, attributes };
 }
 
 /** What an update changes in a plugin's identity block. */
@@ -248,6 +262,10 @@ export interface IdentityDiff {
   readonly invitesAdded: readonly { readonly role: string; readonly roles: readonly string[] }[];
   /** Per role of the old block, the roles it may no longer give; sorted by role. */
   readonly invitesRemoved: readonly { readonly role: string; readonly roles: readonly string[] }[];
+  /** The plugin starts being told of its users' sign-ins. */
+  readonly signInEventsAdded: boolean;
+  /** The plugin stops being told of its users' sign-ins. */
+  readonly signInEventsRemoved: boolean;
 }
 
 /**
@@ -318,6 +336,8 @@ export function identityDiff(
     labelsChanged,
     invitesAdded: invitesDelta(a, b),
     invitesRemoved: invitesDelta(b, a),
+    signInEventsAdded: b.signInEvents === true && a.signInEvents !== true,
+    signInEventsRemoved: a.signInEvents === true && b.signInEvents !== true,
   };
 }
 
@@ -325,7 +345,8 @@ export function identityDiff(
  * Whether an identity change waits for an admin's approval: a role added
  * or removed, an attribute added (the plugin would receive more about its
  * users), or a role allowed to give one more role by invitation (its
- * holders could make more of the relay's users). Narrowing the attributes
+ * holders could make more of the relay's users), or sign-in events turned on
+ * (the plugin would learn when its users sign in). Narrowing the attributes
  * or the invitations and editing labels do not — they only change the
  * digest. Auto-approve never covers it.
  */
@@ -334,7 +355,8 @@ export function identityChangeNeedsApproval(diff: IdentityDiff): boolean {
     diff.rolesAdded.length > 0 ||
     diff.rolesRemoved.length > 0 ||
     diff.attributesAdded.length > 0 ||
-    diff.invitesAdded.length > 0
+    diff.invitesAdded.length > 0 ||
+    diff.signInEventsAdded
   );
 }
 
