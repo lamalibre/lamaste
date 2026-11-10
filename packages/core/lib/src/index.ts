@@ -27,6 +27,7 @@ export {
   OIDC_CLIENT_ID_MAX_LENGTH,
   isOidcClientId,
   RESERVED_TUNNEL_PORTS,
+  MAIL_SUBMISSION_PORT,
   isTunnelPortAllowed,
   INTERNAL_PLUGIN_PORT_RANGE,
   isInternalPluginPort,
@@ -856,6 +857,7 @@ export {
   AUTH_PAGE_PROPERTY_PREFIX,
   renderAuthPageThemeCss,
   BRAND_CSS_LANGUAGE_MENU_RULE,
+  AUTH_STOCK_CSS,
   renderDomainCss,
 } from './auth-branding.js';
 
@@ -886,6 +888,8 @@ export {
   PAGE_MESSAGE_DROPPED_PLACEHOLDERS,
   INVITE_PAGE_KEYS,
   INVITATIONS_PAGE_KEYS,
+  RESET_PAGE_KEYS,
+  ACCOUNT_PASSWORD_PAGE_KEYS,
   UNAVAILABLE_PAGE_KEYS,
   FORBIDDEN_PAGE_KEYS,
   ACCESS_REQUEST_PAGE_KEYS,
@@ -913,6 +917,11 @@ export {
   AUTHELIA_CORRECTIONS,
   forcedAutheliaLocaleFile,
   autheliaIndexLanguageFilters,
+  AUTHELIA_INDEX_RESET_ATTRIBUTE,
+  AUTHELIA_INDEX_RESET_URL_ATTRIBUTE,
+  AUTHELIA_ACCOUNT_LINK_ID,
+  AUTHELIA_ACCOUNT_LINK_CSS,
+  autheliaIndexMailFilters,
   renderForcedAutheliaLocale,
 } from './authelia-locales.js';
 export type {
@@ -920,6 +929,79 @@ export type {
   AutheliaMessages,
   ForcedAutheliaLocale,
 } from './authelia-locales.js';
+
+// Mail: transports, senders, deliverable addresses (mail-design.md; browser-safe,
+// also the subpath ./mail) and a person's own account pages' contract
+export {
+  MAIL_TRANSPORT_KINDS,
+  SMTP_SECURITY_MODES,
+  MAIL_CA_PEM_MAX_BYTES,
+  MAIL_CA_PEM_MAX_CERTIFICATES,
+  MAIL_ADDRESS_MAX_LENGTH,
+  MAIL_SENDER_NAME_MAX_LENGTH,
+  MAIL_SEND_STATUSES,
+  UNDELIVERABLE_MAIL_TLDS,
+  GOOGLE_CLIENT_ID_RE,
+  parseMailAddress,
+  mailAddressDomain,
+  isDeliverableAddress,
+  isMailSenderName,
+  formatMailbox,
+  splitPemCertificates,
+  resolveMailTransport,
+  canSendMail,
+  mailSenderDomains,
+  MailAddressSchema,
+  MailSenderNameSchema,
+  SmtpTransportSettingsSchema,
+  GmailApiTransportSettingsSchema,
+  SmtpTransportInputSchema,
+  MailGoogleStartInputSchema,
+  MailSenderInputSchema,
+  MailTestInputSchema,
+} from './mail.js';
+export type {
+  MailTransportKind,
+  SmtpSecurity,
+  MailSendStatus,
+  MailSender,
+  SmtpTransportSettings,
+  GmailApiTransportSettings,
+  MailTransportSettings,
+  MailTransportRecord,
+  ResolvedMailTransport,
+  SmtpTransportInput,
+  SmtpTransportRequest,
+  MailGoogleStartInput,
+  MailGoogleStartRequest,
+  MailSenderInput,
+  MailSenderRequest,
+  MailTestInput,
+  SmtpTransportView,
+  MailTransportHealth,
+  MailTransportView,
+  MailSendResult,
+} from './mail.js';
+export {
+  AUTH_RESET_PATH,
+  AUTH_ACCOUNT_PASSWORD_PATH,
+  PASSWORD_RESET_API,
+  ACCOUNT_PASSWORD_API_PATH,
+  MAIL_GOOGLE_CALLBACK_PATH,
+  authResetUrl,
+  mailGoogleRedirectUri,
+  PASSWORD_RESET_TTL_MINUTES,
+  PASSWORD_RESET_MAX_FAILURES,
+  PASSWORD_RESET_TOKEN_RE,
+  ACCOUNT_PASSWORD_MIN_LENGTH,
+  ACCOUNT_PASSWORD_MAX_LENGTH,
+  PasswordResetStartSchema,
+  PasswordResetLookupSchema,
+  PasswordResetFinishSchema,
+  PasswordChangeSchema,
+} from './account.js';
+export type { PasswordResetStart, PasswordResetFinish, PasswordChange } from './account.js';
+export { hasControlCharacters } from './text-rules.js';
 
 // Delegated invitations: a plugin user with an inviting role invites
 // colleagues into that plugin (delegated-invitations-design.md)

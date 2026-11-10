@@ -37,6 +37,10 @@
     "./page-messages": {
       "types": "./dist/page-messages.d.ts",
       "import": "./dist/page-messages.js"
+    },
+    "./mail": {
+      "types": "./dist/mail.d.ts",
+      "import": "./dist/mail.js"
     }
   },
   "files": [

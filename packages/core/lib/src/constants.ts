@@ -37,6 +37,7 @@ export const RESERVED_API_PREFIXES = [
   'domains',
   'delegated-invitations',
   'peers',
+  'account',
 ] as const;
 
 export type ReservedApiPrefix = (typeof RESERVED_API_PREFIXES)[number];
@@ -233,7 +234,8 @@ export function isLamasteUsername(value: unknown): value is string {
 /**
  * Loopback ports on the relay that belong to Lamaste's own services and can
  * never be a tunnel port: the panel server (3100), the chisel server (9090),
- * Authelia (9091), the IP-based panel listener (9292) and Gatekeeper (9294).
+ * Authelia (9091), the IP-based panel listener (9292), Gatekeeper (9294) and
+ * the panel's mail submission listener for Authelia (9295).
  *
  * A tunnel's vhost proxies to `127.0.0.1:<port>` on the relay. Were one of
  * these ports allowed, a tunnel hostname would publish that internal service
@@ -243,8 +245,15 @@ export function isLamasteUsername(value: unknown): value is string {
  * chisel grants are rendered.
  */
 export const RESERVED_TUNNEL_PORTS: readonly number[] = Object.freeze([
-  3100, 9090, 9091, 9292, 9294,
+  3100, 9090, 9091, 9292, 9294, 9295,
 ]);
+
+/**
+ * The panel's loopback submission listener (packages/core/docs/mail-design.md
+ * §5): Authelia hands its mail to Lamaste on `127.0.0.1:9295`, never to a
+ * provider. One of {@link RESERVED_TUNNEL_PORTS}.
+ */
+export const MAIL_SUBMISSION_PORT = 9295;
 
 /**
  * Relay-loopback ports Lamaste assigns to internal plugin tunnels — the

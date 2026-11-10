@@ -63,6 +63,7 @@ import { PAGE_LANGUAGES, isPageLanguage } from '../page-messages.js';
 import type { PageLanguage } from '../page-messages.js';
 import { renderInvitePage } from './invite-page.js';
 import { renderInvitationsPage } from './invitations-page.js';
+import { renderAccountPasswordPage, renderResetPage } from './account-pages.js';
 import { renderUnavailablePage } from './unavailable-page.js';
 
 const DIR_MODE = 0o750;
@@ -310,6 +311,8 @@ export function authPagesDigest(): string {
     renderInvitePage(null, language),
     renderInvitationsPage(null, language),
     renderUnavailablePage({ brand: null, language, domain: null }),
+    renderResetPage(null, language),
+    renderAccountPasswordPage(null, language),
   ]);
   return sha256Hex(Buffer.from(pages.join('\n')));
 }
@@ -505,6 +508,14 @@ export async function renderAuthBranding(
     await writeNewFile(
       path.join(dir, AUTH_BRANDING_FILES.unavailable),
       renderUnavailablePage({ brand: pageBrand, language: pageLanguage, domain: input.domain }),
+    );
+    await writeNewFile(
+      path.join(dir, AUTH_BRANDING_FILES.reset),
+      renderResetPage(pageBrand, pageLanguage),
+    );
+    await writeNewFile(
+      path.join(dir, AUTH_BRANDING_FILES.accountPassword),
+      renderAccountPasswordPage(pageBrand, pageLanguage),
     );
     if (brandJson !== null) {
       await writeNewFile(path.join(dir, AUTH_BRANDING_FILES.brand), brandJson);

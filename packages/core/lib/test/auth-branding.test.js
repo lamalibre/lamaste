@@ -837,12 +837,14 @@ test('a brand is rendered into a directory of its own and served through its dom
     assert.equal(await lstat(dir1).catch((err) => err.code), 'ENOENT');
     assert.equal((await readRenderedBrand(domain, root)).revision, 2);
     assert.deepEqual((await readdir(link)).sort(), [
+      'account',
       'brand.css',
       'brand.json',
       'invitations',
       'invite',
       'locales',
       'rendered.json',
+      'reset',
       'static',
       'unavailable',
     ]);

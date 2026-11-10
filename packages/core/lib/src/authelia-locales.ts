@@ -23,7 +23,8 @@
  * Browser-safe (no node built-ins).
  */
 
-import { htmlAsciiReferences } from './page-messages.js';
+import { AUTH_ACCOUNT_PASSWORD_PATH } from './account.js';
+import { htmlAsciiReferences, pageMessage } from './page-messages.js';
 import type { PageLanguage } from './page-messages.js';
 
 // ---------------------------------------------------------------------------
@@ -97,6 +98,82 @@ export function autheliaIndexLanguageFilters(
       }
     }
   }
+  return filters;
+}
+
+/**
+ * A `sub_filter` pair as `lamaste-priv` admits it and the vhost writes it
+ * (single-quoted): 1–512 bytes of printable ASCII without `$`, `\` or `'`.
+ */
+function assertSubFilterText(text: string): void {
+  if (text.length < 1 || text.length > 512 || !/^[\x20-\x7e]+$/.test(text) || /[$\\']/.test(text)) {
+    throw new Error("A sub_filter text is 1-512 bytes of printable ASCII without $, \\ or '");
+  }
+}
+
+/** The index's reset switch (`web/index.html`: `data-resetpassword="%VITE_RESET_PASSWORD%"`). */
+export const AUTHELIA_INDEX_RESET_ATTRIBUTE = 'data-resetpassword';
+
+/** The index's reset link (`web/index.html`: `data-resetpasswordcustomurl="%VITE_RESET_PASSWORD_CUSTOM_URL%"`). */
+export const AUTHELIA_INDEX_RESET_URL_ATTRIBUTE = 'data-resetpasswordcustomurl';
+
+/** The id of the change-password link Lamaste adds to the portal (styled by {@link AUTHELIA_ACCOUNT_LINK_CSS}). */
+export const AUTHELIA_ACCOUNT_LINK_ID = 'lamaste-account-password';
+
+/**
+ * The link's rule in a domain's stylesheet: a quiet link in the bottom
+ * left corner, in the theme's text colour. Authelia's CSP admits no inline
+ * style, so the link is styled from `/brand.css` alone.
+ */
+export const AUTHELIA_ACCOUNT_LINK_CSS = `#${AUTHELIA_ACCOUNT_LINK_ID} { position: fixed; left: 1rem; bottom: 1rem; z-index: 1; font: 0.8125rem/1.4 system-ui, sans-serif; color: inherit; opacity: 0.75; text-decoration: underline; }
+#${AUTHELIA_ACCOUNT_LINK_ID}:hover { opacity: 1; }`;
+
+/**
+ * The `sub_filter` pairs that fit Authelia's index to a domain's mail
+ * (packages/core/docs/mail-design.md §5, §6.3), beside
+ * {@link autheliaIndexLanguageFilters}. Authelia renders one index for
+ * every domain, linking "Reset password?" to the configuration's one
+ * `password_reset.custom_url` — the primary's `https://auth.<primary>/reset`
+ * (`primaryResetUrl`, null while nothing can send and Authelia's reset is
+ * disabled):
+ *
+ * - a domain that can send links to its own page (`domainResetUrl`);
+ * - a domain that cannot (`domainResetUrl` null) shows no reset link — the
+ *   switch off and the URL emptied, so the portal never falls back to
+ *   Authelia's own reset, whose endpoints are not registered;
+ * - every domain gets a "Change password" link to `/account/password`, in
+ *   its language (English when it has none).
+ *
+ * Every text is printable ASCII without `$`, `\` or `'` (the Turkish as
+ * character references), as `lamaste-priv` admits in a vhost.
+ */
+export function autheliaIndexMailFilters(opts: {
+  readonly primaryResetUrl: string | null;
+  readonly domainResetUrl: string | null;
+  readonly language: PageLanguage | null;
+}): ReadonlyArray<readonly [string, string]> {
+  const filters: Array<readonly [string, string]> = [];
+  const { primaryResetUrl, domainResetUrl } = opts;
+  if (primaryResetUrl !== null && domainResetUrl !== primaryResetUrl) {
+    const from = `${AUTHELIA_INDEX_RESET_URL_ATTRIBUTE}="${primaryResetUrl}"`;
+    if (domainResetUrl === null) {
+      filters.push([
+        `${AUTHELIA_INDEX_RESET_ATTRIBUTE}="true"`,
+        `${AUTHELIA_INDEX_RESET_ATTRIBUTE}="false"`,
+      ]);
+      filters.push([from, `${AUTHELIA_INDEX_RESET_URL_ATTRIBUTE}=""`]);
+    } else {
+      filters.push([from, `${AUTHELIA_INDEX_RESET_URL_ATTRIBUTE}="${domainResetUrl}"`]);
+    }
+  }
+  const label = htmlAsciiReferences(
+    pageMessage(opts.language ?? 'en', 'account.changePasswordLink'),
+  );
+  filters.push([
+    '</body>',
+    `<a id="${AUTHELIA_ACCOUNT_LINK_ID}" href="${AUTH_ACCOUNT_PASSWORD_PATH}">${label}</a></body>`,
+  ]);
+  for (const pair of filters) for (const text of pair) assertSubFilterText(text);
   return filters;
 }
 

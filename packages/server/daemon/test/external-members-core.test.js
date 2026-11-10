@@ -415,7 +415,9 @@ test('the users file is held as Lamaste needs: watched, refreshed always, Authel
     file: { path: '/etc/authelia/users.yml', password: { algorithm: 'bcrypt' }, watch: true },
     refresh_interval: 'always',
     password_change: { disable: true },
-    password_reset: { custom_url: '', disable: true },
+    // Lamaste owns the section: disabled, or a link to this relay's own
+    // reset page (mail-design.md §5) — nothing else is kept.
+    password_reset: { disable: true },
   });
   assert.equal(usersFileWatched(config), true);
   // Each setting on its own is not enough.

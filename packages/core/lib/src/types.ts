@@ -8,6 +8,13 @@
 import type { BrandFieldError, BrandFields, RenderedBrand } from './auth-branding.js';
 import type { PluginHosting, PluginMode } from './constants.js';
 import type { MembershipKind } from './domains.js';
+import type {
+  MailGoogleStartRequest,
+  MailSendResult,
+  MailSenderRequest,
+  MailTransportView,
+  SmtpTransportRequest,
+} from './mail.js';
 import type { PageLanguage } from './page-messages.js';
 import type { HostEligibility } from './host-eligibility.js';
 import type { AudienceChange, NormalizedIdentityBlock } from './identity.js';
@@ -870,6 +877,48 @@ export interface AdminClient {
    * `scope_in_use` with `plugins` and `policies` that still use it.
    */
   removeTrustedScope(scope: string): Promise<TrustedScopesView>;
+  // Mail (mail-design.md §3.5): the relay-wide transport, then a domain's override
+  /** The relay's transport and sender, or null when the relay sends no mail. */
+  getMailSettings(): Promise<{ transport: MailTransportView | null }>;
+  /** Set an `smtp` transport — checked before it is stored; `password` omitted keeps the stored one. */
+  setMailSmtp(
+    input: SmtpTransportRequest,
+  ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  /**
+   * Start Google's consent for a `gmail-api` transport: the URL to open,
+   * signed in as the sending Workspace user. The transport is stored when
+   * Google returns to `https://auth.<primary>/mail/google/callback`; poll
+   * {@link AdminClient.getMailSettings}.
+   */
+  startMailGoogleConsent(
+    input: MailGoogleStartRequest,
+  ): Promise<{ authorizeUrl: string; expiresAt: string }>;
+  /** Change the sender only (a `gmail-api` sender is checked against the account's send-as addresses). */
+  setMailSender(
+    input: MailSenderRequest,
+  ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  /** Remove the relay's transport: Authelia back to its file notifier, Google's token revoked (best effort). */
+  clearMailSettings(): Promise<{ removed: boolean; warnings?: AdminWarning[] }>;
+  /** Send a test mail in the primary domain's language and brand. */
+  sendTestMail(to: string): Promise<{ mail: MailSendResult }>;
+  /** A domain's override, or null when it uses the relay's transport and sender. */
+  getDomainMail(name: string): Promise<{ transport: MailTransportView | null }>;
+  setDomainMailSmtp(
+    name: string,
+    input: SmtpTransportRequest,
+  ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  startDomainMailGoogleConsent(
+    name: string,
+    input: MailGoogleStartRequest,
+  ): Promise<{ authorizeUrl: string; expiresAt: string }>;
+  /** A sender of the domain's own over the relay's transport (or its own transport's sender). */
+  setDomainMailSender(
+    name: string,
+    input: MailSenderRequest,
+  ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  clearDomainMail(name: string): Promise<{ removed: boolean; warnings?: AdminWarning[] }>;
+  /** Send a test mail in the domain's language and brand, through what its mail resolves to. */
+  sendDomainTestMail(name: string, to: string): Promise<{ mail: MailSendResult }>;
 
   // A domain's brand on its auth pages (per-domain branding)
   /** The brand without its blobs, or null when the domain has none (404 `unknown_domain`). */
@@ -919,7 +968,15 @@ export interface AdminClient {
      * external membership (400 `external_member_groups`).
      */
     domains?: DomainMembershipInput[];
-  }): Promise<{ ok: boolean; invitation: unknown; token: string }>;
+  }): Promise<{ ok: boolean; invitation: unknown; token: string; mail?: MailSendResult }>;
+  /**
+   * A new link for a pending invitation, mailed when its domain can send:
+   * the old link stops working (mail-design.md §6.1). The token is
+   * answered once, as on creation.
+   */
+  reissueInvitation(
+    id: string,
+  ): Promise<{ ok: boolean; invitation: unknown; token: string; mail: MailSendResult }>;
   /**
    * Revoke a pending invitation, delete one that ended; one being accepted
    * is marked (`action: 'marked'`, 202): it ends revoked, and an account its
