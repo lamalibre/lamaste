@@ -1,0 +1,893 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 58,
+    "name": "Mail across domains: each portal its own reset link",
+    "suite": "e2e-three-vm",
+    "description": "58 — Mail across domains: each portal its own reset link (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "openssl"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE users/${USER_B}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${USER_B}?erase=true"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE users/${USER_C}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${USER_C}?erase=true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-4",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_api PUT \"domains/${DOMAIN_2}/language\" '{\"language\":\"tr\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "B speaks Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".domain.language",
+              "expected": {
+                "kind": "literal",
+                "value": "tr"
+              },
+              "message": "B speaks Turkish"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\nmd_preflight\nmail_cleanup\nmd_domain_active \"${DOMAIN_2}\"\nmd_domain_active \"${DOMAIN_3}\"\nRESP=$(md_api PUT \"domains/${DOMAIN_2}/language\" '{\"language\":\"tr\"}')\nassert_json_field \"$(body_of \"$RESP\")\" '.domain.language' 'tr' \"B speaks Turkish\" || true\nmail_sink_start\nmail_user \"${USER_B}\" \"[\\\"${DOMAIN_2}\\\"]\" \"${PASSWORD}\"\nmail_user \"${USER_C}\" \"[\\\"${DOMAIN_3}\\\"]\" \"${PASSWORD}\"\n\n# ===========================================================================\n# 1. B alone can send\n# ==========================================================================="
+    },
+    {
+      "id": "b-s-own-transport-no-relay-transport",
+      "label": "B's own transport, no relay transport",
+      "steps": [
+        {
+          "id": "step-9",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_transport_put \"domains/${DOMAIN_2}/mail\" \"no-reply@notify.${DOMAIN_2}\" \"E2E B\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "PUT /api/domains/${DOMAIN_2}/mail: B's own transport to the sink",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/domains/${DOMAIN_2}/mail: B's own transport to the sink"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "…a domain row of its own",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.transport.scope) \\(.transport.kind)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "domain smtp"
+              },
+              "message": "…a domain row of its own"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "The relay has no transport",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_api_get \"settings/mail\" | jq -c '.transport' 2>/dev/null)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "The relay has no transport"
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "auth.${DOMAIN_2}/ links https://auth.${DOMAIN_2}/reset",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "auth.${DOMAIN_2}/ links https://auth.${DOMAIN_2}/reset"
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "auth.${DOMAIN_2}/: $(portal_index_reset \"${DOMAIN_2}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "auth.${DOMAIN_2}/: $(portal_index_reset \"${DOMAIN_2}\")"
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "auth.${DOMAIN}/ (cannot send) links no reset page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(portal_index_reset \"${DOMAIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "data-resetpasswordcustomurl=\"\""
+              },
+              "message": "auth.${DOMAIN}/ (cannot send) links no reset page"
+            }
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "auth.${DOMAIN_3}/ (cannot send) links none",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(portal_index_reset \"${DOMAIN_3}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "data-resetpasswordcustomurl=\"\""
+              },
+              "message": "auth.${DOMAIN_3}/ (cannot send) links none"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_portal_post \"${DOMAIN_3}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_C}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "A reset on auth.${DOMAIN_3}: 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "A reset on auth.${DOMAIN_3}: 404"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "…reset_unavailable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "reset_unavailable"
+              },
+              "message": "…reset_unavailable"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"B's own transport, no relay transport\"\n\nRESP=$(mail_transport_put \"domains/${DOMAIN_2}/mail\" \"no-reply@notify.${DOMAIN_2}\" \"E2E B\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/domains/${DOMAIN_2}/mail: B's own transport to the sink\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.transport.scope) \\(.transport.kind)\"' 'domain smtp' \"…a domain row of its own\" || true\nassert_eq \"$(host_api_get \"settings/mail\" | jq -c '.transport' 2>/dev/null)\" \"null\" \"The relay has no transport\" || true\nmd_wait_authelia \"${DOMAIN}\"\nif wait_for 90 portal_links_reset \"${DOMAIN_2}\" \"https://auth.${DOMAIN_2}/reset\"; then\n  log_pass \"auth.${DOMAIN_2}/ links https://auth.${DOMAIN_2}/reset\"\nelse\n  log_fail \"auth.${DOMAIN_2}/: $(portal_index_reset \"${DOMAIN_2}\")\"\nfi\nassert_eq \"$(portal_index_reset \"${DOMAIN}\")\" 'data-resetpasswordcustomurl=\"\"' \"auth.${DOMAIN}/ (cannot send) links no reset page\" || true\nassert_eq \"$(portal_index_reset \"${DOMAIN_3}\")\" 'data-resetpasswordcustomurl=\"\"' \"auth.${DOMAIN_3}/ (cannot send) links none\" || true\nRESP=$(mail_portal_post \"${DOMAIN_3}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_C}\\\"}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"404\" \"A reset on auth.${DOMAIN_3}: 404\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.code' 'reset_unavailable' \"…reset_unavailable\" || true"
+    },
+    {
+      "id": "a-member-of-b-forgets-their-password-turkish-from-b-s-sender",
+      "label": "A member of B forgets their password: Turkish, From B's sender",
+      "steps": [
+        {
+          "id": "step-21",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_portal_post \"${DOMAIN_2}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_B}@${MAIL_DOMAIN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "POST auth.${DOMAIN_2}/api/account/reset/start (by address): 202",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202"
+              },
+              "message": "POST auth.${DOMAIN_2}/api/account/reset/start (by address): 202"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Set MAIL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_last_to \"${USER_B}@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "MAIL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "…From B's sender",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "MAIL"
+              },
+              "path": ".from",
+              "expected": {
+                "kind": "expr",
+                "template": "no-reply@notify.${DOMAIN_2}"
+              },
+              "message": "…From B's sender"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "…in Turkish: Şifrenizi sıfırlayın",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "MAIL"
+              },
+              "path": ".subject",
+              "expected": {
+                "kind": "literal",
+                "value": "Şifrenizi sıfırlayın"
+              },
+              "message": "…in Turkish: Şifrenizi sıfırlayın"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "…its link on auth.${DOMAIN_2}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(mail_link_in \"$MAIL\" \"/reset#\")"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN_2}/reset#"
+              },
+              "message": "…its link on auth.${DOMAIN_2}"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "…naming the username",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$MAIL\" '.text')"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "USER_B"
+              },
+              "message": "…naming the username"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A member of B forgets their password: Turkish, From B's sender\"\n\nRESP=$(mail_portal_post \"${DOMAIN_2}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_B}@${MAIL_DOMAIN}\\\"}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"202\" \"POST auth.${DOMAIN_2}/api/account/reset/start (by address): 202\" || true\nmail_wait \"${USER_B}@${MAIL_DOMAIN}\" 1 \"The mail is in the sink\"\nMAIL=$(mail_last_to \"${USER_B}@${MAIL_DOMAIN}\")\nassert_json_field \"$MAIL\" '.from' \"no-reply@notify.${DOMAIN_2}\" \"…From B's sender\" || true\nassert_json_field \"$MAIL\" '.subject' 'Şifrenizi sıfırlayın' \"…in Turkish: Şifrenizi sıfırlayın\" || true\nassert_contains \"$(mail_link_in \"$MAIL\" \"/reset#\")\" \"https://auth.${DOMAIN_2}/reset#\" \"…its link on auth.${DOMAIN_2}\" || true\nassert_contains \"$(json_get \"$MAIL\" '.text')\" \"${USER_B}\" \"…naming the username\" || true\n\n# ===========================================================================\n# 2. The relay's transport too\n# ==========================================================================="
+    },
+    {
+      "id": "the-relay-s-transport-added-every-portal-its-own-reset-link",
+      "label": "The relay's transport added: every portal its own reset link",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_transport_put \"settings/mail\" \"no-reply@notify.${DOMAIN}\" \"E2E Relay\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "PUT /api/settings/mail: the relay's transport",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/settings/mail: the relay's transport"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "auth.${D}/ links https://auth.${D}/reset",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "auth.${D}/ links https://auth.${D}/reset"
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "auth.${D}/: $(portal_index_reset \"$D\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "auth.${D}/: $(portal_index_reset \"$D\")"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "${AUTHELIA_CONFIG_JSON}"
+          },
+          "capture": [
+            {
+              "variable": "CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Authelia's one custom_url is the primary's; the vhosts give each portal its own",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CONFIG"
+              },
+              "path": ".authentication_backend.password_reset.custom_url",
+              "expected": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}/reset"
+              },
+              "message": "Authelia's one custom_url is the primary's; the vhosts give each portal its own"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The relay's transport added: every portal its own reset link\"\n\nRESP=$(mail_transport_put \"settings/mail\" \"no-reply@notify.${DOMAIN}\" \"E2E Relay\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/settings/mail: the relay's transport\" || true\nmd_wait_authelia \"${DOMAIN}\"\nfor D in \"${DOMAIN}\" \"${DOMAIN_2}\" \"${DOMAIN_3}\"; do\n  if wait_for 90 portal_links_reset \"$D\" \"https://auth.${D}/reset\"; then\n    log_pass \"auth.${D}/ links https://auth.${D}/reset\"\n  else\n    log_fail \"auth.${D}/: $(portal_index_reset \"$D\")\"\n  fi\ndone\nCONFIG=$(host_exec \"${AUTHELIA_CONFIG_JSON}\" 2>/dev/null | tail -n 1 || echo '{}')\nassert_json_field \"$CONFIG\" '.authentication_backend.password_reset.custom_url' \"https://auth.${DOMAIN}/reset\" \"Authelia's one custom_url is the primary's; the vhosts give each portal its own\" || true"
+    },
+    {
+      "id": "a-member-of-c-english-from-the-relay-s-sender",
+      "label": "A member of C: English, From the relay's sender",
+      "steps": [
+        {
+          "id": "step-38",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_portal_post \"${DOMAIN_3}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_C}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "POST auth.${DOMAIN_3}/api/account/reset/start: 202",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202"
+              },
+              "message": "POST auth.${DOMAIN_3}/api/account/reset/start: 202"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Set MAIL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_last_to \"${USER_C}@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "MAIL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "…From the relay's sender",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "MAIL"
+              },
+              "path": ".from",
+              "expected": {
+                "kind": "expr",
+                "template": "no-reply@notify.${DOMAIN}"
+              },
+              "message": "…From the relay's sender"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "…in English",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "MAIL"
+              },
+              "path": ".subject",
+              "expected": {
+                "kind": "literal",
+                "value": "Reset your password"
+              },
+              "message": "…in English"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "…its link on auth.${DOMAIN_3}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(mail_link_in \"$MAIL\" \"/reset#\")"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN_3}/reset#"
+              },
+              "message": "…its link on auth.${DOMAIN_3}"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A member of C: English, From the relay's sender\"\n\nRESP=$(mail_portal_post \"${DOMAIN_3}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_C}\\\"}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"202\" \"POST auth.${DOMAIN_3}/api/account/reset/start: 202\" || true\nmail_wait \"${USER_C}@${MAIL_DOMAIN}\" 1 \"The mail is in the sink\"\nMAIL=$(mail_last_to \"${USER_C}@${MAIL_DOMAIN}\")\nassert_json_field \"$MAIL\" '.from' \"no-reply@notify.${DOMAIN}\" \"…From the relay's sender\" || true\nassert_json_field \"$MAIL\" '.subject' 'Reset your password' \"…in English\" || true\nassert_contains \"$(mail_link_in \"$MAIL\" \"/reset#\")\" \"https://auth.${DOMAIN_3}/reset#\" \"…its link on auth.${DOMAIN_3}\" || true"
+    },
+    {
+      "id": "a-reset-for-a-member-of-b-asked-on-c-s-portal-no-mail",
+      "label": "A reset for a member of B asked on C's portal: no mail",
+      "steps": [
+        {
+          "id": "step-45",
+          "label": "Set BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_count_to \"${USER_B}@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_portal_post \"${DOMAIN_3}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_B}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "auth.${DOMAIN_3}: the same answer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\") $(visit_body \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202 {\"sent\":true}"
+              },
+              "message": "auth.${DOMAIN_3}: the same answer"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Sleep 5s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 5
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "…but no mail: ${USER_B} is no member of C",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(mail_count_to \"${USER_B}@${MAIL_DOMAIN}\")"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "BEFORE"
+              },
+              "message": "…but no mail: ${USER_B} is no member of C"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A reset for a member of B asked on C's portal: no mail\"\n\nBEFORE=$(mail_count_to \"${USER_B}@${MAIL_DOMAIN}\")\nRESP=$(mail_portal_post \"${DOMAIN_3}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_B}\\\"}\")\nassert_eq \"$(visit_status \"$RESP\") $(visit_body \"$RESP\")\" '202 {\"sent\":true}' \"auth.${DOMAIN_3}: the same answer\" || true\nsleep 5\nassert_eq \"$(mail_count_to \"${USER_B}@${MAIL_DOMAIN}\")\" \"${BEFORE}\" \"…but no mail: ${USER_B} is no member of C\" || true\n\n# ===========================================================================\n# 3. B back on the relay's transport\n# ==========================================================================="
+    },
+    {
+      "id": "b-s-own-transport-removed-the-relay-s-carries-its-mail",
+      "label": "B's own transport removed: the relay's carries its mail",
+      "steps": [
+        {
+          "id": "step-50",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"domains/${DOMAIN_2}/mail\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "DELETE /api/domains/${DOMAIN_2}/mail",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "DELETE /api/domains/${DOMAIN_2}/mail"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_portal_post \"${DOMAIN_2}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_B}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "Another reset on auth.${DOMAIN_2}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202"
+              },
+              "message": "Another reset on auth.${DOMAIN_2}"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Set MAIL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_last_to \"${USER_B}@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "MAIL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "…From the relay's sender, still in B's Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "MAIL"
+              },
+              "path": "\"\\(.from) \\(.subject)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "no-reply@notify.${DOMAIN} Şifrenizi sıfırlayın"
+              },
+              "message": "…From the relay's sender, still in B's Turkish"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"B's own transport removed: the relay's carries its mail\"\n\nRESP=$(host_api_call DELETE \"domains/${DOMAIN_2}/mail\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"DELETE /api/domains/${DOMAIN_2}/mail\" || true\nassert_eq \"$(portal_index_reset \"${DOMAIN_2}\")\" \"data-resetpasswordcustomurl=\\\"https://auth.${DOMAIN_2}/reset\\\"\" \"auth.${DOMAIN_2}/ still links its own /reset\" || true\nRESP=$(mail_portal_post \"${DOMAIN_2}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_B}\\\"}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"202\" \"Another reset on auth.${DOMAIN_2}\" || true\nmail_wait \"${USER_B}@${MAIL_DOMAIN}\" 2 \"…mailed\"\nMAIL=$(mail_last_to \"${USER_B}@${MAIL_DOMAIN}\")\nassert_json_field \"$MAIL\" '\"\\(.from) \\(.subject)\"' \"no-reply@notify.${DOMAIN} Şifrenizi sıfırlayın\" \"…From the relay's sender, still in B's Turkish\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 58 — Mail across domains: each portal its own reset link (Three-VM)\n# ============================================================================\n# Which domains can send, and what their people meet (design: packages/core/\n# docs/mail-design.md §3.1, §5, §6.2, Q1). Three domains of the\n# multi-domain harness — A the primary, B in Turkish, C — and the SMTP\n# stand-in on the host VM (mail-harness.sh).\n#\n# 1. B alone has a transport of its own (no relay transport): B's portal\n#    links auth.<B>/reset, A's and C's link none; a reset on C is 404\n#    reset_unavailable. A member of B forgets their password: the mail\n#    arrives From B's sender, in Turkish, with a link on auth.<B>.\n# 2. The relay's transport added: A and C link their own /reset, B still\n#    its own; a reset on C is mailed From the relay's sender, in English,\n#    its link on auth.<C>. B's mail still goes From B's sender.\n# 3. B's transport removed: B falls back to the relay's.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=58\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\nMAIL_SPEC=58\n# shellcheck source-path=SCRIPTDIR source=mail-harness.sh\nsource \"${SCRIPT_DIR}/mail-harness.sh\"\n\nrequire_commands multipass curl jq openssl\n\nRUN_ID=\"$(date +%s)\"\n# Per-run usernames: the reset caps count mails per user over an hour\nUSER_B=\"e2e58-b-${RUN_ID}\"\nUSER_C=\"e2e58-c-${RUN_ID}\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2E-$(openssl rand -hex 12)\"\n\nbegin_test \"58 — Mail across domains: each portal its own reset link (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  [ -n \"${DOMAIN_2:-}\" ] && md_api PUT \"domains/${DOMAIN_2}/language\" '{\"language\":null}' > /dev/null 2>&1 || true\n  host_api_delete \"users/${USER_B}?erase=true\" > /dev/null 2>&1 || true\n  host_api_delete \"users/${USER_C}?erase=true\" > /dev/null 2>&1 || true\n  mail_cleanup\n  md_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

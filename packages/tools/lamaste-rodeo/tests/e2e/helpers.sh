@@ -2944,3 +2944,414 @@ local_sign_in() {
   second=$(curl -sk --max-time 15 ${resolve} -b "$4" -c "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://auth.$5/api/secondfactor/totp" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || echo "none")
   SIGN_IN_RESULT="${first} ${second}"
 }
+
+# ---------------------------------------------------------------------------
+# Mail (4.13): a stand-in SMTP server and a stand-in Google
+#
+# The VMs reach neither Google nor a public SMTP server, and must not
+# (design: packages/core/docs/mail-design.md §8). `write_smtp_sink <file>`
+# writes a Node script (built-ins only) speaking enough SMTP over implicit
+# TLS for nodemailer and Authelia's notifier path through the relay: EHLO,
+# AUTH PLAIN/LOGIN, MAIL, RCPT, DATA, RSET, NOOP, QUIT. Every message is one
+# JSON file in its directory — envelope, raw message, and the subject, text
+# and HTML decoded — so a spec reads the mail a person would get. Its
+# certificate is issued by a private CA the transport trusts through
+# `caPem` (Q4). `write_fake_google <file>` writes the parts of Google the
+# Gmail API transport uses: the consent redirect, the token endpoint
+# (authorization code with PKCE, refresh), revoke and messages.send, plus
+# admin routes to read what was sent and to make sending fail. The panel
+# reaches it only through LAMALIBRE_LAMASTE_TEST_GOOGLE_BASE_URL, set in a
+# unit drop-in (`mail_google_dropin`).
+# ---------------------------------------------------------------------------
+
+# write_smtp_sink file
+write_smtp_sink() {
+  cat > "$1" <<'SMTP_SINK_EOF'
+// Stand-in SMTP server for the Lamaste e2e suite (implicit TLS).
+//
+//   node smtp-sink.mjs --port 2465 --cert server.pem --key server.key \
+//     --dir /var/tmp/sink/mails --username relay --password-file pw
+//
+// One JSON file per message in --dir:
+//   { from, to: [...], raw, subject, text, html, headers: {from, to, …}, at }
+// A file <dir>/../answer holding "<code> <text>" makes the next DATA answer
+// that (once) — how a spec makes the server refuse a message.
+import tls from 'node:tls';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import path from 'node:path';
+
+const opts = {};
+for (let i = 2; i < process.argv.length; i += 2) opts[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];
+const password = readFileSync(opts['password-file'], 'utf-8').trim();
+mkdirSync(opts.dir, { recursive: true });
+let counter = 0;
+
+function decodeQp(text) {
+  return Buffer.from(
+    text.replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))),
+    'latin1',
+  ).toString('utf-8');
+}
+function decodeWords(value) {
+  return value.replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (_, _cs, enc, data) =>
+    enc.toUpperCase() === 'B'
+      ? Buffer.from(data, 'base64').toString('utf-8')
+      : decodeQp(data.replace(/_/g, ' ')),
+  ).replace(/\?=\s+=\?/g, '?==?');
+}
+function splitMessage(raw) {
+  const at = raw.search(/\r?\n\r?\n/);
+  const head = at < 0 ? raw : raw.slice(0, at);
+  const body = at < 0 ? '' : raw.slice(at).replace(/^\r?\n\r?\n/, '');
+  const headers = {};
+  for (const line of head.replace(/\r?\n[ \t]+/g, ' ').split(/\r?\n/)) {
+    const colon = line.indexOf(':');
+    if (colon > 0) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+  }
+  return { headers, body };
+}
+function decodePart(headers, body) {
+  const cte = (headers['content-transfer-encoding'] ?? '').toLowerCase();
+  if (cte === 'base64') return Buffer.from(body.replace(/\s+/g, ''), 'base64').toString('utf-8');
+  if (cte === 'quoted-printable') return decodeQp(body);
+  return body;
+}
+function collect(headers, body, out) {
+  const type = headers['content-type'] ?? 'text/plain';
+  const boundary = /boundary="?([^";]+)"?/i.exec(type)?.[1];
+  if (/^multipart\//i.test(type) && boundary) {
+    for (const piece of body.split(`--${boundary}`).slice(1)) {
+      if (piece.startsWith('--')) break;
+      const part = splitMessage(piece.replace(/^\r?\n/, ''));
+      collect(part.headers, part.body, out);
+    }
+    return;
+  }
+  if (/^text\/html/i.test(type)) out.html ??= decodePart(headers, body);
+  else if (/^text\/plain/i.test(type)) out.text ??= decodePart(headers, body);
+}
+function store(envelope, raw) {
+  const { headers, body } = splitMessage(raw);
+  const out = { text: null, html: null };
+  collect(headers, body, out);
+  const shown = {};
+  for (const key of ['from', 'to', 'cc', 'bcc', 'subject', 'auto-submitted', 'reply-to']) {
+    if (headers[key] !== undefined) shown[key] = decodeWords(headers[key]);
+  }
+  counter += 1;
+  const name = `${Date.now()}-${process.pid}-${counter}.json`;
+  writeFileSync(
+    path.join(opts.dir, name),
+    JSON.stringify({ ...envelope, raw, subject: shown.subject ?? null, text: out.text, html: out.html, headers: shown, at: new Date().toISOString() }),
+  );
+}
+function cannedAnswer() {
+  const file = path.join(opts.dir, '..', 'answer');
+  if (!existsSync(file)) return null;
+  const answer = readFileSync(file, 'utf-8').trim();
+  rmSync(file, { force: true });
+  return answer || null;
+}
+
+const server = tls.createServer({ cert: readFileSync(opts.cert), key: readFileSync(opts.key) }, (socket) => {
+  let buffer = '';
+  let mode = 'command';
+  let authed = !opts.username;
+  let loginStep = null;
+  let envelope = { from: null, to: [] };
+  let data = '';
+  const say = (line) => socket.write(`${line}\r\n`);
+  const plainOk = (b64) => {
+    const parts = Buffer.from(b64, 'base64').toString('utf-8').split('\0');
+    return parts[1] === opts.username && parts[2] === password;
+  };
+  say('220 e2e-smtp-sink ESMTP');
+  socket.on('error', () => {});
+  socket.on('data', (chunk) => {
+    buffer += chunk.toString('latin1');
+    for (;;) {
+      if (mode === 'data') {
+        const end = buffer.indexOf('\r\n.\r\n');
+        const lone = buffer.startsWith('.\r\n') ? 0 : -1;
+        if (end < 0 && lone < 0) return;
+        const cut = lone === 0 && data === '' ? 0 : end + 2;
+        data += buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 3);
+        mode = 'command';
+        const raw = Buffer.from(data.replace(/^\.\./gm, '.'), 'latin1').toString('utf-8');
+        data = '';
+        const canned = cannedAnswer();
+        if (canned) {
+          say(canned);
+        } else {
+          store(envelope, raw);
+          say('250 2.0.0 stored');
+        }
+        envelope = { from: null, to: [] };
+        continue;
+      }
+      const nl = buffer.indexOf('\r\n');
+      if (nl < 0) return;
+      const line = buffer.slice(0, nl);
+      buffer = buffer.slice(nl + 2);
+      if (loginStep === 'user') { loginStep = Buffer.from(line, 'base64').toString('utf-8'); say('334 UGFzc3dvcmQ6'); continue; }
+      if (typeof loginStep === 'string' && loginStep !== 'plain') {
+        authed = loginStep === opts.username && Buffer.from(line, 'base64').toString('utf-8') === password;
+        loginStep = null;
+        say(authed ? '235 2.7.0 Authentication successful' : '535 5.7.8 Authentication failed');
+        continue;
+      }
+      if (loginStep === 'plain') { loginStep = null; authed = plainOk(line); say(authed ? '235 2.7.0 Authentication successful' : '535 5.7.8 Authentication failed'); continue; }
+      const verb = line.split(' ')[0].toUpperCase();
+      if (verb === 'EHLO' || verb === 'HELO') {
+        say('250-e2e-smtp-sink');
+        say('250-SIZE 10485760');
+        say('250-8BITMIME');
+        say(opts.username ? '250 AUTH PLAIN LOGIN' : '250 HELP');
+      } else if (verb === 'AUTH') {
+        const [, method, initial] = line.split(' ');
+        if (/^plain$/i.test(method ?? '')) {
+          if (initial) { authed = plainOk(initial); say(authed ? '235 2.7.0 Authentication successful' : '535 5.7.8 Authentication failed'); }
+          else { loginStep = 'plain'; say('334 '); }
+        } else if (/^login$/i.test(method ?? '')) {
+          loginStep = 'user';
+          say('334 VXNlcm5hbWU6');
+        } else say('504 5.5.4 Unrecognized authentication type');
+      } else if (verb === 'MAIL') {
+        if (!authed) { say('530 5.7.0 Authentication required'); continue; }
+        envelope = { from: /<([^>]*)>/.exec(line)?.[1] ?? '', to: [] };
+        say('250 2.1.0 OK');
+      } else if (verb === 'RCPT') {
+        if (envelope.from === null) { say('503 5.5.1 MAIL first'); continue; }
+        envelope.to.push(/<([^>]*)>/.exec(line)?.[1] ?? '');
+        say('250 2.1.5 OK');
+      } else if (verb === 'DATA') {
+        if (envelope.to.length === 0) { say('503 5.5.1 RCPT first'); continue; }
+        mode = 'data';
+        say('354 End data with <CR><LF>.<CR><LF>');
+      } else if (verb === 'RSET') { envelope = { from: null, to: [] }; say('250 2.0.0 OK'); }
+      else if (verb === 'NOOP') say('250 2.0.0 OK');
+      else if (verb === 'QUIT') { say('221 2.0.0 Bye'); socket.end(); return; }
+      else say('502 5.5.2 Command not recognized');
+    }
+  });
+});
+server.listen(Number(opts.port), opts.host ?? '127.0.0.1', () => console.log(`smtp sink on ${opts.port}`));
+SMTP_SINK_EOF
+}
+
+# write_fake_google file
+write_fake_google() {
+  cat > "$1" <<'FAKE_GOOGLE_EOF'
+// Stand-in for the parts of Google the Lamaste Gmail API transport uses.
+//
+//   node fake-google.mjs --port 4880 --client-id <id> --client-secret-file f \
+//     --account relay@example.com --dir /var/tmp/fake-google
+//
+//   GET  /o/oauth2/v2/auth   the consent: 302 to redirect_uri?code&state at once
+//   POST /token              authorization_code (PKCE S256 checked) | refresh_token
+//   POST /revoke             the refresh token no longer works
+//   POST /gmail/v1/users/me/messages/send   recorded as <dir>/sent/<n>.json
+//   GET  /-/e2e/sent         what was sent (From, To, Subject, raw)
+//   POST /-/e2e/config       {"sendError": {"status": 403, "reason": "dailyLimitExceeded"} | null,
+//                             "grant": "ok" | "invalid_grant"}
+import http from 'node:http';
+import crypto from 'node:crypto';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
+import path from 'node:path';
+
+const opts = {};
+for (let i = 2; i < process.argv.length; i += 2) opts[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];
+const clientSecret = readFileSync(opts['client-secret-file'], 'utf-8').trim();
+const sentDir = path.join(opts.dir, 'sent');
+mkdirSync(sentDir, { recursive: true });
+const SCOPE = 'openid https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email';
+const codes = new Map();
+const refreshTokens = new Set();
+const accessTokens = new Set();
+let config = { sendError: null, grant: 'ok' };
+let sent = 0;
+
+const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+function idToken() {
+  const now = Math.floor(Date.now() / 1000);
+  return `${b64({ alg: 'RS256', kid: 'e2e' })}.${b64({ iss: 'https://accounts.google.com', aud: opts['client-id'], sub: '1', email: opts.account, email_verified: true, iat: now, exp: now + 3600 })}.c2lnbmF0dXJl`;
+}
+function json(res, status, body) {
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+function readBody(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+  });
+}
+function header(raw, name) {
+  const head = raw.split(/\r?\n\r?\n/)[0].replace(/\r?\n[ \t]+/g, ' ');
+  const line = head.split(/\r?\n/).find((l) => l.toLowerCase().startsWith(`${name}:`));
+  return line ? line.slice(name.length + 1).trim() : null;
+}
+
+http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://127.0.0.1');
+  if (req.method === 'GET' && url.pathname === '/o/oauth2/v2/auth') {
+    const q = url.searchParams;
+    if (q.get('client_id') !== opts['client-id'] || q.get('code_challenge_method') !== 'S256') return json(res, 400, { error: 'invalid_request' });
+    const code = crypto.randomBytes(16).toString('hex');
+    codes.set(code, { challenge: q.get('code_challenge'), redirectUri: q.get('redirect_uri') });
+    const back = new URL(q.get('redirect_uri'));
+    back.searchParams.set('code', code);
+    back.searchParams.set('state', q.get('state'));
+    res.writeHead(302, { location: back.href });
+    return res.end();
+  }
+  if (req.method === 'POST' && url.pathname === '/token') {
+    const form = new URLSearchParams(await readBody(req));
+    if (form.get('client_id') !== opts['client-id'] || form.get('client_secret') !== clientSecret) return json(res, 401, { error: 'invalid_client' });
+    if (form.get('grant_type') === 'authorization_code') {
+      const pending = codes.get(form.get('code'));
+      codes.delete(form.get('code'));
+      const challenge = crypto.createHash('sha256').update(form.get('code_verifier') ?? '').digest('base64url');
+      if (!pending || pending.challenge !== challenge || pending.redirectUri !== form.get('redirect_uri')) return json(res, 400, { error: 'invalid_grant' });
+      const refresh = `1//e2e-${crypto.randomBytes(16).toString('hex')}`;
+      const access = `ya29.e2e-${crypto.randomBytes(16).toString('hex')}`;
+      refreshTokens.add(refresh);
+      accessTokens.add(access);
+      return json(res, 200, { access_token: access, expires_in: 3599, refresh_token: refresh, scope: SCOPE, token_type: 'Bearer', id_token: idToken() });
+    }
+    if (form.get('grant_type') === 'refresh_token') {
+      if (config.grant !== 'ok' || !refreshTokens.has(form.get('refresh_token'))) return json(res, 400, { error: 'invalid_grant' });
+      const access = `ya29.e2e-${crypto.randomBytes(16).toString('hex')}`;
+      accessTokens.add(access);
+      return json(res, 200, { access_token: access, expires_in: 3599, scope: SCOPE, token_type: 'Bearer', id_token: idToken() });
+    }
+    return json(res, 400, { error: 'unsupported_grant_type' });
+  }
+  if (req.method === 'POST' && url.pathname === '/revoke') {
+    refreshTokens.delete(new URLSearchParams(await readBody(req)).get('token'));
+    return json(res, 200, {});
+  }
+  if (req.method === 'POST' && url.pathname === '/gmail/v1/users/me/messages/send') {
+    const token = (req.headers.authorization ?? '').replace(/^Bearer /, '');
+    const body = await readBody(req);
+    if (!accessTokens.has(token)) return json(res, 401, { error: { code: 401, message: 'Invalid Credentials' } });
+    if (config.sendError) {
+      return json(res, config.sendError.status, { error: { code: config.sendError.status, message: 'Daily user sending limit exceeded.', errors: [{ reason: config.sendError.reason }] } });
+    }
+    const raw = Buffer.from(JSON.parse(body).raw ?? '', 'base64url').toString('utf-8');
+    sent += 1;
+    writeFileSync(path.join(sentDir, `${Date.now()}-${sent}.json`), JSON.stringify({ from: header(raw, 'from'), to: header(raw, 'to'), subject: header(raw, 'subject'), raw }));
+    return json(res, 200, { id: `e2e-${sent}`, threadId: `e2e-${sent}`, labelIds: ['SENT'] });
+  }
+  if (req.method === 'GET' && url.pathname === '/-/e2e/sent') {
+    return json(res, 200, readdirSync(sentDir).sort().map((f) => JSON.parse(readFileSync(path.join(sentDir, f), 'utf-8'))));
+  }
+  if (req.method === 'POST' && url.pathname === '/-/e2e/config') {
+    config = { ...config, ...JSON.parse((await readBody(req)) || '{}') };
+    return json(res, 200, config);
+  }
+  return json(res, 404, { error: 'not found' });
+}).listen(Number(opts.port), '127.0.0.1', () => console.log(`fake google on ${opts.port}`));
+FAKE_GOOGLE_EOF
+}
+
+# mail_sink_certificates <dir> — a private CA and a certificate for
+# 127.0.0.1 it issued, for the SMTP sink: <dir>/ca.pem, server.pem, server.key
+mail_sink_certificates() {
+  local dir="$1"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 \
+    -subj '/CN=Lamaste e2e mail CA' -keyout "${dir}/ca.key" -out "${dir}/ca.pem" \
+    -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign' > /dev/null 2>&1
+  openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj '/CN=127.0.0.1' \
+    -keyout "${dir}/server.key" -out "${dir}/server.csr" > /dev/null 2>&1
+  printf 'subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n' > "${dir}/server.ext"
+  openssl x509 -req -in "${dir}/server.csr" -CA "${dir}/ca.pem" -CAkey "${dir}/ca.key" -CAcreateserial \
+    -days 2 -extfile "${dir}/server.ext" -out "${dir}/server.pem" > /dev/null 2>&1
+}
+
+# start_smtp_sink <dir> <port> <username> — the sink (write_smtp_sink) on
+# 127.0.0.1:<port>, its mails in <dir>/mails, the password in <dir>/password
+# (made when missing); returns once it answers (1 when it does not in 20 s)
+start_smtp_sink() {
+  local dir="$1" port="$2" deadline
+  [ -s "${dir}/password" ] || openssl rand -hex 16 > "${dir}/password"
+  [ -s "${dir}/ca.pem" ] || mail_sink_certificates "${dir}"
+  write_smtp_sink "${dir}/smtp-sink.mjs"
+  stop_smtp_sink
+  mkdir -p "${dir}/mails"
+  nohup node "${dir}/smtp-sink.mjs" --port "${port}" --cert "${dir}/server.pem" --key "${dir}/server.key" \
+    --dir "${dir}/mails" --username "$3" --password-file "${dir}/password" &> "${dir}/sink.log" &
+  deadline=$((SECONDS + 20))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if echo QUIT | timeout 5 openssl s_client -quiet -connect "127.0.0.1:${port}" 2>/dev/null | grep -q '^220'; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+# stop_smtp_sink — the sink no longer runs
+stop_smtp_sink() { pkill -f '[s]mtp-sink.mjs' 2>/dev/null || true; }
+
+# sink_mails_to <dir> <address> — the sink's mails to <address>, oldest
+# first, as a JSON array
+sink_mails_to() {
+  local f
+  for f in $(ls -1 "$1/mails" 2>/dev/null | sort); do cat "$1/mails/$f"; echo; done |
+    jq -s -c --arg a "$2" '[.[] | select(.to | index($a) != null)]' 2>/dev/null || echo '[]'
+}
+
+# sink_count_to <dir> <address> — how many mails the sink holds for <address>
+sink_count_to() { sink_mails_to "$1" "$2" | jq 'length' 2>/dev/null || echo 0; }
+
+# sink_wait_count <dir> <address> <n> [seconds] — until the sink holds <n> mails for <address>
+sink_wait_count() {
+  local deadline=$((SECONDS + ${4:-30}))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    [ "$(sink_count_to "$1" "$2")" -ge "$3" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+# sink_last_to <dir> <address> — the newest mail to <address> ('null' when none)
+sink_last_to() { sink_mails_to "$1" "$2" | jq -c 'last' 2>/dev/null || echo null; }
+
+# mail_link <mail json> <path> — the first https link to <path> in the mail's text (e.g. /reset#…)
+mail_link() {
+  printf '%s' "$1" | jq -r '.text // ""' | grep -o "https://[^[:space:]\"<>]*$2[^[:space:]\"<>]*" | head -n 1 || true
+}
+
+# start_fake_google <dir> <port> <client id> <account> — the stand-in Google
+# (write_fake_google) on 127.0.0.1:<port>; its client secret in
+# <dir>/client-secret (made when missing); returns once it answers
+start_fake_google() {
+  local dir="$1" port="$2"
+  mkdir -p "${dir}"
+  [ -s "${dir}/client-secret" ] || printf 'GOCSPX-%s\n' "$(openssl rand -hex 12)" > "${dir}/client-secret"
+  write_fake_google "${dir}/fake-google.mjs"
+  stop_fake_google
+  nohup node "${dir}/fake-google.mjs" --port "${port}" --client-id "$3" --client-secret-file "${dir}/client-secret" \
+    --account "$4" --dir "${dir}" &> "${dir}/google.log" &
+  wait_for_http "http://127.0.0.1:${port}/-/e2e/sent" 20
+}
+
+# stop_fake_google — the stand-in Google no longer runs
+stop_fake_google() { pkill -f '[f]ake-google.mjs' 2>/dev/null || true; }
+
+# mail_google_dropin <base url | ""> — the panel's unit sends Google's calls to
+# <base url> (a drop-in setting LAMALIBRE_LAMASTE_TEST_GOOGLE_BASE_URL), or no
+# longer for ""; the panel restarted and answering
+mail_google_dropin() {
+  local dir=/etc/systemd/system/lamalibre-lamaste-serverd.service.d
+  if [ -n "$1" ]; then
+    sudo mkdir -p "${dir}"
+    printf '[Service]\nEnvironment=LAMALIBRE_LAMASTE_TEST_GOOGLE_BASE_URL=%s\n' "$1" | sudo tee "${dir}/e2e-google.conf" > /dev/null
+  else
+    sudo rm -f "${dir}/e2e-google.conf"
+  fi
+  sudo systemctl daemon-reload
+  sudo systemctl restart lamalibre-lamaste-serverd
+  wait_for_http "${PANEL_DIRECT_URL}/api/health" 60 || true
+}
