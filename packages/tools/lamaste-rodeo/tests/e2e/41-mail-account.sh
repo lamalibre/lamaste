@@ -15,12 +15,17 @@
 #    finish needs a current authenticator code; the user signs in through
 #    Authelia with the new password; a "password changed" mail follows. A
 #    second link with the code already accepted: refused (totp_invalid),
-#    then a fresh code sets it. A user without an authenticator: no_totp.
-# 3. Change password, signed in: behind Authelia (401 without a session),
-#    the current password checked, then set; signs in with it.
+#    then a fresh code sets it. A user without an authenticator: no_totp;
+#    a second start while their link is live and under 10 minutes old
+#    mails nothing. A member of admins: the same answer, never a mail.
+# 3. Change password, signed in: behind Gatekeeper (401 without a
+#    session), the current password checked, then set; signs in with it.
+#    A Remote-User sent straight to the panel's loopback port names
+#    nobody (401).
 # 4. An administrator's invitation: mailed with its link; reissued — the
 #    old link dead, a new one mailed; the listing shows the mail and the
-#    reissue; the new link accepted.
+#    reissue; the new link accepted. One granting admins: not mailed
+#    unless asked; three new links a day, the fourth 429 reissue_rate.
 # 5. The Gmail API: lamaste-server mail google → the consent URL; Google's
 #    redirect to auth.<domain>/mail/google/callback stores the transport
 #    (the account read from the token); a test mail through messages.send;
@@ -50,6 +55,8 @@ CHANGE_USER="e2e41-change-${RUN_ID}"
 BARE_USER="e2e41-bare-${RUN_ID}"
 TEST_ONLY_USER="e2e41-local-${RUN_ID}"
 INVITEE="e2e41-inv-${RUN_ID}"
+ADMIN_USER="e2e41-admin-${RUN_ID}"
+ADMIN_INVITEE="e2e41-adminv-${RUN_ID}"
 # Test credentials for this run only, never printed
 PASSWORD="E2e-$(openssl rand -hex 12)"
 NEW_PASSWORD="E2e-$(openssl rand -hex 12)"
@@ -104,7 +111,7 @@ token_of() { printf '%s' "${1#*#}"; }
 # new_user <username> <email> — created with PASSWORD; asserts
 new_user() {
   local resp
-  resp=$(api_post "users" "{\"username\":\"$1\",\"displayname\":\"E2E $1\",\"email\":\"$2\",\"password\":\"${PASSWORD}\",\"groups\":[]}")
+  resp=$(api_post "users" "{\"username\":\"$1\",\"displayname\":\"E2E $1\",\"email\":\"$2\",\"password\":\"${PASSWORD}\",\"groups\":${3:-[]}}")
   assert_json_field "$resp" '.user.username' "$1" "User $1 <$2>" || true
 }
 
@@ -243,6 +250,20 @@ TOKEN=$(token_of "$(mail_link "$(sink_last_to "${SINK}" "${BARE_USER}@${MAIL_DOM
 RESP=$(reset_finish "${TOKEN}" "${NEW_PASSWORD}" "123456")
 assert_eq "$(status_of "$RESP")" "409" "A user without an authenticator: 409" || true
 assert_json_field "$(body_of "$RESP")" '.code' 'no_totp' "…no_totp (the page says to ask an administrator)" || true
+RESP=$(reset_start "${BARE_USER}")
+assert_eq "$(status_of "$RESP")" "202" "A second start while that link is live: the same answer" || true
+sleep 5
+assert_eq "$(sink_count_to "${SINK}" "${BARE_USER}@${MAIL_DOMAIN}")" "1" "…and no new mail (the link is under 10 minutes old)" || true
+
+log_section "An administrator never resets by mail"
+
+new_user "${ADMIN_USER}" "${ADMIN_USER}@${MAIL_DOMAIN}" '["admins"]'
+RESP=$(reset_start "${ADMIN_USER}")
+assert_eq "$(status_of "$RESP") $(body_of "$RESP")" '202 {"sent":true}' "A member of admins: the same answer" || true
+RESP=$(reset_start "${ADMIN_USER}@${MAIL_DOMAIN}")
+assert_eq "$(status_of "$RESP")" "202" "…by address too" || true
+sleep 5
+assert_eq "$(sink_count_to "${SINK}" "${ADMIN_USER}@${MAIL_DOMAIN}")" "0" "…and no mail" || true
 
 # ===========================================================================
 # 3. Change password
@@ -251,7 +272,14 @@ assert_json_field "$(body_of "$RESP")" '.code' 'no_totp' "…no_totp (the page s
 log_section "Change password, signed in"
 
 RESP=$(portal_post /api/account/password "$(jq -c -n --arg c "${PASSWORD}" --arg n "${NEW_PASSWORD}" '{currentPassword: $c, newPassword: $n}')")
-assert_eq "$(status_of "$RESP")" "401" "Without a session: 401 (Authelia's forward auth)" || true
+assert_eq "$(status_of "$RESP")" "401" "Without a session: 401 (Gatekeeper asks Authelia)" || true
+RESP=$(curl -s --max-time 15 -X POST -H "Host: auth.${DOMAIN}" -H 'Content-Type: application/json' \
+  -H "Origin: https://auth.${DOMAIN}" -H "Remote-User: ${CHANGE_USER}" \
+  -d "$(jq -c -n --arg c "${PASSWORD}" --arg n "${NEW_PASSWORD}" '{currentPassword: $c, newPassword: $n}')" \
+  -w '\n%{http_code}' "http://127.0.0.1:3100/api/account/password" 2>/dev/null || echo "000")
+assert_eq "$(status_of "$RESP")" "401" "Remote-User sent straight to 127.0.0.1:3100: 401 — the panel takes the user from Gatekeeper's assertion alone" || true
+VHOST=$(sudo cat "/etc/nginx/sites-available/lamalibre-lamaste-auth-${DOMAIN}" 2>/dev/null || echo "")
+assert_contains "$VHOST" "proxy_pass http://127.0.0.1:9294/authz/account/${DOMAIN};" "The auth vhost asks Gatekeeper for the password change" || true
 CHANGE_SECRET=$(local_reset_totp "${CHANGE_USER}")
 local_sign_in "${CHANGE_USER}" "${PASSWORD}" "${CHANGE_SECRET}" "${JAR}" "${DOMAIN}"
 assert_eq "${SIGN_IN_RESULT}" "OK OK" "${CHANGE_USER} signs in" || true
@@ -288,6 +316,23 @@ ROW=$(api_get "invitations" | jq -c --arg i "${INV_ID}" '.invitations[] | select
 assert_json_field "$ROW" '"\(.mail.status) \(.reissuedAt != null)"' 'sent true' "The listing: mail sent, reissued" || true
 RESP=$(invite_post accept "$(jq -c -n --arg t "${NEW_TOKEN}" --arg p "${PASSWORD}" '{token: $t, password: $p}')")
 assert_eq "$(status_of "$RESP")" "200" "The new link accepted" || true
+
+log_section "An invitation that makes an administrator: not mailed unless asked"
+
+INV=$(api_post "invitations" "{\"username\":\"${ADMIN_INVITEE}\",\"email\":\"${ADMIN_INVITEE}@${MAIL_DOMAIN}\",\"groups\":[\"admins\"]}")
+ADMIN_INV_ID=$(json_get "$INV" '.invitation.id')
+assert_json_field "$INV" '"\(.mail) \(.inviteUrl | test("/invite#"))"' 'null true' "POST /api/invitations (admins): not mailed, its link answered" || true
+RE=$(api_post "invitations/${ADMIN_INV_ID}/reissue" '{}')
+assert_json_field "$RE" '.mail' 'null' "…a new link: not mailed either" || true
+RE=$(api_post "invitations/${ADMIN_INV_ID}/reissue" '{"mail":true}')
+assert_json_field "$RE" '.mail.status' 'sent' "…a new link with mail: true — mailed" || true
+sink_wait_count "${SINK}" "${ADMIN_INVITEE}@${MAIL_DOMAIN}" 1 30 || log_fail "No mail for the administrator's invitation asked to be mailed"
+RE=$(api_post "invitations/${ADMIN_INV_ID}/reissue" '{"mail":false}')
+assert_json_field "$RE" '.mail' 'null' "A third new link: allowed" || true
+RESP=$(call POST "invitations/${ADMIN_INV_ID}/reissue" '{}')
+assert_eq "$(status_of "$RESP")" "429" "A fourth new link the same day: 429" || true
+assert_json_field "$(body_of "$RESP")" '.code' 'reissue_rate' "…reissue_rate" || true
+call DELETE "invitations/${ADMIN_INV_ID}" > /dev/null 2>&1 || true
 
 # ===========================================================================
 # 5. The Gmail API

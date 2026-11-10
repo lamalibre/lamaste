@@ -1022,16 +1022,197 @@
               "message": "…no_totp (the page says to ask an administrator)"
             }
           }
+        },
+        {
+          "id": "step-67",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_start \"${BARE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "A second start while that link is live: the same answer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202"
+              },
+              "message": "A second start while that link is live: the same answer"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Sleep 5s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 5
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "…and no new mail (the link is under 10 minutes old)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sink_count_to \"${SINK}\" \"${BARE_USER}@${MAIL_DOMAIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…and no new mail (the link is under 10 minutes old)"
+            }
+          }
         }
       ],
-      "bash": "log_section \"No authenticator, no reset by mail\"\n\nsudo /usr/local/sbin/lamaste-priv authelia-user purge-second-factors \"${BARE_USER}\" > /dev/null 2>&1 || true\nreset_start \"${BARE_USER}\" > /dev/null\nsink_wait_count \"${SINK}\" \"${BARE_USER}@${MAIL_DOMAIN}\" 1 30 || log_fail \"No reset mail for ${BARE_USER}\"\nTOKEN=$(token_of \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${BARE_USER}@${MAIL_DOMAIN}\")\" \"/reset#\")\")\nRESP=$(reset_finish \"${TOKEN}\" \"${NEW_PASSWORD}\" \"123456\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"A user without an authenticator: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'no_totp' \"…no_totp (the page says to ask an administrator)\" || true\n\n# ===========================================================================\n# 3. Change password\n# ==========================================================================="
+      "bash": "log_section \"No authenticator, no reset by mail\"\n\nsudo /usr/local/sbin/lamaste-priv authelia-user purge-second-factors \"${BARE_USER}\" > /dev/null 2>&1 || true\nreset_start \"${BARE_USER}\" > /dev/null\nsink_wait_count \"${SINK}\" \"${BARE_USER}@${MAIL_DOMAIN}\" 1 30 || log_fail \"No reset mail for ${BARE_USER}\"\nTOKEN=$(token_of \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${BARE_USER}@${MAIL_DOMAIN}\")\" \"/reset#\")\")\nRESP=$(reset_finish \"${TOKEN}\" \"${NEW_PASSWORD}\" \"123456\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"A user without an authenticator: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'no_totp' \"…no_totp (the page says to ask an administrator)\" || true\nRESP=$(reset_start \"${BARE_USER}\")\nassert_eq \"$(status_of \"$RESP\")\" \"202\" \"A second start while that link is live: the same answer\" || true\nsleep 5\nassert_eq \"$(sink_count_to \"${SINK}\" \"${BARE_USER}@${MAIL_DOMAIN}\")\" \"1\" \"…and no new mail (the link is under 10 minutes old)\" || true"
+    },
+    {
+      "id": "an-administrator-never-resets-by-mail",
+      "label": "An administrator never resets by mail",
+      "steps": [
+        {
+          "id": "step-72",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_start \"${ADMIN_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-73",
+          "label": "A member of admins: the same answer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(body_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202 {\"sent\":true}"
+              },
+              "message": "A member of admins: the same answer"
+            }
+          }
+        },
+        {
+          "id": "step-74",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_start \"${ADMIN_USER}@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "…by address too",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202"
+              },
+              "message": "…by address too"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Sleep 5s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 5
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "…and no mail",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sink_count_to \"${SINK}\" \"${ADMIN_USER}@${MAIL_DOMAIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…and no mail"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An administrator never resets by mail\"\n\nnew_user \"${ADMIN_USER}\" \"${ADMIN_USER}@${MAIL_DOMAIN}\" '[\"admins\"]'\nRESP=$(reset_start \"${ADMIN_USER}\")\nassert_eq \"$(status_of \"$RESP\") $(body_of \"$RESP\")\" '202 {\"sent\":true}' \"A member of admins: the same answer\" || true\nRESP=$(reset_start \"${ADMIN_USER}@${MAIL_DOMAIN}\")\nassert_eq \"$(status_of \"$RESP\")\" \"202\" \"…by address too\" || true\nsleep 5\nassert_eq \"$(sink_count_to \"${SINK}\" \"${ADMIN_USER}@${MAIL_DOMAIN}\")\" \"0\" \"…and no mail\" || true\n\n# ===========================================================================\n# 3. Change password\n# ==========================================================================="
     },
     {
       "id": "change-password-signed-in",
       "label": "Change password, signed in",
       "steps": [
         {
-          "id": "step-67",
+          "id": "step-78",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1048,8 +1229,8 @@
           ]
         },
         {
-          "id": "step-68",
-          "label": "Without a session: 401 (Authelia's forward auth)",
+          "id": "step-79",
+          "label": "Without a session: 401 (Gatekeeper asks Authelia)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1064,12 +1245,88 @@
                 "kind": "literal",
                 "value": "401"
               },
-              "message": "Without a session: 401 (Authelia's forward auth)"
+              "message": "Without a session: 401 (Gatekeeper asks Authelia)"
             }
           }
         },
         {
-          "id": "step-69",
+          "id": "step-80",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time 15 -X POST -H \"Host: auth.${DOMAIN}\" -H 'Content-Type: application/json' -H \"Origin: https://auth.${DOMAIN}\" -H \"Remote-User: ${CHANGE_USER}\" -d \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" -w '\\n%{http_code}' \"http://127.0.0.1:3100/api/account/password\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "Remote-User sent straight to 127.0.0.1:3100: 401 — the panel takes the user from Gatekeeper's assertion alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Remote-User sent straight to 127.0.0.1:3100: 401 — the panel takes the user from Gatekeeper's assertion alone"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "Set VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"/etc/nginx/sites-available/lamalibre-lamaste-auth-${DOMAIN}\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "The auth vhost asks Gatekeeper for the password change",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "proxy_pass http://127.0.0.1:9294/authz/account/${DOMAIN};"
+              },
+              "message": "The auth vhost asks Gatekeeper for the password change"
+            }
+          }
+        },
+        {
+          "id": "step-84",
           "label": "Set CHANGE_SECRET",
           "target": "local",
           "op": {
@@ -1086,7 +1343,7 @@
           ]
         },
         {
-          "id": "step-71",
+          "id": "step-86",
           "label": "${CHANGE_USER} signs in",
           "target": "local",
           "continueOnError": true,
@@ -1107,7 +1364,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-87",
           "label": "auth.${DOMAIN}/account/password: the page",
           "target": "local",
           "continueOnError": true,
@@ -1128,7 +1385,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-88",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1145,7 +1402,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-89",
           "label": "A wrong current password: current_password_invalid",
           "target": "local",
           "continueOnError": true,
@@ -1167,7 +1424,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-90",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1184,7 +1441,7 @@
           ]
         },
         {
-          "id": "step-76",
+          "id": "step-91",
           "label": "The current password, then the new one: set",
           "target": "local",
           "continueOnError": true,
@@ -1205,7 +1462,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-93",
           "label": "…signs in with it",
           "target": "local",
           "continueOnError": true,
@@ -1226,14 +1483,14 @@
           }
         }
       ],
-      "bash": "log_section \"Change password, signed in\"\n\nRESP=$(portal_post /api/account/password \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\")\nassert_eq \"$(status_of \"$RESP\")\" \"401\" \"Without a session: 401 (Authelia's forward auth)\" || true\nCHANGE_SECRET=$(local_reset_totp \"${CHANGE_USER}\")\nlocal_sign_in \"${CHANGE_USER}\" \"${PASSWORD}\" \"${CHANGE_SECRET}\" \"${JAR}\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${CHANGE_USER} signs in\" || true\nassert_eq \"$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -b \"${JAR}\" -o /dev/null -w '%{http_code}' \"https://auth.${DOMAIN}/account/password\" 2>/dev/null)\" \"200\" \"auth.${DOMAIN}/account/password: the page\" || true\nRESP=$(portal_post /api/account/password \"$(jq -c -n --arg c \"wrong-${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" -b \"${JAR}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'current_password_invalid' \"A wrong current password: current_password_invalid\" || true\nRESP=$(portal_post /api/account/password \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" -b \"${JAR}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The current password, then the new one: set\" || true\nlocal_sign_in \"${CHANGE_USER}\" \"${NEW_PASSWORD}\" \"${CHANGE_SECRET}\" \"${JAR}\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"…signs in with it\" || true\nif sink_wait_count \"${SINK}\" \"${CHANGE_USER}@${MAIL_DOMAIN}\" 1 30; then log_pass \"A \\\"password changed\\\" mail\"; else log_fail \"No \\\"password changed\\\" mail\"; fi\n\n# ===========================================================================\n# 4. An administrator's invitation\n# ==========================================================================="
+      "bash": "log_section \"Change password, signed in\"\n\nRESP=$(portal_post /api/account/password \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\")\nassert_eq \"$(status_of \"$RESP\")\" \"401\" \"Without a session: 401 (Gatekeeper asks Authelia)\" || true\nRESP=$(curl -s --max-time 15 -X POST -H \"Host: auth.${DOMAIN}\" -H 'Content-Type: application/json' \\\n  -H \"Origin: https://auth.${DOMAIN}\" -H \"Remote-User: ${CHANGE_USER}\" \\\n  -d \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" \\\n  -w '\\n%{http_code}' \"http://127.0.0.1:3100/api/account/password\" 2>/dev/null || echo \"000\")\nassert_eq \"$(status_of \"$RESP\")\" \"401\" \"Remote-User sent straight to 127.0.0.1:3100: 401 — the panel takes the user from Gatekeeper's assertion alone\" || true\nVHOST=$(sudo cat \"/etc/nginx/sites-available/lamalibre-lamaste-auth-${DOMAIN}\" 2>/dev/null || echo \"\")\nassert_contains \"$VHOST\" \"proxy_pass http://127.0.0.1:9294/authz/account/${DOMAIN};\" \"The auth vhost asks Gatekeeper for the password change\" || true\nCHANGE_SECRET=$(local_reset_totp \"${CHANGE_USER}\")\nlocal_sign_in \"${CHANGE_USER}\" \"${PASSWORD}\" \"${CHANGE_SECRET}\" \"${JAR}\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${CHANGE_USER} signs in\" || true\nassert_eq \"$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -b \"${JAR}\" -o /dev/null -w '%{http_code}' \"https://auth.${DOMAIN}/account/password\" 2>/dev/null)\" \"200\" \"auth.${DOMAIN}/account/password: the page\" || true\nRESP=$(portal_post /api/account/password \"$(jq -c -n --arg c \"wrong-${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" -b \"${JAR}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'current_password_invalid' \"A wrong current password: current_password_invalid\" || true\nRESP=$(portal_post /api/account/password \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" -b \"${JAR}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The current password, then the new one: set\" || true\nlocal_sign_in \"${CHANGE_USER}\" \"${NEW_PASSWORD}\" \"${CHANGE_SECRET}\" \"${JAR}\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"…signs in with it\" || true\nif sink_wait_count \"${SINK}\" \"${CHANGE_USER}@${MAIL_DOMAIN}\" 1 30; then log_pass \"A \\\"password changed\\\" mail\"; else log_fail \"No \\\"password changed\\\" mail\"; fi\n\n# ===========================================================================\n# 4. An administrator's invitation\n# ==========================================================================="
     },
     {
       "id": "mailed-reissued-accepted",
       "label": "Mailed, reissued, accepted",
       "steps": [
         {
-          "id": "step-79",
+          "id": "step-94",
           "label": "POST /api/invitations",
           "target": "host",
           "op": {
@@ -1252,7 +1509,7 @@
           ]
         },
         {
-          "id": "step-80",
+          "id": "step-95",
           "label": "Set INV_ID",
           "target": "local",
           "op": {
@@ -1269,7 +1526,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-96",
           "label": "Set OLD_TOKEN",
           "target": "local",
           "op": {
@@ -1286,7 +1543,7 @@
           ]
         },
         {
-          "id": "step-82",
+          "id": "step-97",
           "label": "POST /api/invitations: mailed",
           "target": "local",
           "continueOnError": true,
@@ -1308,7 +1565,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-99",
           "label": "…the mail carries the link answered",
           "target": "local",
           "continueOnError": true,
@@ -1329,7 +1586,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-100",
           "label": "POST /api/invitations/${INV_ID}/reissue",
           "target": "host",
           "op": {
@@ -1348,7 +1605,7 @@
           ]
         },
         {
-          "id": "step-86",
+          "id": "step-101",
           "label": "Set NEW_TOKEN",
           "target": "local",
           "op": {
@@ -1365,7 +1622,7 @@
           ]
         },
         {
-          "id": "step-87",
+          "id": "step-102",
           "label": "POST /api/invitations/${INV_ID}/reissue: the same invitation, mailed again",
           "target": "local",
           "continueOnError": true,
@@ -1387,7 +1644,7 @@
           }
         },
         {
-          "id": "step-88",
+          "id": "step-103",
           "label": "…a new token",
           "target": "local",
           "continueOnError": true,
@@ -1408,7 +1665,7 @@
           }
         },
         {
-          "id": "step-90",
+          "id": "step-105",
           "label": "…the new link mailed",
           "target": "local",
           "continueOnError": true,
@@ -1429,7 +1686,7 @@
           }
         },
         {
-          "id": "step-91",
+          "id": "step-106",
           "label": "Set OLD",
           "target": "local",
           "op": {
@@ -1446,7 +1703,7 @@
           ]
         },
         {
-          "id": "step-92",
+          "id": "step-107",
           "label": "The old link is dead ($(status_of \"$OLD\"))",
           "target": "local",
           "continueOnError": true,
@@ -1467,7 +1724,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-108",
           "label": "GET /api/invitations",
           "target": "host",
           "op": {
@@ -1485,7 +1742,7 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-109",
           "label": "The listing: mail sent, reissued",
           "target": "local",
           "continueOnError": true,
@@ -1507,7 +1764,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-110",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1524,7 +1781,7 @@
           ]
         },
         {
-          "id": "step-96",
+          "id": "step-111",
           "label": "The new link accepted",
           "target": "local",
           "continueOnError": true,
@@ -1545,14 +1802,266 @@
           }
         }
       ],
-      "bash": "log_section \"Mailed, reissued, accepted\"\n\nINV=$(api_post \"invitations\" \"{\\\"username\\\":\\\"${INVITEE}\\\",\\\"email\\\":\\\"${INVITEE}@${MAIL_DOMAIN}\\\"}\")\nINV_ID=$(json_get \"$INV\" '.invitation.id')\nOLD_TOKEN=$(json_get \"$INV\" '.token')\nassert_json_field \"$INV\" '.mail.status' 'sent' \"POST /api/invitations: mailed\" || true\nsink_wait_count \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\" 1 30 || log_fail \"No invitation mail\"\nassert_eq \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\")\" \"/invite#\")\" \"$(json_get \"$INV\" '.inviteUrl')\" \"…the mail carries the link answered\" || true\nRE=$(api_post \"invitations/${INV_ID}/reissue\" '{}')\nNEW_TOKEN=$(json_get \"$RE\" '.token')\nassert_json_field \"$RE\" '\"\\(.mail.status) \\(.invitation.id)\"' \"sent ${INV_ID}\" \"POST /api/invitations/${INV_ID}/reissue: the same invitation, mailed again\" || true\nassert_not_eq \"${NEW_TOKEN}\" \"${OLD_TOKEN}\" \"…a new token\" || true\nsink_wait_count \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\" 2 30 || log_fail \"No second invitation mail\"\nassert_eq \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\")\" \"/invite#\")\" \"$(json_get \"$RE\" '.inviteUrl')\" \"…the new link mailed\" || true\nOLD=$(invite_post lookup \"{\\\"token\\\":\\\"${OLD_TOKEN}\\\"}\")\nassert_not_eq \"$(status_of \"$OLD\")\" \"200\" \"The old link is dead ($(status_of \"$OLD\"))\" || true\nROW=$(api_get \"invitations\" | jq -c --arg i \"${INV_ID}\" '.invitations[] | select(.id == $i)' 2>/dev/null || echo '{}')\nassert_json_field \"$ROW\" '\"\\(.mail.status) \\(.reissuedAt != null)\"' 'sent true' \"The listing: mail sent, reissued\" || true\nRESP=$(invite_post accept \"$(jq -c -n --arg t \"${NEW_TOKEN}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The new link accepted\" || true\n\n# ===========================================================================\n# 5. The Gmail API\n# ==========================================================================="
+      "bash": "log_section \"Mailed, reissued, accepted\"\n\nINV=$(api_post \"invitations\" \"{\\\"username\\\":\\\"${INVITEE}\\\",\\\"email\\\":\\\"${INVITEE}@${MAIL_DOMAIN}\\\"}\")\nINV_ID=$(json_get \"$INV\" '.invitation.id')\nOLD_TOKEN=$(json_get \"$INV\" '.token')\nassert_json_field \"$INV\" '.mail.status' 'sent' \"POST /api/invitations: mailed\" || true\nsink_wait_count \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\" 1 30 || log_fail \"No invitation mail\"\nassert_eq \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\")\" \"/invite#\")\" \"$(json_get \"$INV\" '.inviteUrl')\" \"…the mail carries the link answered\" || true\nRE=$(api_post \"invitations/${INV_ID}/reissue\" '{}')\nNEW_TOKEN=$(json_get \"$RE\" '.token')\nassert_json_field \"$RE\" '\"\\(.mail.status) \\(.invitation.id)\"' \"sent ${INV_ID}\" \"POST /api/invitations/${INV_ID}/reissue: the same invitation, mailed again\" || true\nassert_not_eq \"${NEW_TOKEN}\" \"${OLD_TOKEN}\" \"…a new token\" || true\nsink_wait_count \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\" 2 30 || log_fail \"No second invitation mail\"\nassert_eq \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\")\" \"/invite#\")\" \"$(json_get \"$RE\" '.inviteUrl')\" \"…the new link mailed\" || true\nOLD=$(invite_post lookup \"{\\\"token\\\":\\\"${OLD_TOKEN}\\\"}\")\nassert_not_eq \"$(status_of \"$OLD\")\" \"200\" \"The old link is dead ($(status_of \"$OLD\"))\" || true\nROW=$(api_get \"invitations\" | jq -c --arg i \"${INV_ID}\" '.invitations[] | select(.id == $i)' 2>/dev/null || echo '{}')\nassert_json_field \"$ROW\" '\"\\(.mail.status) \\(.reissuedAt != null)\"' 'sent true' \"The listing: mail sent, reissued\" || true\nRESP=$(invite_post accept \"$(jq -c -n --arg t \"${NEW_TOKEN}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The new link accepted\" || true"
+    },
+    {
+      "id": "an-invitation-that-makes-an-administrator-not-mailed-unless-asked",
+      "label": "An invitation that makes an administrator: not mailed unless asked",
+      "steps": [
+        {
+          "id": "step-112",
+          "label": "POST /api/invitations",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INV",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-113",
+          "label": "Set ADMIN_INV_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$INV\" '.invitation.id'"
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_INV_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
+          "label": "POST /api/invitations (admins): not mailed, its link answered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INV"
+              },
+              "path": "\"\\(.mail) \\(.inviteUrl | test(\"/invite#\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null true"
+              },
+              "message": "POST /api/invitations (admins): not mailed, its link answered"
+            }
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "POST /api/invitations/${ADMIN_INV_ID}/reissue",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations/${ADMIN_INV_ID}/reissue",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "RE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-116",
+          "label": "…a new link: not mailed either",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RE"
+              },
+              "path": ".mail",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "…a new link: not mailed either"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "POST /api/invitations/${ADMIN_INV_ID}/reissue",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations/${ADMIN_INV_ID}/reissue",
+            "body": {
+              "mail": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "RE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-118",
+          "label": "…a new link with mail: true — mailed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RE"
+              },
+              "path": ".mail.status",
+              "expected": {
+                "kind": "literal",
+                "value": "sent"
+              },
+              "message": "…a new link with mail: true — mailed"
+            }
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "POST /api/invitations/${ADMIN_INV_ID}/reissue",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations/${ADMIN_INV_ID}/reissue",
+            "body": {
+              "mail": false
+            }
+          },
+          "capture": [
+            {
+              "variable": "RE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-121",
+          "label": "A third new link: allowed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RE"
+              },
+              "path": ".mail",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "A third new link: allowed"
+            }
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"invitations/${ADMIN_INV_ID}/reissue\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-123",
+          "label": "A fourth new link the same day: 429",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "429"
+              },
+              "message": "A fourth new link the same day: 429"
+            }
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "…reissue_rate",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "reissue_rate"
+              },
+              "message": "…reissue_rate"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An invitation that makes an administrator: not mailed unless asked\"\n\nINV=$(api_post \"invitations\" \"{\\\"username\\\":\\\"${ADMIN_INVITEE}\\\",\\\"email\\\":\\\"${ADMIN_INVITEE}@${MAIL_DOMAIN}\\\",\\\"groups\\\":[\\\"admins\\\"]}\")\nADMIN_INV_ID=$(json_get \"$INV\" '.invitation.id')\nassert_json_field \"$INV\" '\"\\(.mail) \\(.inviteUrl | test(\"/invite#\"))\"' 'null true' \"POST /api/invitations (admins): not mailed, its link answered\" || true\nRE=$(api_post \"invitations/${ADMIN_INV_ID}/reissue\" '{}')\nassert_json_field \"$RE\" '.mail' 'null' \"…a new link: not mailed either\" || true\nRE=$(api_post \"invitations/${ADMIN_INV_ID}/reissue\" '{\"mail\":true}')\nassert_json_field \"$RE\" '.mail.status' 'sent' \"…a new link with mail: true — mailed\" || true\nsink_wait_count \"${SINK}\" \"${ADMIN_INVITEE}@${MAIL_DOMAIN}\" 1 30 || log_fail \"No mail for the administrator's invitation asked to be mailed\"\nRE=$(api_post \"invitations/${ADMIN_INV_ID}/reissue\" '{\"mail\":false}')\nassert_json_field \"$RE\" '.mail' 'null' \"A third new link: allowed\" || true\nRESP=$(call POST \"invitations/${ADMIN_INV_ID}/reissue\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"429\" \"A fourth new link the same day: 429\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'reissue_rate' \"…reissue_rate\" || true\ncall DELETE \"invitations/${ADMIN_INV_ID}\" > /dev/null 2>&1 || true\n\n# ===========================================================================\n# 5. The Gmail API\n# ==========================================================================="
     },
     {
       "id": "google-s-consent-against-a-stand-in-google",
       "label": "Google's consent, against a stand-in Google",
       "steps": [
         {
-          "id": "step-99",
+          "id": "step-128",
           "label": "Set BEFORE",
           "target": "local",
           "op": {
@@ -1569,7 +2078,7 @@
           ]
         },
         {
-          "id": "step-100",
+          "id": "step-129",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1586,7 +2095,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-130",
           "label": "Set AUTHORIZE",
           "target": "local",
           "op": {
@@ -1603,7 +2112,7 @@
           ]
         },
         {
-          "id": "step-102",
+          "id": "step-131",
           "label": "mail google: the consent URL",
           "target": "local",
           "continueOnError": true,
@@ -1624,7 +2133,7 @@
           }
         },
         {
-          "id": "step-103",
+          "id": "step-132",
           "label": "…with PKCE",
           "target": "local",
           "continueOnError": true,
@@ -1645,7 +2154,7 @@
           }
         },
         {
-          "id": "step-104",
+          "id": "step-133",
           "label": "…offline access",
           "target": "local",
           "continueOnError": true,
@@ -1666,7 +2175,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-134",
           "label": "Set BACK",
           "target": "local",
           "op": {
@@ -1683,7 +2192,7 @@
           ]
         },
         {
-          "id": "step-106",
+          "id": "step-135",
           "label": "Google sends the browser back to auth.${DOMAIN}/mail/google/callback",
           "target": "local",
           "continueOnError": true,
@@ -1704,7 +2213,7 @@
           }
         },
         {
-          "id": "step-107",
+          "id": "step-136",
           "label": "Set PAGE",
           "target": "local",
           "op": {
@@ -1721,7 +2230,7 @@
           ]
         },
         {
-          "id": "step-108",
+          "id": "step-137",
           "label": "…which answers",
           "target": "local",
           "continueOnError": true,
@@ -1742,7 +2251,7 @@
           }
         },
         {
-          "id": "step-109",
+          "id": "step-138",
           "label": "…Mail Is Set Up",
           "target": "local",
           "continueOnError": true,
@@ -1763,7 +2272,7 @@
           }
         },
         {
-          "id": "step-110",
+          "id": "step-139",
           "label": "The same return again: answered",
           "target": "local",
           "continueOnError": true,
@@ -1784,7 +2293,7 @@
           }
         },
         {
-          "id": "step-111",
+          "id": "step-140",
           "label": "…but not stored again (the state is single use)",
           "target": "local",
           "continueOnError": true,
@@ -1805,7 +2314,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-141",
           "label": "Set T",
           "target": "local",
           "op": {
@@ -1822,7 +2331,7 @@
           ]
         },
         {
-          "id": "step-113",
+          "id": "step-142",
           "label": "GET /api/settings/mail: gmail-api, the account read from Google's token",
           "target": "local",
           "continueOnError": true,
@@ -1844,7 +2353,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-143",
           "label": "…a newer transport than the SMTP one",
           "target": "local",
           "continueOnError": true,
@@ -1865,7 +2374,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-144",
           "label": "…never the client secret",
           "target": "local",
           "continueOnError": true,
@@ -1893,7 +2402,7 @@
       "label": "Sending through messages.send",
       "steps": [
         {
-          "id": "step-116",
+          "id": "step-145",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1910,7 +2419,7 @@
           ]
         },
         {
-          "id": "step-117",
+          "id": "step-146",
           "label": "mail test: sent",
           "target": "local",
           "continueOnError": true,
@@ -1932,7 +2441,7 @@
           }
         },
         {
-          "id": "step-118",
+          "id": "step-147",
           "label": "Set SENT",
           "target": "local",
           "op": {
@@ -1949,7 +2458,7 @@
           ]
         },
         {
-          "id": "step-119",
+          "id": "step-148",
           "label": "…through the stand-in Google, From the sender",
           "target": "local",
           "continueOnError": true,
@@ -1978,7 +2487,7 @@
       "label": "Google's daily limit: the account rests for 24 hours",
       "steps": [
         {
-          "id": "step-121",
+          "id": "step-150",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1995,7 +2504,7 @@
           ]
         },
         {
-          "id": "step-122",
+          "id": "step-151",
           "label": "mail test: not sent ($(json_get \"$OUT\" '.mail.status'))",
           "target": "local",
           "continueOnError": true,
@@ -2016,7 +2525,7 @@
           }
         },
         {
-          "id": "step-123",
+          "id": "step-152",
           "label": "The account limited",
           "target": "local",
           "continueOnError": true,
@@ -2038,7 +2547,7 @@
           }
         },
         {
-          "id": "step-124",
+          "id": "step-153",
           "label": "Audited: mail.transport.limited",
           "target": "local",
           "continueOnError": true,
@@ -2060,7 +2569,7 @@
           }
         },
         {
-          "id": "step-126",
+          "id": "step-155",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2077,7 +2586,7 @@
           ]
         },
         {
-          "id": "step-127",
+          "id": "step-156",
           "label": "While limited no mail is tried, even with Google willing",
           "target": "local",
           "continueOnError": true,
@@ -2098,7 +2607,7 @@
           }
         },
         {
-          "id": "step-128",
+          "id": "step-157",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2115,7 +2624,7 @@
           ]
         },
         {
-          "id": "step-129",
+          "id": "step-158",
           "label": "mail resume: no longer limited",
           "target": "local",
           "continueOnError": true,
@@ -2137,7 +2646,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-159",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2154,7 +2663,7 @@
           ]
         },
         {
-          "id": "step-131",
+          "id": "step-160",
           "label": "…a test mail sent again",
           "target": "local",
           "continueOnError": true,
@@ -2183,7 +2692,7 @@
       "label": "Cleared",
       "steps": [
         {
-          "id": "step-132",
+          "id": "step-161",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2200,7 +2709,7 @@
           ]
         },
         {
-          "id": "step-133",
+          "id": "step-162",
           "label": "mail clear",
           "target": "local",
           "continueOnError": true,
@@ -2222,7 +2731,7 @@
           }
         },
         {
-          "id": "step-134",
+          "id": "step-163",
           "label": "…no transport",
           "target": "local",
           "continueOnError": true,
@@ -2247,8 +2756,8 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 41 — Mail: a person's own account, invitations, the Gmail API (Single-VM)\n# ============================================================================\n# What mail gives people on one VM (design: packages/core/docs/\n# mail-design.md §3.2–§3.3, §4, §6), over a stand-in SMTP server (helpers.sh\n# write_smtp_sink) and a stand-in Google (write_fake_google, reached through\n# LAMALIBRE_LAMASTE_TEST_GOOGLE_BASE_URL in a unit drop-in). Spec 40 is the\n# relay's side.\n#\n# 1. The Users listing: emailDeliverable — an address under .test is not.\n# 2. Forgot password, end to end on the portal: start answers alike for a\n#    user and for nobody (202, after the same delay); the mail in the sink\n#    with a link https://auth.<domain>/reset#<token>; lookup names the user;\n#    finish needs a current authenticator code; the user signs in through\n#    Authelia with the new password; a \"password changed\" mail follows. A\n#    second link with the code already accepted: refused (totp_invalid),\n#    then a fresh code sets it. A user without an authenticator: no_totp.\n# 3. Change password, signed in: behind Authelia (401 without a session),\n#    the current password checked, then set; signs in with it.\n# 4. An administrator's invitation: mailed with its link; reissued — the\n#    old link dead, a new one mailed; the listing shows the mail and the\n#    reissue; the new link accepted.\n# 5. The Gmail API: lamaste-server mail google → the consent URL; Google's\n#    redirect to auth.<domain>/mail/google/callback stores the transport\n#    (the account read from the token); a test mail through messages.send;\n#    Google's daily limit → the account limited for 24 h, audited, mail held;\n#    mail resume → sending again; mail clear.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node nginx openssl oathtool sqlite3\n\nbegin_test \"41 — Mail: a person's own account, invitations, the Gmail API (Single-VM)\"\n\nWORK_DIR=\"/var/tmp/lamalibre-lamaste-e2e-mail-41\"\nSINK=\"${WORK_DIR}/sink\"\nSINK_PORT=2466\nSINK_USER=\"relay\"\nGOOGLE_PORT=4880\nGOOGLE_CLIENT_ID=\"123456789012-e2elamastemailtest.apps.googleusercontent.com\"\nMAIL_DOMAIN=\"e2e-mail.example.com\"\nRUN_ID=\"$(date +%s)\"\n# Per-run usernames: the reset caps count mails per user over an hour\nRESET_USER=\"e2e41-reset-${RUN_ID}\"\nCHANGE_USER=\"e2e41-change-${RUN_ID}\"\nBARE_USER=\"e2e41-bare-${RUN_ID}\"\nTEST_ONLY_USER=\"e2e41-local-${RUN_ID}\"\nINVITEE=\"e2e41-inv-${RUN_ID}\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nNEW_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nTHIRD_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR=\"${WORK_DIR}/person.cookies\"\nAUDIT_BASE=0\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\ncli_json() {\n  local out\n  out=$({ sudo lamaste-server \"$@\" --json 2>/dev/null || true; } | grep -E '^\\{' | tail -n 1 || true)\n  if [ -n \"${out}\" ]; then printf '%s\\n' \"${out}\"; else echo '{}'; fi\n}\n\n# portal_post <path> <json> [curl args...] — a POST from the portal's own page: the body, then the status\nportal_post() {\n  local path=\"$1\" body=\"$2\"\n  shift 2\n  curl -sk --max-time 20 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -X POST -H 'Content-Type: application/json' \\\n    -H \"Origin: https://auth.${DOMAIN}\" -H 'Sec-Fetch-Site: same-origin' \"$@\" -d \"$body\" -w '\\n%{http_code}' \\\n    \"https://auth.${DOMAIN}${path}\" 2>/dev/null || echo \"000\"\n}\n\nreset_start() { portal_post /api/account/reset/start \"$(jq -c -n --arg i \"$1\" '{identifier: $i}')\"; }\nreset_lookup() { portal_post /api/account/reset/lookup \"$(jq -c -n --arg t \"$1\" '{token: $t}')\"; }\nreset_finish() { portal_post /api/account/reset/finish \"$(jq -c -n --arg t \"$1\" --arg p \"$2\" --arg c \"$3\" '{token: $t, password: $p, totp: $c}')\"; }\n\n# token_of <link> — the token after '#'\ntoken_of() { printf '%s' \"${1#*#}\"; }\n\n# new_user <username> <email> — created with PASSWORD; asserts\nnew_user() {\n  local resp\n  resp=$(api_post \"users\" \"{\\\"username\\\":\\\"$1\\\",\\\"displayname\\\":\\\"E2E $1\\\",\\\"email\\\":\\\"$2\\\",\\\"password\\\":\\\"${PASSWORD}\\\",\\\"groups\\\":[]}\")\n  assert_json_field \"$resp\" '.user.username' \"$1\" \"User $1 <$2>\" || true\n}\n\ninvite_post() {\n  curl -s --max-time 15 -X POST -H 'Content-Type: application/json' -d \"$2\" -w '\\n%{http_code}' \"${PANEL_DIRECT_URL}/api/invite/$1\" 2>/dev/null || echo \"000\"\n}\n\ntransport() { api_get \"settings/mail\" | jq -c '.transport' 2>/dev/null || echo \"null\"; }\ngoogle_sent() { curl -s --max-time 10 \"http://127.0.0.1:${GOOGLE_PORT}/-/e2e/sent\" 2>/dev/null || echo '[]'; }\ngoogle_config() { curl -s --max-time 10 -X POST -H 'Content-Type: application/json' -d \"$1\" \"http://127.0.0.1:${GOOGLE_PORT}/-/e2e/config\" > /dev/null 2>&1 || true; }\naudit_since() {\n  api_get \"audit?action=$1&limit=50\" | jq -c --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base)]' 2>/dev/null || echo \"[]\"\n}\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  call DELETE \"settings/mail\" > /dev/null 2>&1 || true\n  local u id\n  for id in $(api_get \"invitations\" 2>/dev/null | jq -r '.invitations[]? | select(.username | startswith(\"e2e41-\")) | .id' 2>/dev/null || true); do\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n  done\n  for u in $(api_get \"users\" 2>/dev/null | jq -r '.users[]? | select(.username | startswith(\"e2e41-\")) | .username' 2>/dev/null || true); do\n    api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true\n  done\n  stop_smtp_sink\n  stop_fake_google\n  if sudo test -e /etc/systemd/system/lamalibre-lamaste-serverd.service.d/e2e-google.conf; then mail_google_dropin \"\"; fi\n  sudo rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n",
+  "headerRaw": "# ============================================================================\n# 41 — Mail: a person's own account, invitations, the Gmail API (Single-VM)\n# ============================================================================\n# What mail gives people on one VM (design: packages/core/docs/\n# mail-design.md §3.2–§3.3, §4, §6), over a stand-in SMTP server (helpers.sh\n# write_smtp_sink) and a stand-in Google (write_fake_google, reached through\n# LAMALIBRE_LAMASTE_TEST_GOOGLE_BASE_URL in a unit drop-in). Spec 40 is the\n# relay's side.\n#\n# 1. The Users listing: emailDeliverable — an address under .test is not.\n# 2. Forgot password, end to end on the portal: start answers alike for a\n#    user and for nobody (202, after the same delay); the mail in the sink\n#    with a link https://auth.<domain>/reset#<token>; lookup names the user;\n#    finish needs a current authenticator code; the user signs in through\n#    Authelia with the new password; a \"password changed\" mail follows. A\n#    second link with the code already accepted: refused (totp_invalid),\n#    then a fresh code sets it. A user without an authenticator: no_totp;\n#    a second start while their link is live and under 10 minutes old\n#    mails nothing. A member of admins: the same answer, never a mail.\n# 3. Change password, signed in: behind Gatekeeper (401 without a\n#    session), the current password checked, then set; signs in with it.\n#    A Remote-User sent straight to the panel's loopback port names\n#    nobody (401).\n# 4. An administrator's invitation: mailed with its link; reissued — the\n#    old link dead, a new one mailed; the listing shows the mail and the\n#    reissue; the new link accepted. One granting admins: not mailed\n#    unless asked; three new links a day, the fourth 429 reissue_rate.\n# 5. The Gmail API: lamaste-server mail google → the consent URL; Google's\n#    redirect to auth.<domain>/mail/google/callback stores the transport\n#    (the account read from the token); a test mail through messages.send;\n#    Google's daily limit → the account limited for 24 h, audited, mail held;\n#    mail resume → sending again; mail clear.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node nginx openssl oathtool sqlite3\n\nbegin_test \"41 — Mail: a person's own account, invitations, the Gmail API (Single-VM)\"\n\nWORK_DIR=\"/var/tmp/lamalibre-lamaste-e2e-mail-41\"\nSINK=\"${WORK_DIR}/sink\"\nSINK_PORT=2466\nSINK_USER=\"relay\"\nGOOGLE_PORT=4880\nGOOGLE_CLIENT_ID=\"123456789012-e2elamastemailtest.apps.googleusercontent.com\"\nMAIL_DOMAIN=\"e2e-mail.example.com\"\nRUN_ID=\"$(date +%s)\"\n# Per-run usernames: the reset caps count mails per user over an hour\nRESET_USER=\"e2e41-reset-${RUN_ID}\"\nCHANGE_USER=\"e2e41-change-${RUN_ID}\"\nBARE_USER=\"e2e41-bare-${RUN_ID}\"\nTEST_ONLY_USER=\"e2e41-local-${RUN_ID}\"\nINVITEE=\"e2e41-inv-${RUN_ID}\"\nADMIN_USER=\"e2e41-admin-${RUN_ID}\"\nADMIN_INVITEE=\"e2e41-adminv-${RUN_ID}\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nNEW_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nTHIRD_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR=\"${WORK_DIR}/person.cookies\"\nAUDIT_BASE=0\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\ncli_json() {\n  local out\n  out=$({ sudo lamaste-server \"$@\" --json 2>/dev/null || true; } | grep -E '^\\{' | tail -n 1 || true)\n  if [ -n \"${out}\" ]; then printf '%s\\n' \"${out}\"; else echo '{}'; fi\n}\n\n# portal_post <path> <json> [curl args...] — a POST from the portal's own page: the body, then the status\nportal_post() {\n  local path=\"$1\" body=\"$2\"\n  shift 2\n  curl -sk --max-time 20 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -X POST -H 'Content-Type: application/json' \\\n    -H \"Origin: https://auth.${DOMAIN}\" -H 'Sec-Fetch-Site: same-origin' \"$@\" -d \"$body\" -w '\\n%{http_code}' \\\n    \"https://auth.${DOMAIN}${path}\" 2>/dev/null || echo \"000\"\n}\n\nreset_start() { portal_post /api/account/reset/start \"$(jq -c -n --arg i \"$1\" '{identifier: $i}')\"; }\nreset_lookup() { portal_post /api/account/reset/lookup \"$(jq -c -n --arg t \"$1\" '{token: $t}')\"; }\nreset_finish() { portal_post /api/account/reset/finish \"$(jq -c -n --arg t \"$1\" --arg p \"$2\" --arg c \"$3\" '{token: $t, password: $p, totp: $c}')\"; }\n\n# token_of <link> — the token after '#'\ntoken_of() { printf '%s' \"${1#*#}\"; }\n\n# new_user <username> <email> — created with PASSWORD; asserts\nnew_user() {\n  local resp\n  resp=$(api_post \"users\" \"{\\\"username\\\":\\\"$1\\\",\\\"displayname\\\":\\\"E2E $1\\\",\\\"email\\\":\\\"$2\\\",\\\"password\\\":\\\"${PASSWORD}\\\",\\\"groups\\\":${3:-[]}}\")\n  assert_json_field \"$resp\" '.user.username' \"$1\" \"User $1 <$2>\" || true\n}\n\ninvite_post() {\n  curl -s --max-time 15 -X POST -H 'Content-Type: application/json' -d \"$2\" -w '\\n%{http_code}' \"${PANEL_DIRECT_URL}/api/invite/$1\" 2>/dev/null || echo \"000\"\n}\n\ntransport() { api_get \"settings/mail\" | jq -c '.transport' 2>/dev/null || echo \"null\"; }\ngoogle_sent() { curl -s --max-time 10 \"http://127.0.0.1:${GOOGLE_PORT}/-/e2e/sent\" 2>/dev/null || echo '[]'; }\ngoogle_config() { curl -s --max-time 10 -X POST -H 'Content-Type: application/json' -d \"$1\" \"http://127.0.0.1:${GOOGLE_PORT}/-/e2e/config\" > /dev/null 2>&1 || true; }\naudit_since() {\n  api_get \"audit?action=$1&limit=50\" | jq -c --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base)]' 2>/dev/null || echo \"[]\"\n}\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  call DELETE \"settings/mail\" > /dev/null 2>&1 || true\n  local u id\n  for id in $(api_get \"invitations\" 2>/dev/null | jq -r '.invitations[]? | select(.username | startswith(\"e2e41-\")) | .id' 2>/dev/null || true); do\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n  done\n  for u in $(api_get \"users\" 2>/dev/null | jq -r '.users[]? | select(.username | startswith(\"e2e41-\")) | .username' 2>/dev/null || true); do\n    api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true\n  done\n  stop_smtp_sink\n  stop_fake_google\n  if sudo test -e /etc/systemd/system/lamalibre-lamaste-serverd.service.d/e2e-google.conf; then mail_google_dropin \"\"; fi\n  sudo rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

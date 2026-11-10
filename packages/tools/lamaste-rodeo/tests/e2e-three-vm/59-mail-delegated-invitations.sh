@@ -11,13 +11,15 @@
 # 1. The inviter's page on B carries the mail words and the "new link"
 #    button's words (Turkish).
 # 2. A coordinator invites an address of the policy's domain: the answer
-#    says the mail was sent; the sink holds it — From the relay's sender,
-#    in Turkish, the link the inviter was answered (auth.<B>/invite#…).
-#    The inviter's list and the administrator's show the mail sent.
-# 3. A new link (…/<id>/reissue): the same invitation, a new token mailed,
-#    the old link dead; the new one accepted.
-# 4. The transport removed: an invitation answers not-configured, its link
-#    still answered.
+#    says the mail was sent and carries no link (the domain sends mail: the
+#    link goes by mail only); the sink holds it — From the relay's sender,
+#    in Turkish, its link on auth.<B>/invite#…. The inviter's list and the
+#    administrator's show the mail sent. A name that reads as a host name
+#    is refused.
+# 3. A new link (…/<id>/reissue): the same invitation, a new token mailed
+#    and not answered, the old link dead; the new one accepted.
+# 4. The transport removed: an invitation answers not-configured, and its
+#    link is answered — the inviter sends it.
 # ============================================================================
 
 set -euo pipefail
@@ -160,18 +162,22 @@ log_section "The invitation mailed, in Turkish"
 
 RESP=$(inv_api "${JAR_COORD}" POST "" "$(jq -c -n --arg e "${INVITEE_MAIL}" '{email: $e, displayName: "E2E Invitee", role: "viewer"}')")
 assert_eq "$(visit_status "$RESP")" "201" "${COORD} invites ${INVITEE_MAIL} as viewer: 201" || true
-URL=$(json_get "$(visit_body "$RESP")" '.inviteUrl // empty')
 INV_ID=$(json_get "$(visit_body "$RESP")" '.invitation.id // empty')
-TOKEN="${URL##*#}"
-assert_json_field "$(visit_body "$RESP")" '.mail.status' 'sent' "…the answer: mail sent" || true
+assert_json_field "$(visit_body "$RESP")" '"\(.mail.status) \(.inviteUrl)"' 'sent null' "…the answer: mail sent, no link (it goes by mail only)" || true
+assert_eq "$(visit_body "$RESP" | grep -cE '[a-f0-9]{64}' || true)" "0" "…no token anywhere in the answer" || true
 mail_wait "${INVITEE_MAIL}" 1 "The sink holds the invitation"
 MAIL=$(mail_last_to "${INVITEE_MAIL}")
 assert_json_field "$MAIL" '.from' "no-reply@notify.${DOMAIN}" "…From the relay's sender" || true
 assert_json_field "$MAIL" '.subject | startswith("Davetiniz")' 'true' "…in Turkish ($(json_get "$MAIL" '.subject'))" || true
-assert_eq "$(mail_link_in "$MAIL" "/invite#")" "${URL}" "…the link the inviter was answered, on auth.${DOMAIN_2}" || true
+URL=$(mail_link_in "$MAIL" "/invite#")
+TOKEN="${URL##*#}"
+assert_contains "${URL}" "https://auth.${DOMAIN_2}/invite#" "…its link on auth.${DOMAIN_2}" || true
 LIST=$(visit_body "$(inv_api "${JAR_COORD}" GET)")
 assert_eq "$(echo "$LIST" | jq -r --arg i "${INV_ID}" '.invitations[]? | select(.id == $i) | .mail.status' 2>/dev/null)" "sent" "The inviter's list: mail sent" || true
 assert_json_field "$(inv_row "${INV_ID}")" '.mail.status' 'sent' "The administrator's list: mail sent" || true
+RESP=$(inv_api "${JAR_COORD}" POST "" "$(jq -c -n --arg e "${LATER_MAIL}" '{email: $e, displayName: "pay-here.example", role: "viewer"}')")
+assert_eq "$(visit_status "$RESP")" "400" "A name that reads as a host name: 400" || true
+assert_json_field "$(visit_body "$RESP")" '"\(.code) \(.field)"' 'invalid_request displayName' "…invalid_request, field displayName" || true
 
 # ===========================================================================
 # 3. A new link
@@ -181,12 +187,11 @@ log_section "A new link: the old one dead, the new one mailed"
 
 RESP=$(inv_api "${JAR_COORD}" POST "/${INV_ID}/reissue")
 assert_eq "$(visit_status "$RESP")" "200" "POST …/${PLUGIN}/${INV_ID}/reissue: 200" || true
-URL_2=$(json_get "$(visit_body "$RESP")" '.inviteUrl // empty')
-TOKEN_2="${URL_2##*#}"
-assert_json_field "$(visit_body "$RESP")" '"\(.invitation.id) \(.mail.status)"' "${INV_ID} sent" "…the same invitation, mailed again" || true
-assert_not_eq "${TOKEN_2}" "${TOKEN}" "…a new token" || true
+assert_json_field "$(visit_body "$RESP")" '"\(.invitation.id) \(.mail.status) \(.inviteUrl)"' "${INV_ID} sent null" "…the same invitation, mailed again, no link answered" || true
 mail_wait "${INVITEE_MAIL}" 2 "The sink holds the new link"
-assert_eq "$(mail_link_in "$(mail_last_to "${INVITEE_MAIL}")" "/invite#")" "${URL_2}" "…the new link" || true
+URL_2=$(mail_link_in "$(mail_last_to "${INVITEE_MAIL}")" "/invite#")
+TOKEN_2="${URL_2##*#}"
+assert_not_eq "${TOKEN_2}" "${TOKEN}" "…a new token" || true
 assert_not_eq "$(visit_status "$(inv_lookup "${TOKEN}")")" "200" "The old link is dead" || true
 assert_eq "$(visit_status "$(inv_lookup "${TOKEN_2}")")" "200" "The new one answers" || true
 assert_json_field "$(inv_row "${INV_ID}")" '.reissuedAt != null' 'true' "The administrator's list: reissued" || true
@@ -201,7 +206,7 @@ assert_json_field "$(visit_body "$RESP")" '.code' 'invitation_not_pending' "…i
 # 4. No transport
 # ===========================================================================
 
-log_section "No transport: not-configured, the link still answered"
+log_section "No transport: not-configured, the link answered to the inviter"
 
 host_api_delete "settings/mail" > /dev/null 2>&1 || true
 RESP=$(inv_api "${JAR_COORD}" POST "" "$(jq -c -n --arg e "${LATER_MAIL}" '{email: $e, displayName: "E2E Later", role: "viewer"}')")

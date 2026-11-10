@@ -14,7 +14,10 @@
 # 2. The relay's transport added: A and C link their own /reset, B still
 #    its own; a reset on C is mailed From the relay's sender, in English,
 #    its link on auth.<C>. B's mail still goes From B's sender.
-# 3. B's transport removed: B falls back to the relay's.
+# 3. B's transport removed: B falls back to the relay's — its test mail
+#    From the relay's sender, still in Turkish. Another reset for the
+#    member of B while their first link is live and under 10 minutes old:
+#    the same answer, no new mail.
 # ============================================================================
 
 set -euo pipefail
@@ -144,10 +147,19 @@ log_section "B's own transport removed: the relay's carries its mail"
 RESP=$(host_api_call DELETE "domains/${DOMAIN_2}/mail")
 assert_eq "$(status_of "$RESP")" "200" "DELETE /api/domains/${DOMAIN_2}/mail" || true
 assert_eq "$(portal_index_reset "${DOMAIN_2}")" "data-resetpasswordcustomurl=\"https://auth.${DOMAIN_2}/reset\"" "auth.${DOMAIN_2}/ still links its own /reset" || true
+B_TEST="e2e58-btest-${RUN_ID}@${MAIL_DOMAIN}"
+RESP=$(host_api_call POST "domains/${DOMAIN_2}/mail/test" "{\"to\":\"${B_TEST}\"}")
+assert_json_field "$(body_of "$RESP")" '.mail.status' 'sent' "POST /api/domains/${DOMAIN_2}/mail/test: sent" || true
+mail_wait "${B_TEST}" 1 "…mailed"
+MAIL=$(mail_last_to "${B_TEST}")
+assert_json_field "$MAIL" '"\(.from) \(.subject | startswith("Deneme e-postası"))"' "no-reply@notify.${DOMAIN} true" "…From the relay's sender, still in B's Turkish" || true
+
+log_section "A second reset while the first link is live: no new mail"
+
+BEFORE=$(mail_count_to "${USER_B}@${MAIL_DOMAIN}")
 RESP=$(mail_portal_post "${DOMAIN_2}" /api/account/reset/start "{\"identifier\":\"${USER_B}\"}")
-assert_eq "$(visit_status "$RESP")" "202" "Another reset on auth.${DOMAIN_2}" || true
-mail_wait "${USER_B}@${MAIL_DOMAIN}" 2 "…mailed"
-MAIL=$(mail_last_to "${USER_B}@${MAIL_DOMAIN}")
-assert_json_field "$MAIL" '"\(.from) \(.subject)"' "no-reply@notify.${DOMAIN} Şifrenizi sıfırlayın" "…From the relay's sender, still in B's Turkish" || true
+assert_eq "$(visit_status "$RESP") $(visit_body "$RESP")" '202 {"sent":true}' "Another reset on auth.${DOMAIN_2}: the same answer" || true
+sleep 5
+assert_eq "$(mail_count_to "${USER_B}@${MAIL_DOMAIN}")" "${BEFORE}" "…no new mail: the link mailed minutes ago still works" || true
 
 end_test

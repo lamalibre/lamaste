@@ -805,7 +805,109 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-54",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"domains/${DOMAIN_2}/mail/test\" \"{\\\"to\\\":\\\"${B_TEST}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-55",
+          "label": "POST /api/domains/${DOMAIN_2}/mail/test: sent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".mail.status",
+              "expected": {
+                "kind": "literal",
+                "value": "sent"
+              },
+              "message": "POST /api/domains/${DOMAIN_2}/mail/test: sent"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Set MAIL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_last_to \"${B_TEST}\""
+          },
+          "capture": [
+            {
+              "variable": "MAIL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "…From the relay's sender, still in B's Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "MAIL"
+              },
+              "path": "\"\\(.from) \\(.subject | startswith(\"Deneme e-postası\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "no-reply@notify.${DOMAIN} true"
+              },
+              "message": "…From the relay's sender, still in B's Turkish"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"B's own transport removed: the relay's carries its mail\"\n\nRESP=$(host_api_call DELETE \"domains/${DOMAIN_2}/mail\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"DELETE /api/domains/${DOMAIN_2}/mail\" || true\nassert_eq \"$(portal_index_reset \"${DOMAIN_2}\")\" \"data-resetpasswordcustomurl=\\\"https://auth.${DOMAIN_2}/reset\\\"\" \"auth.${DOMAIN_2}/ still links its own /reset\" || true\nB_TEST=\"e2e58-btest-${RUN_ID}@${MAIL_DOMAIN}\"\nRESP=$(host_api_call POST \"domains/${DOMAIN_2}/mail/test\" \"{\\\"to\\\":\\\"${B_TEST}\\\"}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.mail.status' 'sent' \"POST /api/domains/${DOMAIN_2}/mail/test: sent\" || true\nmail_wait \"${B_TEST}\" 1 \"…mailed\"\nMAIL=$(mail_last_to \"${B_TEST}\")\nassert_json_field \"$MAIL\" '\"\\(.from) \\(.subject | startswith(\"Deneme e-postası\"))\"' \"no-reply@notify.${DOMAIN} true\" \"…From the relay's sender, still in B's Turkish\" || true"
+    },
+    {
+      "id": "a-second-reset-while-the-first-link-is-live-no-new-mail",
+      "label": "A second reset while the first link is live: no new mail",
+      "steps": [
+        {
+          "id": "step-59",
+          "label": "Set BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_count_to \"${USER_B}@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -822,8 +924,8 @@
           ]
         },
         {
-          "id": "step-54",
-          "label": "Another reset on auth.${DOMAIN_2}",
+          "id": "step-61",
+          "label": "Another reset on auth.${DOMAIN_2}: the same answer",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -832,61 +934,52 @@
               "kind": "eq",
               "actual": {
                 "kind": "expr",
-                "template": "$(visit_status \"$RESP\")"
+                "template": "$(visit_status \"$RESP\") $(visit_body \"$RESP\")"
               },
               "expected": {
                 "kind": "literal",
-                "value": "202"
+                "value": "202 {\"sent\":true}"
               },
-              "message": "Another reset on auth.${DOMAIN_2}"
+              "message": "Another reset on auth.${DOMAIN_2}: the same answer"
             }
           }
         },
         {
-          "id": "step-56",
-          "label": "Set MAIL",
+          "id": "step-62",
+          "label": "Sleep 5s",
           "target": "local",
           "op": {
-            "type": "exec",
-            "command": "mail_last_to \"${USER_B}@${MAIL_DOMAIN}\""
-          },
-          "capture": [
-            {
-              "variable": "MAIL",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
+            "type": "sleep",
+            "seconds": 5
+          }
         },
         {
-          "id": "step-57",
-          "label": "…From the relay's sender, still in B's Turkish",
+          "id": "step-63",
+          "label": "…no new mail: the link mailed minutes ago still works",
           "target": "local",
           "continueOnError": true,
           "op": {
             "type": "assert",
             "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "MAIL"
-              },
-              "path": "\"\\(.from) \\(.subject)\"",
-              "expected": {
+              "kind": "eq",
+              "actual": {
                 "kind": "expr",
-                "template": "no-reply@notify.${DOMAIN} Şifrenizi sıfırlayın"
+                "template": "$(mail_count_to \"${USER_B}@${MAIL_DOMAIN}\")"
               },
-              "message": "…From the relay's sender, still in B's Turkish"
+              "expected": {
+                "kind": "var",
+                "name": "BEFORE"
+              },
+              "message": "…no new mail: the link mailed minutes ago still works"
             }
           }
         }
       ],
-      "bash": "log_section \"B's own transport removed: the relay's carries its mail\"\n\nRESP=$(host_api_call DELETE \"domains/${DOMAIN_2}/mail\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"DELETE /api/domains/${DOMAIN_2}/mail\" || true\nassert_eq \"$(portal_index_reset \"${DOMAIN_2}\")\" \"data-resetpasswordcustomurl=\\\"https://auth.${DOMAIN_2}/reset\\\"\" \"auth.${DOMAIN_2}/ still links its own /reset\" || true\nRESP=$(mail_portal_post \"${DOMAIN_2}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_B}\\\"}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"202\" \"Another reset on auth.${DOMAIN_2}\" || true\nmail_wait \"${USER_B}@${MAIL_DOMAIN}\" 2 \"…mailed\"\nMAIL=$(mail_last_to \"${USER_B}@${MAIL_DOMAIN}\")\nassert_json_field \"$MAIL\" '\"\\(.from) \\(.subject)\"' \"no-reply@notify.${DOMAIN} Şifrenizi sıfırlayın\" \"…From the relay's sender, still in B's Turkish\" || true"
+      "bash": "log_section \"A second reset while the first link is live: no new mail\"\n\nBEFORE=$(mail_count_to \"${USER_B}@${MAIL_DOMAIN}\")\nRESP=$(mail_portal_post \"${DOMAIN_2}\" /api/account/reset/start \"{\\\"identifier\\\":\\\"${USER_B}\\\"}\")\nassert_eq \"$(visit_status \"$RESP\") $(visit_body \"$RESP\")\" '202 {\"sent\":true}' \"Another reset on auth.${DOMAIN_2}: the same answer\" || true\nsleep 5\nassert_eq \"$(mail_count_to \"${USER_B}@${MAIL_DOMAIN}\")\" \"${BEFORE}\" \"…no new mail: the link mailed minutes ago still works\" || true"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 58 — Mail across domains: each portal its own reset link (Three-VM)\n# ============================================================================\n# Which domains can send, and what their people meet (design: packages/core/\n# docs/mail-design.md §3.1, §5, §6.2, Q1). Three domains of the\n# multi-domain harness — A the primary, B in Turkish, C — and the SMTP\n# stand-in on the host VM (mail-harness.sh).\n#\n# 1. B alone has a transport of its own (no relay transport): B's portal\n#    links auth.<B>/reset, A's and C's link none; a reset on C is 404\n#    reset_unavailable. A member of B forgets their password: the mail\n#    arrives From B's sender, in Turkish, with a link on auth.<B>.\n# 2. The relay's transport added: A and C link their own /reset, B still\n#    its own; a reset on C is mailed From the relay's sender, in English,\n#    its link on auth.<C>. B's mail still goes From B's sender.\n# 3. B's transport removed: B falls back to the relay's.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 58 — Mail across domains: each portal its own reset link (Three-VM)\n# ============================================================================\n# Which domains can send, and what their people meet (design: packages/core/\n# docs/mail-design.md §3.1, §5, §6.2, Q1). Three domains of the\n# multi-domain harness — A the primary, B in Turkish, C — and the SMTP\n# stand-in on the host VM (mail-harness.sh).\n#\n# 1. B alone has a transport of its own (no relay transport): B's portal\n#    links auth.<B>/reset, A's and C's link none; a reset on C is 404\n#    reset_unavailable. A member of B forgets their password: the mail\n#    arrives From B's sender, in Turkish, with a link on auth.<B>.\n# 2. The relay's transport added: A and C link their own /reset, B still\n#    its own; a reset on C is mailed From the relay's sender, in English,\n#    its link on auth.<C>. B's mail still goes From B's sender.\n# 3. B's transport removed: B falls back to the relay's — its test mail\n#    From the relay's sender, still in Turkish. Another reset for the\n#    member of B while their first link is live and under 10 minutes old:\n#    the same answer, no new mail.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=58\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\nMAIL_SPEC=58\n# shellcheck source-path=SCRIPTDIR source=mail-harness.sh\nsource \"${SCRIPT_DIR}/mail-harness.sh\"\n\nrequire_commands multipass curl jq openssl\n\nRUN_ID=\"$(date +%s)\"\n# Per-run usernames: the reset caps count mails per user over an hour\nUSER_B=\"e2e58-b-${RUN_ID}\"\nUSER_C=\"e2e58-c-${RUN_ID}\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2E-$(openssl rand -hex 12)\"\n\nbegin_test \"58 — Mail across domains: each portal its own reset link (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  [ -n \"${DOMAIN_2:-}\" ] && md_api PUT \"domains/${DOMAIN_2}/language\" '{\"language\":null}' > /dev/null 2>&1 || true\n  host_api_delete \"users/${USER_B}?erase=true\" > /dev/null 2>&1 || true\n  host_api_delete \"users/${USER_C}?erase=true\" > /dev/null 2>&1 || true\n  mail_cleanup\n  md_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

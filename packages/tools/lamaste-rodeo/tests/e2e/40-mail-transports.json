@@ -463,6 +463,28 @@
         },
         {
           "id": "step-23",
+          "label": "…shared: Authelia's 180, public 180, the administrators' reserve 90",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.transport.budget.essentialCap) \\(.transport.budget.publicCap) \\(.transport.budget.adminReserve)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "180 180 90"
+              },
+              "message": "…shared: Authelia's 180, public 180, the administrators' reserve 90"
+            }
+          }
+        },
+        {
+          "id": "step-24",
           "label": "Set SHOWN",
           "target": "local",
           "op": {
@@ -479,7 +501,7 @@
           ]
         },
         {
-          "id": "step-24",
+          "id": "step-25",
           "label": "mail show: the sender, a secret held",
           "target": "local",
           "continueOnError": true,
@@ -501,7 +523,7 @@
           }
         },
         {
-          "id": "step-25",
+          "id": "step-26",
           "label": "…never the password",
           "target": "local",
           "continueOnError": true,
@@ -522,7 +544,7 @@
           }
         },
         {
-          "id": "step-26",
+          "id": "step-27",
           "label": "…never the CA bundle",
           "target": "local",
           "continueOnError": true,
@@ -543,7 +565,7 @@
           }
         },
         {
-          "id": "step-27",
+          "id": "step-28",
           "label": "The audit carries no password",
           "target": "local",
           "continueOnError": true,
@@ -564,7 +586,7 @@
           }
         },
         {
-          "id": "step-28",
+          "id": "step-29",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -581,7 +603,7 @@
           ]
         },
         {
-          "id": "step-29",
+          "id": "step-30",
           "label": "set-smtp again without --ca-file: the stored CA bundle kept (same host)",
           "target": "local",
           "continueOnError": true,
@@ -603,14 +625,14 @@
           }
         }
       ],
-      "bash": "log_section \"lamaste-server mail set-smtp: refused without the CA, stored with it\"\n\nOUT=$(set_smtp)\nassert_json_field \"$OUT\" '\"\\(.event) \\(.code)\"' 'error mail_check_failed' \"Without --ca-file: refused at the check (mail_check_failed)\" || true\nassert_eq \"$(transport)\" \"null\" \"…nothing stored\" || true\nOUT=$(set_smtp --ca-file \"${WORK_DIR}/sink/ca.pem\")\nassert_json_field \"$OUT\" '\"\\(.event) \\(.transport.kind) \\(.transport.settings.hasCaPem) \\(.transport.health.status)\"' 'complete smtp true up' \"With --ca-file and --password-stdin: checked and stored, healthy\" || true\nassert_json_field \"$OUT\" '\"\\(.transport.budget.dailyLimit) \\(.transport.budget.ceiling)\"' '500 450' \"…the default daily limit 500, ceiling 450\" || true\nSHOWN=$(cli_json mail show)\nassert_json_field \"$SHOWN\" '\"\\(.transport.sender.address) \\(.transport.sender.name) \\(.transport.hasSecret)\"' \"no-reply@notify.${DOMAIN} E2E Relay true\" \"mail show: the sender, a secret held\" || true\nassert_not_contains \"$SHOWN\" \"$(cat \"${WORK_DIR}/sink/password\")\" \"…never the password\" || true\nassert_not_contains \"$SHOWN\" \"BEGIN CERTIFICATE\" \"…never the CA bundle\" || true\nassert_not_contains \"$(api_get \"audit?action=mail.transport.set&limit=5\")\" \"$(cat \"${WORK_DIR}/sink/password\")\" \"The audit carries no password\" || true\n\nOUT=$(set_smtp)\nassert_json_field \"$OUT\" '\"\\(.event) \\(.transport.settings.hasCaPem)\"' 'complete true' \"set-smtp again without --ca-file: the stored CA bundle kept (same host)\" || true"
+      "bash": "log_section \"lamaste-server mail set-smtp: refused without the CA, stored with it\"\n\nOUT=$(set_smtp)\nassert_json_field \"$OUT\" '\"\\(.event) \\(.code)\"' 'error mail_check_failed' \"Without --ca-file: refused at the check (mail_check_failed)\" || true\nassert_eq \"$(transport)\" \"null\" \"…nothing stored\" || true\nOUT=$(set_smtp --ca-file \"${WORK_DIR}/sink/ca.pem\")\nassert_json_field \"$OUT\" '\"\\(.event) \\(.transport.kind) \\(.transport.settings.hasCaPem) \\(.transport.health.status)\"' 'complete smtp true up' \"With --ca-file and --password-stdin: checked and stored, healthy\" || true\nassert_json_field \"$OUT\" '\"\\(.transport.budget.dailyLimit) \\(.transport.budget.ceiling)\"' '500 450' \"…the default daily limit 500, ceiling 450\" || true\nassert_json_field \"$OUT\" '\"\\(.transport.budget.essentialCap) \\(.transport.budget.publicCap) \\(.transport.budget.adminReserve)\"' '180 180 90' \"…shared: Authelia's 180, public 180, the administrators' reserve 90\" || true\nSHOWN=$(cli_json mail show)\nassert_json_field \"$SHOWN\" '\"\\(.transport.sender.address) \\(.transport.sender.name) \\(.transport.hasSecret)\"' \"no-reply@notify.${DOMAIN} E2E Relay true\" \"mail show: the sender, a secret held\" || true\nassert_not_contains \"$SHOWN\" \"$(cat \"${WORK_DIR}/sink/password\")\" \"…never the password\" || true\nassert_not_contains \"$SHOWN\" \"BEGIN CERTIFICATE\" \"…never the CA bundle\" || true\nassert_not_contains \"$(api_get \"audit?action=mail.transport.set&limit=5\")\" \"$(cat \"${WORK_DIR}/sink/password\")\" \"The audit carries no password\" || true\n\nOUT=$(set_smtp)\nassert_json_field \"$OUT\" '\"\\(.event) \\(.transport.settings.hasCaPem)\"' 'complete true' \"set-smtp again without --ca-file: the stored CA bundle kept (same host)\" || true"
     },
     {
       "id": "a-test-mail-the-daily-limit",
       "label": "A test mail, the daily limit",
       "steps": [
         {
-          "id": "step-30",
+          "id": "step-31",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -627,7 +649,7 @@
           ]
         },
         {
-          "id": "step-31",
+          "id": "step-32",
           "label": "mail test check@${MAIL_DOMAIN}: sent",
           "target": "local",
           "continueOnError": true,
@@ -649,7 +671,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-33",
           "label": "Set MAIL",
           "target": "local",
           "op": {
@@ -666,7 +688,7 @@
           ]
         },
         {
-          "id": "step-33",
+          "id": "step-34",
           "label": "…envelope From the sender",
           "target": "local",
           "continueOnError": true,
@@ -688,7 +710,7 @@
           }
         },
         {
-          "id": "step-34",
+          "id": "step-35",
           "label": "…From header names the sender's name",
           "target": "local",
           "continueOnError": true,
@@ -710,7 +732,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-36",
           "label": "…Auto-Submitted: auto-generated",
           "target": "local",
           "continueOnError": true,
@@ -732,7 +754,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-37",
           "label": "…one recipient",
           "target": "local",
           "continueOnError": true,
@@ -754,7 +776,7 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-38",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -771,7 +793,7 @@
           ]
         },
         {
-          "id": "step-38",
+          "id": "step-39",
           "label": "mail limit 2000: ceiling 1800",
           "target": "local",
           "continueOnError": true,
@@ -800,7 +822,7 @@
       "label": "Authelia submits to the listener",
       "steps": [
         {
-          "id": "step-39",
+          "id": "step-40",
           "label": "Set CONFIG",
           "target": "local",
           "op": {
@@ -817,7 +839,7 @@
           ]
         },
         {
-          "id": "step-40",
+          "id": "step-41",
           "label": "…submissions://127.0.0.1:9295 as authelia, the listener's name checked, no startup check",
           "target": "local",
           "continueOnError": true,
@@ -839,7 +861,7 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-42",
           "label": "…certificates_directory /etc/authelia/certs",
           "target": "local",
           "continueOnError": true,
@@ -861,7 +883,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-43",
           "label": "…the relay's sender",
           "target": "local",
           "continueOnError": true,
@@ -883,7 +905,7 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-44",
           "label": "The password is a template line naming /etc/authelia/mail-submission-password (once)",
           "target": "local",
           "continueOnError": true,
@@ -904,7 +926,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-45",
           "label": "…the password file 0640 lamaste:lamaste-authelia",
           "target": "local",
           "continueOnError": true,
@@ -925,7 +947,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-46",
           "label": "/etc/authelia/certs holds the listener's CA alone",
           "target": "local",
           "continueOnError": true,
@@ -946,7 +968,104 @@
           }
         },
         {
-          "id": "step-46",
+          "id": "step-47",
+          "label": "Set CA_TEXT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo openssl x509 -noout -text -in /etc/authelia/certs/lamaste-mail-ca.pem 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "CA_TEXT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "…name-constrained (critical)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CA_TEXT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "X509v3 Name Constraints: critical"
+              },
+              "message": "…name-constrained (critical)"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "…to lamaste-mail.localhost alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CA_TEXT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "DNS:lamaste-mail.localhost"
+              },
+              "message": "…to lamaste-mail.localhost alone"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "Set CALLBACK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"/etc/nginx/sites-available/lamalibre-lamaste-auth-${DOMAIN}\" 2>/dev/null | awk '/location = \\/mail\\/google\\/callback/,/}/' || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "CALLBACK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "The consent callback keeps no access log (its query carries Google's code)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CALLBACK"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "access_log off;"
+              },
+              "message": "The consent callback keeps no access log (its query carries Google's code)"
+            }
+          }
+        },
+        {
+          "id": "step-52",
           "label": "password_reset.custom_url is the portal's /reset; change stays off",
           "target": "local",
           "continueOnError": true,
@@ -968,7 +1087,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-54",
           "label": "The portal links https://auth.${DOMAIN}/reset",
           "target": "local",
           "op": {
@@ -978,7 +1097,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-55",
           "label": "The portal's reset link: $(reset_link_of_portal)",
           "target": "local",
           "op": {
@@ -988,7 +1107,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-56",
           "label": "…and the change-password page",
           "target": "local",
           "continueOnError": true,
@@ -1009,14 +1128,14 @@
           }
         }
       ],
-      "bash": "log_section \"Authelia submits to the listener\"\n\nif wait_for 60 listening; then log_pass \"The submission listener listens on 127.0.0.1:9295\"; else log_fail \"Nothing listens on 9295\"; fi\nif wait_for 60 notifier_is smtp; then log_pass \"Authelia's notifier is SMTP\"; else log_fail \"Authelia's notifier: $(notifier_kind)\"; fi\nCONFIG=$(authelia_config)\nassert_json_field \"$CONFIG\" '\"\\(.notifier.smtp.address) \\(.notifier.smtp.username) \\(.notifier.smtp.tls.server_name) \\(.notifier.disable_startup_check)\"' 'submissions://127.0.0.1:9295 authelia lamaste-mail.localhost true' \"…submissions://127.0.0.1:9295 as authelia, the listener's name checked, no startup check\" || true\nassert_json_field \"$CONFIG\" '.certificates_directory' '/etc/authelia/certs' \"…certificates_directory /etc/authelia/certs\" || true\nassert_json_field \"$CONFIG\" '.notifier.smtp.sender | test(\"no-reply@notify\")' 'true' \"…the relay's sender\" || true\nassert_eq \"$(template_lines)\" \"1\" \"The password is a template line naming /etc/authelia/mail-submission-password (once)\" || true\nassert_eq \"$(sudo stat -c '%a %U:%G' /etc/authelia/mail-submission-password 2>/dev/null)\" \"640 lamaste:lamaste-authelia\" \"…the password file 0640 lamaste:lamaste-authelia\" || true\nassert_eq \"$(sudo ls /etc/authelia/certs 2>/dev/null | tr '\\n' ' ')\" \"lamaste-mail-ca.pem \" \"/etc/authelia/certs holds the listener's CA alone\" || true\nassert_json_field \"$CONFIG\" '\"\\(.authentication_backend.password_reset.custom_url) \\(.authentication_backend.password_change.disable)\"' \"https://auth.${DOMAIN}/reset true\" \"password_reset.custom_url is the portal's /reset; change stays off\" || true\nlocal_wait_authelia \"${DOMAIN}\"\nif wait_for 60 portal_links \"https://auth.${DOMAIN}/reset\"; then\n  log_pass \"The portal links https://auth.${DOMAIN}/reset\"\nelse\n  log_fail \"The portal's reset link: $(reset_link_of_portal)\"\nfi\nassert_contains \"$(auth_get /)\" 'href=\"/account/password\"' \"…and the change-password page\" || true"
+      "bash": "log_section \"Authelia submits to the listener\"\n\nif wait_for 60 listening; then log_pass \"The submission listener listens on 127.0.0.1:9295\"; else log_fail \"Nothing listens on 9295\"; fi\nif wait_for 60 notifier_is smtp; then log_pass \"Authelia's notifier is SMTP\"; else log_fail \"Authelia's notifier: $(notifier_kind)\"; fi\nCONFIG=$(authelia_config)\nassert_json_field \"$CONFIG\" '\"\\(.notifier.smtp.address) \\(.notifier.smtp.username) \\(.notifier.smtp.tls.server_name) \\(.notifier.disable_startup_check)\"' 'submissions://127.0.0.1:9295 authelia lamaste-mail.localhost true' \"…submissions://127.0.0.1:9295 as authelia, the listener's name checked, no startup check\" || true\nassert_json_field \"$CONFIG\" '.certificates_directory' '/etc/authelia/certs' \"…certificates_directory /etc/authelia/certs\" || true\nassert_json_field \"$CONFIG\" '.notifier.smtp.sender | test(\"no-reply@notify\")' 'true' \"…the relay's sender\" || true\nassert_eq \"$(template_lines)\" \"1\" \"The password is a template line naming /etc/authelia/mail-submission-password (once)\" || true\nassert_eq \"$(sudo stat -c '%a %U:%G' /etc/authelia/mail-submission-password 2>/dev/null)\" \"640 lamaste:lamaste-authelia\" \"…the password file 0640 lamaste:lamaste-authelia\" || true\nassert_eq \"$(sudo ls /etc/authelia/certs 2>/dev/null | tr '\\n' ' ')\" \"lamaste-mail-ca.pem \" \"/etc/authelia/certs holds the listener's CA alone\" || true\nCA_TEXT=$(sudo openssl x509 -noout -text -in /etc/authelia/certs/lamaste-mail-ca.pem 2>/dev/null || echo \"\")\nassert_contains \"$CA_TEXT\" \"X509v3 Name Constraints: critical\" \"…name-constrained (critical)\" || true\nassert_contains \"$CA_TEXT\" \"DNS:lamaste-mail.localhost\" \"…to lamaste-mail.localhost alone\" || true\nCALLBACK=$(sudo cat \"/etc/nginx/sites-available/lamalibre-lamaste-auth-${DOMAIN}\" 2>/dev/null | awk '/location = \\/mail\\/google\\/callback/,/}/' || echo \"\")\nassert_contains \"$CALLBACK\" \"access_log off;\" \"The consent callback keeps no access log (its query carries Google's code)\" || true\nassert_json_field \"$CONFIG\" '\"\\(.authentication_backend.password_reset.custom_url) \\(.authentication_backend.password_change.disable)\"' \"https://auth.${DOMAIN}/reset true\" \"password_reset.custom_url is the portal's /reset; change stays off\" || true\nlocal_wait_authelia \"${DOMAIN}\"\nif wait_for 60 portal_links \"https://auth.${DOMAIN}/reset\"; then\n  log_pass \"The portal links https://auth.${DOMAIN}/reset\"\nelse\n  log_fail \"The portal's reset link: $(reset_link_of_portal)\"\nfi\nassert_contains \"$(auth_get /)\" 'href=\"/account/password\"' \"…and the change-password page\" || true"
     },
     {
       "id": "the-template-line-survives-a-rewrite",
       "label": "The template line survives a rewrite",
       "steps": [
         {
-          "id": "step-51",
+          "id": "step-57",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1033,7 +1152,7 @@
           ]
         },
         {
-          "id": "step-52",
+          "id": "step-58",
           "label": "mail sender --name: renamed",
           "target": "local",
           "continueOnError": true,
@@ -1055,7 +1174,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-59",
           "label": "Authelia's sender follows",
           "target": "local",
           "op": {
@@ -1065,7 +1184,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-60",
           "label": "Authelia's sender: $(authelia_config | jq -r '.notifier.smtp.sender')",
           "target": "local",
           "op": {
@@ -1075,7 +1194,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-61",
           "label": "…the template line still there, once",
           "target": "local",
           "continueOnError": true,
@@ -1103,7 +1222,7 @@
       "label": "Authelia's one-time code through the listener",
       "steps": [
         {
-          "id": "step-57",
+          "id": "step-63",
           "label": "POST /api/users",
           "target": "host",
           "op": {
@@ -1122,7 +1241,7 @@
           ]
         },
         {
-          "id": "step-58",
+          "id": "step-64",
           "label": "A user with a deliverable address",
           "target": "local",
           "continueOnError": true,
@@ -1144,7 +1263,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-65",
           "label": "Set SECRET_ONE",
           "target": "local",
           "op": {
@@ -1161,7 +1280,7 @@
           ]
         },
         {
-          "id": "step-61",
+          "id": "step-67",
           "label": "${USER_ONE} signs in (two factors)",
           "target": "local",
           "continueOnError": true,
@@ -1182,7 +1301,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-68",
           "label": "Set BEFORE",
           "target": "local",
           "op": {
@@ -1199,7 +1318,7 @@
           ]
         },
         {
-          "id": "step-63",
+          "id": "step-69",
           "label": "Set ELEVATE",
           "target": "local",
           "op": {
@@ -1216,7 +1335,7 @@
           ]
         },
         {
-          "id": "step-64",
+          "id": "step-70",
           "label": "POST /api/user/session/elevation: Authelia mails a one-time code",
           "target": "local",
           "continueOnError": true,
@@ -1238,7 +1357,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-71",
           "label": "…which arrives in the sink",
           "target": "local",
           "op": {
@@ -1248,7 +1367,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-72",
           "label": "…which never arrives (sink $(sink_count_to \"${WORK_DIR}/sink\" \"${USER_ONE}@${MAIL_DOMAIN}\"), $(sudo journalctl -u lamalibre-lamaste-serverd --since '-2 min' --no-pager 2>/dev/null | grep -i submission | tail -n 3))",
           "target": "local",
           "op": {
@@ -1258,7 +1377,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-73",
           "label": "Set MAIL",
           "target": "local",
           "op": {
@@ -1275,7 +1394,7 @@
           ]
         },
         {
-          "id": "step-68",
+          "id": "step-74",
           "label": "…From the relay's sender",
           "target": "local",
           "continueOnError": true,
@@ -1297,7 +1416,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-75",
           "label": "…to the user alone",
           "target": "local",
           "continueOnError": true,
@@ -1326,7 +1445,7 @@
       "label": "The listener admits Authelia alone",
       "steps": [
         {
-          "id": "step-70",
+          "id": "step-76",
           "label": "Set LISTENER",
           "target": "local",
           "op": {
@@ -1343,7 +1462,7 @@
           ]
         },
         {
-          "id": "step-71",
+          "id": "step-77",
           "label": "A wrong password: 535",
           "target": "local",
           "continueOnError": true,
@@ -1364,7 +1483,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-78",
           "label": "Set LISTENER",
           "target": "local",
           "op": {
@@ -1381,7 +1500,7 @@
           ]
         },
         {
-          "id": "step-73",
+          "id": "step-79",
           "label": "MAIL without AUTH: not accepted",
           "target": "local",
           "continueOnError": true,
@@ -1409,7 +1528,7 @@
       "label": "The sending host: no tunnel, no site there",
       "steps": [
         {
-          "id": "step-74",
+          "id": "step-80",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1426,7 +1545,7 @@
           ]
         },
         {
-          "id": "step-75",
+          "id": "step-81",
           "label": "A tunnel at notify.${DOMAIN}: 400",
           "target": "local",
           "continueOnError": true,
@@ -1447,7 +1566,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-82",
           "label": "…the relay's mail holds it",
           "target": "local",
           "continueOnError": true,
@@ -1468,7 +1587,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-83",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1485,7 +1604,7 @@
           ]
         },
         {
-          "id": "step-78",
+          "id": "step-84",
           "label": "A site named ${SITE_NAME}: 400",
           "target": "local",
           "continueOnError": true,
@@ -1506,7 +1625,7 @@
           }
         },
         {
-          "id": "step-79",
+          "id": "step-85",
           "label": "…MAIL_SENDER_HOST",
           "target": "local",
           "continueOnError": true,
@@ -1528,7 +1647,7 @@
           }
         },
         {
-          "id": "step-80",
+          "id": "step-86",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1547,7 +1666,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-87",
           "label": "Set SENDER_TUNNEL_ID",
           "target": "local",
           "op": {
@@ -1564,7 +1683,7 @@
           ]
         },
         {
-          "id": "step-82",
+          "id": "step-88",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1581,7 +1700,7 @@
           ]
         },
         {
-          "id": "step-83",
+          "id": "step-89",
           "label": "A sender at ${SENDER_SUB}.${DOMAIN}, which a tunnel serves: 409",
           "target": "local",
           "continueOnError": true,
@@ -1602,7 +1721,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-90",
           "label": "…mail_sender_host_taken",
           "target": "local",
           "continueOnError": true,
@@ -1631,7 +1750,7 @@
       "label": "Port 9295 reserved; a tunnel left there by an older relay",
       "steps": [
         {
-          "id": "step-86",
+          "id": "step-92",
           "label": "A new tunnel on 9295: 400 (reserved)",
           "target": "local",
           "continueOnError": true,
@@ -1652,7 +1771,7 @@
           }
         },
         {
-          "id": "step-87",
+          "id": "step-93",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1671,7 +1790,7 @@
           ]
         },
         {
-          "id": "step-88",
+          "id": "step-94",
           "label": "Set HOLD_ID",
           "target": "local",
           "op": {
@@ -1688,7 +1807,7 @@
           ]
         },
         {
-          "id": "step-89",
+          "id": "step-95",
           "label": "GET /api/audit?limit=1",
           "target": "host",
           "op": {
@@ -1706,7 +1825,7 @@
           ]
         },
         {
-          "id": "step-93",
+          "id": "step-99",
           "label": "GET /api/audit?action=mail.submission.refused&limit=10",
           "target": "host",
           "op": {
@@ -1724,7 +1843,7 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-100",
           "label": "Audited: mail.submission.refused {reason: tunnel}",
           "target": "local",
           "continueOnError": true,
@@ -1746,7 +1865,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-101",
           "label": "The administrators are told",
           "target": "local",
           "continueOnError": true,
@@ -1767,7 +1886,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-102",
           "label": "The tunnel is left where it is",
           "target": "local",
           "continueOnError": true,
@@ -1788,7 +1907,7 @@
           }
         },
         {
-          "id": "step-100",
+          "id": "step-106",
           "label": "GET /api/audit?action=mail.submission.recovered&limit=10",
           "target": "host",
           "op": {
@@ -1806,7 +1925,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-107",
           "label": "Audited: mail.submission.recovered {previous: tunnel}",
           "target": "local",
           "continueOnError": true,
@@ -1828,7 +1947,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-108",
           "label": "DELETE /api/tunnels/${HOLD_ID}",
           "target": "host",
           "op": {
@@ -1846,7 +1965,7 @@
       "label": "A domain's sender over the relay's transport",
       "steps": [
         {
-          "id": "step-104",
+          "id": "step-110",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1863,7 +1982,7 @@
           ]
         },
         {
-          "id": "step-105",
+          "id": "step-111",
           "label": "domains mail ${DOMAIN} sender: a sender alone (no transport of its own)",
           "target": "local",
           "continueOnError": true,
@@ -1885,7 +2004,7 @@
           }
         },
         {
-          "id": "step-106",
+          "id": "step-112",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1902,7 +2021,7 @@
           ]
         },
         {
-          "id": "step-107",
+          "id": "step-113",
           "label": "domains mail ${DOMAIN} test: sent",
           "target": "local",
           "continueOnError": true,
@@ -1924,7 +2043,7 @@
           }
         },
         {
-          "id": "step-109",
+          "id": "step-115",
           "label": "…From the domain's sender, over the relay's sink",
           "target": "local",
           "continueOnError": true,
@@ -1946,7 +2065,7 @@
           }
         },
         {
-          "id": "step-110",
+          "id": "step-116",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1963,7 +2082,7 @@
           ]
         },
         {
-          "id": "step-111",
+          "id": "step-117",
           "label": "domains mail ${DOMAIN} clear",
           "target": "local",
           "continueOnError": true,
@@ -1985,7 +2104,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-118",
           "label": "…the domain has no row of its own",
           "target": "local",
           "continueOnError": true,
@@ -2014,7 +2133,7 @@
       "label": "The budget: an administrator's invitations until the ceiling",
       "steps": [
         {
-          "id": "step-113",
+          "id": "step-119",
           "label": "Set SENT",
           "target": "local",
           "op": {
@@ -2031,7 +2150,7 @@
           ]
         },
         {
-          "id": "step-114",
+          "id": "step-120",
           "label": "Set CEILING",
           "target": "local",
           "op": {
@@ -2048,7 +2167,7 @@
           ]
         },
         {
-          "id": "step-115",
+          "id": "step-121",
           "label": "Set LIMIT",
           "target": "local",
           "op": {
@@ -2065,7 +2184,7 @@
           ]
         },
         {
-          "id": "step-116",
+          "id": "step-122",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2082,7 +2201,7 @@
           ]
         },
         {
-          "id": "step-117",
+          "id": "step-123",
           "label": "mail limit ${LIMIT}: the ceiling one above the ${SENT} sent in 24 h",
           "target": "local",
           "continueOnError": true,
@@ -2104,7 +2223,7 @@
           }
         },
         {
-          "id": "step-118",
+          "id": "step-124",
           "label": "GET /api/audit?limit=1",
           "target": "host",
           "op": {
@@ -2122,7 +2241,7 @@
           ]
         },
         {
-          "id": "step-119",
+          "id": "step-125",
           "label": "Set INV",
           "target": "local",
           "op": {
@@ -2139,8 +2258,8 @@
           ]
         },
         {
-          "id": "step-120",
-          "label": "An administrator's invitation: mailed (the reserve is the essential and admin mails')",
+          "id": "step-126",
+          "label": "An administrator's invitation: mailed (the last of the ceiling is the administrators')",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -2156,12 +2275,12 @@
                 "kind": "literal",
                 "value": "sent true"
               },
-              "message": "An administrator's invitation: mailed (the reserve is the essential and admin mails')"
+              "message": "An administrator's invitation: mailed (the last of the ceiling is the administrators')"
             }
           }
         },
         {
-          "id": "step-121",
+          "id": "step-127",
           "label": "Set INV",
           "target": "local",
           "op": {
@@ -2178,7 +2297,7 @@
           ]
         },
         {
-          "id": "step-122",
+          "id": "step-128",
           "label": "The next one: deferred-budget, its link answered for sharing another way",
           "target": "local",
           "continueOnError": true,
@@ -2200,7 +2319,7 @@
           }
         },
         {
-          "id": "step-123",
+          "id": "step-129",
           "label": "GET /api/audit?action=mail.budget.exhausted&limit=10",
           "target": "host",
           "op": {
@@ -2218,7 +2337,7 @@
           ]
         },
         {
-          "id": "step-124",
+          "id": "step-130",
           "label": "Audited: mail.budget.exhausted",
           "target": "local",
           "continueOnError": true,
@@ -2240,7 +2359,7 @@
           }
         },
         {
-          "id": "step-125",
+          "id": "step-131",
           "label": "GET /api/settings/mail: at the ceiling, when sending resumes",
           "target": "local",
           "continueOnError": true,
@@ -2262,7 +2381,7 @@
           }
         },
         {
-          "id": "step-126",
+          "id": "step-132",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2279,7 +2398,7 @@
           ]
         },
         {
-          "id": "step-127",
+          "id": "step-133",
           "label": "Back to 500",
           "target": "local",
           "continueOnError": true,
@@ -2301,14 +2420,14 @@
           }
         }
       ],
-      "bash": "log_section \"The budget: an administrator's invitations until the ceiling\"\n\nSENT=$(json_get \"$(transport)\" '.budget.sent24h')\nCEILING=$((SENT + 1))\nLIMIT=$(node -e 'const c=Number(process.argv[1]);let l=Math.ceil(c/0.9);while(Math.floor(l*0.9)>c)l--;while(Math.floor(l*0.9)<c)l++;console.log(l)' \"${CEILING}\")\nOUT=$(cli_json mail limit \"${LIMIT}\")\nassert_json_field \"$OUT\" '.transport.budget.ceiling' \"${CEILING}\" \"mail limit ${LIMIT}: the ceiling one above the ${SENT} sent in 24 h\" || true\nAUDIT_BUDGET=$(api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\nINV=$(admin_invite \"e2e40-first\")\nassert_json_field \"$INV\" '\"\\(.mail.status) \\(.inviteUrl | test(\"/invite#\"))\"' 'sent true' \"An administrator's invitation: mailed (the reserve is the essential and admin mails')\" || true\nINV=$(admin_invite \"e2e40-second\")\nassert_json_field \"$INV\" '\"\\(.mail.status) \\(.inviteUrl | test(\"/invite#\"))\"' 'deferred-budget true' \"The next one: deferred-budget, its link answered for sharing another way\" || true\nEXHAUSTED=$(api_get \"audit?action=mail.budget.exhausted&limit=10\" | jq -c --argjson base \"${AUDIT_BUDGET}\" '[.entries[]? | select(.id > $base)]' 2>/dev/null || echo \"[]\")\nassert_json_field \"$EXHAUSTED\" 'length > 0' 'true' \"Audited: mail.budget.exhausted\" || true\nassert_json_field \"$(transport)\" '(.budget.resumesAt != null) and (.budget.sent24h >= .budget.ceiling)' 'true' \"GET /api/settings/mail: at the ceiling, when sending resumes\" || true\nOUT=$(cli_json mail limit 500)\nassert_json_field \"$OUT\" '.transport.budget.dailyLimit' '500' \"Back to 500\" || true\n\n# ===========================================================================\n# 8. The sink down\n# ==========================================================================="
+      "bash": "log_section \"The budget: an administrator's invitations until the ceiling\"\n\nSENT=$(json_get \"$(transport)\" '.budget.sent24h')\nCEILING=$((SENT + 1))\nLIMIT=$(node -e 'const c=Number(process.argv[1]);let l=Math.ceil(c/0.9);while(Math.floor(l*0.9)>c)l--;while(Math.floor(l*0.9)<c)l++;console.log(l)' \"${CEILING}\")\nOUT=$(cli_json mail limit \"${LIMIT}\")\nassert_json_field \"$OUT\" '.transport.budget.ceiling' \"${CEILING}\" \"mail limit ${LIMIT}: the ceiling one above the ${SENT} sent in 24 h\" || true\nAUDIT_BUDGET=$(api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\nINV=$(admin_invite \"e2e40-first\")\nassert_json_field \"$INV\" '\"\\(.mail.status) \\(.inviteUrl | test(\"/invite#\"))\"' 'sent true' \"An administrator's invitation: mailed (the last of the ceiling is the administrators')\" || true\nINV=$(admin_invite \"e2e40-second\")\nassert_json_field \"$INV\" '\"\\(.mail.status) \\(.inviteUrl | test(\"/invite#\"))\"' 'deferred-budget true' \"The next one: deferred-budget, its link answered for sharing another way\" || true\nEXHAUSTED=$(api_get \"audit?action=mail.budget.exhausted&limit=10\" | jq -c --argjson base \"${AUDIT_BUDGET}\" '[.entries[]? | select(.id > $base)]' 2>/dev/null || echo \"[]\")\nassert_json_field \"$EXHAUSTED\" 'length > 0' 'true' \"Audited: mail.budget.exhausted\" || true\nassert_json_field \"$(transport)\" '(.budget.resumesAt != null) and (.budget.sent24h >= .budget.ceiling)' 'true' \"GET /api/settings/mail: at the ceiling, when sending resumes\" || true\nOUT=$(cli_json mail limit 500)\nassert_json_field \"$OUT\" '.transport.budget.dailyLimit' '500' \"Back to 500\" || true\n\n# ===========================================================================\n# 8. The sink down\n# ==========================================================================="
     },
     {
       "id": "the-mail-server-down-invitations-still-answer-authelia-still-signs-in",
       "label": "The mail server down: invitations still answer, Authelia still signs in",
       "steps": [
         {
-          "id": "step-129",
+          "id": "step-135",
           "label": "Set INV",
           "target": "local",
           "op": {
@@ -2325,7 +2444,7 @@
           ]
         },
         {
-          "id": "step-130",
+          "id": "step-136",
           "label": "An invitation: mail failed, its link answered",
           "target": "local",
           "continueOnError": true,
@@ -2347,7 +2466,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-138",
           "label": "${USER_ONE} still signs in",
           "target": "local",
           "continueOnError": true,
@@ -2375,7 +2494,7 @@
       "label": "No transport: back as before",
       "steps": [
         {
-          "id": "step-134",
+          "id": "step-140",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2392,7 +2511,7 @@
           ]
         },
         {
-          "id": "step-135",
+          "id": "step-141",
           "label": "mail clear",
           "target": "local",
           "continueOnError": true,
@@ -2414,7 +2533,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-143",
           "label": "Audited: mail.transport.cleared",
           "target": "local",
           "continueOnError": true,
@@ -2440,7 +2559,7 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 40 — Mail: the relay's transport and Authelia's mail (Single-VM)\n# ============================================================================\n# The relay's side of mail on one VM (design: packages/core/docs/\n# mail-design.md §3–§5, §7, §8). The relay reaches no real mail server: the\n# transport is `smtp` to a stand-in on this VM (helpers.sh write_smtp_sink,\n# implicit TLS, a certificate from a private CA the transport trusts through\n# caPem). Spec 41 is a person's side (reset, change, invitations) and the\n# Gmail API transport.\n#\n# 1. Without mail: no transport, Authelia's notifier a file, nothing on\n#    127.0.0.1:9295, no reset link on the portal, /api/account/reset 404.\n# 2. The transport through lamaste-server: refused without the private CA\n#    (tls), stored with it (--ca-file, --password-stdin), shown without a\n#    secret, the CA bundle kept when a change omits it, a test mail in the\n#    sink From the sender, the daily limit.\n# 3. Authelia's mail: the listener on 9295, Authelia's notifier submitting\n#    to it with its password through a template line (kept by every later\n#    rewrite), the reset link and the change-password link on the portal;\n#    Authelia's one-time code (session elevation) arrives in the sink From\n#    the relay's sender; the listener refuses a wrong password.\n# 4. D6: a tunnel and a site on the sending host refused; a sender on a\n#    hostname a tunnel serves refused.\n# 5. A tunnel holding 9295 (a relay older than 4.13): the listener refused,\n#    audited, the administrators told, Authelia back to the file notifier;\n#    the tunnel moved, the listener back.\n# 6. A domain's own sender over the relay's transport.\n# 7. The budget: an administrator's invitation mailed until the ceiling,\n#    then deferred-budget, mail.budget.exhausted audited.\n# 8. The sink down: an invitation answers failed with its link; Authelia\n#    still signs people in.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 40 — Mail: the relay's transport and Authelia's mail (Single-VM)\n# ============================================================================\n# The relay's side of mail on one VM (design: packages/core/docs/\n# mail-design.md §3–§5, §7, §8). The relay reaches no real mail server: the\n# transport is `smtp` to a stand-in on this VM (helpers.sh write_smtp_sink,\n# implicit TLS, a certificate from a private CA the transport trusts through\n# caPem). Spec 41 is a person's side (reset, change, invitations) and the\n# Gmail API transport.\n#\n# 1. Without mail: no transport, Authelia's notifier a file, nothing on\n#    127.0.0.1:9295, no reset link on the portal, /api/account/reset 404.\n# 2. The transport through lamaste-server: refused without the private CA\n#    (tls), stored with it (--ca-file, --password-stdin), shown without a\n#    secret, the CA bundle kept when a change omits it, a test mail in the\n#    sink From the sender, the daily limit and its shares.\n# 3. Authelia's mail: the listener on 9295 (its CA name-constrained to\n#    lamaste-mail.localhost), Authelia's notifier submitting\n#    to it with its password through a template line (kept by every later\n#    rewrite), the reset link and the change-password link on the portal;\n#    Authelia's one-time code (session elevation) arrives in the sink From\n#    the relay's sender; the listener refuses a wrong password.\n# 4. D6: a tunnel and a site on the sending host refused; a sender on a\n#    hostname a tunnel serves refused.\n# 5. A tunnel holding 9295 (a relay older than 4.13): the listener refused,\n#    audited, the administrators told, Authelia back to the file notifier;\n#    the tunnel moved, the listener back.\n# 6. A domain's own sender over the relay's transport.\n# 7. The budget: an administrator's invitation mailed until the ceiling\n#    (the reserve no other class reaches), then deferred-budget,\n#    mail.budget.exhausted audited.\n# 8. The sink down: an invitation answers failed with its link; Authelia\n#    still signs people in.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node nginx openssl oathtool sqlite3 ss\n\nbegin_test \"40 — Mail: the relay's transport and Authelia's mail (Single-VM)\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/var/tmp/lamalibre-lamaste-e2e-mail-40\"\nSINK_PORT=2465\nSINK_USER=\"relay\"\nUSER_ONE=\"e2e40-one\"\nMAIL_DOMAIN=\"e2e-mail.example.com\"\nOWNER_LABEL=\"e2e40-owner-$(date +%s)\"\nHOLD_SUB=\"e2e40hold\"\nHOLD_PORT=19295\nSENDER_SUB=\"e2e40snd\"\nSITE_NAME=\"notify\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR=\"${WORK_DIR}/one.cookies\"\nAUDIT_BASE=0\nSECRET_ONE=\"\"\nHOLD_ID=\"\"\nSENDER_TUNNEL_ID=\"\"\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\n# call <method> <api path> [<json>] — the panel API as the admin: the body, then the status\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 2 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\nrestart_panel() {\n  sudo systemctl restart lamalibre-lamaste-serverd\n  wait_for_http \"${PANEL_DIRECT_URL}/api/health\" 60 || log_fail \"The panel does not answer after a restart\"\n}\n\n# cli_json <args...> — lamaste-server <args> --json: its last JSON line\ncli_json() {\n  local out\n  out=$({ sudo lamaste-server \"$@\" --json 2>/dev/null || true; } | grep -E '^\\{' | tail -n 1 || true)\n  if [ -n \"${out}\" ]; then printf '%s\\n' \"${out}\"; else echo '{}'; fi\n}\n\n# set_smtp <extra flags...> — mail set-smtp against the sink, the password on stdin\nset_smtp() {\n  local out\n  out=$({ sudo lamaste-server mail set-smtp --host 127.0.0.1 --port \"${SINK_PORT}\" --security tls \\\n    --username \"${SINK_USER}\" --password-stdin --sender \"no-reply@notify.${DOMAIN}\" \\\n    --sender-name \"E2E Relay\" \"$@\" --json < \"${WORK_DIR}/sink/password\" 2>/dev/null || true; } | grep -E '^\\{' | tail -n 1 || true)\n  if [ -n \"${out}\" ]; then printf '%s\\n' \"${out}\"; else echo '{}'; fi\n}\n\ntransport() { api_get \"settings/mail\" | jq -c '.transport' 2>/dev/null || echo \"null\"; }\nlistening() { [ -n \"$(ss -ltnH 'sport = :9295' 2>/dev/null)\" ]; }\nnot_listening() { ! listening; }\nauthelia_config() { sudo bash -c \"${AUTHELIA_CONFIG_JSON}\" 2>/dev/null || echo '{}'; }\nnotifier_kind() { authelia_config | jq -r '.notifier | if .smtp then \"smtp\" elif .filesystem then \"filesystem\" else \"none\" end' 2>/dev/null || echo \"\"; }\nnotifier_is() { [ \"$(notifier_kind)\" = \"$1\" ]; }\nauth_get() { curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}$1\" 2>/dev/null || echo \"\"; }\nreset_link_of_portal() { auth_get / | grep -o 'data-resetpasswordcustomurl=\"[^\"]*\"' | head -n 1 || true; }\nportal_links() { [ \"$(reset_link_of_portal)\" = \"data-resetpasswordcustomurl=\\\"$1\\\"\" ]; }\naudit_since() {\n  api_get \"audit?action=$1&limit=50\" | jq -c --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base)]' 2>/dev/null || echo \"[]\"\n}\nsender_named() { [ \"$(authelia_config | jq -r --arg n \"$1\" '.notifier.smtp.sender // \"\" | startswith($n)' 2>/dev/null)\" = \"true\" ]; }\ntemplate_lines() { sudo grep -c 'mail-submission-password' /etc/authelia/configuration.yml 2>/dev/null || echo 0; }\nsink_holds() { sink_wait_count \"${WORK_DIR}/sink\" \"$1\" \"$2\" \"${3:-30}\"; }\n\n# admin_invite <username> — an administrator's invitation to <username>@MAIL_DOMAIN: the answer, compact\nadmin_invite() {\n  api_post \"invitations\" \"{\\\"username\\\":\\\"$1\\\",\\\"email\\\":\\\"$1@${MAIL_DOMAIN}\\\"}\" | jq -c '.' 2>/dev/null || echo '{}'\n}\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  call DELETE \"settings/mail\" > /dev/null 2>&1 || true\n  [ -n \"${DOMAIN:-}\" ] && call DELETE \"domains/${DOMAIN}/mail\" > /dev/null 2>&1 || true\n  local id\n  for id in $(api_get \"invitations\" 2>/dev/null | jq -r '.invitations[]? | select(.username | startswith(\"e2e40-\")) | .id' 2>/dev/null || true); do\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"users/${USER_ONE}?erase=true\" > /dev/null 2>&1 || true\n  for id in $(api_get \"tunnels\" 2>/dev/null | jq -r --arg a \"${HOLD_SUB}\" --arg b \"${SENDER_SUB}\" '.tunnels[]? | select(.subdomain == $a or .subdomain == $b or .subdomain == \"notify\") | .id' 2>/dev/null || true); do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  for id in $(api_get \"sites\" 2>/dev/null | jq -r --arg n \"${SITE_NAME}\" '.sites[]? | select(.name == $n) | .id' 2>/dev/null || true); do\n    api_delete \"sites/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${OWNER_LABEL}\" > /dev/null 2>&1 || true\n  stop_smtp_sink\n  sudo rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

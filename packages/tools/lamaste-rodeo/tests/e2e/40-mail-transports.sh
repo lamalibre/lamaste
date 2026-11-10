@@ -14,8 +14,9 @@
 # 2. The transport through lamaste-server: refused without the private CA
 #    (tls), stored with it (--ca-file, --password-stdin), shown without a
 #    secret, the CA bundle kept when a change omits it, a test mail in the
-#    sink From the sender, the daily limit.
-# 3. Authelia's mail: the listener on 9295, Authelia's notifier submitting
+#    sink From the sender, the daily limit and its shares.
+# 3. Authelia's mail: the listener on 9295 (its CA name-constrained to
+#    lamaste-mail.localhost), Authelia's notifier submitting
 #    to it with its password through a template line (kept by every later
 #    rewrite), the reset link and the change-password link on the portal;
 #    Authelia's one-time code (session elevation) arrives in the sink From
@@ -26,8 +27,9 @@
 #    audited, the administrators told, Authelia back to the file notifier;
 #    the tunnel moved, the listener back.
 # 6. A domain's own sender over the relay's transport.
-# 7. The budget: an administrator's invitation mailed until the ceiling,
-#    then deferred-budget, mail.budget.exhausted audited.
+# 7. The budget: an administrator's invitation mailed until the ceiling
+#    (the reserve no other class reaches), then deferred-budget,
+#    mail.budget.exhausted audited.
 # 8. The sink down: an invitation answers failed with its link; Authelia
 #    still signs people in.
 # ============================================================================
@@ -201,6 +203,7 @@ assert_eq "$(transport)" "null" "…nothing stored" || true
 OUT=$(set_smtp --ca-file "${WORK_DIR}/sink/ca.pem")
 assert_json_field "$OUT" '"\(.event) \(.transport.kind) \(.transport.settings.hasCaPem) \(.transport.health.status)"' 'complete smtp true up' "With --ca-file and --password-stdin: checked and stored, healthy" || true
 assert_json_field "$OUT" '"\(.transport.budget.dailyLimit) \(.transport.budget.ceiling)"' '500 450' "…the default daily limit 500, ceiling 450" || true
+assert_json_field "$OUT" '"\(.transport.budget.essentialCap) \(.transport.budget.publicCap) \(.transport.budget.adminReserve)"' '180 180 90' "…shared: Authelia's 180, public 180, the administrators' reserve 90" || true
 SHOWN=$(cli_json mail show)
 assert_json_field "$SHOWN" '"\(.transport.sender.address) \(.transport.sender.name) \(.transport.hasSecret)"' "no-reply@notify.${DOMAIN} E2E Relay true" "mail show: the sender, a secret held" || true
 assert_not_contains "$SHOWN" "$(cat "${WORK_DIR}/sink/password")" "…never the password" || true
@@ -238,6 +241,11 @@ assert_json_field "$CONFIG" '.notifier.smtp.sender | test("no-reply@notify")' 't
 assert_eq "$(template_lines)" "1" "The password is a template line naming /etc/authelia/mail-submission-password (once)" || true
 assert_eq "$(sudo stat -c '%a %U:%G' /etc/authelia/mail-submission-password 2>/dev/null)" "640 lamaste:lamaste-authelia" "…the password file 0640 lamaste:lamaste-authelia" || true
 assert_eq "$(sudo ls /etc/authelia/certs 2>/dev/null | tr '\n' ' ')" "lamaste-mail-ca.pem " "/etc/authelia/certs holds the listener's CA alone" || true
+CA_TEXT=$(sudo openssl x509 -noout -text -in /etc/authelia/certs/lamaste-mail-ca.pem 2>/dev/null || echo "")
+assert_contains "$CA_TEXT" "X509v3 Name Constraints: critical" "…name-constrained (critical)" || true
+assert_contains "$CA_TEXT" "DNS:lamaste-mail.localhost" "…to lamaste-mail.localhost alone" || true
+CALLBACK=$(sudo cat "/etc/nginx/sites-available/lamalibre-lamaste-auth-${DOMAIN}" 2>/dev/null | awk '/location = \/mail\/google\/callback/,/}/' || echo "")
+assert_contains "$CALLBACK" "access_log off;" "The consent callback keeps no access log (its query carries Google's code)" || true
 assert_json_field "$CONFIG" '"\(.authentication_backend.password_reset.custom_url) \(.authentication_backend.password_change.disable)"' "https://auth.${DOMAIN}/reset true" "password_reset.custom_url is the portal's /reset; change stays off" || true
 local_wait_authelia "${DOMAIN}"
 if wait_for 60 portal_links "https://auth.${DOMAIN}/reset"; then
@@ -362,7 +370,7 @@ OUT=$(cli_json mail limit "${LIMIT}")
 assert_json_field "$OUT" '.transport.budget.ceiling' "${CEILING}" "mail limit ${LIMIT}: the ceiling one above the ${SENT} sent in 24 h" || true
 AUDIT_BUDGET=$(api_get "audit?limit=1" | jq '.entries[0].id // 0' 2>/dev/null || echo "0")
 INV=$(admin_invite "e2e40-first")
-assert_json_field "$INV" '"\(.mail.status) \(.inviteUrl | test("/invite#"))"' 'sent true' "An administrator's invitation: mailed (the reserve is the essential and admin mails')" || true
+assert_json_field "$INV" '"\(.mail.status) \(.inviteUrl | test("/invite#"))"' 'sent true' "An administrator's invitation: mailed (the last of the ceiling is the administrators')" || true
 INV=$(admin_invite "e2e40-second")
 assert_json_field "$INV" '"\(.mail.status) \(.inviteUrl | test("/invite#"))"' 'deferred-budget true' "The next one: deferred-budget, its link answered for sharing another way" || true
 EXHAUSTED=$(api_get "audit?action=mail.budget.exhausted&limit=10" | jq -c --argjson base "${AUDIT_BUDGET}" '[.entries[]? | select(.id > $base)]' 2>/dev/null || echo "[]")
