@@ -1618,7 +1618,7 @@ tree_dirs() {
 # spec enabled it) and the system packages in PURGE_PACKAGES (those the spec
 # saw missing before Lamaste installed them).
 app_plugin_cleanup() {
-  local plugin route deadline code
+  local plugin route deadline code scope
   if [ -n "${PUSH_POLICY}" ]; then
     host_api_patch "plugins/push-install/config" '{"enabled":true}' > /dev/null 2>&1 || true
     host_api_post "plugins/push-install/enable/${HOST_AGENT_LABEL}" "{\"durationMinutes\":15,\"policyId\":\"${PUSH_POLICY}\"}" > /dev/null 2>&1 || true
@@ -1654,6 +1654,12 @@ app_plugin_cleanup() {
   if [ -n "${PUSH_GLOBAL_BEFORE}" ]; then
     host_api_patch "plugins/push-install/config" "{\"enabled\":${PUSH_GLOBAL_BEFORE}}" > /dev/null 2>&1 || true
   fi
+  # Trusted scopes a spec added: after their plugins and push-install
+  # policies are gone (a scope in use cannot be removed) and before the registry credential is cleared
+  # (which is refused while additional scopes are trusted).
+  for scope in ${CLEAN_TRUSTED_SCOPES:-}; do
+    timed_exec 60 multipass exec "${HOST_VM}" -- sudo bash -c "lamaste-server trusted-scopes remove ${scope} > /dev/null 2>&1; true" > /dev/null 2>&1
+  done
   if [ -n "${CREDENTIAL_SET}" ]; then
     timed_exec 90 multipass exec "${HOST_VM}" -- sudo bash -c "lamaste-server registry-credential clear > /dev/null 2>&1; true" > /dev/null 2>&1
   fi

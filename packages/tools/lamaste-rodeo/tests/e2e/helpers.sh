@@ -597,7 +597,9 @@ write_stub_registry() {
 // republished version at once.
 //
 // Admin-only e2e endpoints: GET /-/e2e/requests (what was recorded),
-// POST /-/e2e/config {"agentTokenTtlSeconds": n, "workloadScopes": [...]}
+// GET /-/feria/scopes (public: the hosted scopes, as Feria 0.5 lists them),
+// POST /-/e2e/config {"agentTokenTtlSeconds": n, "workloadScopes": [...],
+// "hostedScopes": [...], "retiredScopes": [...]}
 // (the lifetime of brokered tokens; the scopes — of read, publish and admin —
 // the workload rule grants the panel's own client at login, read and admin by
 // default as a real Feria's auth.json carries them, narrowed by a spec to
@@ -644,6 +646,12 @@ let agentTokenTtlSeconds = 3600;
 // client: read (the panel's own installs) and admin (brokering). A spec
 // narrows it through /-/e2e/config to prove the panel refuses the result.
 let workloadScopes = ['read', 'admin'];
+// The npm scopes this registry hosts (Feria 0.5's public GET /-/feria/scopes):
+// @lamalibre by default; a spec sets others through /-/e2e/config
+// (hostedScopes, retiredScopes) to prove a relay trusts only a scope its
+// registry hosts.
+let hostedScopes = ['@lamalibre'];
+let retiredScopes = [];
 
 const json = (res, status, payload) => {
   res.writeHead(status, { 'content-type': 'application/json' });
@@ -879,6 +887,14 @@ const server = createServer(async (req, res) => {
       if (!requireAdmin()) return;
       return json(res, 200, { requests });
     }
+    if (req.method === 'GET' && url.pathname === '/-/feria/scopes') {
+      return json(res, 200, {
+        scopes: [
+          ...hostedScopes.map((scope) => ({ scope })),
+          ...retiredScopes.map((scope) => ({ scope, retired: true })),
+        ],
+      });
+    }
     if (req.method === 'POST' && url.pathname === '/-/e2e/config') {
       if (!requireAdmin()) return;
       const cfg = JSON.parse(body || '{}');
@@ -886,7 +902,10 @@ const server = createServer(async (req, res) => {
       if (Array.isArray(cfg.workloadScopes) && cfg.workloadScopes.every((s) => ['read', 'publish', 'admin'].includes(s))) {
         workloadScopes = [...cfg.workloadScopes];
       }
-      return json(res, 200, { agentTokenTtlSeconds, workloadScopes });
+      const isScope = (s) => typeof s === 'string' && /^@[a-z0-9][a-z0-9-]*$/.test(s);
+      if (Array.isArray(cfg.hostedScopes) && cfg.hostedScopes.every(isScope)) hostedScopes = [...cfg.hostedScopes];
+      if (Array.isArray(cfg.retiredScopes) && cfg.retiredScopes.every(isScope)) retiredScopes = [...cfg.retiredScopes];
+      return json(res, 200, { agentTokenTtlSeconds, workloadScopes, hostedScopes, retiredScopes });
     }
     if (req.method === 'PUT' && url.pathname === '/-/e2e/packages') {
       if (!requireAdmin()) return;
@@ -2244,8 +2263,15 @@ write_app_install_fixture() {
   local identity_variant="${8:-none}"
   local web_tag="${9:-none}"
   local web_subdomain="${10:-${name//-/}}"
-  local server_pkg="@lamalibre/${name}-server"
-  local agent_pkg="@lamalibre/${name}-agent"
+  # FIXTURE_SCOPE: the npm scope of both packages (default @lamalibre) — a
+  # trusted publisher scope other than Lamalibre's for spec 58.
+  local scope="${FIXTURE_SCOPE:-@lamalibre}"
+  if ! [[ "$scope" =~ ^@[a-z0-9][a-z0-9-]*$ ]]; then
+    echo "write_app_install_fixture: invalid FIXTURE_SCOPE ${scope}" >&2
+    return 2
+  fi
+  local server_pkg="${scope}/${name}-server"
+  local agent_pkg="${scope}/${name}-agent"
   local here deps='' settings_entry='' identity_entry='' web_entry='' server_files='"index.js", "lamaste-plugin.json"'
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   case "$mode" in
