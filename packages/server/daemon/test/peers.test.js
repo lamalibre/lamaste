@@ -387,7 +387,12 @@ test('a peers block is stored normalized and approved with the rest; the digest 
   assert.deepEqual(plugin.peers, normalizePeersBlock(PEERS.dir));
   const status = await lib.hookStatus(plugin);
   assert.equal(status.approval.required, true, 'a peers block alone needs approval');
-  assert.deepEqual(status.peers, { declared: true, approved: false, block: plugin.peers });
+  assert.deepEqual(status.peers, {
+    declared: true,
+    approved: false,
+    block: plugin.peers,
+    appliedEdges: { in: [], out: [] },
+  });
   assert.equal(
     status.approval.digest,
     approvalDigest({
@@ -694,6 +699,103 @@ test('the provider offline: 503 with the reason, at once', async () => {
       return false;
     }
   }, 'the provider back');
+});
+
+test('a disabled consumer: its edges go pending, its channel closes, nothing crosses', async () => {
+  const opts = lib.peerGatewayOptions(logger);
+  await lib.disablePlugin('leave', logger);
+  try {
+    await waitFor(async () => !(await lib.effectivePeerEdge('leave', 'dir:read')), 'pending edges');
+    const view = await lib.peersView();
+    const edge = view.shelves
+      .flatMap((shelf) => shelf.edges)
+      .find((e) => e.consumer === 'leave' && e.scope === 'dir:read');
+    assert.equal(edge.state, 'pending');
+    assert.equal(edge.reason, 'consumer_disabled');
+    assert.equal(await opts.consumerAllowed('leave'), false);
+    await waitFor(
+      () => lib.peerChannelStatuses().leave === undefined,
+      'the channel no longer kept',
+    );
+    await assert.rejects(halves.leave.peers.json('dir:read', 'GET', '/units/1'));
+  } finally {
+    await lib.enablePlugin('leave', logger);
+  }
+  await waitFor(() => lib.peerChannelStatuses().leave?.state === 'attached', 'the channel again');
+  await waitFor(async () => {
+    try {
+      return (await halves.leave.peers.json('dir:read', 'GET', '/units/3')).unit === '3';
+    } catch {
+      return false;
+    }
+  }, 'calls again');
+});
+
+test("refusals past a consumer's allowance are answered, not audited; a scope it made up is kept as none", async () => {
+  const opts = lib.peerGatewayOptions(logger);
+  let noted = 0;
+  for (let i = 0; i < 100; i += 1) {
+    const scope = `x${crypto.randomBytes(4).toString('hex')}:y`;
+    if (opts.onDenied({ consumer: 'flood', scope, code: 'not_granted' }) !== false) noted += 1;
+  }
+  assert.ok(noted <= 20, `at most the allowance noted (${noted})`);
+  await new Promise((r) => setTimeout(r, 200));
+  const rows = (await lib.listAudit({ action: 'peer.call.denied' })).filter(
+    (a) => a.plugin === 'flood',
+  );
+  assert.equal(rows.length, 1, 'one row for every made-up scope together');
+  assert.equal(rows[0].details.scope, null);
+});
+
+test('the events floor is kept in the state store and only rises for one epoch and stream', async () => {
+  const stream = crypto.randomUUID();
+  await lib.recordEventFloor('ghost', 'dir:read', '1:aa', stream, 5);
+  assert.equal(await lib.eventFloor('ghost', 'dir:read', '1:aa', stream), 5);
+  await lib.recordEventFloor('ghost', 'dir:read', '1:aa', stream, 3);
+  assert.equal(await lib.eventFloor('ghost', 'dir:read', '1:aa', stream), 5, 'never lowered');
+  assert.equal(await lib.eventFloor('ghost', 'dir:read', '2:aa', stream), null, 'another epoch');
+  await lib.recordEventFloor('ghost', 'dir:read', '2:aa', stream, 1);
+  assert.equal(await lib.eventFloor('ghost', 'dir:read', '2:aa', stream), 1, 'replaced');
+  assert.equal(await lib.eventFloor('ghost', 'dir:read', '1:aa', stream), null);
+  // A subscription no longer effective loses its floor; leave keeps its own.
+  assert.ok((await lib.pruneEventFloors()) >= 1);
+  assert.equal(await lib.eventFloor('ghost', 'dir:read', '2:aa', stream), null);
+  const db = await lib.getStateDb();
+  assert.ok(
+    db.prepare("SELECT 1 FROM peer_event_floors WHERE consumer = 'leave'").get(),
+    'the effective subscription keeps its floor',
+  );
+});
+
+test('the approval preview names the applied edges a plugin inherits, pending ones included', async () => {
+  await lib.applyPeerShelf(
+    'preview',
+    { 'dir:read': { provider: 'dir', consumers: ['notes', 'ghost'] } },
+    { actor: 'admin', logger },
+  );
+  try {
+    const notes = await lib.hookStatus(await lib.findPlugin('notes'));
+    assert.ok(
+      notes.peers.appliedEdges.out.some((e) => e.shelfId === 'preview' && e.scope === 'dir:read'),
+    );
+    const dirStatus = await lib.hookStatus(await lib.findPlugin('dir'));
+    const into = dirStatus.peers.appliedEdges.in.map((e) => e.consumer).sort();
+    assert.deepEqual([...new Set(into)], ['ghost', 'leave', 'notes']);
+    // A route nobody installed yet: what an installation under it would inherit.
+    const ghost = await lib.appliedEdgesNaming('ghost');
+    assert.deepEqual(ghost.out, [
+      {
+        shelfId: 'preview',
+        scope: 'dir:read',
+        provider: 'dir',
+        consumer: 'ghost',
+        state: 'pending',
+        reason: 'consumer_not_installed',
+      },
+    ]);
+  } finally {
+    await lib.removePeerShelf('preview', { actor: 'admin', logger });
+  }
 });
 
 test('dependents: unhosting or uninstalling a provider others rely on needs breakPeers, never force', async () => {

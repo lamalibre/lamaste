@@ -25,9 +25,12 @@
  * subscriptions, the provider's forward target (the admin forwarder's
  * resolution: hosting, health, body limit, signing secret) and its
  * readiness, delegations (checked against the directory, the root plugin's
- * audience and the provider's), one outstanding events pull per consumer
- * and scope, and the audit of refusals — at most one `peer.call.denied` per
- * consumer, scope and code a minute.
+ * audience and the provider's), whether a consumer may use its channel at
+ * all, the re-check of open answers, the events floors, one outstanding
+ * events pull per consumer and scope, and the audit of refusals — at most
+ * one `peer.call.denied` per consumer, scope and code a minute, within a
+ * per-consumer allowance (a refusal past it is answered, not audited or
+ * logged; the next audited one says how many were not).
  *
  * **Delegations** are issued to a plugin's agent half with each request a
  * person makes through its user surface, when the plugin has an effective
@@ -58,9 +61,12 @@ import { identityReadiness } from './identity-sync.js';
 import {
   effectivePeerEdge,
   effectiveSubscription,
+  eventFloor,
   hasEffectiveOutgoingEdge,
   invalidatePeers,
   onPeersChanged,
+  pruneEventFloors,
+  recordEventFloor,
 } from './peers.js';
 import { delegationSigningKey, delegationVerifyKeys } from './peer-delegation.js';
 import { installedVersionApproved } from './plugin-hooks.js';
@@ -76,6 +82,14 @@ const READINESS_MAX_RESPONSE_BYTES = 64 * 1024;
 const PEER_TICK_MS = 15_000;
 /** At most one `peer.call.denied` per consumer, scope and code in this window. */
 const DENIAL_AUDIT_WINDOW_MS = 60_000;
+/** How many refusals of one consumer are audited and logged, at most… */
+const DENIAL_ALLOWANCE = 20;
+/** …refilled at this many a minute. */
+const DENIAL_REFILL_PER_MINUTE = 20;
+/** The most (consumer, scope, code) windows remembered; the oldest go first. */
+const DENIAL_KEYS_MAX = 1_000;
+/** The most consumers' allowances remembered. */
+const DENIAL_CONSUMERS_MAX = 1_000;
 
 // ---------------------------------------------------------------------------
 // Readiness
@@ -214,7 +228,49 @@ async function resolveDelegation({ consumer, provider, token }) {
   if (payload.depth < PEER_DELEGATION_MAX_DEPTH && (await hasEffectiveOutgoingEdge(provider))) {
     onward = onwardPeerDelegation(payload, provider, await delegationSigningKey());
   }
-  return { ok: true, user: { userId: user.userId, username: user.username, roles }, onward };
+  return {
+    ok: true,
+    user: { userId: user.userId, username: user.username, roles },
+    root: payload.root,
+    expiresAt: payload.exp,
+    onward,
+  };
+}
+
+/**
+ * Whether the person a call is made for may still have it made: active in
+ * the directory with no principal cleanup pending, an active member of the
+ * root plugin's audience and of the provider's — the delegation's checks,
+ * repeated for an answer still open.
+ */
+async function userStillEntitled(userId, root, provider) {
+  const user = await getDirectoryUser(userId);
+  if (!user || user.status !== 'active') return false;
+  if (await principalCleanupPending(user.username)) return false;
+  const rootPlugin = await findPluginByRoute(root);
+  if (!rootPlugin || (await audienceRolesOf(rootPlugin, user.userId)) === null) return false;
+  const providing = await findPluginByRoute(provider);
+  if (!providing?.identity) return false;
+  return (await audienceRolesOf(providing, user.userId)) !== null;
+}
+
+/**
+ * Whether consumer `route` may use its channel at all now: the same
+ * conditions as keeping one (enabled, approved, consuming, peer-ready,
+ * hosted, active, up) — a channel not closed yet carries nothing for a
+ * consumer that no longer qualifies.
+ */
+async function consumerAllowed(route) {
+  return (await channelTarget(route).catch(() => null)) !== null;
+}
+
+/** Whether an open call may go on: its edge, its consumer and its person, as now. */
+async function recheckOpenCall({ consumer, provider, scope, user }) {
+  const edge = await effectivePeerEdge(consumer, scope);
+  if (!edge || edge.provider !== provider) return false;
+  if (!(await consumerAllowed(consumer))) return false;
+  if (user && !(await userStillEntitled(user.userId, user.root, provider))) return false;
+  return true;
 }
 
 /**
@@ -244,27 +300,72 @@ function acquireEventsPull(consumer, scope) {
   return () => openPulls.delete(key);
 }
 
+/** (consumer, scope, code) → when it was last audited; insertion order is age order. */
 const deniedAt = new Map();
+/** consumer → { tokens, at, suppressed } */
+const allowances = new Map();
 
-/** Audit a refused call — at most once per consumer, scope and code a minute. */
+/**
+ * Take one refusal from `consumer`'s allowance: true when it may be audited
+ * and logged; past it, the refusal is counted as suppressed.
+ */
+function takeAllowance(consumer, now) {
+  let a = allowances.get(consumer);
+  if (!a) {
+    a = { tokens: DENIAL_ALLOWANCE, at: now, suppressed: 0 };
+    if (allowances.size >= DENIAL_CONSUMERS_MAX) {
+      allowances.delete(allowances.keys().next().value);
+    }
+    allowances.set(consumer, a);
+  }
+  a.tokens = Math.min(
+    DENIAL_ALLOWANCE,
+    a.tokens + ((now - a.at) / 60_000) * DENIAL_REFILL_PER_MINUTE,
+  );
+  a.at = now;
+  if (a.tokens < 1) {
+    a.suppressed += 1;
+    return null;
+  }
+  a.tokens -= 1;
+  const suppressed = a.suppressed;
+  a.suppressed = 0;
+  return { suppressed };
+}
+
+/**
+ * Audit a refused call — at most once per consumer, scope and code a minute,
+ * within the consumer's allowance. A scope that is not granted is recorded
+ * as none: a consumer chooses the scope strings it sends, and each new one
+ * must not buy it a row. Returns false past the allowance (the gateway
+ * then writes no log line either).
+ */
 function auditDenial({ consumer, scope, code }, logger) {
   const now = Date.now();
-  const key = `${consumer} ${scope ?? '-'} ${code}`;
+  const taken = takeAllowance(consumer, now);
+  if (!taken) return false;
+  const keptScope =
+    code === 'not_granted' || code === 'bad_path' || code === 'bad_request' ? null : scope;
+  const key = `${consumer} ${keptScope ?? '-'} ${code}`;
   const last = deniedAt.get(key);
-  if (last !== undefined && now - last < DENIAL_AUDIT_WINDOW_MS) return;
+  if (last !== undefined && now - last < DENIAL_AUDIT_WINDOW_MS) return true;
+  deniedAt.delete(key);
   deniedAt.set(key, now);
-  if (deniedAt.size > 10_000) {
-    for (const [k, at] of deniedAt) if (now - at >= DENIAL_AUDIT_WINDOW_MS) deniedAt.delete(k);
-  }
+  while (deniedAt.size > DENIAL_KEYS_MAX) deniedAt.delete(deniedAt.keys().next().value);
   void recordAuditBestEffort(
     {
       actor: 'lamaste',
       action: 'peer.call.denied',
       plugin: consumer,
-      details: { scope, code },
+      details: {
+        scope: keptScope,
+        code,
+        ...(taken.suppressed > 0 ? { suppressed: taken.suppressed } : {}),
+      },
     },
     logger,
   );
+  return true;
 }
 
 /** The gateway's options — exported for the tests, which drive it without channels. */
@@ -277,6 +378,10 @@ export function peerGatewayOptions(logger) {
     providerTarget,
     resolveDelegation,
     subscription: effectiveSubscription,
+    consumerAllowed,
+    recheck: recheckOpenCall,
+    eventFloor,
+    recordEventFloor,
     acquireEventsPull,
     hooks: requestHookRuntime,
     onDenied: (denial) => auditDenial(denial, logger),
@@ -326,7 +431,14 @@ export async function syncPeerChannels(logger) {
         wanted.add(plugin.route);
       }
     }
-    for (const consumer of wanted) manager.ensure(consumer);
+    for (const consumer of wanted) {
+      // One that no longer qualifies — disabled, unhosted, down, not ready,
+      // no longer consuming — loses its channel at once, calls in flight
+      // included; the others are kept or attached.
+      const target = await channelTarget(consumer).catch(() => null);
+      if (target) manager.ensure(consumer);
+      else manager.drop(consumer, { immediate: true });
+    }
   } catch (err) {
     logger?.warn({ err: err?.message }, 'Peer channel sync failed');
   }
@@ -381,6 +493,9 @@ async function peerTick(logger) {
     }
   }
   await syncPeerChannels(logger);
+  await pruneEventFloors().catch((err) =>
+    logger?.warn({ err: err?.message }, 'Pruning peer event floors failed'),
+  );
 }
 
 /**

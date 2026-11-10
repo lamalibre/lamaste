@@ -306,6 +306,12 @@ export async function installedVersionApproved(plugin) {
   return isApproved(approval, await readHookState(plugin.name));
 }
 
+/** The applied edges naming `route` (lib/peers.js; imported late — it imports this module). */
+async function appliedEdgesOf(route) {
+  const { appliedEdgesNaming } = await import('./peers.js');
+  return appliedEdgesNaming(route);
+}
+
 /**
  * What the panel shows about a plugin's hooks, its agent half, its identity
  * (`identity`: whether the installed version declares it, whether that
@@ -350,11 +356,15 @@ export async function hookStatus(plugin) {
       : null,
     // What the installed version provides to and consumes from other
     // plugins (normalized), and whether that version is approved: calls and
-    // events go only along declarations of approved versions.
+    // events go only along declarations of approved versions. With the
+    // applied shelves' edges naming its route, whatever their state — what
+    // approving it would let take effect, a grant made before it was
+    // installed included.
     peers: {
       declared: approval.peers !== null,
       approved: approval.peers !== null && approved,
       block: approval.peers,
+      appliedEdges: await appliedEdgesOf(plugin.route),
     },
     approval: {
       required: approval.required,

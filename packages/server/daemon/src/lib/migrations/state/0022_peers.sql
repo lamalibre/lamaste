@@ -45,3 +45,22 @@ CREATE TABLE peer_counter (
   seq INTEGER NOT NULL
 );
 INSERT INTO peer_counter (id, seq) VALUES (1, 0);
+
+-- The floor of each consumer's events of a scope: the position the relay
+-- last told it to resume from in a gap, for the subscription epoch and the
+-- provider stream that gap was given for. A pull from below the floor, or
+-- for an epoch and stream the relay gave no gap for, is answered with a gap
+-- again — an epoch is no secret, and without a floor a consumer could ask
+-- from an old cursor and read what was published before its grant. A
+-- number, not an event: the relay stores no event. One row per
+-- (consumer, scope); rows whose subscription is no longer effective are
+-- pruned.
+CREATE TABLE peer_event_floors (
+  consumer   TEXT NOT NULL,
+  scope      TEXT NOT NULL,
+  epoch      TEXT NOT NULL,
+  stream_id  TEXT NOT NULL,
+  floor      INTEGER NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (consumer, scope)
+);

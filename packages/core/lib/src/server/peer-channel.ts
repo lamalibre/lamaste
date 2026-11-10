@@ -309,8 +309,12 @@ export interface PeerChannelManager {
   ensure(consumer: string): void;
   /** Attach anew (a rotated secret), then let the old channel drain. */
   replace(consumer: string): void;
-  /** Close the channel and stop keeping one. */
-  drop(consumer: string): void;
+  /**
+   * Stop keeping a channel to `consumer` and close it: by default it drains
+   * (`GOAWAY`, calls in flight finish); with `immediate` — the consumer no
+   * longer qualifies: disabled, unhosted, down — it is destroyed at once.
+   */
+  drop(consumer: string, opts?: { readonly immediate?: boolean }): void;
   status(consumer: string): PeerChannelStatus;
   /** Every consumer kept. */
   consumers(): string[];
@@ -469,13 +473,14 @@ export function createPeerChannelManager(opts: PeerChannelManagerOptions): PeerC
       }
       void attach(consumer);
     },
-    drop(consumer) {
+    drop(consumer, dropOpts) {
       const k = kept.get(consumer);
       if (!k) return;
       k.wanted = false;
       if (k.timer) clearTimeout(k.timer);
       k.timer = null;
-      k.channel?.drain();
+      if (dropOpts?.immediate) k.channel?.destroy();
+      else k.channel?.drain();
       kept.delete(consumer);
     },
     status(consumer) {

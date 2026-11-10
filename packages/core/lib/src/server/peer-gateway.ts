@@ -33,6 +33,12 @@
  *    the provider's approved request hooks — `503 hooks_not_approved` while
  *    they may not run.
  *
+ * Before any of it, the consumer must still qualify (`consumerAllowed`:
+ * enabled, approved, hosted, up) — a channel the relay has not closed yet
+ * carries nothing for a consumer that no longer does — else `403
+ * not_granted`. A provider with `PEER_PROVIDER_MAX_IN_FLIGHT` calls open
+ * answers `503 peer_unavailable` (`busy`).
+ *
  * Then the forwarding core (`forward-core.ts`) sends it to
  * `127.0.0.1:<provider port>/peer<path>` with a `peer` caller assertion —
  * the consumer, the scope, its major, the endpoint pattern matched (the
@@ -45,7 +51,24 @@
  * events of one scope after its cursor (`peer-events.ts`): the relay checks
  * the subscription, answers a gap when the cursor cannot be continued, and
  * otherwise asks the provider (`POST /admin/peers/events/pull`, Lamaste's
- * own call) and checks what comes back. Nothing is stored here.
+ * own call) and checks what comes back — and checks the subscription again
+ * before it answers, so nothing crosses after a revocation that landed
+ * while the provider held the pull.
+ *
+ * **Floors.** Every gap the relay answers records the position it told the
+ * consumer to resume from (`recordEventFloor`, per consumer and scope, with
+ * the epoch and stream it was given for); a pull whose cursor is below the
+ * floor of its epoch and stream, or names an epoch and stream the relay
+ * never gave a gap for, is answered with a gap again. The epoch is no
+ * secret, so without a floor a consumer could ask from an old cursor — or
+ * from the horizon — and read what was published before its grant. A floor
+ * is a number, not an event: the relay still stores no event.
+ *
+ * **Open answers** are tracked: each ends after `PEER_RESPONSE_MAX_MS`, a
+ * call on behalf of a person when its delegation lapses, and every
+ * `PEER_RESPONSE_SWEEP_MS` each is checked again (`recheck`: the edge still
+ * effective, the consumer still qualifying, the person still active and
+ * entitled) and ended when it is not.
  *
  * Every piece of state — edges, targets, readiness, delegations, the
  * directory — comes from the caller ({@link PeerGatewayOptions}); one
@@ -61,6 +84,9 @@ import type { PeerCallerIdentity, PeerCallerUser } from '../caller-assertion.js'
 import { isOriginFormPath } from '../caller-assertion.js';
 import {
   AGENT_HALF_PEERS_EVENTS_PULL_PATH,
+  PEER_PROVIDER_MAX_IN_FLIGHT,
+  PEER_RESPONSE_MAX_MS,
+  PEER_RESPONSE_SWEEP_MS,
   PEER_CALL_TIMEOUT_DEFAULT_MS,
   PEER_CALL_TIMEOUT_MAX_MS,
   PEER_CHANNEL_EVENTS_PATH,
@@ -132,6 +158,10 @@ export type PeerDelegationResolution =
   | {
       readonly ok: true;
       readonly user: PeerCallerUser;
+      /** The plugin the person used (the delegation's root). */
+      readonly root: string;
+      /** When the delegation lapses (ms since the epoch): the call's answer ends then. */
+      readonly expiresAt: number;
       /** A delegation for the provider's own onward calls (it has an outgoing edge), or null. */
       readonly onward: string | null;
     }
@@ -156,7 +186,54 @@ export interface PeerCallDenial {
   readonly code: PeerRelayCode;
 }
 
+/** A peer call whose answer is open, as {@link PeerGatewayOptions.recheck} sees it. */
+export interface PeerOpenCall {
+  readonly consumer: string;
+  readonly provider: string;
+  readonly scope: string;
+  /** On behalf of a person: who, and the plugin they used. */
+  readonly user: { readonly userId: string; readonly root: string } | null;
+}
+
 export interface PeerGatewayOptions extends AgentForwardTimeouts {
+  /**
+   * Whether `consumer` may use its channel at all now (installed, enabled,
+   * approved, hosted, up). Checked for every stream; without it, every
+   * consumer whose channel the relay keeps may.
+   */
+  consumerAllowed?: ((consumer: string) => MaybePromise<boolean>) | undefined;
+  /**
+   * The floor of `consumer`'s events of `scope` for that epoch and stream —
+   * the position the relay last told it to resume from — or null when the
+   * relay gave it no gap for them.
+   */
+  eventFloor(
+    consumer: string,
+    scope: string,
+    epoch: string,
+    streamId: string,
+  ): MaybePromise<number | null>;
+  /** Remember a floor the relay is about to answer in a gap (never lowered for one epoch and stream). */
+  recordEventFloor(
+    consumer: string,
+    scope: string,
+    epoch: string,
+    streamId: string,
+    floor: number,
+  ): MaybePromise<void>;
+  /**
+   * Whether an open call may go on: the edge still effective, the consumer
+   * still qualifying, the person (if any) still active and entitled. Called
+   * every `sweepMs`; false ends the answer. Without it, only lifetimes end
+   * answers.
+   */
+  recheck?: ((call: PeerOpenCall) => MaybePromise<boolean>) | undefined;
+  /** Calls open to one provider at most; default `PEER_PROVIDER_MAX_IN_FLIGHT`. */
+  readonly maxInFlightPerProvider?: number | undefined;
+  /** The longest an answer stays open; default `PEER_RESPONSE_MAX_MS`. */
+  readonly responseMaxMs?: number | undefined;
+  /** How often open answers are checked; default `PEER_RESPONSE_SWEEP_MS`. */
+  readonly sweepMs?: number | undefined;
   /** The effective edge consumer → scope, or null (not granted, unknown, not installed). */
   edge(consumer: string, scope: string): MaybePromise<PeerGatewayEdge | null>;
   /** The provider's forward target and its declaration of `scope` now, or why it is unavailable. */
@@ -183,13 +260,20 @@ export interface PeerGatewayOptions extends AgentForwardTimeouts {
   acquireEventsPull?: ((consumer: string, scope: string) => (() => void) | null) | undefined;
   /** The providers' request hooks; without it every call streams through untouched. */
   readonly hooks?: RequestHookRuntime | undefined;
-  /** Called for every refusal (the caller rate-limits its audit). */
-  onDenied?: ((denial: PeerCallDenial) => void) | undefined;
+  /**
+   * Called for every refusal (the caller rate-limits its audit). Returning
+   * false says the refusal is past the consumer's allowance: the gateway
+   * then writes no log line for it either.
+   */
+  onDenied?: ((denial: PeerCallDenial) => boolean | void) | undefined;
   readonly logger?: AgentForwarderLogger | undefined;
 }
 
 /** Seconds a consumer is told to wait before trying an unavailable provider again. */
 const RETRY_AFTER_SECONDS = 10;
+
+/** …and a busy one. */
+const BUSY_RETRY_AFTER_SECONDS = 1;
 
 /** The relay's own answer to a stream: JSON, marked with its code. */
 function refuse(
@@ -254,6 +338,72 @@ export function createPeerGateway(
   opts: PeerGatewayOptions,
 ): (req: Http2ServerRequest, res: Http2ServerResponse, consumer: string) => Promise<void> {
   const logger = opts.logger;
+  const maxInFlight = opts.maxInFlightPerProvider ?? PEER_PROVIDER_MAX_IN_FLIGHT;
+  const responseMaxMs = opts.responseMaxMs ?? PEER_RESPONSE_MAX_MS;
+  const sweepMs = opts.sweepMs ?? PEER_RESPONSE_SWEEP_MS;
+
+  /** Calls open per provider. */
+  const inFlight = new Map<string, number>();
+
+  interface OpenEntry {
+    readonly call: PeerOpenCall;
+    readonly deadline: number;
+    checking: boolean;
+  }
+  /** Answers open now, and the timer that checks them while there are any. */
+  const open = new Map<Http2ServerResponse, OpenEntry>();
+  let sweeper: NodeJS.Timeout | null = null;
+
+  function end(res: Http2ServerResponse, why: string, call: PeerOpenCall): void {
+    open.delete(res);
+    logger?.info(
+      { consumer: call.consumer, provider: call.provider, scope: call.scope, why },
+      'Peer answer ended by the relay',
+    );
+    // Reset, whether or not the provider answered yet: the forwarding core
+    // sees the stream close unfinished and cancels the provider's request
+    // too — an answer written here instead would leave the provider working
+    // on a call no longer allowed.
+    res.destroy();
+  }
+
+  function sweep(): void {
+    const now = Date.now();
+    for (const [res, entry] of open) {
+      if (now >= entry.deadline) {
+        end(res, 'lifetime', entry.call);
+        continue;
+      }
+      if (!opts.recheck || entry.checking) continue;
+      entry.checking = true;
+      Promise.resolve()
+        .then(() => opts.recheck?.(entry.call))
+        .then(
+          (allowed) => {
+            entry.checking = false;
+            if (allowed === false && open.has(res)) end(res, 'revoked', entry.call);
+          },
+          () => {
+            // A check that fails cannot say the call is still allowed.
+            entry.checking = false;
+            if (open.has(res)) end(res, 'recheck_failed', entry.call);
+          },
+        );
+    }
+    if (open.size === 0 && sweeper) {
+      clearInterval(sweeper);
+      sweeper = null;
+    }
+  }
+
+  function track(res: Http2ServerResponse, call: PeerOpenCall, expiresAt: number | null): void {
+    const deadline = Math.min(Date.now() + responseMaxMs, expiresAt ?? Infinity);
+    open.set(res, { call, deadline, checking: false });
+    if (!sweeper) {
+      sweeper = setInterval(sweep, Math.min(sweepMs, Math.max(deadline - Date.now(), 1)));
+      sweeper.unref();
+    }
+  }
 
   function log(entry: {
     readonly consumer: string;
@@ -287,12 +437,22 @@ export function createPeerGateway(
     else logger.info(line, 'Peer call forwarded');
   }
 
-  function denied(consumer: string, scope: string | null, code: PeerRelayCode): void {
+  /** Tell the caller of a refusal; false when it is past the consumer's allowance. */
+  function denied(consumer: string, scope: string | null, code: PeerRelayCode): boolean {
     try {
-      opts.onDenied?.({ consumer, scope, code });
+      return opts.onDenied?.({ consumer, scope, code }) !== false;
     } catch {
       // An audit that fails never fails the answer.
+      return true;
     }
+  }
+
+  /** A call's answer is complete: no longer open, one less in flight to its provider. */
+  function untrack(res: Http2ServerResponse, provider: string): void {
+    open.delete(res);
+    const left = (inFlight.get(provider) ?? 1) - 1;
+    if (left <= 0) inFlight.delete(provider);
+    else inFlight.set(provider, left);
   }
 
   async function handleCall(
@@ -324,8 +484,9 @@ export function createPeerGateway(
       extra: Readonly<Record<string, unknown>> = {},
       headers: Readonly<Record<string, string>> = {},
     ): void => {
-      denied(consumer, scope, code);
-      done(refuse(res, status, code, error, extra, headers));
+      const noted = denied(consumer, scope, code);
+      const outcome = refuse(res, status, code, error, extra, headers);
+      if (noted) done(outcome);
     };
 
     // 1. The path.
@@ -356,6 +517,8 @@ export function createPeerGateway(
     // 5. The delegation.
     let user: PeerCallerUser | null = null;
     let onward: string | null = null;
+    let delegationRoot: string | null = null;
+    let delegationExpiresAt: number | null = null;
     const token = headerOf(req, PEER_DELEGATION_HEADER);
     if (token !== undefined) {
       const checked = await opts.resolveDelegation({ consumer, provider, token });
@@ -366,6 +529,8 @@ export function createPeerGateway(
       }
       user = checked.user;
       onward = checked.onward;
+      delegationRoot = checked.root;
+      delegationExpiresAt = checked.expiresAt;
     }
     // 6. The provider.
     const resolved = await opts.providerTarget(provider, scope);
@@ -403,6 +568,17 @@ export function createPeerGateway(
       plan = built;
     }
 
+    const openToProvider = inFlight.get(provider) ?? 0;
+    if (openToProvider >= maxInFlight) {
+      return deny(
+        503,
+        'peer_unavailable',
+        'The provider is busy',
+        { reason: 'busy' },
+        { 'retry-after': String(BUSY_RETRY_AFTER_SECONDS) },
+      );
+    }
+
     const caller: PeerCallerIdentity = {
       type: 'peer',
       peer: consumer,
@@ -412,24 +588,42 @@ export function createPeerGateway(
       hops: hops + 1,
       ...(user ? { user } : {}),
     };
-    const outcome = await forwardRequest(
-      { method, headers: req.headers, body: req },
+    inFlight.set(provider, openToProvider + 1);
+    track(
       res,
-      target,
-      caller,
-      targetPath,
       {
-        headersTimeoutMs: headersTimeoutOf(req),
-        ...(opts.bodyIdleTimeoutMs !== undefined
-          ? { bodyIdleTimeoutMs: opts.bodyIdleTimeoutMs }
-          : {}),
-        ...(opts.connectTimeoutMs !== undefined ? { connectTimeoutMs: opts.connectTimeoutMs } : {}),
-        ...(opts.host !== undefined ? { host: opts.host } : {}),
+        consumer,
+        provider,
+        scope,
+        user: user && delegationRoot ? { userId: user.userId, root: delegationRoot } : null,
       },
-      plan,
-      'peer',
-      onward !== null ? { [PEER_DELEGATION_HEADER]: onward } : {},
+      delegationExpiresAt,
     );
+    let outcome: ForwardOutcome;
+    try {
+      outcome = await forwardRequest(
+        { method, headers: req.headers, body: req },
+        res,
+        target,
+        caller,
+        targetPath,
+        {
+          headersTimeoutMs: headersTimeoutOf(req),
+          ...(opts.bodyIdleTimeoutMs !== undefined
+            ? { bodyIdleTimeoutMs: opts.bodyIdleTimeoutMs }
+            : {}),
+          ...(opts.connectTimeoutMs !== undefined
+            ? { connectTimeoutMs: opts.connectTimeoutMs }
+            : {}),
+          ...(opts.host !== undefined ? { host: opts.host } : {}),
+        },
+        plan,
+        'peer',
+        onward !== null ? { [PEER_DELEGATION_HEADER]: onward } : {},
+      );
+    } finally {
+      untrack(res, provider);
+    }
     done(outcome, { provider, endpoint, plan, user: user !== null });
   }
 
@@ -530,19 +724,36 @@ export function createPeerGateway(
         after,
       });
     };
-    const gap = (reason: PeerGapReason, head: number, streamId: string): void =>
-      answer(200, {
-        gap: { reason, resumeFrom: head, epoch: subscription.epoch, streamId },
-      });
     const unreachable = (): void =>
       void refuse(res, 502, 'provider_unreachable', 'The provider did not answer the pull');
+    /**
+     * Answer a gap: first the floor it sets — what the consumer may resume
+     * from, for this epoch and stream — so a later pull cannot ask from
+     * below it.
+     */
+    const gap = async (
+      reason: PeerGapReason,
+      head: number,
+      streamId: string,
+      epoch: string = subscription.epoch,
+    ): Promise<void> => {
+      await opts.recordEventFloor(consumer, pull.scope, epoch, streamId, head);
+      answer(200, { gap: { reason, resumeFrom: head, epoch, streamId } });
+    };
+    /** The provider's head and stream, for a gap. */
+    const probeHead = async (): Promise<{ head: number; streamId: string } | null> => {
+      const probe = await providerPull(0, 0, 0);
+      return probe === 'unreachable' || probe === null
+        ? null
+        : { head: probe.head, streamId: probe.streamId };
+    };
 
     // A cursor that cannot be continued: learn the provider's head and answer a gap.
     const fresh =
       pull.after === null || pull.epoch !== subscription.epoch || pull.streamId === null;
     if (fresh) {
-      const probe = await providerPull(0, 0, 0);
-      if (probe === 'unreachable' || probe === null) return unreachable();
+      const probe = await probeHead();
+      if (!probe) return unreachable();
       const reason: PeerGapReason =
         pull.after === null || pull.epoch === null
           ? 'initial'
@@ -552,10 +763,44 @@ export function createPeerGateway(
       return gap(reason, probe.head, probe.streamId);
     }
     const after = pull.after as number;
+    const streamId = pull.streamId as string;
+    // The cursor must rest on a gap the relay answered for this epoch and
+    // stream, at or past its floor: an epoch is no secret, a floor is.
+    const floor = await opts.eventFloor(consumer, pull.scope, subscription.epoch, streamId);
+    if (floor === null || after < floor) {
+      const probe = await probeHead();
+      if (!probe) return unreachable();
+      return gap(floor === null ? 'initial' : 'granted', probe.head, probe.streamId);
+    }
     const waitMs = Math.min(pull.waitMs, PEER_EVENTS_WAIT_MAX_MS);
     const pulled = await providerPull(after, PEER_EVENTS_PULL_MAX, waitMs);
     if (pulled === 'unreachable' || pulled === null) return unreachable();
-    if (pulled.streamId !== pull.streamId || after > pulled.head) {
+
+    // The provider may have held the pull for a while: what was true when it
+    // was asked must still be true before anything crosses.
+    if (opts.consumerAllowed && !(await opts.consumerAllowed(consumer))) {
+      denied(consumer, pull.scope, 'not_granted');
+      return void refuse(res, 403, 'not_granted', 'This plugin may not use its channel now');
+    }
+    const now = await opts.subscription(consumer, pull.scope);
+    if (!now || now.provider !== subscription.provider) {
+      denied(consumer, pull.scope, 'not_granted');
+      return void refuse(res, 403, 'not_granted', 'This plugin receives no events of that scope');
+    }
+    if (now.epoch !== subscription.epoch) {
+      return gap(
+        subscriptionChangeReason(subscription.epoch, now.epoch),
+        pulled.head,
+        pulled.streamId,
+        now.epoch,
+      );
+    }
+    const floorNow = await opts.eventFloor(consumer, pull.scope, subscription.epoch, streamId);
+    if (floorNow === null || after < floorNow) {
+      return gap('granted', pulled.head, pulled.streamId);
+    }
+
+    if (pulled.streamId !== streamId || after > pulled.head) {
       return gap('stream_changed', pulled.head, pulled.streamId);
     }
     if (after < pulled.horizon) return gap('horizon', pulled.head, pulled.streamId);
@@ -571,6 +816,22 @@ export function createPeerGateway(
   return async (req, res, consumer) => {
     const startedAt = Date.now();
     try {
+      if (opts.consumerAllowed && !(await opts.consumerAllowed(consumer))) {
+        const noted = denied(consumer, null, 'not_granted');
+        const outcome = refuse(res, 403, 'not_granted', 'This plugin may not use its channel now');
+        if (noted) {
+          log({
+            consumer,
+            provider: null,
+            scope: null,
+            method: req.method.toUpperCase(),
+            endpoint: null,
+            startedAt,
+            outcome,
+          });
+        }
+        return;
+      }
       if (pathPartOf(req.url) === PEER_CHANNEL_EVENTS_PATH) {
         await handleEvents(req, res, consumer, startedAt);
       } else {

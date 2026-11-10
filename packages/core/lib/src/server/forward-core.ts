@@ -264,6 +264,7 @@ export function forwardedResponseHeaders(incoming: IncomingHttpHeaders): Outgoin
       name.startsWith(':') ||
       HOP_BY_HOP.has(name) ||
       STRIPPED_RESPONSE_HEADERS.has(name) ||
+      CONNECTION_RESPONSE_HEADERS.has(name) ||
       name.startsWith('x-lamalibre-') ||
       name.startsWith('x-accel-')
     ) {
@@ -588,6 +589,13 @@ export function writeJson(res: ForwardResponse, status: number, body: unknown): 
 }
 
 /**
+ * Response headers that describe a connection, never an answer: `host`
+ * and HTTP/2's `http2-settings` — an HTTP/2 response refuses both (it
+ * throws), and an HTTP/1.1 one has no use for either.
+ */
+const CONNECTION_RESPONSE_HEADERS = new Set(['host', 'http2-settings']);
+
+/**
  * A forwarded answer's headers as `surface` sends them: on a user surface,
  * {@link userSurfaceResponseHeaders}.
  */
@@ -695,7 +703,14 @@ export function streamResponse(
     responseHeaders['x-accel-buffering'] = 'no';
     responseHeaders['cache-control'] = 'no-cache';
   }
-  res.writeHead(status, responseHeaders);
+  try {
+    res.writeHead(status, responseHeaders);
+  } catch (err: unknown) {
+    // A header the response refuses: nothing was sent — let go of the
+    // agent half's answer, or its connection waits for a reader.
+    upstreamRes.destroy();
+    throw err;
+  }
   // Both response kinds have `flushHeaders` (HTTP/2's compatibility one
   // too, though its type does not say so); both are writables.
   if (eventStream) (res as { flushHeaders?: () => void }).flushHeaders?.();

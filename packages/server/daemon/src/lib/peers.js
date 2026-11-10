@@ -157,6 +157,10 @@ function pendingReason(edge, byRoute, approvedPeers) {
   if (!consumed) return 'not_consumed';
   const provided = provider.peers?.provides?.[edge.scope];
   if (!provided) return 'not_provided';
+  // A disabled plugin calls nobody and serves nobody: an administrator
+  // disables a plugin to stop it.
+  if (consumer.status !== 'enabled') return 'consumer_disabled';
+  if (provider.status !== 'enabled') return 'provider_disabled';
   if (!approvedPeers.get(edge.consumer)) return 'consumer_not_approved';
   if (!approvedPeers.get(edge.provider)) return 'provider_not_approved';
   if (!provided.majors.includes(consumed.major)) return 'major_mismatch';
@@ -184,6 +188,10 @@ async function computeSnapshot() {
   }
 
   const byConsumer = new Map();
+  // Edges consumers rely on: effective ones, and those only waiting for
+  // their provider to be enabled again — what removing or narrowing the
+  // provider cuts, disabled or not.
+  const reliance = [];
   const shelves = shelfRows.map((row) => ({
     shelfId: row.shelf_id,
     appliedAt: row.applied_at,
@@ -201,6 +209,19 @@ async function computeSnapshot() {
       ...(reason !== null ? { reason } : {}),
       grantedSeq,
     });
+    if (reason !== null && reason !== 'provider_disabled') continue;
+    {
+      const consumed = byRoute.get(row.consumer).peers.consumes[row.scope];
+      const provided = byRoute.get(row.provider).peers.provides[row.scope];
+      reliance.push({
+        consumer: row.consumer,
+        scope: row.scope,
+        provider: row.provider,
+        major: consumed.major,
+        required: consumed.required,
+        events: sharedEvents(consumed.events, provided.events),
+      });
+    }
     if (reason !== null) continue;
     let scopes = byConsumer.get(row.consumer);
     if (!scopes) byConsumer.set(row.consumer, (scopes = new Map()));
@@ -221,6 +242,7 @@ async function computeSnapshot() {
   }
   return {
     byConsumer,
+    reliance,
     shelves,
     plugins: plugins
       .filter((p) => p.route && p.peers)
@@ -276,14 +298,121 @@ export async function effectiveSubscription(consumer, scope) {
 }
 
 /**
- * Who relies on provider `route` through effective edges: each consumer
+ * The applied edges that name `route` — into it (`in`: it provides) and out
+ * of it (`out`: it consumes) — whatever their state: what an installation
+ * or update under that route inherits from the applied shelves, shown with
+ * its approval.
+ *
+ * @param {string | null} route
+ */
+export async function appliedEdgesNaming(route) {
+  const into = [];
+  const out = [];
+  if (!route) return { in: into, out };
+  for (const shelf of (await peersSnapshot()).shelves) {
+    for (const edge of shelf.edges) {
+      const entry = {
+        shelfId: shelf.shelfId,
+        scope: edge.scope,
+        provider: edge.provider,
+        consumer: edge.consumer,
+        state: edge.state,
+        ...(edge.reason ? { reason: edge.reason } : {}),
+      };
+      if (edge.provider === route) into.push(entry);
+      if (edge.consumer === route) out.push(entry);
+    }
+  }
+  return { in: into, out };
+}
+
+// ---------------------------------------------------------------------------
+// Event floors (what a consumer may resume its events from)
+// ---------------------------------------------------------------------------
+
+/**
+ * The floor of `consumer`'s events of `scope` for this epoch and stream, or
+ * null when the relay gave it no gap for them.
+ */
+export async function eventFloor(consumer, scope, epoch, streamId) {
+  const db = await getStateDb();
+  const row = db
+    .prepare(
+      'SELECT epoch, stream_id, floor FROM peer_event_floors WHERE consumer = ? AND scope = ?',
+    )
+    .get(consumer, scope);
+  if (!row || row.epoch !== epoch || row.stream_id !== streamId) return null;
+  return row.floor;
+}
+
+/**
+ * Record the floor the relay is about to answer in a gap. For the same
+ * epoch and stream a floor only rises; another epoch or stream replaces it.
+ */
+export async function recordEventFloor(consumer, scope, epoch, streamId, floor) {
+  const db = await getStateDb();
+  db.prepare(
+    `INSERT INTO peer_event_floors (consumer, scope, epoch, stream_id, floor, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (consumer, scope) DO UPDATE SET
+       floor = CASE
+         WHEN peer_event_floors.epoch = excluded.epoch
+          AND peer_event_floors.stream_id = excluded.stream_id
+         THEN max(peer_event_floors.floor, excluded.floor)
+         ELSE excluded.floor END,
+       epoch = excluded.epoch,
+       stream_id = excluded.stream_id,
+       updated_at = excluded.updated_at`,
+  ).run(consumer, scope, epoch, streamId, floor, new Date().toISOString());
+}
+
+/**
+ * Forget the floors of subscriptions that are no longer effective: the next
+ * grant starts with a gap anyway, at a new epoch. Returns how many went.
+ */
+export async function pruneEventFloors() {
+  const db = await getStateDb();
+  const { byConsumer } = await peersSnapshot();
+  const rows = db.prepare('SELECT consumer, scope FROM peer_event_floors').all();
+  const remove = db.prepare('DELETE FROM peer_event_floors WHERE consumer = ? AND scope = ?');
+  let removed = 0;
+  for (const row of rows) {
+    const edge = byConsumer.get(row.consumer)?.get(row.scope);
+    if (!edge || edge.events.length === 0) {
+      remove.run(row.consumer, row.scope);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
+/**
+ * The edges consumers rely on into provider `route`: the effective ones and
+ * those pending only because the provider is disabled. Each (consumer,
+ * scope) once.
+ */
+async function relianceInto(route) {
+  const seen = new Set();
+  const out = [];
+  for (const edge of (await peersSnapshot()).reliance) {
+    const key = `${edge.consumer} ${edge.scope}`;
+    if (edge.provider !== route || seen.has(key)) continue;
+    seen.add(key);
+    out.push(edge);
+  }
+  return out;
+}
+
+/**
+ * Who relies on provider `route` (effective edges, or edges waiting only
+ * for it to be enabled again): each consumer
  * once, required ones first — what uninstalling or unhosting it would cut.
  *
  * @returns {Promise<Array<{ consumer: string, scopes: string[], required: boolean }>>}
  */
 export async function peerDependents(route) {
   const byConsumer = new Map();
-  for (const edge of await effectiveEdgesInto(route)) {
+  for (const edge of await relianceInto(route)) {
     const entry = byConsumer.get(edge.consumer) ?? {
       consumer: edge.consumer,
       scopes: [],
@@ -336,9 +465,10 @@ export async function assertNoPeerDependents(plugin, breakPeers) {
  */
 export async function peersPreview(plugin, after) {
   const before = plugin.peers ?? null;
-  if (!before && !after) return null;
+  const applied = await appliedEdgesNaming(plugin.route);
+  if (!before && !after && applied.in.length === 0 && applied.out.length === 0) return null;
   const used = plugin.route
-    ? (await effectiveEdgesInto(plugin.route)).map((edge) => ({
+    ? (await relianceInto(plugin.route)).map((edge) => ({
         consumer: edge.consumer,
         scope: edge.scope,
         major: edge.major,
@@ -350,6 +480,7 @@ export async function peersPreview(plugin, after) {
     after: after ?? null,
     diff: peersDiff(before, after),
     breaks: peersBreaks(before, after, used),
+    appliedEdges: applied,
   };
 }
 

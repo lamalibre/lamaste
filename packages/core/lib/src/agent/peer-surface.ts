@@ -87,6 +87,39 @@ const PEER_ROUTE_CONFIG_KEY = 'lamastePeerRoute';
 const PEER_ROUTE_MARK: object = Object.freeze({});
 const verifiedRequests = new WeakMap<object, VerifiedCallerAssertion>();
 
+/** What Fastify's `printRoutes()` answers for an instance with no route. */
+const EMPTY_ROUTE_TREE = '(empty tree)';
+
+const TREE_LINE_RE = /^((?:│ {3}| {4})*)(?:├── |└── )(.*)$/u;
+const TREE_METHODS_RE = / \(([A-Z]+(?:, [A-Z]+)*)\)$/;
+
+/**
+ * The full paths of the routes in Fastify's `printRoutes()` tree (each line
+ * a node: its depth in the indentation, its part of the path, and the
+ * methods of a route ending there), or null for a line it cannot read —
+ * the caller then refuses rather than guess. Exported for tests.
+ */
+export function routedPaths(tree: string): string[] | null {
+  if (tree.trim() === EMPTY_ROUTE_TREE) return [];
+  const stack: string[] = [];
+  const out: string[] = [];
+  for (const line of tree.split('\n')) {
+    if (line.trim() === '') continue;
+    const match = TREE_LINE_RE.exec(line);
+    if (!match) return null;
+    const depth = (match[1] ?? '').length / 4;
+    if (depth > stack.length) return null;
+    let text = match[2] ?? '';
+    const methods = TREE_METHODS_RE.exec(text);
+    if (methods) text = text.slice(0, methods.index);
+    stack.length = depth;
+    const fullPath = (depth > 0 ? (stack[depth - 1] ?? '') : '') + text;
+    stack.push(fullPath);
+    if (methods) out.push(fullPath);
+  }
+  return out;
+}
+
 /**
  * Answer Lamaste's `/admin/peers` calls — `GET /admin/peers` (readiness:
  * `{ protocol, consumer, outbox, inbox }`) and the events pull —
@@ -140,11 +173,40 @@ export function createPeerAdminHandler(opts: PeerSurfaceOptions): {
 /**
  * Register the peer surface on a Fastify instance — not encapsulated, so its
  * guard covers every `/peer` route of the instance: `fastify.register(peerSurface(opts))`.
+ *
+ * **Register it before any `/peer` route.** Fastify gives a hook only to
+ * the contexts created after it, so a `/peer` route registered earlier would
+ * be out of the guard's reach: registering it after one fails (and when the
+ * instance's routes cannot be read, it fails too). Every `/peer` route
+ * registered after it must be a {@link peerRoute} — another fails its
+ * registration, and so the instance's start: an unchecked route on the peer
+ * surface would answer anything that reaches the agent half's loopback
+ * port.
  */
 export function peerSurface(opts: PeerSurfaceOptions): (fastify: FastifyInstance) => Promise<void> {
   const admin = createPeerAdminHandler(opts);
   const plugin = async (fastify: FastifyInstance): Promise<void> => {
+    const existing = routedPaths(fastify.printRoutes());
+    if (existing === null) {
+      throw new Error("peerSurface could not read the instance's routes; register it first");
+    }
+    const early = existing.filter((routePath) => isUnderAgentHalfPeer(routePath));
+    if (early.length > 0) {
+      throw new Error(
+        `peerSurface must be registered before any /peer route (${early.join(', ')} is out of its guard)`,
+      );
+    }
     surfaces.set(fastify.server, opts);
+
+    fastify.addHook('onRoute', (route) => {
+      if (!isUnderAgentHalfPeer(route.url ?? '')) return;
+      const config = route.config as Record<string, unknown> | undefined;
+      if (config?.[PEER_ROUTE_CONFIG_KEY] !== PEER_ROUTE_MARK) {
+        throw new Error(
+          `${String(route.method)} ${route.url ?? ''}: a route on the peer surface must be made with peerRoute()`,
+        );
+      }
+    });
 
     fastify.addHook('onRequest', async (request, reply) => {
       if (!isUnderAgentHalfPeer(request.url)) return;

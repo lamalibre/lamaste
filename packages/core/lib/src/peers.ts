@@ -134,6 +134,8 @@ export const PEER_UNAVAILABLE_REASONS = [
   'down_tunnel',
   'down_app',
   'not_ready',
+  // The provider has PEER_PROVIDER_MAX_IN_FLIGHT calls open already.
+  'busy',
 ] as const;
 
 export type PeerUnavailableReason = (typeof PEER_UNAVAILABLE_REASONS)[number];
@@ -190,6 +192,26 @@ export const PEER_EVENTS_PULL_MAX_BYTES = 1024 * 1024;
 
 /** The longest a pull holds, waiting for an event. */
 export const PEER_EVENTS_WAIT_MAX_MS = 25_000;
+
+/**
+ * Calls the relay keeps open to one provider at a time, every consumer
+ * together; one more is answered `503 peer_unavailable` (`busy`).
+ */
+export const PEER_PROVIDER_MAX_IN_FLIGHT = 128;
+
+/**
+ * The longest a peer call's answer stays open (a stream, a slow download):
+ * the relay ends it after this long — a call on behalf of a person sooner,
+ * when its delegation lapses.
+ */
+export const PEER_RESPONSE_MAX_MS = 60 * 60 * 1000;
+
+/**
+ * How often the relay checks the peer answers it keeps open: past their
+ * lifetime, or no longer allowed (the edge gone, the consumer disabled, the
+ * person no longer entitled), they are ended.
+ */
+export const PEER_RESPONSE_SWEEP_MS = 5_000;
 
 /** How long a provider's outbox keeps events unless it says otherwise. */
 export const PEER_OUTBOX_RETENTION_DEFAULT_DAYS = 7;

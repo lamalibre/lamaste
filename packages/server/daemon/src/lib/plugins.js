@@ -942,6 +942,8 @@ export function enablePlugin(name, logger) {
     }
 
     logger?.info({ name }, 'Plugin enabled');
+    // Its edges take effect again (lib/peers.js): channels and calls follow.
+    if (row.peers) await invalidatePeersInBackground(logger);
     const oidcClients = await syncOidcClientsBestEffort(logger);
     return { ok: true, name, status: 'enabled', oidcClients };
   });
@@ -977,6 +979,9 @@ export function disablePlugin(name, logger) {
     }
 
     logger?.info({ name }, 'Plugin disabled');
+    // A disabled plugin calls and serves nobody (lib/peers.js): its edges go
+    // pending, and its channel is closed and its open calls ended.
+    if (row.peers) await invalidatePeersInBackground(logger);
     await syncOidcClientsBestEffort(logger);
     return { ok: true, name, status: 'disabled' };
   });
