@@ -121,6 +121,14 @@ export const PAGE_MESSAGES_EN = {
   'invitations.reallyRevoke': 'Really revoke?',
   'invitations.emailRequired': 'Enter an e-mail address.',
   'invitations.emailInvalid': 'Enter a valid e-mail address.',
+  'invitations.mailed':
+    'The invitation was e-mailed. The link is also shown here, only now — whoever opens it first can accept it.',
+  'invitations.mailFailed':
+    'The invitation could not be e-mailed. Send this link yourself — it is shown only now, and whoever opens it first can accept it.',
+  'invitations.mailSent': 'E-mailed',
+  'invitations.mailNotSent': 'Not e-mailed',
+  'invitations.reissue': 'New link',
+  'invitations.reallyReissue': 'Replace the old link?',
   'status.pending': 'Pending',
   'status.expired': 'Expired',
   'status.accepting': 'Being accepted',
@@ -397,6 +405,14 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'invitations.reallyRevoke': 'İptal edilsin mi?',
   'invitations.emailRequired': 'Bir e-posta adresi girin.',
   'invitations.emailInvalid': 'Geçerli bir e-posta adresi girin.',
+  'invitations.mailed':
+    'Davet e-postayla gönderildi. Bağlantı burada da yalnızca şimdi gösteriliyor; onu ilk açan kişi daveti kabul edebilir.',
+  'invitations.mailFailed':
+    'Davet e-postayla gönderilemedi. Bu bağlantıyı kişiye kendiniz gönderin. Bağlantı yalnızca şimdi gösteriliyor ve onu ilk açan kişi daveti kabul edebilir.',
+  'invitations.mailSent': 'E-postayla gönderildi',
+  'invitations.mailNotSent': 'E-posta gönderilemedi',
+  'invitations.reissue': 'Yeni bağlantı',
+  'invitations.reallyReissue': 'Eski bağlantı geçersiz olsun mu?',
   'status.pending': 'Bekliyor',
   'status.expired': 'Süresi doldu',
   'status.accepting': 'Kabul işlemi sürüyor',

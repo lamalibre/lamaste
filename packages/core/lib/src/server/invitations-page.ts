@@ -10,9 +10,11 @@
  * its path — and nothing else from its URL, so a plugin cannot prefill it —
  * and talks to `/api/delegated-invitations/<route>` on its own host
  * (`GET` the roles the person may give and their own invitations, `POST` a
- * new one, `DELETE` a pending one), with `fetch`'s default mode, which
- * sends the `Origin` the panel checks. A new invitation's link is shown
- * once, with a copy button: the person sends it through their own mail.
+ * new one, `POST …/<id>/reissue` a new link for an open one, `DELETE` a
+ * pending one), with `fetch`'s default mode, which sends the `Origin` the
+ * panel checks. A made or reissued invitation's link is shown once, with a
+ * copy button, and with what became of its mail (mail-design.md §6.1): the
+ * relay mails it when the domain can send; otherwise the person sends it.
  * Without a session the page links to the domain's sign-in, coming back to
  * itself (built from `location.origin` and the checked route, never from the
  * query).
@@ -54,9 +56,11 @@ ${AUTH_PAGE_SCRIPT_WORDS}
       var api = '/api/delegated-invitations/' + route;
       var signIn = window.location.origin + '/?rd=' +
         encodeURIComponent(window.location.origin + '/invitations/' + route);
-      // The link of the invitation just made, shown until it is revoked.
+      // The link of the invitation just made or given a new link, shown
+      // until it is revoked, and what became of its mail.
       var link = null;
       var linkId = null;
+      var linkMail = null;
 
       load();
 
@@ -184,9 +188,7 @@ ${AUTH_PAGE_SCRIPT_WORDS}
               errorDiv.innerHTML = '<div class="error-msg">' + text(refusal(answer.status, answer.data, STATUS_KEYS, 'create')) + '</div>';
               return;
             }
-            link = typeof answer.data.inviteUrl === 'string' && answer.data.inviteUrl.indexOf('https://') === 0
-              ? answer.data.inviteUrl : null;
-            linkId = answer.data.invitation && answer.data.invitation.id;
+            keepLink(answer.data);
             document.getElementById('invite-form').reset();
             refresh(null);
           })
@@ -194,6 +196,14 @@ ${AUTH_PAGE_SCRIPT_WORDS}
             button.disabled = false;
             errorDiv.innerHTML = '<div class="error-msg">' + text(msg('invitations.unreachable')) + '</div>';
           });
+      }
+
+      // The link of a made or reissued invitation, from the panel's answer.
+      function keepLink(data) {
+        link = typeof data.inviteUrl === 'string' && data.inviteUrl.indexOf('https://') === 0
+          ? data.inviteUrl : null;
+        linkId = data.invitation && data.invitation.id;
+        linkMail = data.mail && typeof data.mail.status === 'string' ? data.mail.status : null;
       }
 
       function showResult() {
@@ -205,7 +215,9 @@ ${AUTH_PAGE_SCRIPT_WORDS}
         }
         result.innerHTML =
           '<div class="error-msg note-msg">' +
-            '<p>' + text(msg('invitations.ready')) + '</p>' +
+            '<p>' + text(msg(linkMail === 'sent' ? 'invitations.mailed'
+              : linkMail === 'failed' || linkMail === 'deferred-budget' ? 'invitations.mailFailed'
+              : 'invitations.ready')) + '</p>' +
           '</div>' +
           '<div class="field"><div class="row"><input type="text" id="link" readonly>' +
             '<button type="button" class="btn btn-small" id="copy">' + text(msg('invitations.copy')) + '</button></div></div>';
@@ -253,10 +265,18 @@ ${AUTH_PAGE_SCRIPT_WORDS}
           var who = inv.email || inv.displayName || '—';
           var when = inv.status === 'accepted' ? formatDate(inv.acceptedAt) : formatDate(inv.expiresAt);
           var status = has('status.' + inv.status) ? msg('status.' + inv.status) : inv.status;
+          var open = inv.status === 'pending' || inv.status === 'expired';
+          var mailed = open && inv.mail ? inv.mail.status : null;
+          var mailLine = mailed === 'sent' ? msg('invitations.mailSent')
+            : mailed === 'failed' || mailed === 'deferred-budget' ? msg('invitations.mailNotSent') : null;
           line.innerHTML =
             '<span class="detail-label">' + text(who) + '<br>' + text(inv.roleLabel) + '</span>' +
             '<span class="detail-value">' + text(status) +
-              '<br><span class="muted">' + text(when) + '</span></span>';
+              '<br><span class="muted">' + text(when) + '</span>' +
+              (mailLine ? '<br><span class="muted">' + text(mailLine) + '</span>' : '') + '</span>';
+          if (open && ID_RE.test(inv.id)) {
+            line.appendChild(reissueButton(inv));
+          }
           if (inv.status === 'pending' && ID_RE.test(inv.id)) {
             var revoke = document.createElement('button');
             revoke.type = 'button';
@@ -290,6 +310,35 @@ ${AUTH_PAGE_SCRIPT_WORDS}
           }
           rows.appendChild(line);
         });
+      }
+
+      // A new link for an open invitation (an expired one too): the old one
+      // stops working, so two clicks, as revoking takes.
+      function reissueButton(inv) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-outline btn-small';
+        button.textContent = msg('invitations.reissue');
+        button.addEventListener('click', function () {
+          if (button.getAttribute('data-confirm') !== 'yes') {
+            button.setAttribute('data-confirm', 'yes');
+            button.textContent = msg('invitations.reallyReissue');
+            return;
+          }
+          button.disabled = true;
+          request('POST', api + '/' + inv.id + '/reissue')
+            .then(function (answer) {
+              if (answer.status === 401) return showSignIn();
+              if (answer.status === 200) keepLink(answer.data);
+              refresh(answer.status === 200 ? null : refusal(answer.status, answer.data, STATUS_KEYS));
+            })
+            .catch(function () {
+              button.disabled = false;
+              button.removeAttribute('data-confirm');
+              button.textContent = msg('invitations.reissue');
+            });
+        });
+        return button;
       }
     })();
   `;

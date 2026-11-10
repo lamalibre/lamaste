@@ -347,6 +347,31 @@ test('the scripts never show a refusal’s own text, and take their words from t
   assert.ok(INVITATIONS_PAGE_SCRIPT.includes('new Intl.PluralRules(LANG)'));
 });
 
+test('every word the inviter’s page script names is in its data block', () => {
+  const named = [
+    ...INVITATIONS_PAGE_SCRIPT.matchAll(/'((?:invitations|status|error)\.[A-Za-z0-9_.]+)'/g),
+  ].map((m) => m[1]);
+  for (const key of [
+    'invitations.mailed',
+    'invitations.mailFailed',
+    'invitations.mailSent',
+    'invitations.mailNotSent',
+    'invitations.reissue',
+    'invitations.reallyReissue',
+  ]) {
+    assert.ok(named.includes(key), key);
+  }
+  // A plural is named by its stem.
+  for (const key of named) {
+    assert.ok(
+      INVITATIONS_PAGE_KEYS.includes(key) || INVITATIONS_PAGE_KEYS.includes(`${key}_other`),
+      key,
+    );
+  }
+  // A new link for an open invitation, through the inviter's own route.
+  assert.ok(INVITATIONS_PAGE_SCRIPT.includes("request('POST', api + '/' + inv.id + '/reissue')"));
+});
+
 test('the inviter’s page words a refusal by its action, its code, its status, then its fallback', () => {
   // The script's own functions, run on the Turkish data block.
   const take = (re) => {
