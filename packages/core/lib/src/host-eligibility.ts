@@ -7,7 +7,7 @@
 
 import semver from 'semver';
 
-import { APPHOST_PROTOCOL_VERSION } from './agent-half.js';
+import { apphostProtocolFor } from './agent-half.js';
 import type { AgentHalfDeclaration } from './agent-half.js';
 import type { AgentRequires, HostFacts } from './schemas.js';
 
@@ -104,10 +104,13 @@ export function hostEligibility(
           'The app host helper is not enabled on the agent (sudo lamaste-agent apphost enable)',
         );
       } else {
-        if (facts.apphost.version < APPHOST_PROTOCOL_VERSION) {
+        // A half from a scope other than @lamalibre needs a helper that takes
+        // any trusted scope; an older one would refuse its package.
+        const needed = apphostProtocolFor(agentHalf.package);
+        if (facts.apphost.version < needed) {
           reasons.push(
-            `The agent's app host helper speaks protocol ${facts.apphost.version}; this relay needs ` +
-              `${APPHOST_PROTOCOL_VERSION} (update lamaste-agent, then sudo lamaste-agent apphost enable)`,
+            `The agent's app host helper speaks protocol ${facts.apphost.version}; this plugin ` +
+              `needs ${needed} (update lamaste-agent, then sudo lamaste-agent apphost enable)`,
           );
         }
         if (relay.relayKid === null) {

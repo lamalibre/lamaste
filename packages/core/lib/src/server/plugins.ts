@@ -14,6 +14,14 @@ import { PromiseChainMutex, atomicWriteJSON } from '../file-helpers.js';
 import { invalidatePluginHostCache } from '../plugin-host.js';
 import { ManifestValidationError, validateManifest as validateSharedManifest } from '../schemas.js';
 import { revokePluginCapabilitiesFromAgents } from './mtls.js';
+import {
+  SCOPED_PACKAGE_NAME_RE,
+  UntrustedScopeError,
+  assertManifestPackagesTrusted,
+  effectiveTrustedScopes,
+  isTrustedPackage,
+  packageScope,
+} from '../trusted-scopes.js';
 export { ManifestSchema } from '../schemas.js';
 
 // ---------------------------------------------------------------------------
@@ -107,6 +115,7 @@ export class PluginError extends Error {
       | 'NOT_FOUND'
       | 'MUST_DISABLE_FIRST'
       | 'INVALID_SCOPE'
+      | 'UNTRUSTED_SCOPE'
       | 'INVALID_MANIFEST'
       | 'MANIFEST_NOT_FOUND'
       | 'RESERVED_NAME'
@@ -209,8 +218,10 @@ export function validateManifest(raw: unknown): PluginManifest {
 // ---------------------------------------------------------------------------
 
 export interface InstallPluginOptions {
-  /** npm package name (must start with `@lamalibre/`) */
+  /** npm package name, from a trusted publisher scope */
   packageName: string;
+  /** The trusted publisher scopes (`effectiveTrustedScopes`); default `['@lamalibre']`. */
+  trustedScopes?: readonly string[];
   /** Absolute path to the state directory */
   stateDir: string;
   /** Shell command executor (e.g. wrapping execa) */
@@ -220,15 +231,15 @@ export interface InstallPluginOptions {
 
 /**
  * Install a plugin by npm package name.
- * Only `@lamalibre/` scoped packages are allowed.
+ * Only packages from a trusted publisher scope are allowed.
  */
 export function installPlugin(opts: InstallPluginOptions): Promise<PluginEntry> {
   const { packageName, stateDir, exec, logger } = opts;
+  const trustedScopes = opts.trustedScopes ?? effectiveTrustedScopes();
 
   return withPluginLock(async () => {
-    // Validate package scope
-    if (!packageName.startsWith('@lamalibre/')) {
-      throw new PluginError('Only @lamalibre/ scoped packages are allowed', 'INVALID_SCOPE');
+    if (!SCOPED_PACKAGE_NAME_RE.test(packageName) || !isTrustedPackage(packageName, trustedScopes)) {
+      throw new PluginError(new UntrustedScopeError(packageName, packageScope(packageName), trustedScopes).message, 'UNTRUSTED_SCOPE');
     }
 
     // Check if already installed
@@ -313,6 +324,16 @@ export function installPlugin(opts: InstallPluginOptions): Promise<PluginEntry> 
       } catch (err: unknown) {
         if (err instanceof ManifestValidationError) {
           throw new PluginError(err.message, 'INVALID_MANIFEST');
+        }
+        throw err;
+      }
+
+      // Every package the manifest names: trusted, and of the plugin's own scope
+      try {
+        assertManifestPackagesTrusted(manifest, packageName, trustedScopes);
+      } catch (err: unknown) {
+        if (err instanceof UntrustedScopeError) {
+          throw new PluginError(err.message, 'UNTRUSTED_SCOPE');
         }
         throw err;
       }

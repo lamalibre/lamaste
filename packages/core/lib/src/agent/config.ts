@@ -7,6 +7,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteJSON } from '../file-helpers.js';
+import { effectiveTrustedScopes } from '../trusted-scopes.js';
 import { agentConfigPath, agentsDir } from './platform.js';
 import { validateLabel } from './registry.js';
 
@@ -81,6 +82,24 @@ export interface AgentConfig {
    * restarting it; "start" clears it.
    */
   tunnelsStopped?: boolean | undefined;
+  /**
+   * The trusted publisher scopes of this agent's relay, as its last
+   * `agent-config` answer listed them (`sync` keeps it current). The agent's
+   * own plugins install, update and mount only from these scopes. Absent —
+   * an older relay, or never synced — means `@lamalibre` alone.
+   */
+  trustedScopes?: string[] | undefined;
+}
+
+/**
+ * The trusted publisher scopes the agent `label` follows: its relay's list
+ * (`AgentConfig.trustedScopes`), the built-in scope alone when it has none.
+ */
+export async function agentTrustedScopes(label: string): Promise<readonly string[]> {
+  const config = await loadAgentConfig(label);
+  return effectiveTrustedScopes(
+    Array.isArray(config?.trustedScopes) ? config.trustedScopes : undefined,
+  );
 }
 
 // ---------------------------------------------------------------------------

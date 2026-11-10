@@ -89,7 +89,20 @@ export {
 export type { AgentRegistryEntry, AgentRegistry } from './registry.js';
 
 // Agent config
-export { loadAgentConfig, saveAgentConfig, requireAgentConfig } from './config.js';
+export {
+  loadAgentConfig,
+  saveAgentConfig,
+  requireAgentConfig,
+  agentTrustedScopes,
+} from './config.js';
+export {
+  localTrustedScopesFile,
+  readLocalAdditionalTrustedScopes,
+  localTrustedScopes,
+  addLocalTrustedScope,
+  removeLocalTrustedScope,
+  LocalTrustedScopeError,
+} from './local-trusted-scopes.js';
 export type { AgentConfig } from './config.js';
 
 // Curl config files (-K) left behind by a crash

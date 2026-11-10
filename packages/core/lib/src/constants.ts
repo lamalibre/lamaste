@@ -148,8 +148,9 @@ export function pluginCapabilityRegexFor(route: string): RegExp {
 
 /**
  * Derive a plugin's short route segment from either an npm package name
- * (`@lamalibre/herd-server`) or a bare manifest name (`herd`). Strips the
- * `@lamalibre/` scope and the `-server` / `-agent` suffix.
+ * (`@lamalibre/herd-server`, `@example/scoped-app`) or a bare manifest name
+ * (`herd`). Strips the npm scope — any well-formed one: plugins may come
+ * from any trusted publisher scope — and the `-server` / `-agent` suffix.
  *
  * The result is the canonical short identifier used for:
  *   - panel/api routing (`/api/<route>`, `/<route>/...`)
@@ -161,7 +162,7 @@ export function pluginCapabilityRegexFor(route: string): RegExp {
  * from `@lamalibre/lamaste/server` for backwards-compatible imports.
  */
 export function derivePluginRoute(pluginNameOrPackage: string): string {
-  return pluginNameOrPackage.replace(/^@lamalibre\//, '').replace(/-(server|agent)$/, '');
+  return pluginNameOrPackage.replace(/^@[a-z0-9][a-z0-9-]{0,49}\//, '').replace(/-(server|agent)$/, '');
 }
 
 /**

@@ -21,6 +21,24 @@ import {
   RESERVED_API_PREFIXES,
   isAgentHostedPlugin,
 } from './constants.js';
+import { effectiveTrustedScopes, isTrustedPackage, packageScope } from './trusted-scopes.js';
+
+/**
+ * A plugin's server package may be imported (and its bundle served): it is
+ * from a trusted scope, and from the scope of the plugin's own package — a
+ * registry entry naming another publisher's package is refused.
+ */
+function serverPackageTrusted(
+  packageName: unknown,
+  serverPkg: string,
+  trusted: readonly string[],
+): boolean {
+  return (
+    isTrustedPackage(serverPkg, trusted) &&
+    isTrustedPackage(packageName, trusted) &&
+    packageScope(serverPkg) === packageScope(packageName)
+  );
+}
 import type { PluginRegistry, PluginRegistryEntry } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -112,6 +130,19 @@ export interface PluginHostOptions {
    * @default /^\/([a-z0-9-]+)(\/|$)/
    */
   pluginNamePattern?: RegExp;
+
+  /**
+   * The trusted publisher scopes of this host (`effectiveTrustedScopes`),
+   * or a function returning them now. A plugin whose server package is not
+   * from one of them is never imported and its bundle is never served —
+   * the install path refuses such a package already; this catches a
+   * registry that says otherwise. A function is called at mount and on
+   * every bundle request, so a scope that stops being trusted stops being
+   * served at once.
+   *
+   * @default ['@lamalibre']
+   */
+  trustedScopes?: readonly string[] | (() => readonly string[]);
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +191,10 @@ export async function pluginHostPlugin(
     resolvePluginOptions,
     reservedPrefixes = RESERVED_API_PREFIXES,
     pluginNamePattern = /^\/([a-z0-9-]+)(\/|$)/,
+    trustedScopes = effectiveTrustedScopes(),
   } = opts;
+  const currentTrustedScopes = (): readonly string[] =>
+    typeof trustedScopes === 'function' ? trustedScopes() : trustedScopes;
 
   const reservedSet =
     reservedPrefixes instanceof Set
@@ -185,10 +219,10 @@ export async function pluginHostPlugin(
 
     // --- Mount server-side routes ---
     if (serverPkg) {
-      if (!serverPkg.startsWith('@lamalibre/')) {
+      if (!serverPackageTrusted(plugin.packageName, serverPkg, currentTrustedScopes())) {
         fastify.log.error(
-          { plugin: pluginName },
-          'Plugin server package scope violation — skipping',
+          { plugin: pluginName, package: serverPkg },
+          'Plugin server package is not from a trusted publisher scope — skipping',
         );
         continue;
       }
@@ -259,6 +293,7 @@ export async function pluginHostPlugin(
     // --- Serve panel bundle ---
     if (serverPkg) {
       const capturedServerPkg = serverPkg;
+      const capturedPackageName = plugin.packageName;
       fastify.get(
         `/${pluginName}/panel.js`,
         {
@@ -271,8 +306,13 @@ export async function pluginHostPlugin(
         },
         async (_request: FastifyRequest, reply: FastifyReply) => {
           try {
-            if (!capturedServerPkg.startsWith('@lamalibre/')) {
-              return reply.code(403).send({ error: 'Plugin server package scope violation' });
+            if (
+              !serverPackageTrusted(capturedPackageName, capturedServerPkg, currentTrustedScopes())
+            ) {
+              return reply.code(403).send({
+                error: 'Plugin server package is not from a trusted publisher scope',
+                code: 'untrusted_scope',
+              });
             }
             const require = createRequire(path.join(baseDir, '/'));
             const panelPath = require.resolve(`${capturedServerPkg}/panel.js`);

@@ -452,6 +452,9 @@ export type {
 export {
   APPHOST_PATHS,
   APPHOST_PROTOCOL_VERSION,
+  APPHOST_MIN_PROTOCOL_VERSION,
+  APPHOST_SCOPED_PROTOCOL_VERSION,
+  apphostProtocolFor,
   APPHOST_ROUTE_RE,
   APP_SERVICE_USER_MAX,
   AGENT_HALF_INTEGRITY_RE,
@@ -655,6 +658,26 @@ export {
 } from './site-upload.js';
 
 // Branding primitives
+// Trusted publisher scopes — which npm scopes' plugin packages may install and run
+export {
+  BUILTIN_TRUSTED_SCOPE,
+  MAX_ADDITIONAL_TRUSTED_SCOPES,
+  NPM_SCOPE_RE,
+  SCOPED_PACKAGE_NAME_RE,
+  SCOPED_PACKAGE_SPEC_RE,
+  NpmScopeSchema,
+  ScopedPackageNameSchema,
+  AdditionalTrustedScopesSchema,
+  effectiveTrustedScopes,
+  isNpmScope,
+  packageScope,
+  isTrustedPackage,
+  assertTrustedPackage,
+  assertManifestPackagesTrusted,
+  UntrustedScopeError,
+} from './trusted-scopes.js';
+export type { ManifestPackageRefs } from './trusted-scopes.js';
+
 export * from './branding.js';
 
 // Per-domain branding of the auth pages: the brand record's rules, the

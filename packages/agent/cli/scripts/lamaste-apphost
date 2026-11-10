@@ -1,7 +1,7 @@
 #!/usr/bin/node
 /**
  * lamaste-apphost — the root half of a Lamaste agent that hosts the agent
- * halves of agent-hosted plugins (protocol 2).
+ * halves of agent-hosted plugins (protocol 3).
  *
  * The agent runs as an unprivileged user. Installing an agent half needs
  * root — a system account, a system unit, directories under /opt, /var/lib
@@ -102,7 +102,7 @@ const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 const { spawnSync } = require('node:child_process');
 
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Names, paths and patterns (identical to @lamalibre/lamaste)
@@ -113,7 +113,10 @@ const LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 const VERSION_MAX = 100;
 const INTEGRITY_RE = /^sha512-[A-Za-z0-9+/]{86}==$/;
-const PACKAGE_RE = /^@lamalibre\/[a-z0-9][a-z0-9-]*$/;
+// Any well-formed npm scope: the relay signs a job only for a package of a
+// scope it trusts, and it also picks the registry and pins the integrity —
+// a scope check here would not bound it, only look as if it did.
+const PACKAGE_RE = /^@[a-z0-9][a-z0-9-]{0,49}\/[a-z0-9][a-z0-9-]*$/;
 const PACKAGE_MAX = 214;
 const ENTRY_RE = /^(?!\/)(?!.*\.\.)(?!.*\/\/)(?!(?:.*\/)?\.\/)[A-Za-z0-9._/-]+\.(?:mjs|cjs|js)$/;
 const ENTRY_MAX = 200;

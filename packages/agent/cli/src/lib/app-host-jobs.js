@@ -30,7 +30,7 @@ import crypto from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { execa } from 'execa';
-import { APPHOST_PROTOCOL_VERSION, agentJobError } from '@lamalibre/lamaste';
+import { agentJobError, apphostProtocolFor } from '@lamalibre/lamaste';
 import {
   APPHOST_EXIT_NOT_INSTALLED,
   agentTmpDir,
@@ -206,17 +206,20 @@ async function ownedElsewhere(deps, label, route) {
  * Why an install cannot go ahead — the helper not enabled, not answering,
  * too old, or the route owned by another agent — or null when it can.
  */
-async function helperProblem(deps, label, route) {
+async function helperProblem(deps, label, route, pkg) {
   const availability = await deps.appHostStatus(route);
   if (availability.state === 'absent') return HELPER_NOT_ENABLED;
   if (availability.state === 'unusable') {
     return `the app host helper did not answer: ${availability.reason}`;
   }
   const { status } = availability;
-  if (status.protocol < APPHOST_PROTOCOL_VERSION) {
+  // A package of a scope other than @lamalibre needs a helper that takes
+  // any scope; a @lamalibre one installs with the oldest supported helper.
+  const needed = apphostProtocolFor(pkg);
+  if (status.protocol < needed) {
     return (
-      `the app host helper speaks protocol ${status.protocol}; this agent needs ` +
-      `${APPHOST_PROTOCOL_VERSION} (sudo lamaste-agent apphost enable)`
+      `the app host helper speaks protocol ${status.protocol}; ${pkg} needs ` +
+      `${needed} (sudo lamaste-agent apphost enable)`
     );
   }
   const owner = status.apps[route]?.owner;
@@ -238,7 +241,7 @@ async function installAgentHalf(label, job, deps) {
 
   const elsewhere = await ownedElsewhere(deps, label, route);
   if (elsewhere) return failure(elsewhere);
-  const problem = await helperProblem(deps, label, route);
+  const problem = await helperProblem(deps, label, route, spec.package);
   if (problem) return failure(problem);
   // The service cannot start without its config, and the relay lists the
   // job only once it issued one: it arrives with the next converge.
@@ -253,7 +256,12 @@ async function installAgentHalf(label, job, deps) {
   try {
     const credential = await deps.fetchRegistryCredential();
     npmrc = credential
-      ? { registryUrl: credential.registryUrl, token: credential.token, scope: credential.scope }
+      ? {
+          registryUrl: credential.registryUrl,
+          token: credential.token,
+          scopes: credential.scopes,
+          scope: credential.scope,
+        }
       : undefined;
   } catch (err) {
     return failure(`the panel did not broker a registry credential for ${what}: ${err.message}`);

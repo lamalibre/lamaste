@@ -48,6 +48,7 @@ import {
 import { IdentityBlockSchema } from './identity.js';
 import { SettingsBlockSchema } from './plugin-settings.js';
 import { UserSurfaceBlockSchema } from './web-surface.js';
+import { ScopedPackageNameSchema } from './trusted-scopes.js';
 
 // ---------------------------------------------------------------------------
 // Capability string
@@ -712,16 +713,11 @@ export const ManifestSchema = z
     capabilities: z.array(CapabilityStringSchema).max(50).optional().default([]),
     packages: z
       .object({
-        server: z
-          .string()
-          .min(1)
-          .regex(/^@lamalibre\//, 'Server package must be in the @lamalibre/ scope')
-          .optional(),
-        agent: z
-          .string()
-          .min(1)
-          .regex(/^@lamalibre\//, 'Agent package must be in the @lamalibre/ scope')
-          .optional(),
+        // Any well-formed scoped name: whether its scope is trusted is the
+        // installing relay's or agent's decision (`assertManifestPackagesTrusted`
+        // with its configured list), not a static property of the schema.
+        server: ScopedPackageNameSchema.optional(),
+        agent: ScopedPackageNameSchema.optional(),
       })
       .optional()
       .default({}),
@@ -956,6 +952,10 @@ export type ParsedManifest = z.infer<typeof ManifestSchema>;
 /**
  * Schema for validating a `@lamalibre/`-scoped package name.
  * Rejects path traversal patterns in the portion after the scope.
+ *
+ * @deprecated Plugin packages may come from any trusted publisher scope —
+ * use `ScopedPackageNameSchema` for the syntax and `assertTrustedPackage`
+ * (`trusted-scopes.ts`) for the trust decision.
  */
 export const LamaPackageNameSchema = z
   .string()

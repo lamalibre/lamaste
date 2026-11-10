@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { writeFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { execa } from 'execa';
+import { isNpmScope } from '@lamalibre/lamaste';
 import { LAMASTE_DIR, sweepStaleCurlConfigs } from '@lamalibre/lamaste/agent';
 import { formatCurlPinnedPubkey } from './panel-cert.js';
 
@@ -484,6 +485,12 @@ export async function fetchRegistryCredential(config) {
   return {
     registryUrl: parsed.registryUrl,
     scope: typeof parsed.scope === 'string' ? parsed.scope : '@lamalibre',
+    // The scopes the registry serves — the relay's trusted publisher scopes
+    // (relay 4.13+); absent from an older relay, which routed `scope` alone.
+    scopes:
+      Array.isArray(parsed.scopes) && parsed.scopes.length > 0 && parsed.scopes.every(isNpmScope)
+        ? parsed.scopes
+        : undefined,
     token: parsed.token,
     expiresAt: parsed.expiresAt,
     tokenId: typeof parsed.tokenId === 'string' ? parsed.tokenId : '',

@@ -18,6 +18,7 @@
  * with it either.
  */
 
+import { BUILTIN_TRUSTED_SCOPE, packageScope } from './trusted-scopes.js';
 import crypto from 'node:crypto';
 
 import semver from 'semver';
@@ -50,13 +51,19 @@ export const SystemPackageNameSchema = z
   .max(100)
   .regex(/^[a-z0-9][a-z0-9+.-]*$/, 'System package names are lowercase');
 
-/** The agent half's package: an `@lamalibre/` package published at the plugin's version. */
+/**
+ * The agent half's package: a scoped package published at the plugin's
+ * version, in the plugin package's own scope. This is the syntax only —
+ * the relay pins (and so signs) only a package whose scope it trusts
+ * (`assertManifestPackagesTrusted`). The app host helper's `PACKAGE_RE`
+ * is this exact pattern (`test/lamaste-apphost.test.js` compares them).
+ */
 export const AgentHalfPackageNameSchema = z
   .string()
   .max(214)
   .regex(
-    /^@lamalibre\/[a-z0-9][a-z0-9-]*$/,
-    'The agent package is an @lamalibre/ package (lowercase letters, digits and hyphens)',
+    /^@[a-z0-9][a-z0-9-]{0,49}\/[a-z0-9][a-z0-9-]*$/,
+    'The agent package is a scoped package (@<scope>/<name>, lowercase letters, digits and hyphens)',
   );
 
 /**
@@ -272,12 +279,29 @@ function agentLabel(label: string): string {
 }
 
 /**
- * The protocol of `lamaste-apphost` this Lamaste speaks; an agent's helper must be at least this.
+ * The protocol of the `lamaste-apphost` this Lamaste ships (the helper's
+ * `PROTOCOL_VERSION`; the helper's tests compare them).
+ *
  * 2 (4.4): a socket unit holds each agent half's port and hands it to the agent half; the unit
  * restarts always and dumps no core. An agent with a protocol 1 helper (4.3) refuses to install
  * agent halves until `sudo lamaste-agent apphost enable` installs the current one.
+ * 3 (4.13): the helper takes an agent half package of any well-formed npm scope — the relay
+ * signs only packages of scopes it trusts. A protocol 2 helper refuses anything but `@lamalibre/`.
  */
-export const APPHOST_PROTOCOL_VERSION = 2;
+export const APPHOST_PROTOCOL_VERSION = 3;
+
+/** The oldest helper protocol that installs an agent half from the built-in scope (`@lamalibre`). */
+export const APPHOST_MIN_PROTOCOL_VERSION = 2;
+
+/** The oldest helper protocol that installs an agent half from any other trusted scope. */
+export const APPHOST_SCOPED_PROTOCOL_VERSION = 3;
+
+/** The oldest helper protocol that installs `agentHalfPackage` (by its scope). */
+export function apphostProtocolFor(agentHalfPackage: string): number {
+  return packageScope(agentHalfPackage) === BUILTIN_TRUSTED_SCOPE
+    ? APPHOST_MIN_PROTOCOL_VERSION
+    : APPHOST_SCOPED_PROTOCOL_VERSION;
+}
 
 // ---------------------------------------------------------------------------
 // Approval preview

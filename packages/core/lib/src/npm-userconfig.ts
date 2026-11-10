@@ -18,12 +18,22 @@ import { randomBytes } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { BUILTIN_TRUSTED_SCOPE, isNpmScope } from './trusted-scopes.js';
+
 export interface InstallNpmrc {
   /** Registry base URL, e.g. `https://feria.samplepark.tr/`. */
   registryUrl: string;
   /** Bearer token for that registry. */
   token: string;
-  /** npm scope routed to the registry (default `@lamalibre`). */
+  /**
+   * npm scopes routed to the registry — the trusted publisher scopes: the
+   * registry Lamaste holds a credential for serves every one of them.
+   */
+  scopes?: readonly string[] | undefined;
+  /**
+   * One scope, as the panel's broker answered before it sent `scopes`.
+   * Used only when `scopes` is absent. Default (both absent): `@lamalibre`.
+   */
   scope?: string | undefined;
 }
 
@@ -40,13 +50,22 @@ export function npmNerfDart(registryUrl: string): string {
   return `//${dir.host}${dir.pathname}`;
 }
 
-/** The two lines an isolated install userconfig holds. */
+/**
+ * The lines an isolated install userconfig holds: one `<scope>:registry=`
+ * line per routed scope, then the registry's `_authToken`. Every scope is
+ * checked against the npm scope syntax, so nothing but a scope line can
+ * come from it.
+ */
 export function renderInstallNpmrc(npmrc: InstallNpmrc): string {
   const registryUrl = new URL(npmrc.registryUrl).href;
-  const scope = npmrc.scope ?? '@lamalibre';
-  if (!/^@[a-z0-9][a-z0-9-]*$/.test(scope)) throw new Error(`Invalid npm scope: ${scope}`);
+  const scopes = npmrc.scopes ?? [npmrc.scope ?? BUILTIN_TRUSTED_SCOPE];
+  if (scopes.length === 0) throw new Error('No npm scope to route to the registry');
+  for (const scope of scopes) {
+    if (!isNpmScope(scope)) throw new Error(`Invalid npm scope: ${JSON.stringify(scope)}`);
+  }
   if (/\s/.test(npmrc.token)) throw new Error('registry token must not contain whitespace');
-  return `${scope}:registry=${registryUrl}\n${npmNerfDart(registryUrl)}:_authToken=${npmrc.token}\n`;
+  const lines = [...new Set(scopes)].map((scope) => `${scope}:registry=${registryUrl}\n`);
+  return `${lines.join('')}${npmNerfDart(registryUrl)}:_authToken=${npmrc.token}\n`;
 }
 
 /**

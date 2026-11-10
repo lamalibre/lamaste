@@ -12,6 +12,7 @@
 import { execa } from 'execa';
 import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { SCOPED_PACKAGE_SPEC_RE, isTrustedPackage } from '@lamalibre/lamaste';
 import {
   agentDataDir,
   isAgentLoaded,
@@ -56,6 +57,7 @@ import {
   removeSyncService,
   setAgentTunnelsStopped,
   updateAgentConfig,
+  agentTrustedScopes,
 } from '@lamalibre/lamaste/agent';
 import { createPanelApiClient } from './panel-api.js';
 
@@ -162,6 +164,7 @@ export default async function routes(fastify, opts) {
       return {
         registryUrl: credential.registryUrl,
         token: credential.token,
+        scopes: credential.scopes,
         scope: credential.scope,
       };
     } catch (err) {
@@ -551,18 +554,26 @@ export default async function routes(fastify, opts) {
 
   fastify.post('/plugins/install', { preHandler: requireOwner }, async (request, reply) => {
     const { packageName } = request.body || {};
-    // Defense-in-depth at the route boundary: the core lib also validates
-    // scope, but rejecting bad input here avoids spawning npm at all.
+    // Defense-in-depth at the route boundary: the core lib also checks the
+    // name and its scope, but refusing here avoids spawning npm at all.
     if (
       !packageName ||
       typeof packageName !== 'string' ||
       packageName.length > 256 ||
-      !/^@lamalibre\/[a-z0-9][a-z0-9._-]{0,213}(@[A-Za-z0-9._-]+)?$/.test(packageName) ||
+      !SCOPED_PACKAGE_SPEC_RE.test(packageName) ||
       packageName.includes('@npm:')
     ) {
       return reply
         .code(400)
-        .send({ error: 'Invalid packageName: must be @lamalibre/ scoped, no aliases' });
+        .send({ error: 'Invalid packageName: must be @<scope>/<name>, no aliases' });
+    }
+    // The agent follows its relay's trusted publisher scopes (recorded by sync).
+    const trusted = await agentTrustedScopes(label);
+    if (!isTrustedPackage(packageName, trusted)) {
+      return reply.code(400).send({
+        error: `Package "${packageName}" is not from a trusted publisher scope (trusted: ${trusted.join(', ')})`,
+        code: 'untrusted_scope',
+      });
     }
     try {
       const npmrc = await installNpmrc(request.log);
