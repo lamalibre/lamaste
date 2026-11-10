@@ -381,16 +381,40 @@ shows the last check.
 
 ### 6.1 Invitation mails
 
-- `POST /api/invitations` and the delegated
-  `POST /api/delegated-invitations/<route>` mail the link to `email` when
-  the invitation's domain can send. The answer gains
-  `mail: { status: 'sent' | 'failed' | 'not-configured', error? }`; the
-  link is still answered once (the inviter may share it another way).
-- `invitations.mail_status`, `mail_sent_at` (migration 0022) — the
-  listings show it.
-- **Resend** = `POST …/:id/reissue`: a new token (the old hash replaced,
-  the old link dead), mailed; same rate and caps as creating; a delegated
-  policy's `maxOpen` unchanged (it is the same invitation).
+- `POST /api/invitations` (class `admin`) and the delegated
+  `POST /api/delegated-invitations/<route>` (class `public`) mail the link
+  to `email` when the invitation's domain can send — after the
+  invitations lock is released (lib/invitation-mail.js; the lock is a
+  leaf, never held across a mail). The answer gains
+  `mail: { status: 'sent' | 'failed' | 'not-configured' | 'deferred-budget', error? }`;
+  the link is still answered once (the inviter may share it another way).
+  A delegated invitation is mailed for its own domain's sign-in host only,
+  an administrator's for the first of its domains that serves.
+- `invitations.mail_status`, `mail_sent_at` (migration 0022), recorded only
+  while the mailed link is still the invitation's (a reissue in between
+  makes an older mail's outcome moot) — the listings show
+  `mail: { status, sentAt }` (administrators' and the inviter's), and the
+  administrators' `reissuedAt`.
+- **Resend** = a new link for a **pending** invitation, an expired one
+  included (409 `invitation_not_pending` otherwise): a new token (the old
+  hash replaced, the old link dead), its failed attempts reset, mailed,
+  answered once; audit `invitation.reissued`.
+  - The inviter: `POST /api/delegated-invitations/<route>/<id>/reissue`
+    (core `isDelegatedInvitationsUrl` admits the suffix, so Gatekeeper
+    vouches for it as for the rest of the inviter's API) — their own
+    invitation only (404 `not_found` otherwise), under the rules of making
+    one: the plugin can be invited into, the address's domain still
+    allowed, the role still theirs to give (read inside the invitations
+    lock), the grant reserve, the rate — a reissue counts toward the 30 an
+    hour (`invitation_reissues`, migration 0022, swept after a day) — and,
+    when it had expired and so opens again, the caps. Its lifetime restarts
+    at the policy's.
+  - The administrator: `POST /api/invitations/:id/reissue`, either kind,
+    class `admin`, held to neither the inviter's rate nor the caps (the
+    acceptance still checks the inviter's standing); an administrator's
+    invitation keeps the lifetime its link last had (`reissued_at`, 1–30
+    days), refused 409 `username_taken` when the username exists by then; a
+    delegated one gets the policy's.
 - Content: who invited them (display name), to what (the domain's brand /
   the plugin's display name), the link, the expiry, and "if you did not
   expect this, ignore it".
@@ -425,17 +449,36 @@ expires_at, used_at, failed_attempts)`; swept after 24 h.
   one `otpauth://totp/<issuer>:<username>?…` line per configuration,
   `model.TOTPConfiguration.URI`) into its memory through a pipe, keeps the
   one user's line, checks the code itself with that configuration's
-  algorithm, digits and period, ±1 step, and prints only `ok <step>` or
-  `no` — the secret never leaves the root helper, nothing is written, a
-  failure of the CLI is reported without its output. serverd refuses a
-  step it already accepted for that user (replay), and failures count
-  toward the token's five. A user with no TOTP device, or one who
-  lost it, cannot reset by mail — the page says to ask an administrator. Five failed attempts void the
-  token. The password follows the invitation rules, is hashed, and written
-  through `changeUsers` (users lock, the panel the only writer — S2). The
-  user is told by mail that their password changed.
-- Audit: `account.password.reset-requested` (user id, domain — never the
-  identifier as typed), `account.password.reset`.
+  algorithm, digits and period, ±1 step, and prints only `ok <step>`, `no`
+  (a wrong code) or `none` (no TOTP configuration for the user) — the
+  secret never leaves the root helper, nothing is written, a failure of
+  the CLI is reported without its output. serverd refuses a step it
+  already accepted for that user (`account_totp_steps`, migration 0022:
+  after a restart too), and wrong or replayed codes count toward the
+  token's five (400 `totp_invalid`; the fifth answers 410). A user with no
+  TOTP configuration, or one who lost it, cannot reset by mail: 409
+  `no_totp` (not counted), and the page says to ask an administrator. A
+  helper that fails is 503 `authelia_storage_unavailable`. The password
+  follows the invitation rules, is hashed, and written through
+  `changeUsers` (users lock, the panel the only writer — S2), the user
+  checked again under it; the link and the user's other links are voided.
+  The user is told by mail that their password changed (class
+  `essential`, after the answer).
+- Each start's work runs **after** its answer (`202` after a fixed delay,
+  1 s), so neither the answer nor its timing tells what was found; the
+  per-address count is in memory (addresses are never stored), the
+  per-user count in `password_resets`. One start mails at most 20
+  accounts. A link names one user on one domain: its lookup and finish
+  answer only on that domain's sign-in host, for that user while still
+  enabled, active and a member (410 `reset_invalid` alike otherwise).
+- A change must come from the sign-in host's own page: `Sec-Fetch-Site`
+  absent or `same-origin`, an `Origin` when sent exactly
+  `https://auth.<domain>` (403 `forbidden`); a host that is no active
+  domain's sign-in host answers 404.
+- Erasing a user deletes their reset rows and account records
+  (`purgeAccountRecordsOf`, in the erasure's transaction).
+- Audit: `account.password.reset-requested` (user id, domain, the mail's
+  status — never the identifier as typed), `account.password.reset`.
 
 ### 6.3 Change password (signed in)
 
@@ -445,9 +488,18 @@ expires_at, used_at, failed_attempts)`; swept after 24 h.
   panel takes the user from `Remote-User` only on that location (headers
   cleared first, as on every identity location).
 - `{ currentPassword, newPassword }`: the current one checked against
-  users.yml (bcrypt), 5 failures / 15 min per user then 429; written
-  through `changeUsers`; mail "your password changed" when the domain can
-  send.
+  users.yml (bcrypt; any other hash never matches), 5 failures / 15 min
+  per user (`account_password_failures`, migration 0022) then 429; 400
+  `current_password_invalid` / `password_unchanged`; 401 without
+  `Remote-User`, 403 for a user disabled, inactive or not a member of the
+  host's domain; `Origin` required and exactly `https://auth.<domain>`.
+  The current password is required although Authelia vouched for the
+  session: the panel listens on loopback, where any local process can send
+  `Remote-User` — the header names whose password changes, the password
+  proves it. Written through `changeUsers`; audit
+  `account.password.changed`; mail "your password changed" when the
+  domain can send.
+- The users listing (`GET /api/users`) carries `emailDeliverable` (§4).
 - Linked (Q3) from the header of Lamaste's own pages on the auth host
   (invite, inviter's, reset) and from Authelia's portal: the auth vhost's
   index `sub_filter` inserts a plain link (no script, so Authelia's CSP is
