@@ -333,7 +333,12 @@ test('a domain: added pending, refused when it overlaps or is no domain, activat
     [
       'vhost',
       'codelama.com.tr',
-      { primary: false, branding: { theme: 'dark', logo: false }, language: null },
+      {
+        primary: false,
+        branding: { theme: 'dark', logo: false },
+        language: null,
+        mail: { primaryResetUrl: null, domainResetUrl: null },
+      },
     ],
   ]);
   assert.deepEqual(await renderedMembers(), {

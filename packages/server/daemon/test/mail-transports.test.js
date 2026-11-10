@@ -288,6 +288,21 @@ before(async () => {
     ...(await import('../src/lib/mail-store.js')),
   };
   await lib.loadConfig();
+  // Authelia's mail: the listener's files under the test directory, on a
+  // free port; Authelia's configuration and restart stand-ins (the sync
+  // after every change is tested in mail-submission.test.js).
+  const { setMailSubmissionForTests } = await import('../src/lib/mail-submission.js');
+  await mkdir(path.join(dir, 'authelia', 'certs'), { recursive: true });
+  await setMailSubmissionForTests({
+    dir: path.join(stateDir, 'mail-submission'),
+    certsDir: path.join(dir, 'authelia', 'certs'),
+    passwordFile: path.join(dir, 'authelia', 'mail-submission-password'),
+    port: 0,
+  });
+  (await import('../src/lib/authelia.js')).setAutheliaForTests({
+    restart: async () => {},
+    mail: async () => ({ changed: false }),
+  });
   const d = await db();
   const at = new Date().toISOString();
   d.prepare(
@@ -314,6 +329,8 @@ before(async () => {
 });
 
 after(async () => {
+  await (await import('../src/lib/mail-submission.js')).setMailSubmissionForTests(null);
+  (await import('../src/lib/authelia.js')).setAutheliaForTests(null);
   await app?.close();
   await new Promise((resolve) => smtp?.close(resolve));
   await new Promise((resolve) => googleServer?.close(resolve));
