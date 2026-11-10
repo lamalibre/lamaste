@@ -164,7 +164,7 @@ An address under `.example`, `.invalid`, `.local`, `.localhost` or `.test` (the 
 
 ## Audit
 
-`mail.transport.set|cleared|limited|resumed`, `mail.budget.warning|exhausted`, `mail.sent|failed` (kind of mail, the recipient's domain only), `mail.submission.refused|recovered`, `account.password.reset-requested|reset|changed` — user ids and domains, never an address, a token, a password or a secret.
+`mail.transport.set|cleared|limited|resumed|down|up`, `mail.budget.warning|exhausted`, `mail.sent|failed` (kind of mail, the recipient's domain only), `mail.submission.refused|recovered`, `account.password.reset-requested|reset|changed` — user ids and domains, never an address, a token, a password or a secret.
 
 ## CLI
 

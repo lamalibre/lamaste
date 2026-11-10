@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Mail: a relay sends mail — invitations, a "Reset password" link on every sign-in page, "your password changed" notices and Authelia's one-time codes. Hosts whose provider blocks outbound SMTP (DigitalOcean does on accounts made since mid-2022) send over HTTPS through the **Gmail API** as one Google Workspace mailbox; others may use any **SMTP** server. People can now reset a forgotten password (a link by mail **and** a current authenticator code) and change their own while signed in. Design: `packages/core/docs/mail-design.md`; guide: `02-guides/mail.md`; reference: `04-api-reference/mail.md`.
+
+### Added
+
+- **A mail transport** for the relay, and optionally per domain: `gmail-api` (a Web OAuth client of an Internal consent screen, scopes `gmail.send openid email` only; consent through `POST /api/settings/mail/google/start` and Google's return to `https://auth.<primary>/mail/google/callback`, PKCE and a single-use state) or `smtp` (implicit TLS or STARTTLS, AUTH, certificates always verified, `caPem` for a private CA — trusted for that transport alone). Each is checked before it is stored and every six hours. `GET|PUT|PATCH|DELETE /api/settings/mail`, `…/test`, `…/resume`, and the same under `/api/domains/:name/mail` (`PUT …/mail/sender`: a domain's own sender over the relay's transport). Secrets are never answered, logged or passed in arguments.
+- **The sending budget.** Counted per sending account over a rolling 24 hours: at most 90 % of the transport's daily limit (default 500 — Google Workspace's trial limit); reset mails and delegated invitations stop 20 % below it and reset mails at 30 an hour, so the public reset page cannot exhaust the mailbox; `mail.budget.warning` at 70 %, `mail.budget.exhausted`, `deferred-budget`. A provider's own limit reply rests the account for 24 hours (`mail.transport.limited`) until `…/resume`.
+- **Authelia's mail through the panel.** Authelia's notifier submits to the panel's listener on `127.0.0.1:9295` (implicit TLS from a local CA, AUTH with a password referenced by a template line, the relay's sender and one recipient only, rate-limited), which delivers through the relay's transport: Authelia's one-time codes now arrive. Without a transport it writes to a file, as before.
+- **Forgot password** on every sign-in portal: `https://auth.<domain>/reset` and `POST /api/account/reset/start|lookup|finish`. The start answers alike whatever it found; the link (30 minutes, single use, in the URL fragment) and a current TOTP code set a new password — checked by `lamaste-priv authelia-user verify-totp`, a code never accepted twice. A user without an authenticator is told to ask an administrator. Each portal links its own reset page (none where the domain cannot send), in the domain's language and brand.
+- **Change password** while signed in: `https://auth.<domain>/account/password` and `POST /api/account/password`, behind Authelia's two-factor forward auth, the current password always checked; every portal links it.
+- **Invitations by mail**: an administrator's and delegated invitations are mailed, in the domain's language; answers and listings carry `mail: { status }` (`sent`, `failed`, `not-configured`, `deferred-budget`). **A new link**: `POST /api/invitations/:id/reissue` and the inviter's `POST /api/delegated-invitations/:route/:id/reissue` — the old link dead, the new one mailed; the inviter's page has a **New link** button.
+- **`emailDeliverable`** on `GET /api/users`; the Users page marks people who cannot reset their own password.
+- **Panel:** Settings → Mail (Google connect, SMTP, test mail, budget, resume) and Domains → Mail. **CLI:** `lamaste-server mail show|set-smtp|google|sender|limit|test|resume|clear`, `domains mail <domain> …`, `invitations reissue <id>`. **Desktop:** the matching `admin_*` commands.
+- **Audit:** `mail.transport.set|cleared|limited|resumed|down|up`, `mail.budget.warning|exhausted`, `mail.sent|failed`, `mail.submission.refused|recovered`, `account.password.reset-requested|reset|changed`, `invitation.reissued` — never an address, token, password or secret.
+
+### Changed
+
+- **Port 9295 is reserved** (`RESERVED_TUNNEL_PORTS`); `account` is a reserved API prefix.
+- **A sending subdomain is no web host**: once a sender's domain under one of the relay's domains carries mail records, tunnels, sites and aliases refuse that hostname (`MAIL_SENDER_HOST`), and a sender is refused on a hostname something serves (`mail_sender_host_taken`).
+- **Every sign-in portal links `/brand.css`**: a domain with neither brand nor language gets a stock stylesheet carrying the change-password link's rules.
+
+### Upgrade notes
+
+- **Nothing changes until a transport is set.** Authelia keeps its file notifier, no reset link is shown, invitations answer `not-configured` with their link as before.
+- **Every domain's sign-in rendering and auth vhost is rewritten once** at start (the new pages, the account locations, the index filters). No new nginx directive: `lamaste-priv` accepts them as they are; it gains `authelia-user verify-totp`.
+- **A tunnel on port 9295** (possible only from before 4.13) is left where it is; the mail listener refuses to start and the administrators are told until it moves.
+- **create-lamaste** makes `/etc/authelia/certs` (2750 `lamaste:lamaste-authelia`) on install and redeploy.
+- **Authelia's own password reset and change stay off**: the panel remains the only writer of `users.yml`; Authelia's portal only links Lamaste's page (`password_reset.custom_url`).
+- **Sessions** stay open after a password change until the next sign-in (Authelia cannot end them).
+
 ## [4.13.1] - 2026-11-11
 
 ### Fixed
