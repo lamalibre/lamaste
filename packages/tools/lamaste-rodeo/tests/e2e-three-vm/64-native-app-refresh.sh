@@ -51,7 +51,10 @@ LOCAL_TMP=""
 CLEAN_PLUGINS="${PLUGIN}"
 CLEAN_ROUTES="${PLUGIN}"
 PURGE_PACKAGES=""
-PERSON="e2e64-person"
+# A username that reached an OIDC client is never given out again: per run.
+USER_TAG="$(date +%s)"
+USER_TAG="${USER_TAG: -6}"
+PERSON="e2e64-person-${USER_TAG}"
 # A test credential for this run only, never printed
 PERSON_PASSWORD="E2e-$(openssl rand -hex 12)"
 JAR="/tmp/e2e-64-person.cookies"
@@ -169,10 +172,10 @@ if ! write_app_install_fixture "${LOCAL_TMP}/ship/fixtures/v1" "${PLUGIN}" 1.0.0
   exit $?
 fi
 ship_agent_facts_probe
+# Shipped with the fixtures: the tarball's own root entry gives the unpacked
+# directory this machine's owner, so nothing can be transferred into it later.
+write_grant_clock "${LOCAL_TMP}/ship/grant-clock.mjs"
 start_stand_in_feria fixtures/v1/server fixtures/v1/agent
-write_grant_clock "${LOCAL_TMP}/grant-clock.mjs"
-multipass transfer "${LOCAL_TMP}/grant-clock.mjs" "${HOST_VM}:${REMOTE_DIR}/grant-clock.mjs"
-host_exec "chmod 0644 ${REMOTE_DIR}/grant-clock.mjs" > /dev/null 2>&1 || true
 ensure_app_host_helper
 open_push_install "${POLICY_ID}" "[\"@lamalibre/${PLUGIN}-agent\"]" '["install","uninstall"]'
 
@@ -281,7 +284,7 @@ native_sign_in "${JAR}" "${CLIENT}" "${FQDN}" "E2E Laptop"
 AT_LAPTOP="${NATIVE_AT}"
 RT_LAPTOP="${NATIVE_RT}"
 assert_eq "$(native_grants "${CLIENT}" live | jq -r '[.[].deviceName] | sort | join(",")')" "E2E Laptop,E2E Watch" "GET …/grants?status=live: \"E2E Laptop\" and \"E2E Watch\"" || true
-assert_eq "$(native_grants "${CLIENT}" ended | jq -r '[.[] | "\(.deviceName)=\(.revokedReason)"] | sort | join(",")')" "E2E Phone=reuse,E2E Tablet=revoked_by_client" "…status=ended: the phone (reuse) and the tablet (signed out)" || true
+assert_eq "$(native_grants "${CLIENT}" ended | jq -r '[.[] | "\(.deviceName)=\(.endedReason)"] | sort | join(",")')" "E2E Phone=reuse,E2E Tablet=revoked_by_client" "…status=ended: the phone (reuse) and the tablet (signed out)" || true
 assert_eq "$(native_grants "${CLIENT}" live | jq -r '[.[] | select(.userAgent != null and (.userAgent | length) > 0)] | length')" "2" "…each with a summary of its user agent" || true
 OUT=$(cli native-apps grants "${CLIENT}" --status all)
 assert_json_field "$OUT" '[.grants[].deviceName] | sort | join(",")' "E2E Laptop,E2E Phone,E2E Tablet,E2E Watch" "lamaste-server native-apps grants ${CLIENT} --status all --json: the four devices" || true
@@ -364,6 +367,9 @@ fi
 RESP=$(host_api_call PATCH "native-apps/${CLIENT}" '{"enabled":true}')
 assert_eq "$(status_of "$RESP")" "200" "Enabled again" || true
 if wait_for 120 native_client_known "${CLIENT}" "${FQDN}"; then
+  # Disabling and enabling a client restarts Authelia, whose sessions live in
+  # memory: the person signs in to Authelia again, as the app's browser shows.
+  assert_eq "$(sign_in "${PERSON}" "${PERSON_PASSWORD}" "${SECRET}" "${JAR}" "${FQDN}")" "OK OK" "${PERSON} signs in to Authelia again (it restarted)" || true
   native_sign_in "${JAR}" "${CLIENT}" "${FQDN}" "E2E Kiosk 2"
   assert_eq "${NATIVE_SIGN_IN} $(echo_status "${NATIVE_AT}")" "ok 200" "…a new sign-in works and reaches the plugin" || true
 else

@@ -50,10 +50,13 @@ PURGE_PACKAGES=""
 SLUG="e2e65app"
 CLIENT="lamaste-native-${SLUG}"
 # The four people: disabled, erased, removed from the domain, role lost
-U_D="e2e65-disabled"
-U_E="e2e65-erased"
-U_M="e2e65-member"
-U_O="e2e65-roleless"
+# A username that reached an OIDC client is never given out again: per run.
+USER_TAG="$(date +%s)"
+USER_TAG="${USER_TAG: -6}"
+U_D="e2e65-disabled-${USER_TAG}"
+U_E="e2e65-erased-${USER_TAG}"
+U_M="e2e65-member-${USER_TAG}"
+U_O="e2e65-roleless-${USER_TAG}"
 # Test credentials for this run only, never printed
 PASSWORD="E2e-$(openssl rand -hex 12)"
 FQDN=""
@@ -93,7 +96,7 @@ all_signed_in() {
 
 # grant_reason_of <userId> — why the user's grant ended ("live", "none" when it has no grant)
 grant_reason_of() {
-  native_grants "${CLIENT}" all | jq -r --arg u "$1" '[.[] | select(.userId == $u)] | if length == 0 then "none" elif .[0].revokedAt == null then "live" else .[0].revokedReason end' 2>/dev/null || echo "?"
+  native_grants "${CLIENT}" all | jq -r --arg u "$1" '[.[] | select(.userId == $u)] | if length == 0 then "none" elif .[0].endedAt == null then "live" else .[0].endedReason end' 2>/dev/null || echo "?"
 }
 grant_ended_as() { [ "$(grant_reason_of "$1")" = "$2" ]; }
 

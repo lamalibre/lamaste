@@ -70,8 +70,11 @@ LOCAL_TMP=""
 CLEAN_PLUGINS="${PLUGIN_A} ${PLUGIN_B} ${PLUGIN_C}"
 CLEAN_ROUTES="${PLUGIN_A} ${PLUGIN_B} ${PLUGIN_C}"
 PURGE_PACKAGES=""
-PERSON="e2e63-person"
-OTHER="e2e63-other"
+# A username that reached an OIDC client is never given out again: per run.
+USER_TAG="$(date +%s)"
+USER_TAG="${USER_TAG: -6}"
+PERSON="e2e63-person-${USER_TAG}"
+OTHER="e2e63-other-${USER_TAG}"
 # Test credentials for this run only, never printed
 PERSON_PASSWORD="E2e-$(openssl rand -hex 12)"
 OTHER_PASSWORD="E2e-$(openssl rand -hex 12)"
@@ -365,7 +368,7 @@ assert_json_field "$CLAIMS" '"\(.iss) \(.client_id) \(.preferred_username)"' "ht
 assert_json_field "$CLAIMS" "(.aud | if type == \"string\" then [.] else . end | index(\"https://${FQDN}\")) != null" "true" "…its audience the host" || true
 assert_json_field "$CLAIMS" '(.exp - .iat) <= 900' "true" "…living 15 minutes at most" || true
 GRANT=$(native_grant_of "${CLIENT_SITE}" "E2E Phone")
-assert_json_field "$GRANT" '"\(.userId) \(.revokedAt)"' "${PERSON_ID} null" "GET /api/native-apps/${CLIENT_SITE}/grants: the grant of device \"E2E Phone\", ${PERSON}'s, live" || true
+assert_json_field "$GRANT" '"\(.userId) \(.endedAt)"' "${PERSON_ID} null" "GET /api/native-apps/${CLIENT_SITE}/grants: the grant of device \"E2E Phone\", ${PERSON}'s, live" || true
 
 # ===========================================================================
 # 5. Bearer calls

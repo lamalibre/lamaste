@@ -1802,7 +1802,7 @@ native_grant_of() {
 # native_grant_reason <client id> <device name> — why it ended ("live" while
 # it has not, "none" when there is no such grant)
 native_grant_reason() {
-  native_grant_of "$1" "$2" | jq -r 'if . == null then "none" elif .revokedAt == null then "live" else .revokedReason end' 2>/dev/null || echo "none"
+  native_grant_of "$1" "$2" | jq -r 'if . == null then "none" elif .endedAt == null then "live" else .endedReason end' 2>/dev/null || echo "none"
 }
 native_grant_ended_as() { [ "$(native_grant_reason "$1" "$2")" = "$3" ]; }
 
@@ -1836,14 +1836,14 @@ native_cleanup() {
 # they were. The plugins in CLEAN_PLUGINS are uninstalled (a hosted one with
 # purge: removing its agent half is a push, so the gates are opened again for
 # it; an operation still running is waited for, up to three minutes). What
-# may be left of the routes in CLEAN_ROUTES on the agent VM is purged with
-# the helper directly. Then what the spec changed goes back: the push-install
-# window, policy and switch, the panel's registry credential, the
-# stand-in Feria and its firewall rule, the app host helper (only if this
-# spec enabled it) and the system packages in PURGE_PACKAGES (those the spec
-# saw missing before Lamaste installed them).
+# may be left of the routes in CLEAN_ROUTES on the agent VM is reported (only
+# a job the relay signed removes an agent half). Then what the spec changed
+# goes back: the push-install window, policy and switch, the panel's
+# registry credential, the stand-in Feria and its firewall rule, the app host
+# helper (only if this spec enabled it) and the system packages in
+# PURGE_PACKAGES (those the spec saw missing before Lamaste installed them).
 app_plugin_cleanup() {
-  local plugin route deadline code scope
+  local plugin route deadline code scope left
   if [ -n "${PUSH_POLICY}" ]; then
     host_api_patch "plugins/push-install/config" '{"enabled":true}' > /dev/null 2>&1 || true
     host_api_post "plugins/push-install/enable/${HOST_AGENT_LABEL}" "{\"durationMinutes\":15,\"policyId\":\"${PUSH_POLICY}\"}" > /dev/null 2>&1 || true
@@ -1867,8 +1867,12 @@ app_plugin_cleanup() {
     done
   done
   for route in ${CLEAN_ROUTES:-}; do
-    # As the agent that owns the route (the helper refuses any other).
-    timed_exec 120 multipass exec "${AGENT_VM}" -- sudo bash -c "if [ -x ${APPHOST_HELPER} ]; then ${APPHOST_HELPER} remove ${AGENT_LABEL} ${route} --purge > /dev/null 2>&1; fi; true" > /dev/null 2>&1
+    # Removing an agent half takes a job the relay signed (the helper refuses
+    # anything else, exit 5) — the uninstall above, with purge, is the only
+    # way. What it may have left is reported, read only, stdin closed: the
+    # helper reads its job from stdin, and multipass's stays open.
+    left=$(timed_exec 30 multipass exec "${AGENT_VM}" -- sudo bash -c "if [ -x ${APPHOST_HELPER} ]; then ${APPHOST_HELPER} status ${route} < /dev/null 2>/dev/null; fi; true" 2>/dev/null | jq -r --arg r "${route}" '.apps[$r] // empty | select((.versions | length) > 0 or .unit != "absent" or .socket != "absent" or .owner != null) | "versions \(.versions | join(",")), unit \(.unit), socket \(.socket)"' 2>/dev/null || true)
+    if [ -n "${left}" ]; then log_info "The agent half ${route} is still on the agent VM after the uninstall: ${left}"; fi
   done
   if [ -n "${PUSH_WINDOW}" ]; then
     host_api_delete "plugins/push-install/enable/${HOST_AGENT_LABEL}" > /dev/null 2>&1 || true

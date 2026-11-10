@@ -3,7 +3,7 @@
   "meta": {
     "number": 64,
     "name": "Native app: refresh tokens and grants",
-    "suite": "e2e-three-vm",
+    "suite": "e2e",
     "description": "64 — Native app: refresh tokens and grants (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
@@ -34,8 +34,13 @@
       "value": "${PLUGIN}",
       "expression": true
     },
+    "USER_TAG": {
+      "value": "${USER_TAG: -6}",
+      "expression": true
+    },
     "PERSON": {
-      "value": "e2e64-person"
+      "value": "e2e64-person-${USER_TAG}",
+      "expression": true
     },
     "JAR": {
       "value": "/tmp/e2e-64-person.cookies"
@@ -174,7 +179,7 @@
           }
         },
         {
-          "id": "step-19",
+          "id": "step-17",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -191,7 +196,7 @@
           ]
         },
         {
-          "id": "step-20",
+          "id": "step-18",
           "label": "User ${PERSON} created",
           "target": "local",
           "continueOnError": true,
@@ -212,7 +217,7 @@
           }
         },
         {
-          "id": "step-21",
+          "id": "step-19",
           "label": "Set PERSON_ID",
           "target": "local",
           "op": {
@@ -229,7 +234,7 @@
           ]
         },
         {
-          "id": "step-22",
+          "id": "step-20",
           "label": "Set INSTALL",
           "target": "local",
           "op": {
@@ -246,7 +251,7 @@
           ]
         },
         {
-          "id": "step-23",
+          "id": "step-21",
           "label": "Installed and approved: ${PLUGIN}",
           "target": "local",
           "continueOnError": true,
@@ -268,7 +273,7 @@
           }
         },
         {
-          "id": "step-24",
+          "id": "step-22",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -285,7 +290,7 @@
           ]
         },
         {
-          "id": "step-25",
+          "id": "step-23",
           "label": "Its web surface created on ${FQDN}",
           "target": "local",
           "continueOnError": true,
@@ -306,7 +311,7 @@
           }
         },
         {
-          "id": "step-26",
+          "id": "step-24",
           "label": "Set SITE_ID",
           "target": "local",
           "op": {
@@ -323,7 +328,7 @@
           ]
         },
         {
-          "id": "step-27",
+          "id": "step-25",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -340,7 +345,7 @@
           ]
         },
         {
-          "id": "step-28",
+          "id": "step-26",
           "label": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -362,7 +367,7 @@
           }
         },
         {
-          "id": "step-29",
+          "id": "step-27",
           "label": "Ready and served",
           "target": "local",
           "op": {
@@ -372,7 +377,7 @@
           }
         },
         {
-          "id": "step-30",
+          "id": "step-28",
           "label": "Not ready or not served: $(identity_view \"${PLUGIN}\" | jq -c '.readiness') $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')",
           "target": "local",
           "op": {
@@ -382,7 +387,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-29",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -399,7 +404,7 @@
           ]
         },
         {
-          "id": "step-32",
+          "id": "step-30",
           "label": "Native client ${CLIENT} registered for the site",
           "target": "local",
           "continueOnError": true,
@@ -420,7 +425,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-31",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -437,7 +442,7 @@
           ]
         },
         {
-          "id": "step-34",
+          "id": "step-32",
           "label": "${PERSON} entitled as viewer",
           "target": "local",
           "continueOnError": true,
@@ -458,7 +463,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-34",
           "label": "Authelia knows the client; ${PERSON} is in the audience",
           "target": "local",
           "op": {
@@ -468,7 +473,7 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-35",
           "label": "The client or the audience is not ready: $(audience_row \"${PLUGIN}\" \"${PERSON_ID}\")",
           "target": "local",
           "op": {
@@ -478,7 +483,7 @@
           }
         },
         {
-          "id": "step-38",
+          "id": "step-36",
           "label": "Set SECRET",
           "target": "local",
           "op": {
@@ -495,7 +500,7 @@
           ]
         },
         {
-          "id": "step-40",
+          "id": "step-38",
           "label": "${PERSON} signed in to Authelia from the visitor VM",
           "target": "local",
           "continueOnError": true,
@@ -516,14 +521,14 @@
           }
         }
       ],
-      "bash": "log_section \"The plugin's site, a native client, a person signed in to Authelia\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-64-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v1\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none wide v1 \"${SUB_W}\"; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nship_agent_facts_probe\nstart_stand_in_feria fixtures/v1/server fixtures/v1/agent\nwrite_grant_clock \"${LOCAL_TMP}/grant-clock.mjs\"\nmultipass transfer \"${LOCAL_TMP}/grant-clock.mjs\" \"${HOST_VM}:${REMOTE_DIR}/grant-clock.mjs\"\nhost_exec \"chmod 0644 ${REMOTE_DIR}/grant-clock.mjs\" > /dev/null 2>&1 || true\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"@lamalibre/${PLUGIN}-agent\\\"]\" '[\"install\",\"uninstall\"]'\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${PERSON}\\\",\\\"displayname\\\":\\\"E2E Person\\\",\\\"email\\\":\\\"${PERSON}@example.test\\\",\\\"password\\\":\\\"${PERSON_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${PERSON} created\" || true\nPERSON_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nINSTALL=$(install_approved \"${PLUGIN}\" \"@lamalibre/${PLUGIN}-server@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed and approved: ${PLUGIN}\" || true\nRESP=$(host_api_call POST \"plugins/${PLUGIN}/web-surface\" '{\"accessMode\":\"authenticated\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Its web surface created on ${FQDN}\" || true\nSITE_ID=$(json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty')\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nif wait_for 120 identity_ready \"${PLUGIN}\" && wait_for 120 web_served \"${PLUGIN}\"; then\n  log_pass \"Ready and served\"\nelse\n  log_fail \"Not ready or not served: $(identity_view \"${PLUGIN}\" | jq -c '.readiness') $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')\"\nfi\nRESP=$(host_api_call POST \"native-apps\" \"{\\\"slug\\\":\\\"${SLUG}\\\",\\\"hostKind\\\":\\\"site\\\",\\\"hostId\\\":\\\"${SITE_ID}\\\",\\\"name\\\":\\\"E2E Refresh\\\",\\\"redirectPaths\\\":[\\\"${NATIVE_REDIRECT_PATH}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Native client ${CLIENT} registered for the site\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${PERSON}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${PERSON} entitled as viewer\" || true\nvisitor_exec \"grep -q ' ${FQDN}\\$' /etc/hosts || echo '${HOST_IP} ${FQDN}' >> /etc/hosts\" > /dev/null 2>&1 || true\nif wait_for 120 native_client_known \"${CLIENT}\" \"${FQDN}\" && wait_for 30 in_audience \"${PERSON_ID}\"; then\n  log_pass \"Authelia knows the client; ${PERSON} is in the audience\"\nelse\n  log_fail \"The client or the audience is not ready: $(audience_row \"${PLUGIN}\" \"${PERSON_ID}\")\"\nfi\nSECRET=$(reset_totp \"${PERSON}\")\nwait_for_next_totp_window\nassert_eq \"$(sign_in \"${PERSON}\" \"${PERSON_PASSWORD}\" \"${SECRET}\" \"${JAR}\" \"${FQDN}\")\" \"OK OK\" \"${PERSON} signed in to Authelia from the visitor VM\" || true\n\n# ===========================================================================\n# 1–3. Rotation, the grace window, reuse\n# ==========================================================================="
+      "bash": "log_section \"The plugin's site, a native client, a person signed in to Authelia\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-64-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v1\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none wide v1 \"${SUB_W}\"; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nship_agent_facts_probe\n# Shipped with the fixtures: the tarball's own root entry gives the unpacked\n# directory this machine's owner, so nothing can be transferred into it later.\nwrite_grant_clock \"${LOCAL_TMP}/ship/grant-clock.mjs\"\nstart_stand_in_feria fixtures/v1/server fixtures/v1/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"@lamalibre/${PLUGIN}-agent\\\"]\" '[\"install\",\"uninstall\"]'\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${PERSON}\\\",\\\"displayname\\\":\\\"E2E Person\\\",\\\"email\\\":\\\"${PERSON}@example.test\\\",\\\"password\\\":\\\"${PERSON_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${PERSON} created\" || true\nPERSON_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nINSTALL=$(install_approved \"${PLUGIN}\" \"@lamalibre/${PLUGIN}-server@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed and approved: ${PLUGIN}\" || true\nRESP=$(host_api_call POST \"plugins/${PLUGIN}/web-surface\" '{\"accessMode\":\"authenticated\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Its web surface created on ${FQDN}\" || true\nSITE_ID=$(json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty')\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nif wait_for 120 identity_ready \"${PLUGIN}\" && wait_for 120 web_served \"${PLUGIN}\"; then\n  log_pass \"Ready and served\"\nelse\n  log_fail \"Not ready or not served: $(identity_view \"${PLUGIN}\" | jq -c '.readiness') $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')\"\nfi\nRESP=$(host_api_call POST \"native-apps\" \"{\\\"slug\\\":\\\"${SLUG}\\\",\\\"hostKind\\\":\\\"site\\\",\\\"hostId\\\":\\\"${SITE_ID}\\\",\\\"name\\\":\\\"E2E Refresh\\\",\\\"redirectPaths\\\":[\\\"${NATIVE_REDIRECT_PATH}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Native client ${CLIENT} registered for the site\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${PERSON}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${PERSON} entitled as viewer\" || true\nvisitor_exec \"grep -q ' ${FQDN}\\$' /etc/hosts || echo '${HOST_IP} ${FQDN}' >> /etc/hosts\" > /dev/null 2>&1 || true\nif wait_for 120 native_client_known \"${CLIENT}\" \"${FQDN}\" && wait_for 30 in_audience \"${PERSON_ID}\"; then\n  log_pass \"Authelia knows the client; ${PERSON} is in the audience\"\nelse\n  log_fail \"The client or the audience is not ready: $(audience_row \"${PLUGIN}\" \"${PERSON_ID}\")\"\nfi\nSECRET=$(reset_totp \"${PERSON}\")\nwait_for_next_totp_window\nassert_eq \"$(sign_in \"${PERSON}\" \"${PERSON_PASSWORD}\" \"${SECRET}\" \"${JAR}\" \"${FQDN}\")\" \"OK OK\" \"${PERSON} signed in to Authelia from the visitor VM\" || true\n\n# ===========================================================================\n# 1–3. Rotation, the grace window, reuse\n# ==========================================================================="
     },
     {
       "id": "rotation-the-grace-window-and-a-spent-token-reused",
       "label": "Rotation, the grace window, and a spent token reused",
       "steps": [
         {
-          "id": "step-42",
+          "id": "step-40",
           "label": "Signed in on \\",
           "target": "local",
           "continueOnError": true,
@@ -544,7 +549,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-43",
           "label": "Its access token reaches the plugin",
           "target": "local",
           "continueOnError": true,
@@ -565,7 +570,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-45",
           "label": "Refreshed: 200",
           "target": "local",
           "continueOnError": true,
@@ -586,7 +591,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-46",
           "label": "Set AT1",
           "target": "local",
           "op": {
@@ -603,7 +608,7 @@
           ]
         },
         {
-          "id": "step-49",
+          "id": "step-47",
           "label": "Set RT1",
           "target": "local",
           "op": {
@@ -620,7 +625,7 @@
           ]
         },
         {
-          "id": "step-50",
+          "id": "step-48",
           "label": "…a new refresh token and a new access token",
           "target": "local",
           "continueOnError": true,
@@ -641,7 +646,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-49",
           "label": "…the new access token reaches the plugin",
           "target": "local",
           "continueOnError": true,
@@ -662,7 +667,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-51",
           "label": "The spent token again, within 30 s (a lost answer retried): 200",
           "target": "local",
           "continueOnError": true,
@@ -683,7 +688,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-52",
           "label": "…the very same answer, replayed",
           "target": "local",
           "continueOnError": true,
@@ -704,7 +709,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-53",
           "label": "…the grant stays live",
           "target": "local",
           "continueOnError": true,
@@ -725,7 +730,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-55",
           "label": "Refreshed again",
           "target": "local",
           "continueOnError": true,
@@ -746,7 +751,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-56",
           "label": "Set AT2",
           "target": "local",
           "op": {
@@ -763,7 +768,7 @@
           ]
         },
         {
-          "id": "step-59",
+          "id": "step-57",
           "label": "Set RT2",
           "target": "local",
           "op": {
@@ -780,7 +785,7 @@
           ]
         },
         {
-          "id": "step-61",
+          "id": "step-59",
           "label": "Waiting out the grace window of the token just spent (30 s)...",
           "target": "local",
           "op": {
@@ -790,7 +795,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-62",
           "label": "The spent token after its window: 400 invalid_grant",
           "target": "local",
           "continueOnError": true,
@@ -811,7 +816,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-63",
           "label": "…the grant ended: reuse",
           "target": "local",
           "op": {
@@ -821,7 +826,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-64",
           "label": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Phone\")",
           "target": "local",
           "op": {
@@ -831,7 +836,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-65",
           "label": "Its live access token is refused at once: 401 invalid_token",
           "target": "local",
           "continueOnError": true,
@@ -852,7 +857,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-66",
           "label": "…and the one before it",
           "target": "local",
           "continueOnError": true,
@@ -873,7 +878,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-68",
           "label": "Its current refresh token: 400 invalid_grant",
           "target": "local",
           "continueOnError": true,
@@ -894,7 +899,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-69",
           "label": "Audited once: native-app.grant.reuse-detected",
           "target": "local",
           "continueOnError": true,
@@ -915,7 +920,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-70",
           "label": "Admins notified of the reuse",
           "target": "local",
           "continueOnError": true,
@@ -943,7 +948,7 @@
       "label": "The app signs out (token revocation)",
       "steps": [
         {
-          "id": "step-74",
+          "id": "step-72",
           "label": "Signed in on \\",
           "target": "local",
           "continueOnError": true,
@@ -964,7 +969,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-75",
           "label": "POST /api/oidc/revocation with its refresh token: 200",
           "target": "local",
           "continueOnError": true,
@@ -985,7 +990,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-76",
           "label": "…the grant ended: revoked_by_client",
           "target": "local",
           "op": {
@@ -995,7 +1000,7 @@
           }
         },
         {
-          "id": "step-79",
+          "id": "step-77",
           "label": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Tablet\")",
           "target": "local",
           "op": {
@@ -1005,7 +1010,7 @@
           }
         },
         {
-          "id": "step-80",
+          "id": "step-78",
           "label": "…its access token is refused at once",
           "target": "local",
           "continueOnError": true,
@@ -1033,7 +1038,7 @@
       "label": "Grants per device: listed and ended by the administrator",
       "steps": [
         {
-          "id": "step-87",
+          "id": "step-85",
           "label": "GET …/grants?status=live: \\",
           "target": "local",
           "continueOnError": true,
@@ -1054,7 +1059,7 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-87",
           "label": "…each with a summary of its user agent",
           "target": "local",
           "continueOnError": true,
@@ -1075,7 +1080,7 @@
           }
         },
         {
-          "id": "step-90",
+          "id": "step-88",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1092,7 +1097,7 @@
           ]
         },
         {
-          "id": "step-91",
+          "id": "step-89",
           "label": "lamaste-server native-apps grants ${CLIENT} --status all --json: the four devices",
           "target": "local",
           "continueOnError": true,
@@ -1114,7 +1119,7 @@
           }
         },
         {
-          "id": "step-92",
+          "id": "step-90",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1131,7 +1136,7 @@
           ]
         },
         {
-          "id": "step-93",
+          "id": "step-91",
           "label": "\") | .deviceName] | sort | join(\",\")",
           "target": "local",
           "continueOnError": true,
@@ -1153,7 +1158,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-92",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1170,7 +1175,7 @@
           ]
         },
         {
-          "id": "step-95",
+          "id": "step-93",
           "label": "lamaste-server native-apps revoke --grant: one grant ended",
           "target": "local",
           "continueOnError": true,
@@ -1192,7 +1197,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-94",
           "label": "…revoked_by_admin",
           "target": "local",
           "continueOnError": true,
@@ -1213,7 +1218,7 @@
           }
         },
         {
-          "id": "step-97",
+          "id": "step-95",
           "label": "…its access token refused at once",
           "target": "local",
           "continueOnError": true,
@@ -1234,7 +1239,7 @@
           }
         },
         {
-          "id": "step-99",
+          "id": "step-97",
           "label": "…its refresh token refused",
           "target": "local",
           "continueOnError": true,
@@ -1255,7 +1260,7 @@
           }
         },
         {
-          "id": "step-100",
+          "id": "step-98",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1272,7 +1277,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-99",
           "label": "DELETE /api/native-apps/${CLIENT}/grants/<id>: one grant ended",
           "target": "local",
           "continueOnError": true,
@@ -1293,7 +1298,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-100",
           "label": "…revoked_by_admin",
           "target": "local",
           "continueOnError": true,
@@ -1314,7 +1319,7 @@
           }
         },
         {
-          "id": "step-103",
+          "id": "step-101",
           "label": "…its access token refused at once",
           "target": "local",
           "continueOnError": true,
@@ -1335,7 +1340,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-103",
           "label": "…its refresh token refused",
           "target": "local",
           "continueOnError": true,
@@ -1356,7 +1361,7 @@
           }
         },
         {
-          "id": "step-106",
+          "id": "step-104",
           "label": "Audited: native-app.grant.revoked, revoked_by_admin, twice",
           "target": "local",
           "continueOnError": true,
@@ -1377,14 +1382,14 @@
           }
         }
       ],
-      "bash": "log_section \"Grants per device: listed and ended by the administrator\"\n\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Watch\"\nAT_WATCH=\"${NATIVE_AT}\"\nRT_WATCH=\"${NATIVE_RT}\"\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Laptop\"\nAT_LAPTOP=\"${NATIVE_AT}\"\nRT_LAPTOP=\"${NATIVE_RT}\"\nassert_eq \"$(native_grants \"${CLIENT}\" live | jq -r '[.[].deviceName] | sort | join(\",\")')\" \"E2E Laptop,E2E Watch\" \"GET …/grants?status=live: \\\"E2E Laptop\\\" and \\\"E2E Watch\\\"\" || true\nassert_eq \"$(native_grants \"${CLIENT}\" ended | jq -r '[.[] | \"\\(.deviceName)=\\(.revokedReason)\"] | sort | join(\",\")')\" \"E2E Phone=reuse,E2E Tablet=revoked_by_client\" \"…status=ended: the phone (reuse) and the tablet (signed out)\" || true\nassert_eq \"$(native_grants \"${CLIENT}\" live | jq -r '[.[] | select(.userAgent != null and (.userAgent | length) > 0)] | length')\" \"2\" \"…each with a summary of its user agent\" || true\nOUT=$(cli native-apps grants \"${CLIENT}\" --status all)\nassert_json_field \"$OUT\" '[.grants[].deviceName] | sort | join(\",\")' \"E2E Laptop,E2E Phone,E2E Tablet,E2E Watch\" \"lamaste-server native-apps grants ${CLIENT} --status all --json: the four devices\" || true\nOUT=$(cli users native-grants \"${PERSON}\")\nassert_json_field \"$OUT\" '[.grants[] | select(.clientId == \"'\"${CLIENT}\"'\") | .deviceName] | sort | join(\",\")' \"E2E Laptop,E2E Watch\" \"lamaste-server users native-grants ${PERSON} --json: the person's live devices\" || true\n\nOUT=$(cli native-apps revoke \"${CLIENT}\" --grant \"$(grant_id_of \"E2E Watch\")\")\nassert_json_field \"$OUT\" '\"\\(.event) \\(.ended)\"' \"complete 1\" \"lamaste-server native-apps revoke --grant: one grant ended\" || true\nassert_eq \"$(native_grant_reason \"${CLIENT}\" \"E2E Watch\")\" \"revoked_by_admin\" \"…revoked_by_admin\" || true\nassert_eq \"$(echo_refused \"${AT_WATCH}\" && echo refused || echo admitted)\" \"refused\" \"…its access token refused at once\" || true\nnative_refresh \"${CLIENT}\" \"${RT_WATCH}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh token refused\" || true\n\nRESP=$(host_api_call DELETE \"native-apps/${CLIENT}/grants/$(grant_id_of \"E2E Laptop\")\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.ended')\" \"200 1\" \"DELETE /api/native-apps/${CLIENT}/grants/<id>: one grant ended\" || true\nassert_eq \"$(native_grant_reason \"${CLIENT}\" \"E2E Laptop\")\" \"revoked_by_admin\" \"…revoked_by_admin\" || true\nassert_eq \"$(echo_refused \"${AT_LAPTOP}\" && echo refused || echo admitted)\" \"refused\" \"…its access token refused at once\" || true\nnative_refresh \"${CLIENT}\" \"${RT_LAPTOP}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh token refused\" || true\nassert_eq \"$(native_audits native-app.grant.revoked '.reason == \"revoked_by_admin\"')\" \"2\" \"Audited: native-app.grant.revoked, revoked_by_admin, twice\" || true\n\n# ===========================================================================\n# 6. Lifetimes\n# ==========================================================================="
+      "bash": "log_section \"Grants per device: listed and ended by the administrator\"\n\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Watch\"\nAT_WATCH=\"${NATIVE_AT}\"\nRT_WATCH=\"${NATIVE_RT}\"\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Laptop\"\nAT_LAPTOP=\"${NATIVE_AT}\"\nRT_LAPTOP=\"${NATIVE_RT}\"\nassert_eq \"$(native_grants \"${CLIENT}\" live | jq -r '[.[].deviceName] | sort | join(\",\")')\" \"E2E Laptop,E2E Watch\" \"GET …/grants?status=live: \\\"E2E Laptop\\\" and \\\"E2E Watch\\\"\" || true\nassert_eq \"$(native_grants \"${CLIENT}\" ended | jq -r '[.[] | \"\\(.deviceName)=\\(.endedReason)\"] | sort | join(\",\")')\" \"E2E Phone=reuse,E2E Tablet=revoked_by_client\" \"…status=ended: the phone (reuse) and the tablet (signed out)\" || true\nassert_eq \"$(native_grants \"${CLIENT}\" live | jq -r '[.[] | select(.userAgent != null and (.userAgent | length) > 0)] | length')\" \"2\" \"…each with a summary of its user agent\" || true\nOUT=$(cli native-apps grants \"${CLIENT}\" --status all)\nassert_json_field \"$OUT\" '[.grants[].deviceName] | sort | join(\",\")' \"E2E Laptop,E2E Phone,E2E Tablet,E2E Watch\" \"lamaste-server native-apps grants ${CLIENT} --status all --json: the four devices\" || true\nOUT=$(cli users native-grants \"${PERSON}\")\nassert_json_field \"$OUT\" '[.grants[] | select(.clientId == \"'\"${CLIENT}\"'\") | .deviceName] | sort | join(\",\")' \"E2E Laptop,E2E Watch\" \"lamaste-server users native-grants ${PERSON} --json: the person's live devices\" || true\n\nOUT=$(cli native-apps revoke \"${CLIENT}\" --grant \"$(grant_id_of \"E2E Watch\")\")\nassert_json_field \"$OUT\" '\"\\(.event) \\(.ended)\"' \"complete 1\" \"lamaste-server native-apps revoke --grant: one grant ended\" || true\nassert_eq \"$(native_grant_reason \"${CLIENT}\" \"E2E Watch\")\" \"revoked_by_admin\" \"…revoked_by_admin\" || true\nassert_eq \"$(echo_refused \"${AT_WATCH}\" && echo refused || echo admitted)\" \"refused\" \"…its access token refused at once\" || true\nnative_refresh \"${CLIENT}\" \"${RT_WATCH}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh token refused\" || true\n\nRESP=$(host_api_call DELETE \"native-apps/${CLIENT}/grants/$(grant_id_of \"E2E Laptop\")\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.ended')\" \"200 1\" \"DELETE /api/native-apps/${CLIENT}/grants/<id>: one grant ended\" || true\nassert_eq \"$(native_grant_reason \"${CLIENT}\" \"E2E Laptop\")\" \"revoked_by_admin\" \"…revoked_by_admin\" || true\nassert_eq \"$(echo_refused \"${AT_LAPTOP}\" && echo refused || echo admitted)\" \"refused\" \"…its access token refused at once\" || true\nnative_refresh \"${CLIENT}\" \"${RT_LAPTOP}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh token refused\" || true\nassert_eq \"$(native_audits native-app.grant.revoked '.reason == \"revoked_by_admin\"')\" \"2\" \"Audited: native-app.grant.revoked, revoked_by_admin, twice\" || true\n\n# ===========================================================================\n# 6. Lifetimes\n# ==========================================================================="
     },
     {
       "id": "lifetimes-absolute-and-idle",
       "label": "Lifetimes: absolute and idle",
       "steps": [
         {
-          "id": "step-113",
+          "id": "step-111",
           "label": "Two more devices signed in, both reaching the plugin",
           "target": "local",
           "continueOnError": true,
@@ -1405,7 +1410,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-112",
           "label": "\\",
           "target": "local",
           "continueOnError": true,
@@ -1426,7 +1431,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-113",
           "label": "…its access token is refused at once, unexpired as it is",
           "target": "local",
           "continueOnError": true,
@@ -1447,7 +1452,7 @@
           }
         },
         {
-          "id": "step-117",
+          "id": "step-115",
           "label": "…its refresh: 400 invalid_grant",
           "target": "local",
           "continueOnError": true,
@@ -1468,7 +1473,7 @@
           }
         },
         {
-          "id": "step-118",
+          "id": "step-116",
           "label": "…ended: absolute_expired",
           "target": "local",
           "op": {
@@ -1478,7 +1483,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-117",
           "label": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Desk\")",
           "target": "local",
           "op": {
@@ -1488,7 +1493,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-118",
           "label": "\\",
           "target": "local",
           "continueOnError": true,
@@ -1509,7 +1514,7 @@
           }
         },
         {
-          "id": "step-121",
+          "id": "step-119",
           "label": "…its access token is refused at once",
           "target": "local",
           "continueOnError": true,
@@ -1530,7 +1535,7 @@
           }
         },
         {
-          "id": "step-123",
+          "id": "step-121",
           "label": "…its refresh: 400 invalid_grant",
           "target": "local",
           "continueOnError": true,
@@ -1551,7 +1556,7 @@
           }
         },
         {
-          "id": "step-124",
+          "id": "step-122",
           "label": "…ended: idle_expired",
           "target": "local",
           "op": {
@@ -1561,7 +1566,7 @@
           }
         },
         {
-          "id": "step-125",
+          "id": "step-123",
           "label": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Car\")",
           "target": "local",
           "op": {
@@ -1578,7 +1583,7 @@
       "label": "The client disabled, then enabled again",
       "steps": [
         {
-          "id": "step-129",
+          "id": "step-127",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1595,7 +1600,7 @@
           ]
         },
         {
-          "id": "step-130",
+          "id": "step-128",
           "label": "PATCH /api/native-apps/${CLIENT} {enabled: false}",
           "target": "local",
           "continueOnError": true,
@@ -1616,7 +1621,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-129",
           "label": "…its live grant ended: client_disabled",
           "target": "local",
           "op": {
@@ -1626,7 +1631,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-130",
           "label": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Kiosk\")",
           "target": "local",
           "op": {
@@ -1636,7 +1641,7 @@
           }
         },
         {
-          "id": "step-133",
+          "id": "step-131",
           "label": "…its access token refused",
           "target": "local",
           "continueOnError": true,
@@ -1657,7 +1662,7 @@
           }
         },
         {
-          "id": "step-135",
+          "id": "step-133",
           "label": "…its refresh refused",
           "target": "local",
           "continueOnError": true,
@@ -1678,7 +1683,7 @@
           }
         },
         {
-          "id": "step-136",
+          "id": "step-134",
           "label": "Authelia no longer knows the client: nobody signs in with it",
           "target": "local",
           "op": {
@@ -1688,7 +1693,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-135",
           "label": "Authelia still knows the disabled client",
           "target": "local",
           "op": {
@@ -1698,7 +1703,7 @@
           }
         },
         {
-          "id": "step-138",
+          "id": "step-136",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1715,7 +1720,7 @@
           ]
         },
         {
-          "id": "step-139",
+          "id": "step-137",
           "label": "Enabled again",
           "target": "local",
           "continueOnError": true,
@@ -1736,7 +1741,28 @@
           }
         },
         {
-          "id": "step-141",
+          "id": "step-138",
+          "label": "${PERSON} signs in to Authelia again (it restarted)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sign_in \"${PERSON}\" \"${PERSON_PASSWORD}\" \"${SECRET}\" \"${JAR}\" \"${FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${PERSON} signs in to Authelia again (it restarted)"
+            }
+          }
+        },
+        {
+          "id": "step-140",
           "label": "…a new sign-in works and reaches the plugin",
           "target": "local",
           "continueOnError": true,
@@ -1757,7 +1783,7 @@
           }
         },
         {
-          "id": "step-142",
+          "id": "step-141",
           "label": "Authelia does not know the client again",
           "target": "local",
           "op": {
@@ -1767,12 +1793,12 @@
           }
         }
       ],
-      "bash": "log_section \"The client disabled, then enabled again\"\n\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Kiosk\"\nAT_KIOSK=\"${NATIVE_AT}\"\nRT_KIOSK=\"${NATIVE_RT}\"\nRESP=$(host_api_call PATCH \"native-apps/${CLIENT}\" '{\"enabled\":false}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PATCH /api/native-apps/${CLIENT} {enabled: false}\" || true\nif wait_for 15 native_grant_ended_as \"${CLIENT}\" \"E2E Kiosk\" client_disabled; then\n  log_pass \"…its live grant ended: client_disabled\"\nelse\n  log_fail \"The grant: $(native_grant_of \"${CLIENT}\" \"E2E Kiosk\")\"\nfi\nassert_eq \"$(echo_refused \"${AT_KIOSK}\" && echo refused || echo admitted)\" \"refused\" \"…its access token refused\" || true\nnative_refresh \"${CLIENT}\" \"${RT_KIOSK}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh refused\" || true\nif wait_for 120 native_client_gone \"${CLIENT}\" \"${FQDN}\"; then\n  log_pass \"Authelia no longer knows the client: nobody signs in with it\"\nelse\n  log_fail \"Authelia still knows the disabled client\"\nfi\nRESP=$(host_api_call PATCH \"native-apps/${CLIENT}\" '{\"enabled\":true}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Enabled again\" || true\nif wait_for 120 native_client_known \"${CLIENT}\" \"${FQDN}\"; then\n  native_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Kiosk 2\"\n  assert_eq \"${NATIVE_SIGN_IN} $(echo_status \"${NATIVE_AT}\")\" \"ok 200\" \"…a new sign-in works and reaches the plugin\" || true\nelse\n  log_fail \"Authelia does not know the client again\"\nfi"
+      "bash": "log_section \"The client disabled, then enabled again\"\n\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Kiosk\"\nAT_KIOSK=\"${NATIVE_AT}\"\nRT_KIOSK=\"${NATIVE_RT}\"\nRESP=$(host_api_call PATCH \"native-apps/${CLIENT}\" '{\"enabled\":false}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PATCH /api/native-apps/${CLIENT} {enabled: false}\" || true\nif wait_for 15 native_grant_ended_as \"${CLIENT}\" \"E2E Kiosk\" client_disabled; then\n  log_pass \"…its live grant ended: client_disabled\"\nelse\n  log_fail \"The grant: $(native_grant_of \"${CLIENT}\" \"E2E Kiosk\")\"\nfi\nassert_eq \"$(echo_refused \"${AT_KIOSK}\" && echo refused || echo admitted)\" \"refused\" \"…its access token refused\" || true\nnative_refresh \"${CLIENT}\" \"${RT_KIOSK}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh refused\" || true\nif wait_for 120 native_client_gone \"${CLIENT}\" \"${FQDN}\"; then\n  log_pass \"Authelia no longer knows the client: nobody signs in with it\"\nelse\n  log_fail \"Authelia still knows the disabled client\"\nfi\nRESP=$(host_api_call PATCH \"native-apps/${CLIENT}\" '{\"enabled\":true}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Enabled again\" || true\nif wait_for 120 native_client_known \"${CLIENT}\" \"${FQDN}\"; then\n  # Disabling and enabling a client restarts Authelia, whose sessions live in\n  # memory: the person signs in to Authelia again, as the app's browser shows.\n  assert_eq \"$(sign_in \"${PERSON}\" \"${PERSON_PASSWORD}\" \"${SECRET}\" \"${JAR}\" \"${FQDN}\")\" \"OK OK\" \"${PERSON} signs in to Authelia again (it restarted)\" || true\n  native_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Kiosk 2\"\n  assert_eq \"${NATIVE_SIGN_IN} $(echo_status \"${NATIVE_AT}\")\" \"ok 200\" \"…a new sign-in works and reaches the plugin\" || true\nelse\n  log_fail \"Authelia does not know the client again\"\nfi"
     }
   ],
   "apiHelpers": [],
   "headerRaw": "# ============================================================================\n# 64 — Native app: refresh tokens and grants (Three-VM)\n# ============================================================================\n# The relay's token broker in front of Authelia (native-apps-design.md D4,\n# R7–R10): a native client on a plugin's site (e2e-nat64, identity wide, a\n# web surface), one person, several sign-ins — each a grant named by its\n# device. From the visitor VM:\n#\n# 1. Rotation: a refresh answers a new refresh token and a new access\n#    token, which the user surface admits.\n# 2. The grace window (R8): the spent token presented again within 30 s\n#    gets the very same answer (a lost response retried), the grant stays.\n# 3. Reuse: a spent token presented after its window ends the grant — its\n#    live access tokens are refused at once, its current refresh token is\n#    refused — audited native-app.grant.reuse-detected, admins notified.\n# 4. The app signs out (RFC 7009 revocation): its grant ends\n#    (revoked_by_client), its access token is refused.\n# 5. Grants per device: listed through the API and the CLI\n#    (`native-apps grants`, `users native-grants`); one ended by the CLI\n#    (`native-apps revoke --grant`) and one by the API (DELETE) —\n#    revoked_by_admin, refused at once.\n# 6. Lifetimes: a grant past its absolute lifetime, and one idle longer\n#    than the client's idle lifetime — each made so by moving the grant's\n#    own timestamps in the panel's state.db (as its database owner, on the\n#    host VM: the relay's clock is never touched, and a day cannot be\n#    waited) — has its access token refused (R10) and its refresh refused,\n#    ended absolute_expired and idle_expired.\n# 7. The client disabled: its live grant ends (client_disabled), Authelia\n#    no longer knows it; enabled again, it signs people in again.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-nat64\"\nSUB_W=\"e2e64app\"\nPOLICY_ID=\"e2e-apphost-64\"\nREMOTE_DIR=\"/var/tmp/e2e-64-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nPERSON=\"e2e64-person\"\n# A test credential for this run only, never printed\nPERSON_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR=\"/tmp/e2e-64-person.cookies\"\nSLUG=\"e2e64app\"\nCLIENT=\"lamaste-native-${SLUG}\"\nSTATE_DB=\"/etc/lamalibre/lamaste/state.db\"\nFQDN=\"\"\nSITE_ID=\"\"\nPERSON_ID=\"\"\n\n# echo_status <token> — the status of GET /api/<plugin>/app/echo with the bearer\necho_status() { bearer_status \"$1\" - \"https://${FQDN}/api/${PLUGIN}/app/echo\"; }\n# echo_refused <token> — 401 invalid_token, the relay's answer to a token no grant holds\necho_refused() {\n  local out\n  out=$(bearer \"$1\" - \"https://${FQDN}/api/${PLUGIN}/app/echo\")\n  [ \"$(visit_status \"$out\") $(visit_body \"$out\" | jq -r '.error' 2>/dev/null)\" = \"401 invalid_token\" ]\n}\n\n# in_audience <userId> — the audience holds the user as an active member\nin_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"$1\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\n# cli <arguments> — lamaste-server on the host VM with --json; its last line\ncli() {\n  timed_exec 90 multipass exec \"${HOST_VM}\" -- sudo bash -c \"lamaste-server $* --json 2>&1\" 2>/dev/null | tail -n 1\n}\n\n# write_grant_clock <file> — grant-clock.mjs: moves one grant's own\n# timestamps in the panel's state.db, as the database's owner — past its\n# absolute lifetime (`absolute`), or idle one minute longer than its\n# client's idle lifetime (`idle`). Prints {\"changes\": n}.\n#\n#   node grant-clock.mjs <state.db> <grantId> <absolute | idle>\nwrite_grant_clock() {\n  cat > \"$1\" <<'CLOCK_EOF'\nimport { DatabaseSync } from 'node:sqlite';\n\nconst [file, grantId, what] = process.argv.slice(2);\nconst db = new DatabaseSync(file);\ndb.exec('PRAGMA busy_timeout = 10000');\nconst now = Date.now();\nlet changes = 0;\nif (what === 'absolute') {\n  changes = db\n    .prepare('UPDATE native_grants SET absolute_expires_at = ? WHERE grant_id = ? AND revoked_at IS NULL')\n    .run(now - 60_000, grantId).changes;\n} else if (what === 'idle') {\n  const row = db\n    .prepare('SELECT c.idle_days AS idleDays FROM native_grants g JOIN native_clients c ON c.client_id = g.client_id WHERE g.grant_id = ?')\n    .get(grantId);\n  if (row) {\n    changes = db\n      .prepare('UPDATE native_grants SET last_used_at = ? WHERE grant_id = ? AND revoked_at IS NULL')\n      .run(now - row.idleDays * 86_400_000 - 60_000, grantId).changes;\n  }\n}\ndb.close();\nprocess.stdout.write(`${JSON.stringify({ changes: Number(changes) })}\\n`);\nCLOCK_EOF\n}\n\n# grant_clock <grantId> <absolute | idle> — run it on the host VM; prints its changes count\ngrant_clock() {\n  host_exec \"runuser -u lamaste -- node ${REMOTE_DIR}/grant-clock.mjs ${STATE_DB} $1 $2 2>/dev/null\" 2>/dev/null | grep -E '^\\{' | tail -n 1 | jq -r '.changes' 2>/dev/null || echo \"-1\"\n}\n\n# grant_id_of <device> — the id of that device's grant (\"\" when none)\ngrant_id_of() { native_grant_of \"${CLIENT}\" \"$1\" | jq -r '.grantId // empty' 2>/dev/null || true; }\n\nbegin_test \"64 — Native app: refresh tokens and grants (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  native_cleanup \"${CLIENT}\"\n  drop_plugin_grants \"${PLUGIN}\"\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR} /tmp/e2e-native-nobody.cookies; sed -i '/${SUB_W}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  host_api_delete \"users/${PERSON}?erase=true\" > /dev/null 2>&1 || true\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-nat64\"\nSUB_W=\"e2e64app\"\nPOLICY_ID=\"e2e-apphost-64\"\nREMOTE_DIR=\"/var/tmp/e2e-64-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\n# A username that reached an OIDC client is never given out again: per run.\nUSER_TAG=\"$(date +%s)\"\nUSER_TAG=\"${USER_TAG: -6}\"\nPERSON=\"e2e64-person-${USER_TAG}\"\n# A test credential for this run only, never printed\nPERSON_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR=\"/tmp/e2e-64-person.cookies\"\nSLUG=\"e2e64app\"\nCLIENT=\"lamaste-native-${SLUG}\"\nSTATE_DB=\"/etc/lamalibre/lamaste/state.db\"\nFQDN=\"\"\nSITE_ID=\"\"\nPERSON_ID=\"\"\n\n# echo_status <token> — the status of GET /api/<plugin>/app/echo with the bearer\necho_status() { bearer_status \"$1\" - \"https://${FQDN}/api/${PLUGIN}/app/echo\"; }\n# echo_refused <token> — 401 invalid_token, the relay's answer to a token no grant holds\necho_refused() {\n  local out\n  out=$(bearer \"$1\" - \"https://${FQDN}/api/${PLUGIN}/app/echo\")\n  [ \"$(visit_status \"$out\") $(visit_body \"$out\" | jq -r '.error' 2>/dev/null)\" = \"401 invalid_token\" ]\n}\n\n# in_audience <userId> — the audience holds the user as an active member\nin_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"$1\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\n# cli <arguments> — lamaste-server on the host VM with --json; its last line\ncli() {\n  timed_exec 90 multipass exec \"${HOST_VM}\" -- sudo bash -c \"lamaste-server $* --json 2>&1\" 2>/dev/null | tail -n 1\n}\n\n# write_grant_clock <file> — grant-clock.mjs: moves one grant's own\n# timestamps in the panel's state.db, as the database's owner — past its\n# absolute lifetime (`absolute`), or idle one minute longer than its\n# client's idle lifetime (`idle`). Prints {\"changes\": n}.\n#\n#   node grant-clock.mjs <state.db> <grantId> <absolute | idle>\nwrite_grant_clock() {\n  cat > \"$1\" <<'CLOCK_EOF'\nimport { DatabaseSync } from 'node:sqlite';\n\nconst [file, grantId, what] = process.argv.slice(2);\nconst db = new DatabaseSync(file);\ndb.exec('PRAGMA busy_timeout = 10000');\nconst now = Date.now();\nlet changes = 0;\nif (what === 'absolute') {\n  changes = db\n    .prepare('UPDATE native_grants SET absolute_expires_at = ? WHERE grant_id = ? AND revoked_at IS NULL')\n    .run(now - 60_000, grantId).changes;\n} else if (what === 'idle') {\n  const row = db\n    .prepare('SELECT c.idle_days AS idleDays FROM native_grants g JOIN native_clients c ON c.client_id = g.client_id WHERE g.grant_id = ?')\n    .get(grantId);\n  if (row) {\n    changes = db\n      .prepare('UPDATE native_grants SET last_used_at = ? WHERE grant_id = ? AND revoked_at IS NULL')\n      .run(now - row.idleDays * 86_400_000 - 60_000, grantId).changes;\n  }\n}\ndb.close();\nprocess.stdout.write(`${JSON.stringify({ changes: Number(changes) })}\\n`);\nCLOCK_EOF\n}\n\n# grant_clock <grantId> <absolute | idle> — run it on the host VM; prints its changes count\ngrant_clock() {\n  host_exec \"runuser -u lamaste -- node ${REMOTE_DIR}/grant-clock.mjs ${STATE_DB} $1 $2 2>/dev/null\" 2>/dev/null | grep -E '^\\{' | tail -n 1 | jq -r '.changes' 2>/dev/null || echo \"-1\"\n}\n\n# grant_id_of <device> — the id of that device's grant (\"\" when none)\ngrant_id_of() { native_grant_of \"${CLIENT}\" \"$1\" | jq -r '.grantId // empty' 2>/dev/null || true; }\n\nbegin_test \"64 — Native app: refresh tokens and grants (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  native_cleanup \"${CLIENT}\"\n  drop_plugin_grants \"${PLUGIN}\"\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR} /tmp/e2e-native-nobody.cookies; sed -i '/${SUB_W}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  host_api_delete \"users/${PERSON}?erase=true\" > /dev/null 2>&1 || true\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }
