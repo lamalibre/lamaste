@@ -700,7 +700,8 @@ export default async function routes(fastify, opts) {
         return reply.code(400).send({ error: 'Invalid plugin name' });
       }
       try {
-        return await checkPluginUpdate(pluginCfg, name);
+        const npmrc = await installNpmrc(request.log);
+        return await checkPluginUpdate(pluginCfg, name, npmrc ? { npmrc } : {});
       } catch (err) {
         return reply.code(400).send({ error: err.message });
       }

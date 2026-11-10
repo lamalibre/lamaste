@@ -4,6 +4,7 @@
  * Per-agent config: ~/.lamalibre/lamaste/agents/<label>/config.json
  */
 
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteJSON } from '../file-helpers.js';
@@ -100,6 +101,24 @@ export async function agentTrustedScopes(label: string): Promise<readonly string
   return effectiveTrustedScopes(
     Array.isArray(config?.trustedScopes) ? config.trustedScopes : undefined,
   );
+}
+
+/**
+ * {@link agentTrustedScopes}, read synchronously — for the plugin host's
+ * getter, which asks at every mount and bundle request, so a scope the relay
+ * dropped stops being served at the next request even when the daemon could
+ * not be restarted. Anything unreadable is the built-in scope alone.
+ */
+export function agentTrustedScopesSync(label: string): readonly string[] {
+  const configPath = safeAgentConfigPath(label);
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as { trustedScopes?: unknown };
+    return effectiveTrustedScopes(
+      Array.isArray(parsed?.trustedScopes) ? parsed.trustedScopes : undefined,
+    );
+  } catch {
+    return effectiveTrustedScopes();
+  }
 }
 
 // ---------------------------------------------------------------------------

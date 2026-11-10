@@ -394,8 +394,18 @@ export function installPlugin(packageName, logger) {
     const installSpec = packageName;
     packageName = barePackageName(installSpec);
     // Remove the package npm installed when it is refused below.
+    // Through the registry userconfig, like the install: npm's reify may
+    // re-resolve the remaining tree, and must not ask another registry.
     const discardPackage = () =>
-      execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});
+      withRegistryUserconfig(
+        (env) =>
+          execa('npm', ['uninstall', '--ignore-scripts', packageName], {
+            cwd: STATE_DIR,
+            timeout: 120000,
+            env,
+          }),
+        { log: logger },
+      ).catch(() => {});
 
     const s = await getStmts();
 
@@ -657,9 +667,15 @@ export function uninstallPlugin(name, logger) {
 
     // Uninstall the npm package
     logger.info({ name, packageName: plugin.packageName }, 'Uninstalling plugin package');
-    await execa('npm', ['uninstall', plugin.packageName], {
-      cwd: STATE_DIR,
-    }).catch((err) => {
+    await withRegistryUserconfig(
+      (env) =>
+        execa('npm', ['uninstall', '--ignore-scripts', plugin.packageName], {
+          cwd: STATE_DIR,
+          timeout: 120000,
+          env,
+        }),
+      { log: logger },
+    ).catch((err) => {
       logger.warn({ err: err.message }, 'npm uninstall failed (continuing)');
     });
 

@@ -56,16 +56,25 @@ function checkScope(scope) {
 }
 
 /**
- * Write the list, then audit the change; when the audit cannot be written
- * the previous list is put back and the error thrown — a trust change is
- * never in effect without its audit entry.
+ * Audit the change, then write the list: a trust change is never in effect
+ * without its audit entry — not even after a crash between the two, which
+ * leaves at most an entry for a change that did not happen (and a second
+ * entry says so when the write fails here).
  */
-async function changeAudited(previous, next, entry) {
-  await updateConfig({ trustedScopes: next });
+async function changeAudited(_previous, next, entry) {
+  await recordAudit(entry);
   try {
-    await recordAudit(entry);
+    await updateConfig({ trustedScopes: next });
   } catch (err) {
-    await updateConfig({ trustedScopes: previous });
+    await recordAudit({
+      ...entry,
+      action: 'settings.trusted-scope.change-failed',
+      details: {
+        ...(entry.details ?? {}),
+        intended: entry.action,
+        error: String(err?.message ?? err).slice(0, 200),
+      },
+    }).catch(() => {});
     throw err;
   }
 }

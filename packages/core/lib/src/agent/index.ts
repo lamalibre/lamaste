@@ -94,11 +94,14 @@ export {
   saveAgentConfig,
   requireAgentConfig,
   agentTrustedScopes,
+  agentTrustedScopesSync,
 } from './config.js';
 export {
   localTrustedScopesFile,
   readLocalAdditionalTrustedScopes,
   localTrustedScopes,
+  localTrustedScopesSync,
+  assertLocalScopeRouted,
   addLocalTrustedScope,
   removeLocalTrustedScope,
   LocalTrustedScopeError,

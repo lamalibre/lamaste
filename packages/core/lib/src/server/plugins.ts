@@ -149,7 +149,7 @@ async function safeUninstall(
   logger: PluginLogger,
 ): Promise<void> {
   try {
-    await exec('npm', ['uninstall', packageName], { cwd: stateDir });
+    await exec('npm', ['uninstall', '--ignore-scripts', packageName], { cwd: stateDir });
   } catch (err: unknown) {
     logger.warn(
       { packageName, err: err instanceof Error ? err.message : String(err) },
@@ -441,7 +441,7 @@ export function uninstallPlugin(opts: UninstallPluginOptions): Promise<{ ok: tru
     // Uninstall the npm package — propagate failures so callers can diagnose
     // rather than allowing node_modules state to diverge from the registry.
     logger.info({ name, packageName: plugin.packageName }, 'Uninstalling plugin package');
-    await exec('npm', ['uninstall', plugin.packageName], { cwd: stateDir });
+    await exec('npm', ['uninstall', '--ignore-scripts', plugin.packageName], { cwd: stateDir });
 
     // Remove the plugin state directory
     const pluginDir = path.join(stateDir, 'plugins', name);

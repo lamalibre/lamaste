@@ -24,7 +24,7 @@ import { pluginHostPlugin } from '@lamalibre/lamaste';
 import {
   agentDataDir,
   agentPluginsDir,
-  agentTrustedScopes,
+  agentTrustedScopesSync,
   agentPluginsFile,
   readPluginRegistry,
   readPluginBundle,
@@ -163,7 +163,9 @@ export async function startPanelServer(label, { port = 9393, panelApi: panelApiO
     // The relay's trusted publisher scopes as sync last recorded them, read
     // at start; when the relay drops a scope, sync restarts this daemon if a
     // plugin from it is enabled (see convergeChiselService).
-    trustedScopes: await agentTrustedScopes(label),
+    // Read at every mount and bundle request: a scope the relay dropped stops
+    // being served at once, even if the daemon's restart did not happen.
+    trustedScopes: () => agentTrustedScopesSync(label),
 
     /**
      * Forward the owning agent's identity and outbound mTLS material to

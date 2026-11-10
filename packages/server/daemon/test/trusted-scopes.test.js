@@ -85,6 +85,21 @@ before(async () => {
       packages: { server: '@lamalibre/herd-server' },
     }),
   });
+  // A server plugin with code and a panel bundle: the relay mounts it.
+  await npm.publish('@example/mounted-server', '1.0.0', {
+    'package.json': JSON.stringify({
+      name: '@example/mounted-server',
+      version: '1.0.0',
+      main: 'index.js',
+    }),
+    'index.js':
+      "module.exports = async function (fastify) { fastify.get('/ping', async () => ({ pong: true })); };\n",
+    'panel.js': 'window.__mountedPanel = true;\n',
+    'lamaste-plugin.json': manifest('mounted', '1.0.0', {
+      packages: { server: '@example/mounted-server' },
+      panel: { label: 'Mounted', icon: 'box', route: '/mounted' },
+    }),
+  });
   await npm.publish('@lamalibre/lx-server', '1.0.0', {
     'lamaste-plugin.json': manifest('lx', '1.0.0'),
   });
@@ -185,6 +200,48 @@ test('a trusted scope installs, routed to the registry with every trusted scope'
   assert.match(install.userconfigText, /:_authToken=feria_trustedscopes_test_token_0000$/m);
 });
 
+test("the relay's plugin router mounts and serves a server plugin of a trusted additional scope, and stops serving it once untrusted", async () => {
+  const plugin = await lib.installPlugin('@example/mounted-server', logger);
+  await lib.enablePlugin(plugin.name, logger);
+  const { default: Fastify } = await import('fastify');
+  const { default: pluginRouter } = await import('../src/routes/plugin-router.js');
+  const app = Fastify({ logger: false });
+  app.decorateRequest('certRole', null);
+  app.addHook('onRequest', async (request) => {
+    request.certRole = 'admin';
+  });
+  await app.register(pluginRouter, { prefix: '/api' });
+  await app.ready();
+  try {
+    const ping = await app.inject({ method: 'GET', url: '/api/mounted/ping' });
+    assert.equal(ping.statusCode, 200, ping.body);
+    assert.deepEqual(ping.json(), { pong: true });
+    const bundle = await app.inject({ method: 'GET', url: '/api/mounted/panel.js' });
+    assert.equal(bundle.statusCode, 200, bundle.body);
+    assert.match(bundle.body, /__mountedPanel/);
+
+    // The list is read at every request: a scope no longer trusted stops
+    // being served at once — bundle and routes.
+    const before = lib.additionalTrustedScopes();
+    await lib.updateConfig({ trustedScopes: [] });
+    try {
+      const refused = await app.inject({ method: 'GET', url: '/api/mounted/panel.js' });
+      assert.equal(refused.statusCode, 403, refused.body);
+      assert.equal(refused.json().code, 'untrusted_scope');
+      // Its routes too, at once — no restart needed.
+      const route = await app.inject({ method: 'GET', url: '/api/mounted/ping' });
+      assert.equal(route.statusCode, 403, route.body);
+      assert.equal(route.json().code, 'untrusted_scope');
+    } finally {
+      await lib.updateConfig({ trustedScopes: before });
+    }
+  } finally {
+    await app.close();
+    await lib.disablePlugin(plugin.name, logger);
+    await lib.uninstallPlugin(plugin.name, logger);
+  }
+});
+
 test('a manifest naming another scope is refused and its package removed', async () => {
   await rejects(lib.installPlugin('@example/cross-server', logger), 400, 'untrusted_scope');
   const { plugins } = await lib.readPlugins();
@@ -195,6 +252,74 @@ test('a manifest naming another scope is refused and its package removed', async
   assert.ok(
     npm.calls().some((c) => c.args[0] === 'uninstall' && c.args.includes('@example/cross-server')),
   );
+});
+
+test('agents are brokered only the trusted scopes the registry hosts right now', async () => {
+  hostedAnswer = { scopes: [{ scope: '@lamalibre' }, { scope: '@example' }] };
+  lib.resetRegistryHostedScopesCache();
+  assert.deepEqual(await lib.brokeredTrustedScopes(), ['@lamalibre', '@example']);
+  // Retired there (or never hosted): an agent must not route it to that registry,
+  // which would answer from npmjs.
+  hostedAnswer = { scopes: [{ scope: '@lamalibre' }, { scope: '@example', retired: true }] };
+  lib.resetRegistryHostedScopesCache();
+  assert.deepEqual(await lib.brokeredTrustedScopes(), ['@lamalibre']);
+  hostedAnswer = null; // unreadable (an older registry): the built-in scope alone
+  lib.resetRegistryHostedScopesCache();
+  assert.deepEqual(await lib.brokeredTrustedScopes(), ['@lamalibre']);
+  hostedAnswer = { scopes: [{ scope: '@lamalibre' }, { scope: '@example' }] };
+  lib.resetRegistryHostedScopesCache();
+});
+
+test('the registry credential cannot be cleared, or moved to a registry lacking a trusted scope (routes)', async () => {
+  const { default: Fastify } = await import('fastify');
+  const { default: registryCredentialRoutes } =
+    await import('../src/routes/management/registry-credential.js');
+  const app = Fastify({ logger: false });
+  app.decorate('requireRole', () => async () => {});
+  await app.register(registryCredentialRoutes);
+  await app.ready();
+  try {
+    const res = await app.inject({ method: 'DELETE', url: '/registry-credential' });
+    assert.equal(res.statusCode, 409, res.body);
+    assert.equal(res.json().code, 'trusted_scopes_need_registry');
+    assert.deepEqual(res.json().scopes, ['@example']);
+    // Still configured.
+    assert.notEqual(await lib.readRegistryCredentialConfig(), null);
+
+    // Switching to a registry whose credential is good but which does not
+    // host @example is refused, and the stored credential stays.
+    const other = http.createServer((req, res) => {
+      res.setHeader('content-type', 'application/json');
+      if (req.url === '/-/whoami') {
+        return res.end(JSON.stringify({ owner: 'machine:panel', scopes: ['read', 'admin'] }));
+      }
+      if (req.url === '/-/feria/scopes') {
+        return res.end(JSON.stringify({ scopes: [{ scope: '@lamalibre' }] }));
+      }
+      res.writeHead(404);
+      res.end('{}');
+    });
+    await new Promise((resolve) => other.listen(0, '127.0.0.1', resolve));
+    try {
+      const otherUrl = `http://127.0.0.1:${other.address().port}/`;
+      const put = await app.inject({
+        method: 'PUT',
+        url: '/registry-credential',
+        payload: {
+          registryUrl: otherUrl,
+          auth: { kind: 'token', token: 'feria_other_registry_token_000000' },
+        },
+      });
+      assert.equal(put.statusCode, 409, put.body);
+      assert.equal(put.json().code, 'registry_lacks_scope');
+      assert.deepEqual(put.json().scopes, ['@example']);
+      assert.equal((await lib.readRegistryCredentialConfig()).registryUrl, registryUrl);
+    } finally {
+      await new Promise((resolve) => other.close(resolve));
+    }
+  } finally {
+    await app.close();
+  }
 });
 
 test('a scope the registry stops hosting stops installing', async () => {

@@ -13,6 +13,7 @@ import {
   disablePlugin,
   getPluginCapabilities,
   findPlugin,
+  withPluginLock,
 } from '../../lib/plugins.js';
 import { setPluginCapabilities, loadAgentRegistry } from '../../lib/mtls.js';
 import { listPluginOidcClients, rotatePluginOidcClientSecret } from '../../lib/plugin-oidc.js';
@@ -1088,18 +1089,23 @@ export default async function pluginRoutes(fastify, _opts) {
     },
     async (request, reply) => {
       const body = CreatePolicySchema.parse(request.body);
-      const untrusted = (body.allowedPlugins ?? []).filter(
-        (name) => !isTrustedPackage(name, getTrustedScopes()),
-      );
-      if (untrusted.length > 0) {
-        return reply.code(400).send({
-          error: `Not from a trusted publisher scope: ${untrusted.join(', ')}`,
-          code: 'untrusted_scope',
-        });
-      }
-
+      // Checked and written under the plugin lock — the one trust changes
+      // take — so a scope removed meanwhile is never left named by a policy.
+      let untrusted = [];
       try {
-        const policy = await createPushInstallPolicy(body);
+        const policy = await withPluginLock(async () => {
+          untrusted = (body.allowedPlugins ?? []).filter(
+            (name) => !isTrustedPackage(name, getTrustedScopes()),
+          );
+          if (untrusted.length > 0) return null;
+          return createPushInstallPolicy(body);
+        });
+        if (policy === null) {
+          return reply.code(400).send({
+            error: `Not from a trusted publisher scope: ${untrusted.join(', ')}`,
+            code: 'untrusted_scope',
+          });
+        }
         return { ok: true, policy };
       } catch (err) {
         const statusCode = err.statusCode || 500;
@@ -1121,18 +1127,23 @@ export default async function pluginRoutes(fastify, _opts) {
     async (request, reply) => {
       const { id } = z.object({ id: PolicyIdSchema }).parse(request.params);
       const body = UpdatePolicySchema.parse(request.body);
-      const untrusted = (body.allowedPlugins ?? []).filter(
-        (name) => !isTrustedPackage(name, getTrustedScopes()),
-      );
-      if (untrusted.length > 0) {
-        return reply.code(400).send({
-          error: `Not from a trusted publisher scope: ${untrusted.join(', ')}`,
-          code: 'untrusted_scope',
-        });
-      }
-
+      // Checked and written under the plugin lock — the one trust changes
+      // take — so a scope removed meanwhile is never left named by a policy.
+      let untrusted = [];
       try {
-        const policy = await updatePushInstallPolicy(id, body);
+        const policy = await withPluginLock(async () => {
+          untrusted = (body.allowedPlugins ?? []).filter(
+            (name) => !isTrustedPackage(name, getTrustedScopes()),
+          );
+          if (untrusted.length > 0) return null;
+          return updatePushInstallPolicy(id, body);
+        });
+        if (policy === null) {
+          return reply.code(400).send({
+            error: `Not from a trusted publisher scope: ${untrusted.join(', ')}`,
+            code: 'untrusted_scope',
+          });
+        }
         return { ok: true, policy };
       } catch (err) {
         const statusCode = err.statusCode || 500;

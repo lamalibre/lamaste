@@ -254,12 +254,34 @@ export async function pluginHostPlugin(
           };
 
           const effectiveAuthHook = authHookFactory ? authHookFactory(pluginName) : authHook;
+          // Trust is asked at every request too, not only at the mount: a
+          // scope no longer trusted stops being served at once, whether or
+          // not the host restarts.
+          const capturedMountPackage = plugin.packageName;
+          const capturedMountServerPkg = serverPkg;
+          const trustGuard = async (_request: FastifyRequest, reply: FastifyReply) => {
+            if (
+              !serverPackageTrusted(
+                capturedMountPackage,
+                capturedMountServerPkg,
+                currentTrustedScopes(),
+              )
+            ) {
+              return reply.code(403).send({
+                error: 'Plugin server package is not from a trusted publisher scope',
+                code: 'untrusted_scope',
+              });
+            }
+          };
 
           if (auth === 'mtls' && effectiveAuthHook) {
             // Two-level encapsulation: auth guard on outer scope
             await fastify.register(
               async function authScope(outer: FastifyInstance) {
+                // Authentication first: a caller without a certificate learns
+                // nothing about which plugins are installed or trusted.
                 outer.addHook('onRequest', effectiveAuthHook);
+                outer.addHook('onRequest', trustGuard);
                 await outer.register(async function pluginScope(inner: FastifyInstance) {
                   await inner.register(pluginFn, registerOpts);
                 });
@@ -270,16 +292,20 @@ export async function pluginHostPlugin(
             // Parent already enforces auth — single encapsulation level
             await fastify.register(
               async function pluginScope(scope: FastifyInstance) {
+                scope.addHook('onRequest', trustGuard);
                 await scope.register(pluginFn, registerOpts);
               },
               { prefix: `/${pluginName}` },
             );
           } else {
-            // 'none' — no auth guard
-            await fastify.register(pluginFn, {
-              prefix: `/${pluginName}`,
-              ...registerOpts,
-            });
+            // 'none' — no auth guard (the trust guard still applies)
+            await fastify.register(
+              async function trustScope(scope: FastifyInstance) {
+                scope.addHook('onRequest', trustGuard);
+                await scope.register(pluginFn, registerOpts);
+              },
+              { prefix: `/${pluginName}` },
+            );
           }
 
           fastify.log.info({ plugin: pluginName }, 'Plugin server routes mounted');
