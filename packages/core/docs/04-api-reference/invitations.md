@@ -4,7 +4,7 @@
 
 ## In Plain English
 
-An invitation is a link. Whoever opens it first picks a password, scans a TOTP code and has an account. Lamaste sends no mail: whoever makes an invitation copies the link and sends it themselves.
+An invitation is a link. Whoever opens it first picks a password, scans a TOTP code and has an account. Where the invitation's domain can send mail ([Mail](mail.md)) the relay mails the link; otherwise whoever makes an invitation copies the link and sends it themselves.
 
 There are two kinds:
 
@@ -81,19 +81,22 @@ The newest invitations, both kinds. Query: `plugin` (name), `inviter` (directory
 
 An administrator's invitation.
 
-| Field           | Rule                                                                                                                                    |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `username`      | The users API's rule                                                                                                                    |
-| `email`         | An address                                                                                                                              |
-| `groups`        | Optional Authelia groups; never with an external membership (400 `external_member_groups`)                                              |
-| `expiresInDays` | 1–30, default 7                                                                                                                         |
-| `domains`       | Domain names (members) or `{ name, kind }`. Required on a relay with two or more domains (400 `domains_required`); with one, its member |
+| Field           | Rule                                                                                                                                     |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `username`      | The users API's rule                                                                                                                     |
+| `email`         | An address                                                                                                                               |
+| `groups`        | Optional Authelia groups; never with an external membership (400 `external_member_groups`)                                               |
+| `expiresInDays` | 1–30, default 7                                                                                                                          |
+| `domains`       | Domain names (members) or `{ name, kind }`. Required on a relay with two or more domains (400 `domains_required`); with one, its member  |
+| `mail`          | Whether the link is mailed. Omitted: mailed, **unless `groups` names `admins` or a `feria-*` group** — hand such a link over another way |
 
-`201 { ok, invitation, inviteUrl, token, mail }` — `inviteUrl` and `token` here and never again. The link is mailed to `email` when the invitation's domain can send ([Mail](mail.md)); `mail` says what happened (`sent`, `failed`, `not-configured`, `deferred-budget`), and the link is answered whatever it says. `409` when the username is taken, or an open invitation names it.
+`201 { ok, invitation, inviteUrl, token, mail }` — `inviteUrl` and `token` here and never again. When it is to be mailed, the link goes to `email` if the invitation's domain can send ([Mail](mail.md)) and `mail` says what happened (`sent`, `failed`, `not-configured`, `deferred-budget`); `mail` is `null` when it was not to be mailed. The link is answered whatever `mail` says. `409` when the username is taken, or an open invitation names it.
+
+The sending mailbox keeps every mailed link in its Sent folder while it is live: use a mailbox nobody else uses ([Mail guide](../02-guides/mail.md#2-the-sending-mailbox)). That is why an invitation that makes an administrator or gives a registry group is not mailed unless asked.
 
 ### `POST /api/invitations/:id/reissue`
 
-A new link for a **pending** invitation, an expired one included, either kind: a new token (the old link dead at once), its failed attempts reset, mailed — the same answer as creating one. Held to neither an inviter's rate nor the caps. An administrator's invitation keeps the lifetime its link last had; a delegated one gets its policy's. `404 not_found`; `409 invitation_not_pending` (accepted, being accepted or revoked); `409 username_taken` when the username exists by then. Audited `invitation.reissued`.
+A new link for a **pending** invitation, an expired one included, either kind: a new token (the old link dead at once), its failed attempts reset — the same answer as creating one. Body `{ "mail": true | false }` (optional): whether the new link is mailed; omitted, as on creation (not for an invitation that grants `admins` or a `feria-*` group). At most **3 new links a day** per invitation (`429 reissue_rate`). Held to neither an inviter's rate nor the caps. An administrator's invitation keeps the lifetime its link last had; a delegated one gets its policy's. `404 not_found`; `409 invitation_not_pending` (accepted, being accepted or revoked); `409 username_taken` when the username exists by then. Audited `invitation.reissued`.
 
 ### `DELETE /api/invitations/:id`
 
@@ -186,11 +189,13 @@ The caller's own invitations only, and never who accepted one.
 
 ### `POST /api/delegated-invitations/:route`
 
-`{ "email": "deniz@client.example", "displayName": "Deniz", "role": "stakeholder" }` (`displayName` optional) → `201 { invitation, inviteUrl, mail }`, the link here and never again — mailed to the invitee, in the domain's language, when the domain can send (`mail.status`, [Mail status](mail.md#mail-status)).
+`{ "email": "deniz@client.example", "displayName": "Deniz", "role": "stakeholder" }` (`displayName` optional) → `201 { invitation, inviteUrl, mail }`. **Where the plugin's domain can send mail, the link goes by mail only**, to the invitee, in the domain's language: `inviteUrl` is `null` whatever `mail.status` says — a mail that failed or was held back is sent again with a new link. Where the domain cannot send (`mail.status: "not-configured"`) `inviteUrl` is the link, here and never again, for the inviter to send.
+
+A `displayName` — here, and the name an invitee gives when accepting — that reads as a link or a host name (`://`, `www.`, `name.tld`) is refused (`400 invalid_request`, `field: "displayName"`): the invitation mail shows the inviter's name to the person invited.
 
 ### `POST /api/delegated-invitations/:route/:id/reissue`
 
-A new link for the caller's own pending invitation (an expired one included): the old link dead, the new one mailed, answered `{ invitation, inviteUrl, mail }` once. Under the rules of making one — invitations still allowed, the address's domain still in the policy, the role still the caller's to give, the grant reserve — and it counts toward the 30 an hour; one that had expired and opens again counts toward the caps too. `404 not_found` (not the caller's, or none); `409 invitation_not_pending`. The inviter's page shows each open invitation's mail and a **New link** button.
+A new link for the caller's own pending invitation (an expired one included): the old link dead, the new one mailed, answered `{ invitation, inviteUrl, mail }` — `inviteUrl` only where the domain cannot send, as above. Under the rules of making one — invitations still allowed, the address's domain still in the policy, the role still the caller's to give, the grant reserve — and it counts toward the 30 an hour and the 100 a day; one that had expired and opens again counts toward the caps too. At most 3 new links a day per invitation (`429 reissue_rate`). `404 not_found` (not the caller's, or none); `409 invitation_not_pending`. The inviter's page shows each open invitation's mail and a **New link** button.
 
 ### `DELETE /api/delegated-invitations/:route/:id`
 
@@ -210,7 +215,9 @@ Every answer's `error` is English, for the panel, the CLI, scripts and logs; the
 | 403    |                            | `{ "error": "forbidden" }` from nginx, a cross-site request, a wrong `Origin`, or a user who is not entitled                |
 | 404    | `not_found`                | No such plugin, no identity, or (revoking) no such open invitation of the caller's; `resolveUserCaller`'s `404` has no code |
 | 409    | `invitation_cap`           | `cap`: `inviter` (`maxOpenPerInviter`) or `plugin` (`maxJoined`)                                                            |
-| 429    | `invitation_rate`          | 30 invitations by one inviter in an hour, revoked ones included                                                             |
+| 429    | `invitation_rate`          | 30 invitations and new links by one inviter in an hour, revoked ones included                                               |
+| 429    | `invitation_daily_rate`    | 100 invitations and new links by one inviter in a day; the administrators are notified once a day                           |
+| 429    | `reissue_rate`             | 3 new links for this invitation in a day                                                                                    |
 | 503    | `grant_reserve`            | Gatekeeper has fewer than 100 free grants (every invitee costs two)                                                         |
 | 503    | `gatekeeper_unavailable`   | Gatekeeper did not answer                                                                                                   |
 
@@ -257,8 +264,10 @@ A delegated acceptance is refused `410` unless everything still holds: the plugi
 
 ```
 lamaste-server invitations list [--plugin <name>] [--inviter <user>]
+lamaste-server invitations create <username> <email> [--groups a,b] [--domains a,b]
+                                   [--external-domains c,d] [--expires-days n] [--mail|--no-mail]
 lamaste-server invitations revoke <id>
-lamaste-server invitations reissue <id>
+lamaste-server invitations reissue <id> [--mail|--no-mail]
 lamaste-server invitations disable-invitees <user> [--transitive]
 lamaste-server plugins invitations <name>
 lamaste-server plugins invitations <name> set [--enable|--disable] [--email-domains a,b]

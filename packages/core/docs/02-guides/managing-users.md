@@ -101,8 +101,9 @@ You can also update the display name, email, and groups in the same edit form.
 With a [mail transport](mail.md) (4.13), people no longer need you for this:
 
 - **Forgot password.** Every sign-in page links **Reset password** (`https://auth.<domain>/reset`). A link arrives by mail; the new password needs a **current code from their authenticator app** too, so someone who only has the mailbox cannot take the account. Someone who lost their authenticator cannot reset by mail — reset their TOTP (step 4) and set a password here.
+- **Administrators** (members of `admins`) **never reset by mail**: the page answers them like anyone and sends nothing. Another administrator sets their password here, or — the last one — `lamaste-server` on the relay (`sudo lamaste-server reset-admin` restores panel access).
 - **Change password.** Signed in, they open **Change password** on the sign-in page (`https://auth.<domain>/account/password`) and give their current password and a new one.
-- Either way they get a "your password changed" mail. Sessions already open stay open until they sign in again (Authelia cannot end them).
+- Either way the relay ends the sessions **it** holds for them — the desktop app's, their registry (Feria) tokens, Gatekeeper's cached decisions — and they get a "your password changed" mail. Their **Authelia sessions** (other browsers still signed in) and the OpenID Connect tokens Authelia issued **stay until they expire**: Authelia cannot be asked to end them. When that matters — the password was changed by someone else — **disable** the user (step 7) and **enable** them again: that ends every session.
 
 Only users whose address can receive mail can reset: the Users page marks an address that cannot (`@lamaste.local` — the onboarding administrator's —, `.test`, `.example`, `.invalid`, `.localhost`) with "no address — cannot reset their own password". Give them a real address. Without a transport, the reset page is not linked and this step stays yours.
 

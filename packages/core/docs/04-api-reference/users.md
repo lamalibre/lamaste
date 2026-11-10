@@ -244,6 +244,8 @@ One function, keyed by `userId`, for every way a user stops being one — disabl
 | Authelia deletes the user's TOTP configuration and WebAuthn credentials                           |          | ✓       |
 | Gatekeeper's cached session verdicts dropped                                                      | ✓        | ✓       |
 
+A person's own password reset or change ([Mail](mail.md#account-routes)) runs the session-ending part of offboarding: desktop sessions (the epoch), registry tokens, Gatekeeper's cached verdicts. It cannot end Authelia's own sessions or the OpenID Connect tokens Authelia issued — disabling and enabling the user does.
+
 Desktop sessions are bound to the `userId` as well as the username: one is valid only while its user still holds the username and is enabled, so a username given to someone else never revives a session. Sessions issued before 4.5 carry no `userId` and are refused — desktop users sign in again once after the upgrade. An epoch older than a session's longest life (12 hours) can reject nothing and is dropped; `panel.json` names nobody.
 
 **Errors:**

@@ -112,7 +112,7 @@ Every answer that may mail carries `mail: { status, error? }`:
 | `not-configured`  | The domain cannot send: no transport of its own and none on the relay   |
 | `deferred-budget` | Held back by the [sending budget](#the-sending-budget)                  |
 
-An invitation's link is answered whatever the status, so the inviter can share it another way. There is no outbox: a token is stored only as a hash, so sending again means a [new link](invitations.md#post-apiinvitationsidreissue).
+An administrator's invitation is answered with its link whatever the status (and `mail: null` when it was not to be mailed — see [Invitations](invitations.md#post-apiinvitations)). A delegated invitation's link is answered only where its domain cannot send (`not-configured`): elsewhere it goes by mail alone. There is no outbox: a token is stored only as a hash, so sending again means a [new link](invitations.md#post-apiinvitationsidreissue).
 
 ## The Sending Budget
 
@@ -120,15 +120,23 @@ A provider that sees an account pass its limit stops it from sending **anything*
 
 - Every delivery attempt is counted per **sending account** (`gmail:<account>` or `smtp:<host>:<username>`), over a rolling 24 hours, whichever rows send through it.
 - **Ceiling**: at most 90 % of the row's `dailyLimit`.
-- **Classes**: `essential` (Authelia's mail, "password changed", test mails) and `admin` (an administrator's invitations) may use the whole ceiling; `public` (reset mails, delegated invitations) stops 20 % below it. Reset mails are also capped at 30 an hour per account. A reset start still answers its 202; an invitation answers `deferred-budget`; Authelia gets a 4xx and shows its own error.
-- **Notifications**: `mail.budget.warning` at 70 % of the ceiling, `mail.budget.exhausted` when a cap is reached, with when sending resumes.
-- **The provider's refusal** (Gmail `dailyLimitExceeded`, `userRateLimitExceeded`, a "sending limit exceeded" reply; SMTP limit replies): every row on that account is **limited** for 24 hours — nothing is tried — `mail.transport.limited` is notified. `POST …/resume` ends it.
+- **Shares**: each class draws on its own share of the ceiling, counting its own mails only — a flood of one never takes another's:
+  - `essential` — Authelia's mail (sign-in and registration codes) and "password changed" notices: **40 %** (`essentialCap`);
+  - `public` — reset mails, delegated invitations and their new links: **40 %** (`publicCap`);
+  - `admin` — an administrator's invitations and new links, test mails: the **whole ceiling**; the rest (`adminReserve`, at least 20 %) is theirs alone.
+- **Caps**: reset mails 20 an hour per domain; per user, none while their last link is live and under 10 minutes old, 3 an hour, 5 a day; Authelia's mail 5 an hour per recipient (and 30 in 10 minutes); 3 new links a day per invitation; 100 invitations and new links a day per delegated inviter.
+- Over a share or a cap: a reset start still answers its 202; an invitation answers `deferred-budget` (or 429 `reissue_rate` / `invitation_daily_rate`); Authelia gets a 4xx and shows its own error.
+- **Notifications**: `mail.budget.warning` at 70 % of the ceiling; `mail.budget.exhausted` once when a share or the ceiling is reached (`refusal`: `essential-cap`, `public-cap`, `ceiling`), with when sending resumes; a domain's reset cap once an hour; a delegated inviter's daily cap once a day.
+- **The provider's daily limit** (Gmail `dailyLimitExceeded`, "Daily user sending limit exceeded", a "(Mail sending)" `Retry after`; an SMTP quota reply to the session, `MAIL FROM` or `DATA`): every row on that account is **limited** until the provider's time, at most 24 hours — nothing is tried — `mail.transport.limited` is notified. `POST …/resume` ends it. A **rate limit** (Gmail `userRateLimitExceeded`, `rateLimitExceeded`, a bare 429) is no such refusal: the send is tried again with backoff within its 30 seconds and the attempt is not counted. A refused recipient (SMTP `RCPT TO`) concerns that message alone.
+- **A queue per account**: sends through one account go one at a time, through the Gmail API at most one a second.
 
 ```json
 "budget": {
   "dailyLimit": 500,
   "ceiling": 450,
-  "publicCap": 360,
+  "essentialCap": 180,
+  "publicCap": 180,
+  "adminReserve": 90,
   "sent24h": 12,
   "byClass": { "essential": 3, "admin": 4, "public": 5 },
   "resetsLastHour": 1,
@@ -150,13 +158,15 @@ On every domain's sign-in host, `https://auth.<domain>/…`. A change must come 
 | `GET`  | `/account/password`         | —                                  | The change-password page (Authelia two-factor session)                                                     |
 | `POST` | `/api/account/password`     | `{ currentPassword, newPassword }` | `{ ok: true }`; `401` (no session), `403`, `429`, `400 current_password_invalid` / `password_unchanged`    |
 
-**Forgot password.** `identifier` is a username or an address. If it names enabled members (or external members) of the domain with a deliverable address, one mail per address lists each username with its own link `https://auth.<domain>/reset#<token>` — the token in the fragment, never in a URL a log keeps. The work runs after the answer, so neither the answer nor its timing says what was found. Limits: 5 starts per 15 minutes per address, 3 mails an hour per user, 20 accounts per start; over a limit the answer is the same. A link lives 30 minutes, is single use, and a new start voids the user's earlier links.
+Members of `admins` never reset by mail: a start naming one answers the same `202` and mails nothing, and a link made before they became one answers `410 reset_invalid`. Another administrator sets their password (Users page), or `lamaste-server` on the relay.
+
+**Forgot password.** `identifier` is a username or an address. If it names enabled members (or external members) of the domain with a deliverable address, one mail per address lists each username with its own link `https://auth.<domain>/reset#<token>` — the token in the fragment, never in a URL a log keeps. The work runs after the answer, so neither the answer nor its timing says what was found. Limits: 5 starts per 15 minutes per client (an IPv4 address, an IPv6 /64), no new mail while the user's last link is live and under 10 minutes old, 3 mails an hour and 5 a day per user, 20 reset mails an hour per domain, 20 accounts per start; over a limit the answer is the same. A link lives 30 minutes, is single use, and a new start voids the user's earlier links.
 
 **Finishing needs a current authenticator code.** A stolen mailbox alone cannot take the account. The panel checks the code through `lamaste-priv authelia-user verify-totp` (the secret never leaves that root helper) and refuses a code it already accepted for the user, even after a restart. Five wrong or replayed codes void the link. A user without an authenticator gets `409 no_totp` — the page says to ask an administrator, who sets a password on the Users page. The new password follows the invitation rules; a "password changed" mail follows.
 
-**Change password.** Behind Authelia's forward auth; the current password is always checked (the panel listens on loopback, where any local process could send the user header): 5 failures per 15 minutes per user, then 429.
+**Change password.** nginx asks Gatekeeper (`/authz/account/<domain>`), which asks Authelia about the session for that URL (two factors) and vouches for the user to the panel with a relay assertion bound to the request; the panel takes the user from nothing else (no `Remote-User`). The current password is always checked: 5 failures per 15 minutes per user, then 429.
 
-**Sessions.** Authelia has no way to end a user's sessions; a new password applies at the next sign-in. Gatekeeper's cached decisions for the user are dropped.
+**Sessions.** After a reset or a change the relay ends the sessions it holds for the user: desktop user-access sessions, registry tokens, Gatekeeper's cached decisions. **Authelia's own sessions and the OpenID Connect tokens it issued survive** — Authelia cannot be asked to end them; an administrator's disable and enable of the user does.
 
 ## Users Without a Deliverable Address
 
@@ -164,7 +174,7 @@ An address under `.example`, `.invalid`, `.local`, `.localhost` or `.test` (the 
 
 ## Audit
 
-`mail.transport.set|cleared|limited|resumed|down|up`, `mail.budget.warning|exhausted`, `mail.sent|failed` (kind of mail, the recipient's domain only), `mail.submission.refused|recovered`, `account.password.reset-requested|reset|changed` — user ids and domains, never an address, a token, a password or a secret.
+`mail.transport.set|cleared|limited|resumed|down|up`, `mail.budget.warning|exhausted|reset-cap`, `mail.sent|failed` (kind of mail, the recipient's domain only), `mail.submission.refused|recovered`, `account.password.reset-requested|reset|changed` — user ids and domains, never an address, a token, a password or a secret.
 
 ## CLI
 

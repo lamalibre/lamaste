@@ -206,8 +206,10 @@ scope, error class).
 nodemailer's `MailComposer` (multipart text + HTML, in the domain's
 language — page-language `en`/`tr` — with its brand's name and accent;
 every link `https://auth.<domain>/…`), deliver (Gmail API via `fetch`, or
-nodemailer's SMTP transport). Awaited with a 30 s budget, one retry on a
-transient failure (5xx/429 from Google, 4xx/connection on SMTP).
+nodemailer's SMTP transport), in the sending account's queue (§3.7).
+Awaited with a 30 s budget: one retry on a transient failure (5xx from
+Google, 4xx/connection on SMTP), and a rate limit retried with backoff
+within the budget.
 
 **No outbox for Lamaste's own mails.** A mail that carries a token cannot
 wait in a table: tokens are stored only as SHA-256 (invitations, resets).
@@ -225,14 +227,14 @@ must never be the one that reaches them — least of all through
 `/reset`, which anyone can call.
 
 - **Count**: every delivery attempt is a row in
-  `mail_sends (id, account_key, class, kind, sent_at, outcome)` (migration
+  `mail_sends (id, account_key, domain, class, kind, sent_at, outcome)` (migration
   0022; no address, no subject; swept after 48 h). Google's limit is per
   mailbox, and the relay's row and a domain's may send through the same
   one — or a transport may be removed and set again: usage is counted per
   **sending account**, `account_key` = `gmail:<account>` or
   `smtp:<host>:<username or ->`. Usage = rows of the last 24 h for that
   account; `kind` (`authelia`, `invitation`, `reset`, `password-changed`,
-  `test`) serves the reset cap.
+  `test`) and `domain` serve the reset cap.
 - **Limit**: `mail_transports.daily_limit` (1–100000) — the row's own,
   against its account's usage — set by the
   administrator on the transport (`PUT`/`PATCH`, panel, CLI `--daily-limit`);
@@ -240,32 +242,64 @@ must never be the one that reaches them — least of all through
   **500** for `smtp`. Settings → Mail says to raise it to 2,000 once the
   Workspace is paid.
 - **Ceiling**: Lamaste sends at most **90 %** of the limit in 24 h.
-- **Classes and reserve**: each mail has a class —
-  `essential` (Authelia's mail through the listener, password-changed
-  notices, test mails), `admin` (administrator's invitations and
-  reissues), `public` (reset mails, delegated invitations and their
-  reissues). `public` may use the ceiling minus a **20 % reserve**;
-  `essential` and `admin` the whole ceiling. On top, reset mails are
-  capped relay-wide at **30 an hour** per sending account. Over a cap: a
-  reset start still answers its 202 (nothing reveals the cap); an
-  invitation answers `mail.status: 'deferred-budget'` with the link (the
-  inviter shares it another way); the listener answers Authelia a 4xx.
-- **Warnings**: usage crossing **70 %** of the ceiling → notification
-  `mail.budget.warning`; the `public` cap or the ceiling reached →
-  `mail.budget.exhausted` with the time sending resumes (the oldest
-  counted row + 24 h). Each once per crossing; audited.
-- **Google's own refusal** (Gmail API 403/429 with reason
-  `dailyLimitExceeded`, `userRateLimitExceeded` or a "sending limit
-  exceeded" message; SMTP 4.5.3/5.4.5/550 5.7.x limit replies): the
-  transport — and every row on the same sending account — is marked
-  **limited until** now + 24 h — no retries, no sends,
-  every mail answered as over the ceiling — notification
-  `mail.transport.limited`. Administrators may clear it early
-  (`POST …/mail/resume`) once Google's admin console shows the account
-  sending again. Per-second rate limits (`rateLimitExceeded`) stay a
-  transient failure with one retry.
-- `GET /api/settings/mail` adds `budget: { dailyLimit, ceiling, sent24h,
-byClass, limitedUntil, resumesAt }`.
+- **Classes and shares** (security review, D-A): each mail has a class,
+  and each class draws on a share of the ceiling of its own, counted on
+  its own mails only — a flood of one class never takes another's:
+  - `essential` — Authelia's mail through the listener (sign-in and
+    registration codes) and the "your password changed" notices — **40 %**
+    of the ceiling;
+  - `public` — reset mails, delegated invitations and their new links —
+    **40 %**;
+  - `admin` — an administrator's invitations and new links, test mails —
+    may use the **whole ceiling**; the rest (the ceiling less both shares,
+    at least **20 %**) is a reserve no other class reaches.
+    For the default limit of 500: ceiling 450, `essential` 180, `public`
+    180, the administrators' reserve 90.
+- **Caps on top** (all answered alike — nothing reveals them):
+  - reset mails: **20 an hour per domain** (whatever account sends them;
+    `mail_sends.domain`); per user, **no new mail while their last link is
+    live and under 10 minutes old**, 3 an hour, **5 a day**; per client, 5
+    starts in 15 minutes, an IPv4 client by its address and an IPv6 one by
+    its **/64**;
+  - Authelia's mail: **5 an hour per recipient** at the listener, besides
+    its 30 in 10 minutes (a 4xx — Authelia reports the failure);
+  - invitations: **3 new links a day per invitation** (429 `reissue_rate`,
+    an administrator's too); a delegated inviter **100 invitations and new
+    links a day** (429 `invitation_daily_rate`) besides 30 an hour.
+    Over a cap or a share: a reset start still answers its 202; an
+    invitation answers `mail.status: 'deferred-budget'`; the listener
+    answers Authelia a 4xx.
+- **Warnings and notifications**: usage crossing **70 %** of the ceiling →
+  `mail.budget.warning`; a share or the ceiling reached →
+  `mail.budget.exhausted` (`refusal`: `essential-cap`, `public-cap`,
+  `ceiling`) with the time sending resumes (the oldest counted mail of that
+  share + 24 h) — each once per crossing, kept on the account
+  (`mail_accounts.exhausted`); a domain's reset cap → notification once an
+  hour (`mail.budget.reset-cap`); a delegated inviter's daily cap →
+  notification once a day per inviter. Audited.
+- **The provider's own refusal** (F1): only Gmail's **daily** limit —
+  reason `dailyLimitExceeded`, a "Daily user sending limit exceeded" /
+  "sending limit exceeded" message, or a rate limit whose `Retry after`
+  names "(Mail sending)" — marks the transport, and every row on the same
+  sending account, **limited until** Google's `Retry after` (at most now
+  - 24 h): no sends, every mail answered as over the ceiling, notification
+    `mail.transport.limited`. Per-second and per-user rate limits
+    (`userRateLimitExceeded`, `rateLimitExceeded`, a bare 429) are
+    `transient`: tried again with exponential backoff (1 s, 2 s, 4 s …, or
+    Google's `Retry after`) within the send's 30 s, else that one mail fails;
+    such attempts count toward no share. An SMTP limit reply (`4.5.3`,
+    `5.4.5`, or a 421/452/550/554/5.7.x reply saying limit, quota, too many
+    or rate) stops the account only when it answers the **session, `MAIL
+FROM` or `DATA`**; another 5.7.x at `MAIL FROM` marks the transport
+    down (`policy`) without stopping it; a refusal at `RCPT TO` concerns that
+    message alone. Administrators may clear a limit early (`POST
+…/mail/resume`) once the provider's console shows the account sending.
+- **A queue per sending account**: sends through one account go one after
+  another; through the Gmail API at most one a second. A send whose turn
+  comes after its 30 s sends nothing (`queue_timeout`, not counted).
+- `GET /api/settings/mail` adds `budget: { dailyLimit, ceiling,
+essentialCap, publicCap, adminReserve, sent24h, byClass, resetsLastHour,
+limitedUntil, resumesAt }`.
 
 ## 4. Users' addresses
 
@@ -300,7 +334,11 @@ serverd) on `127.0.0.1:9295`:
 - **Implicit TLS** with a certificate from a local CA serverd creates
   (`<stateDir>/mail-submission/`, key 0600); the CA certificate is the only
   file in `/etc/authelia/certs` (0640 `lamaste:lamaste-authelia`) — Authelia
-  appends it to the system pool, so it changes no other trust.
+  appends it to the system pool, and the CA is **name-constrained** to
+  `lamaste-mail.localhost` (critical `nameConstraints`, permitted
+  `DNS:lamaste-mail.localhost`), so the trust covers nothing else. A CA
+  made without the constraint is made again at start (and Authelia
+  restarted with it).
 - **AUTH PLAIN** as `authelia` with a 32-byte random password, written to
   `/etc/authelia/mail-submission-password` (0640
   `lamaste:lamaste-authelia`) and referenced through the template filter
@@ -311,9 +349,13 @@ serverd) on `127.0.0.1:9295`:
   (a second is refused, the message goes to the first), headers that name
   that recipient alone in `To` and the sender in `From` (and `Sender`) — no
   `Cc`, `Bcc` or `Resent-*`, since the Gmail API sends to the headers, not
-  the envelope — ≤ 256 KiB, 30 messages / 10 min; everything else 5xx.
-  Another process on the relay therefore cannot use it to mail anyone as
-  anything.
+  the envelope — ≤ 256 KiB; everything else 5xx. At most 30 messages in
+  10 minutes and **5 an hour to one recipient** — over either a 4xx, so
+  Authelia reports the failure. Another process on the relay therefore
+  cannot use it to mail anyone as anything.
+- A connection must **authenticate within 5 seconds** of its TLS handshake
+  (closed otherwise), with at most 5 commands before; 16 connections at
+  most. One local process cannot sit on the listener for long.
 - Delivers through the **relay-wide** transport (Authelia's mail names no
   domain). The From is the relay-wide sender; the body is Authelia's.
   A delivery failure is answered as a 4xx to Authelia (it shows the user an
@@ -331,9 +373,14 @@ serverd) on `127.0.0.1:9295`:
   (audit `authelia.restarted` reason `mail`) or, unchanged, when the CA
   certificate or the password was replaced — files it reads only at start
   (reason `mail-credentials`). While the listener cannot run (a tunnel on
-  9295, the port held by another program, a failure) Authelia keeps its
-  file notifier; the streak is audited `mail.submission.refused` /
-  `mail.submission.recovered` and notified once. create-lamaste makes
+  9295, a failure) Authelia keeps its file notifier; the streak is audited
+  `mail.submission.refused` / `mail.submission.recovered` and notified
+  once. The port held by another program (`EADDRINUSE`, often the panel's
+  previous process still closing) is tried again every minute (the
+  identity tick, `retryMailSubmission`), and Authelia keeps submitting —
+  its mail fails meanwhile — until the port has been held **5 minutes**:
+  only then is it moved to its file notifier (a restart) and the
+  administrators told. create-lamaste makes
   `/etc/authelia/certs` (2750 `lamaste:lamaste-authelia`) and re-owns the
   password file; root never touches a file inside the directory.
 
@@ -389,10 +436,28 @@ shows the last check.
   to `email` when the invitation's domain can send — after the
   invitations lock is released (lib/invitation-mail.js; the lock is a
   leaf, never held across a mail). The answer gains
-  `mail: { status: 'sent' | 'failed' | 'not-configured' | 'deferred-budget', error? }`;
-  the link is still answered once (the inviter may share it another way).
+  `mail: { status: 'sent' | 'failed' | 'not-configured' | 'deferred-budget', error? }`.
   A delegated invitation is mailed for its own domain's sign-in host only,
   an administrator's for the first of its domains that serves.
+- **An administrator's invitation** (D-B): `mail` in the body of `POST
+/api/invitations` and of its reissue chooses whether it is mailed;
+  omitted, it is mailed **unless it grants `admins` or a `feria-*` group**
+  (core `adminInvitationMailDefault`) — such a link should not rest in a
+  mailbox, the sending one's Sent folder included. The answer's `mail` is
+  null when it was not mailed; the link is answered once either way.
+- **A delegated invitation** (D-C): where the plugin's domain can send
+  mail, its link travels **by mail only** — the inviter's answer
+  (`inviteUrl: null`) and Lamaste's inviter page carry none, so the inviter
+  cannot hand it to anyone but the address it names. A mail that failed or
+  was held back by the budget gives no link either: "New link" mails a new
+  one. Where the domain cannot send (`not-configured`) the link is
+  answered once, as before, for the inviter to send.
+- **Names**: an invitation's `displayName` and the name an invitee gives at
+  acceptance are refused (400, field `displayName`) when they read as a
+  link or a host name — `://`, `www.`, or a label followed by a dot and a
+  top-level-domain-like run of letters (core `looksLikeLinkOrHostname`,
+  which both pages apply too): the invitation mail shows the inviter's
+  name to the person invited.
 - `invitations.mail_status`, `mail_sent_at` (migration 0022), recorded only
   while the mailed link is still the invitation's (a reissue in between
   makes an older mail's outcome moot) — the listings show
@@ -401,7 +466,9 @@ shows the last check.
 - **Resend** = a new link for a **pending** invitation, an expired one
   included (409 `invitation_not_pending` otherwise): a new token (the old
   hash replaced, the old link dead), its failed attempts reset, mailed,
-  answered once; audit `invitation.reissued`.
+  answered once (a delegated inviter's: mailed only, where mail works);
+  audit `invitation.reissued`. **At most 3 new links a day per
+  invitation** (429 `reissue_rate`), the administrator's included.
   - The inviter: `POST /api/delegated-invitations/<route>/<id>/reissue`
     (core `isDelegatedInvitationsUrl` admits the suffix, so Gatekeeper
     vouches for it as for the rest of the inviter's API) — their own
@@ -409,7 +476,9 @@ shows the last check.
     one: the plugin can be invited into, the address's domain still
     allowed, the role still theirs to give (read inside the invitations
     lock), the grant reserve, the rate — a reissue counts toward the 30 an
-    hour (`invitation_reissues`, migration 0022, swept after a day) — and,
+    hour and the **100 a day** (429 `invitation_daily_rate`, the
+    administrators notified once a day per inviter;
+    `invitation_reissues`, migration 0022, swept after a day) — and,
     when it had expired and so opens again, the caps. Its lifetime restarts
     at the policy's.
   - The administrator: `POST /api/invitations/:id/reissue`, either kind,
@@ -434,8 +503,16 @@ Pages and API on every auth vhost (no mTLS, like `/invite`):
   (case-insensitive), one or more **enabled** users who are members or
   external members of `<d>` with a deliverable address: one mail per
   address, listing each matching username with its own link
-  `https://auth.<d>/reset#<token>`. Rate limits: 5 starts / 15 min per IP,
-  3 mails / hour per user; over the limit the answer is the same 202.
+  `https://auth.<d>/reset#<token>`. Limits (D-A): 5 starts / 15 min per
+  client — an IPv4 address, an IPv6 **/64** — no new mail while the user's
+  last link is live and **under 10 minutes old**, 3 mails an hour and **5 a
+  day** per user, **20 an hour per domain** (§3.7); over a limit the
+  answer is the same 202.
+- **Members of `admins` are never reset by mail** (D-D): the same 202
+  after the same delay, no mail; a link made before they became one is
+  refused at lookup and finish (410, as any link that does not open) and
+  again under the users lock. Another administrator sets their password,
+  or `lamaste-server` on the relay.
 - Token: 32 random bytes, SHA-256 at rest, **30 min**, single use; a new
   start for a user voids that user's earlier tokens. Table
   `password_resets (id, token_sha256, username, domain, created_at,
@@ -465,8 +542,9 @@ expires_at, used_at, failed_attempts)`; swept after 24 h.
   follows the invitation rules, is hashed, and written through
   `changeUsers` (users lock, the panel the only writer — S2), the user
   checked again under it; the link and the user's other links are voided.
-  The user is told by mail that their password changed (class
-  `essential`, after the answer).
+  The relay's sessions of the user end (below, "Sessions after a password
+  change"), and the user is told by mail that their password changed
+  (class `essential`, after the answer).
 - Each start's work runs **after** its answer (`202` after a fixed delay,
   1 s), so neither the answer nor its timing tells what was found; the
   per-address count is in memory (addresses are never stored), the
@@ -485,22 +563,26 @@ expires_at, used_at, failed_attempts)`; swept after 24 h.
 
 ### 6.3 Change password (signed in)
 
-- `GET auth.<d>/account/password` — page; the auth vhost puts it and
-  `POST /api/account/password` behind Authelia forward auth (the
-  `/api/user-access/authorize` pattern), two-factor session required; the
-  panel takes the user from `Remote-User` only on that location (headers
-  cleared first, as on every identity location).
+- `GET auth.<d>/account/password` — page, behind Authelia forward auth
+  (the `/api/user-access/authorize` pattern), two-factor session required.
+- `POST /api/account/password` — behind **Gatekeeper** (F6):
+  `auth_request` → `/authz/account/<domain>`, which asks Authelia about
+  the session for that very URL (two factors), checks the domain's
+  projection, and signs a relay assertion for the panel (`@panel`, port 3100) of the password change's kind — `{ account: 'password', domain,
+path: '/api/account/password' }`, bound to the method and target. The
+  panel (`verifyAccountRelay`) takes the user from that assertion and
+  nothing else, and the assertion's domain must be the host's. Before
+  4.13's review it read `Remote-User`, which any local process could send
+  to its loopback port (a bcrypt oracle, and a way to lock people out).
 - `{ currentPassword, newPassword }`: the current one checked against
   users.yml (bcrypt; any other hash never matches), 5 failures / 15 min
   per user (`account_password_failures`, migration 0022) then 429; 400
-  `current_password_invalid` / `password_unchanged`; 401 without
-  `Remote-User`, 403 for a user disabled, inactive or not a member of the
-  host's domain; `Origin` required and exactly `https://auth.<domain>`.
-  The current password is required although Authelia vouched for the
-  session: the panel listens on loopback, where any local process can send
-  `Remote-User` — the header names whose password changes, the password
-  proves it. Written through `changeUsers`; audit
-  `account.password.changed`; mail "your password changed" when the
+  `current_password_invalid` / `password_unchanged`; 401 without a valid
+  assertion (or one for another domain), 403 for a user disabled, inactive
+  or not a member of the host's domain; `Origin` required and exactly
+  `https://auth.<domain>`. The current password is still required.
+  Written through `changeUsers`; the relay's sessions of the user end;
+  audit `account.password.changed`; mail "your password changed" when the
   domain can send.
 - The users listing (`GET /api/users`) carries `emailDeliverable` (§4).
 - Linked (Q3) from the header of Lamaste's own pages on the auth host
@@ -511,15 +593,24 @@ expires_at, used_at, failed_attempts)`; swept after 24 h.
 
 ### Sessions after a password change
 
-Authelia keeps sessions in memory and has no "end this user's sessions"
-API; its own reset does not end them either. 4.13 does the same
-(documented residual): the new password applies at the next sign-in.
-Gatekeeper's session cache is busted for the user.
+After a reset or a change, the sessions **the relay holds** end (F2,
+directory.js `endUserSessions` — the session-ending part of offboarding,
+keyed by user id): the user's desktop user-access sessions (their session
+epoch bumped), their registry tokens (revoked), and Gatekeeper's cached
+session verdicts (busted).
+
+**Authelia's own sessions and the OpenID Connect tokens it issued
+survive** (documented residual): Authelia keeps sessions in memory and
+has no "end this user's sessions" API; its own reset does not end them
+either. An administrator's **disable and enable** of the user ends them
+(a disabled user's next request fails). The "password changed" mail
+does not claim otherwise: it tells the user to contact an administrator,
+who can end every session.
 
 ## 7. Without mail
 
 Nothing breaks: invitations answer `mail.status: 'not-configured'` and the
-link as today; `/reset` is not linked (no `custom_url`) and its API
+link as today (a delegated inviter sees it too); `/reset` is not linked (no `custom_url`) and its API
 answers 404; change password works (it needs no mail) but sends no
 notice; Authelia keeps the file notifier.
 
@@ -594,6 +685,16 @@ rodeo specs, CHANGELOG. New dependencies: `nodemailer`, `smtp-server`.
 | Q3  | Where "change password" is found   | **Lamaste's auth-host pages and Authelia's portal** (§6.3)                     |
 | Q4  | Private CA for an `smtp` transport | **`caPem`**, a product option the e2e sink also uses (§3.1)                    |
 | Q5  | A tunnel already on 9295           | **Refuse the listener and say so**; never move the tunnel (§5)                 |
+
+**After the security review (2026-11-10)** the founders decided four more
+(all as recommended):
+
+| #   | Question                                   | Decision                                                                                                   |
+| --- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| D-A | Can a public flood starve Authelia's mail? | **No**: per-class shares, an administrators' reserve, per-domain/user/client/recipient/inviter caps (§3.7) |
+| D-B | Mail an administrator's invitation?        | **A choice per invitation**, off by default for `admins` and `feria-*` groups (§6.1)                       |
+| D-C | Does a delegated inviter see the link?     | **Not where the domain sends mail**: the link goes by mail only (§6.1)                                     |
+| D-D | May an administrator reset by mail?        | **No**: another administrator or `lamaste-server` sets it (§6.2)                                           |
 
 ## 12. Implementation waves
 
