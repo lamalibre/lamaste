@@ -38,6 +38,7 @@
  */
 
 import { recomputeAudiences } from '../../lib/audience.js';
+import { scheduleNativeStandingCheck } from '../../lib/native-grants.js';
 import { withUsernamesForGrants } from '../../lib/directory.js';
 import { scheduleRenderRetry, syncDomainAccess } from '../../lib/domains.js';
 import { checkProxiedGrant } from '../../lib/entitlements.js';
@@ -87,6 +88,9 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
   const followChange = async (request, answer) => {
     if (answer.statusCode >= 400) return answer;
     await recomputeAudiences({ logger: request.log });
+    // A host grant revoked ends the native grants it admitted: the whole
+    // standing check, restricted hosts' grants included (queued).
+    void scheduleNativeStandingCheck({ checkHostGrant: true, logger: request.log });
     let warnings;
     try {
       warnings = (await syncDomainAccess({ logger: request.log })).warnings ?? [];

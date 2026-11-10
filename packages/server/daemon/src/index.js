@@ -21,6 +21,8 @@ import managementRoutes from './routes/management.js';
 import pluginRouter from './routes/plugin-router.js';
 import agentForwarderRoutes from './routes/agent-forwarder.js';
 import userSurfaceContext from './routes/user-surface.js';
+import nativeOauthContext from './routes/native-oauth.js';
+import { startNativeServices } from './lib/native-grants.js';
 import delegatedInvitationsContext from './routes/delegated-invitations.js';
 import inviteRoutes from './routes/invite.js';
 import enrollmentRoutes from './routes/enrollment.js';
@@ -203,6 +205,11 @@ async function start() {
   // assertion (routes/delegated-invitations.js) ---
   server.register(delegatedInvitationsContext);
 
+  // --- The token broker: every domain's auth.<domain>/api/oidc/token and
+  // /api/oidc/revocation, native clients answered by Lamaste, every other
+  // client passed to Authelia unchanged (routes/native-oauth.js) ---
+  server.register(nativeOauthContext);
+
   // --- User-access session-protected routes (Bearer token, no mTLS) ---
   server.register(async function userAccessContext(app) {
     app.register(userAccessSessionMiddleware);
@@ -328,6 +335,10 @@ async function start() {
   // peers protocol, and the peer channels to consumers (the relay dials
   // them; nothing listens) — now, then every 15s ---
   startPeerServices(server.log);
+  // --- Native apps: every live grant checked against its lifetimes and its
+  // person's standing, clients of deleted hosts removed, old rows pruned —
+  // now, then every minute ---
+  startNativeServices(server.log);
 
   // --- Periodic ticket instance liveness check (every 60s) ---
   const livenessInterval = setInterval(() => {

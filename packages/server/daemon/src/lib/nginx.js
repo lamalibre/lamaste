@@ -427,6 +427,35 @@ const AUTHZ_CLEARED_HEADERS = `
         proxy_set_header X-Forwarded-Uri "";
         proxy_set_header X-Forwarded-Method "";`;
 
+/**
+ * The domain's token and revocation endpoints, sent to the panel's token
+ * broker (`routes/native-oauth.js`; native-apps-design.md D4) instead of
+ * straight to Authelia: the broker answers native clients' requests itself
+ * — their refresh tokens' chain, lifetimes and standing are Lamaste's — and
+ * passes every other client's request to Authelia byte for byte. `Host` is
+ * this portal's literal name (the broker answers only for an active
+ * domain's portal) and `X-Forwarded-Host` is cleared; the client address
+ * goes as for the invitation API. Exact matches: Authelia answers a
+ * trailing slash with a redirect to these very paths.
+ */
+function nativeBrokerLocations(fqdn) {
+  return ['token', 'revocation']
+    .map(
+      (endpoint) => `
+    location = /api/oidc/${endpoint} {
+        proxy_pass http://127.0.0.1:3100/api/native-apps/oauth/${endpoint};
+        proxy_set_header Host ${fqdn};
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
+        client_max_body_size 16k;
+    }
+`,
+    )
+    .join('');
+}
+
 /** Site name of the auth portal vhost of `domain` (`auth.<domain>`). */
 export function authVhostName(domain) {
   assertLiteralHostname(domain);
@@ -892,7 +921,7 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
         proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
         client_max_body_size 16k;
     }
-${delegatedInvitationsLocations(domain, fqdn)}${userAccess}${authBrandLocations(domain, fqdn, language)}
+${nativeBrokerLocations(fqdn)}${delegatedInvitationsLocations(domain, fqdn)}${userAccess}${authBrandLocations(domain, fqdn, language)}
     # Default — proxy to Authelia. Authelia takes the OIDC issuer and the
     # session cookie's domain from X-Forwarded-Host / -Proto: this portal's
     # own name, never what the client sent. (A location that sets any

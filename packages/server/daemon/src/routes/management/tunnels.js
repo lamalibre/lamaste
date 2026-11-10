@@ -59,6 +59,7 @@ import {
   tunnelChiselDeps,
   tunnelStateDeps,
 } from '../../lib/tunnel-deps.js';
+import { reconcileNativeClientHosts } from '../../lib/native-apps.js';
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
 
@@ -667,10 +668,16 @@ export default async function tunnelRoutes(fastify, _opts) {
           logger: request.log,
           authorize: authorizeFor(request, 'delete'),
         });
-        // Its user-surface bindings went with it.
+        // Its user-surface bindings went with it, and its native client.
         await auditDeletedTunnelUserSurface(tunnel, {
           actor: actorFromRequest(request),
           logger: request.log,
+        });
+        await reconcileNativeClientHosts(request.log).catch((err) => {
+          request.log.warn(
+            { err: err.message },
+            'Native clients of the deleted tunnel not removed',
+          );
         });
         return { ok: true };
       } catch (err) {

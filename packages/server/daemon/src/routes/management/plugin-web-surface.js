@@ -20,6 +20,7 @@ import {
   moveWebSurfaceFromTunnel,
   webSurfaceStatus,
 } from '../../lib/web-surface.js';
+import { reconcileNativeClientHosts } from '../../lib/native-apps.js';
 
 const PluginNameParamSchema = z.object({
   name: z
@@ -139,10 +140,15 @@ export default async function pluginWebSurfaceRoutes(fastify, _opts) {
     async (request, reply) => {
       const route = await routeOf(request);
       try {
-        return await deleteWebSurface(route, {
+        const deleted = await deleteWebSurface(route, {
           actor: actorFromRequest(request),
           logger: request.log,
         });
+        // The site's native client, if it had one, goes with it.
+        await reconcileNativeClientHosts(request.log).catch((err) => {
+          request.log.warn({ err: err.message }, 'Native clients of the deleted site not removed');
+        });
+        return deleted;
       } catch (err) {
         return sendFailure(request, reply, err, 'Failed to delete the web surface');
       }

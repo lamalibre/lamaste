@@ -507,10 +507,11 @@ test('every location that proxies a browser to the panel clears a client’s rel
       if (!userSurface) assert.doesNotMatch(body, /relay_assertion/, `${name} ${matcher}`);
     }
   }
-  // panel (8: the site upload location too) + primary auth (3) + second
-  // and branded domains' auth (2 each: the invitation API, the inviter's
-  // API) + agent-panel authz (1) + user surfaces (2 × 3)
-  assert.equal(checked, 22);
+  // panel (8: the site upload location too) + primary auth (5) + second
+  // and branded domains' auth (4 each: the invitation API, the inviter's
+  // API, the token broker's two endpoints) + agent-panel authz (1) + user
+  // surfaces (2 × 3)
+  assert.equal(checked, 28);
 });
 
 test('no location proxying to a tunnel or agent backend passes Authelia’s session cookie on', async () => {
@@ -902,6 +903,13 @@ function assertAsciiDirectives(text, label) {
 /** A vhost with every CSP hash replaced by one placeholder: what may differ between releases. */
 const withoutHashes = (text) => text.replace(/'sha256-[A-Za-z0-9+/=]{44}'/g, "'sha256-…'");
 
+/**
+ * An auth vhost without the token broker's two locations (native apps,
+ * after 4.12): the rest of it is what 4.9.0 rendered.
+ */
+const withoutTokenBroker = (text) =>
+  text.replace(/\n {4}location = \/api\/oidc\/(?:token|revocation) \{\n[^}]*\}\n/g, '');
+
 test('a domain without a page language keeps its 4.9.0 auth vhost but for the pages’ CSP hashes (regression pin)', async () => {
   for (const [name, domain, opts] of [
     ['auth-primary-unbranded.conf', 'alpha.example', { primary: true, branding: null }],
@@ -917,7 +925,8 @@ test('a domain without a page language keeps its 4.9.0 auth vhost but for the pa
       language: null,
     }).config;
     assert.notEqual(now, before, `${name}: the pages' hashes changed with their scripts`);
-    assert.equal(withoutHashes(now), withoutHashes(before), name);
+    assert.match(now, /location = \/api\/oidc\/token \{/, `${name}: the token broker`);
+    assert.equal(withoutHashes(withoutTokenBroker(now)), withoutHashes(before), name);
     // `language` absent is `language: null`.
     assert.equal(
       nginx.renderAuthVhost(domain, `/etc/letsencrypt/live/auth.${domain}`, opts).config,

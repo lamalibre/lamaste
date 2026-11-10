@@ -790,6 +790,16 @@ export function moveWebSurfaceFromTunnel(route, tunnelId, { actor, logger }) {
         },
         logger,
       );
+      // The host's native client follows the hostname when the tunnel
+      // served this plugin alone: the application is the same.
+      if (routes.length === 1) {
+        const { moveNativeClientHost } = await import('./native-apps.js');
+        await moveNativeClientHost(
+          { kind: 'tunnel', id: tunnel.id },
+          { kind: 'site', id: site.id },
+          { actor, logger },
+        );
+      }
       return webSurfaceStatus(route);
     }),
   );

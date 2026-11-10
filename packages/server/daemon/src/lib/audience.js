@@ -580,6 +580,11 @@ export function recomputeAudiences({ logger } = {}) {
     // audiences, and whoever awaits this may hold a lock).
     const { scheduleInvitationSweep } = await import('./delegated-invitations.js');
     scheduleInvitationSweep(lastLogger ?? undefined);
+    // Native grants whose person lost every role, a membership or their
+    // standing: ended — the directory and the audience only (a restricted
+    // host's grant waits for the native tick). Queued, never awaited here.
+    const { scheduleNativeStandingCheck } = await import('./native-grants.js');
+    void scheduleNativeStandingCheck({ logger: lastLogger ?? undefined });
     return result;
   });
   queued = run;
