@@ -829,6 +829,7 @@ export {
   chooseLamalibreRegistry,
   lamalibreRegistryArg,
   lamalibreRegistryEnv,
+  LAMALIBRE_REGISTRY_FLAG,
 } from './lamalibre-registry.js';
 
 // Per-domain branding of the auth pages: the brand record's rules, the

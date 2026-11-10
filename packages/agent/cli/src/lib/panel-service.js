@@ -12,6 +12,7 @@ import { writeFile, rename, mkdir, unlink, access, readFile } from 'node:fs/prom
 import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import { execa } from 'execa';
+import { LAMALIBRE_REGISTRY_FLAG } from '@lamalibre/lamaste';
 import {
   isDarwin,
   panelPlistLabel,
@@ -62,7 +63,7 @@ async function resolveAgentdPath() {
   } catch (err) {
     throw new Error(
       'lamaste-agentd binary not found on PATH. Install it with ' +
-        '`npm install -g @lamalibre/lamaste-agentd` and try again. ' +
+        `\`npm install -g ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/lamaste-agentd\` and try again. ` +
         `(underlying error: ${err instanceof Error ? err.message : String(err)})`,
     );
   }

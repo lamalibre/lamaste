@@ -111,6 +111,13 @@ export function lamalibreRegistryArg(registryUrl: string): string {
   return `--${LAMALIBRE_REGISTRY_CONFIG_KEY}=${registryUrl}`;
 }
 
+/**
+ * The option every printed install command carries —
+ * `--@lamalibre:registry=https://feria.codelama.com.tr/` — so a message or
+ * doc tells the user to install from the hosted Feria, never npmjs.
+ */
+export const LAMALIBRE_REGISTRY_FLAG = lamalibreRegistryArg(LAMALIBRE_REGISTRY_URL);
+
 /** npm's environment routing `@lamalibre` to `registryUrl` (merged into a child's env). */
 export function lamalibreRegistryEnv(registryUrl: string): Record<string, string> {
   return { [LAMALIBRE_REGISTRY_ENV]: registryUrl };

@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { execa } from 'execa';
+import { LAMALIBRE_REGISTRY_FLAG } from '@lamalibre/lamaste';
 
 /**
  * Parse /etc/os-release and validate that we are on Ubuntu 24.04.
@@ -145,7 +146,7 @@ export async function installedPanelIp(panelJsonPath = '/etc/lamalibre/lamaste/p
 export function checkRoot() {
   if (process.getuid() !== 0) {
     throw new Error(
-      'Lamaste installer must be run as root. Try: sudo npx @lamalibre/create-lamaste',
+      `Lamaste installer must be run as root. Try: sudo npx --yes ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/create-lamaste`,
     );
   }
 }
