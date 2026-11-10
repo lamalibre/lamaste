@@ -35,12 +35,14 @@
     "fastify": "^5.8.4",
     "fastify-plugin": "^5.0.0",
     "js-yaml": "^4.1.1",
+    "nodemailer": "10.2.1",
     "qrcode-generator": "^1.5.2",
     "systeminformation": "^5.31.4",
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "pino-pretty": "^11.0.0"
+    "pino-pretty": "^11.0.0",
+    "smtp-server": "3.21.1"
   },
   "engines": {
     "node": ">=22.5.0 <25.0.0"

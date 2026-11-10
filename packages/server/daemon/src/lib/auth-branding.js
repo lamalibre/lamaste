@@ -425,6 +425,32 @@ export async function authVhostInputs(domain) {
 }
 
 /**
+ * How Lamaste's pages and mails on domain `domain` look: the page brand
+ * (core `InviteBrand`; null for a domain without one), the mail brand
+ * (name and accent; null likewise) and the page language (`en` when the
+ * domain sets none). Read from the records.
+ *
+ * @param {string} domain
+ */
+export async function domainPresentation(domain) {
+  const db = await getStateDb();
+  const row = brandingRow(db, domain);
+  return {
+    pageBrand: row
+      ? {
+          name: row.name,
+          tagline: row.tagline,
+          theme: row.theme,
+          accent: row.accent,
+          logo: row.logo_sha256 !== null,
+        }
+      : null,
+    mailBrand: row ? { name: row.name, accent: row.accent } : null,
+    language: languageOf(db, domain) ?? 'en',
+  };
+}
+
+/**
  * The brand of domain `name` as the API shows it — fields, `logo` and
  * `favicon` as `{ sha256, bytes, format, width, height }`, `revision`,
  * `rendered` — or null when the domain has none. 404 `unknown_domain`.

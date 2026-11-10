@@ -23,6 +23,7 @@ import agentForwarderRoutes from './routes/agent-forwarder.js';
 import userSurfaceContext from './routes/user-surface.js';
 import delegatedInvitationsContext from './routes/delegated-invitations.js';
 import inviteRoutes from './routes/invite.js';
+import mailCallbackRoutes from './routes/mail-callback.js';
 import enrollmentRoutes from './routes/enrollment.js';
 import {
   userAccessAdminRoutes,
@@ -56,6 +57,7 @@ import { ensureBrandingBase, reconcileAuthBranding } from './lib/auth-branding.j
 import { writeInvitationsPage, writeInvitePage, writeUnavailablePage } from './lib/invite-page.js';
 import { touchUsersFile } from './lib/authelia.js';
 import { reconcileWebSurfaces } from './lib/web-surface.js';
+import { startMailHealthMonitor, stopMailHealthMonitor } from './lib/mail.js';
 import {
   loadTicketScopeCapabilities,
   checkInstanceLiveness,
@@ -174,6 +176,8 @@ async function start() {
     app.register(inviteRoutes, { prefix: '/api/invite' });
     app.register(enrollmentRoutes, { prefix: '/api/enroll' });
     app.register(userAccessPublicRoutes, { prefix: '/api/user-access' });
+    // Google's return from the relay's mail consent, on the primary auth host
+    app.register(mailCallbackRoutes);
   });
 
   // --- Protected routes (mTLS + onboarding guard) ---
@@ -307,6 +311,10 @@ async function start() {
       .then(() => reconcileWebSurfaces(server.log));
   }
 
+  // --- Mail: every transport checked now and every 6 hours, sending nothing
+  // (mail-design.md §5.1); old delivery records and consents swept ---
+  startMailHealthMonitor(server.log);
+
   // --- Health of hosted agent-hosted plugins (every 10s; idle without hostings) ---
   startHostedPluginHealthMonitor(server.log);
   // The monitor resumes from the persisted health, so a plugin that stayed
@@ -344,6 +352,7 @@ async function start() {
     stopIdentityServices();
     stopPeerServices();
     stopHostedPluginHealthMonitor();
+    stopMailHealthMonitor();
     clearRateLimitInterval();
     await server.close();
     process.exit(0);
