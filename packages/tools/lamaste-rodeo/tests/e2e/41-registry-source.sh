@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 40 — Lamaste's packages came from Feria, never npmjs (Single-VM)
+# 41 — Lamaste's packages came from Feria, never npmjs (Single-VM)
 # ============================================================================
 # Since 4.14 every path that installs or checks Lamaste's own @lamalibre
 # packages takes them from the hosted Feria, or from the registry npm's
 # configuration names for @lamalibre — never npm's default registry, npmjs
 # (packages/core/docs/05-operations/upgrades.md, "Where Lamaste's packages
 # come from"). The VM names the development Feria for @lamalibre in every
-# npmrc it has (tier node-ready). Run last; three-VM 63 is the same on three
+# npmrc it has (tier node-ready). Run last; three-VM 66 is the same on three
 # machines.
 #
 # 1. The rule, as 4.14's core resolves it: root and the lamaste account
@@ -26,7 +26,7 @@ source "${SCRIPT_DIR}/helpers.sh"
 
 require_commands node npm find grep sort
 
-begin_test "40 — Lamaste's packages came from Feria, never npmjs (Single-VM)"
+begin_test "41 — Lamaste's packages came from Feria, never npmjs (Single-VM)"
 
 log_section "The rule, as the relay's core resolves it"
 
