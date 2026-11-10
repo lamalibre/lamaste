@@ -60,35 +60,25 @@ Verified in Authelia 4.39.28's source (`internal/server/handlers.go`,
 
 ### 3.1 Records
 
-state.db migration `0022_mail.sql`:
+state.db migration `0022_mail.sql` (its comments are the reference):
 
-```sql
-CREATE TABLE mail_transports (
-  id             INTEGER PRIMARY KEY,
-  domain         TEXT UNIQUE REFERENCES domains(name) ON DELETE CASCADE,  -- NULL = the relay's row
-  kind           TEXT CHECK (kind IN ('gmail-api', 'smtp')),             -- NULL on a domain row = the relay's transport, own sender only
-  settings       TEXT,             -- JSON, by kind (below); never answered whole
-  secret         TEXT,             -- refresh token or SMTP password; never answered; state.db is 0600 lamaste
-  sender_address TEXT NOT NULL,    -- 'no-reply@notify.codelama.com.tr'
-  sender_name    TEXT,             -- default: the domain's brand name, else 'Lamaste'
-  verified_at    TEXT NOT NULL,    -- the check that admitted this row
-  updated_at     TEXT NOT NULL,
-  CHECK ((kind IS NULL) = (settings IS NULL)),
-  CHECK (domain IS NOT NULL OR kind IS NOT NULL)   -- the relay's row always names a transport
-);
--- At most one relay row (SQLite's UNIQUE admits many NULLs):
-CREATE UNIQUE INDEX mail_transports_relay ON mail_transports ((domain IS NULL)) WHERE domain IS NULL;
-
--- A Google consent under way (§3.3): one row per attempt, 10 minutes.
-CREATE TABLE mail_oauth_pending (
-  state_sha256   TEXT PRIMARY KEY,
-  domain         TEXT,              -- the transport being set (NULL = relay)
-  code_verifier  TEXT NOT NULL,     -- PKCE
-  draft          TEXT NOT NULL,     -- JSON: client id/secret, sender — what the PUT will store
-  created_at     TEXT NOT NULL,
-  expires_at     TEXT NOT NULL
-);
-```
+- `mail_transports` — one relay row (`domain` NULL: Authelia's mail and
+  every domain's default; a partial unique index keeps it to one) and at
+  most one row per domain (`REFERENCES domains ON DELETE CASCADE`): `kind`
+  (NULL on a domain row that sets a sender only), `settings` (JSON by
+  kind, never answered whole), `secret` (never answered or logged;
+  state.db is 0600 lamaste), `account_key` (the sending account the
+  budget counts against, §3.7), `sender_address`, `sender_name`,
+  `daily_limit`, `health_status|checked_at|reason` (§5.1), `verified_at`,
+  `updated_at`.
+- `mail_accounts` — per sending account, whichever rows send through it:
+  `limited_until` (a provider's refusal, §3.7) and the budget
+  notifications of the current crossing (`warned_at`, `exhausted_at`).
+- `mail_oauth_pending` — a Google consent under way (§3.3): the state's
+  SHA-256, the PKCE verifier, the draft (client id and secret, sender,
+  daily limit, who started it), 10 minutes.
+- `mail_sends` — every delivery attempt (§3.7); `password_resets` (§6.2);
+  `invitations.mail_status|mail_sent_at` (§6.1).
 
 `settings` by kind:
 
@@ -177,7 +167,9 @@ nothing:
   No `users.getProfile`, no `sendAs` call (§3.2): a sender other than the
   account comes with the test-mail warning.
 - `smtp`: connect, TLS, EHLO with the panel hostname, AUTH when a
-  username is given, `MAIL FROM:<sender>`, `RSET`, `QUIT`. A timeout says
+  username is given, `QUIT` (nodemailer's `verify`; it has no public
+  `MAIL FROM` without a message, so whether the server takes the sender
+  shows at the test mail). A timeout says
   "the host may block outbound SMTP (DigitalOcean does on new accounts) —
   use the Gmail API transport".
 
@@ -194,7 +186,8 @@ nothing:
 | `PATCH`  | `/api/settings/mail`                  | admin  | sender address/name only (a `gmail-api` sender re-checked)                               |
 | `DELETE` | `/api/settings/mail`                  | admin  | no relay transport: Authelia back to the file notifier; Google token revoked best effort |
 | `POST`   | `/api/settings/mail/test`             | admin  | `{ to }`                                                                                 |
-| _same_   | `/api/domains/:name/mail[...]`        | admin  | the domain's override; may set a sender only                                             |
+| `POST`   | `/api/settings/mail/resume`           | admin  | end a provider's limit refusal early (§3.7)                                              |
+| _same_   | `/api/domains/:name/mail[...]`        | admin  | the domain's override: its own transport, or `PUT …/mail/sender` for a sender only       |
 
 CLI: `lamaste-server mail show|set-smtp|google|sender|clear|test` and
 `lamaste-server domains mail <name> …`; secrets only via stdin; `google`
