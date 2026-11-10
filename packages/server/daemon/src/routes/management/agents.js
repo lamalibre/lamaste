@@ -22,6 +22,7 @@ import {
 } from '@lamalibre/lamaste';
 import { RegistryCredentialError } from '@lamalibre/lamaste/server';
 import { acquireAgentToken } from '../../lib/registry-credential.js';
+import { getTrustedScopes } from '../../lib/trusted-scopes.js';
 import { agentPluginConfig, acknowledgeAgentPluginConfig } from '../../lib/plugin-hosting.js';
 import {
   AGENT_JOB_RESULT_MAX_BYTES,
@@ -240,7 +241,9 @@ export default async function agentsRoutes(fastify, _opts) {
           },
           acquired.cached ? 'Reused registry token for agent' : 'Brokered registry token for agent',
         );
-        return credential;
+        // `scopes`: every trusted publisher scope — the registry hosts them
+        // all, so the agent routes each of them to it (relay 4.13+).
+        return { ...credential, scopes: [...getTrustedScopes()] };
       } catch (err) {
         const status = err instanceof RegistryCredentialError ? err.statusCode : 502;
         request.log.warn({ label, err: err.message }, 'Failed to broker registry token');

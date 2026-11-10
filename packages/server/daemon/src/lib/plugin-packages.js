@@ -27,6 +27,7 @@ import path from 'node:path';
 import { execa } from 'execa';
 import {
   AGENT_HALF_INTEGRITY_RE,
+  SCOPED_PACKAGE_NAME_RE,
   AgentHalfVersionSchema,
   agentHalfOf,
   hookEntrySha256,
@@ -41,24 +42,27 @@ import {
 } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
 import { withRegistryUserconfig } from './registry-credential.js';
+import { assertTrustedPackageSpec } from './trusted-scopes.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
 /** Mirrors lamaste-priv's MAX_HOOK_MODULE_BYTES. */
 export const HOOK_MODULE_MAX_BYTES = 4 * 1024 * 1024;
 
-const PACKAGE_RE = /^@lamalibre\/[a-z0-9][a-z0-9._-]{0,213}$/;
+// The syntax of a package already accepted (its scope was trusted when it
+// was installed or staged — see lib/trusted-scopes.js).
+const PACKAGE_RE = SCOPED_PACKAGE_NAME_RE;
 const VERSION_RE = /^[0-9A-Za-z.+-]{1,64}$/;
 
-/** `@lamalibre/x@1.2.3` → `@lamalibre/x`. */
-export function bareLamalibrePackageName(spec) {
+/** `@scope/x@1.2.3` → `@scope/x`. */
+export function barePackageName(spec) {
   const at = spec.indexOf('@', 1);
   return at === -1 ? spec : spec.slice(0, at);
 }
 
 /** The installed package's directory (real path). */
 export async function installedPackageDir(packageName) {
-  const bare = bareLamalibrePackageName(packageName);
+  const bare = barePackageName(packageName);
   if (!PACKAGE_RE.test(bare)) throw httpError('Invalid package name', 400);
   const require = createRequire(`${STATE_DIR}/`);
   const manifestPath = require.resolve(`${bare}/lamaste-plugin.json`);
@@ -162,7 +166,7 @@ export async function installedWebTreeSha256(packageName, manifest) {
  * manifest and, when the manifest names one, its relay hook module — in
  * memory only.
  *
- * @param {string} packageName bare `@lamalibre/<name>`
+ * @param {string} packageName bare `@<scope>/<name>`
  * @param {string} version an exact version or a dist-tag (`latest`)
  * @returns {Promise<{ version: string, manifestRaw: unknown, readHookModule: (entry: string) => Buffer | null, readWebTree: (root: string) => Promise<import('@lamalibre/lamaste').WebTreeManifest> }>}
  */
@@ -253,7 +257,7 @@ function npmFailureLine(err) {
  * are the ones plugin installs use. Only a sha512 SRI is accepted: it is what the approval
  * binds and what the agent checks the tarball it fetches against.
  *
- * @param {string} packageName bare `@lamalibre/<name>`
+ * @param {string} packageName bare `@<scope>/<name>`
  * @param {string} version an exact version
  * @returns {Promise<string>} `sha512-<base64>`
  */
@@ -324,6 +328,9 @@ export async function pinAgentHalf(manifest) {
       400,
     );
   }
+  // Only a package of a trusted scope the registry hosts is pinned — and so
+  // signed into an app job for an agent's root helper.
+  await assertTrustedPackageSpec(declaration.package);
   const integrity = await readRegistryIntegrity(declaration.package, manifest.version);
   return { package: declaration.package, version: manifest.version, integrity };
 }

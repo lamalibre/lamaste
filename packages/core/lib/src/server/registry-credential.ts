@@ -38,6 +38,7 @@ import path from 'node:path';
 import { z } from 'zod';
 
 import { HOSTNAME_REGEX } from '../constants.js';
+import { isNpmScope } from '../trusted-scopes.js';
 import { atomicWriteJSON } from '../file-helpers.js';
 import { NPM_USERCONFIG_ENV, npmRegistryStatus, renderInstallNpmrc } from '../npm-userconfig.js';
 import type { AutheliaOidcClient, OidcScopeDefinitions } from './authelia.js';
@@ -673,6 +674,53 @@ export interface RegistryCallDeps {
   serviceToken: string;
 }
 
+const HostedScopesSchema = z.object({
+  scopes: z
+    .array(
+      z.object({ scope: z.string(), retired: z.boolean().optional() }).passthrough(),
+    )
+    .max(256),
+});
+
+/**
+ * The npm scopes the registry hosts itself — serves as closed scopes,
+ * never from an upstream — from its public `GET /-/feria/scopes` (Feria
+ * 0.5+). A retired scope is still closed (Feria answers 404 for it and
+ * never proxies it) but holds nothing new; it is listed under `retired`.
+ * A registry that does not answer the route (an older Feria) hosts
+ * `@lamalibre` alone as far as the panel can tell — the built-in scope
+ * needs no check. Throws RegistryCredentialError when the registry cannot
+ * be reached or answers something else.
+ */
+export async function fetchRegistryHostedScopes(
+  registryUrl: string,
+  fetchImpl: FetchLike = globalThis.fetch,
+): Promise<{ hosted: string[]; retired: string[] }> {
+  let json: unknown;
+  try {
+    json = await registryRequest(registryUrl, null, 'GET', '-/feria/scopes', undefined, fetchImpl);
+  } catch (err: unknown) {
+    if (err instanceof RegistryCredentialError && err.statusCode === 404) {
+      return { hosted: ['@lamalibre'], retired: [] };
+    }
+    throw err;
+  }
+  const parsed = HostedScopesSchema.safeParse(json);
+  if (!parsed.success) {
+    throw new RegistryCredentialError(
+      `registry ${registryBase(registryUrl).origin} answered -/feria/scopes with something that is not a scope list`,
+      502,
+    );
+  }
+  const hosted: string[] = [];
+  const retired: string[] = [];
+  for (const entry of parsed.data.scopes) {
+    if (!isNpmScope(entry.scope)) continue;
+    (entry.retired === true ? retired : hosted).push(entry.scope);
+  }
+  return { hosted, retired };
+}
+
 /** Ask the registry for a one-hour read token owned by `agent:<label>`. */
 export async function brokerAgentRegistryToken(
   config: RegistryCredentialConfig,
@@ -736,6 +784,12 @@ export interface RegistryUserconfigLogger {
 }
 
 export interface RegistryUserconfigOptions {
+  /**
+   * The npm scopes routed to the registry — the relay's trusted publisher
+   * scopes, every one of which the registry hosts. Default: the
+   * credential's legacy `scope` alone.
+   */
+  routedScopes?: readonly string[] | undefined;
   /** Where the throw-away userconfig's private directory is made. Default `os.tmpdir()`. */
   tmpDir?: string | undefined;
   /** Told about a refused token and the retry; the token itself is never logged. */
@@ -779,7 +833,8 @@ export async function withRegistryUserconfig<T>(
     let attempt = 0;
     for (;;) {
       attempt += 1;
-      await writeFile(file, renderInstallNpmrc({ registryUrl, token, scope: config.scope }), {
+      const scopes = options.routedScopes ?? [config.scope];
+      await writeFile(file, renderInstallNpmrc({ registryUrl, token, scopes }), {
         encoding: 'utf-8',
         mode: 0o600,
       });

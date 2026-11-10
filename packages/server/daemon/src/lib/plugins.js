@@ -28,9 +28,14 @@ import { listRegisteredSubScopeNames } from './tickets.js';
 import { getStateDb } from './state-db.js';
 import { revokePluginCapabilitiesFromAgents } from './mtls.js';
 import { withRegistryUserconfig } from './registry-credential.js';
+import {
+  assertManifestTrusted,
+  assertPackageSpecSyntax,
+  assertTrustedPackageSpec,
+} from './trusted-scopes.js';
 import { RegistryCredentialError } from '@lamalibre/lamaste/server';
 import {
-  bareLamalibrePackageName,
+  barePackageName,
   installedHookEntrySha256,
   installedWebTreeSha256,
   pinAgentHalf,
@@ -45,7 +50,7 @@ const PLUGINS_DIR = path.join(STATE_DIR, 'plugins');
 // keeps each such sequence atomic. Removable once each operation is
 // collapsed into one transaction.
 let pluginLock = Promise.resolve();
-function withPluginLock(fn) {
+export function withPluginLock(fn) {
   const prev = pluginLock;
   let resolve;
   pluginLock = new Promise((r) => {
@@ -262,35 +267,10 @@ export function validateManifest(raw) {
 }
 
 /**
- * Install a plugin by npm package name.
- * Only @lamalibre/ scoped packages are allowed.
- *
- * @param {string} packageName - The npm package name (must start with @lamalibre/)
- * @param {import('pino').Logger} logger
- * @returns {Promise<object>} The installed plugin entry
+ * Install a plugin by npm package name (or `name@version`). The package
+ * must be from a trusted publisher scope (`lib/trusted-scopes.js`), hosted
+ * by the configured registry when it is an additional one.
  */
-// Reject npm aliases (e.g. "@lamalibre/x@npm:totally-evil") and any name that
-// could resolve outside the @lamalibre/ scope. Optional version suffix
-// (`@1.2.3`, `@beta`, etc.) is allowed; alias schemes (`@npm:`, `@github:`,
-// etc.) and shell metacharacters are not.
-const LAMALIBRE_PACKAGE_RE = /^@lamalibre\/[a-z0-9][a-z0-9._-]{0,213}(@[A-Za-z0-9._-]+)?$/;
-
-function assertSafeLamalibrePackage(packageName) {
-  if (typeof packageName !== 'string' || packageName.length === 0 || packageName.length > 256) {
-    throw Object.assign(new Error('Invalid package name'), { statusCode: 400 });
-  }
-  if (!LAMALIBRE_PACKAGE_RE.test(packageName)) {
-    throw Object.assign(
-      new Error('Only @lamalibre/ scoped packages are allowed (alias schemes are rejected)'),
-      { statusCode: 400 },
-    );
-  }
-  // Defense-in-depth against npm alias syntax even if the regex above shifts.
-  const versionSuffix = packageName.indexOf('@', 1);
-  if (versionSuffix !== -1 && packageName.slice(versionSuffix).startsWith('@npm:')) {
-    throw Object.assign(new Error('npm: alias references are not permitted'), { statusCode: 400 });
-  }
-}
 
 /**
  * After a lifecycle change, bring Authelia's OIDC clients and the secret
@@ -382,12 +362,12 @@ function installFailure(spec, err) {
 
 export function installPlugin(packageName, logger) {
   return withPluginLock(async () => {
-    // Validate package scope
-    assertSafeLamalibrePackage(packageName);
-    // `@lamalibre/x@1.2.3` installs that version; the registry knows the
+    // A well-formed spec from a trusted scope the registry hosts
+    await assertTrustedPackageSpec(packageName);
+    // `@scope/x@1.2.3` installs that version; the registry knows the
     // package by its bare name (the manifest is resolved by it, too).
     const installSpec = packageName;
-    packageName = bareLamalibrePackageName(installSpec);
+    packageName = barePackageName(installSpec);
     // Remove the package npm installed when it is refused below.
     const discardPackage = () =>
       execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});
@@ -451,6 +431,14 @@ export function installPlugin(packageName, logger) {
       throw Object.assign(new Error(`Plugin manifest not found in "${packageName}"`), {
         statusCode: 400,
       });
+    }
+
+    // Every package the manifest names: trusted, of the plugin's own scope
+    try {
+      assertManifestTrusted(manifest, packageName);
+    } catch (err) {
+      await discardPackage();
+      throw err;
     }
 
     const policyError = await manifestPolicyError(manifest);
@@ -840,9 +828,13 @@ export function replacePluginPackage(
   { restoring = false } = {},
 ) {
   return withPluginLock(async () => {
-    const bare = bareLamalibrePackageName(packageName);
+    const bare = barePackageName(packageName);
     const spec = `${bare}@${version}`;
-    assertSafeLamalibrePackage(spec);
+    // An update must be trusted now; a revert puts back the package that
+    // was installed (trusted then — a scope in use cannot be untrusted) and
+    // checks only that it is a well-formed spec.
+    if (restoring) assertPackageSpecSyntax(spec);
+    else await assertTrustedPackageSpec(spec);
     logger?.info({ name, spec }, 'Installing plugin package version');
     try {
       await withRegistryUserconfig(
@@ -873,6 +865,7 @@ export function replacePluginPackage(
         { statusCode: 400 },
       );
     }
+    if (!restoring) assertManifestTrusted(manifest, bare);
     const hooksEntrySha256 = await installedHookEntrySha256(packageName, manifest);
     const webTreeSha256 = await installedWebTreeSha256(packageName, manifest);
     return { manifest, hooksEntrySha256, webTreeSha256 };

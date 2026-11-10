@@ -25,6 +25,7 @@
  *   after the update the audiences are recomputed and the agent half told.
  */
 
+import { assertManifestTrusted, assertTrustedPackageSpec } from './trusted-scopes.js';
 import {
   AGENT_HALF_MAX_BODY_MB,
   ManifestValidationError,
@@ -383,6 +384,8 @@ function assertApprovalCovers(staged, settings, approvedUpdate) {
  * @param {object | null} record the plugin's hosting, if any
  */
 async function stageVersion(plugin, requestedVersion, record) {
+  // The package must still be from a trusted scope the registry hosts.
+  await assertTrustedPackageSpec(plugin.packageName);
   const staged = await readRegistryPackage(plugin.packageName, requestedVersion);
   let manifest;
   try {
@@ -411,6 +414,8 @@ async function stageVersion(plugin, requestedVersion, record) {
   if (manifest.hosting !== 'agent') {
     throw httpError('Version changes the plugin to a server plugin — reinstall it instead', 400);
   }
+  // The new version names only trusted packages of the plugin's own scope.
+  assertManifestTrusted(manifest, plugin.packageName);
   const policy = await manifestPolicyError(manifest);
   if (policy) throw httpError(policy.message, policy.statusCode);
   if (hasAgentHalf(plugin) && !hasAgentHalf(manifest) && record) {

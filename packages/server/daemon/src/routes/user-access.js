@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamalibre/lamaste';
+import {
+  SCOPED_PACKAGE_NAME_RE,
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+  USERNAME_REGEX,
+} from '@lamalibre/lamaste';
 import { getConfig } from '../lib/config.js';
 import { ensureSessionSecret } from '../lib/session.js';
 import { createUserSession } from '../lib/user-access-session.js';
@@ -30,7 +35,9 @@ const CreateGrantSchema = z.object({
     .string()
     .min(1)
     .max(200)
-    .regex(/^@lamalibre\//, 'Plugin must be @lamalibre/ scoped'),
+    // A grant runs no code: any well-formed scoped name (the plugin it names
+    // was installed from a trusted scope).
+    .regex(SCOPED_PACKAGE_NAME_RE, 'Plugin must be a scoped package name (@<scope>/<name>)'),
   target: z
     .string()
     .regex(/^(local|agent:[a-z0-9][a-z0-9-]*)$/, 'Target must be "local" or "agent:<label>"')
@@ -389,7 +396,9 @@ export async function userAccessProtectedRoutes(fastify, _opts) {
       // Label is auto-generated from username + plugin short name.
       // Underscores in usernames are replaced with hyphens to match agent label format
       // (signCSR validates labels against /^[a-z0-9][a-z0-9-]*$/).
-      const pluginShortName = grant.pluginName.replace(/^@lamalibre\//, '').replace(/-server$/, '');
+      const pluginShortName = grant.pluginName
+        .replace(/^@[a-z0-9][a-z0-9-]{0,49}\//, '')
+        .replace(/-server$/, '');
       const sanitizedUsername = username.replace(/_/g, '-');
       const label = `${sanitizedUsername}-${pluginShortName}`;
 

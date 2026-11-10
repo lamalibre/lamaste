@@ -22,8 +22,13 @@ import { z } from 'zod';
 import {
   LAMASTE_SERVER_OIDC_CLIENT_ID,
   RegistryCredentialError,
+  fetchRegistryHostedScopes,
   summariseRegistryCredential,
 } from '@lamalibre/lamaste/server';
+import {
+  additionalTrustedScopes,
+  resetRegistryHostedScopesCache,
+} from '../../lib/trusted-scopes.js';
 
 import {
   clearRegistryCredentialConfig,
@@ -140,6 +145,29 @@ export default async function registryCredentialRoutes(fastify) {
             return reply.code(status).send({ error: err.message });
           }
 
+          // Every additional trusted scope must be hosted by the new registry
+          // too: npm routes those scopes to it with the panel's token.
+          const additional = additionalTrustedScopes();
+          if (additional.length > 0) {
+            let hosted;
+            try {
+              ({ hosted } = await fetchRegistryHostedScopes(body.registryUrl));
+            } catch (err) {
+              return reply.code(502).send({
+                error: `Cannot read the scopes ${body.registryUrl} hosts: ${err.message}`,
+                code: 'registry_unreachable',
+              });
+            }
+            const missing = additional.filter((scope) => !hosted.includes(scope));
+            if (missing.length > 0) {
+              return reply.code(409).send({
+                error: `${body.registryUrl} does not host the trusted scopes ${missing.join(', ')}: host them there first, or stop trusting them`,
+                code: 'registry_lacks_scope',
+                scopes: missing,
+              });
+            }
+          }
+
           const config = {
             provider: 'feria',
             registryUrl: body.registryUrl,
@@ -153,6 +181,8 @@ export default async function registryCredentialRoutes(fastify) {
             warnings = await setRegistryCredential(config, { logger: request.log });
           } catch (err) {
             return sendFailure(request, reply, err, 'Failed to store the registry credential');
+          } finally {
+            resetRegistryHostedScopesCache();
           }
           request.log.info(
             { registryUrl: body.registryUrl, owner: verified.owner, auth: auth.kind },
@@ -181,8 +211,19 @@ export default async function registryCredentialRoutes(fastify) {
   fastify.delete(
     '/registry-credential',
     { preHandler: fastify.requireRole(['admin']), config: { rateLimit: {} } },
-    async (request) => {
+    async (request, reply) => {
+      // Packages of an additional trusted scope install only from the
+      // registry that hosts it; without one npm would resolve them from npmjs.
+      const additional = additionalTrustedScopes();
+      if (additional.length > 0) {
+        return reply.code(409).send({
+          error: `The trusted scopes ${additional.join(', ')} install from this registry — stop trusting them first (lamaste-server trusted-scopes remove <scope>)`,
+          code: 'trusted_scopes_need_registry',
+          scopes: additional,
+        });
+      }
       const removed = await clearRegistryCredentialConfig();
+      resetRegistryHostedScopesCache();
       if (removed) {
         request.log.info('Registry credential removed');
         // Removes the lamaste-server client and its secret if it was in use.

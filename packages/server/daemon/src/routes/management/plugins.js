@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { AGENT_HALF_SETTINGS_MAX_BYTES, AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
+import {
+  AGENT_HALF_SETTINGS_MAX_BYTES,
+  AGENT_LABEL_REGEX,
+  SCOPED_PACKAGE_SPEC_RE,
+  isTrustedPackage,
+} from '@lamalibre/lamaste';
+import { getTrustedScopes } from '../../lib/trusted-scopes.js';
 import {
   readPlugins,
   installPlugin,
@@ -186,7 +192,7 @@ const InstallBodySchema = z.object({
     .string()
     .min(1)
     .max(200)
-    .regex(/^@lamalibre\//, 'Package must be in the @lamalibre/ scope'),
+    .regex(SCOPED_PACKAGE_SPEC_RE, 'Package must be @<scope>/<name>[@<version>]'),
 });
 
 // --- Push install schemas ---
@@ -219,7 +225,7 @@ const ScopedPackageSchema = z
   .string()
   .min(1)
   .max(200)
-  .regex(/^@lamalibre\//, 'Package must be in the @lamalibre/ scope');
+  .regex(SCOPED_PACKAGE_SPEC_RE, 'Package must be @<scope>/<name>[@<version>]');
 
 const CreatePolicySchema = z.object({
   name: z.string().min(1).max(100),
@@ -276,7 +282,7 @@ const PushInstallCommandSchema = z
       .string()
       .min(1)
       .max(200)
-      .regex(/^@lamalibre\//, 'Package must be in the @lamalibre/ scope')
+      .regex(SCOPED_PACKAGE_SPEC_RE, 'Package must be @<scope>/<name>[@<version>]')
       .optional(),
   })
   .refine(
@@ -1077,6 +1083,15 @@ export default async function pluginRoutes(fastify, _opts) {
     },
     async (request, reply) => {
       const body = CreatePolicySchema.parse(request.body);
+      const untrusted = (body.allowedPlugins ?? []).filter(
+        (name) => !isTrustedPackage(name, getTrustedScopes()),
+      );
+      if (untrusted.length > 0) {
+        return reply.code(400).send({
+          error: `Not from a trusted publisher scope: ${untrusted.join(', ')}`,
+          code: 'untrusted_scope',
+        });
+      }
 
       try {
         const policy = await createPushInstallPolicy(body);
@@ -1101,6 +1116,15 @@ export default async function pluginRoutes(fastify, _opts) {
     async (request, reply) => {
       const { id } = z.object({ id: PolicyIdSchema }).parse(request.params);
       const body = UpdatePolicySchema.parse(request.body);
+      const untrusted = (body.allowedPlugins ?? []).filter(
+        (name) => !isTrustedPackage(name, getTrustedScopes()),
+      );
+      if (untrusted.length > 0) {
+        return reply.code(400).send({
+          error: `Not from a trusted publisher scope: ${untrusted.join(', ')}`,
+          code: 'untrusted_scope',
+        });
+      }
 
       try {
         const policy = await updatePushInstallPolicy(id, body);
@@ -1204,6 +1228,17 @@ export default async function pluginRoutes(fastify, _opts) {
     async (request, reply) => {
       const params = AgentLabelParamSchema.parse(request.params);
       const body = PushInstallCommandSchema.parse(request.body);
+      // Installing or updating needs a trusted scope; an uninstall never
+      // does (a plugin stays removable).
+      if (body.packageName && body.action !== 'uninstall') {
+        const trusted = getTrustedScopes();
+        if (!isTrustedPackage(body.packageName, trusted)) {
+          return reply.code(400).send({
+            error: `Package "${body.packageName}" is not from a trusted publisher scope (trusted: ${trusted.join(', ')})`,
+            code: 'untrusted_scope',
+          });
+        }
+      }
 
       // Validate push install access (5-gate auth)
       const access = await validatePushInstallAccess(params.label, request.ip);

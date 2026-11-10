@@ -76,6 +76,7 @@ ${b('COMMANDS')}
   ${c('panel-pin')}       The panel's TLS key pin, to compare with what agents and the desktop pinned
   ${c('chisel')}          Manage chisel tunnel-server credentials (rotate-credential)
   ${c('registry-credential')} Registry (Feria) service credential used to broker agent install tokens
+  ${c('trusted-scopes')}      npm scopes whose plugins this relay trusts: list | add <scope> | remove <scope>
   ${c('uninstall')}       Full server teardown (requires confirmation)
 
 ${b('GLOBAL FLAGS')}
@@ -231,6 +232,11 @@ async function main() {
     case 'panel-pin': {
       const { runPanelPin } = await import('../src/commands/panel-pin.js');
       await runPanelPin({ json });
+      break;
+    }
+    case 'trusted-scopes': {
+      const { runTrustedScopes } = await import('../src/commands/trusted-scopes.js');
+      await runTrustedScopes(args.slice(1), { json });
       break;
     }
     case 'registry-credential': {

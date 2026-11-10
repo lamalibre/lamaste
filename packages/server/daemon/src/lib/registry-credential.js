@@ -40,6 +40,7 @@ import {
   LAMASTE_SERVER_OIDC_CLIENT_ID,
 } from '@lamalibre/lamaste/server';
 
+import { effectiveTrustedScopes } from '@lamalibre/lamaste';
 import { getConfig } from './config.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
@@ -162,7 +163,9 @@ export async function withRegistryUserconfig(fn, options = {}) {
       return (await serviceTokens.resolve(config, deps)).token;
     },
     fn,
-    { log: options.log },
+    // Every trusted publisher scope goes to the registry: it hosts them all
+    // (an additional scope is trusted only while it does — trusted-scopes.js).
+    { log: options.log, routedScopes: effectiveTrustedScopes(getConfig().trustedScopes) },
   );
 }
 

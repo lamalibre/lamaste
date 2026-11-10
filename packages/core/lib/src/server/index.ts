@@ -571,6 +571,7 @@ export {
   obtainRegistryServiceToken,
   verifyRegistryCredential,
   brokerAgentRegistryToken,
+  fetchRegistryHostedScopes,
   revokeRegistryTokensForOwner,
   lostFeriaGroups,
   withRegistryUserconfig,

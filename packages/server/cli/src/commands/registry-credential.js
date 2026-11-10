@@ -129,6 +129,7 @@ async function set(args, { json }) {
 
 async function clear({ json }) {
   const result = await panelRequest('DELETE', '/api/registry-credential');
+  if (result.error) throw new Error(result.error);
   if (json) {
     emit(result);
     return;
