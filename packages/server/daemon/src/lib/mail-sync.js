@@ -105,11 +105,13 @@ async function reportListener(reason, logger) {
  */
 async function syncListener(sender, deliver, logger) {
   if (sender === null) {
+    portHeldSince = null;
     await stopSubmissionListener();
     await reportListener(null, logger);
     return { submitting: false, restartAuthelia: false };
   }
   if ((await portTunnel()) !== null) {
+    portHeldSince = null;
     await stopSubmissionListener();
     await reportListener('tunnel', logger);
     return { submitting: false, restartAuthelia: false };
