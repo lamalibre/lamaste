@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Lamaste's `@lamalibre/*` packages come from the hosted Feria, `https://feria.codelama.com.tr/`, and no longer from npmjs, which is not maintained any more. Every path that installs or checks Lamaste itself names that registry for the `@lamalibre` scope; a release publishes the tag's own packed tarballs to Feria and keeps them on the GitHub Release as the durable copy.
+Lamaste's `@lamalibre/*` packages come from the hosted Feria, `https://feria.codelama.com.tr/`, and no longer from npmjs, frozen at 4.12.0. Every path that installs or checks Lamaste itself names that registry for the `@lamalibre` scope; a release publishes the tag's own packed tarballs to Feria and keeps them on the GitHub Release as the durable copy.
 
 ### Added
 
@@ -30,9 +30,9 @@ Lamaste's `@lamalibre/*` packages come from the hosted Feria, `https://feria.cod
 
 ### Upgrade notes
 
-- **A relay on 4.13 or older reaches 4.14 only through one step that names Feria**: its own Update action (and the Desktop App's **Update**, which asks it) fetches the installer from npmjs, which does not carry 4.14. Either run the redeploy as root — `sudo npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste@4.14.0 --yes` — or add `@lamalibre:registry=https://feria.codelama.com.tr/` to `/root/.npmrc` and then use **Update**; a DigitalOcean server the Desktop App provisioned can be redeployed by the 4.14 cloud CLI (`lamaste-cloud update`). Later updates need nothing. See `05-operations/upgrades.md`, "Upgrading to 4.14". No final 4.13.x on npmjs is needed.
-- Agents: `sudo npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent@4.14.0 && lamaste-agent update`.
-- A root or user npmrc that names npmjs for `@lamalibre` now stops installs with an error saying to remove the line.
+- **npmjs is frozen** (2026-11-10): its last Lamaste release is 4.12.0; 4.13.0 and later are on the hosted Feria only. No final release goes to npmjs.
+- **A relay or agent on 4.13 or older** updates through code that asks npmjs. Map `@lamalibre` once in npm's global configuration — `sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/` — then use the panel's **Update** (relay) or `sudo npm install -g @lamalibre/lamaste-agent@4.14.0 && lamaste-agent update` (agents). Or run the redeploy once as root with `--@lamalibre:registry=https://feria.codelama.com.tr/`; a DigitalOcean server the Desktop App provisioned can be redeployed by the 4.14 cloud CLI (`lamaste-cloud update`). See `05-operations/upgrades.md`, "Upgrading to 4.14".
+- A machine whose npm configuration names npmjs for `@lamalibre` now stops installs with an error saying to remove the line.
 
 ## [4.13.1] - 2026-11-11
 

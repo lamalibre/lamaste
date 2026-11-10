@@ -65,7 +65,7 @@ apt install -y npm
 npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste
 ```
 
-Lamaste's packages are published to the hosted Feria registry, `https://feria.codelama.com.tr/`, not to npmjs. The `--@lamalibre:registry=` option sends only the `@lamalibre` scope there; everything else still comes from npm's default registry. To avoid typing it, set it once with `npm config set @lamalibre:registry https://feria.codelama.com.tr/` — the installer follows that setting too. See [Where Lamaste's packages come from](../05-operations/upgrades.md#where-lamastes-packages-come-from).
+Lamaste's packages are published to the hosted Feria registry, `https://feria.codelama.com.tr/`, not to npmjs. The `--@lamalibre:registry=` option sends only the `@lamalibre` scope there; everything else still comes from npm's default registry. To avoid typing it, set it once with `sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/` (read by every user on the machine) — the installer follows that setting too. See [Where Lamaste's packages come from](../05-operations/upgrades.md#where-lamastes-packages-come-from).
 
 The installer displays a confirmation banner before making any changes:
 

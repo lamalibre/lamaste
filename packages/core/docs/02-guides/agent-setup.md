@@ -62,7 +62,7 @@ Install the agent **globally** first:
 npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 ```
 
-Lamaste's packages are published to the hosted Feria registry, `https://feria.codelama.com.tr/`, not to npmjs. The `--@lamalibre:registry=` option sends only the `@lamalibre` scope there; to avoid typing it, set it once with `npm config set @lamalibre:registry https://feria.codelama.com.tr/` — the agent's own plugin installs follow that setting too. See [Where Lamaste's packages come from](../05-operations/upgrades.md#where-lamastes-packages-come-from).
+Lamaste's packages are published to the hosted Feria registry, `https://feria.codelama.com.tr/`, not to npmjs. The `--@lamalibre:registry=` option sends only the `@lamalibre` scope there; to avoid typing it, set it once with `sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/` (read by every user on the machine) — the agent's own plugin installs follow that setting too. See [Where Lamaste's packages come from](../05-operations/upgrades.md#where-lamastes-packages-come-from).
 
 A global install is required, not a convenience. Setup installs a sync timer (see [How tunnel changes reach the agent](#how-tunnel-changes-reach-the-agent)) that runs the installed `lamaste-agent` every 30 seconds for as long as the agent exists. An `npx` copy lives in npm's cache, which npm may clear at any time — the timer would silently stop. `setup` and `update` therefore refuse to run from `npx`, and they check this **before** an enrollment token is spent. For an installation npm does not manage, set `LAMALIBRE_LAMASTE_AGENT_CLI_PATH` to the absolute path of the `lamaste-agent` script the timer should run.
 

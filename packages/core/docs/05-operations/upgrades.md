@@ -39,7 +39,7 @@ A machine that hosts app plugins' agent halves needs the root-owned install show
 
 ### Where Lamaste's packages come from
 
-Since 4.14 Lamaste's `@lamalibre/*` packages are published to the hosted Feria, **`https://feria.codelama.com.tr/`**, which serves them to anyone without a login. npmjs is no longer a source: its copies stop at 4.13 at most and are not updated. The source code and every release's packed tarballs are on [GitHub Releases](https://github.com/lamalibre/lamaste/releases) — the copy the registry is published from.
+Since 4.14 Lamaste's `@lamalibre/*` packages are published to the hosted Feria, **`https://feria.codelama.com.tr/`**, which serves them to anyone without a login. npmjs is no longer a source: it was frozen on 2026-11-10 at 4.12.0 and is not updated. The source code and every release's packed tarballs are on [GitHub Releases](https://github.com/lamalibre/lamaste/releases) — the copy the registry is published from.
 
 Every command that installs Lamaste names the registry for the `@lamalibre` scope only:
 
@@ -48,10 +48,10 @@ sudo npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/c
 sudo npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 ```
 
-Other dependencies still come from the machine's default registry. To avoid typing the option, set it once in npm's configuration — Lamaste follows it too:
+Other dependencies still come from the machine's default registry. To avoid typing the option, set it once in npm's global configuration — every user on the machine reads it, and Lamaste follows it too:
 
 ```bash
-npm config set @lamalibre:registry https://feria.codelama.com.tr/
+sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/
 ```
 
 **What Lamaste itself does (4.14 and later).** Every path that installs or checks Lamaste's own packages — the installer's `npm install`s, the panel's **Update** action (`lamaste-priv self-update`), plugin installs and update checks without a [registry credential](../04-api-reference/registry-and-oidc.md), the Desktop App's installs and update check, and the cloud provisioner and updater — takes `@lamalibre` from:
@@ -63,24 +63,20 @@ With a registry credential the panel and agents keep installing plugins through 
 
 ### Upgrading to 4.14
 
-4.14 changes where Lamaste's packages come from (see [above](#where-lamastes-packages-come-from)); nothing else needs migrating. **A relay running 4.13 or older cannot reach 4.14 through its own Update action**: its update code asks npm's default registry, npmjs, which does not carry 4.14 — the panel either finds no newer version or fails with `E404`. It needs one step that names Feria, done once; every later update then works as before.
+4.14 changes where Lamaste's packages come from (see [above](#where-lamastes-packages-come-from)); nothing else needs migrating. npmjs was frozen on 2026-11-10: its last Lamaste release is **4.12.0**. 4.13.0 and every later release are on the hosted Feria only.
 
-The Desktop App's **Update** button asks the relay's own Update action, so it hits the same wall until the step below is done.
+**A relay or agent running 4.13 or older updates through code that asks npm's default registry**, npmjs: the panel's **Update** action (and the Desktop App's **Update**, which asks it) finds nothing newer than 4.12.0, or fails with `E404` for a version you name. Each such machine needs npm told once where `@lamalibre` lives — in npm's **global** configuration, which every user on the machine reads, including root's `lamaste-priv self-update` (its `systemd-run` keeps only `PATH`) and the panel's own `lamaste` account:
 
-**On the relay's console (any relay).** As root (SSH, or your provider's console), run the redeploy from Feria:
+```bash
+sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/
+npm view @lamalibre/create-lamaste version   # the newest release, from Feria
+```
+
+**Relay.** After that line, use the panel's **Update** action (or the Desktop App's) as usual — it reaches 4.13.0 and 4.14.0. 4.14 keeps following the line (it names the hosted Feria, which is also 4.14's own default), and every later update works without it. Instead of the mapping you can run the redeploy once as root:
 
 ```bash
 sudo npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste@4.14.0 --yes
 ```
-
-This is the same redeploy the Update action runs. Alternatively, let the old panel's own **Update** find Feria by naming it in root's npm configuration first, then use the **Update** action:
-
-```bash
-sudo npm config set @lamalibre:registry https://feria.codelama.com.tr/ --location=user
-sudo cat /root/.npmrc   # @lamalibre:registry=https://feria.codelama.com.tr/
-```
-
-(The 4.13 helper runs `npx` with `HOME=/root`, so it reads `/root/.npmrc`; 4.14 keeps following that line.) A relay whose root `npmrc` routes `@lamalibre` to npmjs (`@lamalibre:registry=https://registry.npmjs.org/`) refuses to update until the line is removed or changed — the error names it.
 
 **DigitalOcean servers, without a console.** A server provisioned through the Desktop App can be redeployed over SSH by the 4.14 cloud CLI, which fetches the installer from Feria whatever the relay runs (it adds a temporary SSH key through the DigitalOcean API and removes it afterwards):
 
@@ -91,12 +87,15 @@ LAMALIBRE_CLOUD_TOKEN=<token> npx --yes --@lamalibre:registry=https://feria.code
 
 (`<serverId>` is the server's `id` in `~/.lamalibre/lamaste/servers.json`.)
 
-**Agents.** Install the 4.14 agent from Feria and update as usual — the agent's own plugin installs follow the same rule from then on:
+**Agents.** On each agent machine, after the relay — the same global line, then the usual install and update; the agent's own plugin installs follow the same rule from then on:
 
 ```bash
-sudo npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent@4.14.0
+sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/
+sudo npm install -g @lamalibre/lamaste-agent@4.14.0
 lamaste-agent update
 ```
+
+A machine whose npm configuration routes `@lamalibre` to npmjs (`@lamalibre:registry=https://registry.npmjs.org/`, in any npmrc) refuses to install Lamaste from 4.14 on until the line is removed or changed — the error names it.
 
 **Desktop App.** Install 4.14 as usual ([Desktop App Setup](../02-guides/desktop-app-setup.md)); its daemon installs, plugin host install, `lamaste-agent` install and panel update check use Feria from then on.
 
