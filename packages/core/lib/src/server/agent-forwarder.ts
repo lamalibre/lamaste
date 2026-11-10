@@ -125,6 +125,7 @@ import type {
 } from '../hooks/index.js';
 import type { RequestHook } from '../hook-set.js';
 import { AGENT_HALF_IDENTITY_PREFIX } from '../identity.js';
+import { AGENT_HALF_PEERS_PREFIX } from '../peers.js';
 import { AGENT_HALF_SETTINGS_PATH } from '../plugin-settings.js';
 import {
   AGENT_HALF_APP_PREFIX,
@@ -482,6 +483,9 @@ const AGENT_HALF_SETTINGS_SEGMENT = AGENT_HALF_SETTINGS_PATH.split('/')[2] ?? 's
 /** `identity`, the third: the identity feed. */
 const AGENT_HALF_IDENTITY_SEGMENT = AGENT_HALF_IDENTITY_PREFIX.split('/')[2] ?? 'identity';
 
+/** `peers`, the fourth: the peer channel's attach, readiness and event pulls. */
+const AGENT_HALF_PEERS_SEGMENT = AGENT_HALF_PEERS_PREFIX.split('/')[2] ?? 'peers';
+
 /**
  * Whether an agent-half path is under `/admin/hooks` — Lamaste's lifecycle
  * hook calls, which no forwarded caller may reach. The segment after
@@ -501,8 +505,9 @@ export function isAgentHalfHooksPath(targetPath: string): boolean {
 /**
  * Whether an agent-half path is one the forwarder must never reach:
  * `/admin/hooks*` (lifecycle hook calls), `/admin/settings*` (settings and
- * secrets, written only by Lamaste after its own validation) or
- * `/admin/identity*` (the identity feed, sent only by Lamaste) — the
+ * secrets, written only by Lamaste after its own validation),
+ * `/admin/identity*` (the identity feed, sent only by Lamaste) or
+ * `/admin/peers*` (the peer channel and event pulls, Lamaste's only) — the
  * segment after `/admin` reduced as `routerSegment` does (one that does not
  * decode is reserved), then compared by prefix, so `/admin/Settings`,
  * `/admin/%73ettings/x`, `/admin/settings.json`, `/admin/settings_v2` and
@@ -515,7 +520,8 @@ export function isAgentHalfReservedPath(targetPath: string): boolean {
     (segment !== undefined &&
       (segment.startsWith(AGENT_HALF_HOOKS_SEGMENT) ||
         segment.startsWith(AGENT_HALF_SETTINGS_SEGMENT) ||
-        segment.startsWith(AGENT_HALF_IDENTITY_SEGMENT)))
+        segment.startsWith(AGENT_HALF_IDENTITY_SEGMENT) ||
+        segment.startsWith(AGENT_HALF_PEERS_SEGMENT)))
   );
 }
 
@@ -523,6 +529,7 @@ export function isAgentHalfReservedPath(targetPath: string): boolean {
 export function callerLabel(caller: CallerIdentity): string {
   if (caller.type === 'agent') return `agent:${caller.label}`;
   if (caller.type === 'user') return `user:${caller.userId}`;
+  if (caller.type === 'peer') return `peer:${caller.peer}`;
   return caller.type;
 }
 
@@ -532,6 +539,14 @@ function hookCallerOf(caller: ForwardedCaller): HookCaller {
     return { type: 'user', userId: caller.userId, roles: [...caller.roles] };
   }
   if (caller.type === 'agent') return { type: 'agent', label: caller.label };
+  if (caller.type === 'peer') {
+    return {
+      type: 'peer',
+      peer: caller.peer,
+      scope: caller.scope,
+      ...(caller.user ? { userId: caller.user.userId } : {}),
+    };
+  }
   return { type: 'admin' };
 }
 

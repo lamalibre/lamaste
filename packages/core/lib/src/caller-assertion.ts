@@ -43,6 +43,11 @@
  * one kind can never act on the other's routes. A verifier built before
  * the `user` caller existed refuses it as `malformed`.
  *
+ * The same rule holds for the peer surface (`peers.ts`): a `peer` caller —
+ * another app plugin, its call brokered by the relay — is valid only under
+ * `/peer`, and every other caller never for a path there. A verifier built
+ * before the `peer` caller existed refuses it as `malformed`.
+ *
  * Every path, whoever the caller, is in origin form ({@link isOriginFormPath}):
  * exactly one leading `/`, never `//` or `/\`, so no scheme and no
  * authority — a path a router could read as another host's, or as a
@@ -62,7 +67,19 @@ import { openIdentityChanges } from './identity-seal.js';
 import type { IdentityChangesEnvelope, SealedIdentityChanges } from './identity-seal.js';
 import { decryptSettingsSecret } from './settings-secrets.js';
 import type { EncryptedSettingsSecret } from './settings-secrets.js';
-import { isAgentHalfAppPath, isUnderAgentHalfApp } from './user-surface.js';
+import {
+  PEER_MAX_HOPS,
+  isPeerMajor,
+  isPeerRoute,
+  isPeerScope,
+  parsePeerEndpointKey,
+} from './peers.js';
+import {
+  isAgentHalfAppPath,
+  isAgentHalfPeerPath,
+  isUnderAgentHalfApp,
+  isUnderAgentHalfPeer,
+} from './user-surface.js';
 
 /** The request header that carries the assertion (lower case, as Node reports headers). */
 export const CALLER_ASSERTION_HEADER = 'x-lamalibre-caller';
@@ -105,6 +122,35 @@ export interface UserCallerIdentity {
 }
 
 /**
+ * A person a `peer` call is made on behalf of, named only to a provider
+ * that declares `identity` and holds them in its audience: the stable
+ * `userId`, the username, and their roles in the **provider** (1–32).
+ */
+export interface PeerCallerUser {
+  readonly userId: string;
+  readonly username: string;
+  readonly roles: readonly string[];
+}
+
+/**
+ * Another app plugin calling the provider's peer surface (`/peer/*`)
+ * through the relay: the consumer's route (`peer`), the scope it called,
+ * the API major it speaks, the endpoint pattern the relay matched the
+ * request to (`peers.ts` `peerEndpointKey` — the provider runs no other
+ * handler), the hop count from the request that started the chain (1 for a
+ * direct call), and — on behalf of a person — the user.
+ */
+export interface PeerCallerIdentity {
+  readonly type: 'peer';
+  readonly peer: string;
+  readonly scope: string;
+  readonly major: number;
+  readonly endpoint: string;
+  readonly hops: number;
+  readonly user?: PeerCallerUser;
+}
+
+/**
  * Who made the request. `admin` and `agent` are callers the panel admitted
  * and forwards to `/admin/*`; `user` one it forwards to `/app/*` (the user
  * surface, {@link UserCallerIdentity}); `lamaste` is Lamaste itself — its
@@ -116,6 +162,7 @@ export type CallerIdentity =
   | { readonly type: 'admin' }
   | { readonly type: 'agent'; readonly label: string }
   | UserCallerIdentity
+  | PeerCallerIdentity
   | { readonly type: 'lamaste' };
 
 export interface CallerAssertionPayload {
@@ -203,7 +250,39 @@ export function parseCallerIdentity(raw: unknown): CallerIdentity | null {
     }
     return { type: 'user', userId, username, roles: [...roles] };
   }
+  if (caller['type'] === 'peer') return parsePeerCaller(caller);
   return null;
+}
+
+/**
+ * A `peer` caller rebuilt from the fields it has, or null: a route, a
+ * scope, a major, an endpoint key, a hop count from 1 to `PEER_MAX_HOPS`,
+ * and — when present — a user as the `user` caller's (a UUID v4, a
+ * Lamaste username, 1–32 distinct roles).
+ */
+function parsePeerCaller(caller: Record<string, unknown>): PeerCallerIdentity | null {
+  const { peer, scope, major, endpoint, hops, user } = caller;
+  if (
+    !isPeerRoute(peer) ||
+    !isPeerScope(scope) ||
+    !isPeerMajor(major) ||
+    typeof endpoint !== 'string' ||
+    !parsePeerEndpointKey(endpoint) ||
+    typeof hops !== 'number' ||
+    !Number.isInteger(hops) ||
+    hops < 1 ||
+    hops > PEER_MAX_HOPS
+  ) {
+    return null;
+  }
+  const base = { type: 'peer' as const, peer, scope, major, endpoint, hops };
+  if (user === undefined) return base;
+  if (!user || typeof user !== 'object') return null;
+  const { userId, username, roles } = user as Record<string, unknown>;
+  if (!isIdentityUuid(userId) || !isLamasteUsername(username) || !isIdentityRoleList(roles)) {
+    return null;
+  }
+  return { ...base, user: { userId, username, roles: [...roles] } };
 }
 
 /**
@@ -224,13 +303,15 @@ export function isOriginFormPath(path: unknown): path is string {
 /**
  * Whether `caller` may be named for a request to `path` on the agent half:
  * the path must be in origin form ({@link isOriginFormPath}), whoever the
- * caller; then a `user` only under `/app` (read literally), every other
- * caller never where a router could take the path for `/app`
- * (`user-surface.ts`).
+ * caller; then a `user` only under `/app` and a `peer` only under `/peer`
+ * (read literally), every other caller never where a router could take the
+ * path for either (`user-surface.ts`).
  */
 function callerMayReach(caller: CallerIdentity, path: string): boolean {
   if (!isOriginFormPath(path)) return false;
-  return caller.type === 'user' ? isAgentHalfAppPath(path) : !isUnderAgentHalfApp(path);
+  if (caller.type === 'user') return isAgentHalfAppPath(path);
+  if (caller.type === 'peer') return isAgentHalfPeerPath(path);
+  return !isUnderAgentHalfApp(path) && !isUnderAgentHalfPeer(path);
 }
 
 /**
@@ -257,15 +338,18 @@ export function signCallerAssertion(input: CallerAssertionInput, secret: string)
     throw new Error(
       parsedCaller.type === 'user'
         ? 'A user caller is only valid for a path under /app'
-        : 'Only a user caller is valid for a path under /app',
+        : parsedCaller.type === 'peer'
+          ? 'A peer caller is only valid for a path under /peer'
+          : 'Only a user caller is valid for a path under /app, and only a peer caller under /peer',
     );
   }
   const payload: CallerAssertionPayload = {
     v: CALLER_ASSERTION_VERSION,
     plugin: input.plugin,
-    // A user caller is signed in its canonical form; the others exactly as
-    // given, as before the user caller existed.
-    caller: parsedCaller.type === 'user' ? parsedCaller : input.caller,
+    // A user or peer caller is signed in its canonical form; the others
+    // exactly as given, as before those callers existed.
+    caller:
+      parsedCaller.type === 'user' || parsedCaller.type === 'peer' ? parsedCaller : input.caller,
     method: input.method.toUpperCase(),
     path: input.path,
     iat: input.iat ?? Date.now(),
@@ -498,7 +582,8 @@ function bodyMatches(payload: CallerAssertionPayload, opts: VerifyCallerAssertio
  * Verify the `X-Lamalibre-Caller` header of a request the agent half
  * received. Checks, in order: shape, signature against each accepted secret
  * (constant time), plugin, method and path, whether the caller may be named
- * for that path (an origin-form path, then a `user` only under `/app`,
+ * for that path (an origin-form path, then a `user` only under `/app` and
+ * a `peer` only under `/peer`,
  * every other caller never there — `wrong_request`), body (constant time),
  * age, and replay. The
  * nonce is recorded only when everything else passed, so a forged

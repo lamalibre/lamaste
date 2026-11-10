@@ -46,6 +46,7 @@ import {
   parseRoutePattern,
 } from './hooks/index.js';
 import { IdentityBlockSchema } from './identity.js';
+import { PeersBlockSchema, peersRouteIssues } from './peers.js';
 import { SettingsBlockSchema } from './plugin-settings.js';
 import { UserSurfaceBlockSchema } from './web-surface.js';
 
@@ -827,6 +828,12 @@ export const ManifestSchema = z
      * of the agent half's `/app/*`.
      */
     userSurface: UserSurfaceBlockSchema.optional(),
+    /**
+     * What the plugin provides to other app plugins and consumes from them
+     * (see `PeersBlockSchema`). Only with an agent half: calls reach the
+     * agent half's `/peer/*`, and the agent half makes them.
+     */
+    peers: PeersBlockSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
     if (manifest.agent !== undefined && manifest.hosting !== 'agent') {
@@ -861,6 +868,25 @@ export const ManifestSchema = z
         message:
           'identity needs an agent-hosted plugin with an agent half ("hosting": "agent" and an "agent" block) — its users reach the agent half',
       });
+    }
+
+    if (manifest.peers !== undefined) {
+      if (manifest.hosting !== 'agent' || !manifest.agent) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['peers'],
+          message:
+            'peers needs an agent-hosted plugin with an agent half ("hosting": "agent" and an "agent" block) — calls reach the agent half and are made by it',
+        });
+      } else {
+        for (const issue of peersRouteIssues(manifest.peers, derivePluginRoute(manifest.name))) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['peers', ...issue.path],
+            message: issue.message,
+          });
+        }
+      }
     }
 
     if (manifest.userSurface !== undefined && manifest.identity === undefined) {
