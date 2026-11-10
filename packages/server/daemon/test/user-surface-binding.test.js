@@ -152,11 +152,26 @@ async function stored(t) {
 /** The vhost of a tunnel as nginx would read it now. */
 const vhostOf = (t) => sudo.read(`lamalibre-lamaste-app-${t.fqdn}`);
 
-/** Whether a vhost serves `route`'s user surface. */
+/** The body of `location <matcher> {` in `vhost`, or null. */
+function blockOf(vhost, matcher) {
+  const at = vhost.indexOf(`location ${matcher} {`);
+  return at === -1 ? null : vhost.slice(at, vhost.indexOf('\n    }', at));
+}
+
+/** Whether a vhost serves `route`'s user surface: through Gatekeeper to the panel. */
 function serves(vhost, route) {
-  return (
-    vhost.includes(`location = /api/${route}/app {`) &&
-    vhost.includes(`location ^~ /api/${route}/app/ {`)
+  return [`= /api/${route}/app`, `^~ /api/${route}/app/`].every((m) =>
+    Boolean(blockOf(vhost, m)?.includes('auth_request /internal/lamaste/user-surface-authz;')),
+  );
+}
+
+/**
+ * Whether a vhost answers `route`'s user surface itself, 503: bound, not
+ * served — nothing of the request reaches the tunnel's backend (R2).
+ */
+function withholds(vhost, route) {
+  return [`= /api/${route}/app`, `^~ /api/${route}/app/`].every((m) =>
+    Boolean(blockOf(vhost, m)?.includes("return 503 '{")),
   );
 }
 
@@ -339,7 +354,7 @@ after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-test('a binding is accepted before the plugin declares identity, persisted, listed and audited — the vhost waits', async () => {
+test('a binding is accepted before the plugin declares identity, persisted, listed and audited — nginx answers it 503', async () => {
   const before = await vhostOf(T.piyasa);
   const res = await bind(T.piyasa, 'nx');
   assert.equal(res.statusCode, 200, res.body);
@@ -350,7 +365,10 @@ test('a binding is accepted before the plugin declares identity, persisted, list
     { route: 'nx', served: false, reason: 'no_identity' },
   ]);
   assert.deepEqual((await stored(T.piyasa)).userSurface, { routes: ['nx'] });
-  assert.equal(await vhostOf(T.piyasa), before, 'nothing served yet: the vhost is not rewritten');
+  const after = await vhostOf(T.piyasa);
+  assert.ok(!serves(after, 'nx'), 'nothing served yet');
+  assert.ok(withholds(after, 'nx'), 'bound: answered by nginx, never by the tunnel (R2)');
+  assert.notEqual(after, before);
 
   // Idempotent: a second bind changes and audits nothing.
   const again = await bind(T.piyasa, 'nx');
@@ -466,10 +484,12 @@ test('served only while the tunnel’s agent hosts the plugin: unhosting stops i
   });
   assert.deepEqual((await stored(T.piyasa)).userSurface, { routes: ['nx', 'ux'] }, 'still bound');
 
-  // Hosted on another agent than the one carrying the tunnel: still not served.
+  // Hosted on another agent than the one carrying the tunnel: still not
+  // served — not without a cross-agent confirmation (native-apps D1).
   await host('ux', 'vm2');
   assert.ok(!serves(await vhostOf(T.piyasa), 'ux'));
-  assert.equal((await statusOf(T.piyasa, 'ux')).reason, 'not_hosting_agent');
+  assert.ok(withholds(await vhostOf(T.piyasa), 'ux'), 'answered by nginx, never the tunnel');
+  assert.equal((await statusOf(T.piyasa, 'ux')).reason, 'cross_agent_unconfirmed');
   await unhost('ux');
 
   await host('ux', 'vm1');
@@ -550,7 +570,7 @@ test('reconfiguring, toggling and moving the tunnel keep the binding; moved away
   }
 
   // Moved to an agent that does not host the plugin: the binding stays,
-  // nothing of it is served — the vhost is rewritten without its locations.
+  // nothing of it is served — the vhost answers it 503 itself (R2).
   const moved = await call('PATCH', `/api/tunnels/${T.piyasa.id}`, { agentLabel: 'vm2' });
   assert.equal(moved.statusCode, 200, moved.body);
   assert.deepEqual(moved.json().tunnel.userSurface, { routes: ['nx', 'ux'] });
@@ -558,8 +578,9 @@ test('reconfiguring, toggling and moving the tunnel keep the binding; moved away
   vhost = await vhostOf(T.piyasa);
   assert.ok(!serves(vhost, 'ux'), 'another agent’s tunnel serves none of it');
   assert.match(vhost, /error_page 403 = \/internal\/lamaste\/authz;/, 'restricted as it was');
+  assert.ok(withholds(vhost, 'ux'), 'answered by nginx, never by the other agent');
   assert.doesNotThrow(() => validateVhost(vhost));
-  assert.equal((await statusOf(T.piyasa, 'ux')).reason, 'not_hosting_agent');
+  assert.equal((await statusOf(T.piyasa, 'ux')).reason, 'cross_agent_unconfirmed');
 
   // Back on the hosting agent: served again.
   const back = await call('PATCH', `/api/tunnels/${T.piyasa.id}`, { agentLabel: 'vm1' });
@@ -607,7 +628,8 @@ test('deleting a tunnel drops its binding — audited', async () => {
     ['wx', 'wx', 'tunnel-deleted', T.spare.id],
   );
   // The route is free again.
-  assert.equal((await bind(T.piyasa, 'wx')).statusCode, 200);
+  const rebound = await bind(T.piyasa, 'wx');
+  assert.equal(rebound.statusCode, 200, rebound.body);
 });
 
 test('uninstalling a plugin unbinds it everywhere and re-renders those hosts', async () => {

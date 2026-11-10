@@ -9,7 +9,7 @@
  * A tunnel may serve agent-hosted plugins' user surfaces (slice 6, admin
  * only; `lib/user-surface.js`):
  *
- *   PUT    /tunnels/:id/user-surface          { route } — bind
+ *   PUT    /tunnels/:id/user-surface          { route, crossAgent? } — bind
  *   DELETE /tunnels/:id/user-surface/:route   unbind
  *
  * Listings carry the binding (`userSurface: { routes }`) and how each bound
@@ -70,7 +70,14 @@ const UserSurfaceRouteSchema = z
   .max(64)
   .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'route must be a plugin route');
 
-const UserSurfaceBodySchema = z.object({ route: UserSurfaceRouteSchema }).strict();
+const UserSurfaceBodySchema = z
+  .object({
+    route: UserSurfaceRouteSchema,
+    // A plugin another agent hosts: the administrator's explicit
+    // confirmation (native-apps-design.md D1).
+    crossAgent: z.boolean().optional(),
+  })
+  .strict();
 
 const UserSurfaceParamsSchema = z.object({ id: z.string().uuid(), route: UserSurfaceRouteSchema });
 
@@ -704,11 +711,12 @@ export default async function tunnelRoutes(fastify, _opts) {
     { preHandler: fastify.requireRole(['admin']), config: USER_SURFACE_WRITE_RATE_LIMIT },
     async (request, reply) => {
       const { id } = IdParamSchema.parse(request.params);
-      const { route } = UserSurfaceBodySchema.parse(request.body);
+      const { route, crossAgent } = UserSurfaceBodySchema.parse(request.body);
       try {
         const { changed, tunnel } = await bindTunnelUserSurface(id, route, {
           actor: actorFromRequest(request),
           logger: request.log,
+          crossAgent: crossAgent === true,
         });
         return { ok: true, changed, tunnel };
       } catch (err) {

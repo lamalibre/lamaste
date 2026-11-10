@@ -351,6 +351,10 @@ const RULES = {
     // rather than the host's mime.types (entries checked below).
     types: { block: 'types', args: argc(0, 0) },
     internal: { args: argc(0, 0) },
+    // A native app's redirect path: its query holds an authorization code,
+    // so the location keeps no access log — `off` only, never a file (the
+    // root master opens a log file it names).
+    access_log: { args: oneOf('off') },
     // The type of a body the location writes itself (a user surface's JSON
     // refusal): a media type, never a file.
     default_type: { args: (a) => a.length === 1 && /^[a-z]+\/[a-z0-9.+-]{1,64}$/.test(a[0]) },

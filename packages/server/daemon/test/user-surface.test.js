@@ -1141,3 +1141,52 @@ test('admin forwarder: nothing is forwarded while the hosting is down — a dead
     await app.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Native apps' bearer tokens (native-apps-design.md D3)
+// ---------------------------------------------------------------------------
+
+test('user surface: a bearer request needs no Origin; its token never reaches the half; its grant is tracked', async () => {
+  const tracked = [];
+  const { app } = await userSurfaceApp({
+    verifyRelay: (request) =>
+      request.headers['x-test-bearer'] === 'dead'
+        ? { ok: false, reason: 'token_revoked', invalidToken: true }
+        : {
+            ok: true,
+            username: 'ayse',
+            route: PLUGIN,
+            ...(request.headers['x-test-bearer'] === 'live' ? { bearer: { grantId: 'g-1' } } : {}),
+          },
+    trackResponse: (response) => {
+      tracked.push(response.grantId);
+      return () => {};
+    },
+  });
+  try {
+    const url = '/api/fx/app/notes';
+    const post = (headers) =>
+      app.inject({
+        method: 'POST',
+        url,
+        payload: '{"note":"ok"}',
+        headers: { 'content-type': 'application/json', ...headers },
+      });
+    const native = await post({ 'x-test-bearer': 'live', authorization: 'Bearer eyJ.x.y' });
+    assert.equal(native.statusCode, 200, native.body);
+    assert.equal(native.json().authorization, null, 'the bearer token stays with the relay');
+    assert.deepEqual(native.json().caller, AYSE);
+    // The session path still needs the Origin.
+    const session = await post({});
+    assert.equal(session.statusCode, 403);
+    assert.deepEqual(session.json(), { error: 'cross-origin request refused' });
+    assert.deepEqual(tracked, ['g-1']);
+
+    const dead = await post({ 'x-test-bearer': 'dead' });
+    assert.equal(dead.statusCode, 401);
+    assert.deepEqual(dead.json(), { error: 'invalid_token' });
+    assert.equal(dead.headers['www-authenticate'], 'Bearer error="invalid_token"');
+  } finally {
+    await app.close();
+  }
+});

@@ -39,9 +39,12 @@ import {
   AGENT_HALF_MAX_BODY_MB,
   KeyedPromiseChainMutex,
   agentHalfMaxBodyMb,
+  isUserSurfaceRoute,
   isWebSurfaceSubdomain,
   siteUserSurfaceRoute,
+  siteUserSurfaceRoutes,
   tunnelUserSurfaceRoutes,
+  USER_SURFACE_MAX_ROUTES_PER_HOST,
   WebTreeError,
 } from '@lamalibre/lamaste';
 import {
@@ -218,6 +221,42 @@ export async function webSurfaceServing(route, tunnels) {
 }
 
 /**
+ * Whether a route a plugin-owned site serves is served now: its owner's
+ * route as {@link webSurfaceServing} decides; a route joined to the site
+ * (native-apps-design.md D1) while the owner's surface is served (the host
+ * is up) and the joined plugin is installed, declares identity, has its
+ * installed version approved and is hosted — by any agent: the site's
+ * content is the owner's approved tree, never an agent's.
+ *
+ * @param {{ routes: readonly string[] }} host the site as core `userSurfaceHosts` reads it
+ * @param {string} route
+ * @param {readonly object[]} tunnels
+ * @returns {Promise<{ served: boolean, reason?: string, plugin: object | null }>}
+ */
+export async function siteRouteServing(host, route, tunnels) {
+  const [owner] = host.routes;
+  if (owner === undefined) return { served: false, reason: 'not_installed', plugin: null };
+  const ownerServing = await webSurfaceServing(owner, tunnels);
+  if (route === owner) return ownerServing;
+  if (!ownerServing.served) return { served: false, reason: 'site_not_served', plugin: null };
+  return joinedRouteServing(route, tunnels);
+}
+
+/** Whether a route joined to a served site is served (see {@link siteRouteServing}). */
+async function joinedRouteServing(route, tunnels) {
+  const plugin = await findPluginByRoute(route);
+  if (!plugin) return { served: false, reason: 'not_installed', plugin: null };
+  if (!plugin.identity) return { served: false, reason: 'no_identity', plugin };
+  if (!(await installedVersionApproved(plugin).catch(() => false))) {
+    return { served: false, reason: 'not_approved', plugin };
+  }
+  if ((await hostingAgentOf(plugin, tunnels)) === null) {
+    return { served: false, reason: 'not_hosted', plugin };
+  }
+  return { served: true, plugin };
+}
+
+/**
  * The active domain a plugin's site is under — always one: it is created
  * on its plugin's domain, and a domain a site uses cannot be removed.
  */
@@ -233,6 +272,19 @@ async function siteDomain(site) {
  */
 async function renderOwnedSite(site, route, certDir, tunnels, domain) {
   const serving = await webSurfaceServing(route, tunnels);
+  // The routes joined to the site: each served, or answered 503 by nginx.
+  const joined = [];
+  for (const other of siteUserSurfaceRoutes(site).slice(1)) {
+    const state = serving.served
+      ? await joinedRouteServing(other, tunnels)
+      : { served: false, plugin: null };
+    joined.push(
+      state.served
+        ? { route: other, maxBodySizeMb: agentHalfMaxBodyMb(state.plugin) }
+        : { route: other, maxBodySizeMb: AGENT_HALF_MAX_BODY_MB.default, served: false },
+    );
+  }
+  const { nativeHostOf } = await import('./native-files.js');
   return renderWebSurfaceVhost(site, certDir, domain, {
     route,
     served: serving.served,
@@ -241,6 +293,8 @@ async function renderOwnedSite(site, route, certDir, tunnels, domain) {
       : AGENT_HALF_MAX_BODY_MB.default,
     treesDir: webTreesDir(route),
     clearSiteData: !serving.served && serving.reason === 'not_installed',
+    joined,
+    native: await nativeHostOf(site.fqdn),
   });
 }
 
@@ -361,6 +415,14 @@ export async function webSurfaceStatus(route) {
   const access = site
     ? await siteGrantsView(site, plugin && siteOwnedBy(site, plugin) ? plugin.name : null)
     : null;
+  // The routes joined to the site (D1), each with whether it is served.
+  const joined = [];
+  for (const other of site ? siteUserSurfaceRoutes(site).slice(1) : []) {
+    const state = serving.served
+      ? await joinedRouteServing(other, tunnels)
+      : { served: false, reason: 'site_not_served' };
+    joined.push({ route: other, served: state.served, reason: state.served ? null : state.reason });
+  }
   return {
     declared,
     site: site
@@ -372,6 +434,7 @@ export async function webSurfaceStatus(route) {
           ownerPackage: site.owner?.package ?? null,
           grants: access.grants,
           membersWithoutGrant: access.membersWithoutGrant,
+          joined,
         }
       : null,
     served: serving.served,
@@ -497,6 +560,13 @@ export function createWebSurface(route, input, { actor, logger }) {
       if (ownedSiteOf(route, sites)) {
         throw refuse(`Plugin "${plugin.name}" has a web surface already`, 409, 'exists');
       }
+      if (sites.some((s) => siteUserSurfaceRoutes(s).slice(1).includes(route))) {
+        throw refuse(
+          `Plugin "${plugin.name}" is joined to another site — take it off there first`,
+          409,
+          'served_elsewhere',
+        );
+      }
       const bound = tunnels.find((t) => tunnelUserSurfaceRoutes(t).includes(route));
       if (bound) {
         throw refuse(
@@ -575,6 +645,159 @@ export function deleteWebSurface(route, { actor, logger }) {
     );
     return { ok: true, ...left };
   });
+}
+
+/**
+ * Join plugin `joinRoute`'s user surface to the site plugin `route` owns
+ * (native-apps-design.md D1): the site then serves `/api/<joinRoute>/app/*`
+ * beside its owner's, whichever agent hosts the joined plugin, and its
+ * native client (if any) one token for both. The joined plugin must be an
+ * installed agent-hosted plugin on the site's domain, serve its user
+ * surface on no other host (a bound tunnel, its own site), and the site may
+ * serve at most {@link USER_SURFACE_MAX_ROUTES_PER_HOST} routes.
+ * Idempotent. Takes the tunnel lock, then the sites lock.
+ *
+ * Refused: 404 `not_found` (no site for `route`, no plugin at `joinRoute`),
+ * 400 `invalid_route`, `not_agent_hosted`, `not_plugin_domain`,
+ * `too_many_routes`; 409 `served_elsewhere`.
+ *
+ * @param {string} route the site's owner
+ * @param {string} joinRoute
+ * @param {{ actor: string, logger: import('pino').Logger }} opts
+ */
+export function joinWebSurfaceRoute(route, joinRoute, { actor, logger }) {
+  return withTunnelLock(() =>
+    withSitesLock(async () => {
+      if (!isUserSurfaceRoute(joinRoute) || joinRoute === route) {
+        throw refuse(`'${joinRoute}' cannot be joined to this site`, 400, 'invalid_route');
+      }
+      const [sites, tunnels] = await Promise.all([readSites(), readTunnels()]);
+      const site = ownedSiteOf(route, sites);
+      if (!site) throw refuse(`No web surface for the route '${route}'`, 404, 'not_found');
+      const routes = siteUserSurfaceRoutes(site);
+      if (routes.includes(joinRoute)) return webSurfaceStatus(route);
+      const plugin = await findPluginByRoute(joinRoute);
+      if (!plugin) {
+        throw refuse(`No installed plugin holds the route '${joinRoute}'`, 404, 'not_found');
+      }
+      const { isAgentHostedPlugin } = await import('@lamalibre/lamaste');
+      if (!isAgentHostedPlugin(plugin)) {
+        throw refuse(`Plugin "${plugin.name}" is not agent-hosted`, 400, 'not_agent_hosted');
+      }
+      if ((await pluginDomainName(plugin)) !== (await siteDomain(site))) {
+        throw refuse(
+          `Plugin "${plugin.name}" belongs to another domain than ${site.fqdn}`,
+          400,
+          'not_plugin_domain',
+        );
+      }
+      const elsewhere =
+        tunnels.some((t) => tunnelUserSurfaceRoutes(t).includes(joinRoute)) ||
+        sites.some((s) => s.id !== site.id && siteUserSurfaceRoutes(s).includes(joinRoute));
+      if (elsewhere) {
+        throw refuse(
+          `Plugin "${plugin.name}" serves its user surface on another host — a route is served on one host`,
+          409,
+          'served_elsewhere',
+        );
+      }
+      if (routes.length >= USER_SURFACE_MAX_ROUTES_PER_HOST) {
+        throw refuse(
+          `A host serves at most ${USER_SURFACE_MAX_ROUTES_PER_HOST} routes`,
+          400,
+          'too_many_routes',
+        );
+      }
+      const next = { ...site, userSurface: { routes: [...routes.slice(1), joinRoute] } };
+      await writeSites(sites.map((s) => (s.id === site.id ? next : s)));
+      try {
+        await reconcileOwnedSiteVhost(next, route, tunnels);
+      } catch (err) {
+        await writeSites(sites);
+        await reconcileOwnedSiteVhost(site, route, tunnels).catch(() => {});
+        throw err;
+      }
+      await recordAuditBestEffort(
+        {
+          actor,
+          action: 'plugin.web-surface.route.joined',
+          plugin: (await findPluginByRoute(route))?.name ?? null,
+          details: { siteId: site.id, fqdn: site.fqdn, route: joinRoute },
+        },
+        logger,
+      );
+      return webSurfaceStatus(route);
+    }),
+  );
+}
+
+/**
+ * Take plugin `joinRoute`'s user surface off the site plugin `route` owns.
+ * 404 `not_found` when the site has no such joined route. `reason` is the
+ * audit's (`left`, or `uninstalled` when the joined plugin went away).
+ *
+ * @param {string} route
+ * @param {string} joinRoute
+ * @param {{ actor: string, logger: import('pino').Logger, reason?: string }} opts
+ */
+export function leaveWebSurfaceRoute(route, joinRoute, { actor, logger, reason = 'left' }) {
+  return withSitesLock(async () => {
+    const [sites, tunnels] = await Promise.all([readSites(), readTunnels()]);
+    const site = ownedSiteOf(route, sites);
+    const joined = site ? siteUserSurfaceRoutes(site).slice(1) : [];
+    if (!site || !joined.includes(joinRoute)) {
+      throw refuse(`'${joinRoute}' is not joined to this site`, 404, 'not_found');
+    }
+    const rest = joined.filter((r) => r !== joinRoute);
+    const next = { ...site };
+    if (rest.length > 0) next.userSurface = { routes: rest };
+    else delete next.userSurface;
+    await writeSites(sites.map((s) => (s.id === site.id ? next : s)));
+    await reconcileOwnedSiteVhost(next, route, tunnels).catch((err) =>
+      logger?.warn?.(
+        { route, err: err instanceof Error ? err.message : String(err) },
+        'Could not bring the vhost of a web surface in line',
+      ),
+    );
+    await recordAuditBestEffort(
+      {
+        actor,
+        action: 'plugin.web-surface.route.left',
+        plugin: (await findPluginByRoute(route))?.name ?? null,
+        details: { siteId: site.id, fqdn: site.fqdn, route: joinRoute, reason },
+      },
+      logger,
+    );
+    return webSurfaceStatus(route);
+  });
+}
+
+/**
+ * Plugin `joinRoute` is gone (uninstalled): take its route off every site
+ * it was joined to. Best effort — logged, never thrown.
+ *
+ * @param {string} joinRoute
+ * @param {import('pino').Logger} [logger]
+ */
+export async function releaseJoinedRoute(joinRoute, logger) {
+  try {
+    const sites = await readSites();
+    for (const site of sites) {
+      const owner = siteUserSurfaceRoute(site);
+      if (owner && siteUserSurfaceRoutes(site).slice(1).includes(joinRoute)) {
+        await leaveWebSurfaceRoute(owner, joinRoute, {
+          actor: 'lamaste',
+          logger,
+          reason: 'uninstalled',
+        });
+      }
+    }
+  } catch (err) {
+    logger?.warn?.(
+      { route: joinRoute, err: err instanceof Error ? err.message : String(err) },
+      'Could not release a route joined to a web surface',
+    );
+  }
 }
 
 /**

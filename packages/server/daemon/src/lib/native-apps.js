@@ -28,6 +28,7 @@
 import path from 'node:path';
 
 import {
+  NATIVE_APPS_PROJECTION_FILE,
   NativeClientCreateSchema,
   NativeClientUpdateSchema,
   atomicWriteJSONIfChanged,
@@ -36,6 +37,7 @@ import {
   nativeClientId,
   nativeClientLifetimesValid,
   nativeRedirectUris,
+  siteUserSurfaceRoute,
   userSurfaceHosts,
 } from '@lamalibre/lamaste';
 
@@ -48,8 +50,8 @@ import { readSites, readTunnels } from './state.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
-/** Gatekeeper's projection of the native clients (0600). */
-export const NATIVE_APPS_PROJECTION_FILE = 'native-apps.json';
+/** Gatekeeper's projection of the native clients (0600; core names and reads it). */
+export { NATIVE_APPS_PROJECTION_FILE };
 
 /** Whether an error is SQLite's UNIQUE constraint. */
 const isUniqueViolation = (err) => /UNIQUE constraint failed/.test(err?.message ?? '');
@@ -235,22 +237,76 @@ export async function writeNativeAppsProjection(served) {
   );
 }
 
-/** Render Authelia and Gatekeeper's projection again (best effort; warnings). */
-async function syncProviders(logger) {
+/**
+ * Render Authelia and Gatekeeper's projection again, then what the hosts
+ * serve: the app association files and redirect pages (`native-files.js`)
+ * and the vhosts of `hosts` — the hosts whose client changed (best effort;
+ * warnings).
+ *
+ * @param {import('pino').Logger | undefined} logger
+ * @param {ReadonlyArray<{ kind: 'site' | 'tunnel', id: string }>} [hosts]
+ */
+async function syncProviders(logger, hosts = []) {
+  const warnings = [];
   try {
     const { syncOidcClients } = await import('./plugin-oidc.js');
     await syncOidcClients(logger);
-    return [];
   } catch (err) {
     logger?.warn({ err: err.message }, 'Native clients were not rendered into Authelia');
-    return [
-      {
-        step: 'authelia',
-        message: `Authelia's OIDC clients were not rendered (${err.message}); the panel renders them again within a minute`,
-      },
-    ];
+    warnings.push({
+      step: 'authelia',
+      message: `Authelia's OIDC clients were not rendered (${err.message}); the panel renders them again within a minute`,
+    });
   }
+  try {
+    const { syncNativeAppFiles } = await import('./native-files.js');
+    await syncNativeAppFiles({ logger });
+  } catch (err) {
+    logger?.warn({ err: err.message }, 'Native app files were not written');
+    warnings.push({
+      step: 'files',
+      message: `The app association files were not written (${err.message}); the panel writes them again within a minute`,
+    });
+  }
+  for (const host of hosts) {
+    try {
+      await refreshHostVhost(host, logger);
+    } catch (err) {
+      logger?.warn(
+        { err: err.message, host },
+        'The vhost of a native client’s host was not rewritten',
+      );
+      warnings.push({
+        step: 'vhost',
+        message: `The host's vhost was not rewritten (${err.message}); the panel's start rewrites it`,
+      });
+    }
+  }
+  return warnings;
 }
+
+/**
+ * Bring the vhost of one application host in line with its native client:
+ * a site through its web surface's refresh, a tunnel through the
+ * user-surface reconcile.
+ *
+ * @param {{ kind: 'site' | 'tunnel', id: string }} host
+ * @param {import('pino').Logger | undefined} logger
+ */
+async function refreshHostVhost(host, logger) {
+  if (host.kind === 'site') {
+    const site = (await readSites()).find((s) => s.id === host.id);
+    const route = site ? siteUserSurfaceRoute(site) : null;
+    if (!route) return;
+    const { refreshWebSurface } = await import('./web-surface.js');
+    await refreshWebSurface(route, logger);
+    return;
+  }
+  const { reconcileUserSurfaceVhosts } = await import('./vhost-reconcile.js');
+  await reconcileUserSurfaceVhosts(logger ?? SILENT, null, { ids: [host.id] });
+}
+
+const SILENT = Object.freeze({ info() {}, warn() {}, error() {} });
 
 const withWarnings = (warnings) => (warnings.length > 0 ? { warnings } : {});
 
@@ -326,7 +382,7 @@ export async function createNativeClient(input, { actor, logger }) {
     },
     logger,
   );
-  const warnings = await syncProviders(logger);
+  const warnings = await syncProviders(logger, [{ kind: spec.hostKind, id: spec.hostId }]);
   return { client: await getNativeClient(clientId), ...withWarnings(warnings) };
 }
 
@@ -395,7 +451,7 @@ export async function updateNativeClient(clientId, input, { actor, logger }) {
     },
     logger,
   );
-  const warnings = await syncProviders(logger);
+  const warnings = await syncProviders(logger, [{ kind: current.hostKind, id: current.hostId }]);
   return { client: await getNativeClient(clientId), ...withWarnings(warnings) };
 }
 
@@ -407,7 +463,9 @@ export async function updateNativeClient(clientId, input, { actor, logger }) {
  * @param {{ actor: string, logger?: import('pino').Logger, reason?: 'client_deleted' | 'host_deleted' }} opts
  */
 export async function deleteNativeClient(clientId, { actor, logger, reason = 'client_deleted' }) {
-  await clientRowOr404(clientId);
+  const current = await clientRowOr404(clientId);
+  // The host's vhost loses the client's locations — unless the host is gone.
+  const host = reason === 'host_deleted' ? null : { kind: current.hostKind, id: current.hostId };
   const revoked = await revokeNativeGrants({ clientId }, reason, { actor, logger });
   const db = await getStateDb();
   db.prepare('DELETE FROM native_clients WHERE client_id = ?').run(clientId);
@@ -420,7 +478,7 @@ export async function deleteNativeClient(clientId, { actor, logger, reason = 'cl
     },
     logger,
   );
-  const warnings = await syncProviders(logger);
+  const warnings = await syncProviders(logger, host ? [host] : []);
   return { ok: true, ...withWarnings(warnings) };
 }
 
@@ -475,6 +533,9 @@ export async function moveNativeClientHost(from, to, { actor, logger }) {
     },
     logger,
   );
+  // Called inside the move's tunnel and sites locks: no vhost here — the
+  // site's was rendered with the client already (it resolves by hostname,
+  // which the tunnel and the site share).
   await syncProviders(logger);
   return { moved: true, clientId: row.client_id };
 }

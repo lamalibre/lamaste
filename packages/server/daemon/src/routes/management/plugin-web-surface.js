@@ -8,6 +8,8 @@
  *   POST   /plugins/:name/web-surface        { subdomain?, accessMode? } — create the site
  *   POST   /plugins/:name/web-surface/move   { tunnelId } — take over the bound tunnel's host
  *   DELETE /plugins/:name/web-surface        delete the site and its trees
+ *   PUT    /plugins/:name/web-surface/routes/:route   join plugin :route's user surface to the site
+ *   DELETE /plugins/:name/web-surface/routes/:route   take it off again
  */
 
 import { z } from 'zod';
@@ -17,6 +19,8 @@ import { findPlugin } from '../../lib/plugins.js';
 import {
   createWebSurface,
   deleteWebSurface,
+  joinWebSurfaceRoute,
+  leaveWebSurfaceRoute,
   moveWebSurfaceFromTunnel,
   webSurfaceStatus,
 } from '../../lib/web-surface.js';
@@ -41,6 +45,15 @@ const CreateBodySchema = z
     accessMode: z.enum(WEB_SURFACE_ACCESS_MODES).optional(),
   })
   .strict();
+
+const JoinParamSchema = z.object({
+  name: z.string().min(1).max(100),
+  route: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'route is a plugin route'),
+});
 
 const MoveBodySchema = z.object({ tunnelId: z.string().min(1).max(64) }).strict();
 
@@ -130,6 +143,38 @@ export default async function pluginWebSurfaceRoutes(fastify, _opts) {
       }
     },
   );
+
+  for (const [method, join] of [
+    ['put', true],
+    ['delete', false],
+  ]) {
+    fastify[method](
+      '/plugins/:name/web-surface/routes/:route',
+      {
+        preHandler: fastify.requireRole(['admin']),
+        config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+      },
+      async (request, reply) => {
+        const owner = await routeOf(request);
+        const { route } = JoinParamSchema.parse(request.params);
+        const opts = { actor: actorFromRequest(request), logger: request.log };
+        try {
+          return {
+            webSurface: join
+              ? await joinWebSurfaceRoute(owner, route, opts)
+              : await leaveWebSurfaceRoute(owner, route, opts),
+          };
+        } catch (err) {
+          return sendFailure(
+            request,
+            reply,
+            err,
+            join ? 'Failed to join the route to the web surface' : 'Failed to take the route off',
+          );
+        }
+      },
+    );
+  }
 
   fastify.delete(
     '/plugins/:name/web-surface',

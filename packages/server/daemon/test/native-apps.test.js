@@ -18,7 +18,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 
+import http from 'node:http';
+import { readdir } from 'node:fs/promises';
+
 import { normalizeIdentityBlock } from '@lamalibre/lamaste';
+import { createCallerAssertionVerifier, createSignInEventsHandler } from '@lamalibre/lamaste/agent';
 
 import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
@@ -241,6 +245,8 @@ before(async () => {
   process.env.LAMALIBRE_LAMASTE_DATA_DIR = stateDir;
   process.env.LAMALIBRE_LAMASTE_PKI_DIR = path.join(stateDir, 'pki');
   process.env.LAMALIBRE_LAMASTE_CONFIG = path.join(stateDir, 'panel.json');
+  // The hosts' association files and redirect pages (native-files.js).
+  process.env.LAMALIBRE_LAMASTE_NATIVE_FILES_ROOT = path.join(dir, 'native');
   await writeFile(
     process.env.LAMALIBRE_LAMASTE_CONFIG,
     JSON.stringify({
@@ -267,6 +273,9 @@ before(async () => {
     ...(await import('../src/lib/native-grants.js')),
     ...(await import('../src/lib/native-broker.js')),
     ...(await import('../src/lib/notifications.js')),
+    ...(await import('../src/lib/native-files.js')),
+    ...(await import('../src/lib/sign-in-events.js')),
+    ...(await import('../src/lib/plugin-hooks.js')),
   };
   await lib.loadConfig();
   lib.setAutheliaForTests({
@@ -944,4 +953,192 @@ test('deleting a client ends and forgets its grants', async () => {
   assert.equal(await lib.findRefreshToken(sha(issued.refresh_token)), null);
   assert.deepEqual((await call('GET', '/api/native-apps')).json().clients, []);
   assert.deepEqual(provider.options.nativeClients, []);
+});
+
+// ---------------------------------------------------------------------------
+// The host's files (D6) and sign-in events (D7)
+// ---------------------------------------------------------------------------
+
+/** A native client on the site again (the tests above deleted theirs). */
+async function siteClient(extra = {}) {
+  const res = await call('POST', '/api/native-apps', {
+    slug: 'mobile',
+    hostKind: 'site',
+    hostId: SITE.id,
+    name: 'Mobile',
+    redirectPaths: ['/oauth/callback', '/auth/done'],
+    ...extra,
+  });
+  assert.equal(res.statusCode, 201, res.body);
+  return res.json().client;
+}
+
+test('a served client’s host gets its association files and redirect page — only the redirect paths claimed', async () => {
+  await siteClient({
+    associations: {
+      ios: { teamId: 'ABCDE12345', bundleIds: ['com.example.app'] },
+      android: [
+        {
+          packageName: 'com.example.app',
+          sha256CertFingerprints: [Array.from({ length: 32 }, () => 'AB').join(':')],
+        },
+      ],
+    },
+  });
+  const dirOf = path.join(dir, 'native', SITE.fqdn);
+  assert.deepEqual((await readdir(dirOf)).sort(), [
+    'apple-app-site-association',
+    'assetlinks.json',
+    'redirect.html',
+  ]);
+  const aasa = JSON.parse(await readFile(path.join(dirOf, 'apple-app-site-association'), 'utf-8'));
+  assert.deepEqual(aasa.applinks.details, [
+    {
+      appIDs: ['ABCDE12345.com.example.app'],
+      components: [{ '/': '/oauth/callback' }, { '/': '/auth/done' }],
+    },
+  ]);
+  assert.deepEqual(aasa.webcredentials.apps, ['ABCDE12345.com.example.app']);
+  const links = JSON.parse(await readFile(path.join(dirOf, 'assetlinks.json'), 'utf-8'));
+  assert.equal(links[0].target.package_name, 'com.example.app');
+  const page = await readFile(path.join(dirOf, 'redirect.html'), 'utf-8');
+  assert.doesNotMatch(page, /<script/i);
+
+  assert.deepEqual(await lib.nativeHostOf(SITE.fqdn), {
+    dir: dirOf,
+    redirectPaths: ['/oauth/callback', '/auth/done'],
+    appleAppSiteAssociation: true,
+    assetLinks: true,
+  });
+  assert.equal(await lib.nativeHostOf(TUNNEL.fqdn), null);
+
+  // iOS only now: the Android file goes; nothing rewritten that did not change.
+  await call('PATCH', `/api/native-apps/${CLIENT}`, {
+    associations: { ios: { teamId: 'ABCDE12345', bundleIds: ['com.example.app'] } },
+  });
+  assert.deepEqual((await readdir(dirOf)).sort(), ['apple-app-site-association', 'redirect.html']);
+  assert.deepEqual(await lib.syncNativeAppFiles({ logger: quiet }), [], 'nothing changed');
+
+  // Disabled: the host serves none of it.
+  await call('PATCH', `/api/native-apps/${CLIENT}`, { enabled: false });
+  assert.deepEqual(await readdir(path.join(dir, 'native')), []);
+  assert.equal(await lib.nativeHostOf(SITE.fqdn), null);
+  assert.equal((await call('DELETE', `/api/native-apps/${CLIENT}`)).statusCode, 200);
+});
+
+test('a sign-in reaches the plugins of the host that declare signInEvents — sealed, acknowledged, at least once', async () => {
+  // mx declares sign-in events; its version approved.
+  const identity = normalizeIdentityBlock({
+    roles: [{ id: 'viewer', label: 'Viewer' }],
+    signInEvents: true,
+  });
+  const plugins = await lib.readPlugins();
+  await lib.writePlugins({
+    plugins: plugins.plugins.map((p) => (p.name === 'mx' ? { ...p, identity } : p)),
+  });
+  const mx = await lib.findPlugin('mx');
+  await lib.recordApprovedSet(mx, lib.installedApproval(mx).digest, mx.version, 'admin');
+  assert.equal(await lib.installedVersionApproved(mx), true);
+
+  // The agent half: core's verifier and sign-in handler on loopback.
+  const secret = crypto.randomBytes(32).toString('hex');
+  const received = [];
+  let failing = false;
+  const configPath = path.join(dir, 'mx-half.json');
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', async () => {
+      const out = await handler.handle({
+        method: req.method,
+        url: req.url,
+        headers: req.headers,
+        body: Buffer.concat(chunks),
+      });
+      res.writeHead(out.status, out.headers);
+      res.end(out.bodyText);
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      plugin: 'mx',
+      port,
+      secret,
+      issuedAt: '2026-11-10T00:00:00.000Z',
+      fetchedAt: '2026-11-10T00:00:00.000Z',
+      acknowledged: true,
+    }),
+    { mode: 0o600 },
+  );
+  const handler = createSignInEventsHandler({
+    verifier: createCallerAssertionVerifier({ configPath, plugin: 'mx' }),
+    onEvents: (events) => {
+      if (failing) throw new Error('kept nowhere');
+      received.push(...events);
+    },
+  });
+  let clock = Date.now();
+  lib.setSignInEventsDepsForTests({
+    now: () => clock,
+    hostingOf: async () => ({
+      plugin: 'mx',
+      port,
+      current: { secret, issuedAt: '2026-11-10T00:00:00.000Z' },
+      acknowledgedIssuedAt: '2026-11-10T00:00:00.000Z',
+    }),
+  });
+  try {
+    await siteClient();
+    const ayse = await idOf('ayse');
+    const zeynep = await idOf('zeynep');
+    // ayse is in mx's audience; zeynep holds no role there.
+    assert.deepEqual(await lib.queueSignInEvent({ clientId: CLIENT, userId: ayse, at: clock }), [
+      'mx',
+    ]);
+    assert.deepEqual(
+      await lib.queueSignInEvent({ clientId: CLIENT, userId: zeynep, at: clock }),
+      [],
+    );
+    // A client of no served host tells no one.
+    assert.deepEqual(
+      await lib.queueSignInEvent({ clientId: 'lamaste-native-none', userId: ayse, at: clock }),
+      [],
+    );
+    // Queuing starts the delivery; this one waits behind it (one per plugin).
+    const after = await lib.deliverSignInEvents('mx', { logger: quiet, force: true });
+    assert.equal(after.status, 'idle', JSON.stringify(after));
+    assert.equal(received.length, 1);
+    assert.equal(received[0].userId, ayse);
+    assert.deepEqual(received[0].client, { kind: 'native', clientId: CLIENT });
+    assert.equal(received[0].at, new Date(clock).toISOString());
+    const db = await lib.getStateDb();
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM native_sign_in_events').get().n, 0);
+
+    // The half fails: the event stays queued, and the next try waits.
+    failing = true;
+    await lib.queueSignInEvent({ clientId: CLIENT, userId: ayse, at: clock });
+    assert.equal(
+      (await lib.deliverSignInEvents('mx', { logger: quiet, force: true })).status,
+      'failed',
+    );
+    assert.equal((await lib.deliverSignInEvents('mx', { logger: quiet })).status, 'waiting');
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM native_sign_in_events').get().n, 1);
+
+    // Seven days later it is dropped undelivered, counted in the audit.
+    clock += 8 * 86_400_000;
+    assert.equal(
+      (await lib.deliverSignInEvents('mx', { logger: quiet, force: true })).status,
+      'idle',
+    );
+    const [dropped] = await audits('plugin.sign-in-events.dropped');
+    assert.equal(dropped.details.count, 1);
+    assert.equal(received.length, 1);
+  } finally {
+    lib.setSignInEventsDepsForTests(null);
+    server.close();
+    await call('DELETE', `/api/native-apps/${CLIENT}`);
+  }
 });

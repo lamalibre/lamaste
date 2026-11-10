@@ -90,6 +90,10 @@ let stateDir;
 let usersFile;
 let users;
 let lib;
+/** The native clients Gatekeeper admits a bearer token of (its projection); null: none. */
+let nativeClients = null;
+/** The relay issuer's signing key, as Authelia would hold it. */
+const issuerKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 let gatekeeper;
 let autheliaStorage;
 let gk;
@@ -515,6 +519,21 @@ before(async () => {
   gk.decorate('getCacheVersion', () => 1);
   gk.decorate('getSettings', () => ({}));
   gk.decorate('getRelaySigner', () => gkSigner);
+  // A native app's bearer tokens (native-apps-design.md D3): the served
+  // clients as the panel's projection names them, the issuer's keys from a
+  // stand-in for Authelia's /jwks.json.
+  gk.decorate('getNativeClients', () => nativeClients);
+  const { createIssuerKeyCache } = await import(
+    new URL('lib/issuer-keys.js', GATEKEEPER_DIST).href
+  );
+  const issuerJwk = {
+    ...issuerKey.publicKey.export({ format: 'jwk' }),
+    kid: 'lamaste-oidc',
+    use: 'sig',
+    alg: 'RS256',
+  };
+  const issuerKeys = createIssuerKeyCache({ fetch: async () => ({ keys: [issuerJwk] }) });
+  gk.decorate('getIssuerKeys', () => issuerKeys);
   await gk.register(authzRoutes);
   await gk.ready();
 
@@ -820,7 +839,8 @@ test('a host whose tunnel another agent carries serves nothing of the plugin —
     );
     assert.deepEqual(
       tunnel.userSurfaceStatus.find((st) => st.route === 'ux'),
-      { route: 'ux', served: false, reason: 'not_hosting_agent' },
+      // Another agent hosts it, and no administrator bound it across agents.
+      { route: 'ux', served: false, reason: 'cross_agent_unconfirmed' },
     );
   } finally {
     await patchTunnel(piyasa.id, { agentLabel: 'vm1' });
@@ -1027,5 +1047,130 @@ test('an open response is ended once its user is disabled, loses the entitlement
   } finally {
     users.ayse.disabled = false;
     await saveUsers();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A native app's bearer token (native-apps-design.md D3), end to end
+// ---------------------------------------------------------------------------
+
+const NATIVE_CLIENT = 'lamaste-native-piyasa';
+
+/** An access token as Authelia issues one to the host's native client. */
+function nativeToken(claims = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const signed = `${enc({ alg: 'RS256', kid: 'lamaste-oidc', typ: 'at+jwt' })}.${enc({
+    iss: 'https://auth.relay.test',
+    aud: [ORIGIN],
+    client_id: NATIVE_CLIENT,
+    exp: now + 900,
+    iat: now,
+    nbf: now,
+    jti: crypto.randomUUID(),
+    preferred_username: 'ayse',
+    scp: ['openid', 'offline_access', 'profile'],
+    sub: crypto.randomUUID(),
+    ...claims,
+  })}`;
+  return `${signed}.${crypto.sign('sha256', Buffer.from(signed), issuerKey.privateKey).toString('base64url')}`;
+}
+
+/** What nginx does for a bearer request: Gatekeeper first (no cookie), then the panel. */
+async function viaNginxBearer(method, target, token, { body } = {}) {
+  const authz = await gk.inject({
+    method: 'GET',
+    url: `/authz/user-surface/${HOST}`,
+    headers: {
+      host: HOST,
+      'x-original-url': `https://${HOST}${target}`,
+      'x-original-method': method,
+      authorization: `Bearer ${token}`,
+    },
+  });
+  if (authz.statusCode !== 200) return authz;
+  return panel.inject({
+    method,
+    url: target,
+    headers: {
+      host: HOST,
+      'x-forwarded-for': CLIENT,
+      'x-forwarded-proto': 'https',
+      // nginx clears it for the panel; the panel would strip it anyway
+      authorization: `Bearer ${token}`,
+      [RELAY_ASSERTION_HEADER]: authz.headers[RELAY_ASSERTION_HEADER],
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    ...(body === undefined ? {} : { payload: body }),
+  });
+}
+
+test('a native app’s bearer token: the half gets the same user caller, never the token; no Origin needed; a revoked grant ends at once', async () => {
+  const db = await lib.getStateDb();
+  const ayse = await lib.findDirectoryUser('ayse');
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO native_clients (client_id, host_kind, host_id, name, redirect_paths_json,
+       access_token_minutes, idle_days, absolute_days, associations_json, enabled, created_at, updated_at)
+     VALUES (?, 'tunnel', ?, 'Piyasa', '["/oauth/callback"]', 15, 30, 90, '{}', 1, ?, ?)`,
+  ).run(NATIVE_CLIENT, piyasa.id, now, now);
+  const grantId = crypto.randomUUID();
+  db.prepare(
+    `INSERT INTO native_grants (grant_id, client_id, user_id, created_at, last_used_at, absolute_expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(grantId, NATIVE_CLIENT, ayse.userId, now, now, now + 90 * 86_400_000);
+  const token = nativeToken();
+  const sha = crypto.createHash('sha256').update(token).digest('hex');
+  db.prepare(
+    'INSERT INTO native_access_tokens (token_sha256, grant_id, expires_at) VALUES (?, ?, ?)',
+  ).run(sha, grantId, now + 900_000);
+  nativeClients = [{ clientId: NATIVE_CLIENT, fqdn: HOST, domain: 'relay.test' }];
+  try {
+    const res = await viaNginxBearer('GET', '/api/ux/app/me', token);
+    assert.equal(res.statusCode, 200, res.body);
+    const seen = res.json();
+    assert.equal(seen.caller.type, 'user');
+    assert.equal(seen.caller.userId, ayse.userId);
+    assert.deepEqual(seen.caller.roles, ['viewer']);
+    assert.equal(seen.authorization, null, 'the bearer token stays with the relay');
+    assert.equal(seen.cookie, null);
+
+    // A change without an Origin header: a native HTTP stack sends none.
+    const post = await viaNginxBearer('POST', '/api/ux/app/notes', token, { body: '{"n":1}' });
+    assert.equal(post.statusCode, 200, post.body);
+    assert.equal(post.json().body, '{"n":1}');
+
+    // A token the broker never saw issued: verified by Gatekeeper, refused by the panel.
+    const unknown = await viaNginxBearer('GET', '/api/ux/app/me', nativeToken());
+    assert.equal(unknown.statusCode, 401);
+    assert.deepEqual(unknown.json(), { error: 'invalid_token' });
+    assert.equal(unknown.headers['www-authenticate'], 'Bearer error="invalid_token"');
+
+    // An open response of the grant is ended by the sweep once it is revoked.
+    const ended = [];
+    const untrack = lib.trackUserSurfaceResponse({
+      route: 'ux',
+      plugin: 'ux',
+      caller: { type: 'user', userId: ayse.userId, username: 'ayse', roles: ['viewer'] },
+      startedAt: Date.now(),
+      grantId,
+      end: (reason) => ended.push(reason),
+    });
+    assert.equal(await lib.sweepOpenUserSurfaceResponses(logger), 0);
+    const { revokeNativeGrants } = await import('../src/lib/native-grants.js');
+    await revokeNativeGrants({ grantId }, 'revoked_by_admin', { actor: 'admin', logger });
+    assert.equal(await lib.sweepOpenUserSurfaceResponses(logger), 1);
+    assert.deepEqual(ended, ['grant_revoked']);
+    untrack();
+
+    // Revoked: its access token is refused at once, not after 15 minutes.
+    const revoked = await viaNginxBearer('GET', '/api/ux/app/me', token);
+    assert.equal(revoked.statusCode, 401);
+    assert.deepEqual(revoked.json(), { error: 'invalid_token' });
+  } finally {
+    nativeClients = null;
+    db.prepare('DELETE FROM native_access_tokens WHERE grant_id = ?').run(grantId);
+    db.prepare('DELETE FROM native_grants WHERE grant_id = ?').run(grantId);
+    db.prepare('DELETE FROM native_clients WHERE client_id = ?').run(NATIVE_CLIENT);
   }
 });

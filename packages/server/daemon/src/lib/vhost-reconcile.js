@@ -92,10 +92,11 @@ async function servedUserSurface(routes, tunnel) {
  * @param {object} tunnel
  * @param {string} certDir
  * @param {ReadonlyArray<{ route: string, maxBodySizeMb: number }>} [userSurface] - the user
- *   surfaces its vhost serves (`servedUserSurfaceRoutes` of its bound routes)
+ *   surfaces bound to its vhost (`servedUserSurfaceRoutes` of its bound routes)
+ * @param {object | null} [native] - the host's served native client (`native-files.js` `nativeHostOf`)
  * @returns {{ name: string, fqdn: string, config: string } | null}
  */
-export function expectedTunnelVhost(tunnel, certDir, userSurface = []) {
+export function expectedTunnelVhost(tunnel, certDir, userSurface = [], native = null) {
   if (!managedTunnelVhostName(tunnel)) return null;
   const { fqdn, domain } = tunnelHost(tunnel);
   if (tunnel.type === 'panel') {
@@ -112,6 +113,7 @@ export function expectedTunnelVhost(tunnel, certDir, userSurface = []) {
     ...(tunnel.type === 'plugin' && tunnel.pluginRoute ? { pathPrefix: tunnel.pluginRoute } : {}),
     ...(tunnel.maxBodySizeMb !== undefined ? { maxBodySizeMb: tunnel.maxBodySizeMb } : {}),
     ...(userSurface.length > 0 ? { userSurface } : {}),
+    ...(native ? { native } : {}),
   });
 }
 
@@ -215,12 +217,19 @@ function logResult(log, what, result) {
   }
 }
 
+/** The served native client of host `fqdn`, for its vhost (native-apps-design.md D6). */
+async function nativeHostOf(fqdn) {
+  const { nativeHostOf: of } = await import('./native-files.js');
+  return of(fqdn);
+}
+
 const defaultTunnelDeps = {
   readTunnels,
   readInstalledVhost,
   installVhost,
   isSiteEnabled,
   servedUserSurface,
+  nativeHostOf,
 };
 
 /**
@@ -233,8 +242,12 @@ async function reconcileTunnel(tunnel, result, deps) {
   const label = tunnel.fqdn ?? tunnel.subdomain;
   const bound = tunnelUserSurfaceRoutes(tunnel);
   let served;
+  let native = null;
   try {
     served = bound.length > 0 ? await deps.servedUserSurface(bound, tunnel) : [];
+    if (deps.nativeHostOf && typeof tunnel.fqdn === 'string' && tunnel.type !== 'panel') {
+      native = await deps.nativeHostOf(tunnel.fqdn);
+    }
   } catch (err) {
     result.failed.push({ vhost: label, error: err instanceof Error ? err.message : String(err) });
     return;
@@ -243,7 +256,7 @@ async function reconcileTunnel(tunnel, result, deps) {
     {
       name,
       label,
-      render: (certDir) => expectedTunnelVhost(tunnel, certDir, served),
+      render: (certDir) => expectedTunnelVhost(tunnel, certDir, served, native),
       // Linked only when it is now and the tunnel is enabled: a rewrite of
       // the text never publishes a vhost someone unlinked, and unlinks a
       // disabled tunnel's.

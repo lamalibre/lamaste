@@ -714,7 +714,8 @@ export function scheduleNativeStandingCheck({ checkHostGrant = false, logger } =
 
 /**
  * One tick: native clients whose host is gone removed, every live grant
- * checked (restricted hosts' grants too), old rows pruned.
+ * checked (restricted hosts' grants too), old rows pruned, the hosts'
+ * association files and redirect pages written where they changed.
  *
  * @param {import('pino').Logger} [logger]
  */
@@ -726,6 +727,14 @@ export async function nativeTick(logger) {
     await pruneNativeGrants();
   } catch (err) {
     logger?.warn({ err: err.message }, 'Native grant tick failed');
+  }
+  // The hosts' files follow the clients and their domains' brand and
+  // language (a change of either is seen within a minute).
+  try {
+    const { syncNativeAppFiles } = await import('./native-files.js');
+    await syncNativeAppFiles({ logger });
+  } catch (err) {
+    logger?.warn({ err: err.message }, 'Native app files were not written');
   }
 }
 

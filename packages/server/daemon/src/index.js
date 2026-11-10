@@ -23,6 +23,7 @@ import agentForwarderRoutes from './routes/agent-forwarder.js';
 import userSurfaceContext from './routes/user-surface.js';
 import nativeOauthContext from './routes/native-oauth.js';
 import { startNativeServices } from './lib/native-grants.js';
+import { startSignInEventServices } from './lib/sign-in-events.js';
 import delegatedInvitationsContext from './routes/delegated-invitations.js';
 import inviteRoutes from './routes/invite.js';
 import enrollmentRoutes from './routes/enrollment.js';
@@ -339,6 +340,9 @@ async function start() {
   // person's standing, clients of deleted hosts removed, old rows pruned —
   // now, then every minute ---
   startNativeServices(server.log);
+  // Native sign-ins queued for the plugins that declare they want them,
+  // and delivered to their agent halves (lib/sign-in-events.js).
+  await startSignInEventServices(server.log);
 
   // --- Periodic ticket instance liveness check (every 60s) ---
   const livenessInterval = setInterval(() => {
