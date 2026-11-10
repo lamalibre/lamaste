@@ -486,15 +486,15 @@ reference only).
 run only), published to the development Feria, which ran this Feria branch with `@example` hosted
 (`feria-server scopes add @example --any-publisher`); three-VM set created fresh and provisioned.
 
-| Spec | Result |
-| --- | --- |
-| three-VM 01 onboarding | 55 of 55 |
-| three-VM 59 (now 62) trusted publisher scope | 60 of 60 (third run; the first two found the spec issues above) |
-| three-VM 34 app plugin install (`@lamalibre`) | 217 of 217 |
-| three-VM 35 app plugin operate (`@lamalibre`) | 100 of 100 |
-| three-VM 36 app plugin removal (`@lamalibre`) | 83 of 83 |
-| single-VM 01, 03, 15 (fresh host) | 12, 4, 41 — none failed |
-| single-VM 23 | skipped (no agent on the host, as before) |
+| Spec                                          | Result                                                          |
+| --------------------------------------------- | --------------------------------------------------------------- |
+| three-VM 01 onboarding                        | 55 of 55                                                        |
+| three-VM 59 (now 62) trusted publisher scope  | 60 of 60 (third run; the first two found the spec issues above) |
+| three-VM 34 app plugin install (`@lamalibre`) | 217 of 217                                                      |
+| three-VM 35 app plugin operate (`@lamalibre`) | 100 of 100                                                      |
+| three-VM 36 app plugin removal (`@lamalibre`) | 83 of 83                                                        |
+| single-VM 01, 03, 15 (fresh host)             | 12, 4, 41 — none failed                                         |
+| single-VM 23                                  | skipped (no agent on the host, as before)                       |
 
 Spec 62 (then 59) covers: the built-in scope reported; `untrusted_scope` for `@example` (nothing staged) and
 for look-alikes of `@lamalibre`; `registry_lacks_scope` while the registry does not host `@example`;
