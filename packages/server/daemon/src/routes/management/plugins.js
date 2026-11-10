@@ -115,6 +115,7 @@ function operationErrorBody(err, fallback) {
     ...(err.retained ? { retained: err.retained } : {}),
     ...(err.owner ? { route: err.route, owner: err.owner } : {}),
     ...(err.operationId ? { operationId: err.operationId } : {}),
+    ...(Array.isArray(err.consumers) ? { consumers: err.consumers } : {}),
   };
 }
 

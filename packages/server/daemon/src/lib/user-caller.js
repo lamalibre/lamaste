@@ -50,18 +50,33 @@ export async function resolveUserCaller(route, username) {
     return { ok: false, status: 403, error: NOT_ENTITLED };
   }
   if (user.status !== 'active') return { ok: false, status: 403, error: 'This user is disabled' };
-  const row = await readAudienceRow(plugin.name, user.userId);
-  const member = row?.change?.kind === 'upsert' ? row.change.member : null;
-  if (!member || member.status !== 'active' || member.userId !== user.userId) {
-    return { ok: false, status: 403, error: NOT_ENTITLED };
-  }
-  const declared = declaredRoleIds(plugin.identity);
-  const roles = (Array.isArray(member.roles) ? member.roles : []).filter((role) =>
-    declared.has(role),
-  );
-  if (roles.length === 0) return { ok: false, status: 403, error: NOT_ENTITLED };
+  const roles = await audienceRolesOf(plugin, user.userId);
+  if (roles === null) return { ok: false, status: 403, error: NOT_ENTITLED };
   return {
     ok: true,
     caller: { type: 'user', userId: user.userId, username: user.username, roles },
   };
+}
+
+/**
+ * The roles user `userId` holds in installed plugin `plugin` — an active
+ * member of its audience as last computed (`lib/audience.js`), restricted to
+ * the roles the installed version declares — or null when they are none
+ * (not a member, not active, or no declared role left). The plugin must
+ * declare identity.
+ *
+ * @param {{ name: string, identity?: object }} plugin registry entry
+ * @param {string} userId
+ * @returns {Promise<string[] | null>}
+ */
+export async function audienceRolesOf(plugin, userId) {
+  if (!plugin.identity) return null;
+  const row = await readAudienceRow(plugin.name, userId);
+  const member = row?.change?.kind === 'upsert' ? row.change.member : null;
+  if (!member || member.status !== 'active' || member.userId !== userId) return null;
+  const declared = declaredRoleIds(plugin.identity);
+  const roles = (Array.isArray(member.roles) ? member.roles : []).filter((role) =>
+    declared.has(role),
+  );
+  return roles.length > 0 ? roles : null;
 }
