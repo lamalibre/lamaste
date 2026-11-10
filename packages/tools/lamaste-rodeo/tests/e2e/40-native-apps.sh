@@ -363,8 +363,16 @@ assert_eq "$(broker_says -F grant_type=refresh_token -F "refresh_token=e2e-unkno
 assert_eq "$(broker_says -F grant_type=client_credentials -F scope=lamaste.registry -F client_id=lamaste-server "https://auth.${DOMAIN}/api/oidc/token")" "400 invalid_request" "A multipart request of another client: 400 invalid_request too" || true
 assert_eq "$(broker_says -H 'Content-Type: text/plain' --data-binary "grant_type=refresh_token&client_id=${CLIENT}&refresh_token=e2e-x" "https://auth.${DOMAIN}/api/oidc/token")" "400 invalid_request" "A text/plain body: 400 invalid_request" || true
 # A host with a native client never turns public (its tokens would reach the backend).
+# Bound, the user surface refuses first; unbound, the native client still does.
 RESP=$(call PATCH "tunnels/${TUNNEL_ID}" '{"accessMode":"public"}')
-assert_eq "$(status_of "$RESP") $(json_get "$(body_of "$RESP")" '.code')" "409 native_client_conflict" "Making the host's tunnel public while it has a native client: 409 native_client_conflict" || true
+assert_eq "$(status_of "$RESP") $(json_get "$(body_of "$RESP")" '.code')" "409 user_surface_conflict" "Making the bound host's tunnel public: 409 user_surface_conflict" || true
+RESP=$(call DELETE "tunnels/${TUNNEL_ID}/user-surface/${PLUGIN}")
+assert_eq "$(status_of "$RESP")" "200" "${PLUGIN}'s user surface unbound from it" || true
+RESP=$(call PATCH "tunnels/${TUNNEL_ID}" '{"accessMode":"public"}')
+assert_eq "$(status_of "$RESP") $(json_get "$(body_of "$RESP")" '.code')" "409 native_client_conflict" "…unbound, while it has a native client: 409 native_client_conflict" || true
+assert_eq "$(api_get "tunnels" | jq -r --arg id "${TUNNEL_ID}" '.tunnels[] | select(.id == $id) | .accessMode')" "authenticated" "…the tunnel stays authenticated" || true
+RESP=$(call PUT "tunnels/${TUNNEL_ID}/user-surface" "{\"route\":\"${PLUGIN}\"}")
+assert_eq "$(status_of "$RESP")" "200" "${PLUGIN}'s user surface bound again" || true
 
 # ===========================================================================
 # 5. The CLI

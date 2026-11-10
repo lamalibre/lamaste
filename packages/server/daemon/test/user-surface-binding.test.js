@@ -544,6 +544,7 @@ test('reconfiguring, toggling and moving the tunnel keep the binding; moved away
   const publicRes = await call('PATCH', `/api/tunnels/${T.piyasa.id}`, { accessMode: 'public' });
   assert.equal(publicRes.statusCode, 409, publicRes.body);
   assert.match(publicRes.json().details, /cannot be made public — unbind it first/);
+  assert.equal(publicRes.json().code, 'user_surface_conflict');
   assert.equal((await stored(T.piyasa)).accessMode, 'authenticated');
 
   const limit = await call('PATCH', `/api/tunnels/${T.piyasa.id}`, { maxBodySizeMb: 20 });

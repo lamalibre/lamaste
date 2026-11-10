@@ -276,6 +276,12 @@ function tunnelErrorStatus(code) {
   }
 }
 
+/** The refusals of a tunnel change a client tells apart by `code` (each a 409). */
+const TUNNEL_CONFLICT_CODES = {
+  USER_SURFACE_CONFLICT: 'user_surface_conflict',
+  NATIVE_CLIENT_CONFLICT: 'native_client_conflict',
+};
+
 /** A refused or failed user-surface change: the workflow's status, or a 500. */
 function sendUserSurfaceFailure(request, reply, err, fallback) {
   if (err instanceof TunnelError) {
@@ -647,7 +653,7 @@ export default async function tunnelRoutes(fastify, _opts) {
           return reply.code(status).send({
             error: status === 404 ? 'Tunnel not found' : 'Failed to update tunnel',
             details: err.message,
-            ...(err.code === 'NATIVE_CLIENT_CONFLICT' ? { code: 'native_client_conflict' } : {}),
+            ...(TUNNEL_CONFLICT_CODES[err.code] ? { code: TUNNEL_CONFLICT_CODES[err.code] } : {}),
           });
         }
         request.log.error(err, 'Failed to update tunnel');
