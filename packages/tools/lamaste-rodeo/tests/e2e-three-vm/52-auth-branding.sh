@@ -14,7 +14,8 @@
 #    revision and the asset's digest, carries no warning; both rendered.
 # 2. The sign-in pages, from the visitor: A's index says data-theme="dark",
 #    data-logooverride="true" and links /brand.css; B's "light"; C's
-#    "light", "false" and no stylesheet — and Authelia's CSP is untouched.
+#    "light", "false" and the stock stylesheet (4.13: the change-password
+#    link's rules alone) — and Authelia's CSP is untouched.
 #    /brand.css carries the accent and the hidden footer, nosniff and the
 #    assets' cache policy; C has none (404). The logos and favicons are the
 #    fixtures' bytes under the content type of the extension; C gets
@@ -125,11 +126,14 @@ renders_gone() { [ "$(renders_of "$1")" = "0" ]; }
 # entry_gone <domain> — the domain has no entry under the web root (no link, no directory)
 entry_gone() { [ "$(host_exec "test -L ${WEB_ROOT}/$1 -o -e ${WEB_ROOT}/$1 && echo there || echo gone" 2>/dev/null | tail -n 1 | tr -d '\r')" = "gone" ]; }
 
-# stock_page <domain> — the sign-in page of <domain> is the stock one: no logo switch, no stylesheet
+# stock_page <domain> — the sign-in page of <domain> is the stock one: no logo switch, no brand colours
 stock_page() {
-  local body
+  local body css
   body=$(visit_body "$(visit - "$(auth_url "$1" /)")")
-  [[ "$body" == *'data-logooverride="false"'* && "$body" != *'brand.css'* ]]
+  css=$(visit_body "$(visit - "$(auth_url "$1" /brand.css)")")
+  # 4.13: every portal links /brand.css — a stock domain's carries the
+  # change-password link's rules alone, no brand colours
+  [[ "$body" == *'data-logooverride="false"'* && "$css" != *'--primary'* ]]
 }
 
 # write_fixtures — the images on the host VM, deterministic (python3 with
@@ -269,7 +273,7 @@ PAGE_C=$(visit_body "$RESP")
 assert_eq "$(visit_status "$RESP")" "200" "auth.${DOMAIN_3}/: 200" || true
 assert_contains "${PAGE_C}" 'data-theme="light"' "…data-theme=\"light\" (the stock theme)" || true
 assert_contains "${PAGE_C}" 'data-logooverride="false"' "…data-logooverride=\"false\" (the placeholder is never shown)" || true
-assert_not_contains "${PAGE_C}" 'brand.css' "…no stylesheet: exactly the stock page" || true
+assert_contains "${PAGE_C}" '<link rel="stylesheet" href="/brand.css">' "…links /brand.css: the stock stylesheet (4.13: the change-password link)" || true
 assert_contains "$(visit_headers "$RESP" | tr '[:upper:]' '[:lower:]' | awk '$1 == "content-security-policy:" {print}' | tail -n 1)" "style-src 'self'" "…the same CSP as a branded domain's" || true
 
 log_section "/brand.css: the accent, the hidden footer, the asset headers"
@@ -284,7 +288,9 @@ CSS_A=$(visit_body "$RESP")
 assert_contains "${CSS_A}" "--primary: ${ACCENT_A} !important;" "…--primary is A's accent" || true
 assert_contains "${CSS_A}" 'a[href^="https://www.authelia.com"] { display: none !important; }' "…the \"Powered by\" footer link is hidden" || true
 assert_contains "$(visit_body "$(visit - "$(auth_url "${DOMAIN_2}" /brand.css)")")" "--primary: ${ACCENT_B} !important;" "auth.${DOMAIN_2}/brand.css: --primary is B's accent" || true
-assert_eq "$(visit_status "$(visit - "$(auth_url "${DOMAIN_3}" /brand.css)")")" "404" "auth.${DOMAIN_3}/brand.css: 404 (no brand, no stylesheet)" || true
+CSS_C=$(visit - "$(auth_url "${DOMAIN_3}" /brand.css)")
+assert_eq "$(visit_status "${CSS_C}")" "200" "auth.${DOMAIN_3}/brand.css: 200, the stock stylesheet (no brand)" || true
+assert_not_contains "$(visit_body "${CSS_C}")" "--primary" "…no brand colours, the change-password link's rules alone" || true
 
 log_section "The logos and favicons: the fixtures' bytes; C gets Authelia's"
 
@@ -427,12 +433,12 @@ RESP=$(md_api DELETE "domains/${DOMAIN_2}/branding")
 assert_json_field "$(body_of "$RESP")" '"\(.removed) \(.warnings // [] | length)"' "true 0" "DELETE /api/domains/${DOMAIN_2}/branding: removed, no warning" || true
 assert_json_field "$(branding_of "${DOMAIN_2}")" '.branding' "null" "GET says ${DOMAIN_2} has no brand" || true
 if wait_for 90 stock_page "${DOMAIN_2}"; then
-  log_pass "auth.${DOMAIN_2}/ is the stock page: data-logooverride=\"false\", no stylesheet"
+  log_pass "auth.${DOMAIN_2}/ is the stock page: data-logooverride=\"false\", the stock stylesheet"
 else
   log_fail "auth.${DOMAIN_2}/ is not the stock page 90 s after the removal"
 fi
 assert_contains "$(visit_body "$(visit - "$(auth_url "${DOMAIN_2}" /)")")" 'data-theme="light"' "…data-theme=\"light\"" || true
-assert_eq "$(visit_status "$(visit - "$(auth_url "${DOMAIN_2}" /brand.css)")")" "404" "auth.${DOMAIN_2}/brand.css: 404" || true
+assert_not_contains "$(visit_body "$(visit - "$(auth_url "${DOMAIN_2}" /brand.css)")")" "--primary" "auth.${DOMAIN_2}/brand.css: the stock stylesheet, no brand colours" || true
 assert_eq "$(fetch_digest "$(auth_url "${DOMAIN_2}" /static/media/logo.png)")" "200 image/png ${PLACEHOLDER_SHA}" "auth.${DOMAIN_2}/static/media/logo.png: the placeholder" || true
 if wait_for 90 entry_gone "${DOMAIN_2}"; then
   log_pass "${WEB_ROOT}/${DOMAIN_2} is gone"

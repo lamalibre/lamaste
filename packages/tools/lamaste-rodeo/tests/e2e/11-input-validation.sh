@@ -9,7 +9,7 @@
 # - Tunnel PATCH body validation (strict schema, owner label format)
 # - Subdomain injection attempts
 # - Invalid port and request body limit values; the relay's own service ports
-#   (3100, 9090, 9091, 9292, 9294) are reserved for tunnels and agent panels
+#   (3100, 9090, 9091, 9292, 9294, 9295) are reserved for tunnels and agent panels
 # - Invalid JSON bodies
 # - Path traversal attempts (where applicable)
 # ============================================================================
@@ -213,9 +213,10 @@ BODY_HIGH_STATUS=$(api_post_status "tunnels" '{"subdomain":"e2ebodyhigh","port":
 assert_eq "$BODY_HIGH_STATUS" "400" "Request body limit 10241 rejected (HTTP 400)" || true
 
 # Ports of Lamaste's own services on the relay (panel daemon 3100, chisel
-# server 9090, Authelia 9091, panel 9292, gatekeeper 9294): a tunnel there
+# server 9090, Authelia 9091, panel 9292, gatekeeper 9294, mail submission
+# 9295): a tunnel there
 # would collide with the service chisel binds on the relay
-for reserved_port in 3100 9090 9091 9292 9294; do
+for reserved_port in 3100 9090 9091 9292 9294 9295; do
   RESERVED_PORT_STATUS=$(api_post_status "tunnels" "{\"subdomain\":\"e2ereserved${reserved_port}\",\"port\":${reserved_port},\"description\":\"reserved port\",\"agentLabel\":\"${OWNER_LABEL}\"}")
   assert_eq "$RESERVED_PORT_STATUS" "400" "Reserved port ${reserved_port} rejected for a tunnel (HTTP 400)" || true
 done

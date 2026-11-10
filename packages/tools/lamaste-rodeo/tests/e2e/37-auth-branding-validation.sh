@@ -357,8 +357,11 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 assert_contains "$(body_of "$RESP")" 'data-logooverride="false"' "https://auth.${DOMAIN}/ is the stock page again: data-logooverride=\"false\"" || true
-assert_not_contains "$(body_of "$RESP")" 'brand.css' "…no stylesheet" || true
-assert_eq "$(status_of "$(auth_get /brand.css)")" "404" "…/brand.css 404" || true
+assert_contains "$(body_of "$RESP")" '<link rel="stylesheet" href="/brand.css">' "…linking the stock stylesheet (4.13: the change-password link's rules)" || true
+RESP=$(auth_get /brand.css)
+assert_eq "$(status_of "$RESP")" "200" "…/brand.css 200" || true
+assert_contains "$(body_of "$RESP")" "#lamaste-account-password" "…the change-password link's rules" || true
+assert_not_contains "$(body_of "$RESP")" "--primary" "…no brand colours" || true
 SHOWN=$(cli_plain)
 assert_contains "${SHOWN}" "has no brand" "branding ${DOMAIN}: says the domain has no brand" || true
 
