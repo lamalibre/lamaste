@@ -7,6 +7,8 @@
  *   list [--plugin <n>] [--inviter <user>]
  *                                 Every invitation: who for, who invited, role, status
  *   revoke <id>                   Revoke a pending one (delete one that ended with no account)
+ *   reissue <id>                  A new link for a pending (or expired) one: the old link stops
+ *                                 working; the new one is mailed when its domain can send
  *   disable-invitees <user> [--transitive]
  *                                 Disable everyone a person invited (and those they invited)
  *
@@ -27,6 +29,7 @@ import {
   invitationRows,
   invitationsPath,
   isUserId,
+  mailText,
   parseListArgs,
   policyLines,
   policySetBody,
@@ -45,6 +48,7 @@ export async function runInvitations(args, { json }) {
   const [sub, ...rest] = args;
   if (sub === 'list') return listCmd(rest, { json });
   if (sub === 'revoke' && rest.length === 1) return revokeCmd(rest[0], { json });
+  if (sub === 'reissue' && rest.length === 1) return reissueCmd(rest[0], { json });
   if (sub === 'disable-invitees') return disableInviteesCmd(rest, { json });
   return usage(sub ? 1 : 0);
 }
@@ -60,6 +64,9 @@ ${b('Subcommands:')}
                                     Every invitation: who for, who invited, role, status
   ${c('revoke <id>')}                       Revoke a pending invitation; delete one that ended
                                     without making an account (one that made one stays on record)
+  ${c('reissue <id>')}                      A new link for a pending (or expired) invitation: the old
+                                    link stops working; the new one is mailed when its domain
+                                    can send, and printed once
   ${c('disable-invitees <user> [--transitive]')}
                                     Disable everyone a person invited — with --transitive,
                                     everyone those people invited too
@@ -103,6 +110,7 @@ function printInvitations(invitations) {
     const reason = row.reason ? d(` — ${row.reason}`) : '';
     console.log(`  ${chalk.cyan(row.invitee)}  ${row.status}${reason}`);
     console.log(d(`    ${row.invitedBy}, role ${row.role}, until ${row.expiresAt}, ${row.id}`));
+    if (row.mail) console.log(d(`    ${row.mail}`));
   }
   if (invitations.length === 0) console.log(d('  No invitations.'));
   console.log('');
@@ -112,6 +120,25 @@ async function revokeCmd(id, { json }) {
   const result = await call(json, 'DELETE', `/api/invitations/${encodeURIComponent(id)}`);
   if (json) emitComplete(result);
   else console.log(`\n  ${chalk.green('✓')} ${revokeText(id, result.action)}\n`);
+}
+
+async function reissueCmd(id, { json }) {
+  const result = await call(json, 'POST', `/api/invitations/${encodeURIComponent(id)}/reissue`);
+  if (json) {
+    emitComplete(result);
+    return;
+  }
+  const mailed = mailText(result.mail, result.invitation?.email ?? null);
+  console.log(
+    `\n  ${chalk.green('✓')} New link for ${terminalText(id)} — the old one no longer works`,
+  );
+  if (mailed) console.log(`  ${mailed}`);
+  console.log(`\n  ${chalk.cyan(terminalText(result.inviteUrl ?? result.token))}`);
+  console.log(
+    chalk.dim(
+      `  Shown only now; it expires ${terminalText(result.invitation?.expiresAt ?? '')}.\n`,
+    ),
+  );
 }
 
 async function disableInviteesCmd(rest, { json }) {

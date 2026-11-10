@@ -89,7 +89,31 @@ export function invitationRows(invitations) {
     ),
     reason: inv.revokedReason ? terminalText(reasonText(inv.revokedReason)) : '',
     expiresAt: terminalText(String(inv.expiresAt ?? '')).slice(0, 10),
+    mail: inv.status === 'pending' || inv.status === 'expired' ? mailText(inv.mail) : '',
   }));
+}
+
+/**
+ * What became of an invitation's mail (mail-design.md §6.1), in words; ''
+ * when there is nothing to say (no mail state, an invitation made before
+ * mail).
+ *
+ * @param {{ status?: string | null } | null | undefined} mail
+ * @param {string | null} [email]
+ */
+export function mailText(mail, email = null) {
+  switch (mail?.status) {
+    case 'sent':
+      return email ? `e-mailed to ${terminalText(email)}` : 'e-mailed';
+    case 'failed':
+      return 'could not be e-mailed — share the link yourself';
+    case 'deferred-budget':
+      return 'not e-mailed: the mail budget is used up — share the link yourself';
+    case 'not-configured':
+      return 'not e-mailed: no mail is set up for its domain — share the link yourself';
+    default:
+      return '';
+  }
 }
 
 /** What the panel did with a revocation, in words. */

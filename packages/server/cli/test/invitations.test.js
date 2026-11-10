@@ -81,6 +81,8 @@ test('one row per invitation: who for, who invited, why revoked', () => {
     status: 'revoked',
     reason: 'the inviter lost the role that could give it',
     expiresAt: '2026-11-09',
+    // A revoked invitation's mail is past saying.
+    mail: '',
   });
   assert.equal(admin.invitedBy, 'administrator');
   assert.equal(admin.status, 'accepted');

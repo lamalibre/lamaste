@@ -18,6 +18,7 @@
  *   users         Users and the user directory: disable, delete, erase
  *   invitations   Invitations, both kinds: list, revoke, disable invitees
  *   domains       The relay's base domains, their members and their brands
+ *   mail          How the relay sends mail: Gmail API or SMTP, sender, budget
  *   tunnels       Manage tunnels
  *   sites         Manage static sites
  *   certs         Certificate status and renewal
@@ -69,7 +70,8 @@ ${b('COMMANDS')}
   ${c('audit')}           The panel's audit log (approvals, hostings, updates, hook events)
   ${c('users')}           Users and the user directory (list, disable, enable, delete, erase, directory)
   ${c('invitations')}     Invitations, the administrator's and delegated (list, revoke, disable-invitees)
-  ${c('domains')}         The relay's base domains (list, add, verify-dns, activate, remove, members, branding)
+  ${c('domains')}         The relay's base domains (list, add, verify-dns, activate, remove, members, branding, mail)
+  ${c('mail')}            How the relay sends mail (show, set-smtp, google, sender, limit, test, resume, clear)
   ${c('tunnels')}         Manage tunnels (list, create, delete, toggle, bind a plugin's user surface)
   ${c('sites')}           Manage static sites (list, create, delete)
   ${c('certs')}           Certificate status, renewal, and agent cert listing
@@ -203,6 +205,11 @@ async function main() {
     case 'domains': {
       const { runDomains } = await import('../src/commands/domains.js');
       await runDomains(args.slice(1), { json });
+      break;
+    }
+    case 'mail': {
+      const { runMail } = await import('../src/commands/mail.js');
+      await runMail(args.slice(1), { json });
       break;
     }
     case 'tunnels': {
