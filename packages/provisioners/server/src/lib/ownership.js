@@ -229,3 +229,33 @@ export async function migrateAutheliaDir(dir, ids) {
   await ensureDirectory(dir, { uid: lamasteUid, gid: autheliaGid, mode: 0o2770 });
   return { migrated: st !== null };
 }
+
+/** The listener's local CA certificate directory under /etc/authelia (mail-design.md §5). */
+export const AUTHELIA_CERTS_DIRNAME = 'certs';
+/** The password Authelia submits its mail to the panel's listener with. */
+export const AUTHELIA_MAIL_PASSWORD_FILENAME = 'mail-submission-password';
+
+/**
+ * The files of Authelia's mail (packages/core/docs/mail-design.md §5),
+ * which the panel writes and Authelia reads through its group:
+ * `/etc/authelia/certs` (2750 `lamaste:lamaste-authelia` — the panel's
+ * local CA certificate, the one trust Authelia adds to the system's) and
+ * `/etc/authelia/mail-submission-password` (0640, same owners). Run after
+ * {@link migrateAutheliaDir}; the directory is created when missing and
+ * reached without following a symlink (a symlink there fails). Nothing
+ * inside it is touched: the panel writes its certificate there itself (the
+ * group comes from the setgid directory), and root never opens a path
+ * below a directory the lamaste user could have swapped for a link.
+ *
+ * @param {string} dir /etc/authelia
+ * @param {{ lamasteUid: number, autheliaGid: number }} ids
+ */
+export async function ensureAutheliaMailFiles(dir, { lamasteUid, autheliaGid }) {
+  const certs = join(dir, AUTHELIA_CERTS_DIRNAME);
+  await ensureDirectory(certs, { uid: lamasteUid, gid: autheliaGid, mode: 0o2750 });
+  await setFileOwnership(join(dir, AUTHELIA_MAIL_PASSWORD_FILENAME), {
+    uid: lamasteUid,
+    gid: autheliaGid,
+    mode: 0o640,
+  });
+}

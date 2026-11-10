@@ -24,6 +24,10 @@
  *                                      print `yes` when Authelia's storage holds an
  *                                      OpenID Connect opaque identifier for the
  *                                      username, `no` otherwise — nothing else
+ *   authelia-user verify-totp <username>  stdin: a TOTP code (6–8 digits)
+ *                                      print `ok <step>` when the code is the
+ *                                      user's for a step within one of now,
+ *                                      `no` otherwise — never the secret
  *   self-update <version>              run create-lamaste@<version> detached
  *   hooks install <route> <sha256|none>  stdin: the plugin's approved relay hook
  *                                      module (none: shared hooks only); start its runner
@@ -720,7 +724,7 @@ function autheliaTotp(username) {
  * Opening the database as root would leave root-owned journal files the
  * service cannot write.
  */
-function runAutheliaCli(args, username) {
+function runAutheliaCli(args, username, { maxBuffer = 1024 * 1024 } = {}) {
   const uid = lookupId('-u', AUTHELIA_USER);
   const gid = lookupId('-g', AUTHELIA_USER);
   const result = spawnSync(
@@ -733,6 +737,7 @@ function runAutheliaCli(args, username) {
       env: { ...AUTHELIA_CLI_ENV },
       encoding: 'utf8',
       timeout: 60_000,
+      maxBuffer,
     },
   );
   if (result.error) throw result.error;
@@ -865,13 +870,147 @@ function autheliaHasOidcIdentifier(username) {
   }
 }
 
-const AUTHELIA_USER_ACTIONS = new Set(['purge-second-factors', 'has-oidc-identifier']);
+// ---------------------------------------------------------------------------
+// TOTP verification (packages/core/docs/mail-design.md §6.2)
+// ---------------------------------------------------------------------------
+
+/** The largest URI export read back: thousands of users' configurations. */
+const MAX_TOTP_EXPORT_BYTES = 8 * 1024 * 1024;
+
+/** Authelia's algorithm names → node's digests. */
+const TOTP_ALGORITHMS = Object.freeze({ SHA1: 'sha1', SHA256: 'sha256', SHA512: 'sha512' });
+
+/** RFC 4648 base32 (upper case, padding optional) → bytes, or null. */
+function base32Bytes(text) {
+  const clean = String(text).replace(/=+$/, '');
+  if (!/^[A-Z2-7]+$/.test(clean)) return null;
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  const out = [];
+  for (const ch of clean) {
+    value = (value << 5) | alphabet.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(out);
+}
+
+/**
+ * One `otpauth://totp/<issuer>:<username>?…` line of
+ * `authelia storage user totp export uri` (Authelia 4.39.28,
+ * `model.TOTPConfiguration.URI`), parsed — or null for anything else
+ * (the export's closing sentence, blank lines).
+ */
+function parseTotpUri(line) {
+  let url;
+  try {
+    url = new URL(line.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'otpauth:' || url.host !== 'totp') return null;
+  const issuer = url.searchParams.get('issuer') ?? '';
+  let label;
+  try {
+    label = decodeURIComponent(url.pathname);
+  } catch {
+    return null;
+  }
+  const prefix = `/${issuer}:`;
+  if (!label.startsWith(prefix)) return null;
+  const algorithm = TOTP_ALGORITHMS[url.searchParams.get('algorithm') ?? ''];
+  const digits = Number(url.searchParams.get('digits'));
+  const period = Number(url.searchParams.get('period'));
+  const secret = base32Bytes(url.searchParams.get('secret') ?? '');
+  if (!algorithm || (digits !== 6 && digits !== 8) || secret === null || secret.length === 0) {
+    return null;
+  }
+  if (!Number.isInteger(period) || period < 1 || period > 300) return null;
+  return { username: label.slice(prefix.length), algorithm, digits, period, secret };
+}
+
+/** The configuration of `username` in an export's text, or null. */
+function totpConfigFor(exportText, username) {
+  for (const line of String(exportText).split('\n')) {
+    const config = parseTotpUri(line);
+    if (config !== null && config.username === username) return config;
+  }
+  return null;
+}
+
+/** RFC 6238: the code of `step` (RFC 4226 dynamic truncation). */
+function totpCode(config, step) {
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(step));
+  const mac = crypto.createHmac(config.algorithm, config.secret).update(counter).digest();
+  const offset = mac[mac.length - 1] & 0x0f;
+  const binary = mac.readUInt32BE(offset) & 0x7fffffff;
+  return String(binary % 10 ** config.digits).padStart(config.digits, '0');
+}
+
+/**
+ * The step within one of now (`nowMs`) whose code is `code`, or null.
+ * Every step is compared, in constant time.
+ */
+function matchTotpStep(config, code, nowMs) {
+  if (typeof code !== 'string' || code.length !== config.digits || !/^[0-9]+$/.test(code)) {
+    return null;
+  }
+  const now = Math.floor(nowMs / 1000 / config.period);
+  const given = Buffer.from(code);
+  let matched = null;
+  for (const step of [now - 1, now, now + 1]) {
+    if (crypto.timingSafeEqual(Buffer.from(totpCode(config, step)), given) && matched === null) {
+      matched = step;
+    }
+  }
+  return matched;
+}
+
+/**
+ * Check a TOTP code (stdin) against the user's configuration in Authelia's
+ * storage. Authelia's CLI has no per-user lookup or verify, so the
+ * configurations are exported as URIs to this process's memory (a pipe,
+ * never a file) by the Authelia account, the user's found, the code
+ * checked here. Prints `ok <step>` or `no` — nothing of the configuration;
+ * a failure of the CLI is reported without its output (which would carry
+ * every user's secret).
+ */
+function autheliaVerifyTotp(username) {
+  assertAutheliaUsername(username);
+  const code = readStdin(64).trim();
+  if (!/^[0-9]{6,8}$/.test(code)) {
+    process.stdout.write('no\n');
+    return;
+  }
+  const result = runAutheliaCli(['storage', 'user', 'totp', 'export', 'uri'], undefined, {
+    maxBuffer: MAX_TOTP_EXPORT_BYTES,
+  });
+  if (result.status !== 0) {
+    throw new Error(`authelia storage user totp export uri exited with status ${result.status}`);
+  }
+  const text = result.stdout || '';
+  if (Buffer.byteLength(text) > MAX_TOTP_EXPORT_BYTES) throw new Error('the export is too large');
+  const config = totpConfigFor(text, username);
+  const step = config === null ? null : matchTotpStep(config, code, Date.now());
+  process.stdout.write(step === null ? 'no\n' : `ok ${step}\n`);
+}
+
+const AUTHELIA_USER_ACTIONS = new Set([
+  'purge-second-factors',
+  'has-oidc-identifier',
+  'verify-totp',
+]);
 
 /** `authelia-user <action> <username>`, checked before anything runs. */
 function parseAutheliaUserArgs(rest) {
   if (rest.length !== 2) {
     throw new UsageError(
-      'usage: authelia-user purge-second-factors|has-oidc-identifier <username>',
+      'usage: authelia-user purge-second-factors|has-oidc-identifier|verify-totp <username>',
     );
   }
   const [action, username] = rest;
@@ -885,6 +1024,7 @@ function parseAutheliaUserArgs(rest) {
 function autheliaUser(rest) {
   const { action, username } = parseAutheliaUserArgs(rest);
   if (action === 'purge-second-factors') autheliaPurgeSecondFactors(username);
+  else if (action === 'verify-totp') autheliaVerifyTotp(username);
   else autheliaHasOidcIdentifier(username);
 }
 
@@ -1165,6 +1305,9 @@ if (require.main === module) {
     assertAutheliaUsername,
     parseAutheliaUserArgs,
     exportNamesUsername,
+    parseTotpUri,
+    totpConfigFor,
+    matchTotpStep,
     main,
   };
 }
