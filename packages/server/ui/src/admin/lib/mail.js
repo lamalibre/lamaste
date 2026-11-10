@@ -195,6 +195,8 @@ export function smtpForm(transport) {
     // Whether to trust a private CA; the stored bundle is never shown.
     useCaPem: Boolean(s?.hasCaPem),
     caPem: '',
+    // The server a stored bundle is kept for when none is pasted.
+    storedCaHost: s?.hasCaPem ? s.host : null,
     senderAddress: transport?.sender?.address ?? '',
     senderName: transport?.sender?.name ?? '',
     dailyLimit: transport?.budget ? String(transport.budget.dailyLimit) : '',
@@ -203,9 +205,9 @@ export function smtpForm(transport) {
 
 /**
  * The body of `PUT …/mail` from an SMTP form and the password typed (empty:
- * keep the stored one), or the form's errors by field. The panel keeps no
- * CA bundle it is not sent and never shows a stored one, so trusting a
- * private CA means pasting its bundle with every change.
+ * keep the stored one), or the form's errors by field. A stored CA bundle
+ * is never shown: an empty paste keeps it (for the same server only), and
+ * unticking "trust a private CA" removes it.
  *
  * @returns {{ body: object } | { errors: Record<string, string> }}
  */
@@ -219,8 +221,12 @@ export function smtpBody(form, password) {
   const username = form.username.trim();
   if (password !== '' && username === '') errors.password = 'A password needs a username';
   const caPem = form.caPem.trim();
-  if (form.useCaPem && caPem === '') {
-    errors.caPem = 'Paste the CA bundle — a stored one is never shown, and each change replaces it';
+  const keepsStoredCa = form.storedCaHost !== null && form.storedCaHost === host.toLowerCase();
+  if (form.useCaPem && caPem === '' && !keepsStoredCa) {
+    errors.caPem =
+      form.storedCaHost === null
+        ? 'Paste the CA bundle'
+        : 'Paste the CA bundle — the stored one is kept only for the same server';
   }
   const sender = senderFields(form);
   if (!isDeliverableAddress(sender.senderAddress)) errors.senderAddress = 'A deliverable address';
@@ -234,7 +240,8 @@ export function smtpBody(form, password) {
       security: form.security,
       ...(username !== '' ? { username } : {}),
       ...(password !== '' ? { password } : {}),
-      ...(form.useCaPem ? { caPem } : {}),
+      ...(form.useCaPem && caPem !== '' ? { caPem } : {}),
+      ...(!form.useCaPem && form.storedCaHost !== null ? { caPem: null } : {}),
       ...sender,
       ...(limit.dailyLimit !== undefined ? { dailyLimit: limit.dailyLimit } : {}),
     },

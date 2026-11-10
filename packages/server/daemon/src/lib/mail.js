@@ -646,11 +646,16 @@ export async function setSmtpTransport(domain, input, { actor, logger }) {
     const existing = transportRow(db, scope);
     const { password, senderAddress, senderName, dailyLimit, caPem, ...rest } = input;
     const settings = { ...rest };
+    const stored = existing?.kind === 'smtp' ? JSON.parse(existing.settings) : null;
+    const sameHost = stored !== null && stored.host === settings.host;
 
+    // `caPem` like the password: omitted keeps the stored bundle — for the
+    // same host only, never trusted for another server; null or '' removes it.
     let caCertificates = null;
-    if (caPem !== undefined) {
+    const bundle = caPem === undefined ? (sameHost ? (stored.caPem ?? null) : null) : caPem;
+    if (bundle !== null && bundle.trim() !== '') {
       try {
-        caCertificates = parseMailCaPem(caPem);
+        caCertificates = parseMailCaPem(bundle);
       } catch (err) {
         if (err instanceof MailCaPemError) {
           throw httpError(err.message, 400, { code: 'invalid_ca_pem' });
@@ -666,8 +671,7 @@ export async function setSmtpTransport(domain, input, { actor, logger }) {
         throw httpError('A password needs a username', 400, { code: 'password_without_username' });
       }
     } else if (secret === null) {
-      const stored = existing?.kind === 'smtp' ? JSON.parse(existing.settings) : null;
-      if (stored?.host === settings.host && stored?.username === settings.username) {
+      if (sameHost && stored.username === settings.username) {
         secret = existing.secret;
       } else {
         throw httpError('A password is required for this server and username', 400, {

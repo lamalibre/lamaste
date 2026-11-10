@@ -5,7 +5,7 @@
  *
  *   show                                The transport, its sender, last check and sending budget
  *   set-smtp --host <h> [--port 587] [--security starttls|tls] [--username <u>]
- *            [--password-stdin] [--ca-file <ca.pem>] --sender <address>
+ *            [--password-stdin] [--ca-file <ca.pem> | --no-ca] --sender <address>
  *            [--sender-name <name>] [--daily-limit <n>]
  *                                       An SMTP server, checked before it is stored
  *   google --client-id <id> [--client-secret-stdin] --sender <address>
@@ -119,10 +119,11 @@ ${b('Usage:')} ${prefix} <subcommand>
 ${b('Subcommands:')}
   ${c('show')}                              The transport, sender, last check and sending budget
   ${c('set-smtp --host <h> [--port 587] [--security starttls|tls] [--username <u>]')}
-  ${c('         [--password-stdin] [--ca-file <ca.pem>] --sender <address>')}
+  ${c('         [--password-stdin] [--ca-file <ca.pem> | --no-ca] --sender <address>')}
   ${c('         [--sender-name <name>] [--daily-limit <n>]')}
                                     An SMTP server — checked before it is stored. Without a
-                                    password the stored one is kept (same host and username)
+                                    password the stored one is kept (same host and username),
+                                    without --ca-file the stored CA bundle (same host)
   ${c('google --client-id <id> [--client-secret-stdin] --sender <address>')}
   ${c('       [--sender-name <name>] [--daily-limit <n>] [--no-wait]')}
                                     A Google account over the Gmail API: open the URL printed,

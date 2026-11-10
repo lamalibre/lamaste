@@ -78,6 +78,10 @@ test('set-smtp body: the security from the port, the password only when read', (
   assert.equal('password' in smtpRequest(flags), false);
   assert.equal(smtpRequest({ ...flags, port: undefined }).security, 'starttls');
   assert.equal(smtpRequest(flags, { caPem: 'PEM' }).caPem, 'PEM');
+  // No --ca-file: the panel keeps the stored bundle; --no-ca removes it.
+  assert.equal('caPem' in smtpRequest(flags), false);
+  assert.equal(smtpRequest({ ...flags, 'no-ca': true }).caPem, null);
+  assert.throws(() => smtpRequest({ ...flags, 'no-ca': true, 'ca-file': 'ca.pem' }), /exclusive/);
   assert.throws(
     () => smtpRequest({ ...flags, username: undefined }, { password: 'pw' }),
     /needs --username/,

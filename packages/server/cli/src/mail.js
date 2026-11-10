@@ -90,12 +90,13 @@ export const SMTP_FLAGS = Object.freeze({
     'sender-name',
     'daily-limit',
   ],
-  switches: ['password-stdin'],
+  switches: ['password-stdin', 'no-ca'],
 });
 
 /**
  * The body of `PUT …/mail` from `set-smtp`'s flags, the password read (or
- * null: keep the stored one) and the CA bundle read (or null: none).
+ * null: keep the stored one) and the CA bundle read (or null: keep the
+ * stored one for the same host; `--no-ca` removes it).
  */
 export function smtpRequest(flags, { password = null, caPem = null } = {}) {
   if (typeof flags.host !== 'string') throw new Error('--host <host> is required');
@@ -108,6 +109,9 @@ export function smtpRequest(flags, { password = null, caPem = null } = {}) {
   if (password !== null && typeof flags.username !== 'string') {
     throw new Error('A password needs --username');
   }
+  if (flags['no-ca'] === true && typeof flags['ca-file'] === 'string') {
+    throw new Error('--ca-file and --no-ca are exclusive');
+  }
   return {
     host: flags.host,
     port,
@@ -115,6 +119,7 @@ export function smtpRequest(flags, { password = null, caPem = null } = {}) {
     ...(typeof flags.username === 'string' ? { username: flags.username } : {}),
     ...(password !== null ? { password } : {}),
     ...(caPem !== null ? { caPem } : {}),
+    ...(flags['no-ca'] === true ? { caPem: null } : {}),
     ...senderAndLimit(flags),
   };
 }

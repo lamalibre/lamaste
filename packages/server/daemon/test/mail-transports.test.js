@@ -416,6 +416,30 @@ test('a stored password is kept only for the same server and username', async ()
   assert.equal(moved.json().code, 'password_required');
 });
 
+test('a stored CA bundle is kept when omitted, for the same host only, and removed by null', async () => {
+  assert.equal((await call('PUT', '/api/settings/mail', smtpBody())).statusCode, 200);
+  const kept = await call('PUT', '/api/settings/mail', smtpBody({ caPem: undefined }));
+  assert.equal(kept.statusCode, 200, kept.body);
+  assert.equal(kept.json().transport.settings.hasCaPem, true);
+  const removed = await call('PUT', '/api/settings/mail', smtpBody({ caPem: null }));
+  // Without the bundle the sink's certificate is not trusted: refused, the stored row unchanged.
+  assert.equal(removed.statusCode, 422);
+  assert.equal(removed.json().reason, 'tls');
+  const after = (await call('GET', '/api/settings/mail')).json().transport;
+  assert.equal(after.settings.hasCaPem, true);
+  const moved = await call(
+    'PUT',
+    '/api/settings/mail',
+    smtpBody({ caPem: undefined, host: '127.0.0.2', password: SMTP_PASSWORD }),
+  );
+  // Another host never inherits the bundle: the check fails, nothing stored.
+  assert.equal(moved.statusCode, 422);
+  assert.equal(
+    (await call('GET', '/api/settings/mail')).json().transport.settings.host,
+    '127.0.0.1',
+  );
+});
+
 test('a test mail goes through the sink, From the sender, To one recipient', async () => {
   await call('PUT', '/api/settings/mail', smtpBody());
   const res = await call('POST', '/api/settings/mail/test', { to: 'onur@codelama.example' });

@@ -193,6 +193,11 @@ test('SMTP body: the password only as typed, a CA bundle only when chosen', () =
   assert.equal(stored.useCaPem, true);
   assert.equal(stored.caPem, '');
   assert.equal(stored.dailyLimit, '500');
+  // An empty paste keeps the stored bundle — for the same server only.
+  assert.equal('caPem' in smtpBody({ ...stored, senderName: 'N' }, '').body, false);
+  assert.ok(smtpBody({ ...stored, host: 'other.example' }, '').errors.caPem);
+  // Unticked: the stored bundle is removed.
+  assert.equal(smtpBody({ ...stored, useCaPem: false }, '').body.caPem, null);
 });
 
 test('Google body: the client id by core’s rule, the secret as typed', () => {

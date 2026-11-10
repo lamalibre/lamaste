@@ -387,7 +387,11 @@ function SmtpForm({ scope, transport, onSaved, onCancel }) {
           <Field
             id={`${id}-ca`}
             label="CA certificates (PEM)"
-            hint="A stored bundle is never shown: paste it with every change."
+            hint={
+              form.storedCaHost === null
+                ? undefined
+                : 'A stored bundle is never shown: leave this empty to keep it (same server only), paste to replace it.'
+            }
             error={errors.caPem}
           >
             <textarea

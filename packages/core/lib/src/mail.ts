@@ -435,9 +435,18 @@ const SenderFields = {
 
 /**
  * `PUT /api/settings/mail` (and a domain's): an `smtp` transport — checked
- * before it is stored. `password` omitted keeps the stored one.
+ * before it is stored. `password` omitted keeps the stored one; so does
+ * `caPem` (for the same host), while `null` or `''` removes it.
  */
 export const SmtpTransportInputSchema = SmtpTransportSettingsSchema.extend({
+  caPem: z
+    .string()
+    .refine(
+      (pem) => pem.trim() === '' || splitPemCertificates(pem) !== null,
+      'Not a bundle of PEM certificates',
+    )
+    .nullable()
+    .optional(),
   password: SecretInputSchema.optional(),
   /** Omitted: the stored one, else {@link MAIL_DAILY_LIMIT}'s default. */
   dailyLimit: DailyLimitSchema.optional(),
