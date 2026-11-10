@@ -57,24 +57,70 @@ function smtpTransport(settings, password, { ehloName, caCertificates }) {
   });
 }
 
-/** Enhanced status codes and texts with which providers say "you sent too much". */
-const LIMIT_RE = /\b(4\.5\.3|5\.4\.5)\b|(limit|quota|too many)/i;
+/** Words with which providers say "you sent too much". */
+const LIMIT_TEXT = /\b(limit|limits|quota|too many|rate)\b/i;
+/** Enhanced status codes that say it whatever the words: too many recipients/messages, Gmail's daily quota. */
+const LIMIT_CODES = /\b(4\.5\.3|5\.4\.5)\b/;
+/** An enhanced status code of the security or policy class (5.7.x / 4.7.x). */
+const POLICY_CODE = /\b[45]\.7\.\d{1,3}\b/;
 
 /**
- * What a failed SMTP exchange means (§3.6, §3.7): a provider's limit
- * reply stops the account; AUTH or certificate refusals need an
- * administrator; 4xx and connection failures are transient; other 5xx
- * refuse this message.
+ * The stage of the SMTP exchange a failure came at, from nodemailer's
+ * `err.command`: `session` (the connection, greeting, EHLO, STARTTLS),
+ * `auth`, `mail` (`MAIL FROM`), `rcpt` (`RCPT TO`), `data`, or `api` (the
+ * client refused before sending).
+ */
+function smtpStage(err) {
+  const command = typeof err?.command === 'string' ? err.command.toUpperCase() : '';
+  if (command === 'RCPT TO') return 'rcpt';
+  if (command === 'MAIL FROM') return 'mail';
+  if (command === 'DATA') return 'data';
+  if (command.startsWith('AUTH')) return 'auth';
+  if (command === 'API') return 'api';
+  return 'session';
+}
+
+/**
+ * What a failed SMTP exchange means (§3.6, §3.7). Only answers about the
+ * account — to the session (a 421 with limit words, or a reply to
+ * `MAIL FROM` or `DATA`) — stop or flag the account:
+ *
+ * - `limited`: `4.5.3`/`5.4.5`, or a 421, 452, 550/554 or 5.7.x/4.7.x reply
+ *   saying limit, quota, too many or rate — at the session, `MAIL FROM` or
+ *   `DATA`;
+ * - `down` `policy`: another 5.7.x/4.7.x reply to `MAIL FROM` (the sender
+ *   is not allowed) — an administrator acts, sending goes on;
+ * - `down` `auth` / `tls`: AUTH or the certificate refused.
+ *
+ * A refusal at `RCPT TO` concerns that one recipient, whatever it says: a
+ * 4xx is transient, a 5xx `refused` for that message alone. Connection
+ * failures and other 4xx are transient; other 5xx refuse this message.
  */
 export function smtpFailure(err) {
   if (err instanceof MailDeliveryError) return err;
   const code = typeof err?.code === 'string' ? err.code : '';
   const responseCode = Number.isInteger(err?.responseCode) ? err.responseCode : null;
   const response = typeof err?.response === 'string' ? err.response : '';
-  if (responseCode !== null && responseCode >= 400 && LIMIT_RE.test(response)) {
-    const enhanced = /\b5\.7\.\d{1,3}\b/.test(response) || /\b(4\.5\.3|5\.4\.5)\b/.test(response);
-    if (enhanced || responseCode === 421 || responseCode === 452 || responseCode === 550) {
+  const stage = smtpStage(err);
+
+  if (stage === 'rcpt' && responseCode !== null) {
+    return responseCode < 500
+      ? new MailDeliveryError('transient', `smtp_rcpt_${responseCode}`, { cause: err })
+      : new MailDeliveryError('refused', `smtp_rcpt_${responseCode}`, { cause: err });
+  }
+  if (
+    responseCode !== null &&
+    responseCode >= 400 &&
+    (stage === 'session' || stage === 'mail' || stage === 'data')
+  ) {
+    const limitWords =
+      LIMIT_TEXT.test(response) &&
+      ([421, 450, 451, 452, 550, 554].includes(responseCode) || POLICY_CODE.test(response));
+    if (LIMIT_CODES.test(response) || limitWords) {
       return new MailDeliveryError('limited', 'provider_limit', { cause: err });
+    }
+    if (stage === 'mail' && POLICY_CODE.test(response)) {
+      return new MailDeliveryError('down', 'policy', { cause: err });
     }
   }
   if (code === 'EAUTH' || responseCode === 535 || responseCode === 534) {
@@ -84,7 +130,7 @@ export function smtpFailure(err) {
     return new MailDeliveryError('down', 'tls', { cause: err });
   }
   if (code === 'ETIMEDOUT') return new MailDeliveryError('transient', 'timeout', { cause: err });
-  if (CONNECTION_CODES.has(code)) {
+  if (CONNECTION_CODES.has(code) && responseCode === null) {
     return new MailDeliveryError('transient', 'connection', { cause: err });
   }
   if (responseCode !== null && responseCode >= 400 && responseCode < 500) {
@@ -92,6 +138,9 @@ export function smtpFailure(err) {
   }
   if (responseCode !== null && responseCode >= 500) {
     return new MailDeliveryError('refused', `smtp_${responseCode}`, { cause: err });
+  }
+  if (CONNECTION_CODES.has(code)) {
+    return new MailDeliveryError('transient', 'connection', { cause: err });
   }
   return new MailDeliveryError('transient', 'smtp', { cause: err });
 }

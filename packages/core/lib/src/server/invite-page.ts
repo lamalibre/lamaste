@@ -33,6 +33,7 @@
 import { AUTH_PAGE_DEFAULT_ACCENT, AUTH_PAGE_DEFAULT_ACCENT_LIGHT } from '../auth-branding.js';
 import { AUTH_BRANDING_THEMES } from '../auth-branding.js';
 import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH } from '../constants.js';
+import { DISPLAY_NAME_LINK_PATTERN } from '../text-rules.js';
 import { INVITE_PAGE_KEYS, pageMessage, pageMessagesFor } from '../page-messages.js';
 import type { PageLanguage } from '../page-messages.js';
 import { AUTH_PAGE_SCRIPT_WORDS, authPageHeaders, authPageShell } from './auth-pages.js';
@@ -53,6 +54,7 @@ export const INVITE_PAGE_SCRIPT = String.raw`
       var app = document.getElementById('app');
       var TOKEN_RE = /^[a-f0-9]{64}$/;
       var USERNAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
+      var NAME_LINK_RE = new RegExp(${JSON.stringify(DISPLAY_NAME_LINK_PATTERN)}, 'iu');
       var QR_PREFIX = 'data:image/svg+xml;base64,';
       var STATUS_KEYS = { 404: 'error.invitation_not_found', 410: 'error.invitation_closed', 429: 'error.tooManyRequests' };
 ${AUTH_PAGE_SCRIPT_WORDS}
@@ -183,6 +185,9 @@ ${AUTH_PAGE_SCRIPT_WORDS}
             throw failure(format('invite.usernameRule', { min: ${USERNAME_MIN_LENGTH}, max: ${USERNAME_MAX_LENGTH} }));
           }
           if (shownName.length === 0) throw failure(msg('invite.nameRequired'));
+          if (NAME_LINK_RE.test(shownName.replace(/[\u3002\uff0e\uff61]/g, '.'))) {
+            throw failure(msg('invite.nameLooksLikeLink'));
+          }
           return { username: chosen, displayName: shownName };
         });
       }

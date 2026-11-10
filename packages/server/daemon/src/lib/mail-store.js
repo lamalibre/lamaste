@@ -120,8 +120,18 @@ export function accountState(db, accountKey) {
         limited_until: null,
         limited_reason: null,
         warned_at: null,
-        exhausted_at: null,
+        exhausted: '{}',
       };
+}
+
+/** Which shares (or the ceiling) a sending account has reached, notified: refusal → ISO time. */
+export function exhaustedOf(state) {
+  try {
+    const value = JSON.parse(state.exhausted ?? '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
 }
 
 /** Change fields of a sending account's state. */
@@ -129,19 +139,38 @@ export function updateAccountState(db, accountKey, fields) {
   const current = accountState(db, accountKey);
   const next = { ...current, ...fields };
   db.prepare(
-    `INSERT INTO mail_accounts (account_key, limited_until, limited_reason, warned_at, exhausted_at)
+    `INSERT INTO mail_accounts (account_key, limited_until, limited_reason, warned_at, exhausted)
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT (account_key) DO UPDATE SET
        limited_until = excluded.limited_until, limited_reason = excluded.limited_reason,
-       warned_at = excluded.warned_at, exhausted_at = excluded.exhausted_at`,
-  ).run(accountKey, next.limited_until, next.limited_reason, next.warned_at, next.exhausted_at);
+       warned_at = excluded.warned_at, exhausted = excluded.exhausted`,
+  ).run(
+    accountKey,
+    next.limited_until,
+    next.limited_reason,
+    next.warned_at,
+    typeof next.exhausted === 'string' ? next.exhausted : JSON.stringify(next.exhausted),
+  );
   return next;
+}
+
+/** Reset mails for `domain` in the hour before `now`, whatever account sent them (§3.7). */
+export function domainResetsLastHour(db, domain, now) {
+  if (domain === null) return 0;
+  const hourAgo = new Date(now.getTime() - HOUR_MS).toISOString();
+  return Number(
+    db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM mail_sends WHERE domain = ? AND kind = 'reset' AND sent_at > ?",
+      )
+      .get(domain, hourAgo).n,
+  );
 }
 
 /**
  * What a sending account sent: attempts in the last 24 h (all, and by
  * class), reset mails in the last hour, and the oldest attempt still in
- * the window.
+ * the window (of all, and of each class).
  */
 export function accountUsage(db, accountKey, now) {
   const since = new Date(now.getTime() - MAIL_BUDGET.windowHours * HOUR_MS).toISOString();
@@ -162,22 +191,40 @@ export function accountUsage(db, accountKey, now) {
   const oldest = db
     .prepare('SELECT MIN(sent_at) AS at FROM mail_sends WHERE account_key = ? AND sent_at > ?')
     .get(accountKey, since).at;
+  const oldestByClass = Object.fromEntries(MAIL_SEND_CLASSES.map((c) => [c, null]));
+  for (const row of db
+    .prepare(
+      'SELECT class, MIN(sent_at) AS at FROM mail_sends WHERE account_key = ? AND sent_at > ? GROUP BY class',
+    )
+    .all(accountKey, since)) {
+    oldestByClass[row.class] = row.at;
+  }
   return {
     sent24h: Object.values(byClass).reduce((a, b) => a + b, 0),
     byClass,
     resetsLastHour: resets,
     oldestAt: oldest ?? null,
+    oldestByClass,
   };
 }
 
-/** Record one delivery attempt (counted as `failed` until it is known sent). */
-export function recordAttempt(db, { accountKey, sendClass, kind, at }) {
+/** Record one delivery attempt for `domain` (null: the relay's own), counted as `failed` until it is known sent. */
+export function recordAttempt(db, { accountKey, domain = null, sendClass, kind, at }) {
   const result = db
     .prepare(
-      "INSERT INTO mail_sends (account_key, class, kind, sent_at, outcome) VALUES (?, ?, ?, ?, 'failed')",
+      "INSERT INTO mail_sends (account_key, domain, class, kind, sent_at, outcome) VALUES (?, ?, ?, ?, ?, 'failed')",
     )
-    .run(accountKey, sendClass, kind, at.toISOString());
+    .run(accountKey, domain, sendClass, kind, at.toISOString());
   return Number(result.lastInsertRowid);
+}
+
+/**
+ * Forget an attempt the provider took nothing of — a rate limit's refusal,
+ * or one that never reached the provider (its turn came after the send's
+ * time was up): it counts toward no share.
+ */
+export function forgetAttempt(db, id) {
+  db.prepare('DELETE FROM mail_sends WHERE id = ?').run(id);
 }
 
 /** Mark an attempt delivered. */
@@ -200,21 +247,30 @@ export function budgetView(db, row, now) {
   if (row.kind === null) return null;
   const usage = accountUsage(db, row.account_key, now);
   const state = accountState(db, row.account_key);
-  const { ceiling, publicCap } = mailBudgetThresholds(row.daily_limit);
+  const { ceiling, essentialCap, publicCap, adminReserve } = mailBudgetThresholds(row.daily_limit);
   const limitedUntil =
     state.limited_until !== null && Date.parse(state.limited_until) > now.getTime()
       ? state.limited_until
       : null;
+  const windowEnd = (at) =>
+    at === null ? null : new Date(Date.parse(at) + MAIL_BUDGET.windowHours * HOUR_MS).toISOString();
+  // While limited: its end. Else the earliest time a reached share (or the
+  // ceiling) frees a mail again.
   let resumesAt = limitedUntil;
-  if (resumesAt === null && usage.sent24h >= publicCap && usage.oldestAt !== null) {
-    resumesAt = new Date(
-      Date.parse(usage.oldestAt) + MAIL_BUDGET.windowHours * HOUR_MS,
-    ).toISOString();
+  if (resumesAt === null) {
+    const reached = [
+      usage.sent24h >= ceiling ? windowEnd(usage.oldestAt) : null,
+      usage.byClass.essential >= essentialCap ? windowEnd(usage.oldestByClass.essential) : null,
+      usage.byClass.public >= publicCap ? windowEnd(usage.oldestByClass.public) : null,
+    ].filter((at) => at !== null);
+    resumesAt = reached.length === 0 ? null : reached.sort()[0];
   }
   return {
     dailyLimit: row.daily_limit,
     ceiling,
+    essentialCap,
     publicCap,
+    adminReserve,
     sent24h: usage.sent24h,
     byClass: usage.byClass,
     resetsLastHour: usage.resetsLastHour,

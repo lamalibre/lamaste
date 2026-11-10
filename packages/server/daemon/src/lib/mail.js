@@ -21,6 +21,7 @@
 import crypto from 'node:crypto';
 
 import {
+  KeyedPromiseChainMutex,
   MAIL_BUDGET,
   MAIL_DAILY_LIMIT,
   formatMailbox,
@@ -56,11 +57,14 @@ import {
   sendGmailMessage,
 } from './mail-gmail.js';
 import { checkSmtpTransport, sendSmtpMessage } from './mail-smtp.js';
-import { syncMailConfiguration } from './mail-sync.js';
+import { retrySubmissionListener, syncMailConfiguration } from './mail-sync.js';
 import {
   accountState,
   accountUsage,
   deleteTransportRow,
+  domainResetsLastHour,
+  exhaustedOf,
+  forgetAttempt,
   insertPendingConsent,
   mailRecords,
   markAttemptSent,
@@ -77,7 +81,7 @@ import {
   updateAccountState,
   writeTransportRow,
 } from './mail-store.js';
-import { notifyAdminsBestEffort } from './notifications.js';
+import { notifyAdminsBestEffort, notifyAdminsOnce } from './notifications.js';
 import { readSites, readTunnels, withSitesLock } from './state.js';
 import { getStateDb } from './state-db.js';
 
@@ -214,25 +218,43 @@ async function recordHealth(db, row, { status, reason }, logger) {
   );
 }
 
+/** The threshold below which a reached share (or the ceiling) is no longer reached. */
+function exhaustedThreshold(refusal, thresholds) {
+  if (refusal === 'ceiling') return { count: 'sent24h', at: thresholds.ceiling };
+  if (refusal === 'essential-cap') return { count: 'essential', at: thresholds.essentialCap };
+  if (refusal === 'public-cap') return { count: 'public', at: thresholds.publicCap };
+  return null;
+}
+
 /**
  * Admit one attempt under the budget (§3.7) and record it — one
  * synchronous step, so two sends never both take the last mail. Clears a
  * crossing's notification state once usage is back below it.
  */
-function admitAttempt(db, row, { sendClass, kind, now }) {
+function admitAttempt(db, row, { scope, sendClass, kind, now }) {
   const usage = accountUsage(db, row.account_key, now);
   const state = accountState(db, row.account_key);
-  const { publicCap, warningAt } = mailBudgetThresholds(row.daily_limit);
-  if (state.warned_at !== null && usage.sent24h < warningAt) {
+  const thresholds = mailBudgetThresholds(row.daily_limit);
+  if (state.warned_at !== null && usage.sent24h < thresholds.warningAt) {
     updateAccountState(db, row.account_key, { warned_at: null });
   }
-  if (state.exhausted_at !== null && usage.sent24h < publicCap) {
-    updateAccountState(db, row.account_key, { exhausted_at: null });
+  const exhausted = exhaustedOf(state);
+  const still = Object.fromEntries(
+    Object.entries(exhausted).filter(([refusal]) => {
+      const t = exhaustedThreshold(refusal, thresholds);
+      if (t === null) return false;
+      const used = t.count === 'sent24h' ? usage.sent24h : usage.byClass[t.count];
+      return used >= t.at;
+    }),
+  );
+  if (Object.keys(still).length !== Object.keys(exhausted).length) {
+    updateAccountState(db, row.account_key, { exhausted: JSON.stringify(still) });
   }
   const decision = mailBudgetDecision({
     dailyLimit: row.daily_limit,
     sent24h: usage.sent24h,
-    resetsLastHour: usage.resetsLastHour,
+    byClass: usage.byClass,
+    domainResetsLastHour: domainResetsLastHour(db, scope, now),
     sendClass,
     kind,
     limitedUntil: state.limited_until,
@@ -240,7 +262,13 @@ function admitAttempt(db, row, { sendClass, kind, now }) {
   });
   if (!decision.ok) return { refusal: decision.reason, usage };
   return {
-    attemptId: recordAttempt(db, { accountKey: row.account_key, sendClass, kind, at: now }),
+    attemptId: recordAttempt(db, {
+      accountKey: row.account_key,
+      domain: scope,
+      sendClass,
+      kind,
+      at: now,
+    }),
     usage,
   };
 }
@@ -271,25 +299,61 @@ async function afterDelivered(db, row, sent24h, logger) {
   );
 }
 
-/** A mail the budget held back: the "exhausted" notification, once per crossing. */
-async function budgetRefused(db, row, refusal, usage, logger) {
-  if (refusal !== 'ceiling' && refusal !== 'public-cap') return;
-  if (accountState(db, row.account_key).exhausted_at !== null) return;
+/** What stops when a share (or the ceiling) is reached, as notifications say it. */
+const EXHAUSTED_WORDS = Object.freeze({
+  ceiling: 'no more mail — administrators’ invitations included',
+  'essential-cap':
+    'no more of Authelia’s mail (sign-in and registration codes) or password-changed notices — administrators’ invitations still go',
+  'public-cap':
+    'no more password-reset mails or delegated invitations — Authelia’s mail and administrators’ invitations still go',
+});
+
+/**
+ * A mail the budget held back: the "exhausted" notification of a share or
+ * the ceiling, once per crossing (kept on the account, so a restart does
+ * not repeat it); the reset cap of a domain, once an hour.
+ */
+async function budgetRefused(db, row, { scope, refusal, usage }, logger) {
+  if (refusal === 'reset-cap') {
+    const domain = scope ?? 'the relay';
+    const notified = await notifyAdminsOnce(
+      `mail:reset-cap:${domain}`,
+      HOUR_MS,
+      {
+        source: 'lamaste',
+        level: 'warning',
+        message: `Mail: ${MAIL_BUDGET.resetsPerDomainPerHour} password-reset mails for ${domain} in the last hour — more wait until the hour moves on. Someone may be asking for resets in bulk.`,
+      },
+      logger,
+    );
+    if (notified) {
+      await recordAuditBestEffort(
+        { actor: 'lamaste', action: 'mail.budget.reset-cap', details: { scope: domain } },
+        logger,
+      );
+    }
+    return;
+  }
+  if (!(refusal in EXHAUSTED_WORDS)) return;
+  const exhausted = exhaustedOf(accountState(db, row.account_key));
+  if (exhausted[refusal] !== undefined) return;
   const now = new Date();
-  updateAccountState(db, row.account_key, { exhausted_at: now.toISOString() });
-  const resumesAt =
-    usage.oldestAt === null
-      ? null
-      : new Date(Date.parse(usage.oldestAt) + MAIL_BUDGET.windowHours * HOUR_MS).toISOString();
-  const what =
+  updateAccountState(db, row.account_key, {
+    exhausted: JSON.stringify({ ...exhausted, [refusal]: now.toISOString() }),
+  });
+  const oldest =
     refusal === 'ceiling'
-      ? 'no more mail'
-      : 'only essential and administrators’ mail (password resets and delegated invitations wait)';
+      ? usage.oldestAt
+      : usage.oldestByClass[refusal === 'essential-cap' ? 'essential' : 'public'];
+  const resumesAt =
+    oldest === null
+      ? null
+      : new Date(Date.parse(oldest) + MAIL_BUDGET.windowHours * HOUR_MS).toISOString();
   await notifyAdminsBestEffort(
     {
       source: 'lamaste',
       level: 'critical',
-      message: `Mail: ${accountLabel(row)} reached its sending budget — ${what} until ${resumesAt ?? 'the window moves on'}.`,
+      message: `Mail: ${accountLabel(row)} reached its sending budget — ${EXHAUSTED_WORDS[refusal]} until ${resumesAt ?? 'the window moves on'}.`,
     },
     logger,
   );
@@ -303,15 +367,22 @@ async function budgetRefused(db, row, refusal, usage, logger) {
   );
 }
 
-/** A provider's limit refusal: the sending account — every row on it — stops for 24 h. */
-async function providerLimited(db, row, logger) {
-  const until = new Date(Date.now() + MAIL_BUDGET.limitedHours * HOUR_MS).toISOString();
+/**
+ * A provider's daily-limit refusal: the sending account — every row on it —
+ * stops until the provider said (`until`), at most 24 h.
+ */
+async function providerLimited(db, row, failure, logger) {
+  const latest = Date.now() + MAIL_BUDGET.limitedHours * HOUR_MS;
+  const said = failure.until === null ? Number.NaN : Date.parse(failure.until);
+  const until = new Date(
+    Number.isFinite(said) && said > Date.now() ? Math.min(said, latest) : latest,
+  ).toISOString();
   updateAccountState(db, row.account_key, { limited_until: until, limited_reason: 'provider' });
   await notifyAdminsBestEffort(
     {
       source: 'lamaste',
       level: 'critical',
-      message: `Mail: the provider refused ${accountLabel(row)} for sending too much — no mail through it until ${until}. Resume earlier once the provider's console shows it sending again.`,
+      message: `Mail: the provider refused ${accountLabel(row)} for sending too much in a day — no mail through it until ${until}. Resume earlier once the provider's console shows it sending again.`,
     },
     logger,
   );
@@ -326,8 +397,51 @@ async function providerLimited(db, row, logger) {
 }
 
 /**
- * Deliver a composed message through `row` under the budget: one retry
- * for a transient failure, all within 30 s.
+ * The gap the Gmail API's sends through one account keep (Google's
+ * per-user rate limits): at most one a second.
+ */
+let gmailSendIntervalMs = 1_000;
+/** Backoff of a rate-limited send: 1 s, 2 s, 4 s, … — within the send's 30 s. */
+const RATE_LIMIT_BACKOFF_MS = 1_000;
+
+/** One send at a time per sending account (§3.7): a queue, paced for the Gmail API. */
+const accountQueues = new KeyedPromiseChainMutex();
+/** When each Gmail API account last sent (ms). */
+const lastGmailSendAt = new Map();
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+
+/** Tests: the Gmail API's pacing gap; forget when each account last sent. */
+export function setMailPacingForTests({ gmailIntervalMs } = {}) {
+  gmailSendIntervalMs = gmailIntervalMs ?? 1_000;
+  lastGmailSendAt.clear();
+}
+
+/**
+ * Hand one message to `row`'s provider in its account's turn: sends through
+ * one account go one after another, through the Gmail API at most one a
+ * second. A turn that comes after `deadline` sends nothing (`transient`
+ * `queue_timeout`).
+ */
+function queuedSend(row, message, deadline) {
+  return accountQueues.run(row.account_key, async () => {
+    if (row.kind === 'gmail-api') {
+      await sleep((lastGmailSendAt.get(row.account_key) ?? 0) + gmailSendIntervalMs - Date.now());
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new MailDeliveryError('transient', 'queue_timeout');
+    try {
+      return await transportSend(row, message, remaining);
+    } finally {
+      if (row.kind === 'gmail-api') lastGmailSendAt.set(row.account_key, Date.now());
+    }
+  });
+}
+
+/**
+ * Deliver a composed message through `row` under the budget, all within
+ * 30 s: a rate limit is tried again with backoff (Google's `Retry after`
+ * when it said one), another transient failure once.
  *
  * @returns {Promise<import('@lamalibre/lamaste').MailSendResult>}
  */
@@ -349,15 +463,22 @@ async function deliver(row, { scope, from, to, raw, kind, sendClass, logger }) {
       logger,
     );
 
-  for (let attempt = 0; ; attempt++) {
-    const admitted = admitAttempt(db, row, { sendClass, kind, now: new Date() });
+  let transientRetries = 0;
+  let rateRetries = 0;
+  for (;;) {
+    const admitted = admitAttempt(db, row, { scope, sendClass, kind, now: new Date() });
     if (admitted.refusal) {
-      await budgetRefused(db, row, admitted.refusal, admitted.usage, logger);
+      await budgetRefused(
+        db,
+        row,
+        { scope, refusal: admitted.refusal, usage: admitted.usage },
+        logger,
+      );
       return { status: 'deferred-budget', error: admitted.refusal };
     }
     let failure;
     try {
-      await transportSend(row, { from, to, raw }, Math.max(1, deadline - Date.now()));
+      await queuedSend(row, { from, to, raw }, deadline);
       markAttemptSent(db, admitted.attemptId);
       if (row.health_status === 'down')
         await recordHealth(db, row, { status: 'up', reason: null }, logger);
@@ -370,15 +491,35 @@ async function deliver(row, { scope, from, to, raw, kind, sendClass, logger }) {
       if (!(err instanceof MailDeliveryError))
         logger?.error({ err: err?.message }, 'Mail send failed');
     }
+    if (failure.reason === 'rate_limited' || failure.reason === 'queue_timeout') {
+      // The provider took nothing: the attempt counts toward no share.
+      forgetAttempt(db, admitted.attemptId);
+    }
     if (failure.failure === 'limited') {
-      await providerLimited(db, row, logger);
+      await providerLimited(db, row, failure, logger);
       await audit('mail.failed', { error: failure.reason });
       return { status: 'deferred-budget', error: 'limited' };
     }
     if (failure.failure === 'down') {
       await recordHealth(db, row, { status: 'down', reason: failure.reason }, logger);
     }
-    if (failure.failure === 'transient' && attempt === 0 && deadline - Date.now() > 2_000) continue;
+    if (failure.reason === 'rate_limited') {
+      const backoff = RATE_LIMIT_BACKOFF_MS * 2 ** rateRetries;
+      const wait = Math.max(backoff, failure.retryAfterMs ?? 0);
+      if (Date.now() + wait < deadline - 1_000) {
+        rateRetries++;
+        await sleep(wait);
+        continue;
+      }
+    } else if (
+      failure.failure === 'transient' &&
+      failure.reason !== 'queue_timeout' &&
+      transientRetries === 0 &&
+      deadline - Date.now() > 2_000
+    ) {
+      transientRetries++;
+      continue;
+    }
     logger?.warn({ kind, failure: failure.failure, reason: failure.reason }, 'Mail not delivered');
     await audit('mail.failed', { error: failure.reason });
     return { status: 'failed', error: failure.reason };
@@ -484,6 +625,16 @@ export async function mailSenderHostnames() {
  */
 export function syncMail({ logger } = {}) {
   return syncMailConfiguration({ deliver: sendRawMail, logger });
+}
+
+/**
+ * The identity tick's minute: the submission listener tried again while
+ * another program holds its port (lib/mail-sync.js). Never throws.
+ *
+ * @param {import('pino').Logger} [logger]
+ */
+export function retryMailSubmission(logger) {
+  return retrySubmissionListener({ deliver: sendRawMail, logger });
 }
 
 /** `answer` with the warnings of {@link syncMail} after a change added to its own. */

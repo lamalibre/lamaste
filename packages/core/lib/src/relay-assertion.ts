@@ -47,6 +47,14 @@
  * ({@link isDelegatedInvitationsUrl}). The two kinds never stand in for one
  * another: each admits only paths of its own.
  *
+ * And for a person changing their own password on a domain's sign-in host
+ * (`auth.<domain>/api/account/password`, mail-design.md §6.3): the same
+ * audience and caller, and a target of a third kind — `account:
+ * 'password'`, the domain whose sign-in host it is, and the path, which is
+ * {@link ACCOUNT_PASSWORD_API_PATH} exactly. Gatekeeper signs it once
+ * Authelia vouched for the session (two factors), so the panel never takes
+ * the user from a header any local process could send.
+ *
  * Shared between the server side (signing) and the agent side (verifying);
  * depends on nothing but `node:crypto`, `node:fs` and the shared path rules.
  */
@@ -54,6 +62,7 @@
 import crypto from 'node:crypto';
 import { link, open, stat, unlink } from 'node:fs/promises';
 
+import { ACCOUNT_PASSWORD_API_PATH } from './account.js';
 import { NonceStore } from './caller-assertion.js';
 import { AGENT_LABEL_REGEX, HOSTNAME_REGEX } from './constants.js';
 import { isDelegatedInvitationsUrl, isUserSurfaceUrl } from './user-surface.js';
@@ -154,7 +163,8 @@ export type RelayTarget =
   | { readonly path: string }
   | { readonly route: string }
   | RelayUserSurfaceTarget
-  | RelayInvitationsTarget;
+  | RelayInvitationsTarget
+  | RelayAccountTarget;
 
 /** A user on a plugin's user surface: the route and the raw request target on it. */
 export interface RelayUserSurfaceTarget {
@@ -173,6 +183,21 @@ export interface RelayInvitationsTarget {
   readonly path: string;
 }
 
+/**
+ * A person changing their own password on the sign-in host of `domain`:
+ * the one path of that API ({@link ACCOUNT_PASSWORD_API_PATH}).
+ */
+export interface RelayAccountTarget {
+  readonly account: 'password';
+  readonly domain: string;
+  readonly path: string;
+}
+
+/** Whether a verified target is a password change's ({@link RelayAccountTarget}). */
+export function isRelayAccountTarget(target: RelayTarget): target is RelayAccountTarget {
+  return 'account' in target;
+}
+
 /** Whether a verified target is an inviter's ({@link RelayInvitationsTarget}). */
 export function isRelayInvitationsTarget(target: RelayTarget): target is RelayInvitationsTarget {
   return 'invitations' in target;
@@ -180,7 +205,9 @@ export function isRelayInvitationsTarget(target: RelayTarget): target is RelayIn
 
 /** Whether a verified target is a user surface's ({@link RelayUserSurfaceTarget}). */
 export function isRelayUserSurfaceTarget(target: RelayTarget): target is RelayUserSurfaceTarget {
-  return 'route' in target && 'path' in target && !('invitations' in target);
+  return (
+    'route' in target && 'path' in target && !('invitations' in target) && !('account' in target)
+  );
 }
 
 export interface RelayAssertionPayload {
@@ -512,6 +539,9 @@ function assertAgentTarget(caller: RelayCaller, target: RelayTarget): void {
   if ('invitations' in target) {
     throw new Error("An inviter's target is only for the panel audience");
   }
+  if ('account' in target) {
+    throw new Error("A password change's target is only for the panel audience");
+  }
   if ('route' in target && 'path' in target) {
     throw new Error('A user-surface target (route and path) is only for the panel audience');
   }
@@ -532,9 +562,26 @@ function assertAgentTarget(caller: RelayCaller, target: RelayTarget): void {
 function panelCallerAndTarget(
   caller: RelayCaller,
   target: RelayTarget,
-): { caller: RelayPanelUser; target: RelayUserSurfaceTarget | RelayInvitationsTarget } {
+): {
+  caller: RelayPanelUser;
+  target: RelayUserSurfaceTarget | RelayInvitationsTarget | RelayAccountTarget;
+} {
   if (caller.type !== 'user') throw new Error('The panel audience vouches for a user only');
   if (!USERNAME_RE.test(caller.username)) throw new Error('Invalid username in caller');
+  if ('account' in target) {
+    if ('route' in target || 'invitations' in target) {
+      throw new Error("A password change's target names no route");
+    }
+    if (target.account !== 'password') throw new Error('Invalid account target');
+    if (!isDomain(target.domain)) throw new Error('Invalid target domain');
+    if (target.path !== ACCOUNT_PASSWORD_API_PATH) {
+      throw new Error('The target path is not the password change API');
+    }
+    return {
+      caller: { type: 'user', username: caller.username },
+      target: { account: 'password', domain: target.domain, path: target.path },
+    };
+  }
   if ('invitations' in target) {
     if ('route' in target) throw new Error("An inviter's target names no user-surface route");
     if (!ROUTE_RE.test(target.invitations)) throw new Error('Invalid target route');
@@ -667,7 +714,7 @@ function parseCaller(raw: unknown): RelayCaller | null {
 function parseTarget(raw: unknown, caller: RelayCaller): RelayTarget | null {
   if (!raw || typeof raw !== 'object') return null;
   const t = raw as Record<string, unknown>;
-  if ('invitations' in t) return null;
+  if ('invitations' in t || 'account' in t) return null;
   const path = t['path'];
   const route = t['route'];
   if (caller.type === 'user') {
@@ -685,7 +732,10 @@ function parseTarget(raw: unknown, caller: RelayCaller): RelayTarget | null {
 function parsePanelCallerAndTarget(
   rawCaller: unknown,
   rawTarget: unknown,
-): { caller: RelayPanelUser; target: RelayUserSurfaceTarget | RelayInvitationsTarget } | null {
+): {
+  caller: RelayPanelUser;
+  target: RelayUserSurfaceTarget | RelayInvitationsTarget | RelayAccountTarget;
+} | null {
   if (!rawCaller || typeof rawCaller !== 'object' || !rawTarget || typeof rawTarget !== 'object') {
     return null;
   }
@@ -695,6 +745,22 @@ function parsePanelCallerAndTarget(
   const path = t['path'];
   if (c['type'] !== 'user' || typeof username !== 'string' || !USERNAME_RE.test(username)) {
     return null;
+  }
+  if ('account' in t) {
+    const domain = t['domain'];
+    if (
+      'route' in t ||
+      'invitations' in t ||
+      t['account'] !== 'password' ||
+      !isDomain(domain) ||
+      path !== ACCOUNT_PASSWORD_API_PATH
+    ) {
+      return null;
+    }
+    return {
+      caller: { type: 'user', username },
+      target: { account: 'password', domain, path: ACCOUNT_PASSWORD_API_PATH },
+    };
   }
   if ('invitations' in t) {
     const invitations = t['invitations'];
@@ -752,6 +818,7 @@ function parsePayload(raw: Record<string, unknown>): RelayAssertionPayload | nul
 
 /** Whether a verified target admits the request target `url`. */
 function targetAdmits(target: RelayTarget, url: string): boolean {
+  if ('account' in target) return target.path === url && url === ACCOUNT_PASSWORD_API_PATH;
   if ('invitations' in target) {
     return target.path === url && isDelegatedInvitationsUrl(target.path, target.invitations);
   }

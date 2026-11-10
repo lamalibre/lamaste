@@ -55,6 +55,39 @@ export async function notifyAdminsBestEffort(notification, logger) {
   }
 }
 
+/** Keys notified recently ({@link notifyAdminsOnce}): key → when that stops holding (ms). */
+const recentlyNotified = new Map();
+/** At most this many keys are remembered (the oldest go first). */
+const RECENTLY_NOTIFIED_MAX = 1000;
+
+/**
+ * Notify the administrators once per `key` within `withinMs`: a cap that
+ * keeps refusing (a flood of resets, an inviter at their daily cap) is one
+ * notification, not one per refusal. In memory — a restart may notify once
+ * more. Answers whether it notified.
+ *
+ * @param {string} key what the notification is about (no address, no secret)
+ * @param {number} withinMs
+ * @param {{ source: string, level?: 'info'|'warning'|'critical', message: string }} notification
+ * @param {import('pino').Logger} [logger]
+ */
+export async function notifyAdminsOnce(key, withinMs, notification, logger, now = Date.now()) {
+  const until = recentlyNotified.get(key);
+  if (until !== undefined && until > now) return false;
+  recentlyNotified.delete(key);
+  recentlyNotified.set(key, now + withinMs);
+  while (recentlyNotified.size > RECENTLY_NOTIFIED_MAX) {
+    recentlyNotified.delete(recentlyNotified.keys().next().value);
+  }
+  await notifyAdminsBestEffort(notification, logger);
+  return true;
+}
+
+/** Forget what {@link notifyAdminsOnce} remembers (tests). */
+export function forgetRecentNotifications() {
+  recentlyNotified.clear();
+}
+
 function rowToNotification(row) {
   return {
     id: row.id,

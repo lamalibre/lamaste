@@ -67,6 +67,7 @@ export const PAGE_MESSAGES_EN = {
   'invite.usernameRule':
     'A username has {min} to {max} lower-case letters, digits, - and _, and starts with a letter or digit.',
   'invite.nameRequired': 'Enter your name.',
+  'invite.nameLooksLikeLink': 'Enter your name, not a web address.',
   'invite.passwordShort': 'A password has at least 8 characters.',
   'invite.passwordLong': 'A password has at most 128 characters.',
   'invite.passwordMismatch': 'The passwords do not match.',
@@ -121,10 +122,10 @@ export const PAGE_MESSAGES_EN = {
   'invitations.reallyRevoke': 'Really revoke?',
   'invitations.emailRequired': 'Enter an e-mail address.',
   'invitations.emailInvalid': 'Enter a valid e-mail address.',
-  'invitations.mailed':
-    'The invitation was e-mailed. The link is also shown here, only now — whoever opens it first can accept it.',
+  'invitations.mailed': 'The invitation was e-mailed. Its link is in that mail only.',
   'invitations.mailFailed':
-    'The invitation could not be e-mailed. Send this link yourself — it is shown only now, and whoever opens it first can accept it.',
+    'The invitation could not be e-mailed. Try again later with “New link” — a new link is e-mailed and the old one stops working.',
+  'invitations.nameLooksLikeLink': 'Enter their name, not a web address.',
   'invitations.mailSent': 'E-mailed',
   'invitations.mailNotSent': 'Not e-mailed',
   'invitations.reissue': 'New link',
@@ -155,6 +156,8 @@ export const PAGE_MESSAGES_EN = {
   'error.email_domain_not_allowed': 'Invitations cannot go to this e-mail address’s domain.',
   'error.role_not_grantable': 'You may not invite people with this role.',
   'error.invitation_rate': 'Too many invitations in the last hour — try again later.',
+  'error.invitation_daily_rate': 'Too many invitations today — try again tomorrow.',
+  'error.reissue_rate': 'This invitation got a new link too often today — try again tomorrow.',
   'error.invitation_cap.inviter':
     'You have reached your limit of open invitations — revoke one or wait for one to be accepted.',
   'error.invitation_cap.plugin': 'This application takes no more people by invitation.',
@@ -313,7 +316,8 @@ export const PAGE_MESSAGES_EN = {
     'If you did not ask for this, ignore this e-mail. Your password stays as it is.',
   'mail.changed.subject': 'Your password was changed',
   'mail.changed.text': 'The password of your account {username} on {brand} was changed on {date}.',
-  'mail.changed.warning': 'If you did not do this, contact your administrator at once.',
+  'mail.changed.warning':
+    'If you did not do this, contact your administrator at once — they can end every session of your account.',
   'mail.test.subject': 'Test e-mail from {brand}',
   'mail.test.text': 'This is a test. {brand} can send e-mail as {sender}.',
 } as const satisfies Record<string, string>;
@@ -351,6 +355,7 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'invite.usernameRule':
     'Kullanıcı adı {min}–{max} karakter uzunluğunda olmalıdır; yalnızca küçük harf, rakam, kısa çizgi (-) ve alt çizgi (_) içerebilir (ç, ğ, ı, ö, ş, ü kullanılamaz) ve bir harf ya da rakamla başlamalıdır.',
   'invite.nameRequired': 'Adınızı ve soyadınızı girin.',
+  'invite.nameLooksLikeLink': 'Bir web adresi değil, adınızı ve soyadınızı girin.',
   'invite.passwordShort': 'Şifre en az 8 karakter olmalıdır.',
   'invite.passwordLong': 'Şifre en fazla 128 karakter olabilir.',
   'invite.passwordMismatch': 'Şifreler eşleşmiyor.',
@@ -405,10 +410,10 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'invitations.reallyRevoke': 'İptal edilsin mi?',
   'invitations.emailRequired': 'Bir e-posta adresi girin.',
   'invitations.emailInvalid': 'Geçerli bir e-posta adresi girin.',
-  'invitations.mailed':
-    'Davet e-postayla gönderildi. Bağlantı burada da yalnızca şimdi gösteriliyor; onu ilk açan kişi daveti kabul edebilir.',
+  'invitations.mailed': 'Davet e-postayla gönderildi. Bağlantısı yalnızca bu e-postada yer alıyor.',
   'invitations.mailFailed':
-    'Davet e-postayla gönderilemedi. Bu bağlantıyı kişiye kendiniz gönderin. Bağlantı yalnızca şimdi gösteriliyor ve onu ilk açan kişi daveti kabul edebilir.',
+    'Davet e-postayla gönderilemedi. Daha sonra “Yeni bağlantı” ile yeniden deneyin; yeni bağlantı e-postayla gönderilir ve eskisi geçersiz olur.',
+  'invitations.nameLooksLikeLink': 'Bir web adresi değil, kişinin adını ve soyadını girin.',
   'invitations.mailSent': 'E-postayla gönderildi',
   'invitations.mailNotSent': 'E-posta gönderilemedi',
   'invitations.reissue': 'Yeni bağlantı',
@@ -441,6 +446,10 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'error.role_not_grantable': 'Bu rolle kişi davet edemezsiniz.',
   'error.invitation_rate':
     'Son bir saatte çok fazla davet oluşturdunuz. Lütfen daha sonra yeniden deneyin.',
+  'error.invitation_daily_rate':
+    'Bugün çok fazla davet oluşturdunuz. Lütfen yarın yeniden deneyin.',
+  'error.reissue_rate':
+    'Bu davet için bugün çok fazla yeni bağlantı oluşturuldu. Lütfen yarın yeniden deneyin.',
   'error.invitation_cap.inviter':
     'Açık davet sınırınıza ulaştınız. Bir daveti iptal edin ya da davetlerden birinin kabul edilmesini bekleyin.',
   'error.invitation_cap.plugin': 'Bu uygulamaya davetle daha fazla kişi eklenemiyor.',
@@ -596,7 +605,8 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'mail.changed.subject': 'Şifreniz değiştirildi',
   'mail.changed.text':
     'Hesabınızın şifresi değiştirildi. Hesap: {username} ({brand}), tarih: {date}',
-  'mail.changed.warning': 'Bunu siz yapmadıysanız hemen yöneticinize başvurun.',
+  'mail.changed.warning':
+    'Bunu siz yapmadıysanız hemen yöneticinize başvurun; yöneticiniz hesabınızın tüm oturumlarını sonlandırabilir.',
   'mail.test.subject': 'Deneme e-postası: {brand}',
   'mail.test.text': 'Bu bir denemedir. {brand} şu adresten e-posta gönderebiliyor: {sender}',
 });
@@ -657,6 +667,8 @@ export const INVITATIONS_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
   'error.email_domain_not_allowed',
   'error.role_not_grantable',
   'error.invitation_rate',
+  'error.invitation_daily_rate',
+  'error.reissue_rate',
   'error.invitation_cap.inviter',
   'error.invitation_cap.plugin',
   'error.invitation_not_pending',

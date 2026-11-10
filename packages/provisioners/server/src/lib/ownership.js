@@ -59,9 +59,17 @@ export async function writeFileNoFollow(path, content, { mode, uid, gid }) {
  * Set owner and mode of the regular file at `path` through a descriptor.
  * A symlink, a missing file or anything but a regular file is left alone.
  *
+ * Refused (an error, nothing changed) when the file has another hard link
+ * — changing it would change a file elsewhere, which the lamaste user may
+ * have linked here (a file root then hands to it) — or belongs to anyone
+ * but `uid`, root or one of `previousOwners` (an owner an earlier version
+ * gave it): a file someone else owns is not one Lamaste made.
+ *
+ * @param {string} path
+ * @param {{ uid: number, gid: number, mode: number, previousOwners?: number[] }} options
  * @returns {Promise<boolean>} whether the file exists and was checked
  */
-export async function setFileOwnership(path, { uid, gid, mode }) {
+export async function setFileOwnership(path, { uid, gid, mode, previousOwners = [] }) {
   let fh;
   try {
     fh = await open(path, NOFOLLOW_READ);
@@ -72,6 +80,12 @@ export async function setFileOwnership(path, { uid, gid, mode }) {
   try {
     const st = await fh.stat();
     if (!st.isFile()) return false;
+    if (st.nlink !== 1) {
+      throw new Error(`${path} has ${st.nlink} hard links — refusing to change its owner or mode`);
+    }
+    if (st.uid !== uid && st.uid !== 0 && !previousOwners.includes(st.uid)) {
+      throw new Error(`${path} belongs to uid ${st.uid} — refusing to change its owner or mode`);
+    }
     if (st.uid !== uid || st.gid !== gid) await fh.chown(uid, gid);
     if ((st.mode & 0o7777) !== mode) await fh.chmod(mode);
     return true;

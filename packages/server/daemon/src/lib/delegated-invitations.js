@@ -15,6 +15,7 @@ import crypto from 'node:crypto';
 
 import {
   DEFAULT_INVITATION_POLICY,
+  INVITATIONS_PER_INVITER_PER_DAY,
   INVITATIONS_PER_INVITER_PER_HOUR,
   INVITATION_GRANT_RESERVE,
   InvitationPolicyInputSchema,
@@ -26,6 +27,7 @@ import {
 import { httpError } from './app-error.js';
 import { readAudienceRow } from './audience.js';
 import { recordAuditBestEffort } from './audit.js';
+import { notifyAdminsOnce } from './notifications.js';
 import { getDirectoryUser } from './directory.js';
 import { declaredRoleIds } from './entitlements.js';
 import { gatekeeperGrantCapacity, holdsResourceGrant } from './gatekeeper-client.js';
@@ -480,6 +482,7 @@ export async function assertGrantReserve() {
 function countsSync(db, plugin, inviterUserId, now) {
   const nowIso = new Date(now).toISOString();
   const hourAgo = new Date(now - 60 * 60 * 1000).toISOString();
+  const dayAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString();
   const openOfInviter = db
     .prepare(
       `SELECT COUNT(*) AS n FROM invitations WHERE kind = 'delegated' AND plugin = ?
@@ -498,16 +501,16 @@ function countsSync(db, plugin, inviterUserId, now) {
        WHERE i.kind = 'delegated' AND i.plugin = ? AND u.status <> 'removed'`,
     )
     .get(plugin).n;
-  // Invitations made and new links given in the last hour: a reissue
-  // mails a link as a new invitation does (mail-design.md §6.1).
-  const lastHour =
+  // Invitations made and new links given since `since`: a reissue mails a
+  // link as a new invitation does (mail-design.md §6.1).
+  const madeSince = (since) =>
     Number(
       db
         .prepare(
           `SELECT COUNT(*) AS n FROM invitations WHERE kind = 'delegated' AND inviter_user_id = ?
              AND created_at > ?`,
         )
-        .get(inviterUserId, hourAgo).n,
+        .get(inviterUserId, since).n,
     ) +
     Number(
       db
@@ -515,13 +518,14 @@ function countsSync(db, plugin, inviterUserId, now) {
           `SELECT COUNT(*) AS n FROM invitation_reissues WHERE inviter_user_id = ?
              AND reissued_at > ?`,
         )
-        .get(inviterUserId, hourAgo).n,
+        .get(inviterUserId, since).n,
     );
   return {
     openOfInviter: Number(openOfInviter),
     openOfPlugin: Number(openOfPlugin),
     joined: Number(joined),
-    lastHour: Number(lastHour),
+    lastHour: madeSince(hourAgo),
+    lastDay: madeSince(dayAgo),
   };
 }
 
@@ -623,6 +627,11 @@ function allowedEmailDomain(policy, email) {
  */
 function assertCapsSync(db, plugin, policy, inviterUserId, now, { opens }) {
   const counts = countsSync(db, plugin, inviterUserId, now);
+  if (counts.lastDay >= INVITATIONS_PER_INVITER_PER_DAY) {
+    throw httpError('Too many invitations today — try again tomorrow', 429, {
+      code: 'invitation_daily_rate',
+    });
+  }
   if (counts.lastHour >= INVITATIONS_PER_INVITER_PER_HOUR) {
     throw httpError('Too many invitations in the last hour — try again later', 429, {
       code: 'invitation_rate',
@@ -658,7 +667,42 @@ function assertCapsSync(db, plugin, policy, inviterUserId, now, { opens }) {
  * @param {{ email: string, displayName?: string, role: string }} request
  * @param {{ logger?: import('pino').Logger }} [opts]
  */
-export async function createDelegatedInvitation(plugin, caller, request, { logger } = {}) {
+export function createDelegatedInvitation(plugin, caller, request, { logger } = {}) {
+  return notifyingDailyCap(
+    plugin,
+    caller,
+    () => makeDelegatedInvitation(plugin, caller, request, { logger }),
+    logger,
+  );
+}
+
+/**
+ * Run `work` (making or reissuing one of `caller`'s invitations); when it
+ * is refused for the inviter's daily cap, the administrators are told —
+ * once a day per inviter, after the invitations lock was released — and
+ * the refusal goes on.
+ */
+async function notifyingDailyCap(plugin, caller, work, logger) {
+  try {
+    return await work();
+  } catch (err) {
+    if (err?.code === 'invitation_daily_rate') {
+      await notifyAdminsOnce(
+        `invitations:inviter-daily:${caller.userId}`,
+        24 * 60 * 60 * 1000,
+        {
+          source: 'lamaste',
+          level: 'warning',
+          message: `Invitations: user ${caller.userId} reached ${INVITATIONS_PER_INVITER_PER_DAY} invitations and new links in a day into ${plugin.displayName ?? plugin.route} — more are refused until the day moves on.`,
+        },
+        logger,
+      );
+    }
+    throw err;
+  }
+}
+
+async function makeDelegatedInvitation(plugin, caller, request, { logger } = {}) {
   const { policy, surface } = await availablePolicy(plugin, logger);
   const emailDomain = allowedEmailDomain(policy, request.email);
   await assertGrantReserve();
@@ -741,7 +785,16 @@ export async function createDelegatedInvitation(plugin, caller, request, { logge
  * @param {string} id
  * @param {{ logger?: import('pino').Logger }} [opts]
  */
-export async function reissueOwnInvitation(plugin, caller, id, { logger } = {}) {
+export function reissueOwnInvitation(plugin, caller, id, { logger } = {}) {
+  return notifyingDailyCap(
+    plugin,
+    caller,
+    () => reissueOwnInvitationOnce(plugin, caller, id, { logger }),
+    logger,
+  );
+}
+
+async function reissueOwnInvitationOnce(plugin, caller, id, { logger } = {}) {
   const { policy, surface } = await availablePolicy(plugin, logger);
   const found = await getInvitation(id);
   if (

@@ -12,7 +12,10 @@
 
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { X509Certificate } from 'node:crypto';
+import net from 'node:net';
+import tls from 'node:tls';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -234,11 +237,72 @@ test('the local CA, the leaf and Authelia’s two files: made once, private, kep
   const reissued = await lib.ensureSubmissionMaterial();
   assert.notEqual(reissued.cert, first.cert);
   assert.equal(reissued.authelia, false);
+  // The CA vouches for the listener's name alone: name-constrained, critical.
+  assert.equal(lib.caNameConstrained(await readFile(caFile, 'utf-8')), true);
+  const caText = execFileSync('openssl', ['x509', '-noout', '-text', '-in', caFile], {
+    encoding: 'utf-8',
+  });
+  assert.match(caText, /X509v3 Name Constraints: critical/);
+  assert.match(caText, /Permitted:\s+DNS:lamaste-mail\.localhost/);
+
   // A password gone is a new one, which Authelia must read anew.
   await rm(paths.passwordFile);
   const repassed = await lib.ensureSubmissionMaterial();
   assert.equal(repassed.authelia, true);
   assert.notEqual(repassed.password, first.password);
+});
+
+test('a CA made without the name constraint is made again, and Authelia told', async () => {
+  // A CA as the first 4.13 candidate made it: no nameConstraints.
+  await mkdir(paths.dir, { recursive: true, mode: 0o700 });
+  const work = await mkdtemp(path.join(dir, 'old-ca-'));
+  execFileSync(
+    'openssl',
+    ['ecparam', '-name', 'prime256v1', '-genkey', '-noout', '-out', 'k.pem'],
+    {
+      cwd: work,
+    },
+  );
+  execFileSync('openssl', ['pkcs8', '-topk8', '-nocrypt', '-in', 'k.pem', '-out', 'key.pem'], {
+    cwd: work,
+  });
+  execFileSync(
+    'openssl',
+    [
+      'req',
+      '-x509',
+      '-new',
+      '-key',
+      'key.pem',
+      '-subj',
+      '/CN=Lamaste mail submission CA',
+      '-days',
+      '3650',
+      '-sha256',
+      '-addext',
+      'basicConstraints=critical,CA:TRUE,pathlen:0',
+      '-addext',
+      'keyUsage=critical,keyCertSign,cRLSign',
+      '-out',
+      'ca.pem',
+    ],
+    { cwd: work },
+  );
+  const oldCa = await readFile(path.join(work, 'ca.pem'), 'utf-8');
+  assert.equal(lib.caNameConstrained(oldCa), false);
+  await writeFile(path.join(paths.dir, 'ca-key.pem'), await readFile(path.join(work, 'key.pem')), {
+    mode: 0o600,
+  });
+  await writeFile(path.join(paths.dir, 'ca.pem'), oldCa, { mode: 0o600 });
+  await writeFile(path.join(paths.certsDir, 'lamaste-mail-ca.pem'), oldCa, { mode: 0o640 });
+  await writeFile(paths.passwordFile, 'p'.repeat(43), { mode: 0o640 });
+
+  const material = await lib.ensureSubmissionMaterial();
+  const now = await readFile(path.join(paths.certsDir, 'lamaste-mail-ca.pem'), 'utf-8');
+  assert.notEqual(now, oldCa);
+  assert.equal(lib.caNameConstrained(now), true);
+  assert.equal(material.authelia, true, 'Authelia reads the new CA when it restarts');
+  await rm(work, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -305,11 +369,45 @@ test('only Authelia with its password, as the relay’s sender, to one recipient
   );
 });
 
-test('the rate: 30 messages in 10 minutes, then refused', async () => {
+test('the rate: 30 messages in 10 minutes, then a 4xx', async () => {
   await startListener();
-  for (let i = 0; i < lib.SUBMISSION_RATE_MAX; i++) await submit();
-  await assert.rejects(submit(), (err) => err.responseCode === 554);
+  for (let i = 0; i < lib.SUBMISSION_RATE_MAX; i++) {
+    const to = `person${i}@customer.example`;
+    await submit({ envelope: { from: SENDER, to: [to] }, raw: message({ to }) });
+  }
+  await assert.rejects(submit(), (err) => err.responseCode === 451);
   assert.equal(delivered.length, lib.SUBMISSION_RATE_MAX);
+});
+
+test('one recipient: 5 an hour, then a 4xx — another recipient still gets theirs', async () => {
+  await startListener();
+  for (let i = 0; i < lib.SUBMISSION_RECIPIENT_MAX; i++) await submit();
+  await assert.rejects(submit(), (err) => err.responseCode === 451);
+  const other = 'mehmet@customer.example';
+  await submit({ envelope: { from: SENDER, to: [other] }, raw: message({ to: other }) });
+  assert.equal(delivered.length, lib.SUBMISSION_RECIPIENT_MAX + 1);
+});
+
+test('a connection that does not authenticate in time is closed', async () => {
+  await lib.setMailSubmissionForTests({ ...paths, authDeadlineMs: 300 });
+  try {
+    await startListener();
+    const ca = await readFile(path.join(paths.certsDir, 'lamaste-mail-ca.pem'), 'utf-8');
+    const socket = tls.connect({
+      host: '127.0.0.1',
+      port: listenerPort(),
+      ca,
+      servername: 'lamaste-mail.localhost',
+    });
+    socket.on('data', () => {});
+    socket.on('error', () => {});
+    const started = Date.now();
+    await new Promise((resolve) => socket.once('close', resolve));
+    const lasted = Date.now() - started;
+    assert.ok(lasted >= 250 && lasted < 3_000, `closed after ${lasted} ms`);
+  } finally {
+    await lib.setMailSubmissionForTests(paths);
+  }
 });
 
 test('the headers a message must carry, read as Gmail reads them', () => {
@@ -436,6 +534,55 @@ test('a tunnel on the listener’s port: never moved, reported once, Authelia’
   const entries = await lib.listAudit({ limit: 200 });
   assert.ok(entries.some((e) => e.action === 'mail.submission.refused'));
   assert.ok(entries.some((e) => e.action === 'mail.submission.recovered'));
+});
+
+test('a port another program holds: Authelia keeps submitting, the listener retried, its file only after the grace', async () => {
+  await setRelayTransport();
+  // Authelia submits already, as a relay that ran the listener before.
+  await lib.syncMailConfiguration({ deliver });
+  assert.equal(autheliaMail.at(-1).sender?.address, SENDER);
+  await lib.stopSubmissionListener();
+
+  const holder = net.createServer();
+  await new Promise((resolve) => holder.listen(0, '127.0.0.1', resolve));
+  const held = holder.address().port;
+  await lib.setMailSubmissionForTests({ ...paths, port: held });
+  lib.resetMailSyncForTests({ graceMs: 300 });
+  try {
+    const first = await lib.syncMailConfiguration({ deliver });
+    assert.deepEqual(
+      first.warnings.map((w) => w.step),
+      ['listener'],
+    );
+    assert.equal(lib.submissionListenerRunning(), false);
+    assert.equal(autheliaMail.at(-1).sender?.address, SENDER, 'Authelia keeps submitting');
+    assert.equal((await notifications('held by another program')).length, 0);
+
+    // Within the grace: the minute's retry changes nothing for Authelia.
+    await lib.retrySubmissionListener({ deliver });
+    assert.equal(autheliaMail.at(-1).sender?.address, SENDER);
+
+    // Past the grace: Authelia to its file, the administrators told once.
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await lib.retrySubmissionListener({ deliver });
+    assert.equal(autheliaMail.at(-1).sender, null);
+    assert.equal((await notifications('held by another program')).length, 1);
+    await lib.retrySubmissionListener({ deliver });
+    assert.equal((await notifications('held by another program')).length, 1);
+
+    // The port free again: the next retry runs the listener, Authelia submits.
+    await new Promise((resolve) => holder.close(resolve));
+    await lib.retrySubmissionListener({ deliver });
+    assert.equal(lib.submissionListenerRunning(), true);
+    assert.equal(autheliaMail.at(-1).sender?.address, SENDER);
+    // Nothing held any more: the retry does nothing at all.
+    const writes = autheliaMail.length;
+    await lib.retrySubmissionListener({ deliver });
+    assert.equal(autheliaMail.length, writes);
+  } finally {
+    if (holder.listening) await new Promise((resolve) => holder.close(resolve));
+    await lib.setMailSubmissionForTests(paths);
+  }
 });
 
 test('Authelia restarted by the configuration write is not restarted again for its files', async () => {

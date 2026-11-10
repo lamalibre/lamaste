@@ -243,6 +243,7 @@ before(async () => {
         gone: { ...person('Disabled', 'gone@client.example.com'), disabled: true },
         farid: person('Farid', 'farid@client.example.com'),
         coord: person('Coordinator Kaya', 'coord@client.example.com'),
+        boss: person('Boss', 'boss@client.example.com', ['admins']),
       },
     }),
     { mode: 0o660 },
@@ -263,6 +264,7 @@ before(async () => {
     ...(await import('../src/lib/invitation-acceptance.js')),
     ...(await import('../src/lib/mail.js')),
     ...(await import('../src/lib/account.js')),
+    ...(await import('../src/lib/notifications.js')),
   };
   await lib.loadConfig();
   const fake = createFakeAutheliaStorage();
@@ -339,7 +341,8 @@ before(async () => {
   );
 
   const { default: errors } = await import('../src/middleware/errors.js');
-  app = Fastify({ logger: false });
+  // As behind nginx: the client's address from X-Forwarded-For.
+  app = Fastify({ logger: false, trustProxy: true });
   await app.register(errors);
   app.decorateRequest('certRole', null);
   app.addHook('onRequest', async (request) => {
@@ -350,7 +353,19 @@ before(async () => {
     return reply.code(403).send({ error: 'forbidden' });
   });
   const { default: accountRoutes } = await import('../src/routes/account.js');
-  await app.register(accountRoutes, { prefix: '/api/account' });
+  // Gatekeeper's assertion stands in as `x-test-account-user` (and the
+  // domain it was signed for, `x-test-account-domain`, else the host's);
+  // a request without one is unauthenticated whatever else it carries.
+  await app.register(accountRoutes, {
+    prefix: '/api/account',
+    verifyRelay: async (request) => {
+      const username = request.headers['x-test-account-user'];
+      if (typeof username !== 'string' || username === '') return { ok: false, reason: 'missing' };
+      const domain =
+        request.headers['x-test-account-domain'] ?? request.headers.host.replace(/^auth\./, '');
+      return { ok: true, username, domain };
+    },
+  });
   const { default: invitationRoutes } = await import('../src/routes/management/invitations.js');
   await app.register(invitationRoutes, { prefix: '/api' });
   const { default: usersRoutes } = await import('../src/routes/management/users.js');
@@ -501,25 +516,90 @@ test('reset start: 404 where no mail is sent or on no sign-in host; a cross-orig
   assert.equal(sink.messages.length, 0);
 });
 
-test('reset start: three links an hour per user, five starts per address — then the same answer, nothing sent', async () => {
-  for (let i = 0; i < 4; i++) {
-    assert.equal((await startReset('ayse')).statusCode, 202);
+/** Make every reset link of `username` `minutes` older. */
+async function ageResets(username, minutes) {
+  const d = await lib.getStateDb();
+  for (const row of d
+    .prepare('SELECT id, created_at FROM password_resets WHERE username = ?')
+    .all(username)) {
+    d.prepare('UPDATE password_resets SET created_at = ? WHERE id = ?').run(
+      new Date(Date.parse(row.created_at) - minutes * 60_000).toISOString(),
+      row.id,
+    );
   }
-  assert.equal(sink.messages.length, 3);
+}
+
+test('reset start: no new mail while the last link is live and under 10 minutes old', async () => {
+  for (let i = 0; i < 3; i++) assert.equal((await startReset('ayse')).statusCode, 202);
+  assert.equal(sink.messages.length, 1, 'the link mailed first still works');
+  await ageResets('ayse', 11);
+  await startReset('ayse');
+  assert.equal(sink.messages.length, 2);
   // A new link voids the earlier ones: one live.
   const d = await lib.getStateDb();
   const live = d
     .prepare('SELECT COUNT(*) AS n FROM password_resets WHERE expires_at > ? AND used_at IS NULL')
     .get(new Date().toISOString()).n;
   assert.equal(Number(live), 1);
+});
 
-  sink.messages.length = 0;
-  d.exec('DELETE FROM password_resets');
-  // The address's fifth start is still within its count; the sixth does nothing.
-  assert.equal((await startReset('ayse')).statusCode, 202);
-  assert.equal(sink.messages.length, 1);
-  assert.equal((await startReset('mehmet')).statusCode, 202);
-  assert.equal(sink.messages.length, 1);
+test('reset start: three links an hour and five a day per user — then the same answer, nothing sent', async () => {
+  for (let i = 0; i < 4; i++) {
+    lib.setAccountTimingForTests({ startAnswerDelayMs: 0 });
+    assert.equal((await startReset('ayse')).statusCode, 202);
+    await ageResets('ayse', 11);
+  }
+  assert.equal(sink.messages.length, 3, 'three an hour');
+  // Two hours later: two more, then the day's five are used.
+  await ageResets('ayse', 120);
+  for (let i = 0; i < 3; i++) {
+    lib.setAccountTimingForTests({ startAnswerDelayMs: 0 });
+    await startReset('ayse');
+    await ageResets('ayse', 11);
+  }
+  assert.equal(sink.messages.length, 5, 'five a day');
+});
+
+test('reset start: five starts per client — an IPv6 client counted by its /64', async () => {
+  for (let i = 0; i < 5; i++) {
+    await startReset(`nobody-${i}`, {
+      headers: { 'x-forwarded-for': `2001:db8:1:2::${i + 1}` },
+    });
+  }
+  // The sixth from the same /64, another host in it: nothing is done.
+  await startReset('ayse', { headers: { 'x-forwarded-for': '2001:db8:1:2:ffff::9' } });
+  assert.equal(sink.messages.length, 0);
+  assert.equal(lib.resetClientKey('2001:db8:1:2::1'), '2001:db8:1:2::/64');
+  assert.equal(lib.resetClientKey('2001:0db8:0001:0002:aaaa:bbbb:cccc:dddd'), '2001:db8:1:2::/64');
+  assert.equal(lib.resetClientKey('::ffff:203.0.113.5'), '203.0.113.5');
+  assert.equal(lib.resetClientKey('203.0.113.5'), '203.0.113.5');
+  assert.equal(lib.resetClientKey('::1'), '0:0:0:0::/64');
+});
+
+test('reset: an administrator is never reset by mail — one answer, no mail, no link that opens', async () => {
+  const res = await startReset('boss');
+  assert.equal(res.statusCode, 202);
+  assert.deepEqual(res.json(), { sent: true });
+  await startReset('boss@client.example.com');
+  assert.equal(sink.messages.length, 0);
+  // A link made before they became an administrator opens nothing.
+  const d = await lib.getStateDb();
+  const { issueReset } = await import('../src/lib/account-store.js');
+  const token = issueReset(d, {
+    userId: await idOf('boss'),
+    username: 'boss',
+    domain: D,
+    now: new Date(),
+  });
+  assert.equal((await account('POST', '/api/account/reset/lookup', { token })).statusCode, 410);
+  storage.state.totp.set('boss', { code: '222222', step: 400 });
+  const finish = await account('POST', '/api/account/reset/finish', {
+    token,
+    password: NEW_PASSWORD,
+    totp: '222222',
+  });
+  assert.equal(finish.statusCode, 410);
+  assert.equal((await usersNow()).boss.password, hash);
 });
 
 async function linkFor(username) {
@@ -648,9 +728,20 @@ test('reset finish: a user disabled after the link was mailed cannot use it', as
 function change(payload, { user = 'mehmet', headers = {}, host } = {}) {
   return account('POST', '/api/account/password', payload, {
     ...(host ? { host } : {}),
-    headers: { ...(user ? { 'remote-user': user } : {}), ...headers },
+    headers: { ...(user ? { 'x-test-account-user': user } : {}), ...headers },
   });
 }
+
+test('change password: the user is the relay assertion’s — never a Remote-User header', async () => {
+  const body = { currentPassword: PASSWORD, newPassword: NEW_PASSWORD };
+  // What any local process could send to the panel's loopback port.
+  const header = await change(body, { user: null, headers: { 'remote-user': 'mehmet' } });
+  assert.equal(header.statusCode, 401);
+  // An assertion signed for another domain's sign-in host.
+  const elsewhere = await change(body, { headers: { 'x-test-account-domain': OTHER } });
+  assert.equal(elsewhere.statusCode, 401);
+  assert.equal((await usersNow()).mehmet.password, hash);
+});
 
 test('change password: the current one always checked, five wrong ones then 429', async () => {
   assert.equal(
@@ -661,7 +752,11 @@ test('change password: the current one always checked, five wrong ones then 429'
   const noOrigin = await app.inject({
     method: 'POST',
     url: '/api/account/password',
-    headers: { host: PORTAL, 'remote-user': 'mehmet', 'content-type': 'application/json' },
+    headers: {
+      host: PORTAL,
+      'x-test-account-user': 'mehmet',
+      'content-type': 'application/json',
+    },
     payload: JSON.stringify({ currentPassword: PASSWORD, newPassword: NEW_PASSWORD }),
   });
   assert.equal(noOrigin.statusCode, 403);
@@ -679,12 +774,17 @@ test('change password: the current one always checked, five wrong ones then 429'
 });
 
 test('change password: written through the users lock, the user told; a non-member and a disabled user refused', async () => {
+  const ayseId = await idOf('ayse');
+  const epochBefore = lib.getConfig().userEpochs?.[ayseId] ?? 0;
   const done = await change(
     { currentPassword: PASSWORD, newPassword: NEW_PASSWORD },
     { user: 'ayse' },
   );
   assert.equal(done.statusCode, 200, done.body);
   await lib.accountWorkIdle();
+  // The relay's sessions of the user end: their desktop sessions' epoch.
+  assert.ok((lib.getConfig().userEpochs?.[ayseId] ?? 0) >= epochBefore);
+  assert.ok(lib.getConfig().userEpochs?.[ayseId] > 0, 'the epoch was bumped');
   assert.equal(await lib.passwordMatches((await usersNow()).ayse.password, NEW_PASSWORD), true);
   assert.equal(sink.messages.length, 1);
   assert.deepEqual(sink.messages[0].to, ['ayse@client.example.com']);
@@ -812,7 +912,7 @@ test('an invitation with no transport: not-configured, the link answered as befo
   assert.equal(sink.messages.length, 0);
 });
 
-test("a delegated invitation: mailed in the inviter's name; the inviter's reissue under the rate", async () => {
+test("a delegated invitation: mailed in the inviter's name, its link in the mail alone; the inviter's reissue under the rates", async () => {
   const policy = await admin('PUT', '/api/plugins/corral/invitation-policy', {
     enabled: true,
     emailDomains: ['client.example.com'],
@@ -826,6 +926,9 @@ test("a delegated invitation: mailed in the inviter's name; the inviter's reissu
   const made = res.json();
   assert.deepEqual(made.mail, { status: 'sent' });
   assert.equal(made.invitation.mail.status, 'sent');
+  // The domain sends mail: the inviter never sees the link.
+  assert.equal(made.inviteUrl, null);
+  assert.doesNotMatch(res.body, /[a-f0-9]{64}/);
   assert.equal(sink.messages.length, 1);
   assert.match(sink.messages[0].text, /Coordinator Kaya/);
   assert.match(sink.messages[0].text, /Corral/);
@@ -836,9 +939,10 @@ test("a delegated invitation: mailed in the inviter's name; the inviter's reissu
     `/api/delegated-invitations/corral/${made.invitation.id}/reissue`,
   );
   assert.equal(again.statusCode, 200, again.body);
+  assert.equal(again.json().inviteUrl, null);
+  assert.deepEqual(again.json().mail, { status: 'sent' });
   const second = tokensIn(sink.messages[1].text, 'invite')[0];
   assert.notEqual(second, first);
-  assert.equal(again.json().inviteUrl.endsWith(second), true);
 
   // Someone the plugin does not know cannot ask.
   const notMine = await invite(
@@ -849,20 +953,118 @@ test("a delegated invitation: mailed in the inviter's name; the inviter's reissu
   );
   assert.equal(notMine.statusCode, 403);
 
-  // The rate counts new links: 30 in the last hour, and the next is refused.
+  // Three new links a day per invitation.
+  for (let i = 0; i < 2; i++) {
+    const more = await invite(
+      'POST',
+      `/api/delegated-invitations/corral/${made.invitation.id}/reissue`,
+    );
+    assert.equal(more.statusCode, 200, more.body);
+  }
+  const fourth = await invite(
+    'POST',
+    `/api/delegated-invitations/corral/${made.invitation.id}/reissue`,
+  );
+  assert.equal(fourth.statusCode, 429);
+  assert.equal(fourth.json().code, 'reissue_rate');
+
+  // The hourly rate counts new links: 30 in the last hour, and the next is refused.
   const d = await lib.getStateDb();
+  d.prepare('DELETE FROM invitation_reissues').run();
   const coordId = await idOf('coord');
   const insert = d.prepare(
     'INSERT INTO invitation_reissues (invitation_id, inviter_user_id, reissued_at) VALUES (?, ?, ?)',
   );
-  for (let i = 0; i < 30; i++) insert.run(made.invitation.id, coordId, new Date().toISOString());
+  for (let i = 0; i < 30; i++) insert.run(`other-${i}`, coordId, new Date().toISOString());
   const rated = await invite(
     'POST',
     `/api/delegated-invitations/corral/${made.invitation.id}/reissue`,
   );
   assert.equal(rated.statusCode, 429);
   assert.equal(rated.json().code, 'invitation_rate');
+
+  // And 100 a day: refused, the administrators told once.
   d.prepare('DELETE FROM invitation_reissues').run();
+  const hoursAgo = (h) => new Date(Date.now() - h * 3_600_000).toISOString();
+  for (let i = 0; i < 100; i++) insert.run(`other-${i}`, coordId, hoursAgo(2 + (i % 20)));
+  for (let i = 0; i < 2; i++) {
+    const daily = await invite('POST', '/api/delegated-invitations/corral', {
+      email: `daily${i}@client.example.com`,
+      role: 'viewer',
+    });
+    assert.equal(daily.statusCode, 429);
+    assert.equal(daily.json().code, 'invitation_daily_rate');
+  }
+  const { notifications } = await lib.listNotifications({ limit: 50 });
+  assert.equal(
+    notifications.filter((n) => n.message.includes(`user ${coordId} reached 100`)).length,
+    1,
+  );
+  d.prepare('DELETE FROM invitation_reissues').run();
+});
+
+test('a delegated invitation where the domain sends no mail: the link is the inviter’s to send', async () => {
+  await clearTransport();
+  const res = await invite('POST', '/api/delegated-invitations/corral', {
+    email: 'nomail@client.example.com',
+    role: 'viewer',
+  });
+  assert.equal(res.statusCode, 201, res.body);
+  assert.deepEqual(res.json().mail, { status: 'not-configured' });
+  assert.match(res.json().inviteUrl, /^https:\/\/auth\.codelama\.example\/invite#[a-f0-9]{64}$/);
+});
+
+test('a name that reads as a link or a host name is refused — the inviter’s and the invitee’s', async () => {
+  const res = await invite('POST', '/api/delegated-invitations/corral', {
+    email: 'linky@client.example.com',
+    displayName: 'secure-login.example',
+    role: 'viewer',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().field, 'displayName');
+  assert.equal(sink.messages.length, 0);
+});
+
+test("an administrator's invitation granting admins or a registry group is not mailed unless asked", async () => {
+  const quiet = await admin('POST', '/api/invitations', {
+    username: 'newadmin',
+    email: 'newadmin@client.example.com',
+    groups: ['admins'],
+    domains: [D],
+  });
+  assert.equal(quiet.statusCode, 201, quiet.body);
+  assert.equal(quiet.json().mail, null);
+  assert.match(quiet.json().inviteUrl, /\/invite#[a-f0-9]{64}$/);
+  assert.equal(sink.messages.length, 0);
+  const listed = (await admin('GET', '/api/invitations')).json().invitations;
+  assert.equal(listed.find((i) => i.id === quiet.json().invitation.id).mail.status, null);
+
+  // Reissued: not mailed either, unless asked.
+  const reissued = await admin('POST', `/api/invitations/${quiet.json().invitation.id}/reissue`);
+  assert.equal(reissued.statusCode, 200, reissued.body);
+  assert.equal(reissued.json().mail, null);
+  const asked = await admin('POST', `/api/invitations/${quiet.json().invitation.id}/reissue`, {
+    mail: true,
+  });
+  assert.deepEqual(asked.json().mail, { status: 'sent' });
+  assert.equal(sink.messages.length, 1);
+
+  const feria = await admin('POST', '/api/invitations', {
+    username: 'publisher',
+    email: 'publisher@client.example.com',
+    groups: ['feria-publishers'],
+    domains: [D],
+    mail: true,
+  });
+  assert.deepEqual(feria.json().mail, { status: 'sent' });
+  const plain = await admin('POST', '/api/invitations', {
+    username: 'plainone',
+    email: 'plainone@client.example.com',
+    domains: [D],
+    mail: false,
+  });
+  assert.equal(plain.json().mail, null);
+  assert.equal(sink.messages.length, 2);
 });
 
 // ---------------------------------------------------------------------------

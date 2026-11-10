@@ -21,6 +21,15 @@
  *
  * Each step is attempted whatever the one before did; what failed comes
  * back as `warnings` (and is retried at the next change or start).
+ *
+ * A port held by another program (`EADDRINUSE`) is often a moment's
+ * matter — the panel's previous process still closing. The listener is
+ * tried again every minute ({@link retrySubmissionListener}, on the
+ * identity tick), and Authelia keeps submitting to it — its mail fails
+ * meanwhile, Authelia says so to the user — until the port has been held
+ * for {@link PORT_HELD_GRACE_MS}: only then is Authelia moved to its file
+ * notifier (which restarts it) and the administrators told. A tunnel on
+ * the port is refused at once, and never moved (Q5).
  */
 
 import { MAIL_SUBMISSION_PORT, PromiseChainMutex } from '@lamalibre/lamaste';
@@ -44,6 +53,16 @@ const syncMutex = new PromiseChainMutex();
 
 /** Why the listener last could not run (`tunnel` / `port_in_use` / `failed`), or null — reported once per streak. */
 let listenerRefusal = null;
+
+/** How long the listener's port may be held before Authelia is moved to its file notifier. */
+export const PORT_HELD_GRACE_MS = 5 * 60_000;
+let portHeldGraceMs = PORT_HELD_GRACE_MS;
+
+/** Since when the port has been held by another program (ms), or null. */
+let portHeldSince = null;
+
+/** Whether Authelia was last configured to submit to the listener (null: not yet known). */
+let autheliaSubmitting = null;
 
 /** The tunnel that holds the listener's port, or null. */
 async function portTunnel() {
@@ -98,12 +117,25 @@ async function syncListener(sender, deliver, logger) {
   try {
     const material = await ensureSubmissionMaterial({ logger });
     await ensureSubmissionListener({ sender, material, deliver, logger });
+    portHeldSince = null;
     await reportListener(null, logger);
     return { submitting: true, restartAuthelia: material.authelia };
   } catch (err) {
     await stopSubmissionListener();
     logger?.warn({ err: err?.message, code: err?.code }, 'Mail submission listener not started');
-    await reportListener(err?.code === 'EADDRINUSE' ? 'port_in_use' : 'failed', logger);
+    if (err?.code === 'EADDRINUSE') {
+      const now = Date.now();
+      portHeldSince ??= now;
+      // Briefly held: Authelia keeps what it has (no restart); retried
+      // every minute.
+      if (now - portHeldSince < portHeldGraceMs) {
+        return { submitting: autheliaSubmitting ?? true, restartAuthelia: false, retrying: true };
+      }
+      await reportListener('port_in_use', logger);
+      return { submitting: false, restartAuthelia: false };
+    }
+    portHeldSince = null;
+    await reportListener('failed', logger);
     return { submitting: false, restartAuthelia: false };
   }
 }
@@ -123,12 +155,17 @@ export function syncMailConfiguration({ deliver, logger }) {
     const row = transportRow(db, null);
     const sender = row ? { address: row.sender_address, name: row.sender_name } : null;
 
-    const { submitting, restartAuthelia } = await syncListener(sender, deliver, logger);
+    const { submitting, restartAuthelia, retrying } = await syncListener(sender, deliver, logger);
     if (sender !== null && !submitting) {
       warnings.push({
         step: 'listener',
         message:
           "Authelia's mail stays in a file: the relay's submission listener is not running (see the notifications)",
+      });
+    } else if (retrying) {
+      warnings.push({
+        step: 'listener',
+        message: `Port ${MAIL_SUBMISSION_PORT} is held by another program: the relay tries again every minute, and Authelia's mail fails until it is free`,
       });
     }
 
@@ -140,6 +177,7 @@ export function syncMailConfiguration({ deliver, logger }) {
       const { changed } = await withDomainRendering(() => updateAutheliaMailSettings(settings), {
         logger,
       });
+      autheliaSubmitting = settings.sender !== null;
       let reason = changed ? 'mail' : null;
       if (!changed && submitting && restartAuthelia) {
         await reloadAuthelia();
@@ -171,7 +209,27 @@ export function syncMailConfiguration({ deliver, logger }) {
   });
 }
 
-/** Forget a refusal streak (tests). */
-export function resetMailSyncForTests() {
+/**
+ * The minute's retry of a listener whose port another program held: the
+ * whole synchronisation again — the listener, then Authelia only when its
+ * notifier must change (the grace is over, or the listener runs again) —
+ * and nothing at all otherwise. Never throws.
+ *
+ * @param {{ deliver: (input: object) => Promise<{ status: string }>, logger?: import('pino').Logger }} input
+ */
+export async function retrySubmissionListener({ deliver, logger }) {
+  if (portHeldSince === null) return;
+  try {
+    await syncMailConfiguration({ deliver, logger });
+  } catch (err) {
+    logger?.warn({ err: err?.message }, 'Mail submission listener retry failed');
+  }
+}
+
+/** Forget a refusal streak and what Authelia was given (tests); `graceMs` the port's grace. */
+export function resetMailSyncForTests({ graceMs } = {}) {
   listenerRefusal = null;
+  portHeldSince = null;
+  autheliaSubmitting = null;
+  portHeldGraceMs = graceMs ?? PORT_HELD_GRACE_MS;
 }

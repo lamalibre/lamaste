@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamalibre/lamaste';
+import {
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+  USERNAME_REGEX,
+  adminInvitationMailDefault,
+} from '@lamalibre/lamaste';
 import { readUsersRaw } from '../../lib/authelia.js';
 import { listDirectoryUsers } from '../../lib/directory.js';
 import {
@@ -133,7 +138,14 @@ const CreateInvitationSchema = z.object({
   // them). Required while the relay has two or more; with one, the user
   // becomes its member.
   domains: z.array(MembershipInputSchema).max(50).optional(),
+  // Whether the link is mailed (mail-design.md §6.1). Omitted: mailed
+  // unless the invitation grants `admins` or a `feria-*` group (core
+  // `adminInvitationMailDefault`) — such a link is handed over another way.
+  mail: z.boolean().optional(),
 });
+
+/** `POST /api/invitations/:id/reissue` — whether the new link is mailed (default as on creation). */
+const ReissueSchema = z.object({ mail: z.boolean().optional() }).strict();
 
 export default async function invitationRoutes(fastify, _opts) {
   // GET /api/invitations — the newest invitations, both kinds, optionally of
@@ -229,10 +241,12 @@ export default async function invitationRoutes(fastify, _opts) {
       // On the sign-in page of the first domain it names (the invitation
       // page is served on every domain's auth portal).
       const inviteUrl = await invitationLink(invitation, token);
-      const mail = await mailInvitation(invitation, token, {
-        sendClass: 'admin',
-        logger: request.log,
-      });
+      // `mail: null` — not mailed, as the administrator chose (or the default for
+      // an administrator's or a registry group's invitation).
+      const mail =
+        (body.mail ?? adminInvitationMailDefault(body.groups))
+          ? await mailInvitation(invitation, token, { sendClass: 'admin', logger: request.log })
+          : null;
 
       return reply.code(201).send({
         ok: true,
@@ -254,6 +268,7 @@ export default async function invitationRoutes(fastify, _opts) {
     },
     async (request, reply) => {
       const { id } = IdParamSchema.parse(request.params);
+      const options = ReissueSchema.parse(request.body ?? {});
       let made;
       let plugin = null;
       try {
@@ -292,11 +307,14 @@ export default async function invitationRoutes(fastify, _opts) {
         request.log,
       );
       const inviteUrl = await invitationLink(invitation, token);
-      const mail = await mailInvitation(invitation, token, {
-        sendClass: 'admin',
-        plugin,
-        logger: request.log,
-      });
+      const mail =
+        (options.mail ?? adminInvitationMailDefault(invitation.groups ?? []))
+          ? await mailInvitation(invitation, token, {
+              sendClass: 'admin',
+              plugin,
+              logger: request.log,
+            })
+          : null;
       return {
         ok: true,
         invitation: madeView(invitation),

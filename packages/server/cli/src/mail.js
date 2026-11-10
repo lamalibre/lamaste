@@ -210,12 +210,16 @@ export function transportLines(transport, now) {
   if (budget) {
     lines.push([
       'Budget',
-      `${budget.sent24h} of ${budget.ceiling} in 24 h (daily limit ${budget.dailyLimit}, public up to ${budget.publicCap}; ` +
-        `${budget.byClass.essential} essential, ${budget.byClass.admin} admin, ${budget.byClass.public} public)`,
+      `${budget.sent24h} of ${budget.ceiling} in 24 h (daily limit ${budget.dailyLimit})`,
+    ]);
+    lines.push([
+      'Shares',
+      `Authelia's ${budget.byClass.essential} of ${budget.essentialCap}, public ${budget.byClass.public} of ${budget.publicCap}, ` +
+        `admin ${budget.byClass.admin} (the last ${budget.adminReserve} its own)`,
     ]);
     lines.push([
       'Resets',
-      `${budget.resetsLastHour} of ${MAIL_BUDGET.resetsPerHour} in the last hour`,
+      `${budget.resetsLastHour} in the last hour (${MAIL_BUDGET.resetsPerDomainPerHour} an hour per domain)`,
     ]);
     if (budget.limitedUntil && Date.parse(budget.limitedUntil) > now) {
       lines.push([
@@ -223,7 +227,7 @@ export function transportLines(transport, now) {
         `the provider refused — nothing is sent until ${budget.limitedUntil} (or \`resume\`)`,
       ]);
     } else if (budget.resumesAt) {
-      lines.push(['Ceiling', `reached — sending resumes at ${budget.resumesAt}`]);
+      lines.push(['Held back', `a share or the ceiling is reached — until ${budget.resumesAt}`]);
     }
   }
   lines.push(['Updated', transport.updatedAt]);

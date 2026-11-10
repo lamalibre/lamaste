@@ -757,6 +757,7 @@ export {
   verifyRelayAssertion,
   urlIsUnderRoute,
   isRelayInvitationsTarget,
+  isRelayAccountTarget,
   isRelayUserSurfaceTarget,
 } from './relay-assertion.js';
 
@@ -767,6 +768,7 @@ export type {
   RelayTarget,
   RelayUserSurfaceTarget,
   RelayInvitationsTarget,
+  RelayAccountTarget,
   RelayAssertionPayload,
   RelaySigningKey,
   RelayVerifyKey,
@@ -947,6 +949,7 @@ export {
   MAIL_BUDGET,
   mailBudgetThresholds,
   mailBudgetDecision,
+  adminInvitationMailDefault,
   UNDELIVERABLE_MAIL_TLDS,
   GOOGLE_CLIENT_ID_RE,
   parseMailAddress,
@@ -1016,7 +1019,11 @@ export {
   PasswordChangeSchema,
 } from './account.js';
 export type { PasswordResetStart, PasswordResetFinish, PasswordChange } from './account.js';
-export { hasControlCharacters } from './text-rules.js';
+export {
+  hasControlCharacters,
+  looksLikeLinkOrHostname,
+  DISPLAY_NAME_LINK_PATTERN,
+} from './text-rules.js';
 
 // Delegated invitations: a plugin user with an inviting role invites
 // colleagues into that plugin (delegated-invitations-design.md)
@@ -1028,6 +1035,8 @@ export {
   DelegatedInvitationRequestSchema,
   InvitationLookupSchema,
   INVITATIONS_PER_INVITER_PER_HOUR,
+  INVITATIONS_PER_INVITER_PER_DAY,
+  INVITATION_REISSUES_PER_DAY,
   INVITATION_ACCEPTING_STALE_MS,
   INVITATION_GRANT_RESERVE,
   INVITATION_KINDS,

@@ -987,15 +987,36 @@ export interface AdminClient {
      * external membership (400 `external_member_groups`).
      */
     domains?: DomainMembershipInput[];
-  }): Promise<{ ok: boolean; invitation: unknown; token: string; mail?: MailSendResult }>;
+    /**
+     * Whether the link is mailed (mail-design.md §6.1). Omitted: mailed
+     * unless `groups` names `admins` or a `feria-*` group
+     * ({@link adminInvitationMailDefault}).
+     */
+    mail?: boolean;
+  }): Promise<{
+    ok: boolean;
+    invitation: unknown;
+    token: string;
+    inviteUrl: string | null;
+    /** What became of the mail; null when it was not to be mailed. */
+    mail: MailSendResult | null;
+  }>;
   /**
-   * A new link for a pending invitation, mailed when its domain can send:
-   * the old link stops working (mail-design.md §6.1). The token is
-   * answered once, as on creation.
+   * A new link for a pending invitation (at most three a day): the old link
+   * stops working (mail-design.md §6.1), the token is answered once, as on
+   * creation, and the link is mailed when `options.mail` says so — omitted,
+   * as on creation ({@link adminInvitationMailDefault} of its groups).
    */
   reissueInvitation(
     id: string,
-  ): Promise<{ ok: boolean; invitation: unknown; token: string; mail: MailSendResult }>;
+    options?: { mail?: boolean },
+  ): Promise<{
+    ok: boolean;
+    invitation: unknown;
+    token: string;
+    inviteUrl: string | null;
+    mail: MailSendResult | null;
+  }>;
   /**
    * Revoke a pending invitation, delete one that ended; one being accepted
    * is marked (`action: 'marked'`, 202): it ends revoked, and an account its

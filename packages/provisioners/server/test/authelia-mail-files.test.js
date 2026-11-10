@@ -9,11 +9,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { ensureAutheliaMailFiles } from '../src/lib/ownership.js';
+import { ensureAutheliaMailFiles, setFileOwnership } from '../src/lib/ownership.js';
 
 const ids = { lamasteUid: process.getuid(), autheliaGid: process.getgid() };
 
@@ -48,6 +48,56 @@ test('a link where the certificate directory belongs is refused, never followed'
     await symlink(path.join(dir, 'elsewhere'), path.join(dir, 'certs'));
     await assert.rejects(ensureAutheliaMailFiles(dir, ids));
     assert.equal((await stat(path.join(dir, 'elsewhere'))).mode & 0o7777, 0o755);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a password file with a second hard link is refused, the other file untouched', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'lamaste-authelia-'));
+  try {
+    const elsewhere = path.join(dir, 'elsewhere');
+    await writeFile(elsewhere, "not authelia's", { mode: 0o600 });
+    await link(elsewhere, path.join(dir, 'mail-submission-password'));
+    await assert.rejects(ensureAutheliaMailFiles(dir, ids), /hard links/);
+    assert.equal((await stat(elsewhere)).mode & 0o7777, 0o600);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a file owned by someone other than the expected owner or root is refused', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'lamaste-authelia-'));
+  try {
+    const file = path.join(dir, 'f');
+    await writeFile(file, 'x', { mode: 0o600 });
+    const mine = process.getuid();
+    const someoneElse = mine === 0 ? 65534 : mine + 1;
+    // Expected to belong to another uid; its owner (this test) is neither that nor root.
+    if (mine !== 0) {
+      await assert.rejects(
+        setFileOwnership(file, { uid: someoneElse, gid: process.getgid(), mode: 0o640 }),
+        /belongs to uid/,
+      );
+      assert.equal((await stat(file)).mode & 0o7777, 0o600);
+      // An owner an earlier version gave it is accepted (the change itself
+      // then needs root, which this test is not).
+      await assert.rejects(
+        setFileOwnership(file, {
+          uid: someoneElse,
+          gid: process.getgid(),
+          mode: 0o640,
+          previousOwners: [mine],
+        }),
+        (err) => !/belongs to uid/.test(err.message),
+      );
+    }
+    // Its own owner: the mode is set.
+    assert.equal(
+      await setFileOwnership(file, { uid: mine, gid: process.getgid(), mode: 0o640 }),
+      true,
+    );
+    assert.equal((await stat(file)).mode & 0o7777, 0o640);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

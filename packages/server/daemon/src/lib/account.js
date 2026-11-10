@@ -16,17 +16,32 @@
  * the work runs after the answer. A link names one user on one domain; its
  * holder learns that user's username (the page shows whose password they
  * set) and, with a code from that user's authenticator, sets the password.
- * Five failures void a link; a code is good once.
+ * Five failures void a link; a code is good once. What a start may mail
+ * is bounded several ways, all answered alike: 5 starts in 15 minutes per
+ * client (an IPv6 client by its /64), no new link while the user's last
+ * one is live and under 10 minutes old, 3 links an hour and 5 a day per
+ * user, 20 accounts per start — and, in the sending budget, 20 reset mails
+ * an hour per domain and the `public` share (mail-design.md §3.7).
+ * Members of `admins` never reset by mail (decision D-D): another
+ * administrator, or `lamaste-server` on the relay, sets their password.
  *
- * Change password takes the user from `Remote-User`, which nginx writes
- * from Authelia's answer — but the panel listens on loopback, where any
- * local process can send that header, so the current password is always
- * required and checked: the header names whose password is changed, the
- * password proves it.
+ * Change password takes the user from Gatekeeper's relay assertion — the
+ * session Authelia vouched for, two factors, for that very request
+ * (`verifyAccountRelay`) — never from a header any local process could
+ * send to the panel's loopback port. The current password is still
+ * checked.
+ *
+ * After a password is set (reset or change), the sessions the relay holds
+ * for the user end — desktop sessions, registry tokens, Gatekeeper's
+ * cached verdicts (`endUserSessions`). Authelia's own sessions and the
+ * OpenID Connect tokens it issued do not: Authelia cannot be asked to end
+ * them (an administrator's disable and enable does).
  *
  * Logs and audits carry user ids and the domain — never an identifier as
  * typed, an address, a token or a password.
  */
+
+import net from 'node:net';
 
 import {
   KeyedPromiseChainMutex,
@@ -41,6 +56,7 @@ import {
   acceptTotpStep,
   finishReset,
   hashResetToken,
+  hasRecentLiveReset,
   issueReset,
   liveReset,
   passwordFailuresSince,
@@ -58,20 +74,34 @@ import {
   verifyAutheliaUserTotp,
   writeUsers,
 } from './authelia.js';
-import { changeUsers, directoryUsersByUsername, getDirectoryUser } from './directory.js';
+import {
+  ADMIN_GROUP,
+  changeUsers,
+  directoryUsersByUsername,
+  endUserSessions,
+  getDirectoryUser,
+} from './directory.js';
 import { activeDomainNames, domainsOfUser } from './domains.js';
 import { canSendMailFor, sendMail } from './mail.js';
 import { getStateDb } from './state-db.js';
 
 const MINUTE_MS = 60_000;
 
-/** Reset starts one address may make in {@link START_WINDOW_MS}; past it, the same answer and nothing done. */
+/**
+ * Reset starts one client may make in {@link START_WINDOW_MS} — an IPv4
+ * address, or an IPv6 /64 ({@link resetClientKey}); past it, the same
+ * answer and nothing done.
+ */
 const STARTS_PER_ADDRESS = 5;
 const START_WINDOW_MS = 15 * MINUTE_MS;
-/** At most this many addresses are remembered for that count (the oldest go first). */
+/** At most this many clients are remembered for that count (the oldest go first). */
 const START_ADDRESSES_MAX = 10_000;
-/** Reset links one user may be mailed in an hour. */
+/** Reset links one user may be mailed in an hour … */
 const RESETS_PER_USER_PER_HOUR = 3;
+/** … and in a day. */
+const RESETS_PER_USER_PER_DAY = 5;
+/** While the user's last link is live and younger than this, a start mails nothing. */
+const RESET_MIN_INTERVAL_MS = 10 * MINUTE_MS;
 /** One start mails at most this many accounts (an address many users share). */
 const RESET_ACCOUNTS_MAX = 20;
 /** Wrong current passwords per user in {@link PASSWORD_FAILURE_WINDOW_MS} before a 429. */
@@ -141,19 +171,55 @@ async function resetDomain(host) {
 }
 
 /**
+ * The key a client's reset starts are counted under: an IPv4 address as
+ * it is (an IPv4-mapped IPv6 one as its IPv4), an IPv6 address by its /64
+ * — what one host is usually given, so a client cannot walk its own
+ * prefix to start again.
+ *
+ * @param {string | undefined} address
+ */
+export function resetClientKey(address) {
+  const raw = String(address ?? '').trim();
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(raw);
+  if (mapped) return mapped[1];
+  if (net.isIPv4(raw)) return raw;
+  if (!net.isIPv6(raw)) return raw;
+  let text = raw.split('%')[0].toLowerCase();
+  const v4 = /(\d{1,3}(?:\.\d{1,3}){3})$/.exec(text);
+  if (v4) {
+    const p = v4[1].split('.').map(Number);
+    text = `${text.slice(0, -v4[1].length)}${((p[0] << 8) | p[1]).toString(16)}:${((p[2] << 8) | p[3]).toString(16)}`;
+  }
+  const double = text.indexOf('::');
+  const head = double === -1 ? text : text.slice(0, double);
+  const tail = double === -1 ? '' : text.slice(double + 2);
+  const h = head === '' ? [] : head.split(':');
+  const t = tail === '' ? [] : tail.split(':');
+  const groups = double === -1 ? h : [...h, ...Array(8 - h.length - t.length).fill('0'), ...t];
+  return `${groups
+    .slice(0, 4)
+    .map((g) => parseInt(g, 16).toString(16))
+    .join(':')}::/64`;
+}
+
+/**
  * A user who may manage their password on `domain`: in users.yml and not
  * disabled, active in the directory under that id, and a member or an
- * external member of the domain. Null otherwise.
+ * external member of the domain — and, `forReset`, not a member of
+ * `admins` (an administrator's password is never reset by mail). Null
+ * otherwise.
  *
  * @param {Record<string, any>} users users.yml's `users`
  * @param {{ userId: string, username: string, status: string } | null} known the directory's user
  * @param {string} domain
+ * @param {{ forReset?: boolean }} [opts]
  * @returns {Promise<{ userId: string, username: string, entry: Record<string, any> } | null>}
  */
-async function eligibleUser(users, known, domain) {
+async function eligibleUser(users, known, domain, { forReset = false } = {}) {
   if (!known || known.status !== 'active') return null;
   const entry = users[known.username];
   if (!entry || entry.disabled === true) return null;
+  if (forReset && Array.isArray(entry.groups) && entry.groups.includes(ADMIN_GROUP)) return null;
   const memberships = await domainsOfUser(known.userId);
   if (!memberships.some((m) => m.name === domain)) return null;
   return { userId: known.userId, username: known.username, entry };
@@ -164,12 +230,16 @@ async function eligibleUser(users, known, domain) {
  * checked again under the users lock (the user may have gone or been
  * disabled since): 410 `reset_invalid` / 403 when not.
  */
-async function writePassword(username, passwordHash, { actor, refusal, logger }) {
+async function writePassword(username, passwordHash, { actor, refusal, forReset = false, logger }) {
   const outcome = await changeUsers(
     async () => {
       const usersData = await readUsersRaw();
       const entry = usersData.users?.[username];
       if (!entry || entry.disabled === true) throw refusal();
+      // An administrator by now (made one since the link was issued): no reset by mail.
+      if (forReset && Array.isArray(entry.groups) && entry.groups.includes(ADMIN_GROUP)) {
+        throw refusal();
+      }
       entry.password = passwordHash;
       await writeUsers(usersData);
     },
@@ -181,6 +251,20 @@ async function writePassword(username, passwordHash, { actor, refusal, logger })
   );
   for (const warning of outcome.warnings) {
     logger?.warn({ step: warning.step }, 'A password change left a warning');
+  }
+}
+
+/**
+ * After a password was set: the sessions the relay holds for the user end
+ * (lib/directory.js `endUserSessions`) — best effort, logged.
+ */
+async function endSessionsAfterPassword(userId, logger) {
+  const warnings = await endUserSessions(userId, { logger });
+  for (const warning of warnings) {
+    logger?.warn(
+      { userId, step: warning.step },
+      'Ending sessions after a password change left a warning',
+    );
   }
 }
 
@@ -236,7 +320,7 @@ function countStart(address, now) {
  */
 export async function startPasswordReset(body, { host, address, logger }) {
   const domain = await resetDomain(host);
-  if (!countStart(address, Date.now())) {
+  if (!countStart(resetClientKey(address), Date.now())) {
     logger?.info({ domain }, 'Password reset start over its address count — answered alike');
     return;
   }
@@ -270,7 +354,9 @@ async function mailResetLinks(identifier, domain, logger) {
     const email = typeof entry?.email === 'string' ? entry.email : '';
     if (username.toLowerCase() !== wanted && email.toLowerCase() !== wanted) continue;
     if (!isDeliverableAddress(email)) continue;
-    const user = await eligibleUser(users, directory.get(username) ?? null, domain);
+    const user = await eligibleUser(users, directory.get(username) ?? null, domain, {
+      forReset: true,
+    });
     if (!user) continue;
     if (++matched > RESET_ACCOUNTS_MAX) break;
     const key = email.toLowerCase();
@@ -282,11 +368,17 @@ async function mailResetLinks(identifier, domain, logger) {
   for (const group of byAddress.values()) {
     const links = [];
     for (const account of group.accounts) {
-      if (
-        resetsSince(db, account.userId, new Date(now.getTime() - 60 * MINUTE_MS)) >=
-        RESETS_PER_USER_PER_HOUR
-      ) {
+      const before = (ms) => new Date(now.getTime() - ms);
+      if (hasRecentLiveReset(db, account.userId, before(RESET_MIN_INTERVAL_MS), now)) {
+        logger?.info({ userId: account.userId, domain }, 'Password reset: a recent link is live');
+        continue;
+      }
+      if (resetsSince(db, account.userId, before(60 * MINUTE_MS)) >= RESETS_PER_USER_PER_HOUR) {
         logger?.info({ userId: account.userId, domain }, 'Password reset over its hourly count');
+        continue;
+      }
+      if (resetsSince(db, account.userId, before(24 * 60 * MINUTE_MS)) >= RESETS_PER_USER_PER_DAY) {
+        logger?.info({ userId: account.userId, domain }, 'Password reset over its daily count');
         continue;
       }
       const token = issueReset(db, { ...account, domain, now });
@@ -338,7 +430,7 @@ async function openReset(token, domain) {
   const usersData = await readUsersRaw();
   const user =
     known && known.username === row.username
-      ? await eligibleUser(usersData.users ?? {}, known, domain)
+      ? await eligibleUser(usersData.users ?? {}, known, domain, { forReset: true })
       : null;
   if (!user) throw resetInvalid();
   return { db, row, user };
@@ -389,7 +481,11 @@ export async function finishPasswordReset(body, { host, logger }) {
     try {
       verdict = await verifyAutheliaUserTotp(user.username, body.totp);
     } catch (err) {
-      logger?.error({ err: err?.message }, 'The TOTP check failed');
+      // Never the error's message: the helper's argv names the user.
+      logger?.error(
+        { userId: user.userId, exitCode: Number.isInteger(err?.exitCode) ? err.exitCode : null },
+        'The TOTP check failed',
+      );
       throw httpError('The service is not answering — try again shortly', 503, {
         code: 'authelia_storage_unavailable',
       });
@@ -403,9 +499,11 @@ export async function finishPasswordReset(body, { host, logger }) {
     await writePassword(user.username, passwordHash, {
       actor: `user:${user.userId}`,
       refusal: resetInvalid,
+      forReset: true,
       logger,
     });
     finishReset(db, row.id, user.userId, new Date());
+    await endSessionsAfterPassword(user.userId, logger);
     await recordAuditBestEffort(
       {
         actor: `user:${user.userId}`,
@@ -425,25 +523,33 @@ export async function finishPasswordReset(body, { host, logger }) {
 
 /**
  * `POST /api/account/password { currentPassword, newPassword }` from
- * `remoteUser` (Authelia's answer, as nginx wrote it) on this host's
- * domain: 404 when this is no sign-in host; 401 without a user; 403 when
- * the user may not manage their password here (disabled, not a member);
- * 429 after five wrong current passwords in 15 minutes; 400
- * `current_password_invalid` / `password_unchanged`. The notice is mailed
- * when the domain sends mail.
+ * `caller` — the user Gatekeeper's relay assertion vouched for, on the
+ * sign-in host of the assertion's domain (lib/user-surface.js
+ * `verifyAccountRelay`): 404 when this is no sign-in host; 401 without a
+ * caller, or one vouched for on another domain; 403 when the user may not
+ * manage their password here (disabled, not a member); 429 after five
+ * wrong current passwords in 15 minutes; 400 `current_password_invalid` /
+ * `password_unchanged`. The relay's sessions of the user end; the notice
+ * is mailed when the domain sends mail.
  *
  * @param {{ currentPassword: string, newPassword: string }} body parsed `PasswordChangeSchema`
- * @param {{ host?: string, remoteUser?: unknown, logger?: import('pino').Logger }} opts
+ * @param {{ host?: string, caller: { username: string, domain: string } | null,
+ *   logger?: import('pino').Logger }} opts
  */
-export async function changeOwnPassword(body, { host, remoteUser, logger }) {
+export async function changeOwnPassword(body, { host, caller, logger }) {
   const domain = await authHostDomain(host);
   if (domain === null) throw httpError('Not found', 404, { code: 'not_found' });
-  if (typeof remoteUser !== 'string' || !USERNAME_REGEX.test(remoteUser)) {
+  if (
+    caller === null ||
+    typeof caller?.username !== 'string' ||
+    !USERNAME_REGEX.test(caller.username) ||
+    caller.domain !== domain
+  ) {
     throw httpError('unauthenticated', 401);
   }
   const forbidden = () => httpError('Not allowed', 403, { code: 'forbidden' });
   const directory = await directoryUsersByUsername();
-  const known = directory.get(remoteUser) ?? null;
+  const known = directory.get(caller.username) ?? null;
   if (!known) throw forbidden();
 
   return userLocks.run(known.userId, async () => {
@@ -482,6 +588,7 @@ export async function changeOwnPassword(body, { host, remoteUser, logger }) {
       },
       logger,
     );
+    await endSessionsAfterPassword(user.userId, logger);
     // Mailed when the domain sends mail; nothing otherwise (§7).
     noticeAfterAnswer(user, domain, logger);
     return { ok: true };

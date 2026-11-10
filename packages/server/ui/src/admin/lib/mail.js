@@ -12,6 +12,7 @@ import {
   MAIL_BUDGET,
   MAIL_DAILY_LIMIT,
   SMTP_SECURITY_MODES,
+  adminInvitationMailDefault,
   isDeliverableAddress,
 } from '@lamalibre/lamaste/mail';
 
@@ -116,9 +117,10 @@ export function isLimited(budget, now = new Date()) {
 }
 
 /**
- * The budget as lines (§3.7): what was sent of what may be, the share
- * public mails may use, the reset cap, and why sending stops or when it
- * resumes. `level` is the bar's colour.
+ * The budget as lines (§3.7): what was sent of what may be, each class's
+ * share — Authelia's and the public ones, and the reserve only
+ * administrators' mail reaches — the reset cap, and why sending stops or
+ * when it resumes. `level` is the bar's colour.
  *
  * @param {import('@lamalibre/lamaste').MailBudgetView} budget
  * @param {Date} [now]
@@ -126,15 +128,19 @@ export function isLimited(budget, now = new Date()) {
 export function budgetLines(budget, now = new Date()) {
   const lines = [
     `${budget.sent24h} of ${budget.ceiling} mails in the last 24 hours (the daily limit is ${budget.dailyLimit}; Lamaste stops at ${Math.round(MAIL_BUDGET.ceilingRatio * 100)}%)`,
-    `By class: ${budget.byClass.essential} essential · ${budget.byClass.admin} administrators’ invitations · ${budget.byClass.public} public (reset mails and delegated invitations, up to ${budget.publicCap})`,
-    `Reset mails in the last hour: ${budget.resetsLastHour} of ${MAIL_BUDGET.resetsPerHour}`,
+    `Sign-in codes and password notices (Authelia’s share): ${budget.byClass.essential} of ${budget.essentialCap}`,
+    `Reset mails and delegated invitations (the public share): ${budget.byClass.public} of ${budget.publicCap}`,
+    `Administrators’ invitations and test mails: ${budget.byClass.admin} — they may use the whole ceiling, and the last ${budget.adminReserve} are theirs alone`,
+    `Reset mails in the last hour: ${budget.resetsLastHour} (each domain sends at most ${MAIL_BUDGET.resetsPerDomainPerHour} an hour)`,
   ];
   if (isLimited(budget, now)) {
     lines.push(
       `The provider refused for reaching its limit: nothing is sent until ${formatWhen(budget.limitedUntil)}. Resume earlier only once the provider shows the account sending again.`,
     );
   } else if (budget.resumesAt) {
-    lines.push(`At the ceiling: sending resumes at ${formatWhen(budget.resumesAt)}.`);
+    lines.push(
+      `A share or the ceiling is reached: its mail is held back until ${formatWhen(budget.resumesAt)}.`,
+    );
   }
   return lines;
 }
@@ -347,6 +353,15 @@ export function mailStatusText(mail, email = null) {
     default:
       return null;
   }
+}
+
+/**
+ * Whether an administrator's invitation granting `groups` is mailed unless
+ * the administrator says otherwise (core `adminInvitationMailDefault`): not
+ * when it makes an administrator or gives a registry group.
+ */
+export function invitationMailDefault(groups) {
+  return adminInvitationMailDefault(groups);
 }
 
 /** Whether an invitation can be given a new link: a pending one, an expired one too. */

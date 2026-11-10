@@ -86,6 +86,9 @@ const refused = {
   sub_filter_types: location('  sub_filter_types text/css;'),
   sub_filter_last_modified: location('  sub_filter_last_modified on;'),
   'single-quoted string followed by a character': location("  sub_filter 'a'b 'c';"),
+  'access_log to a file in a location': location('  access_log /etc/cron.d/x;'),
+  'access_log with a format in a location': location('  access_log off combined;'),
+  'access_log syslog in a location': location('  access_log syslog:server=127.0.0.1;'),
 };
 
 for (const [name, text] of Object.entries(refused)) {
@@ -101,6 +104,10 @@ test('accepts a minimal TLS proxy vhost, comments with any text included', () =>
       ` ssl_certificate_key /etc/letsencrypt/live/a.example.com/privkey.pem;\n` +
       ` location / {\n  proxy_set_header Host $host;\n  proxy_pass http://127.0.0.1:20010;\n }\n}\n`,
   );
+});
+
+test('accepts access_log off in a location — and nothing else of it', () => {
+  validateVhost(location('  access_log off;\n  proxy_pass http://127.0.0.1:3100;'));
 });
 
 test('accepts the content types of a web surface in a location', () => {

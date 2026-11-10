@@ -12,9 +12,13 @@
  * (`GET` the roles the person may give and their own invitations, `POST` a
  * new one, `POST …/<id>/reissue` a new link for an open one, `DELETE` a
  * pending one), with `fetch`'s default mode, which sends the `Origin` the
- * panel checks. A made or reissued invitation's link is shown once, with a
- * copy button, and with what became of its mail (mail-design.md §6.1): the
- * relay mails it when the domain can send; otherwise the person sends it.
+ * panel checks. Where the plugin's domain can send mail, a made or
+ * reissued invitation is only mailed (mail-design.md §6.1): the answer
+ * carries no link, and the page says what became of the mail — "New link"
+ * mails it again. Where the domain cannot send, the link is shown once,
+ * with a copy button, and the person sends it. A name that reads as a link
+ * or a host name is refused before it is sent (core
+ * `looksLikeLinkOrHostname`, which the panel applies too).
  * Without a session the page links to the domain's sign-in, coming back to
  * itself (built from `location.origin` and the checked route, never from the
  * query).
@@ -28,6 +32,7 @@
  */
 
 import { AUTH_BRANDING_THEMES } from '../auth-branding.js';
+import { DISPLAY_NAME_LINK_PATTERN } from '../text-rules.js';
 import { INVITATIONS_PAGE_KEYS, pageMessage, pageMessagesFor } from '../page-messages.js';
 import type { PageLanguage } from '../page-messages.js';
 import { AUTH_PAGE_SCRIPT_WORDS, authPageHeaders, authPageShell } from './auth-pages.js';
@@ -41,6 +46,7 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
       var ROUTE_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
       var ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
       var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      var NAME_LINK_RE = new RegExp(${JSON.stringify(DISPLAY_NAME_LINK_PATTERN)}, 'iu');
       var STATUS_KEYS = { 404: 'error.not_found', 429: 'error.tooManyRequests' };
       // Loading the page: a refusal no code names is the page's, not an action's.
       var LOAD_KEYS = { 429: 'error.tooManyRequests', fallback: 'invitations.loadFailed' };
@@ -56,8 +62,9 @@ ${AUTH_PAGE_SCRIPT_WORDS}
       var api = '/api/delegated-invitations/' + route;
       var signIn = window.location.origin + '/?rd=' +
         encodeURIComponent(window.location.origin + '/invitations/' + route);
-      // The link of the invitation just made or given a new link, shown
-      // until it is revoked, and what became of its mail.
+      // The invitation just made or given a new link: its link when the
+      // panel answered one (the domain sends no mail), what became of its
+      // mail — shown until it is revoked.
       var link = null;
       var linkId = null;
       var linkMail = null;
@@ -174,7 +181,9 @@ ${AUTH_PAGE_SCRIPT_WORDS}
         if (name !== '') body.displayName = name;
         errorDiv.innerHTML = '';
         var invalid = body.email === '' ? msg('invitations.emailRequired')
-          : !EMAIL_RE.test(body.email) ? msg('invitations.emailInvalid') : null;
+          : !EMAIL_RE.test(body.email) ? msg('invitations.emailInvalid')
+          : NAME_LINK_RE.test(name.replace(/[\u3002\uff0e\uff61]/g, '.')) ? msg('invitations.nameLooksLikeLink')
+          : null;
         if (invalid !== null) {
           errorDiv.innerHTML = '<div class="error-msg">' + text(invalid) + '</div>';
           return;
@@ -198,7 +207,8 @@ ${AUTH_PAGE_SCRIPT_WORDS}
           });
       }
 
-      // The link of a made or reissued invitation, from the panel's answer.
+      // A made or reissued invitation, from the panel's answer: its link
+      // only when the domain sends no mail.
       function keepLink(data) {
         link = typeof data.inviteUrl === 'string' && data.inviteUrl.indexOf('https://') === 0
           ? data.inviteUrl : null;
@@ -210,14 +220,16 @@ ${AUTH_PAGE_SCRIPT_WORDS}
         var result = document.getElementById('result');
         if (!result) return;
         if (link === null) {
-          result.innerHTML = '';
+          // Mailed, or not: never a link — "New link" mails it again.
+          result.innerHTML = linkId === null || linkMail === null ? '' :
+            '<div class="error-msg note-msg"><p>' +
+              text(msg(linkMail === 'sent' ? 'invitations.mailed' : 'invitations.mailFailed')) +
+            '</p></div>';
           return;
         }
         result.innerHTML =
           '<div class="error-msg note-msg">' +
-            '<p>' + text(msg(linkMail === 'sent' ? 'invitations.mailed'
-              : linkMail === 'failed' || linkMail === 'deferred-budget' ? 'invitations.mailFailed'
-              : 'invitations.ready')) + '</p>' +
+            '<p>' + text(msg('invitations.ready')) + '</p>' +
           '</div>' +
           '<div class="field"><div class="row"><input type="text" id="link" readonly>' +
             '<button type="button" class="btn btn-small" id="copy">' + text(msg('invitations.copy')) + '</button></div></div>';

@@ -485,8 +485,8 @@ test('a user surface is never rendered on a public vhost, for an invalid route o
 });
 
 test('every location that proxies a browser to the panel clears a client’s relay assertion', async () => {
-  // Only a user-surface location and an auth portal's inviter API set one —
-  // from Gatekeeper's answer.
+  // Only a user-surface location, an auth portal's inviter API and its
+  // password change set one — from Gatekeeper's answer.
   let checked = 0;
   for (const name of await readdir(captured)) {
     const text = await readFile(path.join(captured, name), 'utf8');
@@ -495,7 +495,8 @@ test('every location that proxies a browser to the panel clears a client’s rel
       checked += 1;
       const userSurface =
         /^(= |\^~ )?\/api\/[a-z0-9-]+\/app\/?$/.test(matcher) ||
-        matcher === '^~ /api/delegated-invitations/';
+        matcher === '^~ /api/delegated-invitations/' ||
+        matcher === '= /api/account/password';
       assert.ok(
         body.includes(
           userSurface
@@ -596,15 +597,16 @@ test('a second domain’s auth portal serves Authelia and invitations — never 
   assert.doesNotMatch(text, /limit_req_zone/);
   assert.doesNotMatch(text, /user-access/);
   // The desktop's sign-in is the primary's alone; the auth requests here are
-  // the inviter API's, to Gatekeeper, and the change-password page's and
-  // API's, to Authelia (mail-design.md §6.3).
+  // the inviter API's, to Gatekeeper, the change-password page's, to
+  // Authelia, and its API's, to Gatekeeper (mail-design.md §6.3).
   assert.doesNotMatch(text, /\/internal\/authelia\/authz/);
   assert.deepEqual(text.match(/auth_request \S+;/g), [
     'auth_request off;',
     'auth_request /internal/lamaste/delegated-invitations-authz;',
     'auth_request /internal/lamaste/account-authz;',
     'auth_request /internal/lamaste/account-authz;',
-    'auth_request /internal/lamaste/account-authz;',
+    'auth_request off;',
+    'auth_request /internal/lamaste/account-api-authz;',
   ]);
   // Google returns the mail consent to the primary's portal alone.
   assert.doesNotMatch(text, /mail\/google\/callback/);
@@ -1255,15 +1257,25 @@ test('the account locations: the reset API public, the change-password page and 
       assert.match(body, /auth_request \/internal\/lamaste\/account-authz;/, matcher);
       assert.match(body, /error_page 401 =302 \$redirection_url;/, matcher);
     }
-    // Its API: the user as Authelia answered, after clearing whatever the client sent.
+    // Its API: the user as Gatekeeper vouched for them — never a Remote-User.
     const api = locationBody(text, '= /api/account/password');
-    assert.match(api, /auth_request \/internal\/lamaste\/account-authz;/);
-    assert.match(api, /auth_request_set \$user \$upstream_http_remote_user;/);
-    assert.ok(
-      api.indexOf('proxy_set_header Remote-User "";') <
-        api.indexOf('proxy_set_header Remote-User $user;'),
+    assert.match(api, /auth_request \/internal\/lamaste\/account-api-authz;/);
+    assert.match(
+      api,
+      /auth_request_set \$relay_assertion \$upstream_http_x_lamalibre_relay_assertion;/,
     );
+    assert.ok(api.includes('proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;'));
+    assert.ok(api.includes('proxy_set_header Remote-User "";'));
+    assert.doesNotMatch(api, /Remote-User \$/);
+    assert.doesNotMatch(api, /X-Lamalibre-Relay-Assertion "";/);
     assert.match(api, /error_page 401 = \/internal\/lamaste\/account-401;/);
+    assert.match(api, /error_page 403 = \/internal\/lamaste\/account-403;/);
+    const apiAuthz = locationBody(text, '= /internal/lamaste/account-api-authz');
+    assert.match(apiAuthz, /internal;/);
+    const domain = fqdn.slice('auth.'.length);
+    assert.ok(apiAuthz.includes(`proxy_pass http://127.0.0.1:9294/authz/account/${domain};`));
+    assert.ok(apiAuthz.includes(`proxy_set_header X-Original-URL https://${fqdn}$request_uri;`));
+    assert.ok(apiAuthz.includes(`proxy_set_header Host ${fqdn};`));
     // The subrequest names this portal, never the client's Host.
     const authz = locationBody(text, '= /internal/lamaste/account-authz');
     assert.match(authz, /internal;/);
@@ -1274,6 +1286,7 @@ test('the account locations: the reset API public, the change-password page and 
   assert.doesNotMatch(second, /mail\/google\/callback/);
   const callback = locationBody(primary, '= /mail/google/callback');
   for (const line of [
+    'access_log off;',
     'proxy_set_header Host auth.alpha.example;',
     'proxy_set_header X-Forwarded-Host "";',
     'proxy_set_header Cookie "";',

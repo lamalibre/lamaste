@@ -31,11 +31,13 @@ import {
 const CLIENT_ID = '123456789012-abcdefgh12345678.apps.googleusercontent.com';
 
 function budget(overrides = {}) {
-  const { ceiling, publicCap } = mailBudgetThresholds(500);
+  const { ceiling, essentialCap, publicCap, adminReserve } = mailBudgetThresholds(500);
   return {
     dailyLimit: 500,
     ceiling,
+    essentialCap,
     publicCap,
+    adminReserve,
     sent24h: 0,
     byClass: { essential: 0, admin: 0, public: 0 },
     resetsLastHour: 0,
@@ -141,8 +143,15 @@ test('budget: levels at the warning share and the ceiling; a provider refusal', 
   assert.equal(budgetLevel(limited, now).level, 'full');
   assert.ok(budgetLines(limited, now).some((line) => /refused for reaching its limit/.test(line)));
   assert.ok(budgetLines(b, now)[0].startsWith(`0 of ${b.ceiling} mails`));
+  // Each class's share is shown, and the administrators' reserve.
+  const shares = budgetLines({ ...b, byClass: { essential: 3, admin: 1, public: 7 } }, now);
+  assert.ok(shares.some((l) => l.includes(`3 of ${b.essentialCap}`)));
+  assert.ok(shares.some((l) => l.includes(`7 of ${b.publicCap}`)));
+  assert.ok(shares.some((l) => l.includes(`the last ${b.adminReserve} are theirs alone`)));
   assert.ok(
-    budgetLines({ ...b, resumesAt: '2026-11-10T20:00:00Z' }, now).some((l) => /resumes at/.test(l)),
+    budgetLines({ ...b, resumesAt: '2026-11-10T20:00:00Z' }, now).some((l) =>
+      /held back until/.test(l),
+    ),
   );
 });
 

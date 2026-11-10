@@ -47,7 +47,7 @@ import {
   useMembershipChoice,
 } from '../components/DomainChoice.jsx';
 import { isExternalAnywhere } from '../lib/domains.js';
-import { isReissuable, mailStatusText } from '../lib/mail.js';
+import { invitationMailDefault, isReissuable, mailStatusText } from '../lib/mail.js';
 
 /** Toast each warning a users change came back with: what the panel could not complete beside it. */
 function toastWarnings(toast, result) {
@@ -370,6 +370,11 @@ function InviteUserModal({ onClose, onSuccess }) {
   });
   const membership = useMembershipChoice(null);
   const [error, setError] = useState('');
+  // Null until the administrator ticks or unticks the box: then the
+  // default follows the groups typed (core `adminInvitationMailDefault`).
+  const [mailChoice, setMailChoice] = useState(null);
+  const mailDefault = invitationMailDefault(groupList(form.groups));
+  const mail = mailChoice ?? mailDefault;
 
   const mutation = useMutation({
     mutationFn: (data) => client.createInvitation(data),
@@ -411,6 +416,7 @@ function InviteUserModal({ onClose, onSuccess }) {
         username: form.username,
         email: form.email,
         groups,
+        mail,
         ...membership.createFields,
       });
       toast('Invitation created');
@@ -455,6 +461,11 @@ function InviteUserModal({ onClose, onSuccess }) {
           external={membership.external}
         />
         <DomainMembershipChoice choice={membership} />
+        <MailInvitationChoice
+          checked={mail}
+          onChange={setMailChoice}
+          quietByDefault={!mailDefault}
+        />
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -479,6 +490,34 @@ function InviteUserModal({ onClose, onSuccess }) {
   );
 }
 
+/**
+ * Whether an administrator's invitation is mailed (mail-design.md §6.1):
+ * ticked unless it makes an administrator or gives a registry group, whose
+ * link should not rest in a mailbox — the sending one's Sent folder
+ * included.
+ */
+function MailInvitationChoice({ checked, onChange, quietByDefault }) {
+  return (
+    <div>
+      <label className="flex items-center gap-2 text-sm text-zinc-300">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="accent-cyan-500"
+        />
+        E-mail the link (when its domain can send mail)
+      </label>
+      {quietByDefault && (
+        <p className="mt-1 text-xs text-zinc-500">
+          Not mailed unless you tick it: this invitation makes an administrator or gives a registry
+          group — hand its link over another way.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // --- Invite Link Modal (shown after creating invitation) ---
 
 /**
@@ -490,7 +529,10 @@ function InviteLinkModal({ result, onClose }) {
   const { inviteUrl, token, mail, invitation, reissued } = result;
 
   const displayUrl = inviteUrl || `(Domain not configured — token: ${token})`;
-  const mailText = mailStatusText(mail, invitation?.email ?? null);
+  const mailText =
+    mail === null
+      ? 'Not e-mailed, as chosen — hand the link over yourself'
+      : mailStatusText(mail, invitation?.email ?? null);
   const expiresAt = invitation?.expiresAt ? new Date(invitation.expiresAt) : null;
 
   function handleCopy() {
@@ -993,7 +1035,7 @@ export default function Users() {
   });
 
   const reissueMutation = useMutation({
-    mutationFn: (id) => client.reissueInvitation(id),
+    mutationFn: ({ id, mail }) => client.reissueInvitation(id, { mail }),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['invitations'] });
       setReissueTarget(null);
@@ -1348,7 +1390,13 @@ export default function Users() {
                     {isReissuable(inv) && (
                       <button
                         type="button"
-                        onClick={() => setReissueTarget(inv.id)}
+                        onClick={() =>
+                          setReissueTarget({
+                            id: inv.id,
+                            mail: invitationMailDefault(inv.groups ?? []),
+                            quietByDefault: !invitationMailDefault(inv.groups ?? []),
+                          })
+                        }
                         className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-cyan-400"
                         title="New link (mailed when its domain can send; the old link stops working)"
                       >
@@ -1391,14 +1439,29 @@ export default function Users() {
 
       {/* New Invitation Link Confirmation */}
       {reissueTarget && (
-        <ConfirmDialog
-          title="New Invitation Link"
-          message="The current link stops working. The new one is mailed when the invitation’s domain can send, and shown once."
-          confirmLabel="Give a new link"
-          onConfirm={() => reissueMutation.mutate(reissueTarget)}
-          onCancel={() => setReissueTarget(null)}
-          isPending={reissueMutation.isPending}
-        />
+        <Modal onClose={() => setReissueTarget(null)}>
+          <h2 className="mb-2 text-lg font-bold text-white">New Invitation Link</h2>
+          <p className="mb-4 text-sm text-zinc-400">
+            The current link stops working. The new one is shown once — and mailed when you choose
+            so and the invitation’s domain can send. An invitation gets at most three new links a
+            day.
+          </p>
+          <div className="mb-6">
+            <MailInvitationChoice
+              checked={reissueTarget.mail}
+              onChange={(mail) => setReissueTarget((prev) => ({ ...prev, mail }))}
+              quietByDefault={reissueTarget.quietByDefault}
+            />
+          </div>
+          <DialogButtons
+            confirmLabel="Give a new link"
+            isPending={reissueMutation.isPending}
+            onConfirm={() =>
+              reissueMutation.mutate({ id: reissueTarget.id, mail: reissueTarget.mail })
+            }
+            onCancel={() => setReissueTarget(null)}
+          />
+        </Modal>
       )}
 
       {/* Revoke Invitation Confirmation */}

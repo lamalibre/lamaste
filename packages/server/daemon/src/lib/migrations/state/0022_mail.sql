@@ -40,15 +40,16 @@ CREATE INDEX mail_transports_account ON mail_transports (account_key);
 
 -- What the relay knows of a sending account, whichever rows send through
 -- it (§3.7): a provider's limit refusal stops the account — every row on it
--- — until `limited_until`; `warned_at` / `exhausted_at` record the budget
--- notifications of the current crossing (each once, cleared when usage
--- falls back below the threshold).
+-- — until `limited_until`; `warned_at` records the warning of the current
+-- crossing and `exhausted` (JSON: refusal → ISO time) each share or the
+-- ceiling reached — each notified once, cleared when usage falls back
+-- below it.
 CREATE TABLE mail_accounts (
   account_key    TEXT PRIMARY KEY,
   limited_until  TEXT,
   limited_reason TEXT,
   warned_at      TEXT,
-  exhausted_at   TEXT
+  exhausted      TEXT NOT NULL DEFAULT '{}'
 );
 
 -- A Google consent under way (§3.3): one row per attempt, single use,
@@ -64,17 +65,21 @@ CREATE TABLE mail_oauth_pending (
   expires_at     TEXT NOT NULL
 );
 
--- Every delivery attempt (§3.7): no address, no subject. Usage is counted
--- per sending account over 24 h; swept after 48 h.
+-- Every delivery attempt (§3.7): no address, no subject; the domain it was
+-- for (NULL: the relay's own — Authelia's, a test). Usage is counted per
+-- sending account over 24 h, reset mails per domain over an hour; swept
+-- after 48 h.
 CREATE TABLE mail_sends (
   id           INTEGER PRIMARY KEY,
   account_key  TEXT NOT NULL,
+  domain       TEXT,
   class        TEXT NOT NULL CHECK (class IN ('essential', 'admin', 'public')),
   kind         TEXT NOT NULL CHECK (kind IN ('authelia', 'invitation', 'reset', 'password-changed', 'test')),
   sent_at      TEXT NOT NULL,
   outcome      TEXT NOT NULL CHECK (outcome IN ('sent', 'failed'))
 );
 CREATE INDEX mail_sends_account_time ON mail_sends (account_key, sent_at);
+CREATE INDEX mail_sends_domain_kind_time ON mail_sends (domain, kind, sent_at);
 
 -- Forgot-password links (§6.2): the token's SHA-256 only, 30 minutes,
 -- single use, five failures void it; swept after 24 h.
@@ -110,6 +115,7 @@ CREATE TABLE invitation_reissues (
   reissued_at      TEXT NOT NULL
 );
 CREATE INDEX invitation_reissues_inviter ON invitation_reissues (inviter_user_id, reissued_at);
+CREATE INDEX invitation_reissues_invitation ON invitation_reissues (invitation_id, reissued_at);
 
 -- The TOTP time steps a reset accepted (§6.2), per user: a code is good
 -- once — after a restart too; swept after 10 minutes.

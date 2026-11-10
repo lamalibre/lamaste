@@ -103,6 +103,38 @@ function startSink(key, cert) {
 // A fake Google: the token endpoint, revocation and messages.send
 // ---------------------------------------------------------------------------
 
+/** Google's answer to a per-user rate limit (a moment later the send goes). */
+const GOOGLE_USER_RATE_LIMIT = {
+  error: {
+    code: 429,
+    message: 'User-rate limit exceeded.  Retry after 1970-01-01T00:00:00.000Z',
+    errors: [
+      {
+        message: 'User-rate limit exceeded.  Retry after 1970-01-01T00:00:00.000Z',
+        domain: 'usageLimits',
+        reason: 'rateLimitExceeded',
+      },
+    ],
+    status: 'RESOURCE_EXHAUSTED',
+  },
+};
+
+/** Google's answer to an account past its daily sending limit. */
+const GOOGLE_MAIL_SENDING_LIMIT = {
+  error: {
+    code: 429,
+    message: 'User-rate limit exceeded.  Retry after 2099-01-01T00:00:00.000Z (Mail sending)',
+    errors: [
+      {
+        message: 'User-rate limit exceeded.  Retry after 2099-01-01T00:00:00.000Z (Mail sending)',
+        domain: 'usageLimits',
+        reason: 'rateLimitExceeded',
+      },
+    ],
+    status: 'RESOURCE_EXHAUSTED',
+  },
+};
+
 const google = {
   /** What a refresh answers: 'ok' | 'invalid_grant' | 'no_scope' | 'other_account'. */
   refresh: 'ok',
@@ -113,6 +145,8 @@ const google = {
   challenge: null,
   refreshes: 0,
   sent: [],
+  sendTimes: [],
+  rateLimited: 0,
   revoked: [],
 };
 
@@ -188,6 +222,13 @@ function startGoogle() {
         });
       }
       if (google.send === '503') return json(res, 503, { error: { code: 503 } });
+      // A per-second rate limit, `google.rateLimited` times, then sent.
+      if (google.rateLimited > 0) {
+        google.rateLimited -= 1;
+        return json(res, 429, GOOGLE_USER_RATE_LIMIT);
+      }
+      if (google.send === 'mail-sending') return json(res, 429, GOOGLE_MAIL_SENDING_LIMIT);
+      google.sendTimes.push(Date.now());
       google.sent.push(Buffer.from(JSON.parse(body).raw, 'base64url').toString('utf-8'));
       return json(res, 200, { id: 'm1', threadId: 't1' });
     }
@@ -233,6 +274,8 @@ async function notifications(fragment) {
 }
 
 async function resetMailState() {
+  lib.forgetRecentNotifications();
+  lib.setMailPacingForTests({ gmailIntervalMs: 0 });
   const d = await db();
   d.exec('DELETE FROM mail_transports; DELETE FROM mail_accounts; DELETE FROM mail_sends;');
   d.exec('DELETE FROM mail_oauth_pending; DELETE FROM notifications;');
@@ -245,6 +288,8 @@ async function resetMailState() {
     scope: `openid ${GMAIL_SEND} https://www.googleapis.com/auth/userinfo.email`,
     refreshes: 0,
     sent: [],
+    sendTimes: [],
+    rateLimited: 0,
     revoked: [],
   });
   lib.forgetGmailAccessTokens();
@@ -483,57 +528,84 @@ function sendAs(kind, sendClass, domain = null) {
   });
 }
 
-test('public mail stops at its cap, essential goes on to the ceiling — notified once each', async () => {
+test('each class stops at its share, admin mail goes on into its reserve to the ceiling — notified once each', async () => {
   await call('PUT', '/api/settings/mail', smtpBody());
   const patch = await call('PATCH', '/api/settings/mail', { dailyLimit: 10 });
   assert.equal(patch.statusCode, 200);
+  const shown = patch.json().transport.budget;
   assert.deepEqual(
-    [patch.json().transport.budget.ceiling, patch.json().transport.budget.publicCap],
-    [9, 7],
+    [shown.ceiling, shown.essentialCap, shown.publicCap, shown.adminReserve],
+    [9, 3, 3, 3],
   );
 
-  for (let i = 0; i < 7; i++) assert.equal((await sendAs('invitation', 'public')).status, 'sent');
-  assert.deepEqual(await sendAs('invitation', 'public'), {
+  // A flood of public mail: it stops at its share, nothing else does.
+  for (let i = 0; i < 3; i++) assert.equal((await sendAs('invitation', 'public')).status, 'sent');
+  for (let i = 0; i < 2; i++) {
+    assert.deepEqual(await sendAs('invitation', 'public'), {
+      status: 'deferred-budget',
+      error: 'public-cap',
+    });
+  }
+  // Authelia's share is its own, and stops too.
+  for (let i = 0; i < 3; i++) assert.equal((await sendAs('authelia', 'essential')).status, 'sent');
+  assert.deepEqual(await sendAs('authelia', 'essential'), {
     status: 'deferred-budget',
-    error: 'public-cap',
+    error: 'essential-cap',
   });
-  assert.deepEqual(await sendAs('invitation', 'public'), {
-    status: 'deferred-budget',
-    error: 'public-cap',
-  });
-  assert.equal((await sendAs('test', 'essential')).status, 'sent');
-  assert.equal((await sendAs('invitation', 'admin')).status, 'sent');
-  assert.deepEqual(await sendAs('test', 'essential'), {
+  // The administrators' reserve is left whole.
+  for (let i = 0; i < 3; i++) assert.equal((await sendAs('invitation', 'admin')).status, 'sent');
+  assert.deepEqual(await sendAs('invitation', 'admin'), {
     status: 'deferred-budget',
     error: 'ceiling',
   });
   assert.equal(sink.messages.length, 9);
   assert.equal((await notifications('may send in 24 hours are used')).length, 1);
-  assert.equal((await notifications('reached its sending budget')).length, 1);
+  assert.equal((await notifications('reached its sending budget')).length, 3);
+  assert.equal((await notifications('no more password-reset mails')).length, 1);
+  assert.equal((await notifications('no more of Authelia')).length, 1);
 
   const { budget } = (await call('GET', '/api/settings/mail')).json().transport;
   assert.equal(budget.sent24h, 9);
-  assert.deepEqual(budget.byClass, { essential: 1, admin: 1, public: 7 });
+  assert.deepEqual(budget.byClass, { essential: 3, admin: 3, public: 3 });
   assert.ok(budget.resumesAt);
 });
 
-test('reset mails stop at 30 an hour per sending account', async () => {
+test('a test mail is an administrator’s: it goes while Authelia’s and the public shares are used up', async () => {
+  await call('PUT', '/api/settings/mail', smtpBody());
+  await call('PATCH', '/api/settings/mail', { dailyLimit: 10 });
+  const d = await db();
+  const row = lib.transportRow(d, null);
+  for (const sendClass of ['essential', 'essential', 'essential', 'public', 'public', 'public']) {
+    lib.recordAttempt(d, { accountKey: row.account_key, sendClass, kind: 'test', at: new Date() });
+  }
+  const res = await call('POST', '/api/settings/mail/test', { to: 'onur@codelama.example' });
+  assert.deepEqual(res.json(), { mail: { status: 'sent' } });
+});
+
+test('reset mails stop at 20 an hour per domain — another domain on the same account goes on', async () => {
   await call('PUT', '/api/settings/mail', smtpBody());
   const d = await db();
   const row = lib.transportRow(d, null);
-  for (let i = 0; i < MAIL_BUDGET.resetsPerHour; i++) {
+  for (let i = 0; i < MAIL_BUDGET.resetsPerDomainPerHour; i++) {
     lib.recordAttempt(d, {
       accountKey: row.account_key,
+      domain: PRIMARY,
       sendClass: 'public',
       kind: 'reset',
       at: new Date(),
     });
   }
-  assert.deepEqual(await sendAs('reset', 'public'), {
+  assert.deepEqual(await sendAs('reset', 'public', PRIMARY), {
     status: 'deferred-budget',
     error: 'reset-cap',
   });
-  assert.equal((await sendAs('invitation', 'public')).status, 'sent');
+  assert.deepEqual(await sendAs('reset', 'public', PRIMARY), {
+    status: 'deferred-budget',
+    error: 'reset-cap',
+  });
+  assert.equal((await notifications('password-reset mails for relay.example')).length, 1);
+  assert.equal((await sendAs('reset', 'public', OTHER)).status, 'sent');
+  assert.equal((await sendAs('invitation', 'public', PRIMARY)).status, 'sent');
 });
 
 test("a provider's limit reply stops the account for 24 hours until resumed", async () => {
@@ -715,6 +787,66 @@ test("Google's daily limit stops every row on the account", async () => {
     error: 'limited',
   });
   assert.equal(google.sent.length, 0);
+});
+
+test("Google's rate limit is tried again with backoff within the send, and stops nothing", async () => {
+  await consent();
+  google.rateLimited = 2;
+  const started = Date.now();
+  assert.deepEqual(await sendAs('test', 'essential'), { status: 'sent' });
+  // 1 s, then 2 s of backoff.
+  assert.ok(Date.now() - started >= 2_900, `${Date.now() - started} ms`);
+  assert.equal(google.sent.length, 1);
+  const d = await db();
+  const row = lib.transportRow(d, null);
+  assert.equal(lib.accountState(d, row.account_key).limited_until, null);
+  // Only the delivered attempt counts toward the budget.
+  assert.deepEqual(
+    d
+      .prepare('SELECT outcome FROM mail_sends')
+      .all()
+      .map((r) => r.outcome),
+    ['sent'],
+  );
+  assert.equal((await notifications('refused')).length, 0);
+});
+
+test("a rate limit that outlasts the send's 30 seconds fails that mail alone", async () => {
+  await consent();
+  google.rateLimited = 1_000;
+  const result = await sendAs('test', 'essential');
+  assert.deepEqual(result, { status: 'failed', error: 'rate_limited' });
+  const d = await db();
+  assert.equal(lib.accountState(d, lib.transportRow(d, null).account_key).limited_until, null);
+  google.rateLimited = 0;
+  assert.deepEqual(await sendAs('test', 'essential'), { status: 'sent' });
+});
+
+test('Google\'s "(Mail sending)" limit stops the account until the time Google names, at most 24 h', async () => {
+  await consent();
+  google.send = 'mail-sending';
+  assert.deepEqual(await sendAs('test', 'essential'), {
+    status: 'deferred-budget',
+    error: 'limited',
+  });
+  const { budget } = (await call('GET', '/api/settings/mail')).json().transport;
+  const hours = (Date.parse(budget.limitedUntil) - Date.now()) / 3_600_000;
+  assert.ok(hours > 23.9 && hours <= 24, String(hours));
+});
+
+test('sends through one Gmail account go one at a time, a second apart', async () => {
+  await consent();
+  lib.setMailPacingForTests({ gmailIntervalMs: 300 });
+  const results = await Promise.all([0, 1, 2].map(() => sendAs('test', 'essential')));
+  assert.deepEqual(
+    results.map((r) => r.status),
+    ['sent', 'sent', 'sent'],
+  );
+  const gaps = google.sendTimes.slice(1).map((t, i) => t - google.sendTimes[i]);
+  assert.ok(
+    gaps.every((g) => g >= 290),
+    `gaps ${gaps.join(', ')}`,
+  );
 });
 
 test('the health check: a revoked grant goes down (consent again), a working one comes back', async () => {

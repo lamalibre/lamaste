@@ -37,7 +37,7 @@ const AdminClientContext = createContext(null);
  *
  * Invitations:
  * @property {(filter?: {plugin?, inviter?, kind?}) => Promise<{invitations: Array}>} getInvitations — both kinds; a delegated one names its plugin, role and inviter `{userId, username}`
- * @property {(data: {username, email, groups?, expiresInDays?}) => Promise<{ok, invitation, token}>} createInvitation
+ * @property {(data: {username, email, groups?, expiresInDays?, domains?, mail?}) => Promise<{ok, invitation, token, inviteUrl, mail}>} createInvitation
  * @property {(id: string) => Promise<{ok, action}>} revokeInvitation — `action`: revoked (pending), deleted (ended), marked (being accepted: it ends revoked, with no grant)
  * @property {(inviterUserId: string, options?: {transitive?: boolean}) => Promise<{disabled: string[], warnings?}>} disableInvitees
  * @property {(name: string) => Promise<object>} getPluginInvitationPolicy — off when none was set; `available`, `unavailableReason`, `invitingRoles`

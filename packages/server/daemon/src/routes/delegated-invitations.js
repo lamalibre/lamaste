@@ -17,7 +17,9 @@
  * plugin's site are same-site — only the origin tells them apart); the
  * directory's user for the plugin (`resolveUserCaller`: active, entitled,
  * identity ready). Its own JSON parser limit, its own rate limit, no CORS,
- * no caching; logs metadata only, never an address.
+ * no caching; logs metadata only, never an address. A made or reissued
+ * invitation's link is answered only where the plugin's domain sends no
+ * mail; elsewhere it goes by mail alone.
  */
 
 import {
@@ -121,8 +123,13 @@ async function available(request, plugin) {
 
 /**
  * Mail a made or reissued invitation's link, then answer it: the
- * invitation as its inviter sees it (with its mail's outcome), the link
- * once, and what became of the mail.
+ * invitation as its inviter sees it (with its mail's outcome) and what
+ * became of the mail. Where the plugin's domain sends mail the link goes
+ * by mail only — never in the answer, sent or not (mail-design.md §6.1):
+ * the inviter cannot hand a link to someone other than the address the
+ * invitation names, and one that was not mailed is given anew with "New
+ * link". Where the domain sends no mail (`not-configured`), the link is
+ * answered once, for the inviter to send.
  */
 async function mailedAnswer(plugin, made, logger) {
   const mail = await mailInvitation(made.invitation, made.token, {
@@ -133,7 +140,11 @@ async function mailedAnswer(plugin, made, logger) {
   const labels = new Map(plugin.identity.roles.map((r) => [r.id, r.label]));
   // As it is now: with its mail's outcome recorded.
   const invitation = (await getInvitation(made.invitation.id)) ?? made.invitation;
-  return { invitation: inviterItem(invitation, labels), inviteUrl: made.inviteUrl, mail };
+  return {
+    invitation: inviterItem(invitation, labels),
+    inviteUrl: mail.status === 'not-configured' ? made.inviteUrl : null,
+    mail,
+  };
 }
 
 /** A refusal; a cap's names the cap (`inviter` or `plugin`) for the page's words. */

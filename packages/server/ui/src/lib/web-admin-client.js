@@ -161,7 +161,8 @@ export const webAdminClient = {
   getInvitations: (filter = {}) => apiFetch(`/api/invitations${toQuery(filter)}`),
   createInvitation: (data) => jsonPost('/api/invitations', data),
   revokeInvitation: (id) => jsonDelete(`/api/invitations/${encodeURIComponent(id)}`),
-  reissueInvitation: (id) => jsonPost(`/api/invitations/${encodeURIComponent(id)}/reissue`),
+  reissueInvitation: (id, options = {}) =>
+    jsonPost(`/api/invitations/${encodeURIComponent(id)}/reissue`, options),
   disableInvitees: (inviterUserId, { transitive = false } = {}) =>
     jsonPost('/api/invitations/disable-invitees', { inviterUserId, transitive }),
   getPluginInvitationPolicy: (name) => apiFetch(pluginPath(name, 'invitation-policy')),

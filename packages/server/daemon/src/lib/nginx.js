@@ -813,11 +813,11 @@ function delegatedInvitationsLocations(domain, fqdn) {
 
 /**
  * What a browser request the auth host proxies to the panel never carries
- * on: whatever names a user or a credential (`Remote-*`, `Authorization`,
- * client-certificate headers, a relay assertion) and a client's
- * `X-Forwarded-Host`.
+ * on, but the relay assertion — for a location that sets it itself from
+ * Gatekeeper's answer (a second `proxy_set_header` of one header would send
+ * both values).
  */
-const BROWSER_IDENTITY_CLEARED = `
+const BROWSER_IDENTITY_CLEARED_KEEP_ASSERTION = `
         proxy_set_header Remote-User "";
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
@@ -826,7 +826,15 @@ const BROWSER_IDENTITY_CLEARED = `
         proxy_set_header X-SSL-Client-Verify "";
         proxy_set_header X-SSL-Client-DN "";
         proxy_set_header X-SSL-Client-Serial "";
-        proxy_set_header X-Forwarded-Host "";${PANEL_ASSERTION_CLEARED}`;
+        proxy_set_header X-Forwarded-Host "";`;
+
+/**
+ * What a browser request the auth host proxies to the panel never carries
+ * on: whatever names a user or a credential (`Remote-*`, `Authorization`,
+ * client-certificate headers, a relay assertion) and a client's
+ * `X-Forwarded-Host`.
+ */
+const BROWSER_IDENTITY_CLEARED = `${BROWSER_IDENTITY_CLEARED_KEEP_ASSERTION}${PANEL_ASSERTION_CLEARED}`;
 
 /** To the panel under the auth host's literal name `fqdn`. */
 function panelProxy(fqdn) {
@@ -871,12 +879,16 @@ function assertAuthVhostMail(domain, mail) {
  *   rendering, else the stock one) and its API (`/api/account/reset/*`) —
  *   public, like the invitation's: `Host` this portal's literal name,
  *   `X-Forwarded-Host` and every identity header cleared, a small body;
- * - the change-password page (`/account/password`) and its API
- *   (`POST /api/account/password`) behind Authelia's forward auth — the
- *   portal's rule wants two factors from the domain's members and external
- *   members. The page redirects to the sign-in, the API answers JSON 401.
- *   The panel reads the user from `Remote-User`, which nginx writes from
- *   Authelia's answer after clearing whatever the client sent.
+ * - the change-password page (`/account/password`) behind Authelia's
+ *   forward auth — the portal's rule wants two factors from the domain's
+ *   members and external members; it redirects to the sign-in;
+ * - its API (`POST /api/account/password`) behind Gatekeeper
+ *   (`/authz/account/<domain>`), which asks Authelia the same about the
+ *   session for that very URL and vouches for its user to the panel with
+ *   a relay assertion bound to the method and target — the only thing the
+ *   panel takes the user from (the panel listens on loopback, where any
+ *   local process could send `Remote-User`). JSON 401/403, never a
+ *   redirect; nothing of the browser's credentials reaches the panel.
  */
 export function accountLocations(domain, fqdn) {
   const cleared = BROWSER_IDENTITY_CLEARED;
@@ -943,15 +955,43 @@ export function accountLocations(domain, fqdn) {
         try_files /index.html =404;${accountPageHeaders}
     }
 
+    # Its API: Gatekeeper vouches for the session's user to the panel
+    location = /internal/lamaste/account-api-authz {
+        internal;
+        auth_request off;
+
+        proxy_pass http://127.0.0.1:9294/authz/account/${domain};
+        proxy_pass_request_body off;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Connection "";
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Original-URL ${originalUrl(fqdn)};
+        proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
+        proxy_set_header Host ${fqdn};
+        proxy_set_header Cookie $http_cookie;
+
+        proxy_http_version 1.1;
+    }
+
+    location = /internal/lamaste/account-403 {
+        internal;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        return 403 '{"error":"forbidden"}';
+    }
+
     location = ${ACCOUNT_PASSWORD_API_PATH} {
-        auth_request /internal/lamaste/account-authz;
-        auth_request_set $user $upstream_http_remote_user;
+        auth_request /internal/lamaste/account-api-authz;
+        auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;
         error_page 401 = /internal/lamaste/account-401;
+        error_page 403 = /internal/lamaste/account-403;
 
         # Nothing the client sent that names a user or a credential; the
-        # user as Authelia answered
-        proxy_set_header Cookie "";${cleared}
-        proxy_set_header Remote-User $user;${toPanel}
+        # user as Gatekeeper vouched for them, for this one request
+        proxy_set_header Cookie "";${BROWSER_IDENTITY_CLEARED_KEEP_ASSERTION}
+        proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;${toPanel}
     }
 `;
 }
@@ -966,6 +1006,8 @@ export function mailCallbackLocation(fqdn) {
   return `
     # Google's return from the relay's mail consent (mail-design.md §3.3)
     location = ${MAIL_GOOGLE_CALLBACK_PATH} {
+        # Its query carries Google's single-use code and the consent's state
+        access_log off;
         proxy_set_header Cookie "";${BROWSER_IDENTITY_CLEARED}${panelProxy(fqdn)}
         client_max_body_size 1k;
     }

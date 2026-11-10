@@ -150,7 +150,8 @@ function mailScopeRoutes(fastify, base, domainOf, { senderOnlyPut }) {
         domain: await mailScope(domainOf(request)),
         to: body.to,
         kind: 'test',
-        sendClass: 'essential',
+        // An administrator's: the reserve no other class reaches (§3.7).
+        sendClass: 'admin',
         render: ({ language, brand, sender }) => renderTestMail({ language, brand, sender }),
         logger: request.log,
       });

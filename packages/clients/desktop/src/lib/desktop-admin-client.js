@@ -158,7 +158,8 @@ export const desktopAdminClient = {
     invokeRefusable('admin_get_invitations', { plugin, inviter, kind }),
   createInvitation: (data) => invokeRefusable('admin_create_invitation', { data }),
   revokeInvitation: (id) => invokeRefusable('admin_revoke_invitation', { id }),
-  reissueInvitation: (id) => invokeRefusable('admin_reissue_invitation', { id }),
+  reissueInvitation: (id, options = {}) =>
+    invokeRefusable('admin_reissue_invitation', { id, mail: options.mail ?? null }),
   disableInvitees: (inviterUserId, { transitive = false } = {}) =>
     invokeRefusable('admin_disable_invitees', { inviterUserId, transitive }),
   getPluginInvitationPolicy: (name) =>

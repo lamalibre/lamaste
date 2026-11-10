@@ -777,14 +777,27 @@ pub async fn admin_revoke_invitation(id: String) -> Result<serde_json::Value, se
     admin_refusable_task("DELETE", format!("/api/invitations/{}", url_encode(&id)), None).await
 }
 
+/// The body of a reissue: `{ "mail": … }` when the administrator chose,
+/// else `{}` — the panel then mails as on creation (not for an invitation
+/// granting `admins` or a `feria-*` group).
+fn reissue_body(mail: Option<bool>) -> String {
+    match mail {
+        Some(mail) => serde_json::json!({ "mail": mail }).to_string(),
+        None => "{}".to_string(),
+    }
+}
+
 /// A new link for a pending invitation (the old one stops working), mailed
-/// when its domain can send; the link is answered once. Rejects with the
-/// panel's refusal (`code` `not_found`, `invitation_not_pending`,
-/// `username_taken`).
+/// as `mail` says (omitted: as on creation); the link is answered once.
+/// Rejects with the panel's refusal (`code` `not_found`,
+/// `invitation_not_pending`, `username_taken`, `reissue_rate`).
 #[tauri::command]
-pub async fn admin_reissue_invitation(id: String) -> Result<serde_json::Value, serde_json::Value> {
+pub async fn admin_reissue_invitation(
+    id: String,
+    mail: Option<bool>,
+) -> Result<serde_json::Value, serde_json::Value> {
     let path = format!("/api/invitations/{}/reissue", url_encode(&id));
-    admin_refusable_task("POST", path, None).await
+    admin_refusable_task("POST", path, Some(reissue_body(mail))).await
 }
 
 // ===========================================================================
@@ -2338,6 +2351,13 @@ mod tests {
     fn a_refusal_keeps_the_dependent_consumers() {
         assert!(refusal_field_kept("consumers", &serde_json::json!([{ "consumer": "leave" }])));
         assert!(!refusal_field_kept("consumers", &serde_json::json!("leave")));
+    }
+
+    #[test]
+    fn a_reissue_names_the_mail_choice_only_when_made() {
+        assert_eq!(reissue_body(None), "{}");
+        assert_eq!(reissue_body(Some(true)), r#"{"mail":true}"#);
+        assert_eq!(reissue_body(Some(false)), r#"{"mail":false}"#);
     }
 
     #[test]

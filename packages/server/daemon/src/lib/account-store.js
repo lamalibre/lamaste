@@ -55,6 +55,22 @@ export function resetsSince(db, userId, since) {
 }
 
 /**
+ * Whether user `userId` holds a live link (unused, unexpired) made after
+ * `since` — a new start then mails nothing (§6.2): the link they have
+ * still works.
+ */
+export function hasRecentLiveReset(db, userId, since, now) {
+  return (
+    db
+      .prepare(
+        `SELECT 1 FROM password_resets
+         WHERE user_id = ? AND used_at IS NULL AND expires_at > ? AND created_at > ? LIMIT 1`,
+      )
+      .get(userId, now.toISOString(), since.toISOString()) !== undefined
+  );
+}
+
+/**
  * A new reset link for user `userId` on `domain`: their earlier live links
  * voided, the new one's hash stored. Returns the token (mailed, never kept).
  *

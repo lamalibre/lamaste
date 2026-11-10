@@ -98,6 +98,7 @@ export async function provisionRelayServices(ctx, report) {
     uid: lamasteUid,
     gid: chiselGid,
     mode: 0o640,
+    previousOwners: [await lookupId('user', 'nobody')],
   });
   // The panel is the CA: the PKI directory is its own. Files earlier
   // versions created through sudo may still be root-owned.

@@ -61,6 +61,65 @@ export function invitationsPath({ plugin, inviter } = {}) {
   return text ? `/api/invitations?${text}` : '/api/invitations';
 }
 
+/**
+ * `invitations create <username> <email> [--groups a,b] [--domains a,b]
+ * [--external-domains c,d] [--expires-days n] [--mail|--no-mail]` as the
+ * body of `POST /api/invitations`, or null when the arguments are anything
+ * else. Without `--mail`/`--no-mail` the panel decides: mailed unless the
+ * invitation grants `admins` or a `feria-*` group.
+ *
+ * @param {string[]} args
+ */
+export function parseCreateArgs(args) {
+  const [username, email, ...flags] = args;
+  if (!username || !email || username.startsWith('--') || email.startsWith('--')) return null;
+  const body = { username, email };
+  const list = (value) =>
+    value
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
+  const domains = [];
+  for (let i = 0; i < flags.length; i++) {
+    const flag = flags[i];
+    if (flag === '--mail' || flag === '--no-mail') {
+      if ('mail' in body) return null;
+      body.mail = flag === '--mail';
+      continue;
+    }
+    const value = flags[i + 1];
+    if (value === undefined || value.startsWith('--')) return null;
+    i += 1;
+    if (flag === '--groups' && !('groups' in body)) body.groups = list(value);
+    else if (flag === '--domains') domains.push(...list(value));
+    else if (flag === '--external-domains') {
+      domains.push(...list(value).map((name) => ({ name, kind: 'external' })));
+    } else if (flag === '--expires-days' && !('expiresInDays' in body)) {
+      const days = Number(value);
+      if (!Number.isInteger(days) || days < 1 || days > 30) return null;
+      body.expiresInDays = days;
+    } else return null;
+  }
+  if (domains.length > 0) body.domains = domains;
+  return body;
+}
+
+/**
+ * `invitations reissue <id> [--mail|--no-mail]`: the id and the body, or
+ * null. Without a flag the panel decides as on creation.
+ *
+ * @param {string[]} args
+ * @returns {{ id: string, body: { mail?: boolean } } | null}
+ */
+export function parseReissueArgs(args) {
+  const [id, ...flags] = args;
+  if (!id || id.startsWith('--') || flags.length > 1) return null;
+  if (flags.length === 0) return { id, body: {} };
+  if (flags[0] === '--mail') return { id, body: { mail: true } };
+  if (flags[0] === '--no-mail') return { id, body: { mail: false } };
+  return null;
+}
+
 /** Why an invitation was revoked, in words. */
 function reasonText(reason) {
   return INVITATION_REVOKE_REASON_TEXT[reason] ?? reason;
@@ -114,6 +173,17 @@ export function mailText(mail, email = null) {
     default:
       return '';
   }
+}
+
+/**
+ * What became of the mail of an invitation just made or given a new link:
+ * as {@link mailText}, and the panel's `mail: null` — not to be mailed, as
+ * the administrator chose (or the default for an invitation that grants
+ * `admins` or a `feria-*` group).
+ */
+export function madeMailText(mail, email = null) {
+  if (mail === null) return 'not e-mailed, as chosen — hand the link over yourself';
+  return mailText(mail, email);
 }
 
 /** What the panel did with a revocation, in words. */

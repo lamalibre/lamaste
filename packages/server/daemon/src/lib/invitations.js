@@ -26,6 +26,7 @@ import crypto from 'node:crypto';
 import {
   INVITATION_ACCEPTING_STALE_MS,
   INVITATION_MAX_FAILED_ATTEMPTS,
+  INVITATION_REISSUES_PER_DAY,
   INVITATION_RETENTION_DAYS,
   INVITATION_TOKEN_BYTES,
   INVITATION_TOKEN_RE,
@@ -846,7 +847,9 @@ export function adminReissueExpiry(row, now) {
  * answer handed to `expiry` as `vetted`). 404 `not_found` when
  * there is no such invitation or `owner(row)` refuses it, 409
  * `invitation_not_pending` when it is no longer pending (accepted, being
- * accepted, revoked). Returns the invitation and its token, shown once.
+ * accepted, revoked), 429 `reissue_rate` when it was given
+ * {@link INVITATION_REISSUES_PER_DAY} new links in the last day (each one a
+ * mail). Returns the invitation and its token, shown once.
  *
  * @param {string} id
  * @template V
@@ -874,6 +877,22 @@ export function reissueInvitationLink(
         throw httpError('Only a pending invitation can be given a new link', 409, {
           code: 'invitation_not_pending',
         });
+      }
+      const reissuedToday = Number(
+        db
+          .prepare(
+            'SELECT COUNT(*) AS n FROM invitation_reissues WHERE invitation_id = ? AND reissued_at > ?',
+          )
+          .get(id, new Date(now - DAY_MS).toISOString()).n,
+      );
+      if (reissuedToday >= INVITATION_REISSUES_PER_DAY) {
+        throw httpError(
+          'This invitation got a new link too often today — try again tomorrow',
+          429,
+          {
+            code: 'reissue_rate',
+          },
+        );
       }
       const expiresAt = expiry(row, db, now, vetted);
       db.prepare(

@@ -9,7 +9,10 @@ import assert from 'node:assert/strict';
 import {
   invitationRows,
   invitationsPath,
+  madeMailText,
+  parseCreateArgs,
   parseListArgs,
+  parseReissueArgs,
   policyLines,
   policySetBody,
   resolveUserId,
@@ -164,4 +167,60 @@ test('the policy as lines; why it cannot work, when it cannot', () => {
     policyLines({ emailDomains: [], invitingRoles: [], available: true }).at(-1),
     'inviting roles: none',
   );
+});
+
+test('create: a username, an address, and the flags — mail only when a flag says', () => {
+  assert.deepEqual(parseCreateArgs(['ayse', 'ayse@corp.example']), {
+    username: 'ayse',
+    email: 'ayse@corp.example',
+  });
+  assert.deepEqual(
+    parseCreateArgs([
+      'boss',
+      'boss@corp.example',
+      '--groups',
+      'admins, feria-admins',
+      '--domains',
+      'a.example,b.example',
+      '--external-domains',
+      'c.example',
+      '--expires-days',
+      '3',
+      '--mail',
+    ]),
+    {
+      username: 'boss',
+      email: 'boss@corp.example',
+      groups: ['admins', 'feria-admins'],
+      domains: ['a.example', 'b.example', { name: 'c.example', kind: 'external' }],
+      expiresInDays: 3,
+      mail: true,
+    },
+  );
+  assert.equal(parseCreateArgs(['ayse', 'a@b.example', '--no-mail']).mail, false);
+  for (const args of [
+    [],
+    ['ayse'],
+    ['--mail', 'a@b.example'],
+    ['ayse', 'a@b.example', '--mail', '--no-mail'],
+    ['ayse', 'a@b.example', '--groups'],
+    ['ayse', 'a@b.example', '--expires-days', '31'],
+    ['ayse', 'a@b.example', '--whatever', 'x'],
+  ]) {
+    assert.equal(parseCreateArgs(args), null, args.join(' '));
+  }
+});
+
+test('reissue: an id, and --mail or --no-mail at most', () => {
+  assert.deepEqual(parseReissueArgs(['abc']), { id: 'abc', body: {} });
+  assert.deepEqual(parseReissueArgs(['abc', '--mail']), { id: 'abc', body: { mail: true } });
+  assert.deepEqual(parseReissueArgs(['abc', '--no-mail']), { id: 'abc', body: { mail: false } });
+  assert.equal(parseReissueArgs(['abc', '--mail', '--no-mail']), null);
+  assert.equal(parseReissueArgs(['--mail']), null);
+  assert.equal(parseReissueArgs([]), null);
+});
+
+test('a mail the administrator chose not to send is said so', () => {
+  assert.match(madeMailText(null), /as chosen/);
+  assert.match(madeMailText({ status: 'sent' }, 'a@b.example'), /e-mailed to a@b\.example/);
 });

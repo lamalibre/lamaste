@@ -74,12 +74,45 @@ async function googleFetch(url, init, signal) {
   }
 }
 
-/** A Google answer's JSON (capped), or null when it is not JSON. */
-async function readJson(res) {
-  const text = await res.text().catch(() => '');
-  if (Buffer.byteLength(text) > GOOGLE_RESPONSE_MAX_BYTES) return null;
+/**
+ * A Google answer's body, at most {@link GOOGLE_RESPONSE_MAX_BYTES}: a
+ * `Content-Length` above the cap is not read at all, and a body without
+ * one is read chunk by chunk and dropped (the stream cancelled) as soon as
+ * it passes the cap. Null for a body over the cap or one that failed.
+ */
+export async function readCappedBody(res, max = GOOGLE_RESPONSE_MAX_BYTES) {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) {
+    await res.body?.cancel().catch(() => {});
+    return null;
+  }
+  if (!res.body) return Buffer.alloc(0);
+  const reader = res.body.getReader();
+  const chunks = [];
+  let total = 0;
   try {
-    const value = JSON.parse(text);
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > max) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+  return Buffer.concat(chunks.map((c) => Buffer.from(c.buffer, c.byteOffset, c.byteLength)));
+}
+
+/** A Google answer's JSON (capped, {@link readCappedBody}), or null when it is not JSON. */
+async function readJson(res) {
+  const body = await readCappedBody(res);
+  if (body === null) return null;
+  try {
+    const value = JSON.parse(body.toString('utf-8'));
     return value && typeof value === 'object' ? value : null;
   } catch {
     return null;
@@ -237,21 +270,85 @@ export async function checkGmailCredentials(credentials, { account = null, signa
   return { account: refreshed.account };
 }
 
-/** The reasons Gmail gives for an account that sent too much — 24 h without sending. */
-const LIMIT_REASONS = new Set(['dailyLimitExceeded', 'userRateLimitExceeded', 'quotaExceeded']);
+/**
+ * The reason Gmail gives for an account past its daily sending limit — the
+ * one refusal that stops the account (up to 24 h without sending).
+ */
+const DAILY_LIMIT_REASONS = new Set(['dailyLimitExceeded']);
 
-/** What a failed `messages.send` means. */
-function sendFailure(status, body) {
+/**
+ * Words with which Gmail says the daily sending limit is reached: "Daily
+ * user sending limit exceeded", "sending limit exceeded", or a rate limit
+ * whose `Retry after` names "(Mail sending)" — what an account past its
+ * daily limit is answered with.
+ */
+const DAILY_LIMIT_TEXT =
+  /daily (user )?sending (limit|quota)|sending limit exceeded|\(mail sending\)/i;
+
+/**
+ * The reasons of a per-second or per-minute rate limit — the next send in a
+ * moment goes through: tried again with backoff, never a stop of the
+ * account.
+ */
+const RATE_LIMIT_REASONS = new Set(['userRateLimitExceeded', 'rateLimitExceeded', 'quotaExceeded']);
+
+/** The longest a provider's word stops an account. */
+const LIMITED_MAX_MS = 24 * 3_600_000;
+
+/** `Retry after <ISO time>` in Google's message: that time in ms, or null. */
+function retryAfterOfMessage(message) {
+  const match = /retry after (\d{4}-\d{2}-\d{2}T[0-9:.]+Z)/i.exec(message);
+  if (!match) return null;
+  const at = Date.parse(match[1]);
+  return Number.isFinite(at) ? at : null;
+}
+
+/** A `Retry-After` header (seconds or an HTTP date) as a time in ms, or null. */
+function retryAfterOfHeader(value, now) {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  if (/^\d{1,6}$/.test(value.trim())) return now + Number(value.trim()) * 1000;
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? at : null;
+}
+
+/**
+ * What a failed `messages.send` means (§3.7): the daily sending limit stops
+ * the account until Google's `Retry after` (at most 24 h); a rate limit —
+ * `userRateLimitExceeded`, `rateLimitExceeded`, a bare 429 — is
+ * `transient` `rate_limited`, with when to try again when Google said.
+ *
+ * @param {number} status
+ * @param {unknown} body Google's JSON answer, or null
+ * @param {{ retryAfterHeader?: string | null, now?: number }} [opts]
+ */
+export function gmailSendFailure(status, body, { retryAfterHeader = null, now = Date.now() } = {}) {
   const errors = Array.isArray(body?.error?.errors) ? body.error.errors : [];
   const reasons = errors.map((e) => e?.reason).filter((r) => typeof r === 'string');
-  const message = typeof body?.error?.message === 'string' ? body.error.message : '';
-  if (
-    (status === 403 || status === 429) &&
-    (reasons.some((r) => LIMIT_REASONS.has(r)) || /sending limit exceeded/i.test(message))
-  ) {
-    return new MailDeliveryError('limited', 'provider_limit');
+  const messages = [
+    typeof body?.error?.message === 'string' ? body.error.message : '',
+    ...errors.map((e) => (typeof e?.message === 'string' ? e.message : '')),
+  ];
+  const retryAt =
+    messages.map(retryAfterOfMessage).find((at) => at !== null) ??
+    retryAfterOfHeader(retryAfterHeader, now);
+  const daily =
+    reasons.some((r) => DAILY_LIMIT_REASONS.has(r)) ||
+    messages.some((m) => DAILY_LIMIT_TEXT.test(m));
+  if (daily && status >= 400 && status < 500) {
+    const until =
+      retryAt !== null && retryAt > now
+        ? Math.min(retryAt, now + LIMITED_MAX_MS)
+        : now + LIMITED_MAX_MS;
+    return new MailDeliveryError('limited', 'provider_limit', {
+      until: new Date(until).toISOString(),
+    });
   }
-  if (status === 429 || status >= 500) return new MailDeliveryError('transient', `http_${status}`);
+  if (status === 429 || (status === 403 && reasons.some((r) => RATE_LIMIT_REASONS.has(r)))) {
+    return new MailDeliveryError('transient', 'rate_limited', {
+      retryAfterMs: retryAt !== null && retryAt > now ? retryAt - now : null,
+    });
+  }
+  if (status >= 500) return new MailDeliveryError('transient', `http_${status}`);
   if (status === 401) return new MailDeliveryError('transient', 'token_expired');
   if (status === 403) return new MailDeliveryError('down', 'scope');
   return new MailDeliveryError('refused', `http_${status}`);
@@ -287,7 +384,9 @@ export async function sendGmailMessage(credentials, raw, signal) {
       await res.body?.cancel().catch(() => {});
       return;
     }
-    const failure = sendFailure(res.status, await readJson(res));
+    const failure = gmailSendFailure(res.status, await readJson(res), {
+      retryAfterHeader: res.headers.get('retry-after'),
+    });
     if (res.status === 401 && attempt === 0) {
       accessTokens.delete(key);
       continue;

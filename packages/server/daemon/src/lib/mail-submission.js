@@ -23,9 +23,19 @@
  *   Authelia was given), one `RCPT`, headers that name that recipient alone
  *   in `To` (no `Cc`, `Bcc` or `Resent-*` — the Gmail API takes its
  *   recipients from the headers) and that sender in `From`, at most
- *   256 KiB, at most 30 messages in 10 minutes. Anything else is a 5xx; a
- *   delivery the transport could not make a 4xx (Authelia shows the user an
- *   error and they try again).
+ *   256 KiB. Anything else is a 5xx. At most 30 messages in 10 minutes and
+ *   5 an hour to one recipient — over either, and for a delivery the
+ *   transport could not make, a 4xx (Authelia shows the user an error and
+ *   they try again later). Its mail is `essential`: a share of the budget
+ *   of its own (§3.7);
+ * - **a connection must authenticate within 5 seconds** of its TLS
+ *   handshake, with few commands before: one local process cannot hold
+ *   the listener's connections for long.
+ *
+ * The local CA is name-constrained to the listener's name (critical
+ * `nameConstraints`, permitted `DNS:lamaste-mail.localhost`): Authelia
+ * trusts it, and it can vouch for nothing else. A CA made before 4.13 had
+ * that constraint is made again (and Authelia restarted with it).
  *
  * It runs only while the relay has a transport (lib/mail-sync.js starts and
  * stops it) and never while a tunnel holds its port (Q5): a tunnel's port
@@ -61,6 +71,14 @@ export const SUBMISSION_MAX_BYTES = 256 * 1024;
 export const SUBMISSION_RATE_MAX = 30;
 /** … in this window. */
 export const SUBMISSION_RATE_WINDOW_MS = 10 * 60_000;
+/** At most this many messages to one recipient … */
+export const SUBMISSION_RECIPIENT_MAX = 5;
+/** … in this window. */
+export const SUBMISSION_RECIPIENT_WINDOW_MS = 60 * 60_000;
+/** A connection that has not authenticated this long after its TLS handshake is closed. */
+let authDeadlineMs = 5_000;
+/** Commands a connection may send before it authenticates. */
+const UNAUTHENTICATED_COMMANDS_MAX = 5;
 
 /** The CA certificate's name under `/etc/authelia/certs`. */
 export const SUBMISSION_CA_FILENAME = 'lamaste-mail-ca.pem';
@@ -95,7 +113,9 @@ let paths = realPaths;
  */
 export async function setMailSubmissionForTests(overrides) {
   await stopSubmissionListener();
-  paths = overrides ? { ...realPaths, ...overrides } : realPaths;
+  const { authDeadlineMs: deadline, ...rest } = overrides ?? {};
+  authDeadlineMs = deadline ?? 5_000;
+  paths = overrides ? { ...realPaths, ...rest } : realPaths;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +182,26 @@ function certificateFresh(pem, now) {
   }
 }
 
+/** DER of the `nameConstraints` extension's OID (2.5.29.30). */
+const NAME_CONSTRAINTS_OID = Buffer.from([0x06, 0x03, 0x55, 0x1d, 0x1e]);
+
+/**
+ * Whether the CA certificate `pem` carries the name constraint to the
+ * listener's name — the `nameConstraints` extension and the permitted name
+ * in its DER (the CA is the panel's own, made with exactly that one
+ * extension of the kind).
+ */
+export function caNameConstrained(pem) {
+  try {
+    const der = new X509Certificate(pem).raw;
+    return (
+      der.includes(NAME_CONSTRAINTS_OID) && der.includes(Buffer.from(MAIL_SUBMISSION_SERVER_NAME))
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Whether `leafPem` was issued by `caPem` for the listener's name. */
 function leafOf(caPem, leafPem) {
   try {
@@ -218,6 +258,8 @@ async function issue(ca) {
           'basicConstraints=critical,CA:TRUE,pathlen:0',
           '-addext',
           'keyUsage=critical,keyCertSign,cRLSign',
+          '-addext',
+          `nameConstraints=critical,permitted;DNS:${MAIL_SUBMISSION_SERVER_NAME}`,
           '-out',
           'ca.pem',
         ],
@@ -300,7 +342,7 @@ export async function ensureSubmissionMaterial({ logger } = {}) {
   let key = await read(FILES.key);
   let cert = await read(FILES.cert);
 
-  const caUsable = caKey !== null && certificateFresh(caCert, now);
+  const caUsable = caKey !== null && certificateFresh(caCert, now) && caNameConstrained(caCert);
   const leafUsable =
     caUsable && key !== null && certificateFresh(cert, now) && leafOf(caCert, cert);
   if (!leafUsable) {
@@ -427,13 +469,27 @@ export function messageRefusal(raw, { sender, rcpt }) {
 let running = null;
 /** Accepted messages' times, for the rate limit. */
 let accepted = [];
+/** Accepted messages' times by recipient (lower case; in memory only, never written). */
+const acceptedByRecipient = new Map();
 
-/** Whether another message fits the rate limit now (and counts it when it does). */
-function takeRateSlot(now) {
+/**
+ * Whether another message to `rcpt` fits the rate limits now — 30 in ten
+ * minutes, 5 an hour to one recipient — and counts it when it does: why
+ * not (`rate` / `recipient`), or null.
+ */
+function takeRateSlot(rcpt, now) {
   accepted = accepted.filter((t) => now - t < SUBMISSION_RATE_WINDOW_MS);
-  if (accepted.length >= SUBMISSION_RATE_MAX) return false;
+  for (const [address, times] of acceptedByRecipient) {
+    const recent = times.filter((t) => now - t < SUBMISSION_RECIPIENT_WINDOW_MS);
+    if (recent.length === 0) acceptedByRecipient.delete(address);
+    else acceptedByRecipient.set(address, recent);
+  }
+  if (accepted.length >= SUBMISSION_RATE_MAX) return 'rate';
+  const toRecipient = acceptedByRecipient.get(rcpt) ?? [];
+  if (toRecipient.length >= SUBMISSION_RECIPIENT_MAX) return 'recipient';
   accepted.push(now);
-  return true;
+  acceptedByRecipient.set(rcpt, [...toRecipient, now]);
+  return null;
 }
 
 function createServer(state, { deliver, logger }) {
@@ -450,7 +506,8 @@ function createServer(state, { deliver, logger }) {
     authMethods: ['PLAIN'],
     disabledCommands: ['STARTTLS'],
     size: SUBMISSION_MAX_BYTES,
-    maxClients: 8,
+    maxClients: 16,
+    maxAllowedUnauthenticatedCommands: UNAUTHENTICATED_COMMANDS_MAX,
     socketTimeout: 60_000,
     closeTimeout: 5_000,
     disableReverseLookup: true,
@@ -460,6 +517,19 @@ function createServer(state, { deliver, logger }) {
       if (address !== '127.0.0.1' && address !== '::ffff:127.0.0.1' && address !== '::1') {
         return callback(refuse('not loopback', refusal(554, 'Not accepted')));
       }
+      return callback();
+    },
+    // After the TLS handshake: the connection authenticates within the
+    // deadline or is closed — a local process cannot sit on a slot.
+    onSecure(socket, session, callback) {
+      const timer = setTimeout(() => {
+        if (session.user !== MAIL_SUBMISSION_USERNAME) {
+          logger?.warn({ reason: 'auth_deadline' }, 'Mail submission refused');
+          socket.destroy();
+        }
+      }, authDeadlineMs);
+      timer.unref();
+      socket.once('close', () => clearTimeout(timer));
       return callback();
     },
     onAuth(auth, _session, callback) {
@@ -500,8 +570,12 @@ function createServer(state, { deliver, logger }) {
         const raw = Buffer.concat(chunks);
         const why = messageRefusal(raw, { sender: state.sender, rcpt });
         if (why !== null) return callback(refuse(why, refusal(554, 'Message not accepted')));
-        if (!takeRateSlot(Date.now())) {
-          return callback(refuse('rate', refusal(554, 'Too many messages')));
+        const limited = takeRateSlot(rcpt, Date.now());
+        if (limited !== null) {
+          // A 4xx: Authelia tells its user the mail failed; they try later.
+          return callback(
+            refuse(limited, refusal(451, '4.7.1 Too many messages; try again later')),
+          );
         }
         deliver({ to: rcpt, raw, kind: 'authelia', sendClass: 'essential', logger }).then(
           (result) =>
@@ -573,6 +647,7 @@ export async function stopSubmissionListener() {
   const { server } = running;
   running = null;
   accepted = [];
+  acceptedByRecipient.clear();
   await new Promise((resolve) => server.close(() => resolve()));
 }
 

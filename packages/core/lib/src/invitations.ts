@@ -31,6 +31,7 @@ import {
 } from './identity.js';
 import type { InvitationMailState } from './mail.js';
 import { displayText } from './plugin-settings.js';
+import { looksLikeLinkOrHostname } from './text-rules.js';
 
 // ---------------------------------------------------------------------------
 // Limits
@@ -44,6 +45,16 @@ export const INVITATION_TOKEN_RE = /^[a-f0-9]{64}$/;
 
 /** Delegated invitations one inviter may make in an hour, revoked ones included. */
 export const INVITATIONS_PER_INVITER_PER_HOUR = 30;
+
+/**
+ * Invitations and new links one inviter may make in a day (each is a mail
+ * where the plugin's domain sends): a bound on what one person can make
+ * the relay send, below the hourly rate kept up all day.
+ */
+export const INVITATIONS_PER_INVITER_PER_DAY = 100;
+
+/** New links one invitation may be given in a day — by its inviter or an administrator. */
+export const INVITATION_REISSUES_PER_DAY = 3;
 
 /** No delegated invitation is made or accepted while Gatekeeper has fewer free grants. */
 export const INVITATION_GRANT_RESERVE = 100;
@@ -85,9 +96,14 @@ export type {
 
 const EmailSchema = z.string().trim().max(IDENTITY_EMAIL_MAX_LENGTH).email();
 
+/**
+ * A person's name as an invitation and its acceptance carry it: shown to
+ * other people in Lamaste's mails and pages, so never one that reads as a
+ * link or a host name ({@link looksLikeLinkOrHostname}).
+ */
 const DisplayNameSchema = displayText(
   z.string().trim().min(1).max(IDENTITY_DISPLAY_NAME_MAX_LENGTH),
-);
+).refine((name) => !looksLikeLinkOrHostname(name), 'Looks like a link or a host name');
 
 const UsernameSchema = z
   .string()

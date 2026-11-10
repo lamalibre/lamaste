@@ -154,7 +154,9 @@ test('a transport as lines: the check, the budget, a provider refusal', () => {
         budget: {
           dailyLimit: 500,
           ceiling: 450,
-          publicCap: 360,
+          essentialCap: 180,
+          publicCap: 180,
+          adminReserve: 90,
           sent24h: 12,
           byClass: { essential: 2, admin: 4, public: 6 },
           resetsLastHour: 1,
@@ -169,6 +171,7 @@ test('a transport as lines: the check, the budget, a provider refusal', () => {
   assert.equal(lines.Sender, 'Code Lama <no-reply@notify.example.com>');
   assert.match(lines.Check, /run `google` again/);
   assert.match(lines.Budget, /^12 of 450 in 24 h/);
+  assert.equal(lines.Shares, "Authelia's 2 of 180, public 6 of 180, admin 4 (the last 90 its own)");
   assert.match(lines.Limited, /until 2026-11-11/);
 });
 

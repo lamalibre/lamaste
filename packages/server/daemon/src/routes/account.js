@@ -4,8 +4,11 @@
  *
  * - `POST /api/account/reset/start|lookup|finish` — forgot password; the
  *   token always in the body, never in a URL a log keeps;
- * - `POST /api/account/password` — change password, behind Authelia's
- *   forward auth: nginx writes `Remote-User` from Authelia's answer.
+ * - `POST /api/account/password` — change password: nginx asks Gatekeeper
+ *   (`/authz/account/<domain>`), which asks Authelia about the session (two
+ *   factors) and vouches for its user with a relay assertion bound to this
+ *   request — the only thing the panel takes the user from (any local
+ *   process can send `Remote-User` to its loopback port).
  *
  * The domain is the raw `Host`'s (lib/account.js). Every change must come
  * from the sign-in host's own page: `Sec-Fetch-Site` absent or
@@ -32,6 +35,7 @@ import {
   startPasswordReset,
 } from '../lib/account.js';
 import { sendFailure } from '../lib/app-error.js';
+import { verifyAccountRelay } from '../lib/user-surface.js';
 
 /** A page's own requests: a handful a minute per address. */
 const ACCOUNT_RATE_LIMIT = { max: 20, timeWindow: '1 minute' };
@@ -63,7 +67,9 @@ function parsed(schema, request, reply) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 
-export default async function accountRoutes(fastify) {
+export default async function accountRoutes(fastify, opts = {}) {
+  // Tests replace the relay check.
+  const verifyRelay = opts.verifyRelay ?? verifyAccountRelay;
   const routeOptions = { config: { rateLimit: ACCOUNT_RATE_LIMIT, cors: false } };
 
   fastify.addHook('onRequest', async (_request, reply) => {
@@ -129,10 +135,11 @@ export default async function accountRoutes(fastify) {
     if (await crossOrigin(request, reply, true)) return reply;
     const body = parsed(PasswordChangeSchema, request, reply);
     if (!body) return reply;
+    const relay = await verifyRelay(request);
     try {
       return await changeOwnPassword(body, {
         host: request.headers.host,
-        remoteUser: request.headers['remote-user'],
+        caller: relay.ok ? { username: relay.username, domain: relay.domain } : null,
         logger: request.log,
       });
     } catch (err) {

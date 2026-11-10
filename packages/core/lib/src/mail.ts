@@ -56,11 +56,13 @@ export type MailSendStatus = (typeof MAIL_SEND_STATUSES)[number];
 // ---------------------------------------------------------------------------
 
 /**
- * Who a mail is for, in the order the budget protects them: `essential`
- * (Authelia's mail, password-changed notices, test mails) and `admin`
- * (an administrator's invitations) may use the whole ceiling; `public`
- * (reset mails, delegated invitations — what anyone can make the relay
- * send) stops short of a reserve.
+ * Who a mail is for, and so which share of the ceiling it draws on:
+ * `essential` (Authelia's mail — sign-in and registration codes — and the
+ * "your password changed" notices) and `public` (reset mails, delegated
+ * invitations — what anyone can make the relay send) each have a share of
+ * their own that the other never touches; `admin` (an administrator's
+ * invitations and new links, test mails) may use the whole ceiling, and
+ * the reserve between the two shares and the ceiling is its alone.
  */
 export const MAIL_SEND_CLASSES = ['essential', 'admin', 'public'] as const;
 export type MailSendClass = (typeof MAIL_SEND_CLASSES)[number];
@@ -81,49 +83,70 @@ export const MAIL_DAILY_LIMIT = Object.freeze({
 export const MAIL_BUDGET = Object.freeze({
   /** Lamaste sends at most this share of the daily limit in 24 h. */
   ceilingRatio: 0.9,
-  /** The share of the ceiling `public` mails never use. */
-  publicReserveRatio: 0.2,
+  /** The share of the ceiling `essential` mails (Authelia's, password-changed notices) may use. */
+  essentialShareRatio: 0.4,
+  /** The share of the ceiling `public` mails (resets, delegated invitations) may use. */
+  publicShareRatio: 0.4,
   /** Usage at this share of the ceiling warns the administrators. */
   warningRatio: 0.7,
-  /** Reset mails per sending account per hour. */
-  resetsPerHour: 30,
+  /** Reset mails per domain per hour (whatever account sends them). */
+  resetsPerDomainPerHour: 20,
   /** How long a provider's limit refusal stops a sending account. */
   limitedHours: 24,
   /** The window usage is counted over (rolling, as Google's). */
   windowHours: 24,
 });
 
-/** The thresholds of a daily limit: what may be sent, what `public` may, where the warning is. */
+/**
+ * The thresholds of a daily limit: the ceiling (what Lamaste sends at
+ * most in 24 h), the shares of `essential` and `public` mail (each counts
+ * its own class's mails only), the reserve only `admin` mail reaches (the
+ * ceiling less both shares, at least a fifth of it) and where the warning
+ * is.
+ */
 export function mailBudgetThresholds(dailyLimit: number): {
   ceiling: number;
+  essentialCap: number;
   publicCap: number;
+  adminReserve: number;
   warningAt: number;
 } {
   if (!Number.isInteger(dailyLimit) || dailyLimit < MAIL_DAILY_LIMIT.min) {
     throw new Error('A daily limit is a positive integer');
   }
   const ceiling = Math.max(1, Math.floor(dailyLimit * MAIL_BUDGET.ceilingRatio));
-  const reserve = Math.ceil(ceiling * MAIL_BUDGET.publicReserveRatio);
+  const essentialCap = Math.floor(ceiling * MAIL_BUDGET.essentialShareRatio);
+  const publicCap = Math.floor(ceiling * MAIL_BUDGET.publicShareRatio);
   return {
     ceiling,
-    publicCap: Math.max(0, ceiling - reserve),
+    essentialCap,
+    publicCap,
+    adminReserve: ceiling - essentialCap - publicCap,
     warningAt: Math.ceil(ceiling * MAIL_BUDGET.warningRatio),
   };
 }
 
 /** Why the budget holds a mail back. */
-export type MailBudgetRefusal = 'limited' | 'ceiling' | 'public-cap' | 'reset-cap';
+export type MailBudgetRefusal =
+  | 'limited'
+  | 'ceiling'
+  | 'essential-cap'
+  | 'public-cap'
+  | 'reset-cap';
 
 /**
  * Whether one more mail of `sendClass`/`kind` may go through a sending
- * account that sent `sent24h` mails in the last 24 h and `resetsLastHour`
- * reset mails in the last hour, `limitedUntil` the end of a provider's
- * refusal (ISO, or null). Pure.
+ * account that sent `sent24h` mails in the last 24 h (`byClass` of them
+ * per class), for a domain whose reset mails numbered `domainResetsLastHour`
+ * in the last hour; `limitedUntil` is the end of a provider's refusal (ISO,
+ * or null). `essential` and `public` mail stop at their own share, `admin`
+ * mail at the ceiling, everything while the provider refuses. Pure.
  */
 export function mailBudgetDecision(input: {
   readonly dailyLimit: number;
   readonly sent24h: number;
-  readonly resetsLastHour: number;
+  readonly byClass: Readonly<Record<MailSendClass, number>>;
+  readonly domainResetsLastHour: number;
   readonly sendClass: MailSendClass;
   readonly kind: MailKind;
   readonly limitedUntil: string | null;
@@ -132,12 +155,15 @@ export function mailBudgetDecision(input: {
   if (input.limitedUntil !== null && Date.parse(input.limitedUntil) > input.now.getTime()) {
     return { ok: false, reason: 'limited' };
   }
-  const { ceiling, publicCap } = mailBudgetThresholds(input.dailyLimit);
+  const { ceiling, essentialCap, publicCap } = mailBudgetThresholds(input.dailyLimit);
   if (input.sent24h >= ceiling) return { ok: false, reason: 'ceiling' };
-  if (input.sendClass === 'public' && input.sent24h >= publicCap) {
+  if (input.sendClass === 'essential' && input.byClass.essential >= essentialCap) {
+    return { ok: false, reason: 'essential-cap' };
+  }
+  if (input.sendClass === 'public' && input.byClass.public >= publicCap) {
     return { ok: false, reason: 'public-cap' };
   }
-  if (input.kind === 'reset' && input.resetsLastHour >= MAIL_BUDGET.resetsPerHour) {
+  if (input.kind === 'reset' && input.domainResetsLastHour >= MAIL_BUDGET.resetsPerDomainPerHour) {
     return { ok: false, reason: 'reset-cap' };
   }
   return { ok: true };
@@ -147,15 +173,32 @@ export function mailBudgetDecision(input: {
 export interface MailBudgetView {
   readonly dailyLimit: number;
   readonly ceiling: number;
+  /** The most `essential` mails (Authelia's, password-changed notices) in 24 h. */
+  readonly essentialCap: number;
+  /** The most `public` mails (resets, delegated invitations) in 24 h. */
   readonly publicCap: number;
+  /** What only `admin` mail (an administrator's invitations, tests) may use. */
+  readonly adminReserve: number;
   /** Delivery attempts through the sending account in the last 24 h (every row on it). */
   readonly sent24h: number;
   readonly byClass: Readonly<Record<MailSendClass, number>>;
+  /** Reset mails through the sending account in the last hour (each domain may send {@link MAIL_BUDGET}.resetsPerDomainPerHour). */
   readonly resetsLastHour: number;
   /** A provider's limit refusal stops the account until then (ISO), or null. */
   readonly limitedUntil: string | null;
-  /** When the oldest counted mail leaves the window while at the ceiling (ISO), or null. */
+  /** When the oldest counted mail leaves the window while a share or the ceiling is reached (ISO), or null. */
   readonly resumesAt: string | null;
+}
+
+/**
+ * Whether an administrator's invitation is mailed unless they say
+ * otherwise: not when it makes an administrator (`admins`) or gives a
+ * registry group (`feria-*`) — the link of such an invitation should not
+ * rest in a mailbox (the sending mailbox's Sent folder included); the
+ * administrator hands it over another way, or ticks the box.
+ */
+export function adminInvitationMailDefault(groups: readonly string[]): boolean {
+  return !groups.some((g) => g === 'admins' || g.startsWith('feria-'));
 }
 
 /**

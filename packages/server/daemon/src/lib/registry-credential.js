@@ -188,7 +188,8 @@ export async function acquireAgentToken(agentLabel) {
 
 /**
  * Revoke a user's registry tokens after their `feria-*` groups changed or
- * they were offboarded (`{ deleted: true }`: disabled or removed). Returns
+ * they were offboarded (`{ deleted: true }`: disabled or removed — or their
+ * password changed, whose session-ending part is the same). Returns
  * the number revoked, or `null` when nothing needed doing (no credential
  * configured, or no feria group lost). The registry knows the user by
  * username (`user:<username>`); the log line names them by `userId` alone.

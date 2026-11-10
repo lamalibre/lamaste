@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { request as undiciRequest } from 'undici';
 import {
+  ACCOUNT_PASSWORD_API_PATH,
   AUTHELIA_SESSION_COOKIE,
   RELAY_ASSERTION_HEADER,
   RELAY_PANEL_AUDIENCE,
@@ -355,6 +356,31 @@ export async function authzRoutes(
     { config: authzRateLimit },
     async (request, reply) =>
       authorizeDelegatedInvitationsRequest(fastify, request, reply, request.params.domain),
+  );
+
+  /**
+   * GET /authz/account/:domain — the nginx auth_request target of the
+   * password change on a domain's sign-in host
+   * (`auth.<domain>/api/account/password`, mail-design.md §6.3). The vhost
+   * names its domain in the path; `X-Original-URL` and `Host` must be
+   * `auth.<domain>` and the raw target exactly that API.
+   *
+   * Gatekeeper asks Authelia about the session for exactly that URL — its
+   * portal rule wants two factors from the domain's members and external
+   * members — never from its session cache, refuses two session cookies,
+   * checks the panel's projection (member or external member of the
+   * domain, fail closed) and vouches for the user to the panel with an
+   * assertion of the password change's kind (`{ account: 'password',
+   * domain, path }`), bound to the method and the target. The panel takes
+   * the user from nothing else — a `Remote-User` any local process could
+   * send names nobody there. 200 with the assertion, 401 without a session,
+   * 403 otherwise, 503 while the relay signing key is unusable.
+   */
+  fastify.get<{ Params: { domain: string } }>(
+    '/authz/account/:domain',
+    { config: authzRateLimit },
+    async (request, reply) =>
+      authorizeAccountRequest(fastify, request, reply, request.params.domain),
   );
 
   /**
@@ -962,6 +988,89 @@ async function authorizeDelegatedInvitationsRequest(
         caller: { type: 'user', username: validated.username },
         method: originalMethod,
         target: { invitations: route, domain: wanted, path: target },
+      },
+      key,
+    );
+  } catch {
+    return refuse('not_assertable');
+  }
+  reply.header(RELAY_ASSERTION_HEADER, assertion);
+  return reply.code(200).send();
+}
+
+/**
+ * Authorize one password change on the sign-in host of `domain` (see the
+ * `/authz/account/:domain` route).
+ */
+async function authorizeAccountRequest(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  domain: string,
+): Promise<FastifyReply> {
+  const requestId = request.id;
+  reply.header('Cache-Control', 'no-store');
+  const refuse = (reason: string): FastifyReply => {
+    request.log.info({ requestId, reason, domain }, 'account authz denied');
+    return reply.code(403).header(USER_SURFACE_REFUSAL_HEADER, 'forbidden').send();
+  };
+
+  const index = fastify.getDomains();
+  const wanted = domain.toLowerCase();
+  if (!index || !index.names.includes(wanted)) return refuse('unknown_domain');
+  const portal = `auth.${wanted}`;
+  const originalUrl = request.headers['x-original-url'];
+  const originalMethod = request.headers['x-original-method'];
+  if (typeof originalUrl !== 'string' || typeof originalMethod !== 'string') {
+    return refuse('missing_original_request');
+  }
+  const parsed = parseOriginalUrl(originalUrl);
+  if (!parsed) return refuse('invalid_original_url');
+  const mismatch = hostnameMismatch(request, portal, parsed.hostname);
+  if (mismatch) return refuse(mismatch.reason);
+  const prefix = `https://${portal}`;
+  if (originalUrl.slice(0, prefix.length).toLowerCase() !== prefix) {
+    return refuse('invalid_original_url');
+  }
+  const target = originalUrl.slice(prefix.length);
+  if (target !== ACCOUNT_PASSWORD_API_PATH) return refuse('not_the_account_path');
+
+  // Never from the cache: Authelia decides two factors for this very URL.
+  const presented = presentedSession(request.headers['cookie']);
+  if (presented.kind !== 'one') {
+    request.log.info(
+      {
+        requestId,
+        reason: presented.kind === 'none' ? 'missing_authelia_cookie' : 'duplicate_authelia_cookie',
+        domain,
+      },
+      'account authz denied',
+    );
+    return reply.code(401).send();
+  }
+  const validated = await validateWithAuthelia(presented.value, originalUrl, requestId);
+  if (validated === FORBIDDEN) return refuse('authelia_forbidden');
+  if (!validated) return reply.code(401).send();
+  const { kind } = domainMembership(index, portal, validated.username);
+  if (kind !== 'member' && kind !== 'external') return refuse('not_a_member');
+
+  const key = await currentRelayKey(fastify, request);
+  if (!key) {
+    request.log.error(
+      { requestId, reason: 'relay_signing_key_unavailable', domain },
+      'account authz failed',
+    );
+    return reply.code(503).send();
+  }
+  let assertion: string;
+  try {
+    assertion = signRelayAssertion(
+      {
+        aud: RELAY_PANEL_AUDIENCE,
+        port: RELAY_PANEL_PORT,
+        caller: { type: 'user', username: validated.username },
+        method: originalMethod,
+        target: { account: 'password', domain: wanted, path: target },
       },
       key,
     );
