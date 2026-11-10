@@ -2063,6 +2063,7 @@ dependencies = [
  "tauri-plugin-deep-link",
  "tauri-plugin-shell",
  "tokio",
+ "url",
  "uuid",
 ]
 

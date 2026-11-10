@@ -18,6 +18,7 @@ import { randomBytes } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { lamalibreRegistryNpmEnv } from './npm-registry-config.js';
 import { BUILTIN_TRUSTED_SCOPE, isNpmScope } from './trusted-scopes.js';
 
 export interface InstallNpmrc {
@@ -72,14 +73,16 @@ export function renderInstallNpmrc(npmrc: InstallNpmrc): string {
  * Run `fn` with the environment npm needs to use an isolated userconfig
  * holding `npmrc` (a 0600 file of a random name in `dataDir`), and delete
  * that file afterwards — success or failure. Without `npmrc`, `fn` runs
- * with an empty environment addition.
+ * with the machine's npm configuration plus `@lamalibre` routed to the
+ * registry `resolveLamalibreRegistry` chooses (the hosted Feria unless
+ * npm's configuration names another) — never npm's default registry.
  */
 export async function withInstallNpmrc<T>(
   dataDir: string,
   npmrc: InstallNpmrc | undefined,
   fn: (env: Record<string, string>) => Promise<T>,
 ): Promise<T> {
-  if (!npmrc) return fn({});
+  if (!npmrc) return fn(await lamalibreRegistryNpmEnv({ cwd: dataDir }));
   const file = path.join(dataDir, `.npmrc-install-${randomBytes(8).toString('hex')}`);
   await writeFile(file, renderInstallNpmrc(npmrc), { encoding: 'utf-8', mode: 0o600 });
   try {

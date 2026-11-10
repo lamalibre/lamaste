@@ -945,9 +945,25 @@ fn find_or_install_agent_cli(app: &tauri::AppHandle) -> Result<PathBuf, String> 
     emit_install_progress(app, "install_agent_cli", "running");
 
     // Always install/update to the latest version so that bug fixes (e.g.
-    // Keychain partition list) are picked up without manual intervention.
+    // Keychain partition list) are picked up without manual intervention —
+    // from the hosted Feria, or the registry npm's configuration names for
+    // `@lamalibre` (a development Feria); never npm's default registry.
+    let registry = match crate::branding::resolve_lamalibre_registry("npm") {
+        Ok(registry) => registry,
+        Err(e) => {
+            emit_install_progress(app, "install_agent_cli", "failed");
+            return Err(e);
+        }
+    };
     let install_output = Command::new("npm")
-        .args(["install", "-g", "@lamalibre/lamaste-agent@latest", "--ignore-scripts"])
+        .args([
+            "install",
+            "-g",
+            "@lamalibre/lamaste-agent@latest",
+            "--ignore-scripts",
+            crate::branding::lamalibre_registry_arg(&registry).as_str(),
+        ])
+        .env(crate::branding::LAMALIBRE_REGISTRY_ENV, &registry)
         .output()
         .map_err(|e| format!("Failed to run npm install: {}", e))?;
 

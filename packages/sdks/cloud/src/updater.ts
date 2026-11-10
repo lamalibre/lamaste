@@ -27,6 +27,7 @@ import { generateKeyPair, waitForSSH, sshExec, cleanupKeyPair, type SSHKeyPair }
 import { loadServers } from './registry.js';
 import { CleanupStack } from './cleanup.js';
 import { LAMASTE_DIR } from '@lamalibre/lamaste/agent';
+import { installerCommand } from './installer-command.js';
 
 // ---------------------------------------------------------------------------
 // NDJSON helpers
@@ -106,7 +107,10 @@ async function releaseLock(): Promise<void> {
  * Run the panel server update flow.
  *
  * SSHes into the server and runs `npx @lamalibre/create-lamaste@<version>`
- * which triggers the redeploy path (stops panel, updates code, restarts).
+ * — fetched from the hosted Feria (`--@lamalibre:registry=`), so a relay of
+ * any version, even one whose own code still reads npmjs, reaches the new
+ * release — which triggers the redeploy path (stops panel, updates code,
+ * restarts).
  *
  * @param options - Update options including token, serverId, and target version
  * @returns The version string reported by the panel after update
@@ -165,7 +169,7 @@ export async function update(options: UpdateOptions): Promise<string> {
     await sshExec(
       ip,
       sshKeyPair.privateKeyPath,
-      `npx --yes @lamalibre/create-lamaste@${version} --json --yes`,
+      installerCommand(version, { json: true }),
       600_000, // 10 minute timeout
       knownHostsPath,
     );

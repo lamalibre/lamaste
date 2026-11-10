@@ -731,3 +731,12 @@ export {
   unavailablePageLogoUrl,
 } from './unavailable-page.js';
 export type { UnavailablePageBrand } from './unavailable-page.js';
+
+// npm's @lamalibre:registry, read and resolved — see npm-registry-config.ts
+export {
+  readConfiguredLamalibreRegistry,
+  resolveLamalibreRegistry,
+  lamalibreRegistryNpmEnv,
+  lamalibreRegistryNpmArg,
+} from '../npm-registry-config.js';
+export type { LamalibreRegistryOptions } from '../npm-registry-config.js';

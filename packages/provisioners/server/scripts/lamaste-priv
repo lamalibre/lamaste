@@ -24,7 +24,8 @@
  *                                      print `yes` when Authelia's storage holds an
  *                                      OpenID Connect opaque identifier for the
  *                                      username, `no` otherwise — nothing else
- *   self-update <version>              run create-lamaste@<version> detached
+ *   self-update <version>              run create-lamaste@<version> detached (@lamalibre
+ *                                      from root's npm @lamalibre:registry, else the hosted Feria)
  *   hooks install <route> <sha256|none>  stdin: the plugin's approved relay hook
  *                                      module (none: shared hooks only); start its runner
  *   hooks activate <route> <sha256>    point the runner back at a module kept from before
@@ -73,6 +74,20 @@ const AUTHELIA_CLI_ENV = Object.freeze({
 
 const SYSTEMD_RUN = '/usr/bin/systemd-run';
 const NPX = '/usr/bin/npx';
+const NPM = '/usr/bin/npm';
+
+// Where @lamalibre packages come from — the rule of core's
+// lamalibre-registry.ts (this program has no dependencies, so it carries a
+// copy; test/lamaste-priv.test.js runs the shared case table against both):
+// root's npm configuration for @lamalibre:registry (a development Feria),
+// refused when it names a public registry, else the hosted Feria.
+const LAMALIBRE_REGISTRY_URL = 'https://feria.codelama.com.tr/';
+const PUBLIC_NPM_REGISTRY_HOSTS = new Set([
+  'registry.npmjs.org',
+  'registry.npmjs.com',
+  'registry.yarnpkg.com',
+  'registry.npmmirror.com',
+]);
 
 class UsageError extends Error {}
 
@@ -889,34 +904,95 @@ function autheliaUser(rest) {
 }
 
 /**
+ * The registry for `@lamalibre`, given what `npm config get
+ * @lamalibre:registry` printed (`undefined` when unset). Same rule and
+ * normalisation as core's `chooseLamalibreRegistry`.
+ */
+function chooseLamalibreRegistry(configured) {
+  const value = String(configured ?? '').trim();
+  if (value === '' || value === 'undefined' || value === 'null') return LAMALIBRE_REGISTRY_URL;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(
+      `root's npm @lamalibre:registry is not a URL — remove it, or set it to ${LAMALIBRE_REGISTRY_URL}`,
+    );
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error(
+      `root's npm @lamalibre:registry is not an http(s) URL — remove it, or set it to ${LAMALIBRE_REGISTRY_URL}`,
+    );
+  }
+  if (url.username !== '' || url.password !== '') {
+    throw new Error("root's npm @lamalibre:registry carries credentials in the URL");
+  }
+  if (PUBLIC_NPM_REGISTRY_HOSTS.has(url.hostname.toLowerCase())) {
+    throw new Error(
+      `root's npm @lamalibre:registry names ${url.hostname}, which no longer carries Lamaste's packages — remove the line, or set it to ${LAMALIBRE_REGISTRY_URL}`,
+    );
+  }
+  url.search = '';
+  url.hash = '';
+  return url.href.endsWith('/') ? url.href : `${url.href}/`;
+}
+
+/** Root's registry for `@lamalibre`, as npm in the update unit will see it (cwd /, HOME /root). */
+function rootLamalibreRegistry() {
+  const result = spawnSync(NPM, ['config', 'get', '@lamalibre:registry'], {
+    cwd: '/',
+    env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin', HOME: '/root' },
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `npm config get @lamalibre:registry exited with status ${result.status}: ${(result.stderr || '').trim()}`,
+    );
+  }
+  return chooseLamalibreRegistry(result.stdout);
+}
+
+/** The `systemd-run` argv of a self-update to `version`, `@lamalibre` from `registry`. */
+function selfUpdateArgs(version, registry, unit) {
+  return [
+    '--unit',
+    unit,
+    '--description',
+    `Lamaste update to ${version}`,
+    '--on-active=2',
+    '--timer-property=AccuracySec=100ms',
+    '--property=Type=oneshot',
+    '--setenv=HOME=/root',
+    NPX,
+    '--yes',
+    `--@lamalibre:registry=${registry}`,
+    `@lamalibre/create-lamaste@${version}`,
+    '--yes',
+  ];
+}
+
+/**
  * Start `create-lamaste@<version> --yes` (the redeploy path) in a transient
  * systemd unit, two seconds from now: it stops and restarts the panel, so it
  * must not run inside the panel's service, and the delay lets the panel's
- * HTTP response reach the browser first.
+ * HTTP response reach the browser first. The installer is fetched from the
+ * registry root's npm configuration names for `@lamalibre`, or the hosted
+ * Feria — never npm's default registry.
  */
 function selfUpdate(version) {
   if (typeof version !== 'string' || !/^\d{1,4}\.\d{1,4}\.\d{1,6}$/.test(version)) {
     throw new UsageError('version must be MAJOR.MINOR.PATCH');
   }
+  const registry = rootLamalibreRegistry();
   const unit = `lamalibre-lamaste-update-${crypto.randomBytes(8).toString('hex')}`;
-  const result = spawnSync(
-    SYSTEMD_RUN,
-    [
-      '--unit',
-      unit,
-      '--description',
-      `Lamaste update to ${version}`,
-      '--on-active=2',
-      '--timer-property=AccuracySec=100ms',
-      '--property=Type=oneshot',
-      '--setenv=HOME=/root',
-      NPX,
-      '--yes',
-      `@lamalibre/create-lamaste@${version}`,
-      '--yes',
-    ],
-    { cwd: '/', env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin' }, encoding: 'utf8', timeout: 30_000 },
-  );
+  const result = spawnSync(SYSTEMD_RUN, selfUpdateArgs(version, registry, unit), {
+    cwd: '/',
+    env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin' },
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(
@@ -1165,6 +1241,9 @@ if (require.main === module) {
     assertAutheliaUsername,
     parseAutheliaUserArgs,
     exportNamesUsername,
+    LAMALIBRE_REGISTRY_URL,
+    chooseLamalibreRegistry,
+    selfUpdateArgs,
     main,
   };
 }

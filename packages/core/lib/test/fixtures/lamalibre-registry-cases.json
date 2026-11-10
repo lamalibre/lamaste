@@ -1,0 +1,30 @@
+{
+  "comment": "Where @lamalibre installs from, given what `npm config get @lamalibre:registry` prints. Shared by core (lamalibre-registry.test.js), the desktop (branding.rs) and lamaste-priv (lamaste-priv.test.js). `registry` is the expected choice; `refused` means the configuration is refused.",
+  "default": "https://feria.codelama.com.tr/",
+  "cases": [
+    { "configured": "undefined", "registry": "https://feria.codelama.com.tr/" },
+    { "configured": "", "registry": "https://feria.codelama.com.tr/" },
+    { "configured": "null", "registry": "https://feria.codelama.com.tr/" },
+    { "configured": "  undefined\n", "registry": "https://feria.codelama.com.tr/" },
+    {
+      "configured": "https://feria.codelama.com.tr/",
+      "registry": "https://feria.codelama.com.tr/"
+    },
+    { "configured": "https://feria.codelama.com.tr", "registry": "https://feria.codelama.com.tr/" },
+    { "configured": "http://localhost:4873", "registry": "http://localhost:4873/" },
+    { "configured": "http://192.168.2.1:4873/", "registry": "http://192.168.2.1:4873/" },
+    {
+      "configured": "https://feria.example.org/npm/",
+      "registry": "https://feria.example.org/npm/"
+    },
+    { "configured": "https://registry.npmjs.org/", "refused": true },
+    { "configured": "https://registry.npmjs.org", "refused": true },
+    { "configured": "https://REGISTRY.NPMJS.ORG/", "refused": true },
+    { "configured": "https://registry.npmjs.com/", "refused": true },
+    { "configured": "https://registry.yarnpkg.com/", "refused": true },
+    { "configured": "https://registry.npmmirror.com/", "refused": true },
+    { "configured": "ftp://feria.codelama.com.tr/", "refused": true },
+    { "configured": "feria.codelama.com.tr", "refused": true },
+    { "configured": "https://user:secret@feria.example.org/", "refused": true }
+  ]
+}

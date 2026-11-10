@@ -623,6 +623,13 @@ test('withInstallNpmrc writes an isolated 0600 userconfig for npm and removes it
     /boom/,
   );
   await assert.rejects(stat(seenFile), /ENOENT/);
-  await withInstallNpmrc(stateDir, undefined, async (env) => assert.deepEqual(env, {}));
+  // Without a credential: no userconfig, but @lamalibre routed to the
+  // registry Lamaste installs itself from (this machine's npm configuration
+  // may name a development Feria; never npm's default registry).
+  await withInstallNpmrc(stateDir, undefined, async (env) => {
+    assert.deepEqual(Object.keys(env), ['npm_config_@lamalibre:registry']);
+    assert.match(env['npm_config_@lamalibre:registry'], /^https?:\/\/.+\/$/);
+    assert.doesNotMatch(env['npm_config_@lamalibre:registry'], /registry\.npmjs\./);
+  });
   assert.throws(() => renderInstallNpmrc({ ...npmrc, scope: 'bad scope' }), /Invalid npm scope/);
 });

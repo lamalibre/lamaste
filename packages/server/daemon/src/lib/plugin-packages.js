@@ -162,7 +162,8 @@ export async function installedWebTreeSha256(packageName, manifest) {
 /**
  * Fetch `<package>@<version>` from the registry the panel installs from
  * (`npm pack` through {@link withRegistryUserconfig}: the configured
- * registry credential, else the machine's npm configuration) and read its
+ * registry credential, else the machine's npm configuration with
+ * `@lamalibre` routed to the hosted Feria or the registry it names) and read its
  * manifest and, when the manifest names one, its relay hook module — in
  * memory only.
  *
