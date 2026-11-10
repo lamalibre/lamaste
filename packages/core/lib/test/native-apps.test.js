@@ -519,7 +519,12 @@ test('verifyNativeAccessToken: every refusal names its reason', () => {
     unknown_key: [sign(claims(), { kid: 'other' })],
     bad_signature: [
       sign(claims(), {}, other),
-      sign(claims()).replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')),
+      // The signature's first character (its last carries padding bits
+      // that change nothing when flipped).
+      sign(claims()).replace(
+        /\.([^.])([^.]*)$/,
+        (_m, c, rest) => `.${c === 'A' ? 'B' : 'A'}${rest}`,
+      ),
     ],
     wrong_issuer: [sign(claims({ iss: 'https://auth.other.org' }))],
     wrong_audience: [sign(claims({ aud: ['https://x.example.com'] })), sign(claims({ aud: 7 }))],
