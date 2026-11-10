@@ -9,15 +9,36 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 let home;
 let agent;
+/** A stand-in for the publisher's registry: `GET /-/feria/scopes`. */
+let registry;
+let registryUrl;
+let hostedAnswer = { scopes: [{ scope: '@lamalibre' }, { scope: '@example' }] };
+/** Route `@example` (or not) in the npm userconfig npm reads for the local host. */
+async function routeExample(url) {
+  const userconfig = path.join(home, 'npmrc');
+  await writeFile(userconfig, url ? `@example:registry=${url}\n` : '');
+  process.env.NPM_CONFIG_USERCONFIG = userconfig;
+}
 const LABEL = 'vm1';
 
 before(async () => {
   home = await mkdtemp(path.join(tmpdir(), 'lamaste-agent-scopes-'));
+  registry = http.createServer((req, res) => {
+    if (req.url === '/-/feria/scopes') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify(hostedAnswer));
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => registry.listen(0, '127.0.0.1', resolve));
+  registryUrl = `http://127.0.0.1:${registry.address().port}/`;
   // Paths are derived from the home directory when the modules load.
   process.env.HOME = home;
   agent = await import('../dist/agent/index.js');
@@ -30,6 +51,8 @@ before(async () => {
 });
 
 after(async () => {
+  await new Promise((resolve) => registry.close(resolve));
+  delete process.env.NPM_CONFIG_USERCONFIG;
   await rm(home, { recursive: true, force: true });
 });
 
@@ -82,7 +105,21 @@ test('the local host follows its own list, changed only through its functions', 
   assert.deepEqual(await agent.localTrustedScopes(), ['@lamalibre']);
   await assert.rejects(agent.addLocalTrustedScope('@lamalibre'), { code: 'builtin_scope' });
   await assert.rejects(agent.addLocalTrustedScope('@Example'), { code: 'invalid_scope' });
+
+  // Not routed by the user's npm configuration, routed to a public registry,
+  // or routed to a registry that does not host it: npm would find the scope
+  // where anyone may own it.
+  await routeExample(null);
+  await assert.rejects(agent.addLocalTrustedScope('@example'), { code: 'scope_not_routed' });
+  await routeExample('https://registry.npmjs.org/');
+  await assert.rejects(agent.addLocalTrustedScope('@example'), { code: 'scope_not_routed' });
+  await routeExample(registryUrl);
+  hostedAnswer = { scopes: [{ scope: '@lamalibre' }, { scope: '@example', retired: true }] };
+  await assert.rejects(agent.addLocalTrustedScope('@example'), { code: 'scope_not_routed' });
+  hostedAnswer = { scopes: [{ scope: '@lamalibre' }, { scope: '@example' }] };
+
   assert.deepEqual(await agent.addLocalTrustedScope('@example'), ['@lamalibre', '@example']);
+  assert.deepEqual(agent.localTrustedScopesSync(), ['@lamalibre', '@example']);
   await assert.rejects(agent.addLocalTrustedScope('@example'), { code: 'scope_already_trusted' });
   const file = agent.localTrustedScopesFile();
   assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), { additional: ['@example'] });
@@ -104,4 +141,25 @@ test('the local host follows its own list, changed only through its functions', 
 
   const cfg = agent.localPluginConfig();
   await assert.rejects(agent.installPlugin(cfg, '@example/x-server'), /not a trusted/);
+  assert.deepEqual(agent.localTrustedScopesSync(), ['@lamalibre']);
+});
+
+test('a trusted local scope installs only while it is routed to a registry that hosts it', async () => {
+  await routeExample(registryUrl);
+  hostedAnswer = { scopes: [{ scope: '@lamalibre' }, { scope: '@example' }] };
+  await agent.addLocalTrustedScope('@example');
+  // The route went away after the scope was added: refused before npm runs.
+  await routeExample(null);
+  await assert.rejects(agent.installPlugin(agent.localPluginConfig(), '@example/x-server'), {
+    code: 'scope_not_routed',
+  });
+  await routeExample(registryUrl);
+  await agent.removeLocalTrustedScope('@example');
+});
+
+test("the plugin hosts' synchronous readers follow the files", async () => {
+  await agent.recordTrustedScopes(LABEL, { trustedScopes: ['@lamalibre', '@example'] });
+  assert.deepEqual(agent.agentTrustedScopesSync(LABEL), ['@lamalibre', '@example']);
+  await agent.recordTrustedScopes(LABEL, {});
+  assert.deepEqual(agent.agentTrustedScopesSync(LABEL), ['@lamalibre']);
 });

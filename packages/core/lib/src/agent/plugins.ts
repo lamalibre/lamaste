@@ -34,7 +34,7 @@ import {
   packageScope,
 } from '../trusted-scopes.js';
 import { agentTrustedScopes } from './config.js';
-import { localTrustedScopes } from './local-trusted-scopes.js';
+import { assertLocalScopeRouted, localTrustedScopes } from './local-trusted-scopes.js';
 import type { InstallNpmrc } from '../npm-userconfig.js';
 import {
   agentDataDir,
@@ -110,6 +110,23 @@ export interface PluginLifecycleConfig {
    * configuration is the user's own choice.
    */
   additionalScopesNeedRegistry?: boolean | undefined;
+  /**
+   * Called before npm runs for a package of an additional scope: throws
+   * unless the configuration npm will use routes that scope to a registry
+   * hosting it. The local host's check (`assertLocalScopeRouted`).
+   */
+  assertAdditionalScopeRoute?: ((scope: string) => Promise<unknown>) | undefined;
+}
+
+/** {@link PluginLifecycleConfig.assertAdditionalScopeRoute} for `packageName`, when it applies. */
+async function assertAdditionalRoute(
+  cfg: PluginLifecycleConfig,
+  packageName: string,
+): Promise<void> {
+  if (cfg.assertAdditionalScopeRoute === undefined) return;
+  const scope = packageScope(packageName);
+  if (scope === null || scope === BUILTIN_TRUSTED_SCOPE) return;
+  await cfg.assertAdditionalScopeRoute(scope);
 }
 
 /**
@@ -255,7 +272,7 @@ function manifestHosting(packageName: string, manifest: PluginManifest): PluginH
 async function safeUninstall(cwd: string, packageName: string): Promise<void> {
   try {
     const { execa } = await import('execa');
-    await execa('npm', ['uninstall', packageName], { cwd });
+    await execa('npm', ['uninstall', '--ignore-scripts', packageName], { cwd });
   } catch {
     // Swallow — rollback is best-effort, original error must not be masked.
   }
@@ -357,6 +374,7 @@ export function installPlugin(
     const trusted = await trustedScopesOf(cfg);
     validatePackageName(packageName, trusted);
     assertRoutedToRegistry(cfg, packageName, options.npmrc);
+    await assertAdditionalRoute(cfg, packageName);
 
     const registry = await readPluginRegistry(cfg.registryPath);
     if (registry.plugins.find((p) => p.packageName === packageName)) {
@@ -525,7 +543,7 @@ export function uninstallPlugin(cfg: PluginLifecycleConfig, name: string): Promi
     // npm uninstall — propagate failures so callers can diagnose rather than
     // allowing the on-disk node_modules state to diverge from the registry.
     const { execa } = await import('execa');
-    await execa('npm', ['uninstall', plugin.packageName], { cwd: cfg.dataDir });
+    await execa('npm', ['uninstall', '--ignore-scripts', plugin.packageName], { cwd: cfg.dataDir });
 
     // Remove plugin data directory
     const pluginDir = path.join(cfg.pluginsDir, plugin.name);
@@ -596,6 +614,7 @@ export function updatePlugin(
     const trusted = await trustedScopesOf(cfg);
     validatePackageName(plugin.packageName, trusted);
     assertRoutedToRegistry(cfg, plugin.packageName, options.npmrc);
+    await assertAdditionalRoute(cfg, plugin.packageName);
 
     const { execa } = await import('execa');
     await withInstallNpmrc(cfg.dataDir, options.npmrc, (env) =>
@@ -654,6 +673,7 @@ export function updatePlugin(
 export async function checkPluginUpdate(
   cfg: PluginLifecycleConfig,
   name: string,
+  options: { npmrc?: InstallNpmrc | undefined } = {},
 ): Promise<PluginUpdateInfo> {
   const registry = await readPluginRegistry(cfg.registryPath);
   const plugin = registry.plugins.find((p) => p.name === name);
@@ -663,11 +683,15 @@ export async function checkPluginUpdate(
 
   const pkg = plugin.packageName;
   validatePackageName(pkg, await trustedScopesOf(cfg));
+  // Asked of the registry an install would use — never of a registry that
+  // could hold another publisher's package of that name.
+  assertRoutedToRegistry(cfg, pkg, options.npmrc);
+  await assertAdditionalRoute(cfg, pkg);
 
   const { execa } = await import('execa');
-  const { stdout } = await execa('npm', ['view', pkg, 'version', '--json'], {
-    cwd: cfg.dataDir,
-  });
+  const { stdout } = await withInstallNpmrc(cfg.dataDir, options.npmrc, (env) =>
+    execa('npm', ['view', pkg, 'version', '--json'], { cwd: cfg.dataDir, timeout: 60_000, env }),
+  );
 
   const latestVersion = JSON.parse(stdout.trim()) as string;
   const currentVersion = plugin.version;
@@ -744,5 +768,6 @@ export function localPluginConfig(): PluginLifecycleConfig {
     requiredMode: 'local',
     maxPlugins: MAX_PLUGINS_PER_REGISTRY,
     trustedScopes: localTrustedScopes,
+    assertAdditionalScopeRoute: assertLocalScopeRouted,
   };
 }

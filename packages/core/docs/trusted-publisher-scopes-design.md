@@ -510,3 +510,32 @@ agent back to `@lamalibre` alone.
 Unit and integration tests: Lamaste serverd 598, agent CLI 125, agentd 113, server CLI 111, core
 111, desktop Rust 52 (clippy clean); Feria core 34, daemon 23. Lint and builds green in both
 repositories.
+
+### Review of the implementation (2026-11-10) and what changed
+
+A second independent review read the code after the merge with slice 8. Every finding was taken:
+
+- **Blocking — the relay never mounted a server plugin of an additional scope.** serverd passed no
+  `trustedScopes` to its plugin host, so the core default (`@lamalibre`) applied: the install
+  succeeded, the plugin was never mounted and its bundle answered 403. Spec 62 used an agent-hosted
+  plugin, which is never mounted, so it could not see this. The plugin router now passes
+  `getTrustedScopes`; serverd's test mounts an `@example` server plugin through the real router,
+  serves its route and bundle, and shows the bundle refused once the scope is no longer trusted.
+- **Credential changes and trust changes race.** `PUT`/`DELETE /api/registry-credential` now check and
+  store under the plugin lock, like trust changes. The broker sends agents only the trusted scopes
+  the registry hosts at that moment (`brokeredTrustedScopes`), so an agent never routes a scope to
+  a registry that would proxy it.
+- **The local host had no registry requirement.** An additional local scope must now be routed by
+  the user's npm configuration to a non-public registry that declares it hosted
+  (`assertLocalScopeRouted`), when added and at every install and update. This supersedes §5's
+  "the user's own choice".
+- **A dropped scope kept being served when the daemon restart failed.** Every plugin host now reads
+  the list at each mount and bundle request (synchronous readers on the agent and the local host).
+- Nits taken: push-install policy writes under the plugin lock; trust changes audited before they
+  are written (a crash leaves at most an entry for a change that did not happen, and a failed write
+  adds `settings.trusted-scope.change-failed`); the agent's update check asks the registry its
+  installs use; `npm uninstall --ignore-scripts`; the TypeScript list cap matches the desktop twin.
+- Documented, not changed: "in use" counts installed rows and policies — enough, because an install
+  writes its row inside the plugin lock (R-S1's "in-flight operations" wording overstated it); a
+  malformed `trustedScopes` in `panel.json` stops the panel from starting, like any invalid
+  configuration; a plugin of another scope that takes a free route inherits the shelf edges (slice 8) that already name that route — the approval preview lists them (`appliedEdges`).

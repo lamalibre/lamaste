@@ -13,6 +13,8 @@
  * (`trusted_scopes::local_trusted_scopes`).
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -50,6 +52,19 @@ export async function readLocalAdditionalTrustedScopes(): Promise<string[]> {
   }
 }
 
+/** {@link localTrustedScopes}, read synchronously (the plugin host's getter). */
+export function localTrustedScopesSync(): readonly string[] {
+  try {
+    const parsed = JSON.parse(readFileSync(localTrustedScopesFile(), 'utf8')) as {
+      additional?: unknown;
+    };
+    const result = AdditionalTrustedScopesSchema.safeParse(parsed?.additional ?? []);
+    return effectiveTrustedScopes(result.success ? result.data : []);
+  } catch {
+    return effectiveTrustedScopes();
+  }
+}
+
 /** The local plugin host's effective trusted scopes. */
 export async function localTrustedScopes(): Promise<readonly string[]> {
   return effectiveTrustedScopes(await readLocalAdditionalTrustedScopes());
@@ -63,7 +78,8 @@ export class LocalTrustedScopeError extends Error {
     | 'scope_already_trusted'
     | 'scope_not_trusted'
     | 'scope_in_use'
-    | 'too_many_scopes';
+    | 'too_many_scopes'
+    | 'scope_not_routed';
   constructor(code: LocalTrustedScopeError['code'], message: string) {
     super(message);
     this.name = 'LocalTrustedScopeError';
@@ -109,10 +125,81 @@ async function localPluginPackagesOfScope(scope: string): Promise<string[]> {
     .filter((name): name is string => typeof name === 'string' && name.startsWith(`${scope}/`));
 }
 
+/** Public registries where anyone may own a scope: never a trusted scope's source. */
+const PUBLIC_REGISTRY_HOSTS: ReadonlySet<string> = new Set([
+  'registry.npmjs.org',
+  'registry.npmjs.com',
+  'registry.yarnpkg.com',
+  'registry.npmmirror.com',
+]);
+
+/**
+ * The local plugin host installs through its user's npm configuration, so
+ * an additional local scope must be routed by that configuration
+ * (`<scope>:registry`, in the local data directory's view) to a registry
+ * that is not a public one and that declares the scope hosted — closed,
+ * never proxied (Feria's `GET /-/feria/scopes`). Otherwise npm would
+ * resolve it from wherever the configuration points, and a registry that
+ * does not host a scope proxies it from npmjs, where anyone may own it.
+ * Checked when the scope is added and again at every install and update.
+ *
+ * @throws LocalTrustedScopeError `scope_not_routed`
+ */
+export async function assertLocalScopeRouted(scope: string): Promise<string> {
+  if (scope === BUILTIN_TRUSTED_SCOPE) return '';
+  const { execa } = await import('execa');
+  let configured = '';
+  try {
+    // As npm sees it from the local host's directory (where installs run);
+    // before the first install that directory may not exist yet.
+    const cwd = existsSync(localDir()) ? localDir() : homedir();
+    const { stdout } = await execa('npm', ['config', 'get', `${scope}:registry`], {
+      cwd,
+      timeout: 15_000,
+    });
+    configured = stdout.trim();
+  } catch {
+    configured = '';
+  }
+  const notRouted = (why: string) =>
+    new LocalTrustedScopeError(
+      'scope_not_routed',
+      `${scope} is not routed to a registry that hosts it (${why}): set ${scope}:registry in your npm configuration to your publisher's registry first`,
+    );
+  let url: URL;
+  try {
+    url = new URL(configured);
+  } catch {
+    throw notRouted(
+      configured === '' || configured === 'undefined' ? 'no registry set' : 'not a URL',
+    );
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw notRouted('not an http(s) URL');
+  if (PUBLIC_REGISTRY_HOSTS.has(url.hostname.toLowerCase())) {
+    throw notRouted(`${url.hostname} is a public registry`);
+  }
+  const base = url.href.replace(/\/+$/, '');
+  let hosted: unknown;
+  try {
+    const res = await fetch(`${base}/-/feria/scopes`, { signal: AbortSignal.timeout(10_000) });
+    hosted = res.ok ? await res.json() : null;
+  } catch {
+    hosted = null;
+  }
+  const scopes = (hosted as { scopes?: Array<{ scope?: unknown; retired?: unknown }> } | null)
+    ?.scopes;
+  const listed = Array.isArray(scopes)
+    ? scopes.some((s) => s.scope === scope && s.retired !== true)
+    : false;
+  if (!listed) throw notRouted(`${url.host} does not declare it hosted`);
+  return base;
+}
+
 /** Add `scope` to the local list; returns the effective list. */
 export function addLocalTrustedScope(scope: string): Promise<readonly string[]> {
   return mutex.run(localTrustedScopesFile(), async () => {
     checkScope(scope);
+    if (scope !== BUILTIN_TRUSTED_SCOPE) await assertLocalScopeRouted(scope);
     const current = await readLocalAdditionalTrustedScopes();
     if (current.includes(scope)) {
       throw new LocalTrustedScopeError('scope_already_trusted', `${scope} is already trusted`);

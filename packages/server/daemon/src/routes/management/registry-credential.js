@@ -38,6 +38,7 @@ import {
 } from '../../lib/registry-credential.js';
 import { DomainNameSchema } from '@lamalibre/lamaste';
 import { sendFailure } from '../../lib/app-error.js';
+import { withPluginLock } from '../../lib/plugins.js';
 import { resolveActiveDomain } from '../../lib/domains.js';
 import { syncOidcClients, withRegistryCandidate } from '../../lib/plugin-oidc.js';
 
@@ -145,45 +146,68 @@ export default async function registryCredentialRoutes(fastify) {
             return reply.code(status).send({ error: err.message });
           }
 
-          // Every additional trusted scope must be hosted by the new registry
-          // too: npm routes those scopes to it with the panel's token.
-          const additional = additionalTrustedScopes();
-          if (additional.length > 0) {
-            let hosted;
+          // Under the plugin lock — the one trust changes take — so a scope
+          // trusted meanwhile cannot end up routed to a registry that does not
+          // host it: the list is read, checked and the credential stored in
+          // one hold.
+          const stored = await withPluginLock(async () => {
+            // Every additional trusted scope must be hosted by the new registry
+            // too: npm routes those scopes to it with the panel's token.
+            const additional = additionalTrustedScopes();
+            if (additional.length > 0) {
+              let hosted;
+              try {
+                ({ hosted } = await fetchRegistryHostedScopes(body.registryUrl));
+              } catch (err) {
+                return {
+                  status: 502,
+                  body: {
+                    error: `Cannot read the scopes ${body.registryUrl} hosts: ${err.message}`,
+                    code: 'registry_unreachable',
+                  },
+                };
+              }
+              const missing = additional.filter((scope) => !hosted.includes(scope));
+              if (missing.length > 0) {
+                return {
+                  status: 409,
+                  body: {
+                    error: `${body.registryUrl} does not host the trusted scopes ${missing.join(', ')}: host them there first, or stop trusting them`,
+                    code: 'registry_lacks_scope',
+                    scopes: missing,
+                  },
+                };
+              }
+            }
+            const config = {
+              provider: 'feria',
+              registryUrl: body.registryUrl,
+              scope: body.scope ?? '@lamalibre',
+              auth,
+              owner: verified.owner,
+              configuredAt: new Date().toISOString(),
+            };
             try {
-              ({ hosted } = await fetchRegistryHostedScopes(body.registryUrl));
+              return {
+                config,
+                warnings: await setRegistryCredential(config, { logger: request.log }),
+              };
             } catch (err) {
-              return reply.code(502).send({
-                error: `Cannot read the scopes ${body.registryUrl} hosts: ${err.message}`,
-                code: 'registry_unreachable',
-              });
+              return { error: err };
+            } finally {
+              resetRegistryHostedScopesCache();
             }
-            const missing = additional.filter((scope) => !hosted.includes(scope));
-            if (missing.length > 0) {
-              return reply.code(409).send({
-                error: `${body.registryUrl} does not host the trusted scopes ${missing.join(', ')}: host them there first, or stop trusting them`,
-                code: 'registry_lacks_scope',
-                scopes: missing,
-              });
-            }
+          });
+          if (stored.status !== undefined) return reply.code(stored.status).send(stored.body);
+          if (stored.error !== undefined) {
+            return sendFailure(
+              request,
+              reply,
+              stored.error,
+              'Failed to store the registry credential',
+            );
           }
-
-          const config = {
-            provider: 'feria',
-            registryUrl: body.registryUrl,
-            scope: body.scope ?? '@lamalibre',
-            auth,
-            owner: verified.owner,
-            configuredAt: new Date().toISOString(),
-          };
-          let warnings;
-          try {
-            warnings = await setRegistryCredential(config, { logger: request.log });
-          } catch (err) {
-            return sendFailure(request, reply, err, 'Failed to store the registry credential');
-          } finally {
-            resetRegistryHostedScopesCache();
-          }
+          const { config, warnings } = stored;
           request.log.info(
             { registryUrl: body.registryUrl, owner: verified.owner, auth: auth.kind },
             'Registry credential configured',
@@ -214,16 +238,23 @@ export default async function registryCredentialRoutes(fastify) {
     async (request, reply) => {
       // Packages of an additional trusted scope install only from the
       // registry that hosts it; without one npm would resolve them from npmjs.
-      const additional = additionalTrustedScopes();
-      if (additional.length > 0) {
+      // Checked and cleared under the plugin lock, so no scope is trusted in
+      // between.
+      const outcome = await withPluginLock(async () => {
+        const additional = additionalTrustedScopes();
+        if (additional.length > 0) return { additional };
+        const removed = await clearRegistryCredentialConfig();
+        resetRegistryHostedScopesCache();
+        return { removed };
+      });
+      if (outcome.additional !== undefined) {
         return reply.code(409).send({
-          error: `The trusted scopes ${additional.join(', ')} install from this registry — stop trusting them first (lamaste-server trusted-scopes remove <scope>)`,
+          error: `The trusted scopes ${outcome.additional.join(', ')} install from this registry — stop trusting them first (lamaste-server trusted-scopes remove <scope>)`,
           code: 'trusted_scopes_need_registry',
-          scopes: additional,
+          scopes: outcome.additional,
         });
       }
-      const removed = await clearRegistryCredentialConfig();
-      resetRegistryHostedScopesCache();
+      const { removed } = outcome;
       if (removed) {
         request.log.info('Registry credential removed');
         // Removes the lamaste-server client and its secret if it was in use.

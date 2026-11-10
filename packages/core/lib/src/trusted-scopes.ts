@@ -83,7 +83,9 @@ export const AdditionalTrustedScopesSchema = z
  */
 export function effectiveTrustedScopes(additional?: readonly unknown[] | null): readonly string[] {
   const out = [BUILTIN_TRUSTED_SCOPE];
-  for (const scope of additional ?? []) {
+  // At most as many entries as a configuration may hold, read as the
+  // desktop's twin reads them (the first ones, before filtering).
+  for (const scope of (additional ?? []).slice(0, MAX_ADDITIONAL_TRUSTED_SCOPES)) {
     if (typeof scope === 'string' && NPM_SCOPE_RE.test(scope) && !out.includes(scope)) {
       out.push(scope);
     }

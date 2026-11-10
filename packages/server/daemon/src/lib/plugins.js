@@ -395,7 +395,9 @@ export function installPlugin(packageName, logger) {
     packageName = barePackageName(installSpec);
     // Remove the package npm installed when it is refused below.
     const discardPackage = () =>
-      execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});
+      execa('npm', ['uninstall', '--ignore-scripts', packageName], { cwd: STATE_DIR }).catch(
+        () => {},
+      );
 
     const s = await getStmts();
 
@@ -657,7 +659,7 @@ export function uninstallPlugin(name, logger) {
 
     // Uninstall the npm package
     logger.info({ name, packageName: plugin.packageName }, 'Uninstalling plugin package');
-    await execa('npm', ['uninstall', plugin.packageName], {
+    await execa('npm', ['uninstall', '--ignore-scripts', plugin.packageName], {
       cwd: STATE_DIR,
     }).catch((err) => {
       logger.warn({ err: err.message }, 'npm uninstall failed (continuing)');

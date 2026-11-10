@@ -34,6 +34,10 @@ Trusted publisher scopes: an administrator can trust a second npm scope whose pu
 - **Removing a provider others rely on** — `DELETE /api/plugins/:name` and `DELETE /api/plugins/:name/hosting` — answers `409 peer_dependents` with the `consumers` unless `breakPeers=true` (`--break-peers` on `plugins uninstall|unhost`); `force` never implies it.
 - A plugin package, and every package its manifest names (which must be in its own scope), is checked against the trusted scopes at install, update staging, agent-half pinning, push install, mount and bundle serving. The manifest schema takes any well-formed scoped name; trust is the installing relay's or agent's decision.
 - A package of an additional scope installs only from a registry that hosts the scope (Feria's `GET /-/feria/scopes`): trusting one needs a registry credential whose registry hosts it, the credential cannot be cleared while additional scopes are trusted, and an agent installs such a package only through the brokered credential. The panel's and agents' install userconfigs route every trusted scope to the registry.
+- The local plugin host trusts an additional scope only while the user's npm configuration routes it to a registry that is not a public one and declares the scope hosted (checked when it is added and at every install and update; `scope_not_routed`).
+- Agents are brokered only the trusted scopes the relay's registry hosts at that moment; the registry credential's change and removal, and push-install policy writes, are serialised with trust changes; a trust change is audited before it is written.
+- Every plugin host (relay, agent daemon, local host) reads the trusted scopes at each mount and bundle request, so a scope no longer trusted stops being served at once.
+- `npm uninstall` runs with `--ignore-scripts` everywhere; an agent's update check asks the registry its installs use.
 - The app host helper speaks protocol 3: it takes an agent half of any well-formed scope. Protocol 2 still installs `@lamalibre` halves; a half of another scope needs 3 (host eligibility says so).
 
 ### Upgrade notes

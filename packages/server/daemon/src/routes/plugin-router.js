@@ -16,6 +16,7 @@ import { pluginHostPlugin } from '@lamalibre/lamaste';
 import { readPlugins } from '../lib/plugins.js';
 import { getPluginStorageConfig } from '../lib/storage.js';
 import { getConfig } from '../lib/config.js';
+import { getTrustedScopes } from '../lib/trusted-scopes.js';
 import { getCaPaths } from '../lib/pki-paths.js';
 import { managementOnly } from '../middleware/onboarding-guard.js';
 
@@ -31,6 +32,9 @@ export default async function pluginRouter(fastify) {
     pluginsDataDir: PLUGINS_DIR,
     readRegistry: readPlugins,
     auth: 'mtls',
+    // The relay's trusted publisher scopes, read at every mount and bundle
+    // request (a removed scope stops being served at once).
+    trustedScopes: getTrustedScopes,
     authHookFactory: (pluginName) => {
       const allowedPrefix = `plugin:${pluginName}:`;
       return async (request, reply) => {

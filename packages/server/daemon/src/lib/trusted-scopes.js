@@ -83,6 +83,27 @@ export async function registryHostedScopes({ fresh = false } = {}) {
 }
 
 /**
+ * The trusted scopes an agent may route to the configured registry: the
+ * built-in scope, and each additional one the registry hosts right now
+ * (re-read at most once a minute). An agent installs a package of an
+ * additional scope only through the routes this names, so a scope the
+ * registry stopped hosting — or never hosted — is never asked of it
+ * (a registry proxies what it does not host). Unreadable: the built-in only.
+ */
+export async function brokeredTrustedScopes() {
+  const additional = additionalTrustedScopes();
+  if (additional.length === 0) return [BUILTIN_TRUSTED_SCOPE];
+  let registry;
+  try {
+    registry = await registryHostedScopes();
+  } catch {
+    registry = null;
+  }
+  const hosted = new Set(registry?.hosted ?? []);
+  return [BUILTIN_TRUSTED_SCOPE, ...additional.filter((scope) => hosted.has(scope))];
+}
+
+/**
  * Throws unless the configured registry hosts `scope`. The built-in scope
  * needs no check (it is Lamalibre's own on every registry Lamaste uses).
  * @param {string} scope
