@@ -56,6 +56,7 @@ import {
   sendGmailMessage,
 } from './mail-gmail.js';
 import { checkSmtpTransport, sendSmtpMessage } from './mail-smtp.js';
+import { syncMailConfiguration } from './mail-sync.js';
 import {
   accountState,
   accountUsage,
@@ -473,6 +474,33 @@ export async function mailSenderHostnames() {
   return senderHostnames(await getStateDb(), await domainNames());
 }
 
+/**
+ * Carry the relay's mail to the submission listener, Authelia and the auth
+ * vhosts (lib/mail-sync.js): after every change of a transport or sender,
+ * after a domain is activated or removed, and at start.
+ *
+ * @param {{ logger?: import('pino').Logger }} [opts]
+ * @returns {Promise<{ submitting: boolean, warnings: Array<{ step: string, message: string }> }>}
+ */
+export function syncMail({ logger } = {}) {
+  return syncMailConfiguration({ deliver: sendRawMail, logger });
+}
+
+/** `answer` with the warnings of {@link syncMail} after a change added to its own. */
+async function withMailSync(answer, logger) {
+  let warnings;
+  try {
+    ({ warnings } = await syncMail({ logger }));
+  } catch (err) {
+    logger?.warn({ err: err?.message }, 'Mail synchronisation after a change failed');
+    warnings = [
+      { step: 'sync', message: `The change was saved but not yet applied (${err?.message})` },
+    ];
+  }
+  if (warnings.length === 0) return answer;
+  return { ...answer, warnings: [...(answer.warnings ?? []), ...warnings] };
+}
+
 // ---------------------------------------------------------------------------
 // Administrators' operations
 // ---------------------------------------------------------------------------
@@ -611,8 +639,8 @@ export async function getMailTransport(domain) {
  * @param {import('@lamalibre/lamaste').SmtpTransportInput} input
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
  */
-export function setSmtpTransport(domain, input, { actor, logger }) {
-  return transportMutex.run(async () => {
+export async function setSmtpTransport(domain, input, { actor, logger }) {
+  const answer = await transportMutex.run(async () => {
     const scope = await mailScope(domain);
     const db = await getStateDb();
     const existing = transportRow(db, scope);
@@ -687,6 +715,7 @@ export function setSmtpTransport(domain, input, { actor, logger }) {
     );
     return { transport: transportView(db, row), ...(warnings.length ? { warnings } : {}) };
   });
+  return withMailSync(answer, logger);
 }
 
 /**
@@ -819,6 +848,12 @@ export async function completeGoogleConsent({ query, host, logger }) {
       return row;
     });
     if (stored === null) return fail('generic');
+    // The page says whether the transport was stored; what the sync could
+    // not do is logged and reported where it applies (notifications, the
+    // next change or start).
+    await syncMail({ logger }).catch((err) => {
+      logger?.warn({ err: err?.message }, 'Mail synchronisation after the consent failed');
+    });
     await recordAuditBestEffort(
       {
         actor: draft.actor,
@@ -856,8 +891,8 @@ export async function completeGoogleConsent({ query, host, logger }) {
  * @param {import('@lamalibre/lamaste').MailTransportPatch} patch
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
  */
-export function patchMailTransport(domain, patch, { actor, logger }) {
-  return transportMutex.run(async () => {
+export async function patchMailTransport(domain, patch, { actor, logger }) {
+  const answer = await transportMutex.run(async () => {
     const scope = await mailScope(domain);
     const db = await getStateDb();
     const row = transportRow(db, scope);
@@ -896,6 +931,7 @@ export function patchMailTransport(domain, patch, { actor, logger }) {
     );
     return senderAnswer(scope);
   });
+  return withMailSync(answer, logger);
 }
 
 /**
@@ -907,8 +943,8 @@ export function patchMailTransport(domain, patch, { actor, logger }) {
  * @param {import('@lamalibre/lamaste').MailSenderInput} input
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
  */
-export function setDomainMailSender(domain, input, { actor, logger }) {
-  return transportMutex.run(async () => {
+export async function setDomainMailSender(domain, input, { actor, logger }) {
+  const answer = await transportMutex.run(async () => {
     const scope = await domainOr404(domain);
     const db = await getStateDb();
     const existing = transportRow(db, scope);
@@ -942,6 +978,7 @@ export function setDomainMailSender(domain, input, { actor, logger }) {
     );
     return senderAnswer(scope);
   });
+  return withMailSync(answer, logger);
 }
 
 /**
@@ -952,8 +989,8 @@ export function setDomainMailSender(domain, input, { actor, logger }) {
  * @param {string | null} domain
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
  */
-export function clearMailTransport(domain, { actor, logger }) {
-  return transportMutex.run(async () => {
+export async function clearMailTransport(domain, { actor, logger }) {
+  const answer = await transportMutex.run(async () => {
     const scope = await mailScope(domain);
     const db = await getStateDb();
     const removed = deleteTransportRow(db, scope);
@@ -980,6 +1017,7 @@ export function clearMailTransport(domain, { actor, logger }) {
     );
     return { removed: true, ...(warnings.length ? { warnings } : {}) };
   });
+  return answer.removed ? withMailSync(answer, logger) : answer;
 }
 
 /**

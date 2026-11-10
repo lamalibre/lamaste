@@ -54,10 +54,18 @@ import {
 } from './lib/vhost-reconcile.js';
 import { activeDomains, ensurePrimaryDomain, syncDomainAccess } from './lib/domains.js';
 import { ensureBrandingBase, reconcileAuthBranding } from './lib/auth-branding.js';
-import { writeInvitationsPage, writeInvitePage, writeUnavailablePage } from './lib/invite-page.js';
+import {
+  writeAccountPasswordPage,
+  writeAuthStockCss,
+  writeInvitationsPage,
+  writeInvitePage,
+  writeResetPage,
+  writeUnavailablePage,
+} from './lib/invite-page.js';
 import { touchUsersFile } from './lib/authelia.js';
 import { reconcileWebSurfaces } from './lib/web-surface.js';
-import { startMailHealthMonitor, stopMailHealthMonitor } from './lib/mail.js';
+import { startMailHealthMonitor, stopMailHealthMonitor, syncMail } from './lib/mail.js';
+import { stopSubmissionListener } from './lib/mail-submission.js';
 import {
   loadTicketScopeCapabilities,
   checkInstanceLiveness,
@@ -265,6 +273,16 @@ async function start() {
       await writeUnavailablePage({ logger: server.log }).catch((err) => {
         server.log.warn({ err: err.message }, 'Startup write of the "not available" page failed');
       });
+      // The stock account pages and the sign-in stylesheet, the same way.
+      for (const [write, what] of [
+        [writeResetPage, 'forgot-password page'],
+        [writeAccountPasswordPage, 'change-password page'],
+        [writeAuthStockCss, 'sign-in stylesheet'],
+      ]) {
+        await write({ logger: server.log }).catch((err) => {
+          server.log.warn({ err: err.message }, `Startup write of the stock ${what} failed`);
+        });
+      }
       // First what the branded sign-in needs from Authelia — its asset
       // path, the placeholder logo and an explicit theme: the one
       // structural change the upgrade makes, one restart — so the
@@ -284,6 +302,17 @@ async function start() {
       // The brands' rendered directories in line with their records (a
       // restored backup, a pin bump, a change a crash cut short).
       await reconcileAuthBranding({ logger: server.log });
+      // The relay's mail (mail-design.md §5): the submission listener while
+      // the relay has a transport, Authelia's notifier and reset link, the
+      // portals' reset links. After the renderings, whose vhosts it
+      // rewrites.
+      await syncMail({ logger: server.log })
+        .then(({ warnings }) => {
+          if (warnings.length > 0) server.log.warn({ warnings }, 'Startup mail sync incomplete');
+        })
+        .catch((err) => {
+          server.log.warn({ err: err.message }, 'Startup mail sync failed');
+        });
     })();
   }
 
@@ -353,6 +382,7 @@ async function start() {
     stopPeerServices();
     stopHostedPluginHealthMonitor();
     stopMailHealthMonitor();
+    await stopSubmissionListener().catch(() => {});
     clearRateLimitInterval();
     await server.close();
     process.exit(0);

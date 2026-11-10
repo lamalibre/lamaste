@@ -46,6 +46,7 @@ import {
   isAutheliaRunning as isAutheliaRunningCore,
   updateAutheliaDomainAccess,
   autheliaWatchesUsersFile,
+  updateAutheliaMail,
   updateAutheliaOidcProvider,
   base32Encode,
   base32Decode,
@@ -53,6 +54,7 @@ import {
   writeTotpToDatabase as writeTotpToDatabaseCore,
   purgeAutheliaSecondFactors,
   autheliaHoldsOpaqueIdentifier,
+  verifyAutheliaTotp,
 } from '@lamalibre/lamaste/server';
 
 /**
@@ -73,6 +75,7 @@ const writeRealTotp = (username, base32Secret) =>
 const realUserStorage = Object.freeze({
   purgeSecondFactors: (username) => purgeAutheliaSecondFactors(username, execa),
   holdsOidcIdentifier: (username) => autheliaHoldsOpaqueIdentifier(username, execa),
+  verifyTotp: (username, code) => verifyAutheliaTotp(username, code, execa),
 });
 
 /** Authelia's users file — another one in tests. */
@@ -97,6 +100,9 @@ const updateRealOidcProvider = (domains, clients, options) =>
   updateAutheliaOidcProvider(domains, clients, execa, options);
 /** Write Authelia's OIDC provider — replaced in tests. */
 let oidcProviderWriter = updateRealOidcProvider;
+const updateRealMail = (settings) => updateAutheliaMail(settings, execa);
+/** Write Authelia's notifier and reset link — replaced in tests. */
+let mailWriter = updateRealMail;
 
 /**
  * Point the users file, the Authelia restart, the TOTP writer, the
@@ -105,7 +111,7 @@ let oidcProviderWriter = updateRealOidcProvider;
  * `touchDelayMs` asks for it. The owned groups the last rendering decided
  * are forgotten either way.
  *
- * @param {{ usersFile?: string, restart?: () => Promise<unknown>, watchesUsersFile?: () => Promise<boolean>, writeTotp?: (username: string, secret: string) => Promise<void>, userStorage?: { purgeSecondFactors: (username: string) => Promise<void>, holdsOidcIdentifier: (username: string) => Promise<boolean> }, domainAccess?: (access: object) => Promise<{ changed: boolean }>, oidcProvider?: (domains: object[], clients: object[], options: object) => Promise<{ changed: boolean, clients: number }>, touchDelayMs?: number | null } | null} overrides
+ * @param {{ usersFile?: string, restart?: () => Promise<unknown>, watchesUsersFile?: () => Promise<boolean>, writeTotp?: (username: string, secret: string) => Promise<void>, userStorage?: { purgeSecondFactors: (username: string) => Promise<void>, holdsOidcIdentifier: (username: string) => Promise<boolean>, verifyTotp?: (username: string, code: string) => Promise<{ ok: boolean, step?: number }> }, domainAccess?: (access: object) => Promise<{ changed: boolean }>, oidcProvider?: (domains: object[], clients: object[], options: object) => Promise<{ changed: boolean, clients: number }>, mail?: (settings: object) => Promise<{ changed: boolean }>, touchDelayMs?: number | null } | null} overrides
  */
 export function setAutheliaForTests(overrides) {
   usersFile = overrides?.usersFile ?? AUTHELIA_USERS;
@@ -125,6 +131,8 @@ export function setAutheliaForTests(overrides) {
   userStorage = overrides?.userStorage ?? realUserStorage;
   domainAccessWriter = overrides?.domainAccess ?? updateRealDomainAccess;
   oidcProviderWriter = overrides?.oidcProvider ?? updateRealOidcProvider;
+  // Authelia's mail settings are another file in tests: left alone unless asked.
+  mailWriter = overrides?.mail ?? (overrides ? async () => ({ changed: false }) : updateRealMail);
 }
 
 /**
@@ -145,6 +153,33 @@ export function purgeAutheliaUserSecondFactors(username) {
  */
 export function autheliaHoldsOidcIdentity(username) {
   return userStorage.holdsOidcIdentifier(username);
+}
+
+/**
+ * Check a TOTP `code` against `username`'s configuration in Authelia's
+ * storage through the root helper (core `verifyAutheliaTotp`): `{ ok: true,
+ * step }` or `{ ok: false }`; throws when it cannot be told. The caller
+ * refuses a step it already accepted for the user.
+ *
+ * @param {string} username
+ * @param {string} code
+ * @returns {Promise<import('@lamalibre/lamaste/server').AutheliaTotpVerdict>}
+ */
+export function verifyAutheliaUserTotp(username, code) {
+  return userStorage.verifyTotp(username, code);
+}
+
+/**
+ * Bring Authelia's notifier and reset link in line with the relay's mail
+ * (core `updateAutheliaMail`): restarts Authelia only when its
+ * configuration changed. Call it as the one writer of Authelia's
+ * configuration (lib/domains.js `withDomainRendering`).
+ *
+ * @param {import('@lamalibre/lamaste/server').AutheliaMailSettings} settings
+ * @returns {Promise<{ changed: boolean }>}
+ */
+export function updateAutheliaMailSettings(settings) {
+  return mailWriter(settings);
 }
 
 /** True once create-lamaste has installed Authelia. */

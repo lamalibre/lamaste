@@ -12,6 +12,8 @@
 import {
   MAIL_BUDGET,
   MAIL_SEND_CLASSES,
+  authResetUrl,
+  canSendMail,
   mailBudgetThresholds,
   mailSenderDomains,
 } from '@lamalibre/lamaste';
@@ -68,6 +70,34 @@ export function senderHostnames(db, relayDomains) {
   return mailSenderDomains(mailRecords(db)).filter((host) =>
     relayDomains.some((domain) => host.endsWith(`.${domain.toLowerCase()}`)),
   );
+}
+
+/**
+ * Where the sign-in portals link "Reset password?" (mail-design.md §5,
+ * Q1), from the records: `autheliaResetUrl` — Authelia's one
+ * `password_reset.custom_url`, the primary's `https://auth.<primary>/reset`
+ * while some active domain can send, else null (Authelia's reset
+ * disabled) — and `domainResetUrl(domain)`, a portal's own page when its
+ * domain can send, else null (the portal shows no reset link). Lamaste's
+ * own reset sends through the domain's transport, never Authelia's.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @returns {{ autheliaResetUrl: string | null, domainResetUrl: (domain: string) => string | null }}
+ */
+export function resetLinkState(db) {
+  const records = mailRecords(db);
+  const active = db
+    .prepare("SELECT name, is_primary FROM domains WHERE status = 'active'")
+    .all()
+    .map((row) => ({ name: row.name, primary: row.is_primary === 1 }));
+  const primary = active.find((d) => d.primary)?.name ?? null;
+  const sends = (domain) => canSendMail(domain, records);
+  return {
+    autheliaResetUrl:
+      primary !== null && active.some((d) => sends(d.name)) ? authResetUrl(primary) : null,
+    domainResetUrl: (domain) =>
+      active.some((d) => d.name === domain) && sends(domain) ? authResetUrl(domain) : null,
+  };
 }
 
 /**

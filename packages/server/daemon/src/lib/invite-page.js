@@ -8,6 +8,10 @@
  * at every start once onboarding is complete, compared first — an identical
  * file is left alone, and only a write is logged.
  *
+ * The stock forgot-password and change-password pages and the sign-in
+ * portal's stock stylesheet (packages/core/docs/mail-design.md §6) are
+ * written the same way, for a domain without a rendering.
+ *
  * The web root belongs to the lamaste user (group www-data, setgid
  * directories), so no privileges are needed; the file is 0640 and nginx
  * reads it via the group.
@@ -18,10 +22,13 @@ import { constants } from 'node:fs';
 import { mkdir, open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
+import { AUTH_BRANDING_FILES, AUTH_STOCK_CSS } from '@lamalibre/lamaste';
 import {
   UNAVAILABLE_PAGE_STOCK_DIR,
+  renderAccountPasswordPage,
   renderInvitationsPage,
   renderInvitePage,
+  renderResetPage,
   renderUnavailablePage,
 } from '@lamalibre/lamaste/server';
 
@@ -33,6 +40,20 @@ export const INVITE_DIR = '/var/www/lamaste/invite';
  * (the auth vhost's `@invitations` fallback root), written the same way.
  */
 export const INVITATIONS_DIR = '/var/www/lamaste/invitations';
+/**
+ * Where the stock forgot-password page lives — what `auth.<domain>/reset`
+ * serves for a domain without a rendering (packages/core/docs/mail-design.md
+ * §6.2), written the same way.
+ */
+export const RESET_DIR = '/var/www/lamaste/reset';
+/** Where the stock change-password page lives (`auth.<domain>/account/password`, §6.3). */
+export const ACCOUNT_PASSWORD_DIR = '/var/www/lamaste/account-password';
+/**
+ * Where the stock stylesheet of the sign-in portal lives: `/brand.css` of a
+ * domain with neither brand nor language — the change-password link's
+ * rules (core `AUTH_STOCK_CSS`, §6.3).
+ */
+export const AUTH_STOCK_DIR = '/var/www/lamaste/auth-stock';
 const INVITE_FILE = 'index.html';
 
 /**
@@ -64,12 +85,12 @@ async function readInstalled(file) {
  * it. A write goes through a temporary file beside it (exclusive, 0640,
  * fsynced) and one rename: nginx serves the old page or the new one.
  */
-async function writeStockPage(html, dir, what, logger) {
-  const dest = path.join(dir, INVITE_FILE);
+async function writeStockPage(html, dir, what, logger, file = INVITE_FILE) {
+  const dest = path.join(dir, file);
   if ((await readInstalled(dest)) === html) return { written: false };
 
   await mkdir(dir, { recursive: true, mode: 0o750 });
-  const tmp = path.join(dir, `.index-${crypto.randomBytes(8).toString('hex')}.html`);
+  const tmp = path.join(dir, `.${file}-${crypto.randomBytes(8).toString('hex')}`);
   try {
     const fh = await open(tmp, 'wx', 0o640);
     try {
@@ -123,5 +144,42 @@ export function writeUnavailablePage({ dir = UNAVAILABLE_PAGE_STOCK_DIR, logger 
     dir,
     'Stock "not available" page',
     logger,
+  );
+}
+
+/**
+ * Write the stock forgot-password page unless the installed one is already it.
+ *
+ * @param {{ dir?: string, logger?: { info: (obj: object, msg: string) => void } }} [opts]
+ * @returns {Promise<{ written: boolean }>}
+ */
+export function writeResetPage({ dir = RESET_DIR, logger } = {}) {
+  return writeStockPage(renderResetPage(null), dir, 'Stock forgot-password page', logger);
+}
+
+/**
+ * Write the stock change-password page unless the installed one is already it.
+ *
+ * @param {{ dir?: string, logger?: { info: (obj: object, msg: string) => void } }} [opts]
+ * @returns {Promise<{ written: boolean }>}
+ */
+export function writeAccountPasswordPage({ dir = ACCOUNT_PASSWORD_DIR, logger } = {}) {
+  return writeStockPage(renderAccountPasswordPage(null), dir, 'Stock change-password page', logger);
+}
+
+/**
+ * Write the sign-in portal's stock stylesheet unless the installed one is
+ * already it.
+ *
+ * @param {{ dir?: string, logger?: { info: (obj: object, msg: string) => void } }} [opts]
+ * @returns {Promise<{ written: boolean }>}
+ */
+export function writeAuthStockCss({ dir = AUTH_STOCK_DIR, logger } = {}) {
+  return writeStockPage(
+    AUTH_STOCK_CSS,
+    dir,
+    'Stock sign-in stylesheet',
+    logger,
+    AUTH_BRANDING_FILES.css,
   );
 }

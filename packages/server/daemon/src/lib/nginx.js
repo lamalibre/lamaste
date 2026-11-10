@@ -17,17 +17,31 @@ import {
   userSurfaceApiPath,
   WEB_TREE_CONTENT_TYPES,
   autheliaIndexLanguageFilters,
+  autheliaIndexMailFilters,
   AUTHELIA_FORCED_LOCALES_DIR,
+  AUTH_ACCOUNT_PASSWORD_PATH,
+  AUTH_RESET_PATH,
+  ACCOUNT_PASSWORD_API_PATH,
+  MAIL_GOOGLE_CALLBACK_PATH,
+  PASSWORD_RESET_API,
   isPageLanguage,
 } from '@lamalibre/lamaste';
 import {
+  ACCOUNT_PASSWORD_PAGE_HEADERS,
   INVITATIONS_PAGE_HEADERS,
   INVITE_PAGE_HEADERS,
+  RESET_PAGE_HEADERS,
   UNAVAILABLE_PAGE_STOCK_DIR,
   authBrandingDir,
   unavailablePageHeaders,
 } from '@lamalibre/lamaste/server';
-import { INVITATIONS_DIR, INVITE_DIR } from './invite-page.js';
+import {
+  ACCOUNT_PASSWORD_DIR,
+  AUTH_STOCK_DIR,
+  INVITATIONS_DIR,
+  INVITE_DIR,
+  RESET_DIR,
+} from './invite-page.js';
 
 const SITES_AVAILABLE = '/etc/nginx/sites-available';
 const SITES_ENABLED = '/etc/nginx/sites-enabled';
@@ -443,13 +457,18 @@ export const LEGACY_AUTH_VHOST = 'lamalibre-lamaste-auth';
  * none — see {@link renderAuthVhost}).
  *
  * @param {string} domain
- * @param {{ primary: boolean, enabled?: boolean, branding?: AuthVhostBranding | null, language?: import('@lamalibre/lamaste').PageLanguage | null }} opts
+ * @param {{ primary: boolean, enabled?: boolean, branding?: AuthVhostBranding | null, language?: import('@lamalibre/lamaste').PageLanguage | null, mail?: AuthVhostMail }} opts
  */
 export async function writeAuthVhost(
   domain,
-  { primary, enabled = true, branding = null, language = null },
+  { primary, enabled = true, branding = null, language = null, mail = NO_MAIL },
 ) {
-  const { name, config } = renderAuthVhost(domain, undefined, { primary, branding, language });
+  const { name, config } = renderAuthVhost(domain, undefined, {
+    primary,
+    branding,
+    language,
+    mail,
+  });
   await safeWriteVhost(name, config, `auth.${domain}`, { enabled });
   return path.join(SITES_AVAILABLE, name);
 }
@@ -462,6 +481,19 @@ export async function writeAuthVhost(
  *
  * @typedef {{ theme: string, logo: boolean }} AuthVhostBranding
  */
+
+/**
+ * Where a domain's portal links "Reset password?" (lib/auth-branding.js
+ * `authVhostInputs`; packages/core/docs/mail-design.md §5): Authelia's one
+ * reset URL (`primaryResetUrl` — the primary's `/reset` while some domain
+ * can send, else null) and this domain's own page (`domainResetUrl`, null
+ * when the domain cannot send).
+ *
+ * @typedef {{ primaryResetUrl: string | null, domainResetUrl: string | null }} AuthVhostMail
+ */
+
+/** A relay that sends no mail: no reset link anywhere. */
+export const NO_MAIL = Object.freeze({ primaryResetUrl: null, domainResetUrl: null });
 
 /**
  * The brand-override locations of an auth vhost: the three routes Authelia
@@ -513,7 +545,14 @@ function authBrandLocations(domain, fqdn, language) {
     # to the rendering that serves, switched by rename — disable_symlinks
     # stays off. The headers apply to a file served from here alone: the
     # fallback is produced in @authelia, which adds none. The content type
-    # comes from the extension, never from the bytes.${override(`= /${AUTH_BRANDING_FILES.favicon}`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.logo}`, '@authelia')}${override(`/${AUTH_BRANDING_LOCALES_DIR}/`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.css}`, '=404')}${forced}
+    # comes from the extension, never from the bytes.${override(`= /${AUTH_BRANDING_FILES.favicon}`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.logo}`, '@authelia')}${override(`/${AUTH_BRANDING_LOCALES_DIR}/`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.css}`, '@stock_css')}${forced}
+
+    # The stylesheet of a domain with neither brand nor language: the
+    # change-password link's rules alone (mail-design.md §6.3).
+    location @stock_css {
+        root ${AUTH_STOCK_DIR};
+        try_files /${AUTH_BRANDING_FILES.css} =404;${headers}
+    }
 
     # Authelia's own answer for an override the domain lacks (a location
     # that sets any header inherits none of the server's).
@@ -553,14 +592,30 @@ function autheliaProxyHeaders(fqdn) {
  * `<noscript>` sentence in that language (core
  * `autheliaIndexLanguageFilters`: printable ASCII without `$`, the Turkish
  * as character references — lamaste-priv refuses anything else in a vhost).
- * A domain with a brand or a language links its stylesheet: the brand's
- * colours, and the rule hiding the language menu.
+ * Every domain gets the mail filters (core `autheliaIndexMailFilters`,
+ * packages/core/docs/mail-design.md §5, §6.3): "Reset password?" pointed
+ * at the domain's own `/reset`, or switched off where the domain cannot
+ * send, and a "Change password" link — and links its stylesheet: the
+ * brand's colours and the rule hiding the language menu when it has them,
+ * the link's rules always (the stock stylesheet for a domain with
+ * neither).
  *
  * @param {AuthVhostBranding | null} branding
  * @param {import('@lamalibre/lamaste').PageLanguage | null} language
+ * @param {AuthVhostMail} mail
  */
-function autheliaIndexRewrite(branding, language) {
+function autheliaIndexRewrite(branding, language, mail) {
   const theme = branding === null ? 'light' : branding.theme;
+  const mailFilters = autheliaIndexMailFilters({
+    primaryResetUrl: mail.primaryResetUrl,
+    domainResetUrl: mail.domainResetUrl,
+    language,
+  })
+    .map(
+      ([from, to]) => `
+        sub_filter '${from}' '${to}';`,
+    )
+    .join('');
   const logo = branding !== null && branding.logo;
   const languageFilters =
     language === null
@@ -582,12 +637,10 @@ function autheliaIndexRewrite(branding, language) {
         proxy_set_header Accept-Encoding "";
         sub_filter_once off;
         sub_filter 'data-theme="light"' 'data-theme="${theme}"';
-        sub_filter 'data-logooverride="true"' 'data-logooverride="${logo ? 'true' : 'false'}"';${languageFilters}${
-          branding === null && language === null
-            ? ''
-            : `
-        sub_filter '</head>' '<link rel="stylesheet" href="/${AUTH_BRANDING_FILES.css}"></head>';`
-        }`;
+        sub_filter 'data-logooverride="true"' 'data-logooverride="${logo ? 'true' : 'false'}"';${languageFilters}
+        # The domain's mail (mail-design.md §5, §6.3): "Reset password?" to
+        # its own page or nowhere, and the change-password link${mailFilters}
+        sub_filter '</head>' '<link rel="stylesheet" href="/${AUTH_BRANDING_FILES.css}"></head>';`;
 }
 
 /** Refuse a language the vhost cannot say (the value is interpolated into a root-validated file). */
@@ -759,31 +812,194 @@ function delegatedInvitationsLocations(domain, fqdn) {
 }
 
 /**
+ * What a browser request the auth host proxies to the panel never carries
+ * on: whatever names a user or a credential (`Remote-*`, `Authorization`,
+ * client-certificate headers, a relay assertion) and a client's
+ * `X-Forwarded-Host`.
+ */
+const BROWSER_IDENTITY_CLEARED = `
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Groups "";
+        proxy_set_header Remote-Name "";
+        proxy_set_header Remote-Email "";
+        proxy_set_header Authorization "";
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
+        proxy_set_header X-Forwarded-Host "";${PANEL_ASSERTION_CLEARED}`;
+
+/** To the panel under the auth host's literal name `fqdn`. */
+function panelProxy(fqdn) {
+  return `
+        proxy_set_header Host ${fqdn};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_pass http://127.0.0.1:${RELAY_PANEL_PORT};
+        proxy_http_version 1.1;`;
+}
+
+/** The prefix of the forgot-password API (`/api/account/reset/`). */
+const PASSWORD_RESET_API_PREFIX = PASSWORD_RESET_API.start.slice(
+  0,
+  PASSWORD_RESET_API.start.lastIndexOf('/') + 1,
+);
+
+/** Refuse a reset URL the vhost cannot say: only an auth host's own `https://auth.<domain>/reset`. */
+function assertAuthVhostMail(domain, mail) {
+  const resetUrl = (value) =>
+    value === null ||
+    (typeof value === 'string' && /^https:\/\/auth\.[a-z0-9.-]{1,253}\/reset$/.test(value));
+  if (
+    mail === null ||
+    typeof mail !== 'object' ||
+    !resetUrl(mail.primaryResetUrl) ||
+    !(
+      mail.domainResetUrl === null ||
+      mail.domainResetUrl === `https://auth.${domain}${AUTH_RESET_PATH}`
+    )
+  ) {
+    throw new Error("Invalid auth vhost mail: reset URLs are an auth host's own /reset, or null");
+  }
+}
+
+/**
+ * The account locations of a domain's sign-in host
+ * (packages/core/docs/mail-design.md §6.2, §6.3):
+ *
+ * - the forgot-password page (`/reset`, the domain's own from its
+ *   rendering, else the stock one) and its API (`/api/account/reset/*`) —
+ *   public, like the invitation's: `Host` this portal's literal name,
+ *   `X-Forwarded-Host` and every identity header cleared, a small body;
+ * - the change-password page (`/account/password`) and its API
+ *   (`POST /api/account/password`) behind Authelia's forward auth — the
+ *   portal's rule wants two factors from the domain's members and external
+ *   members. The page redirects to the sign-in, the API answers JSON 401.
+ *   The panel reads the user from `Remote-User`, which nginx writes from
+ *   Authelia's answer after clearing whatever the client sent.
+ */
+export function accountLocations(domain, fqdn) {
+  const cleared = BROWSER_IDENTITY_CLEARED;
+  const toPanel = `${panelProxy(fqdn)}
+        client_max_body_size 16k;`;
+  const accountPageHeaders = pageHeaderLines(ACCOUNT_PASSWORD_PAGE_HEADERS);
+  return `
+    # Forgot password (mail-design.md §6.2): the page, the domain's own
+    # when it has a rendering, else the stock one — a link carries its
+    # token in the fragment (\`/reset#<token>\`).${authPageLocations(
+      domain,
+      [`= ${AUTH_RESET_PATH}`],
+      AUTH_BRANDING_FILES.reset,
+      'reset',
+      RESET_DIR,
+      RESET_PAGE_HEADERS,
+    )}
+
+    # Its API — public, proxied to the panel (no mTLS)
+    location ^~ ${PASSWORD_RESET_API_PREFIX} {
+        proxy_set_header Cookie "";${cleared}${toPanel}
+    }
+
+    # Change password (mail-design.md §6.3): behind Authelia's forward auth
+    location = /internal/lamaste/account-authz {
+        internal;
+
+        proxy_pass http://127.0.0.1:9091/api/authz/auth-request;
+        proxy_pass_request_body off;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Connection "";
+        proxy_set_header X-Original-Method $request_method;
+        # This vhost's hostname, never the client's Host header
+        proxy_set_header X-Original-URL ${originalUrl(fqdn)};
+        proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
+
+        proxy_http_version 1.1;
+        proxy_buffers 4 32k;
+    }
+
+    location = /internal/lamaste/account-401 {
+        internal;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        return 401 '{"error":"unauthenticated"}';
+    }
+
+    location = ${AUTH_ACCOUNT_PASSWORD_PATH} {
+        auth_request /internal/lamaste/account-authz;
+        auth_request_set $redirection_url $upstream_http_location;
+        error_page 401 =302 $redirection_url;
+
+        root ${authBrandingDir(domain)};
+        try_files /${AUTH_BRANDING_FILES.accountPassword} @account_password;${accountPageHeaders}
+    }
+    location @account_password {
+        auth_request /internal/lamaste/account-authz;
+        auth_request_set $redirection_url $upstream_http_location;
+        error_page 401 =302 $redirection_url;
+
+        root ${ACCOUNT_PASSWORD_DIR};
+        try_files /index.html =404;${accountPageHeaders}
+    }
+
+    location = ${ACCOUNT_PASSWORD_API_PATH} {
+        auth_request /internal/lamaste/account-authz;
+        auth_request_set $user $upstream_http_remote_user;
+        error_page 401 = /internal/lamaste/account-401;
+
+        # Nothing the client sent that names a user or a credential; the
+        # user as Authelia answered
+        proxy_set_header Cookie "";${cleared}
+        proxy_set_header Remote-User $user;${toPanel}
+    }
+`;
+}
+
+/**
+ * Google's return from the relay's mail consent (mail-design.md §3.3), on
+ * the primary's sign-in host alone: proxied to the panel with this
+ * portal's literal name as `Host` — the panel answers it on that host
+ * only — and nothing of the browser's credentials.
+ */
+export function mailCallbackLocation(fqdn) {
+  return `
+    # Google's return from the relay's mail consent (mail-design.md §3.3)
+    location = ${MAIL_GOOGLE_CALLBACK_PATH} {
+        proxy_set_header Cookie "";${BROWSER_IDENTITY_CLEARED}${panelProxy(fqdn)}
+        client_max_body_size 1k;
+    }
+`;
+}
+
+/**
  * Render the Authelia auth portal vhost of one domain. Pure; the startup
  * reconcile renders it on the certificate directory the installed vhost
  * names. Every domain's portal serves Authelia and the invitation page (the
  * domain's own from its rendering when it has a brand, else the stock one
- * from `INVITE_DIR`); only
- * the primary's — the panel's domain, which the desktop's user login
- * exchanges at — serves `/api/user-access/authorize` and declares its rate
- * limit zone (an http-level name, declared once). Every portal serves the
- * domain's brand and language ({@link authBrandLocations},
+ * from `INVITE_DIR`) and its account pages ({@link accountLocations});
+ * only the primary's — the panel's domain, which the desktop's user login
+ * exchanges at and Google returns the mail consent to — serves
+ * `/api/user-access/authorize`, `/mail/google/callback` and declares the
+ * rate limit zone (an http-level name, declared once). Every portal serves
+ * the domain's brand, language and mail ({@link authBrandLocations},
  * {@link autheliaIndexRewrite}): `branding` is null for a domain without a
- * brand, `language` null for one without a page language — a domain with
- * neither keeps the vhost it had before languages.
+ * brand, `language` null for one without a page language, `mail` where the
+ * portal links "Reset password?" ({@link NO_MAIL} when nothing sends).
  *
  * @param {string} domain
  * @param {string} [certPath] - certificate directory (default: the portal's own lineage)
- * @param {{ primary?: boolean, branding?: AuthVhostBranding | null, language?: import('@lamalibre/lamaste').PageLanguage | null }} [opts]
+ * @param {{ primary?: boolean, branding?: AuthVhostBranding | null, language?: import('@lamalibre/lamaste').PageLanguage | null, mail?: AuthVhostMail }} [opts]
  * @returns {{ name: string, fqdn: string, config: string }}
  */
 export function renderAuthVhost(
   domain,
   certPath,
-  { primary = true, branding = null, language = null } = {},
+  { primary = true, branding = null, language = null, mail = NO_MAIL } = {},
 ) {
   assertAuthVhostBranding(branding);
   assertAuthVhostLanguage(language);
+  assertAuthVhostMail(domain, mail);
   const fqdn = `auth.${domain}`;
   let certDirClean = certPath || `/etc/letsencrypt/live/${fqdn}`;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
@@ -892,14 +1108,14 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
         proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
         client_max_body_size 16k;
     }
-${delegatedInvitationsLocations(domain, fqdn)}${userAccess}${authBrandLocations(domain, fqdn, language)}
+${delegatedInvitationsLocations(domain, fqdn)}${accountLocations(domain, fqdn)}${primary ? mailCallbackLocation(fqdn) : ''}${userAccess}${authBrandLocations(domain, fqdn, language)}
     # Default — proxy to Authelia. Authelia takes the OIDC issuer and the
     # session cookie's domain from X-Forwarded-Host / -Proto: this portal's
     # own name, never what the client sent. (A location that sets any
     # header inherits none of the server's.)
     location / {
         proxy_pass http://127.0.0.1:9091;${autheliaProxyHeaders(fqdn)}
-${autheliaIndexRewrite(branding, language)}
+${autheliaIndexRewrite(branding, language, mail)}
     }
 }
 `;

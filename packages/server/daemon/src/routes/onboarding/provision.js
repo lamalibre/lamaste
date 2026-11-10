@@ -8,8 +8,11 @@ import * as authelia from '../../lib/authelia.js';
 import * as certbot from '../../lib/certbot.js';
 import * as nginx from '../../lib/nginx.js';
 import {
+  writeAccountPasswordPage,
+  writeAuthStockCss,
   writeInvitationsPage,
   writeInvitePage,
+  writeResetPage,
   writeUnavailablePage,
 } from '../../lib/invite-page.js';
 import { migrateChiselCredentialsIfNeeded } from '../../lib/chisel-users.js';
@@ -178,6 +181,9 @@ async function runProvisioning(log) {
     await writeInvitePage();
     await writeInvitationsPage();
     await writeUnavailablePage();
+    await writeResetPage();
+    await writeAccountPasswordPage();
+    await writeAuthStockCss();
 
     emitProgress('configure-nginx', 'running', 'Enabling sites...');
     await nginx.enableSite('lamalibre-lamaste-panel-domain');
