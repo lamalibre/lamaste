@@ -336,6 +336,7 @@ async function start() {
   // peers protocol, and the peer channels to consumers (the relay dials
   // them; nothing listens) — now, then every 15s ---
   startPeerServices(server.log);
+
   // --- Native apps: every live grant checked against its lifetimes and its
   // person's standing, clients of deleted hosts removed, old rows pruned —
   // now, then every minute ---
