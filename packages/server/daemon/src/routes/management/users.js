@@ -3,6 +3,7 @@ import {
   USERNAME_MAX_LENGTH,
   USERNAME_MIN_LENGTH,
   USERNAME_REGEX,
+  isDeliverableAddress,
   isLamasteOwnedGroup,
 } from '@lamalibre/lamaste';
 import {
@@ -162,6 +163,8 @@ export default async function usersRoutes(fastify, _opts) {
               userId: known?.userId ?? null,
               status: known?.status ?? (user.disabled ? 'disabled' : 'active'),
               domains: (known && memberships.get(known.userId)) ?? [],
+              // Whether they could reset their own password by mail (mail-design.md §4)
+              emailDeliverable: isDeliverableAddress(user.email),
             };
           })
           .sort((a, b) => a.username.localeCompare(b.username));

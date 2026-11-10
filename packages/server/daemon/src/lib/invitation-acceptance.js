@@ -83,6 +83,7 @@ import {
   importLegacyInvitations,
   invitationClosedError,
   pruneEndedInvitations,
+  pruneInvitationReissues,
   recordCompletion,
   recordFailedAttempt,
   releaseClaim,
@@ -926,6 +927,7 @@ export async function invitationsTick({ logger } = {}) {
   }
   try {
     await pruneEndedInvitations();
+    await pruneInvitationReissues();
   } catch (err) {
     logger?.warn({ err: err.message }, 'Pruning ended invitations failed');
   }

@@ -31,8 +31,10 @@ import { declaredRoleIds } from './entitlements.js';
 import { gatekeeperGrantCapacity, holdsResourceGrant } from './gatekeeper-client.js';
 import {
   getInvitation,
+  invitationMailState,
   listInvitations,
   newInvitationToken,
+  reissueInvitationLink,
   revokeInvitationSync,
   withInvitationsLock,
 } from './invitations.js';
@@ -496,12 +498,25 @@ function countsSync(db, plugin, inviterUserId, now) {
        WHERE i.kind = 'delegated' AND i.plugin = ? AND u.status <> 'removed'`,
     )
     .get(plugin).n;
-  const lastHour = db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM invitations WHERE kind = 'delegated' AND inviter_user_id = ?
-         AND created_at > ?`,
-    )
-    .get(inviterUserId, hourAgo).n;
+  // Invitations made and new links given in the last hour: a reissue
+  // mails a link as a new invitation does (mail-design.md §6.1).
+  const lastHour =
+    Number(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM invitations WHERE kind = 'delegated' AND inviter_user_id = ?
+             AND created_at > ?`,
+        )
+        .get(inviterUserId, hourAgo).n,
+    ) +
+    Number(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM invitation_reissues WHERE inviter_user_id = ?
+             AND reissued_at > ?`,
+        )
+        .get(inviterUserId, hourAgo).n,
+    );
   return {
     openOfInviter: Number(openOfInviter),
     openOfPlugin: Number(openOfPlugin),
@@ -562,12 +577,72 @@ export function inviterItem(inv, labels) {
     createdAt: inv.createdAt,
     expiresAt: inv.expiresAt,
     acceptedAt: inv.acceptedAt,
+    mail: invitationMailState(inv),
   };
 }
 
 // ---------------------------------------------------------------------------
 // Making one
 // ---------------------------------------------------------------------------
+
+/**
+ * The plugin's policy and surface while it can be invited into, else 403
+ * `invitations_unavailable` (the reason to the log only).
+ */
+async function availablePolicy(plugin, logger) {
+  const policy = await getInvitationPolicy(plugin.name);
+  const surface = await invitationSurface(plugin);
+  if (!policy.enabled || !surface.ok) {
+    logger?.info(
+      { plugin: plugin.name, reason: policy.enabled ? surface.reason : 'policy_disabled' },
+      'Delegated invitation refused: unavailable',
+    );
+    throw httpError('Invitations are not available for this plugin', 403, {
+      code: 'invitations_unavailable',
+    });
+  }
+  return { policy, surface };
+}
+
+/** The address's domain when the policy lets invitations go to it, else 400 `email_domain_not_allowed`. */
+function allowedEmailDomain(policy, email) {
+  const emailDomain = emailDomainOf(email);
+  if (!emailDomain || !policy.emailDomains.includes(emailDomain)) {
+    throw httpError('This e-mail address is not under a domain invitations may go to', 400, {
+      code: 'email_domain_not_allowed',
+    });
+  }
+  return emailDomain;
+}
+
+/**
+ * Inside the plugin's invitations lock and a transaction: refuse what the
+ * caps refuse — the inviter's rate (429 `invitation_rate`) always, and when
+ * the invitation opens (a new one, or an expired one given a new link) the
+ * inviter's open invitations and the plugin's people (409 `invitation_cap`).
+ */
+function assertCapsSync(db, plugin, policy, inviterUserId, now, { opens }) {
+  const counts = countsSync(db, plugin, inviterUserId, now);
+  if (counts.lastHour >= INVITATIONS_PER_INVITER_PER_HOUR) {
+    throw httpError('Too many invitations in the last hour — try again later', 429, {
+      code: 'invitation_rate',
+    });
+  }
+  if (!opens) return;
+  if (counts.openOfInviter >= policy.maxOpenPerInviter) {
+    throw httpError(
+      `You have ${counts.openOfInviter} open invitations, the most allowed — revoke one or wait for one to be accepted`,
+      409,
+      { code: 'invitation_cap', cap: 'inviter' },
+    );
+  }
+  if (counts.joined + counts.openOfPlugin >= policy.maxJoined) {
+    throw httpError('This plugin takes no more people by invitation', 409, {
+      code: 'invitation_cap',
+      cap: 'plugin',
+    });
+  }
+}
 
 /**
  * Make a delegated invitation into `plugin` for `caller` (the inviter, as
@@ -584,23 +659,8 @@ export function inviterItem(inv, labels) {
  * @param {{ logger?: import('pino').Logger }} [opts]
  */
 export async function createDelegatedInvitation(plugin, caller, request, { logger } = {}) {
-  const policy = await getInvitationPolicy(plugin.name);
-  const surface = await invitationSurface(plugin);
-  if (!policy.enabled || !surface.ok) {
-    logger?.info(
-      { plugin: plugin.name, reason: policy.enabled ? surface.reason : 'policy_disabled' },
-      'Delegated invitation refused: unavailable',
-    );
-    throw httpError('Invitations are not available for this plugin', 403, {
-      code: 'invitations_unavailable',
-    });
-  }
-  const emailDomain = emailDomainOf(request.email);
-  if (!emailDomain || !policy.emailDomains.includes(emailDomain)) {
-    throw httpError('This e-mail address is not under a domain invitations may go to', 400, {
-      code: 'email_domain_not_allowed',
-    });
-  }
+  const { policy, surface } = await availablePolicy(plugin, logger);
+  const emailDomain = allowedEmailDomain(policy, request.email);
   await assertGrantReserve();
 
   const { token, tokenSha256 } = newInvitationToken();
@@ -617,25 +677,7 @@ export async function createDelegatedInvitation(plugin, caller, request, { logge
     const db = await getStateDb();
     const now = Date.now();
     inTransaction(db, () => {
-      const counts = countsSync(db, plugin.name, caller.userId, now);
-      if (counts.lastHour >= INVITATIONS_PER_INVITER_PER_HOUR) {
-        throw httpError('Too many invitations in the last hour — try again later', 429, {
-          code: 'invitation_rate',
-        });
-      }
-      if (counts.openOfInviter >= policy.maxOpenPerInviter) {
-        throw httpError(
-          `You have ${counts.openOfInviter} open invitations, the most allowed — revoke one or wait for one to be accepted`,
-          409,
-          { code: 'invitation_cap', cap: 'inviter' },
-        );
-      }
-      if (counts.joined + counts.openOfPlugin >= policy.maxJoined) {
-        throw httpError('This plugin takes no more people by invitation', 409, {
-          code: 'invitation_cap',
-          cap: 'plugin',
-        });
-      }
+      assertCapsSync(db, plugin.name, policy, caller.userId, now, { opens: true });
       const nowIso = new Date(now).toISOString();
       db.prepare(
         `INSERT INTO invitations (id, token_sha256, kind, email, display_name, email_domain,
@@ -682,6 +724,78 @@ export async function createDelegatedInvitation(plugin, caller, request, { logge
     // The token in the fragment: no server's log keeps it.
     inviteUrl: `https://auth.${surface.domain}/invite#${token}`,
   };
+}
+
+/**
+ * Give the caller's own pending invitation `id` of `plugin` a new link
+ * (mail-design.md §6.1): under the same rules as making one — the plugin
+ * can be invited into, the address's domain is still allowed, the role is
+ * still the inviter's to give, the grant reserve, the inviter's rate — and,
+ * when it had expired (it opens again), the caps. Its lifetime restarts at
+ * the policy's. 404 `not_found` for another's invitation or none, 409
+ * `invitation_not_pending` for one no longer pending. Returns the
+ * invitation, its token (shown once) and its link.
+ *
+ * @param {object} plugin
+ * @param {{ userId: string }} caller
+ * @param {string} id
+ * @param {{ logger?: import('pino').Logger }} [opts]
+ */
+export async function reissueOwnInvitation(plugin, caller, id, { logger } = {}) {
+  const { policy, surface } = await availablePolicy(plugin, logger);
+  const found = await getInvitation(id);
+  if (
+    !found ||
+    found.kind !== 'delegated' ||
+    found.plugin !== plugin.name ||
+    found.inviterUserId !== caller.userId
+  ) {
+    throw httpError('Invitation not found', 404, { code: 'not_found' });
+  }
+  allowedEmailDomain(policy, found.email);
+  await assertGrantReserve();
+  const made = await reissueInvitationLink(id, {
+    plugin: plugin.name,
+    inviterUserId: caller.userId,
+    owner: (row) => row.kind === 'delegated' && row.inviter_user_id === caller.userId,
+    // The inviter's roles, read inside the lock as on creation: a revocation
+    // of their role and this new link are never interleaved.
+    vet: () => inviterGrantableRoles(plugin, caller.userId),
+    expiry: (row, db, now, grantable) => {
+      if (!grantable.includes(row.role)) {
+        throw httpError('You may not invite people with this role', 403, {
+          code: 'role_not_grantable',
+        });
+      }
+      const expired = !(Date.parse(row.expires_at) > now);
+      assertCapsSync(db, plugin.name, policy, caller.userId, now, { opens: expired });
+      return new Date(now + policy.lifetimeDays * 24 * 60 * 60 * 1000).toISOString();
+    },
+  });
+  await recordAuditBestEffort(
+    {
+      actor: `user:${caller.userId}`,
+      action: 'invitation.reissued',
+      plugin: plugin.name,
+      details: { invitationId: id, kind: 'delegated', expiresAt: made.invitation.expiresAt },
+    },
+    logger,
+  );
+  return { ...made, inviteUrl: `https://auth.${surface.domain}/invite#${made.token}` };
+}
+
+/**
+ * The expiry of a delegated invitation an administrator gives a new link:
+ * the plugin's policy's lifetime from now. The administrator is held to
+ * neither the inviter's rate nor the caps; the acceptance still checks the
+ * inviter's standing (`whyNotAcceptable`).
+ *
+ * @param {string} pluginName
+ */
+export async function delegatedReissueExpiry(pluginName) {
+  const policy = await getInvitationPolicy(pluginName);
+  return (_row, _db, now) =>
+    new Date(now + policy.lifetimeDays * 24 * 60 * 60 * 1000).toISOString();
 }
 
 /**

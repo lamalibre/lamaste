@@ -96,3 +96,35 @@ CREATE INDEX password_resets_user ON password_resets (user_id);
 ALTER TABLE invitations ADD COLUMN mail_status TEXT
   CHECK (mail_status IN ('sent', 'failed', 'not-configured', 'deferred-budget'));
 ALTER TABLE invitations ADD COLUMN mail_sent_at TEXT;
+
+-- A new link replacing an invitation's old one (§6.1): when it last
+-- happened (its lifetime restarts from there) …
+ALTER TABLE invitations ADD COLUMN reissued_at TEXT;
+
+-- … and each reissue by a delegated inviter, which counts toward their
+-- invitations an hour as a new invitation would; swept after 24 h.
+CREATE TABLE invitation_reissues (
+  id               INTEGER PRIMARY KEY,
+  invitation_id    TEXT NOT NULL,
+  inviter_user_id  TEXT,
+  reissued_at      TEXT NOT NULL
+);
+CREATE INDEX invitation_reissues_inviter ON invitation_reissues (inviter_user_id, reissued_at);
+
+-- The TOTP time steps a reset accepted (§6.2), per user: a code is good
+-- once — after a restart too; swept after 10 minutes.
+CREATE TABLE account_totp_steps (
+  user_id      TEXT NOT NULL,
+  step         INTEGER NOT NULL,
+  accepted_at  TEXT NOT NULL,
+  PRIMARY KEY (user_id, step)
+);
+
+-- Wrong current passwords on the change-password page (§6.3), per user:
+-- five in 15 minutes and it answers 429; swept after an hour.
+CREATE TABLE account_password_failures (
+  id         INTEGER PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  failed_at  TEXT NOT NULL
+);
+CREATE INDEX account_password_failures_user ON account_password_failures (user_id, failed_at);

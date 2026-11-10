@@ -41,6 +41,8 @@ import { hasLegacyInvitations, readLegacyInvitations, removeLegacyInvitations } 
 /** The invitations lock's key for the administrator's invitations. */
 const ADMIN_KEY = '';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 const locks = new KeyedPromiseChainMutex();
 
 /**
@@ -154,7 +156,15 @@ function rowToInvitation(row) {
     siteAttemptedAt: row.site_attempted_at,
     totpIssuedAt: row.totp_issued_at,
     accountDisabledAt: row.account_disabled_at,
+    mailStatus: row.mail_status ?? null,
+    mailSentAt: row.mail_sent_at ?? null,
+    reissuedAt: row.reissued_at ?? null,
   };
+}
+
+/** What became of the mail of an invitation's current link, as the views show it. */
+export function invitationMailState(invitation) {
+  return { status: invitation.mailStatus, sentAt: invitation.mailSentAt };
 }
 
 /** Whether a delegated invitation's acceptance has completed every grant. */
@@ -778,8 +788,113 @@ export async function purgeInvitationsOf({
           .run(username, removedAt).changes,
       );
     }
+    db.prepare('DELETE FROM invitation_reissues WHERE inviter_user_id = ?').run(userId);
     return count;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Mail and new links (packages/core/docs/mail-design.md §6.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Record what became of the mail of invitation `id`'s link — only while
+ * that link (`tokenSha256`) is still its link: a reissue in the meantime
+ * made the result of an older mail nobody's concern.
+ *
+ * @param {string} id
+ * @param {string | null} plugin
+ * @param {string} tokenSha256
+ * @param {import('@lamalibre/lamaste').MailSendResult} result
+ */
+export function recordInvitationMail(id, plugin, tokenSha256, result) {
+  return withInvitationsLock(plugin, async () => {
+    const db = await getStateDb();
+    db.prepare(
+      `UPDATE invitations SET mail_status = ?, mail_sent_at = ?
+       WHERE id = ? AND token_sha256 = ?`,
+    ).run(
+      result.status,
+      result.status === 'sent' ? new Date().toISOString() : null,
+      id,
+      tokenSha256,
+    );
+  });
+}
+
+/**
+ * The new expiry of an administrator's invitation given a new link: as
+ * long as its link was good for the last time it was made, in whole days
+ * (1–30).
+ *
+ * @param {{ expires_at: string, created_at: string, reissued_at: string | null }} row
+ * @param {number} now
+ */
+export function adminReissueExpiry(row, now) {
+  const issued = Date.parse(row.reissued_at ?? row.created_at);
+  const days = Math.round((Date.parse(row.expires_at) - issued) / DAY_MS);
+  return new Date(now + Math.min(30, Math.max(1, days)) * DAY_MS).toISOString();
+}
+
+/**
+ * Give pending invitation `id` (of `plugin`; an expired one included) a new
+ * link: a new token replaces the old one's hash — the old link stops
+ * working — its failed attempts start again, its mail is not yet sent, and
+ * it is good until `expiry(row, db, now, vetted)` (which may refuse, inside
+ * the invitations lock and the transaction, by throwing); `vet()`, when
+ * given, runs first inside the lock (what must be read asynchronously, its
+ * answer handed to `expiry` as `vetted`). 404 `not_found` when
+ * there is no such invitation or `owner(row)` refuses it, 409
+ * `invitation_not_pending` when it is no longer pending (accepted, being
+ * accepted, revoked). Returns the invitation and its token, shown once.
+ *
+ * @param {string} id
+ * @template V
+ * @param {{ plugin: string | null, owner?: (row: object) => boolean,
+ *   vet?: () => Promise<V>,
+ *   expiry: (row: object, db: import('node:sqlite').DatabaseSync, now: number, vetted: V | undefined) => string,
+ *   inviterUserId?: string | null }} opts
+ */
+export function reissueInvitationLink(
+  id,
+  { plugin, owner = () => true, vet, expiry, inviterUserId = null },
+) {
+  return withInvitationsLock(plugin, async () => {
+    const vetted = vet ? await vet() : undefined;
+    const db = await getStateDb();
+    const { token, tokenSha256 } = newInvitationToken();
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    inTransaction(db, () => {
+      const row = db.prepare('SELECT * FROM invitations WHERE id = ?').get(id);
+      if (!row || (row.plugin ?? null) !== plugin || !owner(row)) {
+        throw httpError('Invitation not found', 404, { code: 'not_found' });
+      }
+      if (row.status !== 'pending') {
+        throw httpError('Only a pending invitation can be given a new link', 409, {
+          code: 'invitation_not_pending',
+        });
+      }
+      const expiresAt = expiry(row, db, now, vetted);
+      db.prepare(
+        `UPDATE invitations SET token_sha256 = ?, expires_at = ?, reissued_at = ?,
+           failed_attempts = 0, mail_status = NULL, mail_sent_at = NULL
+         WHERE id = ? AND status = 'pending'`,
+      ).run(tokenSha256, expiresAt, nowIso, id);
+      db.prepare(
+        'INSERT INTO invitation_reissues (invitation_id, inviter_user_id, reissued_at) VALUES (?, ?, ?)',
+      ).run(id, inviterUserId, nowIso);
+    });
+    return { invitation: await getInvitation(id), token };
+  });
+}
+
+/** Forget reissues more than a day old — only the last hour's are counted. */
+export async function pruneInvitationReissues(now = Date.now()) {
+  const db = await getStateDb();
+  db.prepare('DELETE FROM invitation_reissues WHERE reissued_at < ?').run(
+    new Date(now - DAY_MS).toISOString(),
+  );
 }
 
 // ---------------------------------------------------------------------------

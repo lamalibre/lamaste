@@ -70,6 +70,7 @@
 
 import crypto from 'node:crypto';
 import { httpError } from './app-error.js';
+import { purgeAccountRecordsOf } from './account-store.js';
 import { recordAuditBestEffort } from './audit.js';
 import {
   autheliaHoldsOidcIdentity,
@@ -1160,6 +1161,8 @@ export async function eraseDirectoryUser(userId, { actor, logger }) {
                version = version + 1, updated_at = ?
          WHERE user_id = ? AND status = 'removed' AND erased_at IS NULL`,
       ).run(now, now, userId);
+      // Their reset links (which name the username) and account records.
+      purgeAccountRecordsOf(db, userId);
       db.prepare(
         'INSERT INTO directory_erasures (user_id, requested_at, requested_by) VALUES (?, ?, ?)',
       ).run(userId, now, actor);

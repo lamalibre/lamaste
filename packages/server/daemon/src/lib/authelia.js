@@ -447,6 +447,19 @@ export function hashPassword(password) {
   return hashAutheliaPassword(password, bcryptHash);
 }
 
+/**
+ * Whether `password` is the one users.yml's `hash` was made from. Only
+ * bcrypt — the hashes Lamaste writes (Authelia must not hash with argon2id
+ * on a small relay); anything else never matches.
+ *
+ * @param {unknown} hash
+ * @param {string} password
+ */
+export async function passwordMatches(hash, password) {
+  if (typeof hash !== 'string' || !/^\$2[aby]\$\d{2}\$/.test(hash)) return false;
+  return bcrypt.compare(password, hash);
+}
+
 export function startAuthelia() {
   return startAutheliaCore(execa);
 }

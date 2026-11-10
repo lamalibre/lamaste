@@ -21,6 +21,7 @@ import managementRoutes from './routes/management.js';
 import pluginRouter from './routes/plugin-router.js';
 import agentForwarderRoutes from './routes/agent-forwarder.js';
 import userSurfaceContext from './routes/user-surface.js';
+import accountRoutes from './routes/account.js';
 import delegatedInvitationsContext from './routes/delegated-invitations.js';
 import inviteRoutes from './routes/invite.js';
 import mailCallbackRoutes from './routes/mail-callback.js';
@@ -186,6 +187,9 @@ async function start() {
     app.register(userAccessPublicRoutes, { prefix: '/api/user-access' });
     // Google's return from the relay's mail consent, on the primary auth host
     app.register(mailCallbackRoutes);
+    // A person's own account on a domain's sign-in host: forgot password,
+    // change password (behind Authelia's forward auth)
+    app.register(accountRoutes, { prefix: '/api/account' });
   });
 
   // --- Protected routes (mTLS + onboarding guard) ---
