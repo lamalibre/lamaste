@@ -146,10 +146,29 @@ async function waitActive(
 }
 
 /**
- * Enable and start the Chisel systemd service.
+ * Whether the Chisel service is in systemd's `failed` state — e.g. it hit a
+ * start rate limit. A failed unit refuses `start` until its failure is reset,
+ * and `try-restart` leaves it alone.
+ */
+export async function isChiselFailed(exec: ExecFn): Promise<boolean> {
+  try {
+    const { stdout } = await exec('systemctl', ['is-failed', CHISEL_SERVICE]);
+    return stdout.trim() === 'failed';
+  } catch {
+    // non-zero when the unit is not failed
+    return false;
+  }
+}
+
+/**
+ * Enable and start the Chisel systemd service. A failed unit's failure is
+ * reset first, so the start is not refused.
  */
 export async function startChisel(exec: ExecFn): Promise<ServiceActiveStatus> {
   try {
+    if (await isChiselFailed(exec)) {
+      await exec('sudo', ['systemctl', 'reset-failed', CHISEL_SERVICE]);
+    }
     await exec('sudo', ['systemctl', 'enable', CHISEL_SERVICE]);
     await exec('sudo', ['systemctl', 'start', CHISEL_SERVICE]);
   } catch (err: unknown) {

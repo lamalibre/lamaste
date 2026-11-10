@@ -143,6 +143,17 @@
     },
     {
       "id": "cleanup-5",
+      "label": "Delete ${CHISEL_LIMIT_DROPIN}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "${CHISEL_LIMIT_DROPIN}"
+      }
+    },
+    {
+      "id": "cleanup-6",
       "label": "DELETE tunnels/${TUNNEL_ID}",
       "target": "host",
       "continueOnError": true,
@@ -153,7 +164,7 @@
       }
     },
     {
-      "id": "cleanup-6",
+      "id": "cleanup-7",
       "label": "DELETE tunnels/${SECOND_ID}",
       "target": "host",
       "continueOnError": true,
@@ -164,7 +175,7 @@
       }
     },
     {
-      "id": "cleanup-7",
+      "id": "cleanup-8",
       "label": "DELETE certs/agent/${OTHER_AGENT}",
       "target": "host",
       "continueOnError": true,
@@ -175,7 +186,7 @@
       }
     },
     {
-      "id": "cleanup-8",
+      "id": "cleanup-9",
       "label": "Cleanup exec on agent",
       "target": "agent",
       "continueOnError": true,
@@ -2202,14 +2213,395 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete the second tunnel — the first keeps serving\"\n# ---------------------------------------------------------------------------\n\nDELETE_SECOND=$(host_api_delete \"tunnels/${SECOND_ID}\" 2>/dev/null || echo '{}')\nassert_json_field \"$DELETE_SECOND\" '.ok' 'true' \"Second tunnel deleted\" || true\nSECOND_ID=\"\"\n\nif unit_drops_remote_within \"$SECOND_REMOTE\" 60; then\n  log_pass \"Agent chisel unit dropped the deleted tunnel's remote\"\nelse\n  log_fail \"Agent chisel unit still asks for the deleted tunnel's remote after 60 seconds\"\nfi\nif port_opens_within \"$TUNNEL_PORT\" \"$PAGE\" 60; then\n  log_pass \"First tunnel serves after the second was deleted\"\nelse\n  log_fail \"First tunnel stayed dark after the second was deleted\"\nfi\nif port_stays_closed \"$SECOND_PORT\" \"$SECOND_PAGE\" 10; then\n  log_pass \"Deleted tunnel's port stays closed\"\nelse\n  log_fail \"Deleted tunnel's port is still bound\"\nfi\n\n# ${OTHER_AGENT} is revoked in cleanup: revoking restarts chisel, which would\n# drop the tunnel again right before the full-path checks below."
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete the second tunnel — the first keeps serving\"\n# ---------------------------------------------------------------------------\n\nDELETE_SECOND=$(host_api_delete \"tunnels/${SECOND_ID}\" 2>/dev/null || echo '{}')\nassert_json_field \"$DELETE_SECOND\" '.ok' 'true' \"Second tunnel deleted\" || true\nSECOND_ID=\"\"\n\nif unit_drops_remote_within \"$SECOND_REMOTE\" 60; then\n  log_pass \"Agent chisel unit dropped the deleted tunnel's remote\"\nelse\n  log_fail \"Agent chisel unit still asks for the deleted tunnel's remote after 60 seconds\"\nfi\nif port_opens_within \"$TUNNEL_PORT\" \"$PAGE\" 60; then\n  log_pass \"First tunnel serves after the second was deleted\"\nelse\n  log_fail \"First tunnel stayed dark after the second was deleted\"\nfi\nif port_stays_closed \"$SECOND_PORT\" \"$SECOND_PAGE\" 10; then\n  log_pass \"Deleted tunnel's port stays closed\"\nelse\n  log_fail \"Deleted tunnel's port is still bound\"\nfi"
+    },
+    {
+      "id": "a-burst-of-revocations-leaves-chisel-running",
+      "label": "A burst of revocations leaves chisel running",
+      "steps": [
+        {
+          "id": "step-123",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl show -p StartLimitIntervalUSec --value chisel 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "LIMIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-124",
+          "label": "The chisel unit has no start rate limit",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LIMIT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The chisel unit has no start rate limit"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "date +%s"
+          },
+          "capture": [
+            {
+              "variable": "BURST_SINCE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-127",
+          "label": "PATCH /api/tunnels/${TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${TUNNEL_ID}",
+            "body": {
+              "enabled": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "FINAL_ENABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-128",
+          "label": "Tunnel enabled after the burst",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FINAL_ENABLE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel enabled after the burst"
+            }
+          }
+        },
+        {
+          "id": "step-129",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "journalctl -u chisel --since @${BURST_SINCE} --no-pager 2>/dev/null | grep -c 'Started chisel.service'"
+          },
+          "capture": [
+            {
+              "variable": "BURST_STARTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-131",
+          "label": "Chisel started ${BURST_STARTS} time(s) for twelve concurrent toggles",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Chisel started ${BURST_STARTS} time(s) for twelve concurrent toggles"
+          }
+        },
+        {
+          "id": "step-132",
+          "label": "Chisel is active after the burst",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_exec \"systemctl is-active chisel\" 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Chisel is active after the burst"
+            }
+          }
+        },
+        {
+          "id": "step-133",
+          "label": "Chisel is not in the failed state",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_exec \"systemctl is-failed chisel\" 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Chisel is not in the failed state"
+            }
+          }
+        },
+        {
+          "id": "step-134",
+          "label": "The tunnel serves again after the burst",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The tunnel serves again after the burst"
+          }
+        },
+        {
+          "id": "step-135",
+          "label": "The tunnel stayed dark after the burst",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The tunnel stayed dark after the burst"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"A burst of revocations leaves chisel running\"\n# ---------------------------------------------------------------------------\n# Each revocation restarts chisel. Under systemd's default start limit\n# (5 starts in 10 s) a burst of them left chisel failed (start-limit-hit) and\n# every tunnel dark until someone reset it by hand (4.13.1).\n\nLIMIT=$(host_exec \"systemctl show -p StartLimitIntervalUSec --value chisel 2>/dev/null\" 2>/dev/null || echo \"\")\nassert_eq \"$LIMIT\" \"0\" \"The chisel unit has no start rate limit\" || true\n\nBURST_SINCE=$(host_exec \"date +%s\")\nhost_exec \"C='curl -sk -o /dev/null --max-time 60 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H Content-Type:application/json'; for i in 1 2 3 4 5 6; do \\$C -d '{\\\"enabled\\\":false}' https://127.0.0.1:9292/api/tunnels/${TUNNEL_ID} & \\$C -d '{\\\"enabled\\\":true}' https://127.0.0.1:9292/api/tunnels/${TUNNEL_ID} & done; wait\" >/dev/null 2>&1 || true\nFINAL_ENABLE=$(host_api_patch \"tunnels/${TUNNEL_ID}\" '{\"enabled\":true}')\nassert_json_field \"$FINAL_ENABLE\" '.ok' 'true' \"Tunnel enabled after the burst\" || true\nsleep 3\nBURST_STARTS=$(host_exec \"journalctl -u chisel --since @${BURST_SINCE} --no-pager 2>/dev/null | grep -c 'Started chisel.service'\" 2>/dev/null || echo \"?\")\nlog_info \"Chisel started ${BURST_STARTS} time(s) for twelve concurrent toggles\"\nassert_eq \"$(host_exec \"systemctl is-active chisel\" 2>/dev/null || true)\" \"active\" \"Chisel is active after the burst\" || true\nassert_eq \"$(host_exec \"systemctl is-failed chisel\" 2>/dev/null || true)\" \"active\" \"Chisel is not in the failed state\" || true\nif port_opens_within \"$TUNNEL_PORT\" \"$PAGE\" 60; then\n  log_pass \"The tunnel serves again after the burst\"\nelse\n  log_fail \"The tunnel stayed dark after the burst\"\nfi"
+    },
+    {
+      "id": "a-failed-chisel-is-recovered-by-the-panel",
+      "label": "A failed chisel is recovered by the panel",
+      "steps": [
+        {
+          "id": "step-136",
+          "label": "GET /api/notifications?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "notifications?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "NOTE_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-138",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl is-failed chisel"
+          },
+          "capture": [
+            {
+              "variable": "FORCED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-139",
+          "label": "Chisel is forced into the failed state",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FORCED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "failed"
+              },
+              "message": "Chisel is forced into the failed state"
+            }
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl show -p Result --value chisel\" 2>/dev/null | grep -q 'start-limit' && log_pass \"The failure is a start-limit hit\" || log_fail \"The forced failure is not a start-limit hit"
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "Set DEADLINE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(SECONDS + 75)"
+          },
+          "capture": [
+            {
+              "variable": "DEADLINE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-147",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-149",
+          "label": "The panel recovered chisel from the failed state within 75 seconds",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RECOVERED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "The panel recovered chisel from the failed state within 75 seconds"
+            }
+          }
+        },
+        {
+          "id": "step-150",
+          "label": "GET /api/notifications",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "notifications"
+          },
+          "capture": [
+            {
+              "variable": "NOTE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-151",
+          "label": "Administrators are notified of the recovery",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOTE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Administrators are notified of the recovery"
+            }
+          }
+        },
+        {
+          "id": "step-152",
+          "label": "The tunnel serves again after the recovery",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The tunnel serves again after the recovery"
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "The tunnel stayed dark after the recovery",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The tunnel stayed dark after the recovery"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"A failed chisel is recovered by the panel\"\n# ---------------------------------------------------------------------------\n# Force what older relays hit: a start limit of one start, then two restarts.\n# The panel's watch (every 30 s) must reset the failure and start chisel.\n\nNOTE_BASE=$(host_api_get \"notifications?limit=1\" | jq \".notifications[0].id // 0\" 2>/dev/null || echo \"0\")\nhost_exec \"mkdir -p $(dirname ${CHISEL_LIMIT_DROPIN}) && printf '[Unit]\\nStartLimitIntervalSec=300\\nStartLimitBurst=1\\n' > ${CHISEL_LIMIT_DROPIN} && systemctl daemon-reload && systemctl restart chisel; systemctl restart chisel; true\" >/dev/null 2>&1 || true\nFORCED=$(host_exec \"systemctl is-failed chisel\" 2>/dev/null || true)\nassert_eq \"$FORCED\" \"failed\" \"Chisel is forced into the failed state\" || true\nhost_exec \"systemctl show -p Result --value chisel\" 2>/dev/null | grep -q 'start-limit' \\\n  && log_pass \"The failure is a start-limit hit\" || log_fail \"The forced failure is not a start-limit hit\"\n# Drop the forced limit; the unit stays failed until something resets it.\nhost_exec \"rm -f ${CHISEL_LIMIT_DROPIN} && systemctl daemon-reload\" >/dev/null 2>&1 || true\n\nRECOVERED=no\nDEADLINE=$((SECONDS + 75))\nwhile [ \"$SECONDS\" -lt \"$DEADLINE\" ]; do\n  if [ \"$(host_exec \"systemctl is-active chisel\" 2>/dev/null || true)\" = \"active\" ]; then\n    RECOVERED=yes\n    break\n  fi\n  sleep 3\ndone\nassert_eq \"$RECOVERED\" \"yes\" \"The panel recovered chisel from the failed state within 75 seconds\" || true\nNOTE=$(host_api_get \"notifications\" | jq -c \"[.notifications[]? | select(.id > ${NOTE_BASE}) | select(.message | contains(\\\"Chisel had stopped in the failed state\\\"))] | length\" 2>/dev/null || echo 0)\nassert_eq \"$NOTE\" \"1\" \"Administrators are notified of the recovery\" || true\nif port_opens_within \"$TUNNEL_PORT\" \"$PAGE\" 60; then\n  log_pass \"The tunnel serves again after the recovery\"\nelse\n  log_fail \"The tunnel stayed dark after the recovery\"\nfi\n\n# ${OTHER_AGENT} is revoked in cleanup: revoking restarts chisel, which would\n# drop the tunnel again right before the full-path checks below."
     },
     {
       "id": "reset-totp-before-authentication",
       "label": "Reset TOTP before authentication",
       "steps": [
         {
-          "id": "step-123",
+          "id": "step-154",
           "label": "Generate TOTP on host",
           "target": "host",
           "op": {
@@ -2230,7 +2622,7 @@
           ]
         },
         {
-          "id": "step-124",
+          "id": "step-155",
           "label": "POST /api/users/${TEST_USER}/reset-totp",
           "target": "host",
           "op": {
@@ -2249,7 +2641,7 @@
           ]
         },
         {
-          "id": "step-125",
+          "id": "step-156",
           "label": "TOTP reset returned otpauth URI",
           "target": "local",
           "continueOnError": true,
@@ -2267,7 +2659,7 @@
           }
         },
         {
-          "id": "step-126",
+          "id": "step-157",
           "label": "Extract OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -2284,7 +2676,7 @@
           }
         },
         {
-          "id": "step-127",
+          "id": "step-158",
           "label": "Extract TOTP_SECRET",
           "target": "local",
           "op": {
@@ -2301,7 +2693,7 @@
           }
         },
         {
-          "id": "step-128",
+          "id": "step-159",
           "label": "Failed to extract TOTP secret from otpauth URI: $OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -2318,7 +2710,7 @@
           }
         },
         {
-          "id": "step-129",
+          "id": "step-160",
           "label": "Extracted TOTP secret from otpauth URI",
           "target": "local",
           "op": {
@@ -2340,7 +2732,7 @@
       "label": "Authenticate with Authelia (first factor)",
       "steps": [
         {
-          "id": "step-131",
+          "id": "step-162",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -2366,7 +2758,7 @@
           ]
         },
         {
-          "id": "step-132",
+          "id": "step-163",
           "label": "Extract AUTH_STATUS",
           "target": "local",
           "op": {
@@ -2383,7 +2775,7 @@
           }
         },
         {
-          "id": "step-133",
+          "id": "step-164",
           "label": "Authelia first factor authentication succeeded",
           "target": "local",
           "op": {
@@ -2398,7 +2790,7 @@
           }
         },
         {
-          "id": "step-134",
+          "id": "step-165",
           "label": "Authelia first factor authentication failed (status: $AUTH_STATUS, response: $AUTH_RESPONSE)",
           "target": "local",
           "op": {
@@ -2420,7 +2812,7 @@
       "label": "Second factor authentication (TOTP)",
       "steps": [
         {
-          "id": "step-135",
+          "id": "step-166",
           "label": "Generate TOTP on host",
           "target": "host",
           "op": {
@@ -2441,7 +2833,7 @@
           ]
         },
         {
-          "id": "step-136",
+          "id": "step-167",
           "label": "oathtool failed to generate a valid 6-digit TOTP code (got: '${TOTP_CODE}')",
           "target": "local",
           "op": {
@@ -2458,7 +2850,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-168",
           "label": "Generated TOTP code: ${TOTP_CODE}",
           "target": "local",
           "op": {
@@ -2468,7 +2860,7 @@
           }
         },
         {
-          "id": "step-138",
+          "id": "step-169",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -2495,7 +2887,7 @@
           ]
         },
         {
-          "id": "step-139",
+          "id": "step-170",
           "label": "Extract TOTP_AUTH_STATUS",
           "target": "local",
           "op": {
@@ -2512,7 +2904,7 @@
           }
         },
         {
-          "id": "step-140",
+          "id": "step-171",
           "label": "Second factor authentication succeeded (TOTP accepted)",
           "target": "local",
           "op": {
@@ -2527,7 +2919,7 @@
           }
         },
         {
-          "id": "step-141",
+          "id": "step-172",
           "label": "Second factor authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)",
           "target": "local",
           "op": {
@@ -2549,7 +2941,7 @@
       "label": "Verify traffic through nginx with full 2FA (re-enabled tunnel)",
       "steps": [
         {
-          "id": "step-142",
+          "id": "step-173",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -2572,7 +2964,7 @@
           ]
         },
         {
-          "id": "step-143",
+          "id": "step-174",
           "label": "Full-path tunnel traffic (nginx + Authelia 2FA) returns expected content",
           "target": "local",
           "continueOnError": true,
@@ -2598,7 +2990,7 @@
   ],
   "apiHelpers": ["host_api_get", "host_api_post", "host_api_patch", "host_api_delete"],
   "headerRaw": "# ============================================================================\n# 03 — Tunnel Toggle Traffic (Three-VM)\n# ============================================================================\n# Tests that tunnel changes on the panel reach the agent through its sync\n# timer alone — no `lamaste-agent update` anywhere — and that disabling,\n# reassigning or deleting one tunnel never takes the agent's other tunnels\n# down with it:\n#\n# 1. Create two tunnels owned by test-agent (the agent VM's chisel client)\n#    and start an HTTP server for each. Each serves within 60 seconds with no\n#    manual update: the 30-second sync timer picks up the new tunnel. Adding a\n#    grant hot-reloads the chisel server's authfile (no chisel restart).\n# 2. Disable the first tunnel: nginx vhost removed, chisel grant removed, and\n#    the chisel server restarts (a revocation). The agent's client, which\n#    still asked for the disabled port, would have its whole session refused;\n#    the sync timer drops that remote so the second tunnel serves again\n#    within 60 seconds while the disabled port stays closed.\n# 3. Re-enable it: it serves again within 60 seconds, no update.\n# 4. Reassign it to a second agent (no chisel client): the grant moves, the\n#    port stays closed, and test-agent keeps serving its other tunnel.\n# 5. Hand it back: it serves again within 60 seconds, no update.\n# 6. Delete the second tunnel: its port closes and the first keeps serving.\n# 7. Authenticate through Authelia (1FA + TOTP) and fetch the first tunnel\n#    through nginx.\n# 8. Clean up\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# chisel_grants <label> — the reverse remotes the host's chisel authfile grants\n# the chisel user agent-<label>, one per line. Only the user half of each\n# \"<user>:<password>\" key is matched and only the grants are printed, so no\n# chisel password reaches the test output.\nchisel_grants() {\n  host_exec \"cat /etc/lamalibre/lamaste/chisel-users\" 2>/dev/null \\\n    | jq -r --arg u \"agent-$1:\" 'to_entries[] | select(.key | startswith($u)) | .value[]' 2>/dev/null \\\n    || true\n}\n\n# direct_status <port> <file> — HTTP status of a marker page through the\n# host's chisel listener for a tunnel port (bypassing nginx); \"200\" only while\n# the agent's chisel client holds that reverse remote\ndirect_status() {\n  host_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:$1/$2 2>/dev/null\" || echo \"000\"\n}\n\n# port_opens_within <port> <file> <seconds> — succeed once the port serves the\n# marker page, polling every 2 seconds. The agent's sync timer runs 5 seconds\n# after activation and then 30 seconds after each run, and the client then\n# reconnects, so 60 seconds covers a full cycle with margin.\nport_opens_within() {\n  local deadline=$((SECONDS + $3))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(direct_status \"$1\" \"$2\")\" = \"200\" ]; then\n      return 0\n    fi\n    sleep 2\n  done\n  return 1\n}\n\n# port_stays_closed <port> <file> <seconds> — succeed if the port never serves\n# the marker page during the window (probing every 2 seconds)\nport_stays_closed() {\n  local deadline=$((SECONDS + $3))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(direct_status \"$1\" \"$2\")\" = \"200\" ]; then\n      return 1\n    fi\n    sleep 2\n  done\n  return 0\n}\n\n# chisel_server_pid — MainPID of the host's chisel server\nchisel_server_pid() {\n  host_exec \"systemctl show -p MainPID --value chisel 2>/dev/null\" 2>/dev/null || echo \"0\"\n}\n\n# chisel_pid_changes_from <pid> <seconds> — succeed once the chisel server's\n# MainPID differs from <pid> (it was restarted)\nchisel_pid_changes_from() {\n  local deadline=$((SECONDS + $2)) now\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    now=$(chisel_server_pid)\n    if [ -n \"$now\" ] && [ \"$now\" != \"0\" ] && [ \"$now\" != \"$1\" ]; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# agent_unit_execstart — the ExecStart= line of the agent's chisel unit\nagent_unit_execstart() {\n  agent_exec \"grep '^ExecStart=' '${CHISEL_UNIT_PATH}' 2>/dev/null\" 2>/dev/null || echo \"\"\n}\n\n# unit_drops_remote_within <remote> <seconds> — succeed once the agent's chisel\n# unit no longer asks for <remote>\nunit_drops_remote_within() {\n  local deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if ! agent_unit_execstart | grep -qF \"$1\"; then\n      return 0\n    fi\n    sleep 2\n  done\n  return 1\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2etoggle\"\nTUNNEL_PORT=18081\nSECOND_SUBDOMAIN=\"e2etoggle2\"\nSECOND_PORT=18082\n# The agent enrolled by setup-host.sh. Its VM runs the Chisel client, so it\n# must own the tunnels for traffic to flow.\nTUNNEL_AGENT=\"test-agent\"\n# The agent VM's local label (setup-agent.sh) names its units and data dir\nAGENT_LOCAL_LABEL=\"e2e-agent\"\nCHISEL_UNIT_PATH=\"/root/.config/systemd/user/lamalibre-lamaste-chisel-${AGENT_LOCAL_LABEL}.service\"\n# A second enrolled agent with no chisel client, to reassign the tunnel to\nOTHER_AGENT=\"e2e-other-$(date +%s)\"\n# The anchored reverse remote the host's chisel authfile grants the owner\nGRANT_PATTERN=\"^R:127\\\\.0\\\\.0\\\\.1:${TUNNEL_PORT}\\$\"\nSECOND_GRANT_PATTERN=\"^R:127\\\\.0\\\\.0\\\\.1:${SECOND_PORT}\\$\"\n# The remotes as the agent's chisel unit asks for them\nTUNNEL_REMOTE=\"R:127.0.0.1:${TUNNEL_PORT}:127.0.0.1:${TUNNEL_PORT}\"\nSECOND_REMOTE=\"R:127.0.0.1:${SECOND_PORT}:127.0.0.1:${SECOND_PORT}\"\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nSECOND_ID=\"\"\nMARKER=\"LAMASTE_TOGGLE_OK_$(date +%s)\"\nSECOND_MARKER=\"LAMASTE_TOGGLE_SECOND_OK_$(date +%s)\"\nPAGE=\"e2e-toggle-index.html\"\nSECOND_PAGE=\"e2e-toggle2-index.html\"\n\nbegin_test \"03 — Tunnel Toggle Traffic (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"pkill -f 'python3 -m http.server ${SECOND_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"rm -f /tmp/${PAGE} /tmp/${SECOND_PAGE} 2>/dev/null || true\" 2>/dev/null || true\n  host_exec \"rm -f /tmp/authelia-cookies-toggle.txt 2>/dev/null || true\" 2>/dev/null || true\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  if [ -n \"$SECOND_ID\" ] && [ \"$SECOND_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${SECOND_ID}\" 2>/dev/null || true\n  fi\n  host_api_delete \"certs/agent/${OTHER_AGENT}\" > /dev/null 2>&1 || true\n  # Converge now rather than on the next timer tick, so the next test starts\n  # from an idle agent\n  agent_exec \"lamaste-agent sync --label ${AGENT_LOCAL_LABEL} 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# chisel_grants <label> — the reverse remotes the host's chisel authfile grants\n# the chisel user agent-<label>, one per line. Only the user half of each\n# \"<user>:<password>\" key is matched and only the grants are printed, so no\n# chisel password reaches the test output.\nchisel_grants() {\n  host_exec \"cat /etc/lamalibre/lamaste/chisel-users\" 2>/dev/null \\\n    | jq -r --arg u \"agent-$1:\" 'to_entries[] | select(.key | startswith($u)) | .value[]' 2>/dev/null \\\n    || true\n}\n\n# direct_status <port> <file> — HTTP status of a marker page through the\n# host's chisel listener for a tunnel port (bypassing nginx); \"200\" only while\n# the agent's chisel client holds that reverse remote\ndirect_status() {\n  host_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:$1/$2 2>/dev/null\" || echo \"000\"\n}\n\n# port_opens_within <port> <file> <seconds> — succeed once the port serves the\n# marker page, polling every 2 seconds. The agent's sync timer runs 5 seconds\n# after activation and then 30 seconds after each run, and the client then\n# reconnects, so 60 seconds covers a full cycle with margin.\nport_opens_within() {\n  local deadline=$((SECONDS + $3))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(direct_status \"$1\" \"$2\")\" = \"200\" ]; then\n      return 0\n    fi\n    sleep 2\n  done\n  return 1\n}\n\n# port_stays_closed <port> <file> <seconds> — succeed if the port never serves\n# the marker page during the window (probing every 2 seconds)\nport_stays_closed() {\n  local deadline=$((SECONDS + $3))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(direct_status \"$1\" \"$2\")\" = \"200\" ]; then\n      return 1\n    fi\n    sleep 2\n  done\n  return 0\n}\n\n# chisel_server_pid — MainPID of the host's chisel server\nchisel_server_pid() {\n  host_exec \"systemctl show -p MainPID --value chisel 2>/dev/null\" 2>/dev/null || echo \"0\"\n}\n\n# chisel_pid_changes_from <pid> <seconds> — succeed once the chisel server's\n# MainPID differs from <pid> (it was restarted)\nchisel_pid_changes_from() {\n  local deadline=$((SECONDS + $2)) now\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    now=$(chisel_server_pid)\n    if [ -n \"$now\" ] && [ \"$now\" != \"0\" ] && [ \"$now\" != \"$1\" ]; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# agent_unit_execstart — the ExecStart= line of the agent's chisel unit\nagent_unit_execstart() {\n  agent_exec \"grep '^ExecStart=' '${CHISEL_UNIT_PATH}' 2>/dev/null\" 2>/dev/null || echo \"\"\n}\n\n# unit_drops_remote_within <remote> <seconds> — succeed once the agent's chisel\n# unit no longer asks for <remote>\nunit_drops_remote_within() {\n  local deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if ! agent_unit_execstart | grep -qF \"$1\"; then\n      return 0\n    fi\n    sleep 2\n  done\n  return 1\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2etoggle\"\nTUNNEL_PORT=18081\nSECOND_SUBDOMAIN=\"e2etoggle2\"\nSECOND_PORT=18082\n# The agent enrolled by setup-host.sh. Its VM runs the Chisel client, so it\n# must own the tunnels for traffic to flow.\nTUNNEL_AGENT=\"test-agent\"\n# The agent VM's local label (setup-agent.sh) names its units and data dir\nAGENT_LOCAL_LABEL=\"e2e-agent\"\nCHISEL_UNIT_PATH=\"/root/.config/systemd/user/lamalibre-lamaste-chisel-${AGENT_LOCAL_LABEL}.service\"\n# A second enrolled agent with no chisel client, to reassign the tunnel to\nOTHER_AGENT=\"e2e-other-$(date +%s)\"\n# The anchored reverse remote the host's chisel authfile grants the owner\nGRANT_PATTERN=\"^R:127\\\\.0\\\\.0\\\\.1:${TUNNEL_PORT}\\$\"\nSECOND_GRANT_PATTERN=\"^R:127\\\\.0\\\\.0\\\\.1:${SECOND_PORT}\\$\"\n# The remotes as the agent's chisel unit asks for them\nTUNNEL_REMOTE=\"R:127.0.0.1:${TUNNEL_PORT}:127.0.0.1:${TUNNEL_PORT}\"\nSECOND_REMOTE=\"R:127.0.0.1:${SECOND_PORT}:127.0.0.1:${SECOND_PORT}\"\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nSECOND_ID=\"\"\nMARKER=\"LAMASTE_TOGGLE_OK_$(date +%s)\"\nSECOND_MARKER=\"LAMASTE_TOGGLE_SECOND_OK_$(date +%s)\"\nPAGE=\"e2e-toggle-index.html\"\nSECOND_PAGE=\"e2e-toggle2-index.html\"\n\nbegin_test \"03 — Tunnel Toggle Traffic (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function\n# ---------------------------------------------------------------------------\n\nCHISEL_LIMIT_DROPIN=/run/systemd/system/chisel.service.d/zz-e2e-start-limit.conf\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"pkill -f 'python3 -m http.server ${SECOND_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"rm -f /tmp/${PAGE} /tmp/${SECOND_PAGE} 2>/dev/null || true\" 2>/dev/null || true\n  host_exec \"rm -f /tmp/authelia-cookies-toggle.txt 2>/dev/null || true\" 2>/dev/null || true\n  # The forced start limit of the recovery check, if the spec stopped inside it\n  host_exec \"rm -f ${CHISEL_LIMIT_DROPIN} && systemctl daemon-reload && { systemctl is-failed -q chisel && systemctl reset-failed chisel && systemctl start chisel; true; }\" 2>/dev/null || true\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  if [ -n \"$SECOND_ID\" ] && [ \"$SECOND_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${SECOND_ID}\" 2>/dev/null || true\n  fi\n  host_api_delete \"certs/agent/${OTHER_AGENT}\" > /dev/null 2>&1 || true\n  # Converge now rather than on the next timer tick, so the next test starts\n  # from an idle agent\n  agent_exec \"lamaste-agent sync --label ${AGENT_LOCAL_LABEL} 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

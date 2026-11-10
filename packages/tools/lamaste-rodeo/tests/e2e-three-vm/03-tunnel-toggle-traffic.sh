@@ -174,6 +174,8 @@ begin_test "03 — Tunnel Toggle Traffic (Three-VM)"
 # Cleanup function
 # ---------------------------------------------------------------------------
 
+CHISEL_LIMIT_DROPIN=/run/systemd/system/chisel.service.d/zz-e2e-start-limit.conf
+
 cleanup() {
   log_info "Cleaning up test resources..."
   agent_exec "pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true" 2>/dev/null || true
@@ -181,6 +183,8 @@ cleanup() {
   agent_exec "sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true" 2>/dev/null || true
   agent_exec "rm -f /tmp/${PAGE} /tmp/${SECOND_PAGE} 2>/dev/null || true" 2>/dev/null || true
   host_exec "rm -f /tmp/authelia-cookies-toggle.txt 2>/dev/null || true" 2>/dev/null || true
+  # The forced start limit of the recovery check, if the spec stopped inside it
+  host_exec "rm -f ${CHISEL_LIMIT_DROPIN} && systemctl daemon-reload && { systemctl is-failed -q chisel && systemctl reset-failed chisel && systemctl start chisel; true; }" 2>/dev/null || true
   if [ -n "$TUNNEL_ID" ] && [ "$TUNNEL_ID" != "null" ]; then
     host_api_delete "tunnels/${TUNNEL_ID}" 2>/dev/null || true
   fi
@@ -488,6 +492,64 @@ if port_stays_closed "$SECOND_PORT" "$SECOND_PAGE" 10; then
   log_pass "Deleted tunnel's port stays closed"
 else
   log_fail "Deleted tunnel's port is still bound"
+fi
+
+# ---------------------------------------------------------------------------
+log_section "A burst of revocations leaves chisel running"
+# ---------------------------------------------------------------------------
+# Each revocation restarts chisel. Under systemd's default start limit
+# (5 starts in 10 s) a burst of them left chisel failed (start-limit-hit) and
+# every tunnel dark until someone reset it by hand (4.13.1).
+
+LIMIT=$(host_exec "systemctl show -p StartLimitIntervalUSec --value chisel 2>/dev/null" 2>/dev/null || echo "")
+assert_eq "$LIMIT" "0" "The chisel unit has no start rate limit" || true
+
+BURST_SINCE=$(host_exec "date +%s")
+host_exec "C='curl -sk -o /dev/null --max-time 60 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H Content-Type:application/json'; for i in 1 2 3 4 5 6; do \$C -d '{\"enabled\":false}' https://127.0.0.1:9292/api/tunnels/${TUNNEL_ID} & \$C -d '{\"enabled\":true}' https://127.0.0.1:9292/api/tunnels/${TUNNEL_ID} & done; wait" >/dev/null 2>&1 || true
+FINAL_ENABLE=$(host_api_patch "tunnels/${TUNNEL_ID}" '{"enabled":true}')
+assert_json_field "$FINAL_ENABLE" '.ok' 'true' "Tunnel enabled after the burst" || true
+sleep 3
+BURST_STARTS=$(host_exec "journalctl -u chisel --since @${BURST_SINCE} --no-pager 2>/dev/null | grep -c 'Started chisel.service'" 2>/dev/null || echo "?")
+log_info "Chisel started ${BURST_STARTS} time(s) for twelve concurrent toggles"
+assert_eq "$(host_exec "systemctl is-active chisel" 2>/dev/null || true)" "active" "Chisel is active after the burst" || true
+assert_eq "$(host_exec "systemctl is-failed chisel" 2>/dev/null || true)" "active" "Chisel is not in the failed state" || true
+if port_opens_within "$TUNNEL_PORT" "$PAGE" 60; then
+  log_pass "The tunnel serves again after the burst"
+else
+  log_fail "The tunnel stayed dark after the burst"
+fi
+
+# ---------------------------------------------------------------------------
+log_section "A failed chisel is recovered by the panel"
+# ---------------------------------------------------------------------------
+# Force what older relays hit: a start limit of one start, then two restarts.
+# The panel's watch (every 30 s) must reset the failure and start chisel.
+
+NOTE_BASE=$(host_api_get "notifications?limit=1" | jq ".notifications[0].id // 0" 2>/dev/null || echo "0")
+host_exec "mkdir -p $(dirname ${CHISEL_LIMIT_DROPIN}) && printf '[Unit]\nStartLimitIntervalSec=300\nStartLimitBurst=1\n' > ${CHISEL_LIMIT_DROPIN} && systemctl daemon-reload && systemctl restart chisel; systemctl restart chisel; true" >/dev/null 2>&1 || true
+FORCED=$(host_exec "systemctl is-failed chisel" 2>/dev/null || true)
+assert_eq "$FORCED" "failed" "Chisel is forced into the failed state" || true
+host_exec "systemctl show -p Result --value chisel" 2>/dev/null | grep -q 'start-limit' \
+  && log_pass "The failure is a start-limit hit" || log_fail "The forced failure is not a start-limit hit"
+# Drop the forced limit; the unit stays failed until something resets it.
+host_exec "rm -f ${CHISEL_LIMIT_DROPIN} && systemctl daemon-reload" >/dev/null 2>&1 || true
+
+RECOVERED=no
+DEADLINE=$((SECONDS + 75))
+while [ "$SECONDS" -lt "$DEADLINE" ]; do
+  if [ "$(host_exec "systemctl is-active chisel" 2>/dev/null || true)" = "active" ]; then
+    RECOVERED=yes
+    break
+  fi
+  sleep 3
+done
+assert_eq "$RECOVERED" "yes" "The panel recovered chisel from the failed state within 75 seconds" || true
+NOTE=$(host_api_get "notifications" | jq -c "[.notifications[]? | select(.id > ${NOTE_BASE}) | select(.message | contains(\"Chisel had stopped in the failed state\"))] | length" 2>/dev/null || echo 0)
+assert_eq "$NOTE" "1" "Administrators are notified of the recovery" || true
+if port_opens_within "$TUNNEL_PORT" "$PAGE" 60; then
+  log_pass "The tunnel serves again after the recovery"
+else
+  log_fail "The tunnel stayed dark after the recovery"
 fi
 
 # ${OTHER_AGENT} is revoked in cleanup: revoking restarts chisel, which would

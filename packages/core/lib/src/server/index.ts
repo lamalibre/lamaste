@@ -344,6 +344,7 @@ export {
   reloadChisel,
   stopChisel,
   isChiselRunning,
+  isChiselFailed,
   getChiselStatus,
 } from './chisel.js';
 export type {
