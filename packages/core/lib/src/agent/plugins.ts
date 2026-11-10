@@ -25,6 +25,7 @@ import { KeyedPromiseChainMutex, atomicWriteJSON } from '../file-helpers.js';
 import { invalidatePluginHostCache } from '../plugin-host.js';
 import { withInstallNpmrc } from '../npm-userconfig.js';
 import {
+  BUILTIN_TRUSTED_SCOPE,
   SCOPED_PACKAGE_NAME_RE,
   assertManifestPackagesTrusted,
   assertTrustedPackage,
@@ -99,6 +100,36 @@ export interface PluginLifecycleConfig {
    * Default: `@lamalibre` alone.
    */
   trustedScopes?: (() => Promise<readonly string[]>) | undefined;
+  /**
+   * A package of a scope other than `@lamalibre` installs only through an
+   * isolated userconfig routing that scope to the relay's registry (the
+   * brokered credential) — never through the machine's own npm
+   * configuration, which may resolve the scope from a public registry where
+   * anyone could own it. Set for agents (their relay's registry hosts their
+   * trusted scopes); the local host has no relay, and its user's npm
+   * configuration is the user's own choice.
+   */
+  additionalScopesNeedRegistry?: boolean | undefined;
+}
+
+/**
+ * Refuse an install or update of a package from an additional scope that
+ * would not go to the relay's registry (see `additionalScopesNeedRegistry`).
+ */
+function assertRoutedToRegistry(
+  cfg: PluginLifecycleConfig,
+  packageName: string,
+  npmrc: InstallNpmrc | undefined,
+): void {
+  if (!cfg.additionalScopesNeedRegistry) return;
+  const scope = packageScope(packageName);
+  if (scope === null || scope === BUILTIN_TRUSTED_SCOPE) return;
+  const routed = npmrc ? (npmrc.scopes ?? [npmrc.scope ?? BUILTIN_TRUSTED_SCOPE]) : [];
+  if (!routed.includes(scope)) {
+    throw new Error(
+      `${packageName} installs only from the relay's registry, which hosts ${scope} — the panel brokered no registry credential for it`,
+    );
+  }
 }
 
 /** The trusted scopes of `cfg`, read now. */
@@ -325,6 +356,7 @@ export function installPlugin(
   return withLock(cfg.registryPath, async () => {
     const trusted = await trustedScopesOf(cfg);
     validatePackageName(packageName, trusted);
+    assertRoutedToRegistry(cfg, packageName, options.npmrc);
 
     const registry = await readPluginRegistry(cfg.registryPath);
     if (registry.plugins.find((p) => p.packageName === packageName)) {
@@ -563,6 +595,7 @@ export function updatePlugin(
 
     const trusted = await trustedScopesOf(cfg);
     validatePackageName(plugin.packageName, trusted);
+    assertRoutedToRegistry(cfg, plugin.packageName, options.npmrc);
 
     const { execa } = await import('execa');
     await withInstallNpmrc(cfg.dataDir, options.npmrc, (env) =>
@@ -696,6 +729,7 @@ export function agentPluginConfig(label: string): PluginLifecycleConfig {
     requiredMode: 'agent',
     maxPlugins: MAX_PLUGINS_PER_REGISTRY,
     trustedScopes: () => agentTrustedScopes(label),
+    additionalScopesNeedRegistry: true,
   };
 }
 

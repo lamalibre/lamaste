@@ -115,8 +115,8 @@ pub(crate) fn validate_plugin_name(name: &str) -> Result<(), String> {
 /// Make a plain HTTP request to the local plugin host daemon on localhost.
 ///
 /// The host listens on 127.0.0.1:9293 without auth — localhost trust boundary.
-/// Plugins are always `@lamalibre/`-scoped and run in the same OS-user context
-/// as the desktop app; no cross-user isolation concern.
+/// Plugins come from a trusted publisher scope (the local list) and run in the
+/// same OS-user context as the desktop app; no cross-user isolation concern.
 fn curl_local_host(
     method: &str,
     path: &str,
@@ -246,18 +246,22 @@ pub async fn local_get_available_plugins() -> Result<Vec<CuratedPlugin>, String>
 
 #[tauri::command]
 pub async fn local_install_plugin(package_name: String) -> Result<serde_json::Value, String> {
-    // Basic scope validation before sending to daemon
-    if !package_name.starts_with("@lamalibre/") {
-        return Err("Only @lamalibre/ scoped packages are allowed".into());
+    // Pre-check before sending to the local plugin host, which decides: a
+    // bare scoped name (no version, no alias) from a scope the local list
+    // trusts (`lamaste-agent trusted-scopes --local`).
+    if package_name.contains('@') && package_name.rfind('@') != Some(0) {
+        return Err("Name the package without a version".into());
     }
-
-    let pkg_suffix = &package_name["@lamalibre/".len()..];
-    if pkg_suffix.is_empty()
-        || !pkg_suffix.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-')
-        || !pkg_suffix.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
-        || !pkg_suffix.ends_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
-    {
+    let trusted = crate::trusted_scopes::local_trusted_scopes();
+    if crate::trusted_scopes::package_scope(&package_name).is_none() {
         return Err("Invalid package name".into());
+    }
+    if !crate::trusted_scopes::is_trusted_package(&package_name, &trusted) {
+        return Err(format!(
+            "{} is not from a trusted publisher scope (trusted here: {})",
+            package_name,
+            trusted.join(", ")
+        ));
     }
 
     tokio::task::spawn_blocking(move || {

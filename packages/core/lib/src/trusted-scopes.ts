@@ -174,12 +174,9 @@ export function assertManifestPackagesTrusted(
     assertTrustedPackage(ref, trusted);
     const scope = packageScope(ref);
     if (scope !== ownScope) {
-      throw Object.assign(
-        new UntrustedScopeError(ref, scope, trusted),
-        {
-          message: `The manifest of ${packageName} names ${ref}, which is not in ${ownScope ?? 'its scope'}: a plugin names only packages of its own scope`,
-        },
-      );
+      throw Object.assign(new UntrustedScopeError(ref, scope, trusted), {
+        message: `The manifest of ${packageName} names ${ref}, which is not in ${ownScope ?? 'its scope'}: a plugin names only packages of its own scope`,
+      });
     }
   }
 }

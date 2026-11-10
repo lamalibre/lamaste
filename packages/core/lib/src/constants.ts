@@ -162,7 +162,9 @@ export function pluginCapabilityRegexFor(route: string): RegExp {
  * from `@lamalibre/lamaste/server` for backwards-compatible imports.
  */
 export function derivePluginRoute(pluginNameOrPackage: string): string {
-  return pluginNameOrPackage.replace(/^@[a-z0-9][a-z0-9-]{0,49}\//, '').replace(/-(server|agent)$/, '');
+  return pluginNameOrPackage
+    .replace(/^@[a-z0-9][a-z0-9-]{0,49}\//, '')
+    .replace(/-(server|agent)$/, '');
 }
 
 /**

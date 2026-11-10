@@ -84,64 +84,64 @@ that it is a well-formed scoped name (the place is not a trust decision, see the
 
 ### Lamaste — core library (`packages/core/lib/src`)
 
-| Place | Today | Becomes |
-| --- | --- | --- |
-| `schemas.ts` `ManifestSchema.packages.server/agent` | regex `^@lamalibre\/` | syntax (`ScopedPackageNameSchema`); trust checked where a manifest is accepted (`assertManifestPackagesTrusted`) |
-| `schemas.ts` `LamaPackageNameSchema` | `startsWith('@lamalibre/')` | kept as is (exported API; `@lamalibre` only), marked deprecated; new `ScopedPackageNameSchema` beside it |
-| `agent-half.ts` `AgentHalfPackageNameSchema` | `^@lamalibre\/[a-z0-9][a-z0-9-]*$` | syntax `^@<scope>\/[a-z0-9][a-z0-9-]*$`; trust at the relay (pin, approval) |
-| `constants.ts` `derivePluginRoute` | strips `^@lamalibre\/` | strips any well-formed scope |
-| `plugin-host.ts:188` mount, `:274` bundle | `startsWith('@lamalibre/')` | trust, against the host's list (`trustedScopes` option, default `["@lamalibre"]`) |
-| `server/plugins.ts` `installPlugin` | `startsWith` → `INVALID_SCOPE` | trust (`trustedScopes` option) → `PluginError(…, 'UNTRUSTED_SCOPE')` |
-| `agent/plugins.ts` `validatePackageName` (install) | `startsWith` | trust (`PluginLifecycleConfig.trustedScopes`) |
-| `agent/plugins.ts` uninstall `:438`, update `:513`, update check `:563` | "registry corruption" `startsWith` | uninstall: syntax (removal must work after a scope is no longer trusted); update and update check: trust |
-| `agent/plugins.ts` `readPluginBundle` `:603` | `startsWith` | trust |
-| `npm-userconfig.ts` `renderInstallNpmrc` | one `scope` line (default `@lamalibre`) | one `<scope>:registry=` line per routed scope (`scopes`) |
-| `server/registry-credential.ts` `scope` | the one scope the registry serves | kept for compatibility, no longer used for routing: the registry serves every trusted scope (see npm routing) |
-| `app-job-signature.ts` payload package fields | `AgentHalfPackageNameSchema` | follows it (syntax); the relay signs only packages it trusts |
-| `agent/app-plugin-hooks.ts`, `agent/apphost.ts` package fields | `AgentHalfPackageNameSchema` | follows it (syntax): these read jobs the relay signed and records the helper wrote |
+| Place                                                                   | Today                                   | Becomes                                                                                                          |
+| ----------------------------------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `schemas.ts` `ManifestSchema.packages.server/agent`                     | regex `^@lamalibre\/`                   | syntax (`ScopedPackageNameSchema`); trust checked where a manifest is accepted (`assertManifestPackagesTrusted`) |
+| `schemas.ts` `LamaPackageNameSchema`                                    | `startsWith('@lamalibre/')`             | kept as is (exported API; `@lamalibre` only), marked deprecated; new `ScopedPackageNameSchema` beside it         |
+| `agent-half.ts` `AgentHalfPackageNameSchema`                            | `^@lamalibre\/[a-z0-9][a-z0-9-]*$`      | syntax `^@<scope>\/[a-z0-9][a-z0-9-]*$`; trust at the relay (pin, approval)                                      |
+| `constants.ts` `derivePluginRoute`                                      | strips `^@lamalibre\/`                  | strips any well-formed scope                                                                                     |
+| `plugin-host.ts:188` mount, `:274` bundle                               | `startsWith('@lamalibre/')`             | trust, against the host's list (`trustedScopes` option, default `["@lamalibre"]`)                                |
+| `server/plugins.ts` `installPlugin`                                     | `startsWith` → `INVALID_SCOPE`          | trust (`trustedScopes` option) → `PluginError(…, 'UNTRUSTED_SCOPE')`                                             |
+| `agent/plugins.ts` `validatePackageName` (install)                      | `startsWith`                            | trust (`PluginLifecycleConfig.trustedScopes`)                                                                    |
+| `agent/plugins.ts` uninstall `:438`, update `:513`, update check `:563` | "registry corruption" `startsWith`      | uninstall: syntax (removal must work after a scope is no longer trusted); update and update check: trust         |
+| `agent/plugins.ts` `readPluginBundle` `:603`                            | `startsWith`                            | trust                                                                                                            |
+| `npm-userconfig.ts` `renderInstallNpmrc`                                | one `scope` line (default `@lamalibre`) | one `<scope>:registry=` line per routed scope (`scopes`)                                                         |
+| `server/registry-credential.ts` `scope`                                 | the one scope the registry serves       | kept for compatibility, no longer used for routing: the registry serves every trusted scope (see npm routing)    |
+| `app-job-signature.ts` payload package fields                           | `AgentHalfPackageNameSchema`            | follows it (syntax); the relay signs only packages it trusts                                                     |
+| `agent/app-plugin-hooks.ts`, `agent/apphost.ts` package fields          | `AgentHalfPackageNameSchema`            | follows it (syntax): these read jobs the relay signed and records the helper wrote                               |
 
 ### Lamaste — relay (`packages/server/daemon/src`, `packages/server/cli/src`)
 
-| Place | Today | Becomes |
-| --- | --- | --- |
-| `lib/plugins.js` `assertSafeLamalibrePackage` (install spec, alias refusal) | `^@lamalibre\/…(@ver)?$` | trust + the same alias/syntax refusal (`assertTrustedPackageSpec`) |
-| `lib/plugin-packages.js` `PACKAGE_RE` (installed dir, pin, pack) | `^@lamalibre\/…$` | syntax: these name a package already accepted; the accepting step checks trust |
-| `routes/management/plugins.js` install body, push-install policy `allowedPlugins`, push-install command | zod regex `^@lamalibre\/` | zod syntax + trust in the handler (the list is runtime state, not a static schema) |
-| `routes/management/tunnels.js:145` plugin tunnel `pluginName` | `^@lamalibre\/…` | syntax; must name an installed plugin (already the case where it matters) — a tunnel runs no code |
-| `routes/user-access.js:33` grant `pluginName`, `:392` short name | regex; `replace(/^@lamalibre\//…)` | syntax; `derivePluginRoute` — a grant runs no code |
-| `routes/management/registry-credential.js:146` default scope | `'@lamalibre'` | unchanged (legacy field) |
-| `server/cli/src/commands/uninstall.js:308` | removes global `@lamalibre/*` packages when uninstalling Lamaste | unchanged — Lamaste's own packages, not a plugin trust check |
-| Plugin install/update staging (`lib/plugin-lifecycle.js`, `lib/hook-pipelines.js`) | manifest scope via `ManifestSchema` | `assertManifestPackagesTrusted(manifest, packageName, trustedScopes)` after the manifest is read |
+| Place                                                                                                   | Today                                                            | Becomes                                                                                           |
+| ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `lib/plugins.js` `assertSafeLamalibrePackage` (install spec, alias refusal)                             | `^@lamalibre\/…(@ver)?$`                                         | trust + the same alias/syntax refusal (`assertTrustedPackageSpec`)                                |
+| `lib/plugin-packages.js` `PACKAGE_RE` (installed dir, pin, pack)                                        | `^@lamalibre\/…$`                                                | syntax: these name a package already accepted; the accepting step checks trust                    |
+| `routes/management/plugins.js` install body, push-install policy `allowedPlugins`, push-install command | zod regex `^@lamalibre\/`                                        | zod syntax + trust in the handler (the list is runtime state, not a static schema)                |
+| `routes/management/tunnels.js:145` plugin tunnel `pluginName`                                           | `^@lamalibre\/…`                                                 | syntax; must name an installed plugin (already the case where it matters) — a tunnel runs no code |
+| `routes/user-access.js:33` grant `pluginName`, `:392` short name                                        | regex; `replace(/^@lamalibre\//…)`                               | syntax; `derivePluginRoute` — a grant runs no code                                                |
+| `routes/management/registry-credential.js:146` default scope                                            | `'@lamalibre'`                                                   | unchanged (legacy field)                                                                          |
+| `server/cli/src/commands/uninstall.js:308`                                                              | removes global `@lamalibre/*` packages when uninstalling Lamaste | unchanged — Lamaste's own packages, not a plugin trust check                                      |
+| Plugin install/update staging (`lib/plugin-lifecycle.js`, `lib/hook-pipelines.js`)                      | manifest scope via `ManifestSchema`                              | `assertManifestPackagesTrusted(manifest, packageName, trustedScopes)` after the manifest is read  |
 
 ### Lamaste — agent (`packages/agent`)
 
-| Place | Today | Becomes |
-| --- | --- | --- |
-| `daemon/src/routes.js:560` agent plugin install | regex `^@lamalibre\/…` | trust against the agent's list (from its relay), same alias refusal |
-| `daemon/src/panel-api.js:434`, `cli/src/lib/panel-api.js:486` brokered credential `scope` | one scope | `scopes` from the broker response (fallback `[scope]`) |
-| `cli/scripts/lamaste-apphost:116` `PACKAGE_RE` | `^@lamalibre\/[a-z0-9][a-z0-9-]*$` | syntax, the same pattern as core's `AgentHalfPackageNameSchema`; helper protocol 2 → 3 (see R-B2) |
-| `cli/src/lib/app-host-jobs.js` npm pack | brokered npmrc, one scope | every trusted scope routed to the brokered registry |
+| Place                                                                                     | Today                              | Becomes                                                                                           |
+| ----------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `daemon/src/routes.js:560` agent plugin install                                           | regex `^@lamalibre\/…`             | trust against the agent's list (from its relay), same alias refusal                               |
+| `daemon/src/panel-api.js:434`, `cli/src/lib/panel-api.js:486` brokered credential `scope` | one scope                          | `scopes` from the broker response (fallback `[scope]`)                                            |
+| `cli/scripts/lamaste-apphost:116` `PACKAGE_RE`                                            | `^@lamalibre\/[a-z0-9][a-z0-9-]*$` | syntax, the same pattern as core's `AgentHalfPackageNameSchema`; helper protocol 2 → 3 (see R-B2) |
+| `cli/src/lib/app-host-jobs.js` npm pack                                                   | brokered npmrc, one scope          | every trusted scope routed to the brokered registry                                               |
 
 ### Lamaste — UIs and desktop
 
-| Place | Today | Becomes |
-| --- | --- | --- |
-| `clients/desktop/src-tauri/src/local_plugins.rs:250` | `starts_with("@lamalibre/")` | trust, Rust helper `trusted_scopes.rs` against the local list |
-| `local_plugins.rs:118` doc comment | "always `@lamalibre/`" | "from a trusted scope" |
-| `server/ui` Plugins page, Gatekeeper grants placeholders; `agent/ui` Plugins placeholder | `@lamalibre/...` | placeholders unchanged; the server UI gains a **Trusted publishers** section |
+| Place                                                                                    | Today                        | Becomes                                                                      |
+| ---------------------------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------- |
+| `clients/desktop/src-tauri/src/local_plugins.rs:250`                                     | `starts_with("@lamalibre/")` | trust, Rust helper `trusted_scopes.rs` against the local list                |
+| `local_plugins.rs:118` doc comment                                                       | "always `@lamalibre/`"       | "from a trusted scope"                                                       |
+| `server/ui` Plugins page, Gatekeeper grants placeholders; `agent/ui` Plugins placeholder | `@lamalibre/...`             | placeholders unchanged; the server UI gains a **Trusted publishers** section |
 
 ### Feria (`../feria`)
 
-| Place | Today | Becomes |
-| --- | --- | --- |
-| `daemon/src/app.ts:255` publish/metadata/tarball routes under `{ prefix: '/@lamalibre' }` | one hosted scope | registered once per hosted scope |
-| `routes/metadata.ts` closed scope (404, never upstream) | `@lamalibre` | every hosted scope is closed |
-| `routes/publish.ts` | `publish` token scope | `publish` **and** a publisher allowed for that npm scope |
-| `routes/packages.ts` list/visibility/delete under `/packages/@lamalibre/:name` | one scope | per hosted scope |
-| `core/lib/src/server/store.ts` `packages/@lamalibre/` | one directory | one directory per hosted scope |
-| `core/lib/src/server/npmrc.ts` (dev `setup`/`teardown`) | `@lamalibre:registry=` line | one line per hosted scope; teardown removes every scope line pointing at this Feria |
-| `core/lib/src/server/auth/registry-client.ts`, `ui/src/web/web-client.ts`, `desktop/src-tauri/src/feria.rs` | build `/packages/@lamalibre/<short>` | build from the full name |
-| `routes/proxy.ts` | proxies everything else | unchanged — unhosted scopes still proxy upstream |
+| Place                                                                                                       | Today                                | Becomes                                                                             |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------- |
+| `daemon/src/app.ts:255` publish/metadata/tarball routes under `{ prefix: '/@lamalibre' }`                   | one hosted scope                     | registered once per hosted scope                                                    |
+| `routes/metadata.ts` closed scope (404, never upstream)                                                     | `@lamalibre`                         | every hosted scope is closed                                                        |
+| `routes/publish.ts`                                                                                         | `publish` token scope                | `publish` **and** a publisher allowed for that npm scope                            |
+| `routes/packages.ts` list/visibility/delete under `/packages/@lamalibre/:name`                              | one scope                            | per hosted scope                                                                    |
+| `core/lib/src/server/store.ts` `packages/@lamalibre/`                                                       | one directory                        | one directory per hosted scope                                                      |
+| `core/lib/src/server/npmrc.ts` (dev `setup`/`teardown`)                                                     | `@lamalibre:registry=` line          | one line per hosted scope; teardown removes every scope line pointing at this Feria |
+| `core/lib/src/server/auth/registry-client.ts`, `ui/src/web/web-client.ts`, `desktop/src-tauri/src/feria.rs` | build `/packages/@lamalibre/<short>` | build from the full name                                                            |
+| `routes/proxy.ts`                                                                                           | proxies everything else              | unchanged — unhosted scopes still proxy upstream                                    |
 
 ## Design
 
@@ -153,15 +153,19 @@ zod only), the one implementation every TypeScript and JavaScript place calls:
 ```ts
 export const BUILTIN_TRUSTED_SCOPE = '@lamalibre';
 export const MAX_ADDITIONAL_TRUSTED_SCOPES = 16;
-export const NpmScopeSchema: z.ZodString;              // ^@[a-z0-9][a-z0-9-]{0,49}$
-export const ScopedPackageNameSchema: z.ZodString;     // <scope>/[a-z0-9][a-z0-9._-]{0,213}
-export const AdditionalTrustedScopesSchema;            // unique, ≤ 16, never @lamalibre
+export const NpmScopeSchema: z.ZodString; // ^@[a-z0-9][a-z0-9-]{0,49}$
+export const ScopedPackageNameSchema: z.ZodString; // <scope>/[a-z0-9][a-z0-9._-]{0,213}
+export const AdditionalTrustedScopesSchema; // unique, ≤ 16, never @lamalibre
 export function effectiveTrustedScopes(additional?: readonly string[]): readonly string[];
-export function packageScope(name: string): string | null;   // null unless well-formed
+export function packageScope(name: string): string | null; // null unless well-formed
 export function isTrustedPackage(name: string, trusted: readonly string[]): boolean;
 export function assertTrustedPackage(name: string, trusted: readonly string[]): void; // UntrustedScopeError
 export function assertManifestPackagesTrusted(manifest, packageName, trusted): void;
-export class UntrustedScopeError extends Error { code = 'untrusted_scope'; scope; packageName }
+export class UntrustedScopeError extends Error {
+  code = 'untrusted_scope';
+  scope;
+  packageName;
+}
 ```
 
 - `isTrustedPackage` parses the name with the strict syntax first, then compares the scope with
@@ -189,7 +193,7 @@ test reads and the Rust test includes with `include_str!`.
   also keeps this branch free of a migration-number race with parallel branches).
 - **API** (admin only; `settings` is already a reserved prefix):
   - `GET /api/settings/trusted-scopes` → `{ builtIn: "@lamalibre", additional: ["@example"],
-    effective: ["@lamalibre", "@example"] }`.
+effective: ["@lamalibre", "@example"] }`.
   - `POST /api/settings/trusted-scopes` `{ scope }` → 201 with the same body. 400
     `invalid_scope` (syntax), 400 `builtin_scope` (`@lamalibre`), 409 `scope_already_trusted`,
     409 `too_many_scopes`.
@@ -291,7 +295,7 @@ accepts publishes for.
   `@lamalibre` is always hosted (Feria is Lamalibre's registry) with `publishers: "any"` unless the
   file lists it with a list. Absent file = `@lamalibre` only, any publisher — today's behaviour.
 - **Changed** only by Feria's operator on the Feria host, with `feria-server scopes list | add
-  <scope> --publisher <owner>... | publishers <scope> --set <owner>... | remove <scope>`, which
+<scope> --publisher <owner>... | publishers <scope> --set <owner>... | remove <scope>`, which
   writes the file and appends `scopes.added|publishers.changed|removed` to `audit.log`. The daemon
   reads the file at start (routes are registered per hosted scope); the command says a restart is
   needed and the daemon logs the hosted scopes it serves. `remove` refuses while the scope holds

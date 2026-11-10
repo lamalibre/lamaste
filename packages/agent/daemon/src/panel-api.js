@@ -436,7 +436,9 @@ export function createPanelApiClient(label) {
         // The scopes the registry serves — the relay's trusted publisher scopes
         // (relay 4.13+); absent from an older relay, which routed `scope` alone.
         scopes:
-          Array.isArray(parsed.scopes) && parsed.scopes.length > 0 && parsed.scopes.every(isNpmScope)
+          Array.isArray(parsed.scopes) &&
+          parsed.scopes.length > 0 &&
+          parsed.scopes.every(isNpmScope)
             ? parsed.scopes
             : undefined,
         token: parsed.token,

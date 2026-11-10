@@ -238,8 +238,14 @@ export function installPlugin(opts: InstallPluginOptions): Promise<PluginEntry> 
   const trustedScopes = opts.trustedScopes ?? effectiveTrustedScopes();
 
   return withPluginLock(async () => {
-    if (!SCOPED_PACKAGE_NAME_RE.test(packageName) || !isTrustedPackage(packageName, trustedScopes)) {
-      throw new PluginError(new UntrustedScopeError(packageName, packageScope(packageName), trustedScopes).message, 'UNTRUSTED_SCOPE');
+    if (
+      !SCOPED_PACKAGE_NAME_RE.test(packageName) ||
+      !isTrustedPackage(packageName, trustedScopes)
+    ) {
+      throw new PluginError(
+        new UntrustedScopeError(packageName, packageScope(packageName), trustedScopes).message,
+        'UNTRUSTED_SCOPE',
+      );
     }
 
     // Check if already installed

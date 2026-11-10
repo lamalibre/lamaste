@@ -29,6 +29,7 @@ import PluginOidcClients from '../components/PluginOidcClients.jsx';
 import PluginInvitations from '../components/PluginInvitations.jsx';
 import { declaresInvitingRole } from '../lib/invitations.js';
 import PushInstallSection from '../components/PushInstallSection.jsx';
+import TrustedScopesSection from '../components/TrustedScopesSection.jsx';
 import { PluginRetainedData, UninstalledRetainedData } from '../components/RetainedData.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import RefreshNote from '../components/RefreshNote.jsx';
@@ -497,7 +498,7 @@ function InstallForm({ onInstall, isInstalling }) {
           type="text"
           value={packageName}
           onChange={(e) => setPackageName(e.target.value)}
-          placeholder="@lamalibre/..."
+          placeholder="@lamalibre/... (or another trusted scope)"
           className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-cyan-400"
         />
       </div>
@@ -1018,6 +1019,8 @@ export default function Plugins() {
         installedNames={installedNames}
         isActing={isActing}
       />
+
+      <TrustedScopesSection />
 
       <PushInstallSection>
         <PushInstallPolicies />

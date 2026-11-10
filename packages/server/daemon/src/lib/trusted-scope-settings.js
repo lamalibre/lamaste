@@ -9,7 +9,11 @@
  * not made — and announced to the administrators.
  */
 
-import { BUILTIN_TRUSTED_SCOPE, MAX_ADDITIONAL_TRUSTED_SCOPES, isNpmScope } from '@lamalibre/lamaste';
+import {
+  BUILTIN_TRUSTED_SCOPE,
+  MAX_ADDITIONAL_TRUSTED_SCOPES,
+  isNpmScope,
+} from '@lamalibre/lamaste';
 import { recordAudit } from './audit.js';
 import { updateConfig } from './config.js';
 import { notifyAdminsBestEffort } from './notifications.js';

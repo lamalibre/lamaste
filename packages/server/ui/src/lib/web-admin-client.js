@@ -117,6 +117,12 @@ export const webAdminClient = {
   setPluginDomain: (name, domain) => jsonPut(pluginPath(name, 'domain'), { domain }),
   setDomainLanguage: (name, language) => jsonPut(domainPath(name, '/language'), { language }),
 
+  // --- Trusted publisher scopes ---
+  getTrustedScopes: () => apiFetch('/api/settings/trusted-scopes'),
+  addTrustedScope: (scope) => jsonPost('/api/settings/trusted-scopes', { scope }),
+  removeTrustedScope: (scope) =>
+    jsonDelete(`/api/settings/trusted-scopes/${encodeURIComponent(scope)}`),
+
   // --- A domain's brand on its auth pages ---
   getDomainBranding: (name) => apiFetch(domainPath(name, '/branding')),
   updateDomainBranding: (name, fields) => jsonPut(domainPath(name, '/branding'), fields),

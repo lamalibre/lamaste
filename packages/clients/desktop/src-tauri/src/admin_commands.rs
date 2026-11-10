@@ -485,6 +485,41 @@ pub async fn admin_set_domain_language(
     admin_refusable_task("PUT", domain_path(&name, "/language"), Some(body)).await
 }
 
+// --- Trusted publisher scopes ---
+
+/// `/api/settings/trusted-scopes[/<scope>]`; the scope is encoded, and the
+/// panel validates it.
+fn trusted_scopes_path(scope: Option<&str>) -> String {
+    match scope {
+        None => "/api/settings/trusted-scopes".to_string(),
+        Some(s) => format!("/api/settings/trusted-scopes/{}", url_encode(s)),
+    }
+}
+
+/// The relay's trusted publisher scopes: `builtIn`, `additional`, `effective`.
+#[tauri::command]
+pub async fn admin_get_trusted_scopes() -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("GET", trusted_scopes_path(None), None).await
+}
+
+/// Trust one more npm scope. Rejects with the panel's refusal (`code`
+/// `invalid_scope`, `builtin_scope`, `scope_already_trusted`,
+/// `registry_credential_required`, `registry_lacks_scope`, …).
+#[tauri::command]
+pub async fn admin_add_trusted_scope(scope: String) -> Result<serde_json::Value, serde_json::Value> {
+    let body = serde_json::json!({ "scope": scope }).to_string();
+    admin_refusable_task("POST", trusted_scopes_path(None), Some(body)).await
+}
+
+/// Stop trusting a scope. Rejects with the panel's refusal (`scope_in_use`
+/// with the `plugins` and `policies` that use it, `scope_not_trusted`, …).
+#[tauri::command]
+pub async fn admin_remove_trusted_scope(
+    scope: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("DELETE", trusted_scopes_path(Some(&scope)), None).await
+}
+
 // --- A domain's brand on its auth pages ---
 
 /// `/api/domains/<name>/branding<rest>`.
@@ -2343,6 +2378,19 @@ mod tests {
         }
         assert!(user_surface_path("not-a-uuid", None).is_err());
         assert!(user_surface_path("../tunnels", Some("fx")).is_err());
+    }
+
+    #[test]
+    fn trusted_scope_paths_encode_the_scope() {
+        assert_eq!(trusted_scopes_path(None), "/api/settings/trusted-scopes");
+        assert_eq!(
+            trusted_scopes_path(Some("@example")),
+            "/api/settings/trusted-scopes/%40example"
+        );
+        assert_eq!(
+            trusted_scopes_path(Some("@a/../b")),
+            "/api/settings/trusted-scopes/%40a%2F..%2Fb"
+        );
     }
 
     #[test]

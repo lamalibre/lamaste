@@ -168,7 +168,12 @@ export {
 export type { StoredChiselCredential } from './chisel-credential.js';
 export { ensureAgentChiselBinary, installedAgentChiselVersion } from './chisel-binary.js';
 export type { AgentChiselBinaryResult } from './chisel-binary.js';
-export { convergeChiselService, setAgentTunnelsStopped, updateAgentConfig } from './converge.js';
+export {
+  convergeChiselService,
+  setAgentTunnelsStopped,
+  updateAgentConfig,
+  recordTrustedScopes,
+} from './converge.js';
 export { withAgentLock } from './agent-lock.js';
 
 // App plugins (hosting an agent-hosted plugin's agent half on this agent)

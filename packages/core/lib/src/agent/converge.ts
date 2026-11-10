@@ -317,7 +317,7 @@ async function ensureAppPluginConfigs(
  * agent daemon is restarted (through the service manager, detached), so the
  * plugin host stops mounting it now rather than at the next restart.
  */
-async function recordTrustedScopes(
+export async function recordTrustedScopes(
   label: string,
   response: AgentConfigResponse,
 ): Promise<string[]> {

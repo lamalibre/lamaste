@@ -676,9 +676,7 @@ export interface RegistryCallDeps {
 
 const HostedScopesSchema = z.object({
   scopes: z
-    .array(
-      z.object({ scope: z.string(), retired: z.boolean().optional() }).passthrough(),
-    )
+    .array(z.object({ scope: z.string(), retired: z.boolean().optional() }).passthrough())
     .max(256),
 });
 

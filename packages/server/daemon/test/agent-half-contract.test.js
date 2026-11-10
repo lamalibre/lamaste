@@ -174,11 +174,9 @@ test('manifest: the agent package, the Node.js range and the route are checked',
   );
   assert.throws(
     () =>
-      assertManifestPackagesTrusted(
-        { agent: { package: '@other/fx-agent' } },
-        '@other/fx-server',
-        ['@lamalibre'],
-      ),
+      assertManifestPackagesTrusted({ agent: { package: '@other/fx-agent' } }, '@other/fx-server', [
+        '@lamalibre',
+      ]),
     UntrustedScopeError,
   );
   assert.match(

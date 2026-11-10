@@ -94,6 +94,11 @@ export const desktopAdminClient = {
   setDomainLanguage: (name, language) =>
     invokeRefusable('admin_set_domain_language', { name, language }),
 
+  // --- Trusted publisher scopes ---
+  getTrustedScopes: () => invokeRefusable('admin_get_trusted_scopes'),
+  addTrustedScope: (scope) => invokeRefusable('admin_add_trusted_scope', { scope }),
+  removeTrustedScope: (scope) => invokeRefusable('admin_remove_trusted_scope', { scope }),
+
   // --- A domain's brand on its auth pages ---
   getDomainBranding: (name) => invokeRefusable('admin_get_domain_branding', { name }),
   updateDomainBranding: (name, fields) =>

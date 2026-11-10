@@ -640,6 +640,16 @@ export interface UserSurfaceRouteStatus {
  * - Web panel: uses apiFetch() with browser mTLS
  * - Desktop app: uses Tauri invoke() -> Rust -> curl + P12
  */
+/** The relay's trusted publisher scopes (`GET /api/settings/trusted-scopes`). */
+export interface TrustedScopesView {
+  /** Always trusted, never listed: `@lamalibre`. */
+  readonly builtIn: string;
+  /** The scopes an administrator added. */
+  readonly additional: readonly string[];
+  /** `builtIn`, then `additional`. */
+  readonly effective: readonly string[];
+}
+
 export interface AdminClient {
   // Users — Authelia's users.yml, each with the directory's `userId` and `status`
   getUsers(): Promise<{ users: AdminUser[] }>;
@@ -770,6 +780,22 @@ export interface AdminClient {
     changed: boolean;
     warnings?: AdminWarning[];
   }>;
+
+  // Trusted publisher scopes (trusted-publisher-scopes-design.md)
+  /** `@lamalibre` (always trusted), the additional scopes, and both together. */
+  getTrustedScopes(): Promise<TrustedScopesView>;
+  /**
+   * Trust one more npm scope: its plugins then run with the same privileges
+   * as Lamalibre's own. 400 `invalid_scope` / `builtin_scope`, 409
+   * `scope_already_trusted`, `too_many_scopes`, `registry_credential_required`,
+   * `registry_lacks_scope` (the configured registry must host it).
+   */
+  addTrustedScope(scope: string): Promise<TrustedScopesView>;
+  /**
+   * Stop trusting a scope. 404 `scope_not_trusted`, 400 `builtin_scope`, 409
+   * `scope_in_use` with `plugins` and `policies` that still use it.
+   */
+  removeTrustedScope(scope: string): Promise<TrustedScopesView>;
 
   // A domain's brand on its auth pages (per-domain branding)
   /** The brand without its blobs, or null when the domain has none (404 `unknown_domain`). */

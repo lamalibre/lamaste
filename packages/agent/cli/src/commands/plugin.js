@@ -6,7 +6,35 @@ import {
   uninstallPlugin,
   updatePlugin,
   agentPluginConfig,
+  loadAgentConfig,
 } from '@lamalibre/lamaste/agent';
+import { fetchRegistryCredential } from '../lib/panel-api.js';
+
+/**
+ * The registry credential the panel brokers for one install (the same as
+ * the agent daemon's): npm then installs from the relay's registry, which
+ * hosts every trusted scope. Undefined when the panel has none or cannot be
+ * reached — a @lamalibre package then installs as the machine's npm is
+ * configured, and a package of another scope is refused (core lifecycle).
+ * @param {string} label
+ */
+async function installNpmrc(label) {
+  const config = await loadAgentConfig(label);
+  if (!config) return undefined;
+  try {
+    const credential = await fetchRegistryCredential(config);
+    if (!credential) return undefined;
+    return {
+      registryUrl: credential.registryUrl,
+      token: credential.token,
+      scopes: credential.scopes,
+      scope: credential.scope,
+    };
+  } catch (err) {
+    console.error(chalk.yellow(`  No registry credential from the panel: ${err.message}`));
+    return undefined;
+  }
+}
 
 /**
  * Install a plugin locally on the agent.
@@ -17,7 +45,9 @@ async function installLocal(label, packageName) {
   console.log(chalk.cyan(`  Installing ${packageName}...`));
   try {
     const pluginConfig = agentPluginConfig(label);
-    const entry = await installPlugin(pluginConfig, packageName);
+    const entry = await installPlugin(pluginConfig, packageName, {
+      npmrc: await installNpmrc(label),
+    });
     console.log(chalk.green(`  Plugin "${entry.name}" installed`));
   } catch (err) {
     console.error(chalk.red(`  ${err.message}`));
@@ -61,7 +91,9 @@ async function updateLocal(label, nameOrPackage) {
   console.log(chalk.cyan(`  Updating ${nameOrPackage}...`));
   try {
     const pluginConfig = agentPluginConfig(label);
-    const plugin = await updatePlugin(pluginConfig, nameOrPackage);
+    const plugin = await updatePlugin(pluginConfig, nameOrPackage, {
+      npmrc: await installNpmrc(label),
+    });
     console.log(chalk.green(`  Plugin "${plugin.name}" updated to v${plugin.version}`));
   } catch (err) {
     console.error(chalk.red(`  ${err.message}`));

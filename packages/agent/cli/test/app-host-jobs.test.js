@@ -131,6 +131,7 @@ function handlers(overrides = {}) {
       fetchRegistryCredential: async () => ({
         registryUrl: 'https://feria.example/',
         scope: '@lamalibre',
+        scopes: ['@lamalibre', '@example'],
         token: TOKEN,
         expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
         tokenId: 'tok-1',
@@ -170,9 +171,11 @@ test('install: helper ready, pinned tarball piped with its spec, config handed o
   assert.equal(packed.length, 1);
   assert.equal(packed[0].name, '@lamalibre/fx-agent');
   assert.equal(packed[0].version, '1.0.0');
+  // Every trusted scope the broker named is routed to the registry.
   assert.deepEqual(packed[0].npmrc, {
     registryUrl: 'https://feria.example/',
     token: TOKEN,
+    scopes: ['@lamalibre', '@example'],
     scope: '@lamalibre',
   });
 
@@ -252,7 +255,23 @@ test('install: without the helper it fails at once with the remedy; an unusable 
   });
   assert.match(
     (await old.h.install(job('app-install', { spec: spec() }))).error,
-    /protocol 1; this agent needs 2/,
+    /protocol 1; @lamalibre\/fx-agent needs 2/,
+  );
+
+  // A half of another trusted scope needs a helper that takes any scope (3);
+  // a @lamalibre half still installs with a protocol 2 helper.
+  const two = handlers({
+    deps: {
+      appHostStatus: async () => ({
+        state: 'ready',
+        status: { protocol: 2, node: '22.13.1', apps: {} },
+      }),
+    },
+  });
+  assert.match(
+    (await two.h.install(job('app-install', { spec: spec({ package: '@example/fx-agent' }) })))
+      .error,
+    /protocol 2; @example\/fx-agent needs 3 \(sudo lamaste-agent apphost enable\)/,
   );
 });
 

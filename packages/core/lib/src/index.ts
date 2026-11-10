@@ -126,6 +126,7 @@ export type {
   IdentitySyncResult,
   UserSurfaceRouteStatus,
   AdminClient,
+  TrustedScopesView,
   AgentClient,
 } from './types.js';
 
