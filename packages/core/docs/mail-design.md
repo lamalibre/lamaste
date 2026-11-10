@@ -304,15 +304,35 @@ serverd) on `127.0.0.1:9295`:
   the OIDC issuer key already uses; `renderAutheliaConfigTemplate` keeps
   refusing `{{`/`}}` in values, `sentinelizeAutheliaConfig` learns the
   second template line. Compared in constant time.
-- Accepts **only** `MAIL FROM` = the sender Authelia was given, one `RCPT`,
-  ≤ 256 KiB, 30 messages / 10 min; everything else 5xx. Another process on
-  the relay therefore cannot use it to mail anyone as anything.
+- Accepts **only** `MAIL FROM` = the sender Authelia was given, one `RCPT`
+  (a second is refused, the message goes to the first), headers that name
+  that recipient alone in `To` and the sender in `From` (and `Sender`) — no
+  `Cc`, `Bcc` or `Resent-*`, since the Gmail API sends to the headers, not
+  the envelope — ≤ 256 KiB, 30 messages / 10 min; everything else 5xx.
+  Another process on the relay therefore cannot use it to mail anyone as
+  anything.
 - Delivers through the **relay-wide** transport (Authelia's mail names no
   domain). The From is the relay-wide sender; the body is Authelia's.
   A delivery failure is answered as a 4xx to Authelia (it shows the user an
   error; they try again) and audited.
 - Runs only while a relay transport exists; otherwise Authelia keeps
   `notifier.filesystem` as today.
+- **As built** (`lib/mail-submission.js`, `lib/mail-sync.js`): one
+  synchronisation after every transport or sender change, after a domain
+  is activated or removed, and at start — the listener (its files made or
+  renewed: the CA and the leaf in `<stateDir>/mail-submission/`, the CA
+  certificate as `/etc/authelia/certs/lamaste-mail-ca.pem`), then
+  Authelia's notifier and reset link written under `withDomainRendering`
+  (the one writer of Authelia's configuration), then every active
+  domain's auth vhost. Authelia restarts when its configuration changed
+  (audit `authelia.restarted` reason `mail`) or, unchanged, when the CA
+  certificate or the password was replaced — files it reads only at start
+  (reason `mail-credentials`). While the listener cannot run (a tunnel on
+  9295, the port held by another program, a failure) Authelia keeps its
+  file notifier; the streak is audited `mail.submission.refused` /
+  `mail.submission.recovered` and notified once. create-lamaste makes
+  `/etc/authelia/certs` (2750 `lamaste:lamaste-authelia`) and re-owns the
+  password file; root never touches a file inside the directory.
 
 `9295` joins `RESERVED_TUNNEL_PORTS` (a tunnel vhost proxies to
 `127.0.0.1:<port>`; a tunnel there would receive the panel's traffic). A
@@ -399,14 +419,17 @@ expires_at, used_at, failed_attempts)`; swept after 24 h.
   TOTP code required (Q2): a stolen mailbox alone cannot take the account.
   Authelia's storage holds the TOTP secret (encrypted with its storage
   key) and its CLI has no per-user verify, so `lamaste-priv` gains
-  `authelia-totp-verify <username>` (code on stdin, 6 digits): as the
-  Authelia account it runs `authelia storage user totp export uri`, keeps
-  the one user's URI in memory, checks the code itself (SHA-1, 30 s,
-  ±1 step, the parameters `authelia-totp` stores) and prints only
-  `ok <step>` or `no` — the secret never leaves the root helper, nothing
-  is written. serverd refuses a step it already accepted for that user
-  (replay), and failures count toward the token's five. The exact export
-  command is confirmed against 4.39.28 when implemented. A user with no TOTP device, or one who
+  `authelia-user verify-totp <username>` (code on stdin, 6–8 digits; core
+  `verifyAutheliaTotp`, serverd `verifyAutheliaUserTotp`): as the Authelia
+  account it runs `authelia storage user totp export uri` (4.39.28:
+  one `otpauth://totp/<issuer>:<username>?…` line per configuration,
+  `model.TOTPConfiguration.URI`) into its memory through a pipe, keeps the
+  one user's line, checks the code itself with that configuration's
+  algorithm, digits and period, ±1 step, and prints only `ok <step>` or
+  `no` — the secret never leaves the root helper, nothing is written, a
+  failure of the CLI is reported without its output. serverd refuses a
+  step it already accepted for that user (replay), and failures count
+  toward the token's five. A user with no TOTP device, or one who
   lost it, cannot reset by mail — the page says to ask an administrator. Five failed attempts void the
   token. The password follows the invitation rules, is hashed, and written
   through `changeUsers` (users lock, the panel the only writer — S2). The
@@ -544,7 +567,7 @@ before the next starts.
    sink.
 3. **serverd — Authelia's mail and the auth host**: the submission
    listener and its local CA, the password file, rendering Authelia's
-   notifier on transport changes; `lamaste-priv authelia-totp-verify` and
+   notifier on transport changes; `lamaste-priv authelia-user verify-totp` and
    any new vhost directive in its allow-list; create-lamaste ownership of
    `/etc/authelia/certs`; auth vhost locations (callback, `/reset`,
    `/api/account/*`, `/account/password` behind forward auth) and the
