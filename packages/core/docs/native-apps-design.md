@@ -3,7 +3,8 @@
 > **Status:** as planned, 2026-11-10; independently reviewed the same day — the review's findings are adopted in
 > [Review (2026-11-10)](#review-2026-11-10), which amends the sections below where they differ. Implemented the same
 > day on Lamaste `feat/native-app-signin` (waves 1–3, unit tests green) — [As implemented](#as-implemented-2026-11-10);
-> reference [Native Apps](04-api-reference/native-apps.md). Rodeo proof on fresh VMs pending.
+> reference [Native Apps](04-api-reference/native-apps.md). Proven on fresh VMs, rebased on 4.13.0 —
+> [Rodeo (2026-11-10)](#rodeo-2026-11-10).
 > **Release:** its own minor after 4.13.0 (calls between app plugins, trusted publisher scopes), unless ready in time.
 > **Companions:** `identity-directory-design.md` (the directory, the audience, offboarding),
 > `multi-domain-relay-design.md` (domains, owned groups, OIDC authorization policies),
@@ -571,8 +572,8 @@ wave 2b Gatekeeper bearer path, hosts, files and events `3fb6f618`, `c5321b16`, 
   `tunnel-deps.js`, and a vhost write fails rather than being written without them when the client lookup fails.
 - **Sign-in events.** Delivered on a 30 s tick and right after each sign-in; sealed with `sealPluginJson` (shared with
   identity changes), salt `lamaste/sign-in-events/v1`.
-- **Not proven yet on a live nginx:** that `auth_request_set` keeps the refusal header on a `401` (R11) — the rodeo
-  checks it.
+- **R11 on a live nginx:** `auth_request_set` keeps Gatekeeper's refusal header on a `401` — three-VM 63 sees
+  `{"error":"invalid_token"}` and `WWW-Authenticate: Bearer error="invalid_token"` from nginx.
 
 ### Security review (2026-11-10)
 
@@ -612,6 +613,28 @@ agent, hostingAgent }]`, core `tunnelCrossAgentConfirmations`, `isCrossAgentConf
   `401`; the broker computes standing — Gatekeeper's answer included — before the grant's lock (R14), the commit's
   compare-and-swap still deciding; sign-in event delivery drops the events of a person no longer in the plugin's
   audience. Documented: a joined route's audience can load the owner's shell.
+
+### Rodeo (2026-11-10)
+
+Fresh VMs, the branch rebased on `release/4.13.0` (`8ae8dc12`), the candidate on the development Feria:
+
+- **Three-VM** — 63 sign-in (PKCE S256 only, the code through the broker, the JWT's issuer/audience/client/lifetime,
+  bearer calls to a site's two plugins and a cross-agent tunnel, the association files and redirect page, R11) 117/117;
+  64 refresh (rotation, the grace answer, reuse ending the grant with its audit and notification, idle and absolute
+  lifetimes, revocation by the app and the admin, a client disabled and enabled) 70/70; 65 standing (disabled,
+  erased, removed from the domain, the last role lost — each grant ended with its reason, tokens refused, the audit;
+  sign-in events reach only the plugin that declares them) 52/52. Regressions: 01 55, 31 45, 40 121, 42 61, 48 42,
+  57 63, 59 47.
+- **Single-VM** — 40 (the client API's refusals, Authelia's rendering, the broker's form-only bodies and pass-through,
+  the public-host refusals, the CLI) 77/77; 01 12, 03 4, 26 69, 27 49 (+1 skip, as always: no agent on that host), 32
+  186.
+- **What the runs found.** In the specs: usernames are per run (one that reached an OIDC client is never given out
+  again), grants are read as the API answers them (`endedAt`/`endedReason`), 64 signs in to Authelia again after
+  the client is enabled again (that restarts Authelia, whose sessions live in memory), and the app-plugin harness no
+  longer calls `lamaste-apphost remove` after an uninstall (unsigned, it waited for a job on stdin for 120 s a route).
+  In Lamaste: a refused `PATCH /api/tunnels/:id` now names its conflict (`user_surface_conflict`,
+  `native_client_conflict`). Outside this feature: a burst of chisel restarts (three plugins uninstalled within
+  seconds) left `chisel.service` in `start-limit-hit` and every tunnel down — a bug since 4.0.0, fixed for 4.13.1.
 
 ## Open questions
 
