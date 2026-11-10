@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Native apps on the user surface: a mobile app signs a person in through the relay's sign-in and calls the agent-hosted plugins of one host with a bearer token, checked exactly as a browser session is, with credentials that end when the person's standing ends. Design: `packages/core/docs/native-apps-design.md`; reference: `04-api-reference/native-apps.md`.
+
+### Added
+
+- **Native clients** — `GET|POST /api/native-apps`, `GET|PATCH|DELETE /api/native-apps/:clientId`: one OIDC public client (`lamaste-native-<slug>`) per application host, rendered into Authelia with PKCE `S256` required, authorization code and refresh tokens, the host's audience, access tokens of 5–15 minutes, idle and absolute grant lifetimes (default 30 and 90 days), two factors for the domain's members and the external members granted the host.
+- **The token broker.** The domain's token and revocation endpoints (`auth.<domain>/api/oidc/token`, `/api/oidc/revocation`) pass through the panel: native clients' requests follow Lamaste's rules — refresh tokens rotate, a reused one ends the whole grant (after a 30-second window for a lost answer), lifetimes and the person's standing are checked at every refresh — and everything else reaches Authelia byte for byte.
+- **Grants** per person and device: `GET /api/native-apps/:clientId/grants`, `DELETE …/grants/:grantId`, `POST …/grants/revoke`, `GET /api/users/:username/native-grants`. A grant ends when its person is disabled, removed or erased, leaves the domain, loses every role on the host's plugins or the host's grant, and when its client or host goes.
+- **Bearer tokens on the user surface.** `Authorization: Bearer <JWT>` on `/api/<route>/app/*`: Gatekeeper verifies the token (issuer, audience, the host's client, lifetime) and applies a session's checks; the panel admits only tokens its broker saw issued for a live grant and forwards the same `user` caller. A refused token: `401 { "error": "invalid_token" }` with `WWW-Authenticate`.
+- **App association files**: the host serves `/.well-known/apple-app-site-association` (claiming only the redirect paths) and `/.well-known/assetlinks.json` from the client's settings, and a fallback page at each redirect path.
+- **Application hosts**: a plugin's site can serve other plugins' user surfaces (`PUT|DELETE /api/plugins/:name/web-surface/routes/:route`), and a tunnel can serve a plugin another agent hosts when bound `crossAgent: true` (lapses when the tunnel changes agent).
+- **Sign-in events**: a plugin whose identity block declares `signInEvents: true` receives its users' native sign-ins (user, time, client) at `POST /admin/identity/sign-ins`; `createSignInEventsHandler` in `@lamalibre/lamaste/agent`.
+- Panel **Native Apps** page, a person's devices on Users, Joined plugins on a web surface, the cross-agent confirmation on Tunnels; CLI `lamaste-server native-apps …`, `users native-grants`, `plugins web-surface <name> join|leave`, `tunnels bind-user-surface --cross-agent`; `AdminClient` and desktop commands; core `@lamalibre/lamaste/native-apps`.
+
+### Changed
+
+- **A bound user-surface route that is not served is answered by the relay** (`503` JSON), no longer sent down the tunnel.
+- **Manifests may not declare an OIDC client `lamaste` or `lamaste-*`**: that namespace is Lamaste's own clients'.
+- `native-apps` is a reserved API prefix.
+
+### Upgrade notes
+
+- **Every auth vhost and every user-surface host's vhost is rewritten** at the panel's start (the token endpoints, the bound routes' locations).
+- `state.db` migration `0023_native_apps.sql`.
+- **Approvals stand**: `identity.signInEvents` enters the digest only when `true`.
+
 ## [4.13.1] - 2026-11-11
 
 ### Fixed

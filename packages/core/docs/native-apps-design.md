@@ -1,7 +1,9 @@
 # Native Apps on the User Surface — Design Document
 
 > **Status:** as planned, 2026-11-10; independently reviewed the same day — the review's findings are adopted in
-> [Review (2026-11-10)](#review-2026-11-10), which amends the sections below where they differ.
+> [Review (2026-11-10)](#review-2026-11-10), which amends the sections below where they differ. Implemented the same
+> day on Lamaste `feat/native-app-signin` (waves 1–3, unit tests green) — [As implemented](#as-implemented-2026-11-10);
+> reference [Native Apps](04-api-reference/native-apps.md). Rodeo proof on fresh VMs pending.
 > **Release:** its own minor after 4.13.0 (calls between app plugins, trusted publisher scopes), unless ready in time.
 > **Companions:** `identity-directory-design.md` (the directory, the audience, offboarding),
 > `multi-domain-relay-design.md` (domains, owned groups, OIDC authorization policies),
@@ -524,6 +526,53 @@ NULL AND version = v`); if it loses (revoked meanwhile), it revokes the new refr
   (≥ 17.4, `ASWebAuthenticationSession` with an HTTPS callback, `webcredentials`) and Android
   (Custom Tabs + verified App Links) hand the redirect to the app needs devices or emulators —
   reported as outside this proof (Q4).
+
+## As implemented (2026-11-10)
+
+Lamaste `feat/native-app-signin`: wave 1 core `f95978d0` (+ `b9cd0368`), wave 2a serverd broker and grants `365a1129`,
+wave 2b Gatekeeper bearer path, hosts, files and events `3fb6f618`, `c5321b16`, wave 3 panel, CLI and desktop
+`545df6d3`, then the docs. Where the code differs from the plan above:
+
+- **Names.** Core root modules `native-apps.ts` (rules, schemas, association files, the projection; also the
+  browser-safe subpath `@lamalibre/lamaste/native-apps` for the panel UI), `native-token.ts` (verifier, JWKS parser,
+  `bearerTokenOf`, grace sealing), `sign-in-events.ts`; `./server` `renderNativeClient`,
+  `renderNativeClientLifespans`, `renderNativeClientPolicies`, `HOST_ACCESS_FACTOR`, `renderNativeRedirectPage`;
+  `./agent` `createSignInEventsHandler`. serverd `lib/native-apps.js`, `lib/native-grants.js`, `lib/native-broker.js`,
+  `lib/native-files.js`, `lib/sign-in-events.js`, `routes/native-oauth.js`, `routes/management/native-apps.js`;
+  Gatekeeper `lib/issuer-keys.ts`. Each native client's Authelia lifespan reuses its policy name
+  `lamaste_client_<id>`.
+- **Factor (R4).** `HOST_ACCESS_FACTOR` (`two_factor`) is one constant used by the domain's host access rules and by
+  native clients' policies.
+- **Cross-agent (D1/R3).** Confirmed once per tunnel (`userSurface.originAgent`), not per route; every cross-agent
+  bind still needs `crossAgent: true`. The served-route reason is `cross_agent_unconfirmed` for a plugin another agent
+  hosts without a confirmation for the tunnel's current agent; `not_hosting_agent` now means no agent hosts it or none
+  carries the tunnel. Deciding whether a tunnel serves a route also checks identity and approval.
+- **R2.** Every bound route is rendered; one not served gets a `503` JSON location. Binding therefore rewrites the
+  vhost at once.
+- **Sites (D1).** A joined route is served only while the owner's own surface is served (`site_not_served`); the
+  shell admits a member of the audience of any served route. API `PUT|DELETE /api/plugins/:name/web-surface/routes/:route`,
+  refusals `invalid_route`, `not_found`, `not_agent_hosted`, `not_plugin_domain`, `served_elsewhere`,
+  `too_many_routes`.
+- **Served clients.** Enabled, host entry present, under an active domain — a host that binds no route at the
+  moment keeps its client in Authelia (only standing is "unavailable"), so a temporary unbind ends no grant.
+- **Standing** counts roles on every bound route (not only served ones): a hosting down for a while ends nobody's
+  grant.
+- **Broker.** A code exchange without `offline_access` is refused (`invalid_scope`). Revoking a grant marks its
+  current token spent (no second reuse report later). Concurrent refreshes with one token: the second gets the grace
+  answer. Rate limits are in-memory fixed windows. The panel's own rate limit is off on the broker's routes.
+- **Host moves.** Moving a plugin's surface from a tunnel to its own site moves the tunnel's native client when that
+  tunnel served that plugin alone (`native-app.host.moved`).
+- **Audit.** One `native-app.grant.revoked` per revocation call (count + ≤ 20 ids); `plugin.web-surface.route.joined|left`,
+  `plugin.sign-in-events.dropped`; `tunnel.user-surface.bound` with `reason: "cross-agent"`.
+- **Relay assertion.** A panel caller with any field but `type`, `username`, `credential` is refused as malformed; the
+  `credential` is accepted only on a user-surface target.
+- **Files** at `/var/www/lamaste/native/<fqdn>/{apple-app-site-association,assetlinks.json,redirect.html}` (root
+  overridable with `LAMALIBRE_LAMASTE_NATIVE_FILES_ROOT`); the tunnel vhost gets the native locations through
+  `tunnel-deps.js`, and a vhost write fails rather than being written without them when the client lookup fails.
+- **Sign-in events.** Delivered on a 30 s tick and right after each sign-in; sealed with `sealPluginJson` (shared with
+  identity changes), salt `lamaste/sign-in-events/v1`.
+- **Not proven yet on a live nginx:** that `auth_request_set` keeps the refusal header on a `401` (R11) — the rodeo
+  checks it.
 
 ## Open questions
 

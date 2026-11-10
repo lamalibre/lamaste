@@ -279,6 +279,11 @@
           "file": "04-api-reference/peers.md"
         },
         {
+          "title": "Native Apps",
+          "slug": "api-native-apps",
+          "file": "04-api-reference/native-apps.md"
+        },
+        {
           "title": "App Host (Agent Halves)",
           "slug": "api-app-host",
           "file": "04-api-reference/app-host.md"
