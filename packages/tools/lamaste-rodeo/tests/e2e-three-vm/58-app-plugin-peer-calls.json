@@ -758,7 +758,7 @@
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "host_api_call DELETE \"plugins/${PROVIDER}?force=true\""
+            "command": "host_api_call POST \"plugins/${PROVIDER}/disable\" '{}'"
           },
           "capture": [
             {
@@ -771,7 +771,84 @@
         },
         {
           "id": "step-43",
-          "label": "Uninstalling the provider: 409 peer_dependents",
+          "label": "The provider disabled (an uninstall needs it)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The provider disabled (an uninstall needs it)"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "consumer_call \"${SCOPE_READ}\" GET /units/9"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "A disabled provider takes no call: 503 peer_unavailable ($(json_get \"$OUT\" '.error.reason'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.error.code) \\(.error.status)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "peer_unavailable 503"
+              },
+              "message": "A disabled provider takes no call: 503 peer_unavailable ($(json_get \"$OUT\" '.error.reason'))"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"plugins/${PROVIDER}?force=true\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "Uninstalling the provider: 409, even with force",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -786,13 +863,52 @@
                 "kind": "literal",
                 "value": "409"
               },
-              "message": "Uninstalling the provider: 409 peer_dependents"
+              "message": "Uninstalling the provider: 409, even with force"
             }
           }
         },
         {
-          "id": "step-44",
-          "label": "…and it still answers",
+          "id": "step-48",
+          "label": "…peer_dependents",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "peer_dependents"
+              },
+              "message": "…peer_dependents"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PROVIDER}/enable\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "Enabled again",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -801,18 +917,38 @@
               "kind": "eq",
               "actual": {
                 "kind": "expr",
-                "template": "$(call_code \"${SCOPE_READ}\" GET /units/9)"
+                "template": "$(status_of \"$RESP\")"
               },
               "expected": {
                 "kind": "literal",
                 "value": "200"
               },
-              "message": "…and it still answers"
+              "message": "Enabled again"
             }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "…and it answers again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…and it answers again"
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "After enabling: $(consumer_call \"${SCOPE_READ}\" GET /units/9)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "After enabling: $(consumer_call \"${SCOPE_READ}\" GET /units/9)"
           }
         }
       ],
-      "bash": "log_section \"The provider cannot go while the consumer depends on it\"\n\nRESP=$(host_api_call DELETE \"plugins/${PROVIDER}/hosting?force=true\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Unhosting the provider: 409, even with force\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.code) \\([.consumers[]? | if type == \"object\" then .consumer // .name else . end] | join(\",\"))\"' \"peer_dependents ${CONSUMER}\" \"…peer_dependents, naming ${CONSUMER}\" || true\nRESP=$(host_api_call DELETE \"plugins/${PROVIDER}?force=true\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Uninstalling the provider: 409 peer_dependents\" || true\nassert_eq \"$(call_code \"${SCOPE_READ}\" GET /units/9)\" \"200\" \"…and it still answers\" || true"
+      "bash": "log_section \"The provider cannot go while the consumer depends on it\"\n\nRESP=$(host_api_call DELETE \"plugins/${PROVIDER}/hosting?force=true\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Unhosting the provider: 409, even with force\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.code) \\([.consumers[]? | if type == \"object\" then .consumer // .name else . end] | join(\",\"))\"' \"peer_dependents ${CONSUMER}\" \"…peer_dependents, naming ${CONSUMER}\" || true\nRESP=$(host_api_call POST \"plugins/${PROVIDER}/disable\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The provider disabled (an uninstall needs it)\" || true\nOUT=$(consumer_call \"${SCOPE_READ}\" GET /units/9)\nassert_json_field \"$OUT\" '\"\\(.error.code) \\(.error.status)\"' 'peer_unavailable 503' \"A disabled provider takes no call: 503 peer_unavailable ($(json_get \"$OUT\" '.error.reason'))\" || true\nRESP=$(host_api_call DELETE \"plugins/${PROVIDER}?force=true\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Uninstalling the provider: 409, even with force\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'peer_dependents' \"…peer_dependents\" || true\nRESP=$(host_api_call POST \"plugins/${PROVIDER}/enable\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Enabled again\" || true\nif wait_for 60 eval '[ \"$(call_code \"${SCOPE_READ}\" GET /units/9)\" = \"200\" ]'; then\n  log_pass \"…and it answers again\"\nelse\n  log_fail \"After enabling: $(consumer_call \"${SCOPE_READ}\" GET /units/9)\"\nfi"
     }
   ],
   "apiHelpers": [],

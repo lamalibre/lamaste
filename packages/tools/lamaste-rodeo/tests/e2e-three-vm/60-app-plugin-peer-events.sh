@@ -18,7 +18,9 @@
 # 3. The grant removed (the shelf deleted): events published meanwhile are
 #    never delivered — the consumer had no grant for them. Granted again,
 #    the subscription has a new epoch: a `granted` gap, then only what comes
-#    after it.
+#    after it. A pull made by hand with that epoch and stream from an older
+#    position (0) is answered a gap, never the events the consumer had no
+#    grant for: the relay keeps the floor it gave the gap with.
 # ============================================================================
 
 set -euo pipefail
@@ -156,5 +158,12 @@ if events_seq_ok; then
 else
   log_fail "Seqs: $(consumer_state | jq -c '[.events[]?.seq]')"
 fi
+CURSOR=$(consumer_state | jq -c --arg s "${SCOPE_READ}" '[.cursors[]? | select(.scope == $s)] | first // {}')
+EPOCH=$(json_get "$CURSOR" '.epoch // empty')
+STREAM=$(json_get "$CURSOR" '.stream_id // empty')
+assert_not_eq "${EPOCH}" "" "The consumer's cursor of ${SCOPE_READ}: epoch and stream after the granted gap ($(json_get "$CURSOR" '.cursor'))" || true
+OUT=$(consumer_rawpull "${SCOPE_READ}" 0 "${EPOCH}" "${STREAM}")
+assert_json_field "$OUT" '.status' '200' "A pull by hand with that epoch and stream from position 0: answered" || true
+assert_json_field "$OUT" '"\(.body.gap != null) \((.body.events // []) | length)"' 'true 0' "…with a gap and no events: c-1 and c-2, published without a grant, stay out of reach ($(json_get "$OUT" '.body.gap.reason // ""'))" || true
 
 end_test

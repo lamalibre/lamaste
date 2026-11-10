@@ -170,7 +170,9 @@ open_agent2_push_install() {
 #     {scope, method, path, json?, forge?} makes a call as the plugin (forge:
 #     with a made-up delegation, as a plugin inventing a user would) and
 #     answers {status, body} or {error: {code, status, reason}};
-#     GET /admin/e2e/state answers {connected, events, gaps}; the user
+#     GET /admin/e2e/state answers {connected, events, gaps, cursors};
+#     POST /admin/e2e/rawpull {scope, after, epoch, streamId} makes an events
+#     pull by hand on the channel (what a half could send past the SDK); the user
 #     surface GET /app/me-via-peer calls the provider's
 #     /people/<the user's id>/info on behalf of the user.
 #
@@ -480,7 +482,18 @@ if (peers) {
       connected: peers.connected(),
       events: db.prepare('SELECT seq, key, tag, n FROM e2e_events ORDER BY id').all(),
       gaps: db.prepare('SELECT scope, reason FROM e2e_gaps ORDER BY id').all(),
+      cursors: db.prepare('SELECT scope, provider, stream_id, epoch, cursor, gap_reason FROM lamaste_peer_cursors ORDER BY scope').all(),
     });
+  });
+  // An events pull as the consumer's half could make it by hand, past the
+  // SDK's inbox: what the relay answers a pull from another position.
+  app.post('/admin/e2e/rawpull', async (request, reply) => {
+    const verified = await adminCaller(request, reply);
+    if (!verified) return reply;
+    const { scope, after, epoch, streamId } = request.body ?? {};
+    return signed(reply, verified, 200, await callResult(() =>
+      peers.call(scope, 'POST', '/.lamaste/events', { json: { scope, after, epoch, streamId, waitMs: 0 } }),
+    ));
   });
   // The user surface: a user caller only; the call goes on their behalf.
   app.get('/app/me-via-peer', async (request, reply) => {
@@ -517,6 +530,12 @@ consumer_call() {
 }
 
 consumer_state() { host_api_get "${CONSUMER}/e2e/state"; }
+
+# consumer_rawpull <scope> <after> <epoch> <streamId> — an events pull the
+# consumer's half makes by hand on its channel; prints {status, body} or {error}
+consumer_rawpull() {
+  host_api_post "${CONSUMER}/e2e/rawpull" "$(jq -cn --arg s "$1" --argjson a "$2" --arg e "$3" --arg t "$4" '{scope: $s, after: $a, epoch: $e, streamId: $t}')"
+}
 provider_peerlog() { host_api_get "${PROVIDER}/e2e/peerlog"; }
 provider_publish() { host_api_post "${PROVIDER}/e2e/publish" "{\"count\":$1,\"tag\":\"$2\"}"; }
 
@@ -533,7 +552,7 @@ peers_view() { host_api_get "peers"; }
 
 # audit_action_count <action> — audit entries of <action> since the spec began
 audit_action_count() {
-  host_api_get "audit?action=$1&limit=500" | jq "[.entries[]? | select(.id > ${AUDIT_BASE} and .action == \"$1\")] | length" 2>/dev/null || echo "0"
+  host_api_get "audit?action=$1&limit=200" | jq "[.entries[]? | select(.id > ${AUDIT_BASE} and .action == \"$1\")] | length" 2>/dev/null || echo "0"
 }
 
 # edge_state <scope> — the applied shelf's edge consumer → scope: its state
@@ -574,8 +593,8 @@ peers_setup() {
 
   install_approved "${PROVIDER}" "${PROVIDER_SERVER}@1.0.0" > /dev/null
   install_approved "${CONSUMER}" "${CONSUMER_SERVER}@1.0.0" > /dev/null
-  assert_json_field "$(host_api_get "plugins/${PROVIDER}/hooks")" '.approval.state' 'approved' "${PROVIDER} installed and approved (its peers block in the digest)" || true
-  assert_json_field "$(host_api_get "plugins/${CONSUMER}/hooks")" '.approval.state' 'approved' "${CONSUMER} installed and approved" || true
+  assert_json_field "$(host_api_get "plugins/${PROVIDER}/hooks")" '.hooks.approval.state' 'approved' "${PROVIDER} installed and approved (its peers block in the digest)" || true
+  assert_json_field "$(host_api_get "plugins/${CONSUMER}/hooks")" '.hooks.approval.state' 'approved' "${CONSUMER} installed and approved" || true
 
   op=$(host_plugin "${PROVIDER}" 300 nudge)
   assert_json_field "$op" '.status' 'succeeded' "${PROVIDER} hosted on ${HOST_AGENT_LABEL} (agent VM) ($(json_get "$op" '.error // .refused.error // ""'))" || true

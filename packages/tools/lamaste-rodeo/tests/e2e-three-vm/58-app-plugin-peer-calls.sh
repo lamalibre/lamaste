@@ -156,8 +156,19 @@ log_section "The provider cannot go while the consumer depends on it"
 RESP=$(host_api_call DELETE "plugins/${PROVIDER}/hosting?force=true")
 assert_eq "$(status_of "$RESP")" "409" "Unhosting the provider: 409, even with force" || true
 assert_json_field "$(body_of "$RESP")" '"\(.code) \([.consumers[]? | if type == "object" then .consumer // .name else . end] | join(","))"' "peer_dependents ${CONSUMER}" "…peer_dependents, naming ${CONSUMER}" || true
+RESP=$(host_api_call POST "plugins/${PROVIDER}/disable" '{}')
+assert_eq "$(status_of "$RESP")" "200" "The provider disabled (an uninstall needs it)" || true
+OUT=$(consumer_call "${SCOPE_READ}" GET /units/9)
+assert_json_field "$OUT" '"\(.error.code) \(.error.status)"' 'peer_unavailable 503' "A disabled provider takes no call: 503 peer_unavailable ($(json_get "$OUT" '.error.reason'))" || true
 RESP=$(host_api_call DELETE "plugins/${PROVIDER}?force=true")
-assert_eq "$(status_of "$RESP")" "409" "Uninstalling the provider: 409 peer_dependents" || true
-assert_eq "$(call_code "${SCOPE_READ}" GET /units/9)" "200" "…and it still answers" || true
+assert_eq "$(status_of "$RESP")" "409" "Uninstalling the provider: 409, even with force" || true
+assert_json_field "$(body_of "$RESP")" '.code' 'peer_dependents' "…peer_dependents" || true
+RESP=$(host_api_call POST "plugins/${PROVIDER}/enable" '{}')
+assert_eq "$(status_of "$RESP")" "200" "Enabled again" || true
+if wait_for 60 eval '[ "$(call_code "${SCOPE_READ}" GET /units/9)" = "200" ]'; then
+  log_pass "…and it answers again"
+else
+  log_fail "After enabling: $(consumer_call "${SCOPE_READ}" GET /units/9)"
+fi
 
 end_test
