@@ -1,32 +1,42 @@
-# Copies a release that is already on npmjs to Feria byte for byte. Feria
-# serves @lamalibre as a closed scope, so every release must land there too.
-# npmjs publishing stays a manual step; run this afterwards on the release
-# tag:
+# Publishes a release to Feria — the registry Lamaste installs its
+# @lamalibre packages from — byte for byte from the GitHub Release's assets
+# (the tarballs release.yml packed at the tag, and release-manifest.json).
+# release.yml calls it after creating the Release; run it by hand to
+# publish a release again (Feria rebuilt from the Releases) or to check one:
 #
 #   gh workflow run feria.yml -R lamalibre/lamaste --ref v<version>
 #   gh workflow run feria.yml -R lamalibre/lamaste --ref v<version> -f dry_run=true
 #
 # The second form proves the login and reports each package's state
 # (already on Feria, would be published, refused) without publishing.
+# Releases before 4.14.0 carry no packed tarballs and cannot be published
+# this way.
 #
 # Feria's address is FERIA_URL below, the one place it is named: the script
 # reads it from the environment, and the job derives the npmrc host from it.
+# It is the same registry as LAMALIBRE_REGISTRY_URL in
+# packages/core/lib/src/branding.ts.
 #
 # No registry secret is stored in GitHub: the job exchanges its OIDC token
 # (audience = FERIA_URL) at Feria's login. Feria grants `publish` only to
 # refs/tags/v* of repositories owned by the lamalibre organisation, through
 # the rule for GitHub's issuer (https://token.actions.githubusercontent.com)
-# in its auth.json on the relay — and that rule names the audience, so the
-# address here and the audience there must be the same URL. A login that
-# answers 401 right after the address changed means the relay's rule still
-# names the previous one; curl failing on the certificate (exit 60) means the
-# host no longer serves Feria at all (4.8.0's run, when the registry had
-# moved from feria.samplepark.tr to feria.codelama.com.tr). The token is
-# revoked when the job ends. See .github/scripts/mirror-to-feria.mjs for what
-# is copied, skipped or refused.
-name: Mirror to Feria
+# in its auth.json — and that rule names the audience, so the address here
+# and the audience there must be the same URL. A login that answers 401
+# right after the address changed means the rule still names the previous
+# one; curl failing on the certificate (exit 60) means the host no longer
+# serves Feria at all. The token is revoked when the job ends. See
+# .github/scripts/publish-to-feria.mjs for what is published, skipped or
+# refused.
+name: Publish to Feria
 
 on:
+  workflow_call:
+    inputs:
+      dry_run:
+        description: 'Prove the login and report each package, publish nothing'
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       dry_run:
@@ -38,11 +48,11 @@ env:
   FERIA_URL: https://feria.codelama.com.tr
 
 permissions:
-  contents: read
+  contents: read # download the Release's assets
   id-token: write # the OIDC token exchanged at Feria
 
 jobs:
-  mirror:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - name: Run on a release tag
@@ -56,8 +66,18 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
-          # The copy installs nothing; no package-manager cache to set up.
+          # Publishing installs nothing; no package-manager cache to set up.
           package-manager-cache: false
+
+      - name: Download the release's packed tarballs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/release"
+          gh release download "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" \
+            --dir "${RUNNER_TEMP}/release" --pattern '*.tgz' --pattern 'release-manifest.json'
+          ls -l "${RUNNER_TEMP}/release"
 
       - name: Feria token from the job's OIDC identity
         id: feria
@@ -87,13 +107,14 @@ jobs:
           umask 077
           printf '//%s/:_authToken=%s\n' "$host" "$token" > "${RUNNER_TEMP}/feria.npmrc"
 
-      - name: Copy the release from npmjs to Feria
+      - name: Publish the release's tarballs to Feria
         env:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           args=()
           if [ "${DRY_RUN}" = "true" ]; then args+=(--dry-run); fi
-          node .github/scripts/mirror-to-feria.mjs "${GITHUB_REF_NAME#v}" --npmrc "${RUNNER_TEMP}/feria.npmrc" "${args[@]}"
+          node .github/scripts/publish-to-feria.mjs "${GITHUB_REF_NAME#v}" \
+            --dir "${RUNNER_TEMP}/release" --npmrc "${RUNNER_TEMP}/feria.npmrc" "${args[@]}"
 
       - name: Revoke the Feria token
         if: ${{ always() && steps.feria.outputs.id != '' }}
