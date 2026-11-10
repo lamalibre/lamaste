@@ -58,8 +58,12 @@ function toQuery(query) {
  * failing pre-teardown hooks pass, `purge` deletes the data and service
  * account of an agent half Lamaste installed. Only the flags that are set.
  */
-function removalQuery({ force = false, purge = false } = {}) {
-  return toQuery({ force: force ? 'true' : undefined, purge: purge ? 'true' : undefined });
+function removalQuery({ force = false, purge = false, breakPeers = false } = {}) {
+  return toQuery({
+    force: force ? 'true' : undefined,
+    purge: purge ? 'true' : undefined,
+    breakPeers: breakPeers ? 'true' : undefined,
+  });
 }
 
 /** `/api/domains/<name><rest>`. */
@@ -277,6 +281,12 @@ export const webAdminClient = {
       `/api/plugins/${encodeURIComponent(name)}/retained-data${toQuery({ agentLabel, forget: 'true' })}`,
     ),
   getPluginSettings: (name) => apiFetch(`/api/plugins/${encodeURIComponent(name)}/settings`),
+
+  // --- Calls and events between app plugins: applied shelves ---
+  getPeers: () => apiFetch('/api/peers'),
+  applyPeerShelf: (shelfId, scopes) =>
+    jsonPut(`/api/peers/shelves/${encodeURIComponent(shelfId)}`, { scopes }),
+  removePeerShelf: (shelfId) => jsonDelete(`/api/peers/shelves/${encodeURIComponent(shelfId)}`),
   // The body carries the secrets the administrator typed: it goes in the
   // request body only, never into the URL.
   updatePluginSettings: (name, body) =>

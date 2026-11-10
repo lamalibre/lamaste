@@ -1,0 +1,406 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 61,
+    "name": "The provider offline",
+    "suite": "e2e-three-vm",
+    "description": "61 — The provider offline (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-both-plugins-hosted-the-shelf-applied",
+      "label": "Pre-flight, both plugins hosted, the shelf applied",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "DELETE /api/peers/shelves/${SHELF_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "peers/shelves/${SHELF_ID}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-2",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-61-peers-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "apply_shelf"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "The shelf grants ${SCOPE_READ} to ${CONSUMER}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The shelf grants ${SCOPE_READ} to ${CONSUMER}"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "A call answers while the provider is up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "A call answers while the provider is up"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "The call: $(consumer_call \"${SCOPE_READ}\" GET /units/1)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The call: $(consumer_call \"${SCOPE_READ}\" GET /units/1)"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight, both plugins hosted, the shelf applied\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nhost_api_delete \"peers/shelves/${SHELF_ID}\" > /dev/null 2>&1 || true\nLOCAL_TMP=$(mktemp -d /tmp/e2e-61-peers-XXXXXXXX)\npeers_setup \"${POLICY_ID}\"\nRESP=$(apply_shelf)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The shelf grants ${SCOPE_READ} to ${CONSUMER}\" || true\nif wait_for 30 call_answers; then\n  log_pass \"A call answers while the provider is up\"\nelse\n  log_fail \"The call: $(consumer_call \"${SCOPE_READ}\" GET /units/1)\"\nfi\n\n# ===========================================================================\n# 1. The provider's agent half stopped\n# ==========================================================================="
+    },
+    {
+      "id": "the-provider-s-agent-half-stopped",
+      "label": "The provider's agent half stopped",
+      "steps": [
+        {
+          "id": "step-9",
+          "label": "The relay's health of ${PROVIDER}: $(provider_health)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The relay's health of ${PROVIDER}: $(provider_health)"
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Health: $(provider_health)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health: $(provider_health)"
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "…reason app: the tunnel answers, the half does not",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(provider_health)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "down app"
+              },
+              "message": "…reason app: the tunnel answers, the half does not"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "consumer_call \"${SCOPE_READ}\" GET /units/1"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "A call: 503 peer_unavailable, down_app",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.error.code) \\(.error.status) \\(.error.reason)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "peer_unavailable 503 down_app"
+              },
+              "message": "A call: 503 peer_unavailable, down_app"
+            }
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "…with Retry-After ($(json_get \"$OUT\" '.error.retryAfter // \"\"') s)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$OUT\" '.error.retryAfter // empty')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "…with Retry-After ($(json_get \"$OUT\" '.error.retryAfter // \"\"') s)"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "…answered at once ($((SECONDS - T0)) s): nothing waited on the dead port",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…answered at once ($((SECONDS - T0)) s): nothing waited on the dead port"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "The refusal took $((SECONDS - T0)) s",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The refusal took $((SECONDS - T0)) s"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Started again: up, and the call answers",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Started again: up, and the call answers"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "After the restart: $(provider_health), $(consumer_call \"${SCOPE_READ}\" GET /units/1)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "After the restart: $(provider_health), $(consumer_call \"${SCOPE_READ}\" GET /units/1)"
+          }
+        }
+      ],
+      "bash": "log_section \"The provider's agent half stopped\"\n\nagent_exec \"systemctl stop ${PROVIDER_UNITS}\" > /dev/null 2>&1 || true\nif wait_for 90 provider_state_is down; then\n  log_pass \"The relay's health of ${PROVIDER}: $(provider_health)\"\nelse\n  log_fail \"Health: $(provider_health)\"\nfi\nassert_eq \"$(provider_health)\" \"down app\" \"…reason app: the tunnel answers, the half does not\" || true\nT0=$SECONDS\nOUT=$(consumer_call \"${SCOPE_READ}\" GET /units/1)\nassert_json_field \"$OUT\" '\"\\(.error.code) \\(.error.status) \\(.error.reason)\"' 'peer_unavailable 503 down_app' \"A call: 503 peer_unavailable, down_app\" || true\nassert_not_eq \"$(json_get \"$OUT\" '.error.retryAfter // empty')\" \"\" \"…with Retry-After ($(json_get \"$OUT\" '.error.retryAfter // \"\"') s)\" || true\nif [ $((SECONDS - T0)) -le 10 ]; then\n  log_pass \"…answered at once ($((SECONDS - T0)) s): nothing waited on the dead port\"\nelse\n  log_fail \"The refusal took $((SECONDS - T0)) s\"\nfi\nagent_exec \"systemctl start ${PROVIDER_UNITS}\" > /dev/null 2>&1 || true\nif wait_for 90 provider_state_is up && wait_for 60 call_answers; then\n  log_pass \"Started again: up, and the call answers\"\nelse\n  log_fail \"After the restart: $(provider_health), $(consumer_call \"${SCOPE_READ}\" GET /units/1)\"\nfi\n\n# ===========================================================================\n# 2. The provider's agent unreachable\n# ==========================================================================="
+    },
+    {
+      "id": "the-provider-s-agent-unreachable-its-chisel-client-stopped",
+      "label": "The provider's agent unreachable (its chisel client stopped)",
+      "steps": [
+        {
+          "id": "step-22",
+          "label": "Down: $(provider_health)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Down: $(provider_health)"
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Health: $(provider_health)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health: $(provider_health)"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "…reason tunnel: nothing answers on the relay's end",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(provider_health)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "down tunnel"
+              },
+              "message": "…reason tunnel: nothing answers on the relay's end"
+            }
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "consumer_call \"${SCOPE_READ}\" GET /units/1"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "A call: 503 peer_unavailable, down_tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.error.code) \\(.error.status) \\(.error.reason)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "peer_unavailable 503 down_tunnel"
+              },
+              "message": "A call: 503 peer_unavailable, down_tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "The agent back: up, and the call answers",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent back: up, and the call answers"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "After the recovery: $(provider_health), $(consumer_call \"${SCOPE_READ}\" GET /units/1)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "After the recovery: $(provider_health), $(consumer_call \"${SCOPE_READ}\" GET /units/1)"
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "consumer_state | jq '.events | length' 2>/dev/null || echo 0"
+          },
+          "capture": [
+            {
+              "variable": "BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "Events published after the recovery are delivered",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Events published after the recovery are delivered"
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Events: $(consumer_state | jq -c '.events')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Events: $(consumer_state | jq -c '.events')"
+          }
+        }
+      ],
+      "bash": "log_section \"The provider's agent unreachable (its chisel client stopped)\"\n\nuser_systemctl \"stop ${SYNC_TIMER} ${CHISEL_UNIT}\" > /dev/null 2>&1 || true\nif wait_for 90 provider_state_is down; then\n  log_pass \"Down: $(provider_health)\"\nelse\n  log_fail \"Health: $(provider_health)\"\nfi\nassert_eq \"$(provider_health)\" \"down tunnel\" \"…reason tunnel: nothing answers on the relay's end\" || true\nOUT=$(consumer_call \"${SCOPE_READ}\" GET /units/1)\nassert_json_field \"$OUT\" '\"\\(.error.code) \\(.error.status) \\(.error.reason)\"' 'peer_unavailable 503 down_tunnel' \"A call: 503 peer_unavailable, down_tunnel\" || true\nuser_systemctl \"start ${CHISEL_UNIT} ${SYNC_TIMER}\" > /dev/null 2>&1 || true\nnudge_sync\nif wait_for 120 provider_state_is up && wait_for 60 call_answers; then\n  log_pass \"The agent back: up, and the call answers\"\nelse\n  log_fail \"After the recovery: $(provider_health), $(consumer_call \"${SCOPE_READ}\" GET /units/1)\"\nfi\nBEFORE=$(consumer_state | jq '.events | length' 2>/dev/null || echo 0)\nprovider_publish 2 after > /dev/null\nif wait_for 60 eval '[ \"$(consumer_state | jq \".events | length\" 2>/dev/null || echo 0)\" = \"$((BEFORE + 2))\" ]'; then\n  log_pass \"Events published after the recovery are delivered\"\nelse\n  log_fail \"Events: $(consumer_state | jq -c '.events')\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 61 — The provider offline (Three-VM)\n# ============================================================================\n# Slice 8's failure handling. The consumer e2e-pcons (visitor VM's second\n# agent) calls the provider e2e-pdir (agent VM):\n#\n# 1. The provider's agent half stopped (its socket and service): once the\n#    relay's health monitor reports it down (reason app — the tunnel still\n#    answers, the half does not), a call is refused at once: 503\n#    peer_unavailable, reason down_app, with Retry-After; nothing waits on a\n#    dead port. Started again: up, and the call answers.\n# 2. The provider's whole agent unreachable (its chisel client and sync timer\n#    stopped on the agent VM): down, reason tunnel → 503 peer_unavailable,\n#    down_tunnel. The agent back: up, and the call answers; events published\n#    after the recovery are delivered.\n#\n# The last peers spec: its cleanup also removes the second agent from the\n# visitor VM (the suite leaves the VMs as it found them).\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=peers-harness.sh\nsource \"${SCRIPT_DIR}/peers-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\nPOLICY_ID=\"e2e-apphost-61\"\nREMOTE_DIR=\"/var/tmp/e2e-61-peers\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${CONSUMER} ${PROVIDER}\"\nCLEAN_ROUTES=\"${PROVIDER}\"\nPURGE_PACKAGES=\"\"\nPROVIDER_UNITS=\"lamalibre-app-${PROVIDER}.socket lamalibre-app-${PROVIDER}.service\"\nCHISEL_UNIT=\"lamalibre-lamaste-chisel-${AGENT_LABEL}\"\n\nbegin_test \"61 — The provider offline (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  timed_exec 60 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"systemctl start ${PROVIDER_UNITS} > /dev/null 2>&1; XDG_RUNTIME_DIR=/run/user/0 systemctl --user start ${SYNC_TIMER} ${CHISEL_UNIT} > /dev/null 2>&1; true\" > /dev/null 2>&1\n  peers_cleanup\n  remove_second_agent\n}\ntrap cleanup EXIT\n\nprovider_health() { hosting_field \"${PROVIDER}\" '.hosting.health | \"\\(.state) \\(.reason)\"'; }\nprovider_state_is() { [ \"$(hosting_field \"${PROVIDER}\" '.hosting.health.state')\" = \"$1\" ]; }\ncall_answers() { [ \"$(consumer_call \"${SCOPE_READ}\" GET /units/1 | jq -r '.status // empty' 2>/dev/null)\" = \"200\" ]; }\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

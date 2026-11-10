@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
+  Cable,
   BarChart3,
   BookOpen,
   Box,
@@ -82,6 +83,7 @@ const baseNavItems = [
   { type: 'link', to: '/services', icon: Server, label: 'Services' },
   { type: 'link', to: '/tickets', icon: Ticket, label: 'Tickets' },
   { type: 'link', to: '/plugins', icon: Package, label: 'Plugins' },
+  { type: 'link', to: '/peers', icon: Cable, label: 'Peers' },
   { type: 'link', to: '/storage', icon: HardDrive, label: 'Storage' },
   { type: 'link', to: '/audit', icon: ScrollText, label: 'Audit' },
   { type: 'link', to: '/settings', icon: Settings, label: 'Settings' },

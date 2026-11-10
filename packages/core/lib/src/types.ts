@@ -633,6 +633,80 @@ export interface UserSurfaceRouteStatus {
 // AdminClient interface
 // ---------------------------------------------------------------------------
 
+/** How a plugin or its hosting is removed (`uninstallPlugin`, `clearPluginHosting`). */
+export interface PluginRemovalOptions {
+  /** Let failing pre-teardown hooks pass. */
+  readonly force?: boolean;
+  /** Delete the data directory and service account of the agent half Lamaste installed. */
+  readonly purge?: boolean;
+  /** Remove a plugin other plugins' effective peer edges consume (their calls and events stop). */
+  readonly breakPeers?: boolean;
+}
+
+/** A shelf's scope graph as the relay takes it: the shelf manifest's `scopes` block. */
+export type PeerShelfScopes = Readonly<
+  Record<string, { readonly provider: string; readonly consumers: readonly string[] }>
+>;
+
+/** One edge of an applied shelf: effective, or pending with the reason. */
+export interface PeerShelfEdge {
+  readonly scope: string;
+  readonly provider: string;
+  readonly consumer: string;
+  readonly state: 'effective' | 'pending';
+  readonly reason?: string;
+  readonly grantedSeq: number;
+}
+
+/** `GET /api/peers`. */
+export interface PeersView {
+  readonly shelves: readonly {
+    readonly shelfId: string;
+    readonly appliedAt: string;
+    readonly appliedBy: string;
+    readonly edges: readonly PeerShelfEdge[];
+  }[];
+  readonly plugins: readonly {
+    readonly name: string;
+    readonly route: string;
+    readonly approved: boolean;
+    readonly provides: Readonly<Record<string, unknown>>;
+    readonly consumes: Readonly<Record<string, unknown>>;
+  }[];
+  readonly edges: readonly {
+    readonly consumer: string;
+    readonly scope: string;
+    readonly provider: string;
+    readonly major: number;
+    readonly required: boolean;
+    readonly events: readonly string[];
+    readonly epoch?: string;
+  }[];
+  /** Each consumer's peer channel. */
+  readonly channels: Readonly<
+    Record<
+      string,
+      {
+        readonly state: 'attached' | 'attaching' | 'backoff' | 'detached';
+        readonly since: number;
+        readonly lastError: string | null;
+      }
+    >
+  >;
+  /** Each agent half's answer to the peers protocol, for its installed version. */
+  readonly readiness: Readonly<
+    Record<
+      string,
+      {
+        readonly version: string;
+        readonly consumer: boolean;
+        readonly inbox: boolean;
+        readonly answeredAt: string;
+      }
+    >
+  >;
+}
+
 /**
  * AdminClient — the data layer abstraction for the admin panel.
  *
@@ -970,11 +1044,14 @@ export interface AdminClient {
    * an operation (202 `{ operation }`) that runs its uninstall pipeline;
    * `force` lets failing pre-teardown hooks pass, `purge` deletes the data
    * directory and service account of the agent half Lamaste installed
-   * (kept by default; refused when it installed none).
+   * (kept by default; refused when it installed none). A plugin whose
+   * provided scopes other plugins' effective peer edges consume is refused
+   * with `code` `peer_dependents` and the `consumers` (required first)
+   * unless `breakPeers` — `force` never implies it.
    */
   uninstallPlugin(
     name: string,
-    options?: { force?: boolean; purge?: boolean },
+    options?: PluginRemovalOptions,
   ): Promise<{ ok: boolean; operation?: unknown }>;
   fetchPluginBundle(name: string): Promise<string>;
   // Agent-hosted plugins with an agent half: which agent hosts the plugin.
@@ -993,10 +1070,10 @@ export interface AdminClient {
     name: string,
   ): Promise<{ agents: Array<HostEligibility & { readonly label: string }> }>;
   setPluginHosting(name: string, agentLabel: string): Promise<{ ok: boolean; operation: unknown }>;
-  /** `force` and `purge` as for {@link AdminClient.uninstallPlugin}. */
+  /** `force`, `purge` and `breakPeers` as for {@link AdminClient.uninstallPlugin}. */
   clearPluginHosting(
     name: string,
-    options?: { force?: boolean; purge?: boolean },
+    options?: PluginRemovalOptions,
   ): Promise<{ ok: boolean; operation: unknown }>;
   rotatePluginHostingSecret(name: string): Promise<{ ok: boolean; hosting: unknown }>;
   // Retained data: what agents keep of the plugin's agent half after it was
@@ -1024,6 +1101,14 @@ export interface AdminClient {
     agentLabel: string,
   ): Promise<{ ok: boolean; forgotten: RetainedAgentData }>;
   getPluginOperations(name: string): Promise<{ operations: unknown[] }>;
+  // Calls and events between app plugins (slice 8): the relay's applied
+  // shelves. A refusal rejects with the panel's message and `code`
+  // (`not_declared`, `major_mismatch`, `cycle`, …).
+  /** Every applied shelf and its edges, the plugins' declarations, channels and readiness. */
+  getPeers(): Promise<PeersView>;
+  /** Replace shelf `shelfId`'s edges with its scope graph (`{ <scope>: { provider, consumers } }`). */
+  applyPeerShelf(shelfId: string, scopes: PeerShelfScopes): Promise<unknown>;
+  removePeerShelf(shelfId: string): Promise<unknown>;
   getPluginOperation(name: string, id: string): Promise<{ operation: unknown }>;
   // Lifecycle hooks and what needs approval — the relay hook set and the
   // agent half Lamaste installs (`hooks.approval.digest` is what to approve)

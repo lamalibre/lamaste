@@ -1,0 +1,980 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 58,
+    "name": "Calls between app plugins on two agents",
+    "suite": "e2e-three-vm",
+    "description": "58 — Calls between app plugins on two agents (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-the-second-agent-both-plugins-hosted",
+      "label": "Pre-flight, the second agent, both plugins hosted",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-58-peers-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "DELETE /api/peers/shelves/${SHELF_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "peers/shelves/${SHELF_ID}"
+          },
+          "continueOnError": true
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight, the second agent, both plugins hosted\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nLOCAL_TMP=$(mktemp -d /tmp/e2e-58-peers-XXXXXXXX)\nhost_api_delete \"peers/shelves/${SHELF_ID}\" > /dev/null 2>&1 || true\npeers_setup \"${POLICY_ID}\"\n\n# ===========================================================================\n# 1. Nothing applied\n# ==========================================================================="
+    },
+    {
+      "id": "no-shelf-applied-nothing-is-granted",
+      "label": "No shelf applied: nothing is granted",
+      "steps": [
+        {
+          "id": "step-4",
+          "label": "A call before any shelf is applied: 403 not_granted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(call_code \"${SCOPE_READ}\" GET /units/7)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "not_granted"
+              },
+              "message": "A call before any shelf is applied: 403 not_granted"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "…a scope no installed plugin provides is answered alike (not_granted)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(call_code \"nosuch:read\" GET /units/7)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "not_granted"
+              },
+              "message": "…a scope no installed plugin provides is answered alike (not_granted)"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Set VIEW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "peers_view"
+          },
+          "capture": [
+            {
+              "variable": "VIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"No shelf applied: nothing is granted\"\n\nassert_eq \"$(call_code \"${SCOPE_READ}\" GET /units/7)\" \"not_granted\" \"A call before any shelf is applied: 403 not_granted\" || true\nassert_eq \"$(call_code \"nosuch:read\" GET /units/7)\" \"not_granted\" \"…a scope no installed plugin provides is answered alike (not_granted)\" || true\nVIEW=$(peers_view)\nassert_json_field \"$VIEW\" \"[.plugins[]? | select(.name == \\\"${PROVIDER}\\\") | .provides | keys | join(\\\",\\\")] | first\" \"${SCOPE_READ},${SCOPE_WRITE}\" \"GET /api/peers: ${PROVIDER} provides ${SCOPE_READ} and ${SCOPE_WRITE}\" || true\nassert_json_field \"$VIEW\" \"[.shelves[]? | select(.shelfId == \\\"${SHELF_ID}\\\")] | length\" \"0\" \"…no shelf ${SHELF_ID} applied\" || true\n\n# ===========================================================================\n# 2. Applying a shelf\n# ==========================================================================="
+    },
+    {
+      "id": "applying-a-shelf-refusals-then-the-edge",
+      "label": "Applying a shelf: refusals, then the edge",
+      "steps": [
+        {
+          "id": "step-9",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "apply_shelf \"{\\\"${SCOPE_READ}\\\":{\\\"provider\\\":\\\"${CONSUMER}\\\",\\\"consumers\\\":[\\\"${CONSUMER}\\\"]}}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "A scope whose namespace is not its provider's route is refused (400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A scope whose namespace is not its provider's route is refused (400)"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "apply_shelf \"{\\\"${SCOPE_READ}\\\":{\\\"provider\\\":\\\"${PROVIDER}\\\",\\\"consumers\\\":[\\\"e2e-idsurf\\\"]}}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "A consumer that is not installed is kept pending or refused: $(status_of \"$RESP\") $(body_of \"$RESP\" | jq -c '.code // .shelf.edges // empty' 2>/dev/null)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "literal",
+                "value": "200 409"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "message": "A consumer that is not installed is kept pending or refused: $(status_of \"$RESP\") $(body_of \"$RESP\" | jq -c '.code // .shelf.edges // empty' 2>/dev/null)"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "DELETE /api/peers/shelves/${SHELF_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "peers/shelves/${SHELF_ID}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-14",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "apply_shelf"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "PUT /api/peers/shelves/${SHELF_ID}: ${SCOPE_READ} granted to ${CONSUMER}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/peers/shelves/${SHELF_ID}: ${SCOPE_READ} granted to ${CONSUMER}"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "GET /api/peers: the edge ${CONSUMER} → ${SCOPE_READ} is effective",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "GET /api/peers: the edge ${CONSUMER} → ${SCOPE_READ} is effective"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "The edge: $(peers_view | jq -c '.shelves')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The edge: $(peers_view | jq -c '.shelves')"
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Audited: peer.shelf.applied",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_action_count peer.shelf.applied)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Audited: peer.shelf.applied"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Applying a shelf: refusals, then the edge\"\n\nRESP=$(apply_shelf \"{\\\"${SCOPE_READ}\\\":{\\\"provider\\\":\\\"${CONSUMER}\\\",\\\"consumers\\\":[\\\"${CONSUMER}\\\"]}}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A scope whose namespace is not its provider's route is refused (400)\" || true\nRESP=$(apply_shelf \"{\\\"${SCOPE_READ}\\\":{\\\"provider\\\":\\\"${PROVIDER}\\\",\\\"consumers\\\":[\\\"e2e-idsurf\\\"]}}\")\nassert_contains \"200 409\" \"$(status_of \"$RESP\")\" \"A consumer that is not installed is kept pending or refused: $(status_of \"$RESP\") $(body_of \"$RESP\" | jq -c '.code // .shelf.edges // empty' 2>/dev/null)\" || true\nhost_api_delete \"peers/shelves/${SHELF_ID}\" > /dev/null 2>&1 || true\nRESP=$(apply_shelf)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/peers/shelves/${SHELF_ID}: ${SCOPE_READ} granted to ${CONSUMER}\" || true\nif wait_for 30 eval '[ \"$(edge_state \"${SCOPE_READ}\")\" = \"effective\" ]'; then\n  log_pass \"GET /api/peers: the edge ${CONSUMER} → ${SCOPE_READ} is effective\"\nelse\n  log_fail \"The edge: $(peers_view | jq -c '.shelves')\"\nfi\nassert_not_eq \"$(audit_action_count peer.shelf.applied)\" \"0\" \"Audited: peer.shelf.applied\" || true\n\n# ===========================================================================\n# 3. A granted call\n# ==========================================================================="
+    },
+    {
+      "id": "a-granted-call-from-the-visitor-vm-s-agent-to-the-agent-vm-s",
+      "label": "A granted call, from the visitor VM's agent to the agent VM's",
+      "steps": [
+        {
+          "id": "step-19",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "consumer_call \"${SCOPE_READ}\" GET /units/7"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "GET /units/7 on ${SCOPE_READ}: 200 from the provider",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "GET /units/7 on ${SCOPE_READ}: 200 from the provider"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "…the provider saw the peer caller the relay signed: ${CONSUMER}, ${SCOPE_READ}, major 1, one hop",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".body | \"\\(.unitId) \\(.caller.type) \\(.caller.peer) \\(.caller.scope) \\(.caller.major) \\(.caller.hops)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "7 peer ${CONSUMER} ${SCOPE_READ} 1 1"
+              },
+              "message": "…the provider saw the peer caller the relay signed: ${CONSUMER}, ${SCOPE_READ}, major 1, one hop"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "…and the endpoint pattern the relay matched",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".body.caller.endpoint",
+              "expected": {
+                "kind": "literal",
+                "value": "GET /units/:unitId"
+              },
+              "message": "…and the endpoint pattern the relay matched"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "…no user: the plugin called as itself",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".body.caller.user // \"none\"",
+              "expected": {
+                "kind": "literal",
+                "value": "none"
+              },
+              "message": "…no user: the plugin called as itself"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A granted call, from the visitor VM's agent to the agent VM's\"\n\nOUT=$(consumer_call \"${SCOPE_READ}\" GET /units/7)\nassert_json_field \"$OUT\" '.status' '200' \"GET /units/7 on ${SCOPE_READ}: 200 from the provider\" || true\nassert_json_field \"$OUT\" '.body | \"\\(.unitId) \\(.caller.type) \\(.caller.peer) \\(.caller.scope) \\(.caller.major) \\(.caller.hops)\"' \"7 peer ${CONSUMER} ${SCOPE_READ} 1 1\" \"…the provider saw the peer caller the relay signed: ${CONSUMER}, ${SCOPE_READ}, major 1, one hop\" || true\nassert_json_field \"$OUT\" '.body.caller.endpoint' 'GET /units/:unitId' \"…and the endpoint pattern the relay matched\" || true\nassert_json_field \"$OUT\" '.body.caller.user // \"none\"' 'none' \"…no user: the plugin called as itself\" || true\n\n# ===========================================================================\n# 4. Denied calls\n# ==========================================================================="
+    },
+    {
+      "id": "denied-no-grant-not-in-the-allowlist-a-sibling-route",
+      "label": "Denied: no grant, not in the allowlist, a sibling route",
+      "steps": [
+        {
+          "id": "step-24",
+          "label": "${SCOPE_WRITE} is not granted: 403 not_granted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(call_code \"${SCOPE_WRITE}\" POST /echo)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "not_granted"
+              },
+              "message": "${SCOPE_WRITE} is not granted: 403 not_granted"
+            }
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "GET /secret, which the provider serves but does not declare: 403 endpoint_not_allowed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(call_code \"${SCOPE_READ}\" GET /secret)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "endpoint_not_allowed"
+              },
+              "message": "GET /secret, which the provider serves but does not declare: 403 endpoint_not_allowed"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "consumer_call \"${SCOPE_READ}\" GET /units/export"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "GET /units/export (matches /units/:unitId, a static route of its own on the provider): 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "GET /units/export (matches /units/:unitId, a static route of its own on the provider): 403"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "…the provider's SDK refused it: its route is not the endpoint the relay matched",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$OUT\" '.body.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "not the endpoint"
+              },
+              "message": "…the provider's SDK refused it: its route is not the endpoint the relay matched"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Set LOG",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "provider_peerlog"
+          },
+          "capture": [
+            {
+              "variable": "LOG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "The provider's handlers ran only for the allowlisted route — never /secret, never /units/export",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "LOG"
+              },
+              "path": "[.calls[]?.route] | unique | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "/peer/units/:unitId"
+              },
+              "message": "The provider's handlers ran only for the allowlisted route — never /secret, never /units/export"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set DENIED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "audit_action_count peer.call.denied"
+          },
+          "capture": [
+            {
+              "variable": "DENIED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "The relay's refusals are audited (peer.call.denied: ${DENIED})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The relay's refusals are audited (peer.call.denied: ${DENIED})"
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "peer.call.denied entries: ${DENIED}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "peer.call.denied entries: ${DENIED}"
+          }
+        }
+      ],
+      "bash": "log_section \"Denied: no grant, not in the allowlist, a sibling route\"\n\nassert_eq \"$(call_code \"${SCOPE_WRITE}\" POST /echo)\" \"not_granted\" \"${SCOPE_WRITE} is not granted: 403 not_granted\" || true\nassert_eq \"$(call_code \"${SCOPE_READ}\" GET /secret)\" \"endpoint_not_allowed\" \"GET /secret, which the provider serves but does not declare: 403 endpoint_not_allowed\" || true\nOUT=$(consumer_call \"${SCOPE_READ}\" GET /units/export)\nassert_json_field \"$OUT\" '.status' '403' \"GET /units/export (matches /units/:unitId, a static route of its own on the provider): 403\" || true\nassert_contains \"$(json_get \"$OUT\" '.body.error')\" \"not the endpoint\" \"…the provider's SDK refused it: its route is not the endpoint the relay matched\" || true\nLOG=$(provider_peerlog)\nassert_json_field \"$LOG\" '[.calls[]?.route] | unique | join(\",\")' '/peer/units/:unitId' \"The provider's handlers ran only for the allowlisted route — never /secret, never /units/export\" || true\nDENIED=$(audit_action_count peer.call.denied)\nif [ \"${DENIED}\" -ge 2 ] 2>/dev/null; then\n  log_pass \"The relay's refusals are audited (peer.call.denied: ${DENIED})\"\nelse\n  log_fail \"peer.call.denied entries: ${DENIED}\"\nfi\n\n# ===========================================================================\n# 5. The shelf widened\n# ==========================================================================="
+    },
+    {
+      "id": "the-shelf-widened-to-scope-write",
+      "label": "The shelf widened to ${SCOPE_WRITE}",
+      "steps": [
+        {
+          "id": "step-34",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "apply_shelf \"{\\\"${SCOPE_READ}\\\":{\\\"provider\\\":\\\"${PROVIDER}\\\",\\\"consumers\\\":[\\\"${CONSUMER}\\\"]},\\\"${SCOPE_WRITE}\\\":{\\\"provider\\\":\\\"${PROVIDER}\\\",\\\"consumers\\\":[\\\"${CONSUMER}\\\"]}}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Re-applied with ${SCOPE_WRITE} too",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Re-applied with ${SCOPE_WRITE} too"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "consumer_call \"${SCOPE_WRITE}\" POST /echo '{\"hello\":\"peers\"}'"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "POST /echo with a body: 200, echoed, under ${SCOPE_WRITE}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.status) \\(.body.echoed.hello) \\(.body.caller.scope)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "200 peers ${SCOPE_WRITE}"
+              },
+              "message": "POST /echo with a body: 200, echoed, under ${SCOPE_WRITE}"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "${SCOPE_READ} still answers (its edge kept across the re-apply)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(call_code \"${SCOPE_READ}\" GET /units/8)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${SCOPE_READ} still answers (its edge kept across the re-apply)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The shelf widened to ${SCOPE_WRITE}\"\n\nRESP=$(apply_shelf \"{\\\"${SCOPE_READ}\\\":{\\\"provider\\\":\\\"${PROVIDER}\\\",\\\"consumers\\\":[\\\"${CONSUMER}\\\"]},\\\"${SCOPE_WRITE}\\\":{\\\"provider\\\":\\\"${PROVIDER}\\\",\\\"consumers\\\":[\\\"${CONSUMER}\\\"]}}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Re-applied with ${SCOPE_WRITE} too\" || true\nOUT=$(consumer_call \"${SCOPE_WRITE}\" POST /echo '{\"hello\":\"peers\"}')\nassert_json_field \"$OUT\" '\"\\(.status) \\(.body.echoed.hello) \\(.body.caller.scope)\"' \"200 peers ${SCOPE_WRITE}\" \"POST /echo with a body: 200, echoed, under ${SCOPE_WRITE}\" || true\nassert_eq \"$(call_code \"${SCOPE_READ}\" GET /units/8)\" \"200\" \"${SCOPE_READ} still answers (its edge kept across the re-apply)\" || true\n\n# ===========================================================================\n# 6. The provider's dependents\n# ==========================================================================="
+    },
+    {
+      "id": "the-provider-cannot-go-while-the-consumer-depends-on-it",
+      "label": "The provider cannot go while the consumer depends on it",
+      "steps": [
+        {
+          "id": "step-39",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"plugins/${PROVIDER}/hosting?force=true\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Unhosting the provider: 409, even with force",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Unhosting the provider: 409, even with force"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "…peer_dependents, naming ${CONSUMER}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.code) \\([.consumers[]? | if type == \"object\" then .consumer // .name else . end] | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "peer_dependents ${CONSUMER}"
+              },
+              "message": "…peer_dependents, naming ${CONSUMER}"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PROVIDER}/disable\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "The provider disabled (an uninstall needs it)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The provider disabled (an uninstall needs it)"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "consumer_call \"${SCOPE_READ}\" GET /units/9"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "A disabled provider's edges are pending: a call is 403 not_granted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.error.code) \\(.error.status)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "not_granted 403"
+              },
+              "message": "A disabled provider's edges are pending: a call is 403 not_granted"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "…GET /api/peers shows the edge pending ($(peers_view | jq -r --arg s \"${SCOPE_READ}\" '[.shelves[]?.edges[]? | select(.scope == $s) | .reason] | first // ",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(edge_state \"${SCOPE_READ}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "pending"
+              },
+              "message": "…GET /api/peers shows the edge pending ($(peers_view | jq -r --arg s \"${SCOPE_READ}\" '[.shelves[]?.edges[]? | select(.scope == $s) | .reason] | first // "
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"plugins/${PROVIDER}?force=true\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "Uninstalling the provider: 409, even with force",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Uninstalling the provider: 409, even with force"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "…peer_dependents",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "peer_dependents"
+              },
+              "message": "…peer_dependents"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PROVIDER}/enable\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "Enabled again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Enabled again"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "…and it answers again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…and it answers again"
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "After enabling: $(consumer_call \"${SCOPE_READ}\" GET /units/9)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "After enabling: $(consumer_call \"${SCOPE_READ}\" GET /units/9)"
+          }
+        }
+      ],
+      "bash": "log_section \"The provider cannot go while the consumer depends on it\"\n\nRESP=$(host_api_call DELETE \"plugins/${PROVIDER}/hosting?force=true\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Unhosting the provider: 409, even with force\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.code) \\([.consumers[]? | if type == \"object\" then .consumer // .name else . end] | join(\",\"))\"' \"peer_dependents ${CONSUMER}\" \"…peer_dependents, naming ${CONSUMER}\" || true\nRESP=$(host_api_call POST \"plugins/${PROVIDER}/disable\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The provider disabled (an uninstall needs it)\" || true\nOUT=$(consumer_call \"${SCOPE_READ}\" GET /units/9)\nassert_json_field \"$OUT\" '\"\\(.error.code) \\(.error.status)\"' 'not_granted 403' \"A disabled provider's edges are pending: a call is 403 not_granted\" || true\nassert_eq \"$(edge_state \"${SCOPE_READ}\")\" \"pending\" \"…GET /api/peers shows the edge pending ($(peers_view | jq -r --arg s \"${SCOPE_READ}\" '[.shelves[]?.edges[]? | select(.scope == $s) | .reason] | first // \"\"'))\" || true\nRESP=$(host_api_call DELETE \"plugins/${PROVIDER}?force=true\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"Uninstalling the provider: 409, even with force\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'peer_dependents' \"…peer_dependents\" || true\nRESP=$(host_api_call POST \"plugins/${PROVIDER}/enable\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Enabled again\" || true\nif wait_for 60 eval '[ \"$(call_code \"${SCOPE_READ}\" GET /units/9)\" = \"200\" ]'; then\n  log_pass \"…and it answers again\"\nelse\n  log_fail \"After enabling: $(consumer_call \"${SCOPE_READ}\" GET /units/9)\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 58 — Calls between app plugins on two agents (Three-VM)\n# ============================================================================\n# Slice 8: one app plugin's agent half calls another's through the relay. The\n# provider e2e-pdir is hosted on the agent VM's agent, the consumer e2e-pcons\n# on a second agent the visitor VM runs (peers-harness.sh:\n# ensure_second_agent) — two agents, two VMs, one relay. The consumer's half\n# calls through the peer channel the relay opened to it\n# (POST /admin/e2e/call, an administrator's request through the forwarder):\n#\n# 1. Nothing applied: every call is 403 not_granted; GET /api/peers shows\n#    both declarations and no shelf.\n# 2. Applying a shelf: a scope named for another plugin and an edge the\n#    consumer does not declare are refused; the shelf granting\n#    e2e-pdir:read to e2e-pcons is applied and its edge is effective.\n# 3. A granted call reaches the provider's handler with the `peer` caller\n#    the relay signed — consumer, scope, major, the endpoint pattern the\n#    relay matched, one hop, no user.\n# 4. Denied: a scope the shelf does not grant (403 not_granted); a path the\n#    provider serves but does not declare (403 endpoint_not_allowed, never\n#    reaching it); a static sibling route the declared `:unitId` pattern\n#    matches — the provider's SDK refuses it, since its route is not the\n#    endpoint the relay matched (403, no handler ran). Refusals are audited.\n# 5. The shelf widened to e2e-pdir:write: the POST endpoint answers, with\n#    its body.\n# 6. The provider cannot be unhosted while the consumer's edges use it (409\n#    peer_dependents naming e2e-pcons), even with force; disabled, its edges\n#    are pending (a call is 403 not_granted) — and an uninstall is still\n#    refused while the shelf grants them; enabled again, it answers. Only\n#    an administrator breaking them on purpose removes it (the cleanup).\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=peers-harness.sh\nsource \"${SCRIPT_DIR}/peers-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\nPOLICY_ID=\"e2e-apphost-58\"\nREMOTE_DIR=\"/var/tmp/e2e-58-peers\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${CONSUMER} ${PROVIDER}\"\nCLEAN_ROUTES=\"${PROVIDER}\"\nPURGE_PACKAGES=\"\"\n\nbegin_test \"58 — Calls between app plugins on two agents (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  peers_cleanup\n}\ntrap cleanup EXIT\n\n# call_code <scope> <method> <path> — the relay's code of a refused call, or the provider's status\ncall_code() {\n  local out\n  out=$(consumer_call \"$1\" \"$2\" \"$3\")\n  echo \"$out\" | jq -r '.error.code // (.status | tostring)' 2>/dev/null || echo \"unreadable\"\n}\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

@@ -48,6 +48,11 @@ export function onHealthTransition(plugin, before, after, logger) {
         await refreshPluginSettingsBestEffort(plugin, logger);
         await syncPluginIdentity(plugin, { logger });
       }
+      // Peer readiness and the channels follow the hosting's health.
+      if (after.state !== before?.state) {
+        const { onPeerHealthTransition } = await import('./peer-runtime.js');
+        await onPeerHealthTransition(plugin, after, logger);
+      }
     });
   chains.set(plugin, next);
   next.finally(() => {

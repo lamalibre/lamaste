@@ -70,6 +70,7 @@ import { agentLastSeenAt, agentPresenceMap } from './agent-presence.js';
 import { refreshPluginSettingsBestEffort } from './plugin-settings.js';
 import { refreshPluginIdentity } from './identity-sync.js';
 import { refreshUserSurfaceVhosts } from './user-surface.js';
+import { assertNoPeerDependents } from './peers.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
@@ -312,7 +313,7 @@ export async function hostPlugin(name, agentLabel, { actor, logger, sourceIp }) 
   }
   if (!(await installedVersionApproved(plugin))) {
     throw httpError(
-      `Plugin "${name}" brings relay hooks, an agent half or an identity block that are not approved — review and approve them first`,
+      `Plugin "${name}" brings relay hooks, an agent half, an identity or a peers block that are not approved — review and approve them first`,
       409,
       { code: 'hooks_not_approved' },
     );
@@ -350,6 +351,10 @@ export async function hostPlugin(name, agentLabel, { actor, logger, sourceIp }) 
         // Its user surface's locations take the body limit of the internal
         // tunnel the hosting brought.
         await refreshUserSurfaceVhosts(plugin.route, logger);
+        // Its half is asked whether it speaks the peers protocol; a consumer
+        // gets its channel.
+        const { refreshPluginPeers } = await import('./peer-runtime.js');
+        await refreshPluginPeers(plugin.name, logger);
       }
       return result;
     },
@@ -363,21 +368,25 @@ export async function hostPlugin(name, agentLabel, { actor, logger, sourceIp }) 
  * operation. `force` lets failing pre-teardown stages pass (reported and
  * audited) — for an agent that is gone or a half that no longer answers.
  * `purge` removes the data directory and service account of an agent half
- * Lamaste installed (kept by default).
+ * Lamaste installed (kept by default). `breakPeers` removes the hosting of
+ * a plugin other plugins' effective peer edges consume; without it that is
+ * `409 peer_dependents` (`force` never implies it).
  *
  * @param {string} name
- * @param {{ actor: string, logger: import('pino').Logger, force?: boolean, purge?: boolean, sourceIp: string }} opts
+ * @param {{ actor: string, logger: import('pino').Logger, force?: boolean, purge?: boolean, breakPeers?: boolean, sourceIp: string }} opts
  * @returns {Promise<object>} the operation
  */
 export async function unhostPlugin(
   name,
-  { actor, logger, force = false, purge = false, sourceIp },
+  { actor, logger, force = false, purge = false, breakPeers = false, sourceIp },
 ) {
   const plugin = await requireHostablePlugin(name);
   const record = await ownHosting(plugin);
   if (!record) {
     throw httpError(`Plugin "${name}" is not hosted on an agent`, 404);
   }
+  // Other plugins' calls and events into it stop: only with breakPeers.
+  await assertNoPeerDependents(plugin, breakPeers);
   const push = await prepareHostingRemoval(plugin, record, { purge, sourceIp });
   const { operation } = await startPluginOperation({
     plugin: plugin.name,
@@ -617,6 +626,11 @@ export async function acknowledgeAgentPluginConfig(label, route, issuedAt) {
     route,
     issuedAt,
   );
+  if (acknowledged) {
+    // A consumer's peer channel was attached under the previous secret.
+    const { peerSecretAcknowledged } = await import('./peer-runtime.js');
+    peerSecretAcknowledged(route);
+  }
   return { acknowledged, secretIssuedAt: next.current.issuedAt };
 }
 

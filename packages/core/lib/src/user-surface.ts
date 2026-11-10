@@ -54,6 +54,12 @@ import type { WebSurfaceAccessMode } from './web-surface.js';
 /** The agent half's user surface, the only prefix a `user` caller reaches. */
 export const AGENT_HALF_APP_PREFIX = '/app';
 
+/**
+ * The agent half's peer surface (`peers.ts`), the only prefix a `peer`
+ * caller — another app plugin, through the relay — reaches.
+ */
+export const AGENT_HALF_PEER_PREFIX = '/peer';
+
 /** Where the relay serves a plugin's user surface: `/api/<route>/app/*`. */
 export const USER_SURFACE_API_PREFIX = '/api';
 
@@ -176,6 +182,30 @@ const APP_SEGMENT = AGENT_HALF_APP_PREFIX.slice(1);
 export function isUnderAgentHalfApp(path: string): boolean {
   const segment = routerSegment(path, 0);
   return segment === null || (segment !== undefined && segment.startsWith(APP_SEGMENT));
+}
+
+/**
+ * Whether `path` (with its query string) is on the agent half's peer
+ * surface: `/peer`, `/peer/…` or `/peer?…`, read literally, with no unsafe
+ * segment ({@link hasUnsafePathSegments}). The only paths a `peer` caller
+ * is valid for.
+ */
+export function isAgentHalfPeerPath(path: string): boolean {
+  return isSafelyUnder(path, AGENT_HALF_PEER_PREFIX);
+}
+
+/** `peer`, the first segment of the peer surface. */
+const PEER_SEGMENT = AGENT_HALF_PEER_PREFIX.slice(1);
+
+/**
+ * Whether a router could take `path` for one under `/peer` — its first
+ * segment, reduced as {@link routerSegment} does, starts with `peer`, or
+ * does not decode: `/Peer/x`, `/%70eer`, `//peer`, `/peers` alike. No
+ * caller but a `peer` may have such a path signed for it.
+ */
+export function isUnderAgentHalfPeer(path: string): boolean {
+  const segment = routerSegment(path, 0);
+  return segment === null || (segment !== undefined && segment.startsWith(PEER_SEGMENT));
 }
 
 /** `/api/<route>/app` — the relay path of a plugin's user surface. Throws on an invalid route. */

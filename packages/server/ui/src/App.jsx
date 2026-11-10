@@ -17,6 +17,7 @@ import {
   TicketsPage,
   StoragePage,
   AuditPage,
+  PeersPage,
   DomainsPage,
 } from './admin/index.js';
 import { webAdminClient } from './lib/web-admin-client.js';
@@ -71,6 +72,7 @@ function AppRoutes() {
         <Route path="/tickets" element={<TicketsPage />} />
         <Route path="/plugins" element={<PluginsPage />} />
         <Route path="/storage" element={<StoragePage />} />
+        <Route path="/peers" element={<PeersPage />} />
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/plugins/:pluginName/*" element={<PluginLoaderRoute />} />
         <Route path="/settings" element={<SettingsPage hasDomain={!!domain} />} />

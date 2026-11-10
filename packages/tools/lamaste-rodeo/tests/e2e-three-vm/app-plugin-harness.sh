@@ -1633,9 +1633,9 @@ app_plugin_cleanup() {
       if [ "$code" = "404" ] || [ "$code" = "000" ]; then break; fi
       host_api_post "plugins/${plugin}/disable" '{}' > /dev/null 2>&1 || true
       if [ "$(host_api_get_status "plugins/${plugin}/hosting")" = "200" ]; then
-        host_api_delete "plugins/${plugin}?force=true&purge=true" > /dev/null 2>&1 || true
+        host_api_delete "plugins/${plugin}?force=true&purge=true&breakPeers=true" > /dev/null 2>&1 || true
       else
-        host_api_delete "plugins/${plugin}?force=true" > /dev/null 2>&1 || true
+        host_api_delete "plugins/${plugin}?force=true&breakPeers=true" > /dev/null 2>&1 || true
       fi
       nudge_sync
       sleep 3

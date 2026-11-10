@@ -43,6 +43,7 @@ import {
 } from './lib/plugin-hosting.js';
 import { refreshHostedPluginSettings } from './lib/plugin-settings.js';
 import { startIdentityServices, stopIdentityServices } from './lib/identity-sync.js';
+import { startPeerServices, stopPeerServices } from './lib/peer-runtime.js';
 import { syncOidcClients } from './lib/plugin-oidc.js';
 import { ensureRelaySigningKey } from './lib/relay-signing.js';
 import {
@@ -323,6 +324,11 @@ async function start() {
   // changed outside Lamaste, retries), with a daily full reconcile per plugin ---
   startIdentityServices(server.log);
 
+  // --- Calls and events between app plugins: which agent halves speak the
+  // peers protocol, and the peer channels to consumers (the relay dials
+  // them; nothing listens) — now, then every 15s ---
+  startPeerServices(server.log);
+
   // --- Periodic ticket instance liveness check (every 60s) ---
   const livenessInterval = setInterval(() => {
     checkInstanceLiveness(server.log).catch((err) => {
@@ -336,6 +342,7 @@ async function start() {
     server.log.info({ signal }, 'Received signal, shutting down gracefully');
     clearInterval(livenessInterval);
     stopIdentityServices();
+    stopPeerServices();
     stopHostedPluginHealthMonitor();
     clearRateLimitInterval();
     await server.close();

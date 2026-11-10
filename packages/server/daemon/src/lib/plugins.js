@@ -20,6 +20,7 @@ import {
   derivePluginRoute,
   hasAgentHalf,
   normalizeIdentityBlock,
+  normalizePeersBlock,
   pluginHostCapability,
   validateManifest as coreValidateManifest,
   validateInstalledManifest,
@@ -79,9 +80,9 @@ async function getStmts() {
       INSERT INTO plugins
         (name, route, display_name, package_name, version, description, capabilities,
          packages, panel, config, modes, hosting, agent, hooks, hooks_entry_sha256,
-         agent_half_pin, settings, identity, user_surface, web_tree_sha256, status,
+         agent_half_pin, settings, identity, user_surface, web_tree_sha256, peers, status,
          installed_at, enabled_at, domain)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     deleteByName: db.prepare('DELETE FROM plugins WHERE name = ?'),
     // The plugin's audience and the state of its identity feed
@@ -154,6 +155,7 @@ function rowToPlugin(row) {
   if (row.identity != null) entry.identity = JSON.parse(row.identity);
   if (row.user_surface != null) entry.userSurface = JSON.parse(row.user_surface);
   if (row.web_tree_sha256 != null) entry.webTreeSha256 = row.web_tree_sha256;
+  if (row.peers != null) entry.peers = JSON.parse(row.peers);
   if (row.enabled_at != null) entry.enabledAt = row.enabled_at;
   // The domain the plugin belongs to; null: the primary (lib/domains.js).
   entry.domain = row.domain ?? null;
@@ -179,6 +181,28 @@ function nullableJson(value) {
  */
 export function identityOf(manifest) {
   return manifest.identity ? normalizeIdentityBlock(manifest.identity) : undefined;
+}
+
+/**
+ * A manifest's `peers` block as the registry stores it — normalized (core
+ * `normalizePeersBlock`: defaults applied) — or undefined when it declares
+ * none. The stored block enters the approval digest.
+ *
+ * @param {{ peers?: import('@lamalibre/lamaste').PeersBlockInput }} manifest
+ * @returns {import('@lamalibre/lamaste').PeersBlock | undefined}
+ */
+export function peersOf(manifest) {
+  return manifest.peers ? normalizePeersBlock(manifest.peers) : undefined;
+}
+
+/** Judge the applied shelves' edges again (lib/peers.js) — never throws. */
+async function invalidatePeersInBackground(logger) {
+  try {
+    const { invalidatePeers } = await import('./peers.js');
+    invalidatePeers(logger);
+  } catch (err) {
+    logger?.warn({ err: err.message }, 'Could not recompute the peer edges');
+  }
 }
 
 /** Recompute the plugin audiences (lib/audience.js) beside other work — never throws. */
@@ -241,6 +265,7 @@ export async function writePlugins(data) {
         nullableJson(p.identity),
         nullableJson(p.userSurface),
         nullableString(p.webTreeSha256),
+        nullableJson(p.peers),
         p.status,
         p.installedAt,
         nullableString(p.enabledAt),
@@ -522,6 +547,7 @@ export function installPlugin(packageName, logger) {
       identity: identityOf(manifest),
       userSurface: manifest.userSurface,
       webTreeSha256,
+      peers: peersOf(manifest),
       status: 'disabled',
       installedAt: new Date().toISOString(),
     };
@@ -552,6 +578,7 @@ export function installPlugin(packageName, logger) {
         nullableJson(entry.identity),
         nullableJson(entry.userSurface),
         nullableString(entry.webTreeSha256),
+        nullableJson(entry.peers),
         entry.status,
         entry.installedAt,
         null,
@@ -569,6 +596,8 @@ export function installPlugin(packageName, logger) {
     // Users already entitled to its route (grants that outlived an earlier
     // installation) make up its audience from the start.
     if (entry.identity) await recomputeAudiencesInBackground(logger);
+    // Applied shelves may name it: its edges are judged again.
+    if (entry.peers) await invalidatePeersInBackground(logger);
     // A new installation is served on no host (its version is not approved
     // yet): a vhost still carrying the route from before goes in line.
     const { refreshUserSurfaceVhosts } = await import('./user-surface.js');
@@ -703,6 +732,8 @@ export function uninstallPlugin(name, logger) {
     await releasePluginUserSurface(plugin.route, { plugin: name, logger });
 
     logger.info({ name }, 'Plugin uninstalled');
+    // The applied shelves keep their edges, now pending; its channel goes.
+    if (plugin.peers) await invalidatePeersInBackground(logger);
     await syncOidcClientsBestEffort(logger);
 
     // Grants on its OIDC clients end with it: client ids are chosen, not
@@ -732,7 +763,8 @@ const updateRowSql = `
   UPDATE plugins SET
     display_name = ?, version = ?, description = ?, capabilities = ?, packages = ?, panel = ?,
     config = ?, modes = ?, hosting = ?, agent = ?, hooks = ?, hooks_entry_sha256 = ?,
-    agent_half_pin = ?, settings = ?, identity = ?, user_surface = ?, web_tree_sha256 = ?
+    agent_half_pin = ?, settings = ?, identity = ?, user_surface = ?, web_tree_sha256 = ?,
+    peers = ?
   WHERE name = ?`;
 
 /**
@@ -781,6 +813,7 @@ export async function writePluginRow(
         nullableJson(identityOf(manifest)),
         nullableJson(manifest.userSurface),
         nullableString(webTreeSha256),
+        nullableJson(peersOf(manifest)),
         name,
       );
     const pruned = prunedSettingsCache(
@@ -902,6 +935,8 @@ export function enablePlugin(name, logger) {
     }
 
     logger?.info({ name }, 'Plugin enabled');
+    // Its edges take effect again (lib/peers.js): channels and calls follow.
+    if (row.peers) await invalidatePeersInBackground(logger);
     const oidcClients = await syncOidcClientsBestEffort(logger);
     return { ok: true, name, status: 'enabled', oidcClients };
   });
@@ -937,6 +972,9 @@ export function disablePlugin(name, logger) {
     }
 
     logger?.info({ name }, 'Plugin disabled');
+    // A disabled plugin calls and serves nobody (lib/peers.js): its edges go
+    // pending, and its channel is closed and its open calls ended.
+    if (row.peers) await invalidatePeersInBackground(logger);
     await syncOidcClientsBestEffort(logger);
     return { ok: true, name, status: 'disabled' };
   });

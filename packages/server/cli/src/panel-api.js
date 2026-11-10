@@ -337,6 +337,8 @@ export function parsePanelResponse(stdout, method, path) {
       err.reasons = parsed.reasons.filter((r) => typeof r === 'string');
     }
     if (typeof parsed.operationId === 'string') err.operationId = parsed.operationId;
+    // `peer_dependents`: the plugins whose calls and events would stop.
+    if (Array.isArray(parsed.consumers)) err.consumers = parsed.consumers;
     const errors = settingsErrors(parsed.errors) ?? fieldErrors(parsed.errors);
     if (errors) err.errors = errors;
     if (typeof parsed.reason === 'string') err.reason = parsed.reason;

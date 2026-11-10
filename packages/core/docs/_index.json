@@ -274,6 +274,11 @@
           "file": "04-api-reference/agent-hosted-plugins.md"
         },
         {
+          "title": "Calls and Events Between Plugins",
+          "slug": "api-peers",
+          "file": "04-api-reference/peers.md"
+        },
+        {
           "title": "App Host (Agent Halves)",
           "slug": "api-app-host",
           "file": "04-api-reference/app-host.md"

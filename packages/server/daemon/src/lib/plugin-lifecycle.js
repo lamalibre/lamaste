@@ -49,6 +49,7 @@ import {
   findPlugin,
   getPluginCapabilities,
   identityOf,
+  peersOf,
   manifestPolicyError,
   replacePluginPackage,
   uninstallPlugin,
@@ -95,6 +96,8 @@ import { notifyAdminsBestEffort } from './notifications.js';
 import { refreshPluginSettingsBestEffort, settingsBlockOf } from './plugin-settings.js';
 import { refreshPluginIdentity } from './identity-sync.js';
 import { refreshUserSurfaceVhosts } from './user-surface.js';
+import { assertNoPeerDependents, peersApprovalRequired, peersPreview } from './peers.js';
+import { refreshPluginPeers } from './peer-runtime.js';
 
 /** Replaces the OIDC client sync (tests: there is no Authelia to write to). */
 let oidcSyncOverride = null;
@@ -132,10 +135,13 @@ async function syncOidcBestEffort(logger) {
  * (a hosted plugin whose agent half Lamaste installed) removes the agent
  * half's data directory and service account too; `sourceIp` is the
  * admin's, for the push-install gates of removing that agent half.
+ * `breakPeers` uninstalls a plugin other plugins' effective peer edges
+ * consume (their calls and events into it stop); without it such an
+ * uninstall answers `409 peer_dependents` — `force` never implies it.
  */
 export async function uninstallPluginWithHosting(
   name,
-  { actor, logger, force = false, purge = false, sourceIp },
+  { actor, logger, force = false, purge = false, breakPeers = false, sourceIp },
 ) {
   const plugin = await findPlugin(name);
   if (!plugin) throw httpError(`Plugin "${name}" not found`, 404);
@@ -145,6 +151,8 @@ export async function uninstallPluginWithHosting(
   if (isPluginOperationRunning(name)) {
     throw httpError(`Plugin "${name}" has an operation in progress — wait for it to finish`, 409);
   }
+  // Other plugins' calls and events into it stop: only with breakPeers.
+  await assertNoPeerDependents(plugin, breakPeers);
   // Only the plugin's own hosting: never one another plugin holds on its route.
   const record = hasAgentHalf(plugin) ? await ownHosting(plugin) : null;
   if (!record) {
@@ -343,6 +351,7 @@ function approvalRequiredFor(staged, state, settings, identity) {
             identity: staged.identity,
             web: staged.webTree,
             body: staged.maxBodySizeMb,
+            peers: staged.peers,
           }),
         ]),
     ...settingsApprovalRequired(settings),
@@ -476,6 +485,7 @@ async function stageVersion(plugin, requestedVersion, record) {
     identity: identityOf(manifest),
     userSurface: manifest.userSurface,
     webTreeSha256: webTree?.sha256 ?? null,
+    peers: peersOf(manifest),
   };
   const approval = installedApproval(entry);
   return {
@@ -493,6 +503,8 @@ async function stageVersion(plugin, requestedVersion, record) {
     webTree,
     // The request body limit it declares, MiB (null: it declares none).
     maxBodySizeMb: approval.maxBodySizeMb,
+    // The staged peers block, normalized (null: it declares none).
+    peers: approval.peers,
     // The relay hook set's own digest — what the runner holds.
     relayDigest: approval.relay?.digest ?? null,
     approvalRequired: approval.required,
@@ -725,7 +737,11 @@ export async function updatePlugin(
   const state = await readHookState(name);
   const settings = settingsPreview(plugin, staged.manifest);
   const identity = identityPreview(plugin, staged.manifest);
-  const approvalRequired = approvalRequiredFor(staged, state, settings, identity);
+  const peers = await peersPreview(plugin, staged.peers);
+  const approvalRequired = [
+    ...approvalRequiredFor(staged, state, settings, identity),
+    ...peersApprovalRequired(peers),
+  ];
   let approvedBy = null;
   let autoApproved = false;
   if (approvedUpdate !== null) {
@@ -755,6 +771,7 @@ export async function updatePlugin(
         settings,
         identity,
         web: await webPreview(plugin, staged),
+        peers,
         approvalRequired,
         withheldReasons,
         actor,
@@ -835,6 +852,7 @@ async function awaitApproval({
   settings,
   identity,
   web,
+  peers,
   approvalRequired,
   withheldReasons,
   actor,
@@ -855,6 +873,7 @@ async function awaitApproval({
     identity,
     web,
     body: bodyLimitPreview(plugin, staged),
+    peers,
     approvalRequired,
     ...(withheld.length > 0 ? { autoApproveWithheld: withheld } : {}),
   };
@@ -956,6 +975,7 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
         identity: identityOf(installed.manifest),
         userSurface: installed.manifest.userSurface,
         webTreeSha256: installed.webTreeSha256,
+        peers: peersOf(installed.manifest),
       };
       let approval;
       try {
@@ -1030,6 +1050,10 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
   // is bound to serve it from the version that does — a plugin's
   // switch-over to the relay's user surface is this update.
   await refreshUserSurfaceVhosts(plugin.route, logger);
+  // And what it provides to and consumes from other plugins: the effective
+  // edges follow the installed version, whose half must answer the peers
+  // protocol again before calls reach it.
+  await refreshPluginPeers(name, logger);
 
   // Hooks the new version no longer has: the old runner goes once the new
   // version is in place.

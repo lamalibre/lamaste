@@ -235,14 +235,16 @@ test('an update whose agent half changed waits for approval and is pinned again 
     'body',
     'digest',
     'identity',
+    'peers',
     'relay',
     'settings',
     'stagedAt',
     'version',
     'web',
   ]);
-  // Neither version declares identity, nor a web surface.
+  // Neither version declares identity, nor a web surface, nor peers.
   assert.equal(shown.pendingUpdate.identity, null);
+  assert.equal(shown.pendingUpdate.peers, null);
   assert.equal(shown.pendingUpdate.web, null);
   // It waits for one reason: its digest is not the approved one.
   assert.deepEqual(shown.pendingUpdate.approvalRequired, [

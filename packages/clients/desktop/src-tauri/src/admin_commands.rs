@@ -89,19 +89,28 @@ fn admin_operation(method: &str, path: &str, body: Option<&str>) -> Result<serde
     if let Some(id) = value.get("operationId").filter(|i| i.is_string()) {
         answer.insert("operationId".to_string(), id.clone());
     }
+    // `peer_dependents`: the plugins whose calls and events would stop.
+    if let Some(consumers) = value.get("consumers").filter(|c| c.is_array()) {
+        answer.insert("consumers".to_string(), consumers.clone());
+    }
     Err(serde_json::Value::Object(answer))
 }
 
-/// `?force=true&purge=true` for removing a plugin's hosting, with only the
-/// flags that are set: `force` lets failing pre-teardown hooks pass, `purge`
-/// deletes the data and service account of an agent half Lamaste installed.
-fn removal_query(force: Option<bool>, purge: Option<bool>) -> String {
+/// `?force=true&purge=true&breakPeers=true` for removing a plugin's hosting,
+/// with only the flags that are set: `force` lets failing pre-teardown hooks
+/// pass, `purge` deletes the data and service account of an agent half
+/// Lamaste installed, `breakPeers` removes a plugin other plugins' peer
+/// edges consume (their calls and events into it stop).
+fn removal_query(force: Option<bool>, purge: Option<bool>, break_peers: Option<bool>) -> String {
     let mut query = serde_json::Map::new();
     if force.unwrap_or(false) {
         query.insert("force".to_string(), serde_json::Value::Bool(true));
     }
     if purge.unwrap_or(false) {
         query.insert("purge".to_string(), serde_json::Value::Bool(true));
+    }
+    if break_peers.unwrap_or(false) {
+        query.insert("breakPeers".to_string(), serde_json::Value::Bool(true));
     }
     query_string(&serde_json::Value::Object(query))
 }
@@ -518,6 +527,48 @@ pub async fn admin_remove_trusted_scope(
     scope: String,
 ) -> Result<serde_json::Value, serde_json::Value> {
     admin_refusable_task("DELETE", trusted_scopes_path(Some(&scope)), None).await
+}
+
+// --- Calls and events between app plugins: applied shelves ---
+
+/// `/api/peers/shelves/<id>`, for an id a shelf could have: a DNS label.
+fn peer_shelf_path(shelf_id: &str) -> Result<String, serde_json::Value> {
+    let valid = !shelf_id.is_empty()
+        && shelf_id.len() <= 63
+        && shelf_id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && !shelf_id.starts_with('-')
+        && !shelf_id.ends_with('-');
+    if !valid {
+        return Err(refusal("A shelf id is a DNS label".to_string()));
+    }
+    Ok(format!("/api/peers/shelves/{}", shelf_id))
+}
+
+/// Every plugin's provides and consumes, every applied shelf with its edges
+/// (`effective` or `pending` with the reason), and each consumer's channel.
+#[tauri::command]
+pub async fn admin_get_peers() -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("GET", "/api/peers".to_string(), None).await
+}
+
+/// Apply a shelf's scope graph to the relay (replacing that shelf's edges).
+/// Rejects with the panel's refusal (`code` `not_declared`, `major_mismatch`,
+/// `cycle`).
+#[tauri::command]
+pub async fn admin_apply_peer_shelf(
+    shelf_id: String,
+    scopes: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = peer_shelf_path(&shelf_id)?;
+    let body = serde_json::json!({ "scopes": scopes }).to_string();
+    admin_refusable_task("PUT", path, Some(body)).await
+}
+
+/// Remove a shelf's edges from the relay.
+#[tauri::command]
+pub async fn admin_remove_peer_shelf(shelf_id: String) -> Result<serde_json::Value, serde_json::Value> {
+    let path = peer_shelf_path(&shelf_id)?;
+    admin_refusable_task("DELETE", path, None).await
 }
 
 // --- A domain's brand on its auth pages ---
@@ -1000,9 +1051,10 @@ pub async fn admin_uninstall_plugin(
     name: String,
     force: Option<bool>,
     purge: Option<bool>,
+    break_peers: Option<bool>,
 ) -> Result<serde_json::Value, serde_json::Value> {
     tokio::task::spawn_blocking(move || {
-        let path = format!("/api/plugins/{}{}", url_encode(&name), removal_query(force, purge));
+        let path = format!("/api/plugins/{}{}", url_encode(&name), removal_query(force, purge, break_peers));
         admin_operation("DELETE", &path, None)
     })
     .await.map_err(|e| refusal(format!("Task failed: {}", e)))?
@@ -1046,12 +1098,13 @@ pub async fn admin_clear_plugin_hosting(
     name: String,
     force: Option<bool>,
     purge: Option<bool>,
+    break_peers: Option<bool>,
 ) -> Result<serde_json::Value, serde_json::Value> {
     tokio::task::spawn_blocking(move || {
         let path = format!(
             "/api/plugins/{}/hosting{}",
             url_encode(&name),
-            removal_query(force, purge)
+            removal_query(force, purge, break_peers)
         );
         admin_operation("DELETE", &path, None)
     })
@@ -1241,14 +1294,14 @@ fn panel_refusal(status: u16, body: &str) -> serde_json::Value {
 }
 
 /// What `panel_refusal` passes on beyond the message and the status.
-const REFUSAL_FIELDS: [&str; 7] =
-    ["code", "reasons", "operationId", "errors", "reason", "revision", "hosting"];
+const REFUSAL_FIELDS: [&str; 8] =
+    ["code", "reasons", "operationId", "errors", "reason", "revision", "hosting", "consumers"];
 
 /// Whether a field of a refusal has the shape the panel UI reads it in.
 fn refusal_field_kept(key: &str, field: &serde_json::Value) -> bool {
     match key {
         "code" | "operationId" | "reason" => field.is_string(),
-        "reasons" => field.is_array(),
+        "reasons" | "consumers" => field.is_array(),
         // A settings refusal's map, or a brand refusal's list by field.
         "errors" => field.is_object() || field.is_array(),
         "revision" => field.is_u64(),
@@ -2159,6 +2212,28 @@ pub async fn admin_clear_access_request_log() -> Result<serde_json::Value, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removal_flags_go_in_the_query_only_when_set() {
+        assert_eq!(removal_query(None, None, None), "");
+        let all = removal_query(Some(true), Some(true), Some(true));
+        assert!(all.contains("force=true") && all.contains("purge=true") && all.contains("breakPeers=true"));
+        assert!(!removal_query(Some(true), None, Some(false)).contains("breakPeers"));
+    }
+
+    #[test]
+    fn a_peer_shelf_id_is_a_dns_label() {
+        assert_eq!(peer_shelf_path("ops-2").unwrap(), "/api/peers/shelves/ops-2");
+        for bad in ["", "Ops", "-ops", "ops-", "../x", "a/b", &"a".repeat(64)] {
+            assert!(peer_shelf_path(bad).is_err(), "{}", bad);
+        }
+    }
+
+    #[test]
+    fn a_refusal_keeps_the_dependent_consumers() {
+        assert!(refusal_field_kept("consumers", &serde_json::json!([{ "consumer": "leave" }])));
+        assert!(!refusal_field_kept("consumers", &serde_json::json!("leave")));
+    }
 
     #[test]
     fn the_invitations_filters_are_checked_before_the_panel_is_asked() {

@@ -51,6 +51,7 @@ Hosting a plugin on an agent does three things at once: it creates the internal 
 | `settings`            | What an administrator configures — values and secrets the agent half stores. Only with an `agent` block. See [Settings](#settings).                                                                                                                                                                                                                                                                                                                              |
 | `identity`            | The plugin's users: its roles (1–32, `{ id, label, description? }`) and the user attributes it may receive (`attributes`, a subset of `displayName` and `email`, default `["displayName"]`). Only with `hosting: "agent"` and an `agent` block. Part of the approval digest when present. See [Users and identity](#users-and-identity).                                                                                                                         |
 | `userSurface`         | How end users reach the plugin. Only `web`: `{ defaultSubdomain, accessMode?, root? }` — the subdomain Lamaste offers for the plugin's own site (a DNS label, not reserved, not `agent-…`), its access mode (`authenticated`, the default, or `restricted`; never public) and the directory of the server package holding the shell (`root`, default `web`). Only with `identity`. The shell's files enter the approval digest. See [Web surface](#web-surface). |
+| `peers`               | Optional (4.13). The scopes the plugin **provides** to other plugins (endpoints on its agent half's `/peer` surface, events, API majors) and those it **consumes** (required or optional, the major it speaks, the events it subscribes to). Only with an `agent` block. Part of the approval digest when declared. See [Calls and Events Between Plugins](peers.md).                                                                                            |
 
 There is no port in the manifest: Lamaste assigns it when the plugin is hosted.
 
@@ -1000,6 +1001,10 @@ lamaste-server plugins identity-sync <name> [--reconcile]
 ```
 
 `plugins hooks` and `plugins update` print the identity block, an update's identity diff and the `identity.changed` reason. Binding the user surface: [Tunnels API](tunnels.md#user-surface-binding).
+
+## Calls and events between plugins
+
+A plugin that declares `peers` calls the endpoints other plugins provide, and receives their events, along the edges an applied shelf grants — through the relay, over a **peer channel** the relay opens on the consumer's own internal tunnel. Its agent half then serves a third surface beside `/admin` and `/app`: `/peer/*`, reached only by the `peer` caller, which reaches nothing else. Everything — the manifest block, applied shelves, the channel, the relay's decision codes, delegations on behalf of a person, events and gaps, readiness, the SDK — is in [Calls and Events Between Plugins](peers.md).
 
 ## Delegated invitations
 
