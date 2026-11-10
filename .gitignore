@@ -9,6 +9,10 @@ panel-dist/
 *.key
 *.pem
 *.csr
+# Mail tests' certificates and the SMTP sink's test-only key (their READMEs say what they are)
+!packages/core/lib/test/fixtures/mail/*.pem
+!packages/server/daemon/test/fixtures/mail/*.pem
+!packages/server/daemon/test/fixtures/mail/*.key
 .DS_Store
 *.log
 *.tgz
