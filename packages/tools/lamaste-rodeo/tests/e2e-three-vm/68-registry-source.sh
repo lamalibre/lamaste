@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 66 — Lamaste's packages came from Feria, never npmjs (Three-VM)
+# 68 — Lamaste's packages came from Feria, never npmjs (Three-VM)
 # ============================================================================
 # Since 4.14 every path that installs or checks Lamaste's own @lamalibre
 # packages takes them from the hosted Feria, or from the registry npm's
@@ -34,7 +34,7 @@ host_exec() { multipass exec lamaste-host -- sudo bash -c "$1"; }
 agent_exec() { multipass exec lamaste-agent -- sudo bash -c "$1"; }
 visitor_exec() { multipass exec lamaste-visitor -- sudo bash -c "$1"; }
 
-begin_test "66 — Lamaste's packages came from Feria, never npmjs (Three-VM)"
+begin_test "68 — Lamaste's packages came from Feria, never npmjs (Three-VM)"
 
 # ---------------------------------------------------------------------------
 log_section "The rule, as the host's core resolves it"

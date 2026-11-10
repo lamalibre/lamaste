@@ -2948,7 +2948,7 @@ local_sign_in() {
 # ---------------------------------------------------------------------------
 # Where Lamaste's packages came from (4.14: the hosted Feria, or the registry
 # npm's configuration names for @lamalibre — on the VMs, the development
-# Feria; never npmjs). Single-VM 41, three-VM 66 and the upgrade suite's 01.
+# Feria; never npmjs). Single-VM 43, three-VM 68 and the upgrade suite's 01.
 # ---------------------------------------------------------------------------
 
 # npm_fetch_evidence_script — prints a bash script that, run as root on a VM,

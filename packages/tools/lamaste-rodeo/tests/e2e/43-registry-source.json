@@ -1,10 +1,10 @@
 {
   "version": 1,
   "meta": {
-    "number": 41,
+    "number": 43,
     "name": "Lamaste's packages came from Feria, never npmjs (Single-VM)",
     "suite": "e2e",
-    "description": "41 — Lamaste's packages came from Feria, never npmjs (Single-VM)",
+    "description": "43 — Lamaste's packages came from Feria, never npmjs (Single-VM)",
     "deps": [],
     "requires": ["node", "npm", "find", "grep", "sort"]
   },
@@ -324,8 +324,8 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 41 — Lamaste's packages came from Feria, never npmjs (Single-VM)\n# ============================================================================\n# Since 4.14 every path that installs or checks Lamaste's own @lamalibre\n# packages takes them from the hosted Feria, or from the registry npm's\n# configuration names for @lamalibre — never npm's default registry, npmjs\n# (packages/core/docs/05-operations/upgrades.md, \"Where Lamaste's packages\n# come from\"). The VM names the development Feria for @lamalibre in every\n# npmrc it has (tier node-ready). Run last; three-VM 66 is the same on three\n# machines.\n#\n# 1. The rule, as 4.14's core resolves it: root and the lamaste account\n#    follow the configuration (the development Feria); an npm with no\n#    configuration resolves the hosted Feria (nothing is fetched); an npm\n#    naming npmjs for @lamalibre is refused.\n# 2. The evidence: npm's cache index and debug logs, of every user, hold\n#    @lamalibre requests to the development Feria and none to a public\n#    registry or to the hosted Feria.\n# 3. The root helper runs the self-update's npx with --@lamalibre:registry=.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands node npm find grep sort\n\nbegin_test \"41 — Lamaste's packages came from Feria, never npmjs (Single-VM)\"\n",
+  "headerRaw": "# ============================================================================\n# 43 — Lamaste's packages came from Feria, never npmjs (Single-VM)\n# ============================================================================\n# Since 4.14 every path that installs or checks Lamaste's own @lamalibre\n# packages takes them from the hosted Feria, or from the registry npm's\n# configuration names for @lamalibre — never npm's default registry, npmjs\n# (packages/core/docs/05-operations/upgrades.md, \"Where Lamaste's packages\n# come from\"). The VM names the development Feria for @lamalibre in every\n# npmrc it has (tier node-ready). Run last; three-VM 68 is the same on three\n# machines.\n#\n# 1. The rule, as 4.14's core resolves it: root and the lamaste account\n#    follow the configuration (the development Feria); an npm with no\n#    configuration resolves the hosted Feria (nothing is fetched); an npm\n#    naming npmjs for @lamalibre is refused.\n# 2. The evidence: npm's cache index and debug logs, of every user, hold\n#    @lamalibre requests to the development Feria and none to a public\n#    registry or to the hosted Feria.\n# 3. The root helper runs the self-update's npx with --@lamalibre:registry=.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands node npm find grep sort\n\nbegin_test \"43 — Lamaste's packages came from Feria, never npmjs (Single-VM)\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }
