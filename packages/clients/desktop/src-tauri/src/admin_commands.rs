@@ -1922,10 +1922,21 @@ fn user_surface_path(id: &str, route: Option<&str>) -> Result<String, serde_json
 pub async fn admin_bind_tunnel_user_surface(
     id: String,
     route: String,
+    cross_agent: Option<bool>,
 ) -> Result<serde_json::Value, serde_json::Value> {
     let path = user_surface_path(&id, None)?;
-    let body = serde_json::json!({ "route": plugin_route(&route)? }).to_string();
-    admin_refusable_task("PUT", path, Some(body)).await
+    admin_refusable_task("PUT", path, Some(bind_user_surface_body(&route, cross_agent)?)).await
+}
+
+/// `{ route, crossAgent? }` — `crossAgent` only when it is `true`: serving a
+/// route whose plugin another agent hosts is the administrator's explicit
+/// decision, never a default.
+fn bind_user_surface_body(route: &str, cross_agent: Option<bool>) -> Result<String, serde_json::Value> {
+    let mut body = serde_json::json!({ "route": plugin_route(route)? });
+    if cross_agent == Some(true) {
+        body["crossAgent"] = serde_json::Value::Bool(true);
+    }
+    Ok(body.to_string())
 }
 
 /// Stop serving plugin `route`'s user surface on the tunnel's host.
@@ -1935,6 +1946,170 @@ pub async fn admin_unbind_tunnel_user_surface(
     route: String,
 ) -> Result<serde_json::Value, serde_json::Value> {
     admin_refusable_task("DELETE", user_surface_path(&id, Some(&route))?, None).await
+}
+
+// ===========================================================================
+// Native apps (native-apps-design.md): native clients of application hosts,
+// their grants, and the plugins a web surface's site joins
+// ===========================================================================
+
+/// The longest native client slug (`lamaste-native-<slug>`).
+const NATIVE_SLUG_MAX: usize = 40;
+
+/// `/api/native-apps/<client id>[<rest>]`, for an id of the form
+/// `lamaste-native-<slug>` (slug: 1–40 lowercase letters, digits and inner
+/// hyphens).
+fn native_app_path(client_id: &str, rest: &str) -> Result<String, serde_json::Value> {
+    let slug = client_id.strip_prefix("lamaste-native-").unwrap_or("");
+    let bytes = slug.as_bytes();
+    let valid = (1..=NATIVE_SLUG_MAX).contains(&bytes.len())
+        && bytes.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+        && bytes.first() != Some(&b'-')
+        && bytes.last() != Some(&b'-');
+    if !valid {
+        return Err(refusal(format!("\"{}\" is not a native client id", client_id)));
+    }
+    Ok(format!("/api/native-apps/{}{}", client_id, rest))
+}
+
+/// A grant's status filter: `live`, `ended` or `all`.
+fn grant_status(status: Option<&str>) -> Result<Option<&str>, serde_json::Value> {
+    match status {
+        None | Some("") => Ok(None),
+        Some(s @ ("live" | "ended" | "all")) => Ok(Some(s)),
+        Some(other) => Err(refusal(format!("\"{}\" is not a grant status", other))),
+    }
+}
+
+/// `/api/native-apps/<id>/grants`, with a person's directory id and a status when given.
+fn native_grants_path(
+    client_id: &str,
+    user_id: Option<&str>,
+    status: Option<&str>,
+) -> Result<String, serde_json::Value> {
+    let mut path = native_app_path(client_id, "/grants")?;
+    let mut sep = '?';
+    if let Some(user_id) = user_id.filter(|u| !u.is_empty()) {
+        if !is_canonical_uuid(user_id) {
+            return Err(refusal(format!("\"{}\" is not a directory user id", user_id)));
+        }
+        path.push_str(&format!("{}userId={}", sep, user_id));
+        sep = '&';
+    }
+    if let Some(status) = grant_status(status)? {
+        path.push_str(&format!("{}status={}", sep, status));
+    }
+    Ok(path)
+}
+
+/// A JSON object, as the panel's create and change bodies are.
+fn object_body(data: &serde_json::Value) -> Result<String, serde_json::Value> {
+    if !data.is_object() {
+        return Err(refusal("The request body must be an object".to_string()));
+    }
+    Ok(data.to_string())
+}
+
+/// Every native client, its host resolved. Answered with `{ clients }`.
+#[tauri::command]
+pub async fn admin_list_native_apps() -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("GET", "/api/native-apps".to_string(), None).await
+}
+
+/// Register a native client for an application host. Answered with
+/// `{ client, warnings? }`.
+#[tauri::command]
+pub async fn admin_create_native_app(data: serde_json::Value) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("POST", "/api/native-apps".to_string(), Some(object_body(&data)?)).await
+}
+
+/// Change a native client (enable or disable it with `{ enabled }`).
+/// Answered with `{ client, warnings? }`.
+#[tauri::command]
+pub async fn admin_update_native_app(
+    client_id: String,
+    data: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = native_app_path(&client_id, "")?;
+    admin_refusable_task("PATCH", path, Some(object_body(&data)?)).await
+}
+
+/// Delete a native client; its grants end.
+#[tauri::command]
+pub async fn admin_delete_native_app(client_id: String) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("DELETE", native_app_path(&client_id, "")?, None).await
+}
+
+/// A native client's grants, per person and device. Answered with `{ grants }`.
+#[tauri::command]
+pub async fn admin_list_native_grants(
+    client_id: String,
+    user_id: Option<String>,
+    status: Option<String>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = native_grants_path(&client_id, user_id.as_deref(), status.as_deref())?;
+    admin_refusable_task("GET", path, None).await
+}
+
+/// End one grant (one person on one device).
+#[tauri::command]
+pub async fn admin_revoke_native_grant(
+    client_id: String,
+    grant_id: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    if !is_canonical_uuid(&grant_id) {
+        return Err(refusal(format!("\"{}\" is not a grant id", grant_id)));
+    }
+    let path = native_app_path(&client_id, &format!("/grants/{}", grant_id))?;
+    admin_refusable_task("DELETE", path, None).await
+}
+
+/// End every grant a person holds with one native client.
+#[tauri::command]
+pub async fn admin_revoke_user_native_grants(
+    client_id: String,
+    user_id: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    if !is_canonical_uuid(&user_id) {
+        return Err(refusal(format!("\"{}\" is not a directory user id", user_id)));
+    }
+    let path = native_app_path(&client_id, "/grants/revoke")?;
+    let body = serde_json::json!({ "userId": user_id }).to_string();
+    admin_refusable_task("POST", path, Some(body)).await
+}
+
+/// A person's grants with every native client. Answered with `{ grants }`.
+#[tauri::command]
+pub async fn admin_get_user_native_grants(
+    username: String,
+    status: Option<String>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let mut path = format!("{}/native-grants", user_path(&username)?);
+    if let Some(status) = grant_status(status.as_deref())? {
+        path.push_str(&format!("?status={}", status));
+    }
+    admin_refusable_task("GET", path, None).await
+}
+
+/// Join plugin `route`'s user surface to the site the plugin `name` owns.
+/// Answered with `{ webSurface }`.
+#[tauri::command]
+pub async fn admin_join_web_surface_route(
+    name: String,
+    route: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = web_surface_path(&name, &format!("web-surface/routes/{}", plugin_route(&route)?))?;
+    admin_refusable_task("PUT", path, None).await
+}
+
+/// Take plugin `route`'s user surface off the site again. Answered with `{ webSurface }`.
+#[tauri::command]
+pub async fn admin_leave_web_surface_route(
+    name: String,
+    route: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = web_surface_path(&name, &format!("web-surface/routes/{}", plugin_route(&route)?))?;
+    admin_refusable_task("DELETE", path, None).await
 }
 
 // ===========================================================================
@@ -2519,5 +2694,57 @@ mod tests {
         for bad in ["", "..", "a/b", "a b", "a_b", "a\"b", &"a".repeat(65)] {
             assert!(move_tunnel_id(bad).unwrap_err()["error"].is_string(), "{}", bad);
         }
+    }
+
+    #[test]
+    fn native_app_paths_take_only_native_client_ids() {
+        assert_eq!(native_app_path("lamaste-native-app", "").unwrap(), "/api/native-apps/lamaste-native-app");
+        assert_eq!(
+            native_app_path("lamaste-native-a-1", "/grants/revoke").unwrap(),
+            "/api/native-apps/lamaste-native-a-1/grants/revoke"
+        );
+        assert!(native_app_path(&format!("lamaste-native-{}", "a".repeat(40)), "").is_ok());
+        for bad in [
+            "".to_string(),
+            "lamaste-native-".into(),
+            "lamaste-server".into(),
+            "native-app".into(),
+            "lamaste-native-App".into(),
+            "lamaste-native--a".into(),
+            "lamaste-native-a/..".into(),
+            format!("lamaste-native-{}", "a".repeat(41)),
+        ] {
+            assert!(native_app_path(&bad, "").unwrap_err()["error"].is_string(), "{}", bad);
+        }
+    }
+
+    #[test]
+    fn native_grants_paths_carry_checked_filters() {
+        let uid = "8d3f1c2b-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
+        assert_eq!(
+            native_grants_path("lamaste-native-app", None, None).unwrap(),
+            "/api/native-apps/lamaste-native-app/grants"
+        );
+        assert_eq!(
+            native_grants_path("lamaste-native-app", Some(uid), Some("all")).unwrap(),
+            format!("/api/native-apps/lamaste-native-app/grants?userId={}&status=all", uid)
+        );
+        assert_eq!(
+            native_grants_path("lamaste-native-app", None, Some("ended")).unwrap(),
+            "/api/native-apps/lamaste-native-app/grants?status=ended"
+        );
+        assert!(native_grants_path("lamaste-native-app", Some("x"), None).is_err());
+        assert!(native_grants_path("lamaste-native-app", None, Some("dead")).is_err());
+    }
+
+    #[test]
+    fn a_bind_body_names_cross_agent_only_when_asked() {
+        assert_eq!(bind_user_surface_body("fx", None).unwrap(), r#"{"route":"fx"}"#);
+        assert_eq!(bind_user_surface_body("fx", Some(false)).unwrap(), r#"{"route":"fx"}"#);
+        let body: serde_json::Value =
+            serde_json::from_str(&bind_user_surface_body("fx", Some(true)).unwrap()).unwrap();
+        assert_eq!(body, serde_json::json!({ "route": "fx", "crossAgent": true }));
+        assert!(bind_user_surface_body("Fx", Some(true)).is_err());
+        assert!(object_body(&serde_json::json!([1])).is_err());
     }
 }

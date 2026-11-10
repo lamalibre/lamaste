@@ -24,6 +24,7 @@ import {
   siteGrantLines,
   siteGrantsDecide,
   stillAdmitted,
+  joinedRouteText,
 } from '../src/plugin-web-surface.js';
 
 const SHA_A = 'a'.repeat(64);
@@ -328,4 +329,23 @@ test('sites list marks a site a plugin owns, with its access mode', () => {
   assert.equal(siteOwnerTag({ name: 'blog', owner: null }), null);
   assert.equal(siteOwnerTag({ name: 'blog', owner: { plugin: 7 } }), null);
   assert.equal(siteOwnerTag({ owner: { plugin: 'm\u001b[2Ji' } }), '[plugin m[2Ji]');
+});
+
+test('join and leave name another plugin route', () => {
+  assert.deepEqual(parseWebSurfaceArgs(['shop', 'join', 'news']), {
+    ok: true,
+    name: 'shop',
+    action: 'join',
+    route: 'news',
+  });
+  assert.equal(parseWebSurfaceArgs(['shop', 'leave', 'news']).action, 'leave');
+  assert.match(parseWebSurfaceArgs(['shop', 'join']).error, /names a plugin route/);
+  assert.match(parseWebSurfaceArgs(['shop', 'join', 'a', 'b']).error, /Unexpected argument "b"/);
+  assert.match(parseWebSurfaceArgs(['shop', 'grants', 'x']).error, /Unexpected argument "x"/);
+  assert.match(parseWebSurfaceArgs(['shop', 'join', 'news', '--yes']).error, /takes no --yes/);
+  assert.equal(joinedRouteText({ route: 'news', served: true, reason: null }), 'served');
+  assert.match(
+    joinedRouteText({ route: 'news', served: false, reason: 'not_hosted' }),
+    /not hosted/,
+  );
 });

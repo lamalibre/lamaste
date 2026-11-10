@@ -25,6 +25,7 @@ export { default as StoragePage } from './pages/Storage.jsx';
 export { default as AuditPage } from './pages/Audit.jsx';
 export { default as PeersPage } from './pages/Peers.jsx';
 export { default as DomainsPage } from './pages/Domains.jsx';
+export { default as NativeAppsPage } from './pages/NativeApps.jsx';
 export { default as UserPluginAccessPage } from './pages/UserPluginAccess.jsx';
 
 // Gatekeeper Pages

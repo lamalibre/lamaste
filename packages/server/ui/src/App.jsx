@@ -19,6 +19,7 @@ import {
   AuditPage,
   PeersPage,
   DomainsPage,
+  NativeAppsPage,
 } from './admin/index.js';
 import { webAdminClient } from './lib/web-admin-client.js';
 import { retryQuery } from './admin/lib/query-refresh.js';
@@ -67,6 +68,7 @@ function AppRoutes() {
         <Route path="/sites" element={<SitesPage domain={domain} onOpenPlugin={openPlugin} />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/domains" element={<DomainsPage />} />
+        <Route path="/native-apps" element={<NativeAppsPage />} />
         <Route path="/certificates" element={<CertificatesPage />} />
         <Route path="/services" element={<ServicesPage />} />
         <Route path="/tickets" element={<TicketsPage />} />

@@ -37,6 +37,10 @@
     "./page-messages": {
       "types": "./dist/page-messages.d.ts",
       "import": "./dist/page-messages.js"
+    },
+    "./native-apps": {
+      "types": "./dist/native-apps.d.ts",
+      "import": "./dist/native-apps.js"
     }
   },
   "files": [

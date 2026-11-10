@@ -17,6 +17,7 @@ import type {
   InvitationPolicyInput,
   InvitationPolicyView,
 } from './invitations.js';
+import type { NativeAssociations, NativeGrantEndReason } from './native-apps.js';
 import type { SettingsField, SettingsValue } from './plugin-settings.js';
 import type { AgentBlock } from './schemas.js';
 
@@ -484,6 +485,11 @@ export interface PluginWebSurfaceView {
     readonly membersWithoutGrant:
       | readonly { readonly userId: string; readonly username: string }[]
       | null;
+    /**
+     * Other plugins' routes joined to the site (an application host): each
+     * served there, or answered 503 by nginx, and why.
+     */
+    readonly joined?: readonly WebSurfaceJoinedRoute[];
   } | null;
   readonly served: boolean;
   readonly reason: WebSurfaceNotServedReason | null;
@@ -626,7 +632,99 @@ export interface UserSurfaceRouteStatus {
    * tunnel is not carried by the agent hosting the plugin (moved, revoked,
    * or the plugin hosted elsewhere or not at all).
    */
-  readonly reason: 'not_installed' | 'no_identity' | 'not_approved' | 'not_hosting_agent' | null;
+  readonly reason:
+    | 'not_installed'
+    | 'no_identity'
+    | 'not_approved'
+    | 'not_hosting_agent'
+    | 'cross_agent_unconfirmed'
+    | null;
+}
+
+// ---------------------------------------------------------------------------
+// Native apps (native-apps-design.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * A native client of an application host, as the panel shows it: its
+ * settings, its host resolved (`fqdn`, `domain`, null when the host entry is
+ * gone or lies under no active domain), whether Authelia serves it and why
+ * not, the audience and redirect URIs it is rendered with, and the routes
+ * its host binds and serves.
+ */
+export interface NativeClientView {
+  readonly clientId: string;
+  readonly hostKind: 'site' | 'tunnel';
+  readonly hostId: string;
+  readonly name: string;
+  readonly redirectPaths: readonly string[];
+  readonly accessTokenMinutes: number;
+  readonly idleDays: number;
+  readonly absoluteDays: number;
+  readonly associations: NativeAssociations;
+  readonly enabled: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly fqdn: string | null;
+  readonly domain: string | null;
+  readonly served: boolean;
+  /** Why it is not served: `disabled`, `host_missing` or `domain_inactive`. */
+  readonly reason?: 'disabled' | 'host_missing' | 'domain_inactive';
+  /** `https://<fqdn>` — the audience of every access token it gets. */
+  readonly audience: string | null;
+  readonly redirectUris: readonly string[];
+  readonly accessMode: 'authenticated' | 'restricted' | null;
+  readonly routes: readonly string[];
+  readonly servedRoutes: readonly string[];
+}
+
+/** What creates a native client (core `NativeClientCreateSchema`). */
+export interface NativeClientCreateRequest {
+  readonly slug: string;
+  readonly hostKind: 'site' | 'tunnel';
+  readonly hostId: string;
+  readonly name: string;
+  readonly redirectPaths: readonly string[];
+  readonly accessTokenMinutes?: number;
+  readonly idleDays?: number;
+  readonly absoluteDays?: number;
+  readonly associations?: NativeAssociations;
+  readonly enabled?: boolean;
+}
+
+/** A change to a native client (core `NativeClientUpdateSchema`); `enabled` enables or disables it. */
+export type NativeClientUpdateRequest = Partial<
+  Omit<NativeClientCreateRequest, 'slug' | 'hostKind' | 'hostId'>
+>;
+
+/** One person's sign-in on one device with one native client. */
+export interface NativeGrantView {
+  readonly grantId: string;
+  readonly clientId: string;
+  readonly userId: string;
+  readonly username: string | null;
+  readonly deviceName: string | null;
+  readonly userAgent: string | null;
+  readonly createdAt: string;
+  readonly lastUsedAt: string;
+  /** When it ends unless used again or ended earlier: the sooner of idle and absolute. */
+  readonly expiresAt: string | null;
+  readonly status: 'live' | 'ended';
+  readonly endedAt: string | null;
+  readonly endedReason: NativeGrantEndReason | null;
+}
+
+/** A route joined to a plugin's site, and whether it is served there. */
+export interface WebSurfaceJoinedRoute {
+  readonly route: string;
+  readonly served: boolean;
+  readonly reason:
+    | 'site_not_served'
+    | 'not_installed'
+    | 'no_identity'
+    | 'not_approved'
+    | 'not_hosted'
+    | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1216,6 +1314,40 @@ export interface AdminClient {
   ): Promise<{ webSurface: PluginWebSurfaceView }>;
   /** Delete the site, its trees and the grants on it. */
   deletePluginWebSurface(name: string): Promise<{ ok: boolean }>;
+  /**
+   * Join plugin `route`'s user surface to the site plugin `name` owns (an
+   * application host). Refusals: `invalid_route`, `not_found`,
+   * `not_agent_hosted`, `not_plugin_domain`, `served_elsewhere`,
+   * `too_many_routes`.
+   */
+  joinWebSurfaceRoute(name: string, route: string): Promise<{ webSurface: PluginWebSurfaceView }>;
+  /** Take a joined route off the site again. */
+  leaveWebSurfaceRoute(name: string, route: string): Promise<{ webSurface: PluginWebSurfaceView }>;
+  // Native apps (native-apps-design.md): one native client per application
+  // host, and its grants — one per person and device.
+  listNativeApps(): Promise<{ clients: NativeClientView[] }>;
+  createNativeApp(
+    data: NativeClientCreateRequest,
+  ): Promise<{ client: NativeClientView; warnings?: AdminWarning[] }>;
+  /** Change a native client; `{ enabled: false }` disables it (its grants end, no new sign-ins). */
+  updateNativeApp(
+    clientId: string,
+    data: NativeClientUpdateRequest,
+  ): Promise<{ client: NativeClientView; warnings?: AdminWarning[] }>;
+  /** Delete a native client; its grants end. */
+  deleteNativeApp(clientId: string): Promise<{ ok: boolean; warnings?: AdminWarning[] }>;
+  listNativeGrants(
+    clientId: string,
+    filter?: { userId?: string; status?: 'live' | 'ended' | 'all' },
+  ): Promise<{ grants: NativeGrantView[] }>;
+  revokeNativeGrant(clientId: string, grantId: string): Promise<{ ok: boolean; ended: number }>;
+  /** End every grant a person holds with the client. */
+  revokeUserNativeGrants(clientId: string, userId: string): Promise<{ ok: boolean; ended: number }>;
+  /** A person's grants with every native client. */
+  getUserNativeGrants(
+    username: string,
+    filter?: { status?: 'live' | 'ended' | 'all' },
+  ): Promise<{ grants: NativeGrantView[] }>;
   // Push install: what lets the panel install, update and remove what
   // Lamaste installs on an agent while that agent's window is open.
   getPushInstallConfig(): Promise<{
@@ -1355,6 +1487,15 @@ export interface AdminClient {
   bindTunnelUserSurface(
     id: string,
     route: string,
+    options?: {
+      /**
+       * Serve a route whose plugin another agent hosts: the administrator's
+       * explicit decision that the tunnel's agent may serve the origin of
+       * that plugin's users. Lapses when the tunnel changes agent
+       * (`cross_agent_unconfirmed`).
+       */
+      crossAgent?: boolean;
+    },
   ): Promise<{ ok: boolean; changed: boolean; tunnel: unknown }>;
   /** Stop serving it there: requests for the route go down the tunnel again. */
   unbindTunnelUserSurface(id: string, route: string): Promise<{ ok: boolean; tunnel: unknown }>;

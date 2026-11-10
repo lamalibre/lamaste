@@ -22,6 +22,7 @@ import { RESERVED_TUNNEL_PORTS } from '@lamalibre/lamaste/domains';
 import {
   boundRoutes,
   userSurfaceCandidateBlock,
+  userSurfaceCrossAgent,
   userSurfaceEligibility,
   userSurfaceReasonText,
   userSurfaceStatusOf,
@@ -569,6 +570,8 @@ function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
   const queryClient = useQueryClient();
   const addToast = useToast();
   const [route, setRoute] = useState('');
+  // A plugin another agent hosts: bound only once the administrator confirms.
+  const [crossAgentConfirmed, setCrossAgentConfirmed] = useState(false);
   const tunnel = tunnels.find((t) => t.id === tunnelId);
   const pluginsQuery = useQuery({ queryKey: ['plugins'], queryFn: () => client.getPlugins() });
   // A plugin's own site (its web surface) serves its route too.
@@ -579,10 +582,12 @@ function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
     queryClient.invalidateQueries({ queryKey: ['plugin-identity'] });
   };
   const bind = useMutation({
-    mutationFn: (r) => client.bindTunnelUserSurface(tunnelId, r),
-    onSuccess: (data, r) => {
+    mutationFn: ({ r, crossAgent }) =>
+      client.bindTunnelUserSurface(tunnelId, r, crossAgent ? { crossAgent: true } : {}),
+    onSuccess: (data, { r }) => {
       refresh();
       setRoute('');
+      setCrossAgentConfirmed(false);
       const status = userSurfaceStatusOf(data.tunnel, r);
       addToast(
         status?.served
@@ -618,6 +623,8 @@ function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
   const candidates = (pluginsQuery.data?.plugins ?? [])
     .filter((p) => p.hosting === 'agent' && p.route && !routes.includes(p.route))
     .sort((a, b) => a.route.localeCompare(b.route));
+  const chosen = candidates.find((p) => p.route === route) ?? null;
+  const crossAgent = chosen ? userSurfaceCrossAgent(chosen, tunnel) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -633,9 +640,11 @@ function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
           Agent-hosted plugins bound here are reached at{' '}
           <span className="font-mono text-zinc-400">/api/&lt;route&gt;/app/</span> on this host by
           signed-in users: Gatekeeper vouches for the session, the panel passes the user&apos;s id
-          and roles to the plugin&apos;s agent half. Only a plugin hosted on this tunnel&apos;s
-          agent ({tunnel.agentLabel ?? 'none'}) is served here. Until a plugin&apos;s installed,
-          approved version declares identity, those requests still go down the tunnel.
+          and roles to the plugin&apos;s agent half. This tunnel&apos;s agent is{' '}
+          {tunnel.agentLabel ?? 'none'}. Until a plugin&apos;s installed, approved version declares
+          identity, the relay answers its API with 503. A plugin another agent hosts is served here
+          only once you confirm it: this tunnel&apos;s agent then serves the pages beside that
+          plugin&apos;s users — until the tunnel changes agent.
         </p>
 
         <p className="text-xs text-zinc-400 mb-1">Bound here</p>
@@ -674,7 +683,10 @@ function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
           <div className="flex flex-wrap items-center gap-2">
             <select
               value={route}
-              onChange={(e) => setRoute(e.target.value)}
+              onChange={(e) => {
+                setRoute(e.target.value);
+                setCrossAgentConfirmed(false);
+              }}
               disabled={busy || pluginsQuery.isLoading}
               aria-label="Agent-hosted plugin"
               className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 font-mono focus:outline-none focus:border-cyan-400 disabled:opacity-50"
@@ -689,22 +701,39 @@ function UserSurfaceDialog({ tunnelId, tunnels, onClose }) {
                     {p.route}
                     {blocked !== null
                       ? ` — ${blocked}`
-                      : p.identity
-                        ? ''
-                        : ' — declares no identity yet'}
+                      : userSurfaceCrossAgent(p, tunnel)
+                        ? ` — hosted on ${userSurfaceCrossAgent(p, tunnel)} (across agents)`
+                        : p.identity
+                          ? ''
+                          : ' — declares no identity yet'}
                   </option>
                 );
               })}
             </select>
             <button
               type="button"
-              disabled={busy || !route}
-              onClick={() => bind.mutate(route)}
+              disabled={busy || !route || (crossAgent !== null && !crossAgentConfirmed)}
+              onClick={() => bind.mutate({ r: route, crossAgent: crossAgent !== null })}
               className="flex items-center gap-2 rounded bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
             >
               {bind.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
               Bind
             </button>
+            {crossAgent !== null && (
+              <label className="basis-full flex items-start gap-2 text-xs text-yellow-300">
+                <input
+                  type="checkbox"
+                  checked={crossAgentConfirmed}
+                  onChange={(e) => setCrossAgentConfirmed(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  {route} is hosted on {crossAgent}, not on {tunnel.agentLabel}. Serve it here
+                  anyway: {tunnel.agentLabel} serves this host&apos;s pages, which then reach{' '}
+                  {route}&apos;s users. It lapses when the tunnel changes agent.
+                </span>
+              </label>
+            )}
             {!pluginsQuery.isLoading && candidates.length === 0 && (
               <p className="basis-full text-xs text-zinc-500">
                 No other agent-hosted plugin is installed.
