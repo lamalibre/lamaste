@@ -2264,7 +2264,7 @@ write_app_install_fixture() {
   local web_tag="${9:-none}"
   local web_subdomain="${10:-${name//-/}}"
   # FIXTURE_SCOPE: the npm scope of both packages (default @lamalibre) — a
-  # trusted publisher scope other than Lamalibre's for spec 58.
+  # trusted publisher scope other than Lamalibre's for spec 59.
   local scope="${FIXTURE_SCOPE:-@lamalibre}"
   if ! [[ "$scope" =~ ^@[a-z0-9][a-z0-9-]*$ ]]; then
     echo "write_app_install_fixture: invalid FIXTURE_SCOPE ${scope}" >&2

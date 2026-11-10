@@ -347,7 +347,7 @@ accepts publishes for.
 
 ## Proof (rodeo, fresh VMs)
 
-- **Lamaste three-VM spec 58 `trusted-publisher-scope`** (shares `app-plugin-harness.sh`):
+- **Lamaste three-VM spec 59 `trusted-publisher-scope`** (shares `app-plugin-harness.sh`):
   an invented `@example/scoped-app` agent-hosted plugin with an agent half
   `@example/scoped-app-agent`, **published to the development Feria** (this branch, `@example`
   hosted) before the run and fetched by the host VM through the read-only bridge, then served by
