@@ -543,8 +543,8 @@ wave 2b Gatekeeper bearer path, hosts, files and events `3fb6f618`, `c5321b16`, 
   `lamaste_client_<id>`.
 - **Factor (R4).** `HOST_ACCESS_FACTOR` (`two_factor`) is one constant used by the domain's host access rules and by
   native clients' policies.
-- **Cross-agent (D1/R3).** Confirmed once per tunnel (`userSurface.originAgent`), not per route; every cross-agent
-  bind still needs `crossAgent: true`. The served-route reason is `cross_agent_unconfirmed` for a plugin another agent
+- **Cross-agent (D1/R3).** First confirmed once per tunnel (`userSurface.originAgent`); since the implementation's
+  security review (M2, below) per route: `userSurface.crossAgent: [{ route, agent, hostingAgent }]`. The served-route reason is `cross_agent_unconfirmed` for a plugin another agent
   hosts without a confirmation for the tunnel's current agent; `not_hosting_agent` now means no agent hosts it or none
   carries the tunnel. Deciding whether a tunnel serves a route also checks identity and approval.
 - **R2.** Every bound route is rendered; one not served gets a `503` JSON location. Binding therefore rewrites the
@@ -573,6 +573,45 @@ wave 2b Gatekeeper bearer path, hosts, files and events `3fb6f618`, `c5321b16`, 
   identity changes), salt `lamaste/sign-in-events/v1`.
 - **Not proven yet on a live nginx:** that `auth_request_set` keeps the refusal header on a `401` (R11) — the rodeo
   checks it.
+
+### Security review (2026-11-10)
+
+An independent review of the implementation (`b21c0d60..017995ff`) found one high, two medium and five low issues; all
+are fixed, each with unit tests.
+
+- **H1 — a multipart body skipped the broker.** The broker read only form bodies; anything else was "not native" and
+  passed to Authelia, which also reads `multipart/form-data` (Go's `ParseMultipartForm`) — confirmed on 4.39.28: a
+  multipart refresh of a native client's token answered 200 and rotated, outside every Lamaste rule. Fixed: both
+  endpoints refuse, for every client and before classifying, a body whose media type is not exactly
+  `application/x-www-form-urlencoded` (parameters and case ignored; none is refused) or that is content-encoded
+  (`400 invalid_request`; `bodyRefusal`). Also verified: Authelia does not read token parameters from the query
+  string. Classification further counts a `client_assertion`'s `iss`/`sub` (native → refused, public clients do not
+  authenticate), and a `Basic` header the broker cannot read is refused (`401`), never passed on.
+- **M1 — a native client on a public host.** A client stays served only while its host is enabled and not public
+  (`reason` `host_public`, `host_disabled`); a tunnel with a native client (served or not) cannot be made public
+  (`409`, `code: native_client_conflict`, core `UserSurfaceDeps.hasNativeClient`); and every backend location of a host
+  with a native client — public vhosts too — clears `Authorization` and hides the backend's `WWW-Authenticate`
+  (`nginx.js` `NATIVE_BACKEND_GUARD`, `native-files.js` `nativeGuardOf`; `lamaste-priv` allows `proxy_hide_header
+<name>` in a location).
+- **M2 — the cross-agent confirmation was per tunnel.** A confirmation given for one plugin covered any other bound
+  plugin later hosted elsewhere. Now per route, naming both agents as they were (`userSurface.crossAgent: [{ route,
+agent, hostingAgent }]`, core `tunnelCrossAgentConfirmations`, `isCrossAgentConfirmed`); served only while both are
+  still so; all of a tunnel's go when its agent changes or is dropped; a route's go everywhere when its plugin's
+  internal tunnel is created, removed, reassigned or released (core `forgetCrossAgentRoute`). Binding an already bound
+  route again with `crossAgent: true` now records a confirmation (the "bind it again" the status texts ask for). The
+  pre-release `originAgent` field confirms nothing.
+- **L1** — a client deleted or no longer served while Authelia answered a code exchange: the issued refresh token is
+  revoked there and the app gets `invalid_client` (it was a 500).
+- **L2** — the grace answer now checks the portal's domain (R5), the grant's lifetimes and the person's standing (the
+  directory part) before it is given.
+- **L3** — Gatekeeper takes the bearer path only for the `Bearer` scheme; any other `Authorization` (a cached Basic
+  login) is ignored and the session decides.
+- **L4** — redirect paths may not lie under `/internal` (an exact location there collided with the renderers' own);
+  the docs say a redirect path shadows whatever the backend or shell serves there.
+- **L5** — a live token for a route or client not served for now (a hosting moving, a host disabled) is `503`, not
+  `401`; the broker computes standing — Gatekeeper's answer included — before the grant's lock (R14), the commit's
+  compare-and-swap still deciding; sign-in event delivery drops the events of a person no longer in the plugin's
+  audience. Documented: a joined route's audience can load the owner's shell.
 
 ## Open questions
 

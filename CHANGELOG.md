@@ -16,7 +16,7 @@ Native apps on the user surface: a mobile app signs a person in through the rela
 - **Grants** per person and device: `GET /api/native-apps/:clientId/grants`, `DELETE …/grants/:grantId`, `POST …/grants/revoke`, `GET /api/users/:username/native-grants`. A grant ends when its person is disabled, removed or erased, leaves the domain, loses every role on the host's plugins or the host's grant, and when its client or host goes.
 - **Bearer tokens on the user surface.** `Authorization: Bearer <JWT>` on `/api/<route>/app/*`: Gatekeeper verifies the token (issuer, audience, the host's client, lifetime) and applies a session's checks; the panel admits only tokens its broker saw issued for a live grant and forwards the same `user` caller. A refused token: `401 { "error": "invalid_token" }` with `WWW-Authenticate`.
 - **App association files**: the host serves `/.well-known/apple-app-site-association` (claiming only the redirect paths) and `/.well-known/assetlinks.json` from the client's settings, and a fallback page at each redirect path.
-- **Application hosts**: a plugin's site can serve other plugins' user surfaces (`PUT|DELETE /api/plugins/:name/web-surface/routes/:route`), and a tunnel can serve a plugin another agent hosts when bound `crossAgent: true` (lapses when the tunnel changes agent).
+- **Application hosts**: a plugin's site can serve other plugins' user surfaces (`PUT|DELETE /api/plugins/:name/web-surface/routes/:route`), and a tunnel can serve a plugin another agent hosts when bound `crossAgent: true` — confirmed per route for the two agents as they are, lapsing when the tunnel or the plugin changes agent.
 - **Sign-in events**: a plugin whose identity block declares `signInEvents: true` receives its users' native sign-ins (user, time, client) at `POST /admin/identity/sign-ins`; `createSignInEventsHandler` in `@lamalibre/lamaste/agent`.
 - Panel **Native Apps** page, a person's devices on Users, Joined plugins on a web surface, the cross-agent confirmation on Tunnels; CLI `lamaste-server native-apps …`, `users native-grants`, `plugins web-surface <name> join|leave`, `tunnels bind-user-surface --cross-agent`; `AdminClient` and desktop commands; core `@lamalibre/lamaste/native-apps`.
 
@@ -25,6 +25,8 @@ Native apps on the user surface: a mobile app signs a person in through the rela
 - **A bound user-surface route that is not served is answered by the relay** (`503` JSON), no longer sent down the tunnel.
 - **Manifests may not declare an OIDC client `lamaste` or `lamaste-*`**: that namespace is Lamaste's own clients'.
 - `native-apps` is a reserved API prefix.
+- **The token and revocation endpoints take only forms** (`application/x-www-form-urlencoded`, not content-encoded), for every client: Authelia also reads `multipart/form-data`, which would have let a native client's refresh pass the broker unseen.
+- **A tunnel with a native client cannot be made public** (`409 native_client_conflict`), and its backend never receives `Authorization` nor sends a `WWW-Authenticate` back.
 
 ### Upgrade notes
 
