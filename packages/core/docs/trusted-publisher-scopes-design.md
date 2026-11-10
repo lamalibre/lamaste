@@ -348,17 +348,17 @@ accepts publishes for.
 ## Proof (rodeo, fresh VMs)
 
 - **Lamaste three-VM spec 59 `trusted-publisher-scope`** (shares `app-plugin-harness.sh`):
-  an invented `@example/scoped-app` agent-hosted plugin with an agent half
-  `@example/scoped-app-agent`, **published to the development Feria** (this branch, `@example`
+  an invented `@example/e2e-scoped-server` agent-hosted plugin with an agent half
+  `@example/e2e-scoped-agent`, **published to the development Feria** (this branch, `@example`
   hosted) before the run and fetched by the host VM through the read-only bridge, then served by
   the stand-in Feria the harness already runs (the panel's registry credential). Steps: install
   refused with `untrusted_scope` while the relay does not trust `@example` (nothing staged, no
   row); `lamaste-server trusted-scopes add @example` (audit event present); install, host on the
-  agent VM (helper protocol 2), health up, forwarded admin call answered; agent `config.json`
+  agent VM (helper protocol 3), health up, forwarded admin call answered; agent `config.json`
   carries the scope after a sync; `trusted-scopes remove @example` refused 409 `scope_in_use`;
   uninstall; remove succeeds; install refused again. The harness's `@lamalibre` fixture plugin is
   installed and hosted in the same run (unaffected).
-- **Existing specs** 34–36 (app plugins) and single-VM 11 (plugin lifecycle) and 19 (agent plugin
+- **Existing specs** 34–36 (app plugins) and single-VM 15 (plugin lifecycle) and 23 (agent plugin
   CRUD, the 400 for a foreign scope) run unchanged.
 - **Feria**: integration tests (`app.inject`) for hosted scopes, the publisher rule, closed-scope
   404s, proxying of unhosted scopes, `setup`/`teardown` lines; and a live run on the development
