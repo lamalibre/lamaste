@@ -1,7 +1,8 @@
 # Trusted Publisher Scopes — Design Document
 
-> **Status:** 2026-11-10, as planned and reviewed by an independent reviewer (findings and how each
-> changed the design: _Review findings_ at the end — they supersede the sections above where they differ).
+> **Status:** 2026-11-10, implemented and proven on rodeo (_As implemented_ at the end). Reviewed by
+> an independent reviewer before implementation (_Review findings_ — they supersede the sections
+> above where they differ).
 > **Target:** Lamaste on top of 4.12.0 (`develop` at `b21c0d60`) and Feria on top of 0.4.0
 > (`chore/feria-codelama` at `1ecca09`). No version is bumped, tagged or published here; that is
 > the founders'.
@@ -454,3 +455,58 @@ Every finding was accepted; the design changes are:
   applies to trust events like any other; the notification is the second record. N5: the legacy
   credential `scope` is not routed when it is not trusted — a scope that is not trusted has no plugin
   to install.
+
+## As implemented (2026-11-10)
+
+The design above, with the review findings, is what was built; the differences are listed here.
+
+**Branches** (not pushed, nothing published beyond the development Feria): Lamaste
+`claude/trusted-publisher-scopes-af4790` on `develop` 4.12.0; Feria `feat/trusted-publisher-scopes`
+on `chore/feria-codelama` 0.4.0; plugin-development `docs/trusted-publisher-scopes` (the manifest
+reference only).
+
+**Differences from the plan**
+
+- The single-VM specs the plan named as 11 and 19 are 15 (plugin lifecycle) and 23 (agent plugin
+  CRUD). Spec 23 skips itself in the single-VM suite as it always has (the suite installs no
+  `lamaste-agent` on the host); agentd's install checks are covered by its unit tests and, end to
+  end, by spec 59's agent half.
+- Spec 59 does not host a `@lamalibre` plugin in the same run: specs 34–36 do that on the same
+  candidate, VMs and relay, right after it.
+- Spec 34 pinned the helper's protocol at 2 and now expects 3 — the one existing assertion this
+  change alters.
+- Spec 59 owns its development-Feria state: it removes its fixture packages before publishing and on
+  exit (every run publishes fresh bytes, so npm's cache cannot answer the agent's fetch), and counts
+  only the notifications of its own run.
+- The agent CLI's `plugin install|update` takes the brokered registry credential like agentd (the
+  review did not list it; an additional scope would otherwise have resolved through the machine's own
+  npm configuration).
+
+**Proof, rodeo, 2026-11-10** — candidate built from this branch (versions set to 4.13.0 for the
+run only), published to the development Feria, which ran this Feria branch with `@example` hosted
+(`feria-server scopes add @example --any-publisher`); three-VM set created fresh and provisioned.
+
+| Spec | Result |
+| --- | --- |
+| three-VM 01 onboarding | 55 of 55 |
+| three-VM 59 trusted publisher scope | 60 of 60 (third run; the first two found the spec issues above) |
+| three-VM 34 app plugin install (`@lamalibre`) | 217 of 217 |
+| three-VM 35 app plugin operate (`@lamalibre`) | 100 of 100 |
+| three-VM 36 app plugin removal (`@lamalibre`) | 83 of 83 |
+| single-VM 01, 03, 15 (fresh host) | 12, 4, 41 — none failed |
+| single-VM 23 | skipped (no agent on the host, as before) |
+
+Spec 59 covers: the built-in scope reported; `untrusted_scope` for `@example` (nothing staged) and
+for look-alikes of `@lamalibre`; `registry_lacks_scope` while the registry does not host `@example`;
+`lamaste-server trusted-scopes add` (audit entry, one notification); the agent's `config.json`
+following the relay's list at its next sync; the packages published to the development Feria with
+`feria-dev`, a package of an unhosted scope not stored there, and the stand-in serving Feria's bytes
+(integrity equal); install, approval and hosting on the agent VM through helper protocol 3, the half
+running as its own account, the helper's owner record, a forwarded call answered; the agent fetching
+the half from the relay's registry with its brokered token; `scope_in_use` while installed;
+`trusted_scopes_need_registry`; uninstall with purge; removal (audited); install refused again; the
+agent back to `@lamalibre` alone.
+
+Unit and integration tests: Lamaste serverd 598, agent CLI 125, agentd 113, server CLI 111, core
+111, desktop Rust 52 (clippy clean); Feria core 34, daemon 23. Lint and builds green in both
+repositories.
