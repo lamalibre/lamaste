@@ -1,61 +1,61 @@
 # Lamaste E2E: 19 — Agent Plugin CRUD
 
-> Started at `2026-11-09 12:43:29 UTC`
+> Started at `2026-11-10 13:05:35 UTC`
 
 
 ## Pre-flight: check onboarding is complete
 
-✅ `12:43:29` Onboarding is complete  
+✅ `13:05:35` Onboarding is complete  
 
 ## Start agent panel service
 
-✅ `12:43:29` lamaste-agentd is installed on the agent VM  
-✅ `12:43:30` Agent panel started on port 9393  
+✅ `13:05:35` lamaste-agentd is installed on the agent VM  
+✅ `13:05:38` Agent panel started on port 9393  
 
 ## GET /plugins — empty list
 
-✅ `12:43:30` Plugin list is initially empty  
+✅ `13:05:38` Plugin list is initially empty  
 
 ## Install validation — missing body
 
-✅ `12:43:31` Install without packageName returns 400  
+✅ `13:05:38` Install without packageName returns 400  
 
 ## Install validation — non-lamalibre scope
 
-✅ `12:43:31` Install with non-@lamalibre/ scope returns 400  
+✅ `13:05:38` Install with non-@lamalibre/ scope returns 400  
 
 ## Plugin name validation — reserved names
 
-✅ `12:43:31` Reserved name 'plugins' rejected  
-✅ `12:43:31` Reserved name 'agents' rejected  
+✅ `13:05:38` Reserved name 'plugins' rejected  
+✅ `13:05:39` Reserved name 'agents' rejected  
 
 ## Plugin name validation — invalid characters
 
-✅ `12:43:31` Name with dots rejected  
-✅ `12:43:31` Name with slashes rejected  
-✅ `12:43:31` Uppercase name rejected  
+✅ `13:05:39` Name with dots rejected  
+✅ `13:05:39` Name with slashes rejected  
+✅ `13:05:39` Uppercase name rejected  
 
 ## Operations on nonexistent plugin
 
-✅ `12:43:31` Enable nonexistent plugin returns 400  
-✅ `12:43:31` Disable nonexistent plugin returns 400  
-✅ `12:43:32` Delete nonexistent plugin returns 400  
+✅ `13:05:39` Enable nonexistent plugin returns 400  
+✅ `13:05:39` Disable nonexistent plugin returns 400  
+✅ `13:05:40` Delete nonexistent plugin returns 400  
 
 ## Check-update and bundle for nonexistent plugin
 
-✅ `12:43:32` Check-update nonexistent returns 400  
-✅ `12:43:32` Bundle nonexistent returns 404  
+✅ `13:05:40` Check-update nonexistent returns 400  
+✅ `13:05:40` Bundle nonexistent returns 404  
 
 ## Auth validation — requests without credentials
 
-✅ `12:43:32` Request without credentials returns 401  
-✅ `12:43:32` Health endpoint accessible without auth  
+✅ `13:05:40` Request without credentials returns 401  
+✅ `13:05:40` Health endpoint accessible without auth  
 
 ## Auth validation — forged certificate headers
 
-✅ `12:43:32` Forged agent certificate headers are refused (401)  
-✅ `12:43:32` Forged admin certificate headers are refused (401)  
-✅ `12:43:32` Percent-escaped /api path without credentials is refused (401)  
+✅ `13:05:41` Forged agent certificate headers are refused (401)  
+✅ `13:05:41` Forged admin certificate headers are refused (401)  
+✅ `13:05:41` Percent-escaped /api path without credentials is refused (401)  
 
 ---
 
