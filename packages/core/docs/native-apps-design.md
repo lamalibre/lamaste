@@ -636,14 +636,13 @@ Fresh VMs, the branch rebased on `release/4.13.0` (`8ae8dc12`), the candidate on
   `native_client_conflict`). Outside this feature: a burst of chisel restarts (three plugins uninstalled within
   seconds) left `chisel.service` in `start-limit-hit` and every tunnel down — a bug since 4.0.0, fixed for 4.13.1.
 
-## Open questions
+## Decided questions (founder, 2026-11-10)
 
-- **Q1.** Browser sign-in events: Authelia emits none. Accept "native sign-ins only" (directories
-  show browser users' last activity), or ask Lamaste to watch Authelia's authentication log (it
-  logs successful first factors) — fragile across Authelia versions.
-- **Q2.** Remembered consent (`feat/oidc-remembered-consent`, unmerged) does not help native
-  clients: `offline_access` makes Authelia ask every time. One consent per sign-in (every ≤ 90
-  days) is assumed acceptable.
-- **Q4.** A device/emulator check of the claimed HTTPS redirect (iOS ≥ 17.4, Android App Links) belongs to the product's app, not Lamaste's rodeo.
-- **Q3.** Self-service device listing for the person (a page on `auth.<domain>`, like the inviter's
-  page) — not in this release; the app's own sign-out revokes its grant.
+- **Q1 — native sign-ins only.** Browser sign-ins are not events (Authelia emits none); Lamaste does not watch
+  Authelia's authentication log. Directories show browser users' last activity.
+- **Q2 — one consent per device sign-in is accepted.** `offline_access` makes Authelia ask every time (remembered
+  consent does not help); at most every 90 days per device.
+- **Q3 — the self-service device page is a later release.** 4.14 has the administrator's view (Native Apps, Users →
+  devices) and the app's own sign-out; a page on `auth.<domain>` like the inviter's is its own slice.
+- **Q4 — the device check belongs to the product's app.** Lamaste's rodeo proves the association files, the redirect
+  page and the protocol; the first app built on it checks the claimed HTTPS redirect on iOS ≥ 17.4 and Android.
