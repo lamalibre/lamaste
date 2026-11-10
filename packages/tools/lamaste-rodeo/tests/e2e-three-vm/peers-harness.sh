@@ -577,8 +577,23 @@ edge_state() {
 # consumer_connected — the consumer's half reports its peer channel up
 consumer_connected() { [ "$(consumer_state | jq -r '.connected' 2>/dev/null)" = "true" ]; }
 
+# consumer_cursor_ready <scope> — the consumer's inbox holds a cursor on the
+# provider's stream for <scope> and no gap is pending: events published from
+# now on are delivered, not covered by a reconcile (a first pull answers an
+# `initial` gap at the provider's head, so what was published before it is
+# the reconcile's, by design)
+consumer_cursor_ready() {
+  [ "$(consumer_state | jq -r --arg s "$1" '[.cursors[]? | select(.scope == $s and .cursor != null and .stream_id != null and .gap_reason == null)] | length' 2>/dev/null)" = "1" ]
+}
+
+# consumer_cursor <scope> — the consumer's cursor row for <scope>, compact JSON
+consumer_cursor() {
+  consumer_state | jq -c --arg s "$1" '[.cursors[]? | select(.scope == $s)] | first // {}' 2>/dev/null || echo "{}"
+}
+
 # consumer_event_count — how many events the consumer's handler recorded
 consumer_event_count() { consumer_state | jq -r '.events | length' 2>/dev/null || echo "-1"; }
+consumer_event_count_is() { [ "$(consumer_event_count)" = "$1" ]; }
 
 # ---------------------------------------------------------------------------
 # Setup and cleanup shared by the specs

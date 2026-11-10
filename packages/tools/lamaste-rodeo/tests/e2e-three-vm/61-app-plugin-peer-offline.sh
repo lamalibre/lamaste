@@ -13,7 +13,14 @@
 # 2. The provider's whole agent unreachable (its chisel client and sync timer
 #    stopped on the agent VM): down, reason tunnel → 503 peer_unavailable,
 #    down_tunnel. The agent back: up, and the call answers; events published
-#    after the recovery are delivered.
+#    after the recovery are delivered from the cursor the consumer held
+#    before the outage, with no new gap.
+#
+# The consumer's cursor is established (its `initial` gap reconciled) while
+# the provider is up, before anything is stopped: a first pull answers that
+# gap at the provider's head, so events published before it are the
+# reconcile's, not the inbox's — a cursor first made after the recovery
+# would start past the events this spec publishes.
 #
 # The last peers spec: its cleanup also removes the second agent from the
 # visitor VM (the suite leaves the VMs as it found them).
@@ -68,6 +75,12 @@ if wait_for 30 call_answers; then
 else
   log_fail "The call: $(consumer_call "${SCOPE_READ}" GET /units/1)"
 fi
+if wait_for 90 consumer_cursor_ready "${SCOPE_READ}"; then
+  log_pass "The consumer's events cursor rests on the provider's stream (its initial gap reconciled)"
+else
+  log_fail "The consumer's cursor: $(consumer_cursor "${SCOPE_READ}"), gaps: $(consumer_state | jq -c '.gaps' 2>/dev/null)"
+fi
+CURSOR_BEFORE=$(consumer_cursor "${SCOPE_READ}")
 
 # ===========================================================================
 # 1. The provider's agent half stopped
@@ -122,10 +135,13 @@ else
 fi
 BEFORE=$(consumer_state | jq '.events | length' 2>/dev/null || echo 0)
 provider_publish 2 after > /dev/null
-if wait_for 60 eval '[ "$(consumer_state | jq ".events | length" 2>/dev/null || echo 0)" = "$((BEFORE + 2))" ]'; then
+if wait_for 60 consumer_event_count_is "$((BEFORE + 2))"; then
   log_pass "Events published after the recovery are delivered"
 else
-  log_fail "Events: $(consumer_state | jq -c '.events')"
+  log_fail "Events: $(consumer_state | jq -c '.events'), cursor: $(consumer_cursor "${SCOPE_READ}"), gaps: $(consumer_state | jq -c '.gaps' 2>/dev/null)"
 fi
+assert_eq "$(consumer_state | jq -r '[.events[]?.tag] | join(",")' 2>/dev/null)" "after,after" "…exactly the two, once each" || true
+assert_eq "$(consumer_state | jq -r '[.gaps[]?.reason] | join(",")' 2>/dev/null)" "initial" "…from the cursor held across the outage: no gap but the initial one" || true
+assert_eq "$(consumer_cursor "${SCOPE_READ}" | jq -r '.stream_id')" "$(printf '%s' "${CURSOR_BEFORE}" | jq -r '.stream_id')" "…on the same provider stream as before the outage" || true
 
 end_test
