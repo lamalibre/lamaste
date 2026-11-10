@@ -278,8 +278,10 @@ export async function pluginHostPlugin(
             // Two-level encapsulation: auth guard on outer scope
             await fastify.register(
               async function authScope(outer: FastifyInstance) {
-                outer.addHook('onRequest', trustGuard);
+                // Authentication first: a caller without a certificate learns
+                // nothing about which plugins are installed or trusted.
                 outer.addHook('onRequest', effectiveAuthHook);
+                outer.addHook('onRequest', trustGuard);
                 await outer.register(async function pluginScope(inner: FastifyInstance) {
                   await inner.register(pluginFn, registerOpts);
                 });
