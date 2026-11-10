@@ -332,6 +332,10 @@ export {
   PEER_HOPS_HEADER,
   PEER_TIMEOUT_HEADER,
   PEER_DELEGATION_HEADER,
+  PEER_RELAY_HEADER,
+  PEER_RELAY_CODES,
+  PEER_UNAVAILABLE_REASONS,
+  PEER_GAP_REASONS,
   PEER_MAX_HOPS,
   PEER_CALL_TIMEOUT_DEFAULT_MS,
   PEER_CALL_TIMEOUT_MAX_MS,
@@ -379,6 +383,9 @@ export {
 } from './peers.js';
 export type {
   PeerEndpointMethod,
+  PeerRelayCode,
+  PeerUnavailableReason,
+  PeerGapReason,
   PeerPatternSegment,
   PeersBlockInput,
   PeersBlock,
@@ -391,6 +398,28 @@ export type {
   PeerUsedEdge,
   PeerBreak,
 } from './peers.js';
+
+// Peer events: the wire contract of the outbox, the relay and the inbox
+export {
+  PEER_EVENTS_REQUEST_MAX_BYTES,
+  PEER_EVENTS_ANSWER_MAX_BYTES,
+  isPeerStreamId,
+  isPeerEpoch,
+  peerSubscriptionEpoch,
+  parsePeerEvent,
+  parsePeerEventsPullRequest,
+  parsePeerEventsPullAnswer,
+  parsePeerEventsRequest,
+  parsePeerEventsChannelAnswer,
+} from './peer-events.js';
+export type {
+  PeerEvent,
+  PeerEventsPullRequest,
+  PeerEventsPullAnswer,
+  PeerEventsRequest,
+  PeerEventsGap,
+  PeerEventsChannelAnswer,
+} from './peer-events.js';
 
 // Peer delegations: a plugin calling another on behalf of a person it serves
 export {

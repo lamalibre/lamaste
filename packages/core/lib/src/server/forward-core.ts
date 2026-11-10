@@ -42,6 +42,8 @@ import type {
   TunnelFallback,
 } from '../hooks/index.js';
 import type { RequestHook } from '../hook-set.js';
+import { PEER_RELAY_HEADER } from '../peers.js';
+import type { PeerRelayCode } from '../peers.js';
 import { isHookEditableHeader, METHOD_URL_OVERRIDE_HEADERS } from './hook-decisions.js';
 import type { ValidatedDecision } from './hook-decisions.js';
 
@@ -606,7 +608,36 @@ export function writeError(
   status: number,
   body: Readonly<Record<string, unknown>>,
 ): void {
+  if (surface === 'peer') {
+    const code = peerRelayCodeFor(status, body);
+    markPeerRelayAnswer(res, code);
+    writeJson(res, status, { ...body, peer: { code } });
+    return;
+  }
   writeJson(res, status, surface === 'user' ? { error: userSurfaceErrorText(status) } : body);
+}
+
+/**
+ * Mark an answer as the relay's own on the peer surface
+ * (`PEER_RELAY_HEADER`), so a consumer's SDK never mistakes it for the
+ * provider's.
+ */
+export function markPeerRelayAnswer(res: ForwardResponse, code: PeerRelayCode): void {
+  if (!res.headersSent) res.setHeader(PEER_RELAY_HEADER, code);
+}
+
+/** The peer relay code of one of the forwarding core's own error answers. */
+function peerRelayCodeFor(status: number, body: Readonly<Record<string, unknown>>): PeerRelayCode {
+  const reasonId = body['reasonId'];
+  if (reasonId === 'hook-failed' || reasonId === 'response-not-checkable') return 'hook_failed';
+  if (typeof reasonId === 'string') return 'hook_rejected';
+  if (status === 413) return 'too_large';
+  if (status === 504) return 'timeout';
+  if (status === 502) {
+    return body['reason'] === 'tunnel' ? 'provider_unreachable' : 'provider_unauthenticated';
+  }
+  if (status === 400 || status === 403) return 'bad_request';
+  return 'relay_error';
 }
 
 /** Answer a forwarding failure — or, while the plugin is down, its `tunnel:down` fallback. */
@@ -879,7 +910,9 @@ export async function forwardRequest(
 ): Promise<ForwardOutcome> {
   const method = request.method.toUpperCase();
   const bodyIdleTimeoutMs = opts.bodyIdleTimeoutMs ?? AGENT_FORWARD_DEFAULTS.bodyIdleTimeoutMs;
-  const fallback = plan?.runtime.fallbackFor(target.plugin) ?? null;
+  // A plugin's `tunnel:down` fallback answers its own clients, never a peer
+  // (the peer gateway refuses a provider known to be down before this).
+  const fallback = surface === 'peer' ? null : (plan?.runtime.fallbackFor(target.plugin) ?? null);
 
   if (isServiceWorkerRequest(request.headers)) {
     writeError(res, surface, 403, { error: 'A plugin route cannot serve a service worker' });
@@ -973,6 +1006,7 @@ export async function forwardRequest(
       }
       const decision = run.decision as PreForwardDecision;
       if (decision.action === 'reject') {
+        if (surface === 'peer') markPeerRelayAnswer(res, 'hook_rejected');
         writeJson(
           res,
           decision.status,

@@ -87,6 +87,67 @@ export const PEER_TIMEOUT_HEADER = 'x-lamalibre-peer-timeout';
 /** A delegation (`peer-delegation.ts`): to a half with a user's request, from a half with a call. */
 export const PEER_DELEGATION_HEADER = 'x-lamalibre-delegation';
 
+/**
+ * The header the relay sets on every answer it gives a peer call itself — a
+ * refusal or a failure to reach the provider — with its code
+ * ({@link PeerRelayCode}): the SDK tells the relay's answers from the
+ * provider's own by it. A provider cannot send it: the relay strips every
+ * `x-lamalibre-*` header of a forwarded answer.
+ */
+export const PEER_RELAY_HEADER = 'x-lamalibre-peer-relay';
+
+/**
+ * What the relay answers a peer call with when it does not pass on the
+ * provider's answer: refusals (`bad_path`, `hop_limit`, `not_granted`,
+ * `endpoint_not_allowed`, `delegation_invalid`, `user_not_entitled`,
+ * `version_mismatch`, `too_large`, `peer_unavailable`, `hooks_not_approved`,
+ * `hook_rejected`, `hook_failed`) and failures of the forward itself
+ * (`provider_unreachable`, `provider_unauthenticated`, `timeout`,
+ * `relay_error`).
+ */
+export const PEER_RELAY_CODES = [
+  'bad_path',
+  'bad_request',
+  'hop_limit',
+  'not_granted',
+  'endpoint_not_allowed',
+  'delegation_invalid',
+  'user_not_entitled',
+  'version_mismatch',
+  'too_large',
+  'peer_unavailable',
+  'hooks_not_approved',
+  'hook_rejected',
+  'hook_failed',
+  'provider_unreachable',
+  'provider_unauthenticated',
+  'timeout',
+  'relay_error',
+] as const;
+
+export type PeerRelayCode = (typeof PEER_RELAY_CODES)[number];
+
+/** Why a provider is not available to a peer call or an events pull right now. */
+export const PEER_UNAVAILABLE_REASONS = [
+  'not_hosted',
+  'down_tunnel',
+  'down_app',
+  'not_ready',
+] as const;
+
+export type PeerUnavailableReason = (typeof PEER_UNAVAILABLE_REASONS)[number];
+
+/** Why an events pull answers a gap instead of events (`resumeFrom` is the provider's head). */
+export const PEER_GAP_REASONS = [
+  'initial',
+  'granted',
+  'subscribed',
+  'stream_changed',
+  'horizon',
+] as const;
+
+export type PeerGapReason = (typeof PEER_GAP_REASONS)[number];
+
 /** A call never goes further than this many hops from the request that started it. */
 export const PEER_MAX_HOPS = 4;
 

@@ -454,3 +454,31 @@ export {
   etcEcosystemRoot,
   etcProductRoot,
 } from '../branding.js';
+
+// Peers: calls to other app plugins, their events, the peer surface (design: slice 8)
+export { createPeers, PeerCallError } from './peer-client.js';
+export type {
+  Peers,
+  PeersOptions,
+  PeersLogger,
+  PeerCallOptions,
+  PeerResponse,
+  PeerRequestLike,
+  PeerEventHandler,
+  PeerGapNotice,
+  PeerCaller,
+} from './peer-client.js';
+export { createPeerOutbox, createPeerOutboxHandler } from './peer-outbox.js';
+export type {
+  PeerOutbox,
+  PeerOutboxOptions,
+  PeerOutboxState,
+  PeerEventInput,
+  PeerSqlDatabase,
+  PeerSqlStatement,
+  PeerSqlValue,
+} from './peer-outbox.js';
+export { peerSurface, peerRoute, createPeerAdminHandler } from './peer-surface.js';
+export type { PeerSurfaceOptions, PeerRouteHandler, PeerRouteOptions } from './peer-surface.js';
+export { peerContextOf } from './peer-context.js';
+export type { PeerRequestContext } from './peer-context.js';
