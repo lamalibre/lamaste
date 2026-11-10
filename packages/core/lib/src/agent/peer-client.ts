@@ -49,6 +49,8 @@ import {
   PEER_CALL_TIMEOUT_DEFAULT_MS,
   PEER_CALL_TIMEOUT_MAX_MS,
   PEER_CHANNEL_EVENTS_PATH,
+  PEER_CHANNEL_PING_INTERVAL_MS,
+  PEER_CHANNEL_PING_TIMEOUT_MS,
   PEER_CHANNEL_UPGRADE,
   PEER_DELEGATION_HEADER,
   PEER_EVENTS_WAIT_MAX_MS,
@@ -167,6 +169,14 @@ export interface PeersOptions {
   readonly attachWaitMs?: number | undefined;
   /** How long an events pull waits at the head (default `PEER_EVENTS_WAIT_MAX_MS`). */
   readonly eventsWaitMs?: number | undefined;
+  /**
+   * How often the half PINGs its channel (default
+   * `PEER_CHANNEL_PING_INTERVAL_MS`), and how long an unanswered PING may
+   * stay so before the channel is taken for dead (default
+   * `PEER_CHANNEL_PING_TIMEOUT_MS`). For tests and tuning.
+   */
+  readonly pingIntervalMs?: number | undefined;
+  readonly pingTimeoutMs?: number | undefined;
   readonly logger?: PeersLogger | undefined;
 }
 
@@ -265,16 +275,61 @@ export function createPeers(opts: PeersOptions): Peers {
   );
   const logger = opts.logger;
 
+  const pingIntervalMs = opts.pingIntervalMs ?? PEER_CHANNEL_PING_INTERVAL_MS;
+  const pingTimeoutMs = opts.pingTimeoutMs ?? PEER_CHANNEL_PING_TIMEOUT_MS;
+
   let session: ClientHttp2Session | null = null;
   let closed = false;
+  /** When each session last proved alive (a PING answered, an answer begun). */
+  const aliveAt = new WeakMap<ClientHttp2Session, number>();
+  /** Sessions with a liveness PING out. */
+  const probing = new WeakSet<ClientHttp2Session>();
   let waiters: ((s: ClientHttp2Session | null) => void)[] = [];
   const handlers = new Map<string, Map<string, PeerEventHandler>>();
   const loops = new Set<string>();
   let tableReady = false;
 
+  /**
+   * Ask the relay to answer a PING; a session that does not within
+   * `pingTimeoutMs` is dead and destroyed, failing its streams at once
+   * (`relay_unavailable`) instead of leaving them to their timeouts. A
+   * channel's TCP connection runs through chisel on both machines and can
+   * die without a FIN — the agent's chisel client reconnecting, for one —
+   * and the relay's own PINGs only end its side.
+   */
+  function probe(s: ClientHttp2Session): void {
+    if (s.closed || s.destroyed || probing.has(s)) return;
+    probing.add(s);
+    const deadline = setTimeout(() => {
+      logger?.warn({ plugin: opts.plugin }, 'Peer channel did not answer a PING: dropped');
+      s.destroy();
+    }, pingTimeoutMs);
+    deadline.unref();
+    const sent = s.ping((err) => {
+      probing.delete(s);
+      clearTimeout(deadline);
+      if (err) s.destroy();
+      else aliveAt.set(s, Date.now());
+    });
+    if (!sent) {
+      probing.delete(s);
+      clearTimeout(deadline);
+      s.destroy();
+    }
+  }
+
+  /** Probe a session not heard from for a while, before a call relies on it. */
+  function probeIfQuiet(s: ClientHttp2Session): void {
+    if (Date.now() - (aliveAt.get(s) ?? 0) > Math.min(pingIntervalMs, 5_000)) probe(s);
+  }
+
   function setSession(next: ClientHttp2Session): void {
     const previous = session;
     session = next;
+    aliveAt.set(next, Date.now());
+    const pinger = setInterval(() => probe(next), pingIntervalMs);
+    pinger.unref();
+    next.once('close', () => clearInterval(pinger));
     next.on('error', () => {
       // 'close' follows.
     });
@@ -288,8 +343,14 @@ export function createPeers(opts: PeersOptions): Peers {
     const waiting = waiters;
     waiters = [];
     for (const fn of waiting) fn(next);
-    // Calls in flight on the previous one finish there.
-    if (previous && !previous.closed) previous.close();
+    // Calls in flight on the previous one finish there — if it is alive:
+    // the relay attaches anew both when it replaces a working channel (it
+    // sends GOAWAY, and the old one answers) and when it found the old one
+    // dead, which this side may not have noticed yet.
+    if (previous && !previous.closed) {
+      previous.close();
+      probe(previous);
+    }
   }
 
   function sessionReady(): Promise<ClientHttp2Session | null> {
@@ -405,6 +466,7 @@ export function createPeers(opts: PeersOptions): Peers {
 
     const s = await sessionReady();
     if (!s) throw new PeerCallError('relay_unavailable', 'No peer channel to the relay');
+    probeIfQuiet(s);
     let stream: ClientHttp2Stream;
     try {
       stream = s.request(headers, { endStream: body === undefined });
@@ -434,6 +496,7 @@ export function createPeers(opts: PeersOptions): Peers {
       }, timeoutMs + 5_000);
       stream.once('response', (h) => {
         clearTimeout(timer);
+        aliveAt.set(s, Date.now());
         resolve(h);
       });
       stream.once('error', (err) => {

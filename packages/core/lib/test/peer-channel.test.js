@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import http2 from 'node:http2';
+import net from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import Fastify from 'fastify';
 
@@ -184,8 +185,9 @@ async function startProvider() {
 
 async function startConsumer(opts = {}) {
   const secret = opts.secret ?? generateHostingSecret();
-  const configPath = path.join(dir, 'leave.json');
-  const dbPath = path.join(dir, 'leave.db');
+  const files = opts.files ?? 'leave';
+  const configPath = path.join(dir, `${files}.json`);
+  const dbPath = path.join(dir, `${files}.db`);
   const db = new DatabaseSync(dbPath);
   const probe = Fastify();
   await probe.listen({ port: opts.port ?? 0, host: '127.0.0.1' });
@@ -200,6 +202,7 @@ async function startConsumer(opts = {}) {
     db,
     eventsWaitMs: 300,
     attachWaitMs: 3000,
+    ...(opts.peers ?? {}),
     onGap: async (notice) => {
       if (state.failGaps > 0) {
         state.failGaps -= 1;
@@ -861,4 +864,92 @@ test("a provider's connection headers do not break the answer", async () => {
   assert.equal(response.headers['http2-settings'], undefined);
   assert.equal(response.headers['host'], undefined);
   assert.deepEqual(await response.json(), { odd: true });
+});
+
+/**
+ * A TCP relay between the relay and a consumer half that can stop carrying
+ * bytes without closing anything — what a channel through chisel looks like
+ * when the agent's chisel client reconnects.
+ */
+async function startStallingProxy(targetPort) {
+  const pairs = new Set();
+  const server = net.createServer((inbound) => {
+    const outbound = net.connect(targetPort, '127.0.0.1');
+    const pair = { inbound, outbound, stalled: false };
+    pairs.add(pair);
+    const carry = (from, to) =>
+      from.on('data', (chunk) => {
+        if (!pair.stalled) to.write(chunk);
+      });
+    carry(inbound, outbound);
+    carry(outbound, inbound);
+    const end = () => {
+      pairs.delete(pair);
+      inbound.destroy();
+      outbound.destroy();
+    };
+    inbound.on('error', end).on('close', end);
+    outbound.on('error', end).on('close', end);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    port: server.address().port,
+    /** Stop carrying bytes on every connection open now; new ones still work. */
+    stallOpen() {
+      for (const pair of pairs) pair.stalled = true;
+    },
+    close() {
+      for (const pair of pairs) {
+        pair.inbound.destroy();
+        pair.outbound.destroy();
+      }
+      return new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+test('a channel that dies without a FIN fails its calls at once and is replaced', async () => {
+  const second = await startConsumer({
+    files: 'leave-stall',
+    subscribe: false,
+    peers: { pingIntervalMs: 200, pingTimeoutMs: 400 },
+  });
+  const proxy = await startStallingProxy(second.port);
+  const channels = createPeerChannelServer({ handle: createPeerGateway(gatewayOptions) });
+  const stallRelay = createPeerChannelManager({
+    server: channels,
+    resolve: async () => ({ consumer: 'leave', port: proxy.port, secret: second.secret }),
+    minBackoffMs: 50,
+    maxBackoffMs: 200,
+  });
+  try {
+    stallRelay.ensure('leave');
+    await waitFor(() => second.peers.connected());
+    assert.equal((await second.peers.json('directory:read', 'GET', '/units/1')).unit, '1');
+
+    // The connection stops carrying anything; neither side sees it close.
+    proxy.stallOpen();
+    const started = Date.now();
+    await assert.rejects(
+      () => second.peers.json('directory:read', 'GET', '/units/2'),
+      (err) => err instanceof PeerCallError && err.code === 'relay_unavailable',
+    );
+    assert.ok(Date.now() - started < 3_000, 'the call failed within the PING timeout');
+
+    // The relay attaches anew (a fresh connection carries bytes again): the
+    // dead session is dropped on this side too, and calls work again.
+    stallRelay.replace('leave');
+    await waitFor(async () => {
+      try {
+        return (await second.peers.json('directory:read', 'GET', '/units/3')).unit === '3';
+      } catch {
+        return false;
+      }
+    });
+  } finally {
+    stallRelay.close();
+    await second.peers.close();
+    await second.server.close();
+    await proxy.close();
+  }
 });

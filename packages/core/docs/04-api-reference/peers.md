@@ -253,7 +253,7 @@ const manager = await peers.json('directory:read', 'GET', `/people/${caller.user
 });
 ```
 
-`call()` returns `{ status, headers, body, buffer(), text(), json() }` with the body streaming; `json()` requires a 2xx JSON answer. A refusal or failure rejects with `PeerCallError` (`code` as in the table above, `status`, `retryAfter`, or `relay_unavailable` when no channel came within `attachWaitMs`, default 5 s). `from: request` passes on only the hop count, `onBehalfOf: request` the delegation too.
+`call()` returns `{ status, headers, body, buffer(), text(), json() }` with the body streaming; `json()` requires a 2xx JSON answer. A refusal or failure rejects with `PeerCallError` (`code` as in the table above, `status`, `retryAfter`, or `relay_unavailable` when no channel came within `attachWaitMs`, default 5 s, or the channel died under the call). The half PINGs its channel every 20 s, and also before a call on a channel it has not heard from for 5 s; one that does not answer within 10 s is dropped and its calls fail at once with `relay_unavailable` — a channel runs through chisel on both machines and can die without a FIN — and the relay attaches a new one. `from: request` passes on only the hop count, `onBehalfOf: request` the delegation too.
 
 A provider:
 
