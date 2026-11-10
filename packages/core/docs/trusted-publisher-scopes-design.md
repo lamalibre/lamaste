@@ -527,14 +527,20 @@ A second independent review read the code after the merge with slice 8. Every fi
   a registry that would proxy it.
 - **The local host had no registry requirement.** An additional local scope must now be routed by
   the user's npm configuration to a non-public registry that declares it hosted
-  (`assertLocalScopeRouted`), when added and at every install and update. This supersedes §5's
-  "the user's own choice".
+  (`assertLocalScopeRouted`), when added and at every install and update — over https, or plain
+  http to this machine only. A registry that does not answer `GET /-/feria/scopes` (Verdaccio,
+  GitHub Packages) is refused: nothing says it will not proxy the scope, so local additional
+  scopes need a Feria. This supersedes §5's "the user's own choice".
 - **A dropped scope kept being served when the daemon restart failed.** Every plugin host now reads
-  the list at each mount and bundle request (synchronous readers on the agent and the local host).
+  the list at each mount, at each bundle request and — through a guard on the plugin's mounted
+  scope — at each request to the plugin's routes (synchronous readers on the agent and the local
+  host), so a scope no longer trusted stops being served at once, restart or not.
 - Nits taken: push-install policy writes under the plugin lock; trust changes audited before they
   are written (a crash leaves at most an entry for a change that did not happen, and a failed write
   adds `settings.trusted-scope.change-failed`); the agent's update check asks the registry its
-  installs use; `npm uninstall --ignore-scripts`; the TypeScript list cap matches the desktop twin.
+  installs use; `npm uninstall --ignore-scripts` everywhere, and the relay's uninstalls run through
+  the registry userconfig like its installs (an agent's uninstall keeps working without a brokered
+  credential); the TypeScript list cap matches the desktop twin.
 - Documented, not changed: "in use" counts installed rows and policies — enough, because an install
   writes its row inside the plugin lock (R-S1's "in-flight operations" wording overstated it); a
   malformed `trustedScopes` in `panel.json` stops the panel from starting, like any invalid

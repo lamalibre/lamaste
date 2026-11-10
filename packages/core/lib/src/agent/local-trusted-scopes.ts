@@ -135,10 +135,13 @@ const PUBLIC_REGISTRY_HOSTS: ReadonlySet<string> = new Set([
 
 /**
  * The local plugin host installs through its user's npm configuration, so
- * an additional local scope must be routed by that configuration
+ * an additional local scope must be routed (over https, or http to this
+ * machine only) by that configuration
  * (`<scope>:registry`, in the local data directory's view) to a registry
  * that is not a public one and that declares the scope hosted — closed,
- * never proxied (Feria's `GET /-/feria/scopes`). Otherwise npm would
+ * never proxied (Feria's `GET /-/feria/scopes`; a registry that does not
+ * answer it — Verdaccio, GitHub Packages — is refused, since nothing says
+ * it will not proxy the scope). Otherwise npm would
  * resolve it from wherever the configuration points, and a registry that
  * does not host a scope proxies it from npmjs, where anyone may own it.
  * Checked when the scope is added and again at every install and update.
@@ -175,6 +178,10 @@ export async function assertLocalScopeRouted(scope: string): Promise<string> {
     );
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') throw notRouted('not an http(s) URL');
+  // Plain http only to this machine: anything else could be answered by
+  // whoever sits on the path.
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname.toLowerCase());
+  if (url.protocol === 'http:' && !loopback) throw notRouted('plain http to another host');
   if (PUBLIC_REGISTRY_HOSTS.has(url.hostname.toLowerCase())) {
     throw notRouted(`${url.hostname} is a public registry`);
   }

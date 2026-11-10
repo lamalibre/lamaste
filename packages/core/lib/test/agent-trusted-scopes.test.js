@@ -113,6 +113,9 @@ test('the local host follows its own list, changed only through its functions', 
   await assert.rejects(agent.addLocalTrustedScope('@example'), { code: 'scope_not_routed' });
   await routeExample('https://registry.npmjs.org/');
   await assert.rejects(agent.addLocalTrustedScope('@example'), { code: 'scope_not_routed' });
+  // Plain http is for this machine only.
+  await routeExample('http://registry.example.test/');
+  await assert.rejects(agent.addLocalTrustedScope('@example'), { code: 'scope_not_routed' });
   await routeExample(registryUrl);
   hostedAnswer = { scopes: [{ scope: '@lamalibre' }, { scope: '@example', retired: true }] };
   await assert.rejects(agent.addLocalTrustedScope('@example'), { code: 'scope_not_routed' });

@@ -220,14 +220,18 @@ test("the relay's plugin router mounts and serves a server plugin of a trusted a
     assert.equal(bundle.statusCode, 200, bundle.body);
     assert.match(bundle.body, /__mountedPanel/);
 
-    // The list is read at every bundle request: a scope no longer trusted
-    // stops being served at once (its routes go at the next start).
+    // The list is read at every request: a scope no longer trusted stops
+    // being served at once — bundle and routes.
     const before = lib.additionalTrustedScopes();
     await lib.updateConfig({ trustedScopes: [] });
     try {
       const refused = await app.inject({ method: 'GET', url: '/api/mounted/panel.js' });
       assert.equal(refused.statusCode, 403, refused.body);
       assert.equal(refused.json().code, 'untrusted_scope');
+      // Its routes too, at once — no restart needed.
+      const route = await app.inject({ method: 'GET', url: '/api/mounted/ping' });
+      assert.equal(route.statusCode, 403, route.body);
+      assert.equal(route.json().code, 'untrusted_scope');
     } finally {
       await lib.updateConfig({ trustedScopes: before });
     }
@@ -266,7 +270,7 @@ test('agents are brokered only the trusted scopes the registry hosts right now',
   lib.resetRegistryHostedScopesCache();
 });
 
-test('the registry credential cannot be cleared while an additional scope is trusted (route)', async () => {
+test('the registry credential cannot be cleared, or moved to a registry lacking a trusted scope (routes)', async () => {
   const { default: Fastify } = await import('fastify');
   const { default: registryCredentialRoutes } =
     await import('../src/routes/management/registry-credential.js');
@@ -281,6 +285,38 @@ test('the registry credential cannot be cleared while an additional scope is tru
     assert.deepEqual(res.json().scopes, ['@example']);
     // Still configured.
     assert.notEqual(await lib.readRegistryCredentialConfig(), null);
+
+    // Switching to a registry whose credential is good but which does not
+    // host @example is refused, and the stored credential stays.
+    const other = http.createServer((req, res) => {
+      res.setHeader('content-type', 'application/json');
+      if (req.url === '/-/whoami') {
+        return res.end(JSON.stringify({ owner: 'machine:panel', scopes: ['read', 'admin'] }));
+      }
+      if (req.url === '/-/feria/scopes') {
+        return res.end(JSON.stringify({ scopes: [{ scope: '@lamalibre' }] }));
+      }
+      res.writeHead(404);
+      res.end('{}');
+    });
+    await new Promise((resolve) => other.listen(0, '127.0.0.1', resolve));
+    try {
+      const otherUrl = `http://127.0.0.1:${other.address().port}/`;
+      const put = await app.inject({
+        method: 'PUT',
+        url: '/registry-credential',
+        payload: {
+          registryUrl: otherUrl,
+          auth: { kind: 'token', token: 'feria_other_registry_token_000000' },
+        },
+      });
+      assert.equal(put.statusCode, 409, put.body);
+      assert.equal(put.json().code, 'registry_lacks_scope');
+      assert.deepEqual(put.json().scopes, ['@example']);
+      assert.equal((await lib.readRegistryCredentialConfig()).registryUrl, registryUrl);
+    } finally {
+      await new Promise((resolve) => other.close(resolve));
+    }
   } finally {
     await app.close();
   }
