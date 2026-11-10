@@ -2047,6 +2047,9 @@ identity_block_json() {
     narrow)
       echo '{ "roles": [{ "id": "viewer", "label": "Reader", "description": "Reads the dashboards" }, { "id": "editor", "label": "Editor" }], "attributes": ["displayName"] }'
       ;;
+    signin)
+      echo '{ "roles": [{ "id": "viewer", "label": "Viewer", "description": "Reads the dashboards" }, { "id": "editor", "label": "Editor" }], "attributes": ["displayName", "email"], "signInEvents": true }'
+      ;;
     inviting)
       echo '{ "roles": [{ "id": "coordinator", "label": "Coordinator", "invites": ["coordinator", "viewer"] }, { "id": "viewer", "label": "Viewer", "description": "Reads the dashboards" }, { "id": "editor", "label": "Editor" }], "attributes": ["displayName", "email"] }'
       ;;
@@ -2428,6 +2431,7 @@ import {
   createIdentityProjection,
   createSettingsHandler,
   createSettingsStore,
+  createSignInEventsHandler,
   responderHeaderFor,
   settingsFromManifest,
 } from '@lamalibre/lamaste/agent';
@@ -2574,6 +2578,35 @@ function projectionProbe() {
     erased: identity.erased.all().map((row) => row.user_id),
   };
 }
+
+// Sign-in events (native apps), when the manifest declares identity: what
+// Lamaste sends to /admin/identity/sign-ins, kept in sign-ins.json in the
+// data directory by seq (a resent event is the same event). A plugin whose
+// manifest does not declare signInEvents never gets the call — its probe
+// stays empty, and its request log shows no such request.
+const SIGN_INS_PATH = path.join(dataDir, 'sign-ins.json');
+function readSignIns() {
+  try {
+    const held = JSON.parse(readFileSync(SIGN_INS_PATH, 'utf8'));
+    return Array.isArray(held) ? held : [];
+  } catch {
+    return [];
+  }
+}
+const signIns = identity
+  ? createSignInEventsHandler({
+      verifier,
+      onEvents: (events) => {
+        const held = new Map(readSignIns().map((e) => [e.seq, e]));
+        for (const event of events) held.set(event.seq, event);
+        writeFileAtomic(SIGN_INS_PATH, `${JSON.stringify([...held.values()].sort((a, b) => a.seq - b.seq))}\n`);
+      },
+      logger: {
+        info: (obj, msg) => log(`sign-ins ${msg ?? ''} ${JSON.stringify(obj)}`),
+        warn: (obj, msg) => log(`sign-ins warning ${msg ?? ''} ${JSON.stringify(obj)}`),
+      },
+    })
+  : null;
 
 // The request log: every request that reaches this process, before anything
 // looks at it — the raw path, never the query. What proves that a request
@@ -2772,6 +2805,11 @@ const server = http.createServer(async (req, res) => {
     logRequest(method, target);
     const p = new URL(target, 'http://127.0.0.1').pathname;
     if (identity && (p === '/app' || p.startsWith('/app/'))) return await userSurface(req, res, method, target, p);
+    if (signIns && p === '/admin/identity/sign-ins') {
+      const out = await signIns.handle({ method, url: target, headers: req.headers, body: await bodyOf(req) });
+      log(`sign-ins ${method} ${p} ${out.status}`);
+      return answer(res, out);
+    }
     if (identity && (p === '/admin/identity' || p.startsWith('/admin/identity/'))) {
       const out = await identity.handler.handle({ method, url: target, headers: req.headers, body: await bodyOf(req) });
       log(`identity ${method} ${p} ${out.status}`);
@@ -2818,6 +2856,11 @@ const server = http.createServer(async (req, res) => {
     if (p === '/admin/sandbox') return json(res, 200, await sandboxProbe(), verified);
     if (p === '/admin/probe/settings' && settings) return json(res, 200, settingsProbe(), verified);
     // What the identity projection holds: an administrator's read alone.
+    // The sign-in events Lamaste delivered: an administrator's read alone.
+    if (p === '/admin/e2e/sign-ins' && signIns) {
+      if (caller.type !== 'admin') return json(res, 403, { error: 'administrators only' }, verified);
+      return json(res, 200, { events: readSignIns() }, verified);
+    }
     if (p === '/admin/e2e/projection' && identity) {
       if (caller.type !== 'admin') return json(res, 403, { error: 'administrators only' }, verified);
       if (method !== 'GET') return json(res, 405, { error: 'GET only' }, verified, { allow: 'GET' });

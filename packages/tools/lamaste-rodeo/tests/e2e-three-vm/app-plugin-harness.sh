@@ -1604,6 +1604,231 @@ tree_dirs() {
 }
 
 # ---------------------------------------------------------------------------
+# Native apps (native-apps-design.md) — specs 63 to 65
+# ---------------------------------------------------------------------------
+#
+# A phone app's sign-in, driven from the visitor VM with curl: the person
+# signs in to Authelia (sign_in: password and TOTP — a native client's
+# policy is two_factor), the authorization request with a PKCE challenge
+# (pkce_pair, made here with openssl), Authelia's consent (offline_access
+# always asks), the code from the redirect's Location, and the exchange at
+# the domain's token endpoint — the relay's token broker. Tokens live in the
+# spec's shell variables only and are never logged; an assertion names what
+# was checked, never a token.
+
+NATIVE_REDIRECT_PATH="/native/callback"
+NATIVE_SCOPE="openid offline_access profile"
+PKCE_VERIFIER=""
+PKCE_CHALLENGE=""
+# The last native_post's answer, as visit prints it (headers, body, status)
+NATIVE_ANSWER=""
+
+# pkce_pair — a fresh verifier (64 characters of base64url) and its S256
+# challenge (RFC 7636), in PKCE_VERIFIER and PKCE_CHALLENGE (never call it
+# in a command substitution)
+pkce_pair() {
+  PKCE_VERIFIER=$(openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n')
+  PKCE_CHALLENGE=$(printf '%s' "${PKCE_VERIFIER}" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+}
+
+# uri <value> — percent-encoded for a query string
+uri() { jq -rn --arg v "$1" '$v | @uri'; }
+
+# url_param <url> <name> — one query parameter of a URL, decoded ("" when absent)
+url_param() {
+  node -e 'try { process.stdout.write(new URL(process.argv[1]).searchParams.get(process.argv[2]) ?? ""); } catch { }' "$1" "$2" 2>/dev/null || true
+}
+
+# jwt_part <token> <0 | 1> — a JWT's header (0) or claims (1) as JSON ('{}' when it is none)
+jwt_part() {
+  node -e 'try { process.stdout.write(Buffer.from(process.argv[1].split(".")[Number(process.argv[2])], "base64url").toString("utf8")); } catch { process.stdout.write("{}"); }' "$1" "$2" 2>/dev/null || echo '{}'
+}
+
+# tampered <token> — the token with one character of its claims changed
+# (the signature no longer matches)
+tampered() {
+  # shellcheck disable=SC2016 # a JavaScript program
+  node -e 'const [h, c, s] = process.argv[1].split("."); const i = Math.floor(c.length / 2); const x = c[i] === "A" ? "B" : "A"; process.stdout.write(`${h}.${c.slice(0, i)}${x}${c.slice(i + 1)}.${s}`);' "$1" 2>/dev/null || echo "x"
+}
+
+# native_location <jar> <url> — GET <url> from the visitor VM with the
+# person's Authelia session (the jar, updated), never followed: the
+# Location it answers with ("" when none)
+native_location() {
+  visitor_exec "curl -sk --max-time 20 -o /dev/null -D - -b $(q "$1") -c $(q "$1" "$2") || true" 2>/dev/null |
+    tr -d '\r' | awk 'tolower($1) == "location:" {v = $2} END {print v}' || true
+}
+
+# native_authorize <jar> <client id> <host fqdn> <S256 | plain | none> — the
+# authorization request of a native client of <host fqdn>, with the
+# person's session; consent given when Authelia asks. Prints "code <code>",
+# "error <error>", or "none <what happened>"
+native_authorize() {
+  local jar="$1" client="$2" host="$3" mode="$4" portal="https://auth.${DOMAIN}" query loc flow body redirect code error
+  query="client_id=$(uri "$client")&response_type=code&redirect_uri=$(uri "https://${host}${NATIVE_REDIRECT_PATH}")&scope=$(uri "${NATIVE_SCOPE}")&state=$(openssl rand -hex 12)&nonce=$(openssl rand -hex 12)"
+  case "$mode" in
+    S256) query="${query}&code_challenge=${PKCE_CHALLENGE}&code_challenge_method=S256" ;;
+    plain) query="${query}&code_challenge=${PKCE_VERIFIER}&code_challenge_method=plain" ;;
+    none) ;;
+  esac
+  loc=$(native_location "$jar" "${portal}/api/oidc/authorization?${query}")
+  if [[ "$loc" == *"/consent/openid/decision"* ]]; then
+    flow=$(url_param "$loc" flow_id)
+    body=$(jq -c -n --arg f "$flow" --arg c "$client" '{flow_id: $f, client_id: $c, consent: true, pre_configured: false, claims: []}')
+    redirect=$(visitor_exec "curl -sk --max-time 20 -b $(q "$jar") -c $(q "$jar" -X POST -H 'Content-Type: application/json' -d "$body" "${portal}/api/oidc/consent") || true" 2>/dev/null | jq -r '.data.redirect_uri // empty' 2>/dev/null || true)
+    if [ -z "$redirect" ]; then
+      echo "none consent-refused"
+      return 0
+    fi
+    loc=$(native_location "$jar" "$redirect")
+  fi
+  if [[ "$loc" != "https://${host}${NATIVE_REDIRECT_PATH}?"* ]]; then
+    echo "none ${loc:-no-redirect}"
+    return 0
+  fi
+  code=$(url_param "$loc" code)
+  error=$(url_param "$loc" error)
+  if [ -n "$code" ]; then
+    echo "code ${code}"
+  else
+    echo "error ${error:-none}"
+  fi
+}
+
+# native_post <path on the portal> [-H <header>] <name=value>... — a form
+# POST to the domain's sign-in host from the visitor VM (the token and
+# revocation endpoints); the answer in NATIVE_ANSWER, as visit prints it
+# (never call it in a command substitution)
+native_post() {
+  local path="$1" args="" kv
+  shift
+  if [ "${1:-}" = "-H" ]; then
+    args="-H $(printf %q "$2")"
+    shift 2
+  fi
+  for kv in "$@"; do args="${args} --data-urlencode $(printf %q "$kv")"; done
+  NATIVE_ANSWER=$(visitor_exec "curl -sk --max-time 20 -D - -w '\n%{http_code}' -X POST ${args} $(q "https://auth.${DOMAIN}${path}") || true" 2>/dev/null || echo "000")
+}
+native_status() { visit_status "${NATIVE_ANSWER}"; }
+native_body() { visit_body "${NATIVE_ANSWER}"; }
+# native_field <jq> — a field of the last answer's JSON body (raw; "" when none)
+native_field() { visit_body "${NATIVE_ANSWER}" | jq -r "$1" 2>/dev/null || echo ""; }
+
+# native_exchange <client id> <host fqdn> <code> <device name> — the code
+# for tokens, with the verifier of the last pkce_pair (answer in NATIVE_ANSWER)
+native_exchange() {
+  native_post /api/oidc/token "grant_type=authorization_code" "code=$3" \
+    "redirect_uri=https://$2${NATIVE_REDIRECT_PATH}" "client_id=$1" "code_verifier=${PKCE_VERIFIER}" "device_name=$4"
+}
+
+# native_refresh <client id> <refresh token> (answer in NATIVE_ANSWER)
+native_refresh() {
+  native_post /api/oidc/token "grant_type=refresh_token" "refresh_token=$2" "client_id=$1"
+}
+
+# native_sign_in <jar> <client id> <host fqdn> <device name> — a whole
+# native sign-in with a fresh PKCE pair; NATIVE_AT and NATIVE_RT hold the
+# tokens ("" when it failed — NATIVE_SIGN_IN says how: "ok", "authorize
+# <outcome>" or "exchange <status>"). Never call it in a command substitution.
+NATIVE_AT=""
+NATIVE_RT=""
+NATIVE_SIGN_IN=""
+native_sign_in() {
+  local outcome
+  NATIVE_AT=""
+  NATIVE_RT=""
+  pkce_pair
+  outcome=$(native_authorize "$1" "$2" "$3" S256)
+  if [ "${outcome%% *}" != "code" ]; then
+    NATIVE_SIGN_IN="authorize ${outcome}"
+    return 0
+  fi
+  native_exchange "$2" "$3" "${outcome#code }" "$4"
+  if [ "$(native_status)" != "200" ]; then
+    NATIVE_SIGN_IN="exchange $(native_status) $(native_field '.error // ""')"
+    return 0
+  fi
+  # shellcheck disable=SC2034 # read by the specs that source this file
+  NATIVE_AT=$(native_field '.access_token // empty')
+  # shellcheck disable=SC2034
+  NATIVE_RT=$(native_field '.refresh_token // empty')
+  # shellcheck disable=SC2034
+  NATIVE_SIGN_IN="ok"
+}
+
+# bearer <token> <jar | -> <url> [curl arguments...] — a request with the
+# token as the bearer (as visit prints it); the jar sends that visitor's
+# cookies beside it
+bearer() {
+  local token="$1" jar="$2"
+  shift 2
+  visit "$jar" -H "Authorization: Bearer ${token}" "$@"
+}
+bearer_status() { visit_status "$(bearer "$@")"; }
+# bearer_gets <status> <token> <url> — the bearer GET answers <status>
+bearer_gets() { [ "$(bearer_status "$2" - "$3")" = "$1" ]; }
+# bearer_refused <token> <url> — anything but 200 (a 401 or a 403, as the
+# relay decides first)
+bearer_refused() {
+  local s
+  s=$(bearer_status "$1" - "$2")
+  [ "$s" = "401" ] || [ "$s" = "403" ]
+}
+
+# native_client_known <client id> <host fqdn> — Authelia knows the client
+# (after the restart that rendered it): its authorization endpoint sends a
+# visitor without a session to sign in, not to an invalid_client error
+native_client_known() {
+  local loc
+  loc=$(native_location /tmp/e2e-native-nobody.cookies "https://auth.${DOMAIN}/api/oidc/authorization?client_id=$(uri "$1")&response_type=code&redirect_uri=$(uri "https://$2${NATIVE_REDIRECT_PATH}")&scope=openid&state=$(openssl rand -hex 12)")
+  [ -n "$loc" ] && [[ "$loc" != *"error=invalid_client"* ]]
+}
+
+# native_client_gone <client id> <host fqdn> — Authelia no longer knows it
+native_client_gone() {
+  [[ "$(native_location /tmp/e2e-native-nobody.cookies "https://auth.${DOMAIN}/api/oidc/authorization?client_id=$(uri "$1")&response_type=code&redirect_uri=$(uri "https://$2${NATIVE_REDIRECT_PATH}")&scope=openid&state=$(openssl rand -hex 12)")" == *"error=invalid_client"* ]]
+}
+
+# native_grants <client id> [live | ended | all] — the client's grants (JSON array)
+native_grants() {
+  host_api_get "native-apps/$1/grants?status=${2:-all}" 2>/dev/null | jq -c '.grants // []' 2>/dev/null || echo '[]'
+}
+
+# native_grant_of <client id> <device name> — the grant of that device ('null' when none)
+native_grant_of() {
+  native_grants "$1" all | jq -c --arg d "$2" '[.[] | select(.deviceName == $d)] | first // null' 2>/dev/null || echo "null"
+}
+
+# native_grant_reason <client id> <device name> — why it ended ("live" while
+# it has not, "none" when there is no such grant)
+native_grant_reason() {
+  native_grant_of "$1" "$2" | jq -r 'if . == null then "none" elif .revokedAt == null then "live" else .revokedReason end' 2>/dev/null || echo "none"
+}
+native_grant_ended_as() { [ "$(native_grant_reason "$1" "$2")" = "$3" ]; }
+
+# native_audits <action> [jq filter on details] — audit entries since the
+# spec began (native-app.* entries name no plugin)
+native_audits() {
+  host_api_get "audit?action=$1&limit=200" | jq "[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details | ${2:-true})] | length" 2>/dev/null || echo "0"
+}
+
+# sign_ins_of <plugin> — the sign-in events its agent half holds (JSON array)
+sign_ins_of() { host_api_get "$1/e2e/sign-ins" 2>/dev/null | jq -c '.events // []' 2>/dev/null || echo '[]'; }
+
+# native_vhost_has <site file> <text> — the host VM's vhost file holds <text>
+native_vhost_has() {
+  [ "$(host_exec "grep -cF $(printf %q "$2") /etc/nginx/sites-available/$1 || true" 2>/dev/null | tail -n 1)" != "0" ]
+}
+
+# native_cleanup <client id>... — delete the native clients (their grants end)
+native_cleanup() {
+  local id
+  for id in "$@"; do
+    host_api_delete "native-apps/${id}" > /dev/null 2>&1 || true
+  done
+}
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 

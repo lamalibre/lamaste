@@ -1,0 +1,2055 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 40,
+    "name": "Native apps: the client API, its rendering and the token broker",
+    "suite": "e2e",
+    "description": "40 — Native apps: the client API, its rendering and the token broker",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq",
+      "node",
+      "npm",
+      "openssl",
+      "python3",
+      "runuser",
+      "systemd-run",
+      "nginx"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE native-apps/${CLIENT}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "native-apps/${CLIENT}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "POST plugins/${PLUGIN}/disable",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "plugins/${PLUGIN}/disable"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE plugins/${PLUGIN}?force=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN}?force=true"
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "DELETE certs/agent/${AGENT_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Domain: ${DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Domain: ${DOMAIN}"
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        }
+      ],
+      "when": {
+        "kind": "and",
+        "conditions": [
+          {
+            "kind": "var_not_empty",
+            "variable": "DOMAIN"
+          },
+          {
+            "kind": "var_not_eq",
+            "variable": "DOMAIN",
+            "value": "null"
+          }
+        ]
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping native apps tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Domain: ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-native\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_native_000000000000000000\"\nSTUB_UNIT=\"lamalibre-lamaste-e2e-40-stub\"\nHALF_UNIT=\"lamalibre-lamaste-e2e-40-half\"\nPLUGIN=\"e2e-ident\"\nPACKAGE=\"@lamalibre/e2e-ident-server\"\nAGENT_LABEL=\"e2e-native-$(date +%s)\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nHALF_CONFIG=\"${WORK_DIR}/plugin-config.json\"\nHALF_LOG=\"${WORK_DIR}/half.log\"\nHALF_DB=\"${WORK_DIR}/half-data/identity.db\"\nLAMASTE_LIB=\"/opt/lamalibre/lamaste/serverd/node_modules/@lamalibre/lamaste\"\nSUB=\"e2e40native\"\nFQDN=\"${SUB}.${DOMAIN}\"\nTUNNEL_PORT=18540\nSLUG=\"e2e40app\"\nCLIENT=\"lamaste-native-${SLUG}\"\nREDIRECT=\"/native/callback\"\nIOS_TEAM=\"E2ETEAM040\"\nIOS_BUNDLE=\"com.example.e2enative\"\nANDROID_PACKAGE=\"com.example.e2enative\"\nANDROID_FP=\"AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99\"\nNATIVE_DIR=\"/var/www/lamaste/native/${FQDN}\"\nAUTH_RESOLVE=\"--resolve auth.${DOMAIN}:443:127.0.0.1\"\nMARK=\"e2e40code$(date +%s)\"\nTUNNEL_ID=\"\"\nPORT=\"\"\n\ncleanup() {\n  api_delete \"native-apps/${CLIENT}\" > /dev/null 2>&1 || true\n  if [ -n \"${TUNNEL_ID}\" ]; then api_delete \"tunnels/${TUNNEL_ID}\" > /dev/null 2>&1 || true; fi\n  systemctl stop \"${HALF_UNIT}\" \"${STUB_UNIT}\" > /dev/null 2>&1 || true\n  api_post \"plugins/${PLUGIN}/disable\" > /dev/null 2>&1 || true\n  local deadline=$((SECONDS + 180))\n  while [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(api_get_status \"plugins/${PLUGIN}\")\" != \"404\" ]; do\n    api_delete \"plugins/${PLUGIN}?force=true\" > /dev/null 2>&1 || true\n    sleep 3\n  done\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\n# call <method> <api path> [<json>] — one panel API call as the admin: the\n# body, then the HTTP status on a line of its own\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\nagent_api_get() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -H 'Accept: application/json' \"${BASE_URL}/api/$1\"\n}\nagent_api_post() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \"$2\" \"${BASE_URL}/api/$1\"\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 2 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\n# wait_operation <operation id> <seconds> — the operation once it ended\nwait_operation() {\n  local id=\"$1\" deadline=$((SECONDS + $2)) op='{}'\n  if [ -z \"$id\" ]; then\n    echo '{}'\n    return 0\n  fi\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    op=$(api_get \"plugins/${PLUGIN}/operations/${id}\" | jq -c '.operation // {}' 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$op\" | jq -r '.status // \"running\"' 2>/dev/null)\" != \"running\" ]; then\n      echo \"$op\"\n      return 0\n    fi\n    sleep 2\n  done\n  echo \"$op\"\n}\n\nhealth_up() { [ \"$(api_get \"plugins/${PLUGIN}/hosting\" | jq -r '.hosting.health.state' 2>/dev/null)\" = \"up\" ]; }\nidentity_ready() { [ \"$(api_get \"plugins/${PLUGIN}/identity\" | jq -r '.identity.readiness.ready' 2>/dev/null)\" = \"true\" ]; }\n\n# create_status <json> — \"<status> <code>\" of POST /api/native-apps with that body\ncreate_status() {\n  local out\n  out=$(call POST \"native-apps\" \"$1\")\n  echo \"$(status_of \"$out\") $(json_get \"$(body_of \"$out\")\" '.code // \"\"')\"\n}\n\n# rendered_client — Authelia's configured client as JSON ('{}' when absent)\nrendered_client() {\n  bash -c \"${AUTHELIA_CONFIG_JSON}\" 2>/dev/null | jq -c --arg id \"${CLIENT}\" '[.identity_providers.oidc.clients[]? | select(.client_id == $id)] | first // {}' 2>/dev/null || echo '{}'\n}\nclient_rendered() { [ \"$(rendered_client | jq -r '.client_id // \"\"')\" = \"${CLIENT}\" ]; }\nclient_not_rendered() { [ \"$(rendered_client)\" = \"{}\" ]; }\n\n# broker <curl args...> — a form POST to the auth host on this VM: the body, then the status\nbroker() {\n  # shellcheck disable=SC2086 # AUTH_RESOLVE is two words on purpose\n  curl -sk --max-time 20 ${AUTH_RESOLVE} -w '\\n%{http_code}' -X POST \"$@\" 2>/dev/null || echo \"000\"\n}\nbroker_says() {\n  local out\n  out=$(broker \"$@\")\n  echo \"$(status_of \"$out\") $(json_get \"$(body_of \"$out\")\" '.error // \"\"')\"\n}\n\n# cli <arguments> — lamaste-server with --json; its last line\ncli() { lamaste-server \"$@\" --json 2>&1 | tail -n 1; }\n\n# ===========================================================================\n# 1. An application host\n# ==========================================================================="
+    },
+    {
+      "id": "an-application-host-a-plugin-hosted-its-user-surface-on-a-tunnel",
+      "label": "An application host: a plugin hosted, its user surface on a tunnel",
+      "steps": [
+        {
+          "id": "step-96",
+          "label": "Stand-in registry is up on ${STUB_URL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Stand-in registry is up on ${STUB_URL}"
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)"
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-101",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-102",
+          "label": "${PACKAGE}@2.0.0 installed: agent-hosted, identity declared",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": "\"\\(.plugin.version) \\(.hooks.identity.declared)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "2.0.0 true"
+              },
+              "message": "${PACKAGE}@2.0.0 installed: agent-hosted, identity declared"
+            }
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "POST /api/plugins/${PLUGIN}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/enable"
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "Agent certificate issued for ${AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent certificate issued for ${AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "Extract P12_PASS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "POST /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hosting",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "HOST_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-113",
+          "label": "Set HOST_OP_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$HOST_RESPONSE\" '.operation.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "HOST_OP_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-116",
+          "label": "GET /api/agents/me/plugin-config/${PLUGIN}",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "agents/me/plugin-config/${PLUGIN}"
+          },
+          "capture": [
+            {
+              "variable": "PLUGIN_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-117",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "Set PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$PLUGIN_CONFIG\" '.port // empty'"
+          },
+          "capture": [
+            {
+              "variable": "PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-123",
+          "label": "POST /api/agents/me/plugin-config/${PLUGIN}/ack",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/me/plugin-config/${PLUGIN}/ack",
+            "body": "{\\"
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "Set HOST_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${HOST_OP_ID}\" 180"
+          },
+          "capture": [
+            {
+              "variable": "HOST_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-127",
+          "label": "Hosted on ${AGENT_LABEL}, its half on the relay loopback (port ${PORT})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Hosted on ${AGENT_LABEL}, its half on the relay loopback (port ${PORT})"
+            }
+          }
+        },
+        {
+          "id": "step-128",
+          "label": "Health up, identity ready",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health up, identity ready"
+          }
+        },
+        {
+          "id": "step-129",
+          "label": "Not up or not ready: $(api_get \"plugins/${PLUGIN}/identity\" | jq -c '.identity.readiness')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not up or not ready: $(api_get \"plugins/${PLUGIN}/identity\" | jq -c '.identity.readiness')"
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-131",
+          "label": "Set TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.tunnel.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-132",
+          "label": "Tunnel ${FQDN}, authenticated, carried by ${AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": ".tunnel.fqdn",
+              "expected": {
+                "kind": "var",
+                "name": "FQDN"
+              },
+              "message": "Tunnel ${FQDN}, authenticated, carried by ${AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-133",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"tunnels/${TUNNEL_ID}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-134",
+          "label": "${PLUGIN}'s user surface bound to it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${PLUGIN}'s user surface bound to it"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An application host: a plugin hosted, its user surface on a tunnel\"\n\ncleanup\nmkdir -p \"${WORK_DIR}\" \"${AGENT_CERT_DIR}\" \"$(dirname \"${HALF_DB}\")\"\nchmod 700 \"${AGENT_CERT_DIR}\" \"$(dirname \"${HALF_DB}\")\"\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_identity_fixture_plugins \"${WORK_DIR}/fixtures\"\nwrite_app_plugin_half \"${WORK_DIR}/app-plugin-half.mjs\"\nsystemctl stop \"${STUB_UNIT}\" > /dev/null 2>&1 || true\nsystemd-run --quiet --collect --unit \"${STUB_UNIT}\" --setenv=PATH=\"${PATH}\" --setenv=HOME=/root \\\n  \"$(command -v node)\" \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" \\\n  --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json \\\n  --package \"${WORK_DIR}/fixtures/v2\"\nif wait_for_http \"${STUB_URL}/-/ping\" 60; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(journalctl -u \"${STUB_UNIT}\" --no-pager -o cat 2>/dev/null | tail -n 5)\"\n  end_test\n  exit $?\nfi\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nAUDIT_BASE=$(api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\nINSTALL=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PACKAGE}@2.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '\"\\(.plugin.version) \\(.hooks.identity.declared)\"' '2.0.0 true' \"${PACKAGE}@2.0.0 installed: agent-hosted, identity declared\" || true\napi_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$INSTALL\" '.hooks.approval.digest')\\\"}\" > /dev/null\napi_post \"plugins/${PLUGIN}/enable\" > /dev/null\n\nCERT_RESPONSE=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"Agent certificate issued for ${AGENT_LABEL}\" || true\nP12_PASS=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.crt\" -clcerts -nokeys -passin pass:\"${P12_PASS}\" 2>/dev/null\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.key\" -nocerts -nodes -passin pass:\"${P12_PASS}\" 2>/dev/null\nchmod 600 \"${AGENT_CERT_DIR}/client.key\"\nunset P12_PASS\n\nHOST_RESPONSE=$(api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nHOST_OP_ID=$(json_get \"$HOST_RESPONSE\" '.operation.id // empty')\nPLUGIN_CONFIG=\"{}\"\nfor _ in $(seq 1 60); do\n  PLUGIN_CONFIG=$(agent_api_get \"agents/me/plugin-config/${PLUGIN}\" 2>/dev/null || echo '{}')\n  if [ -n \"$(json_get \"$PLUGIN_CONFIG\" '.port // empty')\" ]; then break; fi\n  sleep 1\ndone\nPORT=$(json_get \"$PLUGIN_CONFIG\" '.port // empty')\necho \"$PLUGIN_CONFIG\" | jq '. + {fetchedAt: (now | todate), acknowledged: false}' > \"${HALF_CONFIG}.tmp\"\nchmod 600 \"${HALF_CONFIG}.tmp\"\nmv \"${HALF_CONFIG}.tmp\" \"${HALF_CONFIG}\"\nagent_api_post \"agents/me/plugin-config/${PLUGIN}/ack\" \"{\\\"issuedAt\\\":\\\"$(json_get \"$PLUGIN_CONFIG\" '.issuedAt')\\\"}\" > /dev/null\nsystemctl stop \"${HALF_UNIT}\" > /dev/null 2>&1 || true\nsystemd-run --quiet --collect --unit \"${HALF_UNIT}\" \"$(command -v node)\" \"${WORK_DIR}/app-plugin-half.mjs\" \\\n  --config \"${HALF_CONFIG}\" --plugin \"${PLUGIN}\" --lamaste \"${LAMASTE_LIB}\" --log \"${HALF_LOG}\" --identity-db \"${HALF_DB}\"\nHOST_OP=$(wait_operation \"${HOST_OP_ID}\" 180)\nassert_json_field \"$HOST_OP\" '.status' 'succeeded' \"Hosted on ${AGENT_LABEL}, its half on the relay loopback (port ${PORT})\" || true\nif wait_for 60 health_up && wait_for 90 identity_ready; then\n  log_pass \"Health up, identity ready\"\nelse\n  log_fail \"Not up or not ready: $(api_get \"plugins/${PLUGIN}/identity\" | jq -c '.identity.readiness')\"\nfi\n\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB}\\\",\\\"port\\\":${TUNNEL_PORT},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nTUNNEL_ID=$(json_get \"$RESP\" '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${FQDN}\" \"Tunnel ${FQDN}, authenticated, carried by ${AGENT_LABEL}\" || true\nRESP=$(call PUT \"tunnels/${TUNNEL_ID}/user-surface\" \"{\\\"route\\\":\\\"${PLUGIN}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${PLUGIN}'s user surface bound to it\" || true\n\n# ===========================================================================\n# 2. The client API\n# ==========================================================================="
+    },
+    {
+      "id": "the-client-api-refuses-what-a-native-client-may-not-be",
+      "label": "The client API refuses what a native client may not be",
+      "steps": [
+        {
+          "id": "step-136",
+          "label": "An id that is no slug: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base 'Bad_Slug')\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "An id that is no slug: 400"
+            }
+          }
+        },
+        {
+          "id": "step-137",
+          "label": "A redirect path under /api/: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base \"${SLUG}\" /api/e2e/callback)\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "A redirect path under /api/: 400"
+            }
+          }
+        },
+        {
+          "id": "step-138",
+          "label": "A redirect path under /.well-known/: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base \"${SLUG}\" /.well-known/callback)\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "A redirect path under /.well-known/: 400"
+            }
+          }
+        },
+        {
+          "id": "step-139",
+          "label": "A redirect path with a dot segment: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base \"${SLUG}\" /native/../callback)\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "A redirect path with a dot segment: 400"
+            }
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "A redirect path with a query: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base \"${SLUG}\" '/native/callback?x=1')\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "A redirect path with a query: 400"
+            }
+          }
+        },
+        {
+          "id": "step-141",
+          "label": "Access tokens of 30 minutes: 400 (15 at most)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base | jq -c '. + {accessTokenMinutes: 30}')\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "Access tokens of 30 minutes: 400 (15 at most)"
+            }
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "An idle lifetime longer than the absolute one: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base | jq -c '. + {idleDays: 60, absoluteDays: 30}')\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "An idle lifetime longer than the absolute one: 400"
+            }
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "A malformed iOS team id: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base | jq -c '. + {associations: {ios: {teamId: \"short\", bundleIds: [\"com.example.app\"]}}}')\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "A malformed iOS team id: 400"
+            }
+          }
+        },
+        {
+          "id": "step-144",
+          "label": "A malformed Android fingerprint: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base | jq -c '. + {associations: {android: [{packageName: \"com.example.app\", sha256CertFingerprints: [\"AA:BB\"]}]}}')\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "A malformed Android fingerprint: 400"
+            }
+          }
+        },
+        {
+          "id": "step-145",
+          "label": "An unknown field (an audience of its own): 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base | jq -c '. + {audience: [\"https://elsewhere.example\"]}')\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_request"
+              },
+              "message": "An unknown field (an audience of its own): 400"
+            }
+          }
+        },
+        {
+          "id": "step-146",
+          "label": "A host that serves no plugin: 400 not_an_application_host",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base | jq -c '.hostId = \"no-such-tunnel\"')\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 not_an_application_host"
+              },
+              "message": "A host that serves no plugin: 400 not_an_application_host"
+            }
+          }
+        },
+        {
+          "id": "step-148",
+          "label": "Set BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "base | jq -c --arg team \"${IOS_TEAM}\" --arg bundle \"${IOS_BUNDLE}\" --arg pkg \"${ANDROID_PACKAGE}\" --arg fp \"${ANDROID_FP}\" '. + {idleDays: 20, absoluteDays: 60, associations: {ios: {teamId: $team, bundleIds: [$bundle]}, android: [{packageName: $pkg, sha256CertFingerprints: [$fp]}]}}'"
+          },
+          "capture": [
+            {
+              "variable": "BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-149",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"native-apps\" \"$BODY\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-150",
+          "label": "POST /api/native-apps: ${CLIENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "POST /api/native-apps: ${CLIENT}"
+            }
+          }
+        },
+        {
+          "id": "step-151",
+          "label": "…served, the host's audience, its redirect URI",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.client.clientId) \\(.client.served) \\(.client.audience) \\(.client.redirectUris | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${CLIENT} true https://${FQDN} https://${FQDN}${REDIRECT}"
+              },
+              "message": "…served, the host's audience, its redirect URI"
+            }
+          }
+        },
+        {
+          "id": "step-152",
+          "label": "A second client on the host: 409 host_has_client",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(create_status \"$(base e2e40second /second/callback)\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409 host_has_client"
+              },
+              "message": "A second client on the host: 409 host_has_client"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The client API refuses what a native client may not be\"\n\nbase() { jq -c -n --arg s \"${1:-$SLUG}\" --arg id \"${TUNNEL_ID}\" --arg r \"${2:-$REDIRECT}\" '{slug: $s, hostKind: \"tunnel\", hostId: $id, name: \"E2E Native\", redirectPaths: [$r]}'; }\nassert_eq \"$(create_status \"$(base 'Bad_Slug')\")\" \"400 invalid_request\" \"An id that is no slug: 400\" || true\nassert_eq \"$(create_status \"$(base \"${SLUG}\" /api/e2e/callback)\")\" \"400 invalid_request\" \"A redirect path under /api/: 400\" || true\nassert_eq \"$(create_status \"$(base \"${SLUG}\" /.well-known/callback)\")\" \"400 invalid_request\" \"A redirect path under /.well-known/: 400\" || true\nassert_eq \"$(create_status \"$(base \"${SLUG}\" /native/../callback)\")\" \"400 invalid_request\" \"A redirect path with a dot segment: 400\" || true\nassert_eq \"$(create_status \"$(base \"${SLUG}\" '/native/callback?x=1')\")\" \"400 invalid_request\" \"A redirect path with a query: 400\" || true\nassert_eq \"$(create_status \"$(base | jq -c '. + {accessTokenMinutes: 30}')\")\" \"400 invalid_request\" \"Access tokens of 30 minutes: 400 (15 at most)\" || true\nassert_eq \"$(create_status \"$(base | jq -c '. + {idleDays: 60, absoluteDays: 30}')\")\" \"400 invalid_request\" \"An idle lifetime longer than the absolute one: 400\" || true\nassert_eq \"$(create_status \"$(base | jq -c '. + {associations: {ios: {teamId: \"short\", bundleIds: [\"com.example.app\"]}}}')\")\" \"400 invalid_request\" \"A malformed iOS team id: 400\" || true\nassert_eq \"$(create_status \"$(base | jq -c '. + {associations: {android: [{packageName: \"com.example.app\", sha256CertFingerprints: [\"AA:BB\"]}]}}')\")\" \"400 invalid_request\" \"A malformed Android fingerprint: 400\" || true\nassert_eq \"$(create_status \"$(base | jq -c '. + {audience: [\"https://elsewhere.example\"]}')\")\" \"400 invalid_request\" \"An unknown field (an audience of its own): 400\" || true\nassert_eq \"$(create_status \"$(base | jq -c '.hostId = \"no-such-tunnel\"')\")\" \"400 not_an_application_host\" \"A host that serves no plugin: 400 not_an_application_host\" || true\nassert_eq \"$(api_get \"native-apps\" | jq '[.clients[]? | select(.hostId == \"'\"${TUNNEL_ID}\"'\")] | length' 2>/dev/null || echo \"-1\")\" \"0\" \"…none was registered\" || true\n\nBODY=$(base | jq -c --arg team \"${IOS_TEAM}\" --arg bundle \"${IOS_BUNDLE}\" --arg pkg \"${ANDROID_PACKAGE}\" --arg fp \"${ANDROID_FP}\" '. + {idleDays: 20, absoluteDays: 60, associations: {ios: {teamId: $team, bundleIds: [$bundle]}, android: [{packageName: $pkg, sha256CertFingerprints: [$fp]}]}}')\nRESP=$(call POST \"native-apps\" \"$BODY\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"POST /api/native-apps: ${CLIENT}\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.client.clientId) \\(.client.served) \\(.client.audience) \\(.client.redirectUris | join(\",\"))\"' \"${CLIENT} true https://${FQDN} https://${FQDN}${REDIRECT}\" \"…served, the host's audience, its redirect URI\" || true\nassert_eq \"$(create_status \"$(base e2e40second /second/callback)\")\" \"409 host_has_client\" \"A second client on the host: 409 host_has_client\" || true\nassert_eq \"$(api_get \"audit?action=native-app.created&limit=20\" | jq \"[.entries[]? | select(.id > ${AUDIT_BASE}) | select(.details.clientId == \\\"${CLIENT}\\\")] | length\" 2>/dev/null || echo \"0\")\" \"1\" \"Audited: native-app.created\" || true\n\n# ===========================================================================\n# 3. What Authelia, Gatekeeper and nginx are given\n# ==========================================================================="
+    },
+    {
+      "id": "authelia-s-client-gatekeeper-s-projection-the-vhosts-and-the-files",
+      "label": "Authelia's client, Gatekeeper's projection, the vhosts and the files",
+      "steps": [
+        {
+          "id": "step-154",
+          "label": "Authelia's configuration holds ${CLIENT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia's configuration holds ${CLIENT}"
+          }
+        },
+        {
+          "id": "step-155",
+          "label": "Authelia's configuration does not hold ${CLIENT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia's configuration does not hold ${CLIENT}"
+          }
+        },
+        {
+          "id": "step-157",
+          "label": "Set RENDERED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "rendered_client"
+          },
+          "capture": [
+            {
+              "variable": "RENDERED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-158",
+          "label": "Public, no client authentication, PKCE required, S256 only",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RENDERED"
+              },
+              "path": "\"\\(.public) \\(.token_endpoint_auth_method) \\(.require_pkce) \\(.pkce_challenge_method)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true none true S256"
+              },
+              "message": "Public, no client authentication, PKCE required, S256 only"
+            }
+          }
+        },
+        {
+          "id": "step-159",
+          "label": "authorization_code + refresh_token, code, offline_access",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RENDERED"
+              },
+              "path": "\"\\(.grant_types | sort | join(\",\")) \\(.response_types | join(\",\")) \\(.scopes | sort | join(\",\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "authorization_code,refresh_token code offline_access,openid,profile"
+              },
+              "message": "authorization_code + refresh_token, code, offline_access"
+            }
+          }
+        },
+        {
+          "id": "step-160",
+          "label": "The host's audience granted implicitly, RS256 JWTs, consent asked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RENDERED"
+              },
+              "path": "\"\\(.audience | join(\",\")) \\(.requested_audience_mode) \\(.access_token_signed_response_alg) \\(.consent_mode)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "https://${FQDN} implicit RS256 explicit"
+              },
+              "message": "The host's audience granted implicitly, RS256 JWTs, consent asked"
+            }
+          }
+        },
+        {
+          "id": "step-161",
+          "label": "Set CONFIG",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "bash -c \"${AUTHELIA_CONFIG_JSON}\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-165",
+          "label": "Set DISCOVERY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/.well-known/openid-configuration\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "DISCOVERY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-166",
+          "label": "Discovery: S256 only, the standard token endpoint",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISCOVERY"
+              },
+              "path": "\"\\(.code_challenge_methods_supported | join(\",\")) \\(.token_endpoint)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "S256 https://auth.${DOMAIN}/api/oidc/token"
+              },
+              "message": "Discovery: S256 only, the standard token endpoint"
+            }
+          }
+        },
+        {
+          "id": "step-168",
+          "label": "…0600",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(stat -c '%a' \"${STATE_DIR}/native-apps.json\" 2>/dev/null || echo \"-\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "600"
+              },
+              "message": "…0600"
+            }
+          }
+        },
+        {
+          "id": "step-169",
+          "label": "Set AUTH_VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "vhost_available auth \"${DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "AUTH_VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-170",
+          "label": "The auth vhost sends /api/oidc/token to the broker",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cat \"${AUTH_VHOST}\" 2>/dev/null)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location = /api/oidc/token"
+              },
+              "message": "The auth vhost sends /api/oidc/token to the broker"
+            }
+          }
+        },
+        {
+          "id": "step-171",
+          "label": "…and /api/oidc/revocation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cat \"${AUTH_VHOST}\" 2>/dev/null)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "proxy_pass http://127.0.0.1:3100/api/native-apps/oauth/revocation"
+              },
+              "message": "…and /api/oidc/revocation"
+            }
+          }
+        },
+        {
+          "id": "step-172",
+          "label": "Set HOST_VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "vhost_available app \"${FQDN}\""
+          },
+          "capture": [
+            {
+              "variable": "HOST_VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-174",
+          "label": "The host's vhost was rewritten for the client",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The host's vhost was rewritten for the client"
+          }
+        },
+        {
+          "id": "step-175",
+          "label": "The host's vhost (${HOST_VHOST}) has no native locations",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The host's vhost (${HOST_VHOST}) has no native locations"
+          }
+        },
+        {
+          "id": "step-176",
+          "label": "Set VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cat \"${HOST_VHOST}\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-177",
+          "label": "The host's vhost serves Apple's association file",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location = /.well-known/apple-app-site-association"
+              },
+              "message": "The host's vhost serves Apple's association file"
+            }
+          }
+        },
+        {
+          "id": "step-178",
+          "label": "…and Android's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "location = /.well-known/assetlinks.json"
+              },
+              "message": "…and Android's"
+            }
+          }
+        },
+        {
+          "id": "step-179",
+          "label": "…and the redirect path",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "location = ${REDIRECT}"
+              },
+              "message": "…and the redirect path"
+            }
+          }
+        },
+        {
+          "id": "step-180",
+          "label": "…kept out of the access log",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "access_log off"
+              },
+              "message": "…kept out of the access log"
+            }
+          }
+        },
+        {
+          "id": "step-181",
+          "label": "…and never passes Authorization to the tunnel's backend",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "proxy_set_header Authorization \"\";"
+              },
+              "message": "…and never passes Authorization to the tunnel's backend"
+            }
+          }
+        },
+        {
+          "id": "step-182",
+          "label": "nginx -t accepts the vhosts lamaste-priv wrote",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(nginx -t > /dev/null 2>&1 && echo ok || echo failed)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "nginx -t accepts the vhosts lamaste-priv wrote"
+            }
+          }
+        },
+        {
+          "id": "step-183",
+          "label": "The files in ${NATIVE_DIR}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(find \"${NATIVE_DIR}\" -mindepth 1 -maxdepth 1 -printf '%f\\n' 2>/dev/null | sort | paste -sd, -)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "apple-app-site-association,assetlinks.json,redirect.html"
+              },
+              "message": "The files in ${NATIVE_DIR}"
+            }
+          }
+        },
+        {
+          "id": "step-184",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 --resolve \"${FQDN}:443:127.0.0.1\" -D - -w '\\n%{http_code}' \"https://${FQDN}/.well-known/apple-app-site-association\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-185",
+          "label": "Apple's file served without a session",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Apple's file served without a session"
+            }
+          }
+        },
+        {
+          "id": "step-186",
+          "label": "…the app, claiming the redirect path only",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(printf '%s\\n' \"$RESP\" | sed '$d' | tr -d '\\r' | awk 'f; /^$/ {f = 1}')"
+              },
+              "path": "\"\\(.applinks.details[0].appIDs | join(\",\")) \\([.applinks.details[0].components[].\"/\"] | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${IOS_TEAM}.${IOS_BUNDLE} ${REDIRECT}"
+              },
+              "message": "…the app, claiming the redirect path only"
+            }
+          }
+        },
+        {
+          "id": "step-187",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 --resolve \"${FQDN}:443:127.0.0.1\" -o /dev/null -w '%{http_code}' \"https://${FQDN}${REDIRECT}?code=${MARK}\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-188",
+          "label": "The redirect page served without a session",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The redirect page served without a session"
+            }
+          }
+        },
+        {
+          "id": "step-189",
+          "label": "…its query in no nginx log",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(grep -rcF \"${MARK}\" /var/log/nginx/ 2>/dev/null | awk -F: '{s += $NF} END {print s + 0}')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…its query in no nginx log"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Authelia's client, Gatekeeper's projection, the vhosts and the files\"\n\nif wait_for 90 client_rendered; then\n  log_pass \"Authelia's configuration holds ${CLIENT}\"\nelse\n  log_fail \"Authelia's configuration does not hold ${CLIENT}\"\nfi\nlocal_wait_authelia \"${DOMAIN}\"\nRENDERED=$(rendered_client)\nassert_json_field \"$RENDERED\" '\"\\(.public) \\(.token_endpoint_auth_method) \\(.require_pkce) \\(.pkce_challenge_method)\"' \"true none true S256\" \"Public, no client authentication, PKCE required, S256 only\" || true\nassert_json_field \"$RENDERED\" '\"\\(.grant_types | sort | join(\",\")) \\(.response_types | join(\",\")) \\(.scopes | sort | join(\",\"))\"' \"authorization_code,refresh_token code offline_access,openid,profile\" \"authorization_code + refresh_token, code, offline_access\" || true\nassert_json_field \"$RENDERED\" '\"\\(.audience | join(\",\")) \\(.requested_audience_mode) \\(.access_token_signed_response_alg) \\(.consent_mode)\"' \"https://${FQDN} implicit RS256 explicit\" \"The host's audience granted implicitly, RS256 JWTs, consent asked\" || true\nCONFIG=$(bash -c \"${AUTHELIA_CONFIG_JSON}\" 2>/dev/null || echo '{}')\nassert_json_field \"$CONFIG\" \".identity_providers.oidc.lifespans.custom[\\\"$(json_get \"$RENDERED\" '.lifespan')\\\"] | \\\"\\(.access_token) \\(.refresh_token)\\\"\" \"15 minutes 20 days\" \"Its lifespans: access tokens 15 minutes, refresh tokens the idle lifetime (20 days)\" || true\nassert_json_field \"$CONFIG\" \".identity_providers.oidc.claims_policies[\\\"$(json_get \"$RENDERED\" '.claims_policy')\\\"].access_token | join(\\\",\\\")\" \"preferred_username\" \"Its claims policy puts preferred_username in the access token\" || true\nassert_json_field \"$CONFIG\" \".identity_providers.oidc.authorization_policies[\\\"$(json_get \"$RENDERED\" '.authorization_policy')\\\"] | \\\"\\(.default_policy) \\([.rules[].policy] | unique | join(\\\",\\\"))\\\"\" \"deny two_factor\" \"Its authorization policy: two factors, everyone else denied\" || true\nDISCOVERY=$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/.well-known/openid-configuration\" 2>/dev/null || echo '{}')\nassert_json_field \"$DISCOVERY\" '\"\\(.code_challenge_methods_supported | join(\",\")) \\(.token_endpoint)\"' \"S256 https://auth.${DOMAIN}/api/oidc/token\" \"Discovery: S256 only, the standard token endpoint\" || true\n\nassert_json_field \"$(cat \"${STATE_DIR}/native-apps.json\" 2>/dev/null || echo '{}')\" \"[.clients[]? | select(.clientId == \\\"${CLIENT}\\\") | .fqdn] | join(\\\",\\\")\" \"${FQDN}\" \"Gatekeeper's projection native-apps.json names the client and its host\" || true\nassert_eq \"$(stat -c '%a' \"${STATE_DIR}/native-apps.json\" 2>/dev/null || echo \"-\")\" \"600\" \"…0600\" || true\n\nAUTH_VHOST=$(vhost_available auth \"${DOMAIN}\")\nassert_contains \"$(cat \"${AUTH_VHOST}\" 2>/dev/null)\" \"location = /api/oidc/token\" \"The auth vhost sends /api/oidc/token to the broker\" || true\nassert_contains \"$(cat \"${AUTH_VHOST}\" 2>/dev/null)\" \"proxy_pass http://127.0.0.1:3100/api/native-apps/oauth/revocation\" \"…and /api/oidc/revocation\" || true\nHOST_VHOST=$(vhost_available app \"${FQDN}\")\nhost_vhost_native() { grep -qF \"location = ${REDIRECT}\" \"${HOST_VHOST}\" 2>/dev/null; }\nif wait_for 60 host_vhost_native; then\n  log_pass \"The host's vhost was rewritten for the client\"\nelse\n  log_fail \"The host's vhost (${HOST_VHOST}) has no native locations\"\nfi\nVHOST=$(cat \"${HOST_VHOST}\" 2>/dev/null || echo \"\")\nassert_contains \"$VHOST\" \"location = /.well-known/apple-app-site-association\" \"The host's vhost serves Apple's association file\" || true\nassert_contains \"$VHOST\" \"location = /.well-known/assetlinks.json\" \"…and Android's\" || true\nassert_contains \"$VHOST\" \"location = ${REDIRECT}\" \"…and the redirect path\" || true\nassert_contains \"$VHOST\" \"access_log off\" \"…kept out of the access log\" || true\nassert_contains \"$VHOST\" 'proxy_set_header Authorization \"\";' \"…and never passes Authorization to the tunnel's backend\" || true\nassert_eq \"$(nginx -t > /dev/null 2>&1 && echo ok || echo failed)\" \"ok\" \"nginx -t accepts the vhosts lamaste-priv wrote\" || true\nassert_eq \"$(find \"${NATIVE_DIR}\" -mindepth 1 -maxdepth 1 -printf '%f\\n' 2>/dev/null | sort | paste -sd, -)\" \"apple-app-site-association,assetlinks.json,redirect.html\" \"The files in ${NATIVE_DIR}\" || true\n\nRESP=$(curl -sk --max-time 15 --resolve \"${FQDN}:443:127.0.0.1\" -D - -w '\\n%{http_code}' \"https://${FQDN}/.well-known/apple-app-site-association\" 2>/dev/null || echo \"000\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Apple's file served without a session\" || true\nassert_json_field \"$(printf '%s\\n' \"$RESP\" | sed '$d' | tr -d '\\r' | awk 'f; /^$/ {f = 1}')\" '\"\\(.applinks.details[0].appIDs | join(\",\")) \\([.applinks.details[0].components[].\"/\"] | join(\",\"))\"' \"${IOS_TEAM}.${IOS_BUNDLE} ${REDIRECT}\" \"…the app, claiming the redirect path only\" || true\nRESP=$(curl -sk --max-time 15 --resolve \"${FQDN}:443:127.0.0.1\" -o /dev/null -w '%{http_code}' \"https://${FQDN}${REDIRECT}?code=${MARK}\" 2>/dev/null || echo \"000\")\nassert_eq \"$RESP\" \"200\" \"The redirect page served without a session\" || true\nassert_eq \"$(grep -rcF \"${MARK}\" /var/log/nginx/ 2>/dev/null | awk -F: '{s += $NF} END {print s + 0}')\" \"0\" \"…its query in no nginx log\" || true\n\n# ===========================================================================\n# 4. The broker\n# ==========================================================================="
+    },
+    {
+      "id": "the-token-broker",
+      "label": "The token broker",
+      "steps": [
+        {
+          "id": "step-190",
+          "label": "Basic client authentication naming the native client: 401 invalid_client",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(broker_says -H \"Authorization: Basic $(printf '%s:' \"${CLIENT}\" | base64)\" --data-urlencode grant_type=refresh_token --data-urlencode refresh_token=e2e-x \"https://auth.${DOMAIN}/api/oidc/token\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401 invalid_client"
+              },
+              "message": "Basic client authentication naming the native client: 401 invalid_client"
+            }
+          }
+        },
+        {
+          "id": "step-191",
+          "label": "A code for a native id that is not registered: 401 invalid_client, never forwarded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(broker_says --data-urlencode grant_type=authorization_code --data-urlencode code=e2e-x --data-urlencode \"redirect_uri=https://${FQDN}${REDIRECT}\" --data-urlencode code_verifier=e2e-x --data-urlencode client_id=lamaste-native-e2e40nosuch \"https://auth.${DOMAIN}/api/oidc/token\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401 invalid_client"
+              },
+              "message": "A code for a native id that is not registered: 401 invalid_client, never forwarded"
+            }
+          }
+        },
+        {
+          "id": "step-192",
+          "label": "An unknown refresh token: 400 invalid_grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(broker_says --data-urlencode grant_type=refresh_token --data-urlencode \"refresh_token=e2e-unknown-${MARK}\" --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/token\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_grant"
+              },
+              "message": "An unknown refresh token: 400 invalid_grant"
+            }
+          }
+        },
+        {
+          "id": "step-193",
+          "label": "A grant a native client never uses: 400 unsupported_grant_type",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(broker_says --data-urlencode grant_type=client_credentials --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/token\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 unsupported_grant_type"
+              },
+              "message": "A grant a native client never uses: 400 unsupported_grant_type"
+            }
+          }
+        },
+        {
+          "id": "step-194",
+          "label": "Revoking an unknown token: 200 (RFC 7009)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(broker_says --data-urlencode \"token=e2e-unknown-${MARK}\" --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/revocation\" | cut -d' ' -f1)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Revoking an unknown token: 200 (RFC 7009)"
+            }
+          }
+        },
+        {
+          "id": "step-195",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "broker -H \"Authorization: Basic $(printf '%s' 'lamaste-server:e2e-wrong-secret' | base64)\" --data-urlencode grant_type=client_credentials --data-urlencode scope=lamaste.registry \"https://auth.${DOMAIN}/api/oidc/token\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-196",
+          "label": "A confidential client with a wrong secret: 401 invalid_client…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$OUT\") $(json_get \"$(body_of \"$OUT\")\" '.error')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401 invalid_client"
+              },
+              "message": "A confidential client with a wrong secret: 401 invalid_client…"
+            }
+          }
+        },
+        {
+          "id": "step-197",
+          "label": "…Authelia's own answer, passed through",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(body_of \"$OUT\")\" '.error_description')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Client authentication failed"
+              },
+              "message": "…Authelia's own answer, passed through"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The token broker\"\n\nassert_eq \"$(broker_says -H \"Authorization: Basic $(printf '%s:' \"${CLIENT}\" | base64)\" --data-urlencode grant_type=refresh_token --data-urlencode refresh_token=e2e-x \"https://auth.${DOMAIN}/api/oidc/token\")\" \"401 invalid_client\" \"Basic client authentication naming the native client: 401 invalid_client\" || true\nassert_eq \"$(broker_says --data-urlencode grant_type=authorization_code --data-urlencode code=e2e-x --data-urlencode \"redirect_uri=https://${FQDN}${REDIRECT}\" --data-urlencode code_verifier=e2e-x --data-urlencode client_id=lamaste-native-e2e40nosuch \"https://auth.${DOMAIN}/api/oidc/token\")\" \"401 invalid_client\" \"A code for a native id that is not registered: 401 invalid_client, never forwarded\" || true\nassert_eq \"$(broker_says --data-urlencode grant_type=refresh_token --data-urlencode \"refresh_token=e2e-unknown-${MARK}\" --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/token\")\" \"400 invalid_grant\" \"An unknown refresh token: 400 invalid_grant\" || true\nassert_eq \"$(broker_says --data-urlencode grant_type=client_credentials --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/token\")\" \"400 unsupported_grant_type\" \"A grant a native client never uses: 400 unsupported_grant_type\" || true\nassert_eq \"$(broker_says --data-urlencode \"token=e2e-unknown-${MARK}\" --data-urlencode \"client_id=${CLIENT}\" \"https://auth.${DOMAIN}/api/oidc/revocation\" | cut -d' ' -f1)\" \"200\" \"Revoking an unknown token: 200 (RFC 7009)\" || true\nOUT=$(broker -H \"Authorization: Basic $(printf '%s' 'lamaste-server:e2e-wrong-secret' | base64)\" --data-urlencode grant_type=client_credentials --data-urlencode scope=lamaste.registry \"https://auth.${DOMAIN}/api/oidc/token\")\nassert_eq \"$(status_of \"$OUT\") $(json_get \"$(body_of \"$OUT\")\" '.error')\" \"401 invalid_client\" \"A confidential client with a wrong secret: 401 invalid_client…\" || true\nassert_contains \"$(json_get \"$(body_of \"$OUT\")\" '.error_description')\" \"Client authentication failed\" \"…Authelia's own answer, passed through\" || true\n\n# ===========================================================================\n# 5. The CLI\n# ==========================================================================="
+    },
+    {
+      "id": "lamaste-server-native-apps",
+      "label": "lamaste-server native-apps",
+      "steps": [
+        {
+          "id": "step-198",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli native-apps list"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-200",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli native-apps update \"${CLIENT}\" --access-minutes 10"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-201",
+          "label": "native-apps update --access-minutes 10",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.event) \\(.client.accessTokenMinutes)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "complete 10"
+              },
+              "message": "native-apps update --access-minutes 10"
+            }
+          }
+        },
+        {
+          "id": "step-202",
+          "label": "…Authelia's lifespan follows: 10 minutes",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…Authelia's lifespan follows: 10 minutes"
+          }
+        },
+        {
+          "id": "step-203",
+          "label": "Authelia's lifespan did not follow the update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia's lifespan did not follow the update"
+          }
+        },
+        {
+          "id": "step-204",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli native-apps grants \"${CLIENT}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-205",
+          "label": "native-apps grants --json: none yet",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".grants | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "native-apps grants --json: none yet"
+            }
+          }
+        },
+        {
+          "id": "step-206",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "FIRST_USER",
+              "from": {
+                "kind": "jq",
+                "expression": ".users[0].username // empty"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-207",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli users native-grants \"${FIRST_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-208",
+          "label": "users native-grants ${FIRST_USER} --json: a list",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".grants | type",
+              "expected": {
+                "kind": "literal",
+                "value": "array"
+              },
+              "message": "users native-grants ${FIRST_USER} --json: a list"
+            }
+          }
+        },
+        {
+          "id": "step-209",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli native-apps disable \"${CLIENT}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-210",
+          "label": "native-apps disable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".event",
+              "expected": {
+                "kind": "literal",
+                "value": "complete"
+              },
+              "message": "native-apps disable"
+            }
+          }
+        },
+        {
+          "id": "step-211",
+          "label": "…Authelia's configuration no longer holds it",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…Authelia's configuration no longer holds it"
+          }
+        },
+        {
+          "id": "step-212",
+          "label": "A disabled client is still in Authelia's configuration",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "A disabled client is still in Authelia's configuration"
+          }
+        },
+        {
+          "id": "step-213",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli native-apps enable \"${CLIENT}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-214",
+          "label": "native-apps enable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".event",
+              "expected": {
+                "kind": "literal",
+                "value": "complete"
+              },
+              "message": "native-apps enable"
+            }
+          }
+        },
+        {
+          "id": "step-215",
+          "label": "…rendered again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…rendered again"
+          }
+        },
+        {
+          "id": "step-216",
+          "label": "The enabled client is not rendered",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The enabled client is not rendered"
+          }
+        },
+        {
+          "id": "step-217",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli native-apps delete \"${CLIENT}\" --yes"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-218",
+          "label": "native-apps delete --yes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".event",
+              "expected": {
+                "kind": "literal",
+                "value": "complete"
+              },
+              "message": "native-apps delete --yes"
+            }
+          }
+        },
+        {
+          "id": "step-219",
+          "label": "…gone from Authelia's configuration",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…gone from Authelia's configuration"
+          }
+        },
+        {
+          "id": "step-220",
+          "label": "A deleted client is still in Authelia's configuration",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "A deleted client is still in Authelia's configuration"
+          }
+        },
+        {
+          "id": "step-221",
+          "label": "…its files are gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(test -e \"${NATIVE_DIR}\" && echo present || echo gone)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "gone"
+              },
+              "message": "…its files are gone"
+            }
+          }
+        },
+        {
+          "id": "step-223",
+          "label": "…the host's vhost no longer serves its redirect path",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…the host's vhost no longer serves its redirect path"
+          }
+        },
+        {
+          "id": "step-224",
+          "label": "The host's vhost still serves the deleted client's redirect path",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The host's vhost still serves the deleted client's redirect path"
+          }
+        }
+      ],
+      "bash": "log_section \"lamaste-server native-apps\"\n\nOUT=$(cli native-apps list)\nassert_json_field \"$OUT\" \"[.clients[] | select(.clientId == \\\"${CLIENT}\\\") | \\\"\\(.served) \\(.fqdn)\\\"] | first\" \"true ${FQDN}\" \"native-apps list --json: the client, served, on ${FQDN}\" || true\nOUT=$(cli native-apps update \"${CLIENT}\" --access-minutes 10)\nassert_json_field \"$OUT\" '\"\\(.event) \\(.client.accessTokenMinutes)\"' \"complete 10\" \"native-apps update --access-minutes 10\" || true\nif wait_for 90 bash -c \"${AUTHELIA_CONFIG_JSON} | jq -e '.identity_providers.oidc.lifespans.custom[] | select(.access_token == \\\"10 minutes\\\")' > /dev/null\"; then\n  log_pass \"…Authelia's lifespan follows: 10 minutes\"\nelse\n  log_fail \"Authelia's lifespan did not follow the update\"\nfi\nOUT=$(cli native-apps grants \"${CLIENT}\")\nassert_json_field \"$OUT\" '.grants | length' \"0\" \"native-apps grants --json: none yet\" || true\nFIRST_USER=$(api_get \"users\" | jq -r '.users[0].username // empty' 2>/dev/null || echo \"\")\nOUT=$(cli users native-grants \"${FIRST_USER}\")\nassert_json_field \"$OUT\" '.grants | type' \"array\" \"users native-grants ${FIRST_USER} --json: a list\" || true\nOUT=$(cli native-apps disable \"${CLIENT}\")\nassert_json_field \"$OUT\" '.event' \"complete\" \"native-apps disable\" || true\nif wait_for 90 client_not_rendered; then\n  log_pass \"…Authelia's configuration no longer holds it\"\nelse\n  log_fail \"A disabled client is still in Authelia's configuration\"\nfi\nOUT=$(cli native-apps enable \"${CLIENT}\")\nassert_json_field \"$OUT\" '.event' \"complete\" \"native-apps enable\" || true\nif wait_for 90 client_rendered; then\n  log_pass \"…rendered again\"\nelse\n  log_fail \"The enabled client is not rendered\"\nfi\nOUT=$(cli native-apps delete \"${CLIENT}\" --yes)\nassert_json_field \"$OUT\" '.event' \"complete\" \"native-apps delete --yes\" || true\nif wait_for 90 client_not_rendered; then\n  log_pass \"…gone from Authelia's configuration\"\nelse\n  log_fail \"A deleted client is still in Authelia's configuration\"\nfi\nassert_eq \"$(test -e \"${NATIVE_DIR}\" && echo present || echo gone)\" \"gone\" \"…its files are gone\" || true\nassert_json_field \"$(cat \"${STATE_DIR}/native-apps.json\" 2>/dev/null || echo '{}')\" \"[.clients[]? | select(.clientId == \\\"${CLIENT}\\\")] | length\" \"0\" \"…Gatekeeper's projection no longer names it\" || true\nif wait_for 60 bash -c \"! grep -qF 'location = ${REDIRECT}' '${HOST_VHOST}'\"; then\n  log_pass \"…the host's vhost no longer serves its redirect path\"\nelse\n  log_fail \"The host's vhost still serves the deleted client's redirect path\"\nfi\n\nlocal_wait_authelia \"${DOMAIN}\""
+    }
+  ],
+  "apiHelpers": ["agent_api_get", "agent_api_post"],
+  "headerRaw": "# ============================================================================\n# 40 — Native apps: the client API, its rendering and the token broker\n# ============================================================================\n# native-apps-design.md on one VM. An agent-hosted plugin with identity\n# (helpers.sh write_identity_fixture_plugins, e2e-ident 2.0.0) hosted on a\n# test agent whose half runs on the relay loopback (write_app_plugin_half,\n# as spec 32 runs it), its user surface bound to an authenticated tunnel\n# that agent carries: an application host. Then:\n#\n# - the client API refuses what a native client may not be: an id that is\n#   no slug, a redirect path under /api/ or /.well-known/, with a dot\n#   segment or a query, access tokens longer than 15 minutes, an idle\n#   lifetime longer than the absolute one, a malformed iOS team or Android\n#   fingerprint, an unknown field, a host that serves no plugin;\n# - one client per host (409 host_has_client); the registered client is\n#   served, its audience the host, its redirect URI on it;\n# - Authelia's configuration on disk: a public client, PKCE S256 required,\n#   authorization_code + refresh_token, the host's audience granted\n#   implicitly, RS256 JWT access tokens, its own lifespans (15 minutes,\n#   refresh = the idle lifetime), a two-factor policy; discovery offers S256\n#   only;\n# - Gatekeeper's projection names the client and its host;\n# - the vhosts, written through lamaste-priv and accepted by nginx -t: the\n#   auth vhost sends the token and revocation endpoints to the broker; the\n#   host's vhost serves the association files and the redirect path before\n#   any authorization (the redirect path out of the access log) and never\n#   passes Authorization to the tunnel's backend; the files on disk;\n# - the broker: Basic client authentication naming a native client, a\n#   native id that is not registered and an unknown refresh token are\n#   refused without reaching Authelia; a grant type a native client never\n#   uses is refused; revocation of an unknown token answers 200; a request\n#   of no native client is Authelia's to answer;\n# - the CLI: native-apps list, update, disable (Authelia drops the client),\n#   enable, grants, users native-grants, delete (its files, projection\n#   entry and vhost locations gone).\n#\n# The sign-in, refresh and standing paths are three-VM specs 63 to 65.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm openssl python3 runuser systemd-run nginx\n\nbegin_test \"40 — Native apps: the client API, its rendering and the token broker\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

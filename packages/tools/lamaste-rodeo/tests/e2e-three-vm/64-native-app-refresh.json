@@ -1,0 +1,1778 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 64,
+    "name": "Native app: refresh tokens and grants",
+    "suite": "e2e-three-vm",
+    "description": "64 — Native app: refresh tokens and grants (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    }
+  },
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-nat64"
+    },
+    "SUB_W": {
+      "value": "e2e64app"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-64"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-64-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "PERSON": {
+      "value": "e2e64-person"
+    },
+    "JAR": {
+      "value": "/tmp/e2e-64-person.cookies"
+    },
+    "SLUG": {
+      "value": "e2e64app"
+    },
+    "CLIENT": {
+      "value": "lamaste-native-${SLUG}",
+      "expression": true
+    },
+    "STATE_DB": {
+      "value": "/etc/lamalibre/lamaste/state.db"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE users/${PERSON}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${PERSON}?erase=true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, site ${FQDN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, site ${FQDN}"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has node:sqlite and the visitor VM has oathtool",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite and the visitor VM has oathtool"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "The agent VM needs Node.js with node:sqlite and the visitor VM oathtool",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM needs Node.js with node:sqlite and the visitor VM oathtool"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "DELETE /api/plugins/${PLUGIN}/web-surface",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}/web-surface"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-8",
+          "label": "DELETE /api/users/${PERSON}?erase=true",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "users/${PERSON}?erase=true"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-9",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nFQDN=\"${SUB_W}.${DOMAIN}\"\nlog_info \"Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, site ${FQDN}\"\nif agent_has_node_sqlite && visitor_has_oathtool; then\n  log_pass \"The agent VM's Node.js has node:sqlite and the visitor VM has oathtool\"\nelse\n  log_fail \"The agent VM needs Node.js with node:sqlite and the visitor VM oathtool\"\n  end_test\n  exit $?\nfi\nnative_cleanup \"${CLIENT}\"\nhost_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\ndrop_plugin_grants \"${PLUGIN}\"\nhost_api_delete \"users/${PERSON}?erase=true\" > /dev/null 2>&1 || true\nAUDIT_BASE=$(host_api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# Setup: the plugin's site, a native client, a person signed in\n# ==========================================================================="
+    },
+    {
+      "id": "the-plugin-s-site-a-native-client-a-person-signed-in-to-authelia",
+      "label": "The plugin's site, a native client, a person signed in to Authelia",
+      "steps": [
+        {
+          "id": "step-10",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-64-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${PERSON}\\\",\\\"displayname\\\":\\\"E2E Person\\\",\\\"email\\\":\\\"${PERSON}@example.test\\\",\\\"password\\\":\\\"${PERSON_PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "User ${PERSON} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${PERSON} created"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Set PERSON_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "PERSON_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Set INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "install_approved \"${PLUGIN}\" \"@lamalibre/${PLUGIN}-server@1.0.0\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Installed and approved: ${PLUGIN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed and approved: ${PLUGIN}"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PLUGIN}/web-surface\" '{\"accessMode\":\"authenticated\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Its web surface created on ${FQDN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "Its web surface created on ${FQDN}"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Set SITE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "SITE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 300 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Ready and served",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Ready and served"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Not ready or not served: $(identity_view \"${PLUGIN}\" | jq -c '.readiness') $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not ready or not served: $(identity_view \"${PLUGIN}\" | jq -c '.readiness') $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')"
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"native-apps\" \"{\\\"slug\\\":\\\"${SLUG}\\\",\\\"hostKind\\\":\\\"site\\\",\\\"hostId\\\":\\\"${SITE_ID}\\\",\\\"name\\\":\\\"E2E Refresh\\\",\\\"redirectPaths\\\":[\\\"${NATIVE_REDIRECT_PATH}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Native client ${CLIENT} registered for the site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "Native client ${CLIENT} registered for the site"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${PERSON}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "${PERSON} entitled as viewer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${PERSON} entitled as viewer"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Authelia knows the client; ${PERSON} is in the audience",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia knows the client; ${PERSON} is in the audience"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "The client or the audience is not ready: $(audience_row \"${PLUGIN}\" \"${PERSON_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The client or the audience is not ready: $(audience_row \"${PLUGIN}\" \"${PERSON_ID}\")"
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Set SECRET",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${PERSON}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "${PERSON} signed in to Authelia from the visitor VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sign_in \"${PERSON}\" \"${PERSON_PASSWORD}\" \"${SECRET}\" \"${JAR}\" \"${FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${PERSON} signed in to Authelia from the visitor VM"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The plugin's site, a native client, a person signed in to Authelia\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-64-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v1\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none wide v1 \"${SUB_W}\"; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nship_agent_facts_probe\nstart_stand_in_feria fixtures/v1/server fixtures/v1/agent\nwrite_grant_clock \"${LOCAL_TMP}/grant-clock.mjs\"\nmultipass transfer \"${LOCAL_TMP}/grant-clock.mjs\" \"${HOST_VM}:${REMOTE_DIR}/grant-clock.mjs\"\nhost_exec \"chmod 0644 ${REMOTE_DIR}/grant-clock.mjs\" > /dev/null 2>&1 || true\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"@lamalibre/${PLUGIN}-agent\\\"]\" '[\"install\",\"uninstall\"]'\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${PERSON}\\\",\\\"displayname\\\":\\\"E2E Person\\\",\\\"email\\\":\\\"${PERSON}@example.test\\\",\\\"password\\\":\\\"${PERSON_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${PERSON} created\" || true\nPERSON_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nINSTALL=$(install_approved \"${PLUGIN}\" \"@lamalibre/${PLUGIN}-server@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed and approved: ${PLUGIN}\" || true\nRESP=$(host_api_call POST \"plugins/${PLUGIN}/web-surface\" '{\"accessMode\":\"authenticated\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Its web surface created on ${FQDN}\" || true\nSITE_ID=$(json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty')\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nif wait_for 120 identity_ready \"${PLUGIN}\" && wait_for 120 web_served \"${PLUGIN}\"; then\n  log_pass \"Ready and served\"\nelse\n  log_fail \"Not ready or not served: $(identity_view \"${PLUGIN}\" | jq -c '.readiness') $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')\"\nfi\nRESP=$(host_api_call POST \"native-apps\" \"{\\\"slug\\\":\\\"${SLUG}\\\",\\\"hostKind\\\":\\\"site\\\",\\\"hostId\\\":\\\"${SITE_ID}\\\",\\\"name\\\":\\\"E2E Refresh\\\",\\\"redirectPaths\\\":[\\\"${NATIVE_REDIRECT_PATH}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Native client ${CLIENT} registered for the site\" || true\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${PERSON}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${PERSON} entitled as viewer\" || true\nvisitor_exec \"grep -q ' ${FQDN}\\$' /etc/hosts || echo '${HOST_IP} ${FQDN}' >> /etc/hosts\" > /dev/null 2>&1 || true\nif wait_for 120 native_client_known \"${CLIENT}\" \"${FQDN}\" && wait_for 30 in_audience \"${PERSON_ID}\"; then\n  log_pass \"Authelia knows the client; ${PERSON} is in the audience\"\nelse\n  log_fail \"The client or the audience is not ready: $(audience_row \"${PLUGIN}\" \"${PERSON_ID}\")\"\nfi\nSECRET=$(reset_totp \"${PERSON}\")\nwait_for_next_totp_window\nassert_eq \"$(sign_in \"${PERSON}\" \"${PERSON_PASSWORD}\" \"${SECRET}\" \"${JAR}\" \"${FQDN}\")\" \"OK OK\" \"${PERSON} signed in to Authelia from the visitor VM\" || true\n\n# ===========================================================================\n# 1–3. Rotation, the grace window, reuse\n# ==========================================================================="
+    },
+    {
+      "id": "rotation-the-grace-window-and-a-spent-token-reused",
+      "label": "Rotation, the grace window, and a spent token reused",
+      "steps": [
+        {
+          "id": "step-42",
+          "label": "Signed in on \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NATIVE_SIGN_IN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "Signed in on \\"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Its access token reaches the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_status \"${AT0}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Its access token reaches the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Refreshed: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Refreshed: 200"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Set AT1",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "native_field '.access_token // empty'"
+          },
+          "capture": [
+            {
+              "variable": "AT1",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Set RT1",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "native_field '.refresh_token // empty'"
+          },
+          "capture": [
+            {
+              "variable": "RT1",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "…a new refresh token and a new access token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$([ -n \"${RT1}\" ] && [ \"${RT1}\" != \"${RT0}\" ] && [ -n \"${AT1}\" ] && [ \"${AT1}\" != \"${AT0}\" ] && echo rotated || echo same)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "rotated"
+              },
+              "message": "…a new refresh token and a new access token"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "…the new access token reaches the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_status \"${AT1}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…the new access token reaches the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "The spent token again, within 30 s (a lost answer retried): 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The spent token again, within 30 s (a lost answer retried): 200"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "…the very same answer, replayed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$([ \"$(native_field '.refresh_token // empty')\" = \"${RT1}\" ] && [ \"$(native_field '.access_token // empty')\" = \"${AT1}\" ] && echo same || echo different)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "same"
+              },
+              "message": "…the very same answer, replayed"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "…the grant stays live",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_grant_reason \"${CLIENT}\" \"E2E Phone\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "live"
+              },
+              "message": "…the grant stays live"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Refreshed again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Refreshed again"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Set AT2",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "native_field '.access_token // empty'"
+          },
+          "capture": [
+            {
+              "variable": "AT2",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
+          "label": "Set RT2",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "native_field '.refresh_token // empty'"
+          },
+          "capture": [
+            {
+              "variable": "RT2",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "Waiting out the grace window of the token just spent (30 s)...",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Waiting out the grace window of the token just spent (30 s)..."
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "The spent token after its window: 400 invalid_grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status) $(native_field '.error')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_grant"
+              },
+              "message": "The spent token after its window: 400 invalid_grant"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "…the grant ended: reuse",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…the grant ended: reuse"
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Phone\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Phone\")"
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Its live access token is refused at once: 401 invalid_token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_refused \"${AT2}\" && echo refused || echo admitted)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "Its live access token is refused at once: 401 invalid_token"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "…and the one before it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_refused \"${AT1}\" && echo refused || echo admitted)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "…and the one before it"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "Its current refresh token: 400 invalid_grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status) $(native_field '.error')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_grant"
+              },
+              "message": "Its current refresh token: 400 invalid_grant"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "Audited once: native-app.grant.reuse-detected",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_audits native-app.grant.reuse-detected \".clientId == \\\"${CLIENT}\\\" and .userId == \\\"${PERSON_ID}\\\"\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Audited once: native-app.grant.reuse-detected"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "Admins notified of the reuse",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_api_get \"notifications?limit=50\" | jq --arg c \"${CLIENT}\" '[.notifications[]? | select(.message | contains($c))] | length >= 1' 2>/dev/null || echo false)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Admins notified of the reuse"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Rotation, the grace window, and a spent token reused\"\n\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Phone\"\nassert_eq \"${NATIVE_SIGN_IN}\" \"ok\" \"Signed in on \\\"E2E Phone\\\"\" || true\nAT0=\"${NATIVE_AT}\"\nRT0=\"${NATIVE_RT}\"\nassert_eq \"$(echo_status \"${AT0}\")\" \"200\" \"Its access token reaches the plugin\" || true\n\nnative_refresh \"${CLIENT}\" \"${RT0}\"\nassert_eq \"$(native_status)\" \"200\" \"Refreshed: 200\" || true\nAT1=$(native_field '.access_token // empty')\nRT1=$(native_field '.refresh_token // empty')\nassert_eq \"$([ -n \"${RT1}\" ] && [ \"${RT1}\" != \"${RT0}\" ] && [ -n \"${AT1}\" ] && [ \"${AT1}\" != \"${AT0}\" ] && echo rotated || echo same)\" \"rotated\" \"…a new refresh token and a new access token\" || true\nassert_eq \"$(echo_status \"${AT1}\")\" \"200\" \"…the new access token reaches the plugin\" || true\n\nnative_refresh \"${CLIENT}\" \"${RT0}\"\nassert_eq \"$(native_status)\" \"200\" \"The spent token again, within 30 s (a lost answer retried): 200\" || true\nassert_eq \"$([ \"$(native_field '.refresh_token // empty')\" = \"${RT1}\" ] && [ \"$(native_field '.access_token // empty')\" = \"${AT1}\" ] && echo same || echo different)\" \"same\" \"…the very same answer, replayed\" || true\nassert_eq \"$(native_grant_reason \"${CLIENT}\" \"E2E Phone\")\" \"live\" \"…the grant stays live\" || true\n\nnative_refresh \"${CLIENT}\" \"${RT1}\"\nassert_eq \"$(native_status)\" \"200\" \"Refreshed again\" || true\nAT2=$(native_field '.access_token // empty')\nRT2=$(native_field '.refresh_token // empty')\nSPENT_AT=${SECONDS}\nlog_info \"Waiting out the grace window of the token just spent (30 s)...\"\nsleep $((32 - (SECONDS - SPENT_AT)))\nnative_refresh \"${CLIENT}\" \"${RT1}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"The spent token after its window: 400 invalid_grant\" || true\nif wait_for 15 native_grant_ended_as \"${CLIENT}\" \"E2E Phone\" reuse; then\n  log_pass \"…the grant ended: reuse\"\nelse\n  log_fail \"The grant: $(native_grant_of \"${CLIENT}\" \"E2E Phone\")\"\nfi\nassert_eq \"$(echo_refused \"${AT2}\" && echo refused || echo admitted)\" \"refused\" \"Its live access token is refused at once: 401 invalid_token\" || true\nassert_eq \"$(echo_refused \"${AT1}\" && echo refused || echo admitted)\" \"refused\" \"…and the one before it\" || true\nnative_refresh \"${CLIENT}\" \"${RT2}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"Its current refresh token: 400 invalid_grant\" || true\nassert_eq \"$(native_audits native-app.grant.reuse-detected \".clientId == \\\"${CLIENT}\\\" and .userId == \\\"${PERSON_ID}\\\"\")\" \"1\" \"Audited once: native-app.grant.reuse-detected\" || true\nassert_eq \"$(host_api_get \"notifications?limit=50\" | jq --arg c \"${CLIENT}\" '[.notifications[]? | select(.message | contains($c))] | length >= 1' 2>/dev/null || echo false)\" \"true\" \"Admins notified of the reuse\" || true\n\n# ===========================================================================\n# 4. The app signs out\n# ==========================================================================="
+    },
+    {
+      "id": "the-app-signs-out-token-revocation",
+      "label": "The app signs out (token revocation)",
+      "steps": [
+        {
+          "id": "step-74",
+          "label": "Signed in on \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NATIVE_SIGN_IN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "Signed in on \\"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "POST /api/oidc/revocation with its refresh token: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "POST /api/oidc/revocation with its refresh token: 200"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "…the grant ended: revoked_by_client",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…the grant ended: revoked_by_client"
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Tablet\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Tablet\")"
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "…its access token is refused at once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_refused \"${AT_TABLET}\" && echo refused || echo admitted)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "…its access token is refused at once"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The app signs out (token revocation)\"\n\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Tablet\"\nassert_eq \"${NATIVE_SIGN_IN}\" \"ok\" \"Signed in on \\\"E2E Tablet\\\"\" || true\nAT_TABLET=\"${NATIVE_AT}\"\nnative_post /api/oidc/revocation \"token=${NATIVE_RT}\" \"token_type_hint=refresh_token\" \"client_id=${CLIENT}\"\nassert_eq \"$(native_status)\" \"200\" \"POST /api/oidc/revocation with its refresh token: 200\" || true\nif wait_for 15 native_grant_ended_as \"${CLIENT}\" \"E2E Tablet\" revoked_by_client; then\n  log_pass \"…the grant ended: revoked_by_client\"\nelse\n  log_fail \"The grant: $(native_grant_of \"${CLIENT}\" \"E2E Tablet\")\"\nfi\nassert_eq \"$(echo_refused \"${AT_TABLET}\" && echo refused || echo admitted)\" \"refused\" \"…its access token is refused at once\" || true\n\n# ===========================================================================\n# 5. Grants per device: listed, ended by the administrator\n# ==========================================================================="
+    },
+    {
+      "id": "grants-per-device-listed-and-ended-by-the-administrator",
+      "label": "Grants per device: listed and ended by the administrator",
+      "steps": [
+        {
+          "id": "step-87",
+          "label": "GET …/grants?status=live: \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_grants \"${CLIENT}\" live | jq -r '[.[].deviceName] | sort | join(\",\")')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "E2E Laptop,E2E Watch"
+              },
+              "message": "GET …/grants?status=live: \\"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "…each with a summary of its user agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_grants \"${CLIENT}\" live | jq -r '[.[] | select(.userAgent != null and (.userAgent | length) > 0)] | length')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "…each with a summary of its user agent"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli native-apps grants \"${CLIENT}\" --status all"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-91",
+          "label": "lamaste-server native-apps grants ${CLIENT} --status all --json: the four devices",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "[.grants[].deviceName] | sort | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "E2E Laptop,E2E Phone,E2E Tablet,E2E Watch"
+              },
+              "message": "lamaste-server native-apps grants ${CLIENT} --status all --json: the four devices"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli users native-grants \"${PERSON}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "\") | .deviceName] | sort | join(\",\")",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "[.grants[] | select(.clientId == \"",
+              "expected": {
+                "kind": "var",
+                "name": "CLIENT"
+              },
+              "message": "\") | .deviceName] | sort | join(\",\")"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli native-apps revoke \"${CLIENT}\" --grant \"$(grant_id_of \"E2E Watch\")\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-95",
+          "label": "lamaste-server native-apps revoke --grant: one grant ended",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.event) \\(.ended)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "complete 1"
+              },
+              "message": "lamaste-server native-apps revoke --grant: one grant ended"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "…revoked_by_admin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_grant_reason \"${CLIENT}\" \"E2E Watch\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "revoked_by_admin"
+              },
+              "message": "…revoked_by_admin"
+            }
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "…its access token refused at once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_refused \"${AT_WATCH}\" && echo refused || echo admitted)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "…its access token refused at once"
+            }
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "…its refresh token refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status) $(native_field '.error')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_grant"
+              },
+              "message": "…its refresh token refused"
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"native-apps/${CLIENT}/grants/$(grant_id_of \"E2E Laptop\")\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-101",
+          "label": "DELETE /api/native-apps/${CLIENT}/grants/<id>: one grant ended",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.ended')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200 1"
+              },
+              "message": "DELETE /api/native-apps/${CLIENT}/grants/<id>: one grant ended"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "…revoked_by_admin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_grant_reason \"${CLIENT}\" \"E2E Laptop\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "revoked_by_admin"
+              },
+              "message": "…revoked_by_admin"
+            }
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "…its access token refused at once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_refused \"${AT_LAPTOP}\" && echo refused || echo admitted)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "…its access token refused at once"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "…its refresh token refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status) $(native_field '.error')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_grant"
+              },
+              "message": "…its refresh token refused"
+            }
+          }
+        },
+        {
+          "id": "step-106",
+          "label": "Audited: native-app.grant.revoked, revoked_by_admin, twice",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_audits native-app.grant.revoked '.reason == \"revoked_by_admin\"')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "Audited: native-app.grant.revoked, revoked_by_admin, twice"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Grants per device: listed and ended by the administrator\"\n\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Watch\"\nAT_WATCH=\"${NATIVE_AT}\"\nRT_WATCH=\"${NATIVE_RT}\"\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Laptop\"\nAT_LAPTOP=\"${NATIVE_AT}\"\nRT_LAPTOP=\"${NATIVE_RT}\"\nassert_eq \"$(native_grants \"${CLIENT}\" live | jq -r '[.[].deviceName] | sort | join(\",\")')\" \"E2E Laptop,E2E Watch\" \"GET …/grants?status=live: \\\"E2E Laptop\\\" and \\\"E2E Watch\\\"\" || true\nassert_eq \"$(native_grants \"${CLIENT}\" ended | jq -r '[.[] | \"\\(.deviceName)=\\(.revokedReason)\"] | sort | join(\",\")')\" \"E2E Phone=reuse,E2E Tablet=revoked_by_client\" \"…status=ended: the phone (reuse) and the tablet (signed out)\" || true\nassert_eq \"$(native_grants \"${CLIENT}\" live | jq -r '[.[] | select(.userAgent != null and (.userAgent | length) > 0)] | length')\" \"2\" \"…each with a summary of its user agent\" || true\nOUT=$(cli native-apps grants \"${CLIENT}\" --status all)\nassert_json_field \"$OUT\" '[.grants[].deviceName] | sort | join(\",\")' \"E2E Laptop,E2E Phone,E2E Tablet,E2E Watch\" \"lamaste-server native-apps grants ${CLIENT} --status all --json: the four devices\" || true\nOUT=$(cli users native-grants \"${PERSON}\")\nassert_json_field \"$OUT\" '[.grants[] | select(.clientId == \"'\"${CLIENT}\"'\") | .deviceName] | sort | join(\",\")' \"E2E Laptop,E2E Watch\" \"lamaste-server users native-grants ${PERSON} --json: the person's live devices\" || true\n\nOUT=$(cli native-apps revoke \"${CLIENT}\" --grant \"$(grant_id_of \"E2E Watch\")\")\nassert_json_field \"$OUT\" '\"\\(.event) \\(.ended)\"' \"complete 1\" \"lamaste-server native-apps revoke --grant: one grant ended\" || true\nassert_eq \"$(native_grant_reason \"${CLIENT}\" \"E2E Watch\")\" \"revoked_by_admin\" \"…revoked_by_admin\" || true\nassert_eq \"$(echo_refused \"${AT_WATCH}\" && echo refused || echo admitted)\" \"refused\" \"…its access token refused at once\" || true\nnative_refresh \"${CLIENT}\" \"${RT_WATCH}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh token refused\" || true\n\nRESP=$(host_api_call DELETE \"native-apps/${CLIENT}/grants/$(grant_id_of \"E2E Laptop\")\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.ended')\" \"200 1\" \"DELETE /api/native-apps/${CLIENT}/grants/<id>: one grant ended\" || true\nassert_eq \"$(native_grant_reason \"${CLIENT}\" \"E2E Laptop\")\" \"revoked_by_admin\" \"…revoked_by_admin\" || true\nassert_eq \"$(echo_refused \"${AT_LAPTOP}\" && echo refused || echo admitted)\" \"refused\" \"…its access token refused at once\" || true\nnative_refresh \"${CLIENT}\" \"${RT_LAPTOP}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh token refused\" || true\nassert_eq \"$(native_audits native-app.grant.revoked '.reason == \"revoked_by_admin\"')\" \"2\" \"Audited: native-app.grant.revoked, revoked_by_admin, twice\" || true\n\n# ===========================================================================\n# 6. Lifetimes\n# ==========================================================================="
+    },
+    {
+      "id": "lifetimes-absolute-and-idle",
+      "label": "Lifetimes: absolute and idle",
+      "steps": [
+        {
+          "id": "step-113",
+          "label": "Two more devices signed in, both reaching the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_status \"${AT_DESK}\") $(echo_status \"${AT_CAR}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200 200"
+              },
+              "message": "Two more devices signed in, both reaching the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-114",
+          "label": "\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(grant_clock \"$(grant_id_of \"E2E Desk\")\" absolute)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "\\"
+            }
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "…its access token is refused at once, unexpired as it is",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_refused \"${AT_DESK}\" && echo refused || echo admitted)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "…its access token is refused at once, unexpired as it is"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "…its refresh: 400 invalid_grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status) $(native_field '.error')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_grant"
+              },
+              "message": "…its refresh: 400 invalid_grant"
+            }
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "…ended: absolute_expired",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…ended: absolute_expired"
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Desk\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Desk\")"
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(grant_clock \"$(grant_id_of \"E2E Car\")\" idle)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "\\"
+            }
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "…its access token is refused at once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_refused \"${AT_CAR}\" && echo refused || echo admitted)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "…its access token is refused at once"
+            }
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "…its refresh: 400 invalid_grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status) $(native_field '.error')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_grant"
+              },
+              "message": "…its refresh: 400 invalid_grant"
+            }
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "…ended: idle_expired",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…ended: idle_expired"
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Car\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Car\")"
+          }
+        }
+      ],
+      "bash": "log_section \"Lifetimes: absolute and idle\"\n\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Desk\"\nAT_DESK=\"${NATIVE_AT}\"\nRT_DESK=\"${NATIVE_RT}\"\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Car\"\nAT_CAR=\"${NATIVE_AT}\"\nRT_CAR=\"${NATIVE_RT}\"\nassert_eq \"$(echo_status \"${AT_DESK}\") $(echo_status \"${AT_CAR}\")\" \"200 200\" \"Two more devices signed in, both reaching the plugin\" || true\n\nassert_eq \"$(grant_clock \"$(grant_id_of \"E2E Desk\")\" absolute)\" \"1\" \"\\\"E2E Desk\\\"'s grant moved past its absolute lifetime (its row in state.db, as the database's owner)\" || true\nassert_eq \"$(echo_refused \"${AT_DESK}\" && echo refused || echo admitted)\" \"refused\" \"…its access token is refused at once, unexpired as it is\" || true\nnative_refresh \"${CLIENT}\" \"${RT_DESK}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh: 400 invalid_grant\" || true\nif wait_for 15 native_grant_ended_as \"${CLIENT}\" \"E2E Desk\" absolute_expired; then\n  log_pass \"…ended: absolute_expired\"\nelse\n  log_fail \"The grant: $(native_grant_of \"${CLIENT}\" \"E2E Desk\")\"\nfi\n\nassert_eq \"$(grant_clock \"$(grant_id_of \"E2E Car\")\" idle)\" \"1\" \"\\\"E2E Car\\\"'s grant made idle a minute longer than the client's 30 days\" || true\nassert_eq \"$(echo_refused \"${AT_CAR}\" && echo refused || echo admitted)\" \"refused\" \"…its access token is refused at once\" || true\nnative_refresh \"${CLIENT}\" \"${RT_CAR}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh: 400 invalid_grant\" || true\nif wait_for 15 native_grant_ended_as \"${CLIENT}\" \"E2E Car\" idle_expired; then\n  log_pass \"…ended: idle_expired\"\nelse\n  log_fail \"The grant: $(native_grant_of \"${CLIENT}\" \"E2E Car\")\"\nfi\n\n# ===========================================================================\n# 7. The client disabled and enabled again\n# ==========================================================================="
+    },
+    {
+      "id": "the-client-disabled-then-enabled-again",
+      "label": "The client disabled, then enabled again",
+      "steps": [
+        {
+          "id": "step-129",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PATCH \"native-apps/${CLIENT}\" '{\"enabled\":false}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-130",
+          "label": "PATCH /api/native-apps/${CLIENT} {enabled: false}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PATCH /api/native-apps/${CLIENT} {enabled: false}"
+            }
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "…its live grant ended: client_disabled",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…its live grant ended: client_disabled"
+          }
+        },
+        {
+          "id": "step-132",
+          "label": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Kiosk\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The grant: $(native_grant_of \"${CLIENT}\" \"E2E Kiosk\")"
+          }
+        },
+        {
+          "id": "step-133",
+          "label": "…its access token refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_refused \"${AT_KIOSK}\" && echo refused || echo admitted)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "…its access token refused"
+            }
+          }
+        },
+        {
+          "id": "step-135",
+          "label": "…its refresh refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status) $(native_field '.error')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_grant"
+              },
+              "message": "…its refresh refused"
+            }
+          }
+        },
+        {
+          "id": "step-136",
+          "label": "Authelia no longer knows the client: nobody signs in with it",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia no longer knows the client: nobody signs in with it"
+          }
+        },
+        {
+          "id": "step-137",
+          "label": "Authelia still knows the disabled client",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia still knows the disabled client"
+          }
+        },
+        {
+          "id": "step-138",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PATCH \"native-apps/${CLIENT}\" '{\"enabled\":true}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-139",
+          "label": "Enabled again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Enabled again"
+            }
+          }
+        },
+        {
+          "id": "step-141",
+          "label": "…a new sign-in works and reaches the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${NATIVE_SIGN_IN} $(echo_status \"${NATIVE_AT}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "ok 200"
+              },
+              "message": "…a new sign-in works and reaches the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "Authelia does not know the client again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia does not know the client again"
+          }
+        }
+      ],
+      "bash": "log_section \"The client disabled, then enabled again\"\n\nnative_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Kiosk\"\nAT_KIOSK=\"${NATIVE_AT}\"\nRT_KIOSK=\"${NATIVE_RT}\"\nRESP=$(host_api_call PATCH \"native-apps/${CLIENT}\" '{\"enabled\":false}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PATCH /api/native-apps/${CLIENT} {enabled: false}\" || true\nif wait_for 15 native_grant_ended_as \"${CLIENT}\" \"E2E Kiosk\" client_disabled; then\n  log_pass \"…its live grant ended: client_disabled\"\nelse\n  log_fail \"The grant: $(native_grant_of \"${CLIENT}\" \"E2E Kiosk\")\"\nfi\nassert_eq \"$(echo_refused \"${AT_KIOSK}\" && echo refused || echo admitted)\" \"refused\" \"…its access token refused\" || true\nnative_refresh \"${CLIENT}\" \"${RT_KIOSK}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh refused\" || true\nif wait_for 120 native_client_gone \"${CLIENT}\" \"${FQDN}\"; then\n  log_pass \"Authelia no longer knows the client: nobody signs in with it\"\nelse\n  log_fail \"Authelia still knows the disabled client\"\nfi\nRESP=$(host_api_call PATCH \"native-apps/${CLIENT}\" '{\"enabled\":true}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Enabled again\" || true\nif wait_for 120 native_client_known \"${CLIENT}\" \"${FQDN}\"; then\n  native_sign_in \"${JAR}\" \"${CLIENT}\" \"${FQDN}\" \"E2E Kiosk 2\"\n  assert_eq \"${NATIVE_SIGN_IN} $(echo_status \"${NATIVE_AT}\")\" \"ok 200\" \"…a new sign-in works and reaches the plugin\" || true\nelse\n  log_fail \"Authelia does not know the client again\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 64 — Native app: refresh tokens and grants (Three-VM)\n# ============================================================================\n# The relay's token broker in front of Authelia (native-apps-design.md D4,\n# R7–R10): a native client on a plugin's site (e2e-nat64, identity wide, a\n# web surface), one person, several sign-ins — each a grant named by its\n# device. From the visitor VM:\n#\n# 1. Rotation: a refresh answers a new refresh token and a new access\n#    token, which the user surface admits.\n# 2. The grace window (R8): the spent token presented again within 30 s\n#    gets the very same answer (a lost response retried), the grant stays.\n# 3. Reuse: a spent token presented after its window ends the grant — its\n#    live access tokens are refused at once, its current refresh token is\n#    refused — audited native-app.grant.reuse-detected, admins notified.\n# 4. The app signs out (RFC 7009 revocation): its grant ends\n#    (revoked_by_client), its access token is refused.\n# 5. Grants per device: listed through the API and the CLI\n#    (`native-apps grants`, `users native-grants`); one ended by the CLI\n#    (`native-apps revoke --grant`) and one by the API (DELETE) —\n#    revoked_by_admin, refused at once.\n# 6. Lifetimes: a grant past its absolute lifetime, and one idle longer\n#    than the client's idle lifetime — each made so by moving the grant's\n#    own timestamps in the panel's state.db (as its database owner, on the\n#    host VM: the relay's clock is never touched, and a day cannot be\n#    waited) — has its access token refused (R10) and its refresh refused,\n#    ended absolute_expired and idle_expired.\n# 7. The client disabled: its live grant ends (client_disabled), Authelia\n#    no longer knows it; enabled again, it signs people in again.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-nat64\"\nSUB_W=\"e2e64app\"\nPOLICY_ID=\"e2e-apphost-64\"\nREMOTE_DIR=\"/var/tmp/e2e-64-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nPERSON=\"e2e64-person\"\n# A test credential for this run only, never printed\nPERSON_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR=\"/tmp/e2e-64-person.cookies\"\nSLUG=\"e2e64app\"\nCLIENT=\"lamaste-native-${SLUG}\"\nSTATE_DB=\"/etc/lamalibre/lamaste/state.db\"\nFQDN=\"\"\nSITE_ID=\"\"\nPERSON_ID=\"\"\n\n# echo_status <token> — the status of GET /api/<plugin>/app/echo with the bearer\necho_status() { bearer_status \"$1\" - \"https://${FQDN}/api/${PLUGIN}/app/echo\"; }\n# echo_refused <token> — 401 invalid_token, the relay's answer to a token no grant holds\necho_refused() {\n  local out\n  out=$(bearer \"$1\" - \"https://${FQDN}/api/${PLUGIN}/app/echo\")\n  [ \"$(visit_status \"$out\") $(visit_body \"$out\" | jq -r '.error' 2>/dev/null)\" = \"401 invalid_token\" ]\n}\n\n# in_audience <userId> — the audience holds the user as an active member\nin_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"$1\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\n# cli <arguments> — lamaste-server on the host VM with --json; its last line\ncli() {\n  timed_exec 90 multipass exec \"${HOST_VM}\" -- sudo bash -c \"lamaste-server $* --json 2>&1\" 2>/dev/null | tail -n 1\n}\n\n# write_grant_clock <file> — grant-clock.mjs: moves one grant's own\n# timestamps in the panel's state.db, as the database's owner — past its\n# absolute lifetime (`absolute`), or idle one minute longer than its\n# client's idle lifetime (`idle`). Prints {\"changes\": n}.\n#\n#   node grant-clock.mjs <state.db> <grantId> <absolute | idle>\nwrite_grant_clock() {\n  cat > \"$1\" <<'CLOCK_EOF'\nimport { DatabaseSync } from 'node:sqlite';\n\nconst [file, grantId, what] = process.argv.slice(2);\nconst db = new DatabaseSync(file);\ndb.exec('PRAGMA busy_timeout = 10000');\nconst now = Date.now();\nlet changes = 0;\nif (what === 'absolute') {\n  changes = db\n    .prepare('UPDATE native_grants SET absolute_expires_at = ? WHERE grant_id = ? AND revoked_at IS NULL')\n    .run(now - 60_000, grantId).changes;\n} else if (what === 'idle') {\n  const row = db\n    .prepare('SELECT c.idle_days AS idleDays FROM native_grants g JOIN native_clients c ON c.client_id = g.client_id WHERE g.grant_id = ?')\n    .get(grantId);\n  if (row) {\n    changes = db\n      .prepare('UPDATE native_grants SET last_used_at = ? WHERE grant_id = ? AND revoked_at IS NULL')\n      .run(now - row.idleDays * 86_400_000 - 60_000, grantId).changes;\n  }\n}\ndb.close();\nprocess.stdout.write(`${JSON.stringify({ changes: Number(changes) })}\\n`);\nCLOCK_EOF\n}\n\n# grant_clock <grantId> <absolute | idle> — run it on the host VM; prints its changes count\ngrant_clock() {\n  host_exec \"runuser -u lamaste -- node ${REMOTE_DIR}/grant-clock.mjs ${STATE_DB} $1 $2 2>/dev/null\" 2>/dev/null | grep -E '^\\{' | tail -n 1 | jq -r '.changes' 2>/dev/null || echo \"-1\"\n}\n\n# grant_id_of <device> — the id of that device's grant (\"\" when none)\ngrant_id_of() { native_grant_of \"${CLIENT}\" \"$1\" | jq -r '.grantId // empty' 2>/dev/null || true; }\n\nbegin_test \"64 — Native app: refresh tokens and grants (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  native_cleanup \"${CLIENT}\"\n  drop_plugin_grants \"${PLUGIN}\"\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR} /tmp/e2e-native-nobody.cookies; sed -i '/${SUB_W}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  host_api_delete \"users/${PERSON}?erase=true\" > /dev/null 2>&1 || true\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

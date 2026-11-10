@@ -1,0 +1,1109 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 65,
+    "name": "Native app: sign-ins end with the person's standing",
+    "suite": "e2e-three-vm",
+    "description": "65 — Native app: sign-ins end with the person's standing (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    }
+  },
+  "constants": {
+    "PLUGIN_A": {
+      "value": "e2e-nat65a"
+    },
+    "PLUGIN_B": {
+      "value": "e2e-nat65b"
+    },
+    "SUB_W": {
+      "value": "e2e65app"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-65"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-65-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN_A} ${PLUGIN_B}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN_A} ${PLUGIN_B}",
+      "expression": true
+    },
+    "SLUG": {
+      "value": "e2e65app"
+    },
+    "CLIENT": {
+      "value": "lamaste-native-${SLUG}",
+      "expression": true
+    },
+    "U_D": {
+      "value": "e2e65-disabled"
+    },
+    "U_E": {
+      "value": "e2e65-erased"
+    },
+    "U_M": {
+      "value": "e2e65-member"
+    },
+    "U_O": {
+      "value": "e2e65-roleless"
+    }
+  },
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, site ${FQDN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, site ${FQDN}"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has node:sqlite and the visitor VM has oathtool",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite and the visitor VM has oathtool"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "The agent VM needs Node.js with node:sqlite and the visitor VM oathtool",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM needs Node.js with node:sqlite and the visitor VM oathtool"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "DELETE /api/plugins/${PLUGIN_A}/web-surface",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN_A}/web-surface"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-10",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nFQDN=\"${SUB_W}.${DOMAIN}\"\nlog_info \"Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, site ${FQDN}\"\nif agent_has_node_sqlite && visitor_has_oathtool; then\n  log_pass \"The agent VM's Node.js has node:sqlite and the visitor VM has oathtool\"\nelse\n  log_fail \"The agent VM needs Node.js with node:sqlite and the visitor VM oathtool\"\n  end_test\n  exit $?\nfi\nnative_cleanup \"${CLIENT}\"\nhost_api_delete \"plugins/${PLUGIN_A}/web-surface\" > /dev/null 2>&1 || true\ndrop_plugin_grants \"${PLUGIN_A}\"\ndrop_plugin_grants \"${PLUGIN_B}\"\nfor u in \"${U_D}\" \"${U_E}\" \"${U_M}\" \"${U_O}\"; do host_api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true; done\nAUDIT_BASE=$(host_api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# Setup: two plugins on one site, a native client, four people\n# ==========================================================================="
+    },
+    {
+      "id": "two-plugins-on-one-site-a-native-client-four-people-signed-in",
+      "label": "Two plugins on one site, a native client, four people signed in",
+      "steps": [
+        {
+          "id": "step-11",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-65-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "FIXTURES",
+            "value": "built"
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Fixtures built: ${PLUGIN_A} (signInEvents, a web tree), ${PLUGIN_B}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixtures built: ${PLUGIN_A} (signInEvents, a web tree), ${PLUGIN_B}"
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${u}\\\",\\\"displayname\\\":\\\"E2E ${u}\\\",\\\"email\\\":\\\"${u}@example.test\\\",\\\"password\\\":\\\"${PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "User ${u} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${u} created"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "install_approved \"${PLUGIN_A}\" \"@lamalibre/${PLUGIN_A}-server@1.0.0\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Installed and approved: ${PLUGIN_A}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed and approved: ${PLUGIN_A}"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "…its approved identity block declares signInEvents",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_get \"plugins/${PLUGIN_A}/hooks\")"
+              },
+              "path": "\"\\(.hooks.identity.approved) \\(.hooks.identity.block.signInEvents)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true true"
+              },
+              "message": "…its approved identity block declares signInEvents"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Set INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "install_approved \"${PLUGIN_B}\" \"@lamalibre/${PLUGIN_B}-server@1.0.0\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Installed and approved: ${PLUGIN_B}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed and approved: ${PLUGIN_B}"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "…its identity block does not",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_get \"plugins/${PLUGIN_B}/hooks\")"
+              },
+              "path": "\"\\(.hooks.identity.approved) \\(.hooks.identity.block.signInEvents // false)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true false"
+              },
+              "message": "…its identity block does not"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PLUGIN_A}/web-surface\" '{\"accessMode\":\"authenticated\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "${PLUGIN_A}'s web surface created on ${FQDN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "${PLUGIN_A}'s web surface created on ${FQDN}"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Set SITE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "SITE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${plugin}\" 300 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "${plugin} hosted ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "${plugin} hosted ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Both ready, the site served",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Both ready, the site served"
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Not ready: $(identity_view \"${PLUGIN_A}\" | jq -c '.readiness') $(identity_view \"${PLUGIN_B}\" | jq -c '.readiness')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not ready: $(identity_view \"${PLUGIN_A}\" | jq -c '.readiness') $(identity_view \"${PLUGIN_B}\" | jq -c '.readiness')"
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN_A}/web-surface/routes/${PLUGIN_B}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "${PLUGIN_B} joins the site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${PLUGIN_B} joins the site"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"native-apps\" \"{\\\"slug\\\":\\\"${SLUG}\\\",\\\"hostKind\\\":\\\"site\\\",\\\"hostId\\\":\\\"${SITE_ID}\\\",\\\"name\\\":\\\"E2E Standing\\\",\\\"redirectPaths\\\":[\\\"${NATIVE_REDIRECT_PATH}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Native client ${CLIENT} registered for the site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "Native client ${CLIENT} registered for the site"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN_A}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${U_O}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "${U_D}, ${U_E} and ${U_M} entitled on both plugins; ${U_O} on ${PLUGIN_A} alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${U_D}, ${U_E} and ${U_M} entitled on both plugins; ${U_O} on ${PLUGIN_A} alone"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Authelia knows the client; the audiences hold the people",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia knows the client; the audiences hold the people"
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Not ready to sign in: $(audience_row \"${PLUGIN_A}\" \"${ID_O}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not ready to sign in: $(audience_row \"${PLUGIN_A}\" \"${ID_O}\")"
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Set SECRET_D",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${U_D}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_D",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "Set SECRET_E",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${U_E}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_E",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "Set SECRET_M",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${U_M}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_M",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-63",
+          "label": "Set SECRET_O",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${U_O}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_O",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "The four signed in to Authelia from the visitor VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sign_in \"${U_D}\" \"${PASSWORD}\" \"${SECRET_D}\" \"$(jar_of d)\" \"${FQDN}\") $(sign_in \"${U_E}\" \"${PASSWORD}\" \"${SECRET_E}\" \"$(jar_of e)\" \"${FQDN}\") $(sign_in \"${U_M}\" \"${PASSWORD}\" \"${SECRET_M}\" \"$(jar_of m)\" \"${FQDN}\") $(sign_in \"${U_O}\" \"${PASSWORD}\" \"${SECRET_O}\" \"$(jar_of o)\" \"${FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK OK OK OK OK OK OK"
+              },
+              "message": "The four signed in to Authelia from the visitor VM"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Each signed in on their device; each reaches ${PLUGIN_A}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(bearer_status \"${AT_D}\" - \"$(echo_url)\") $(bearer_status \"${AT_E}\" - \"$(echo_url)\") $(bearer_status \"${AT_M}\" - \"$(echo_url)\") $(bearer_status \"${AT_O}\" - \"$(echo_url)\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200 200 200 200"
+              },
+              "message": "Each signed in on their device; each reaches ${PLUGIN_A}"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "Four live grants",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_grants \"${CLIENT}\" live | jq length)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "4"
+              },
+              "message": "Four live grants"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Two plugins on one site, a native client, four people signed in\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-65-app-plugin-XXXXXXXX)\nFIXTURES=\"built\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/a\" \"${PLUGIN_A}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none signin v1 \"${SUB_W}\" || FIXTURES=\"failed\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/b\" \"${PLUGIN_B}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none wide || FIXTURES=\"failed\"\nif [ \"$FIXTURES\" != \"built\" ]; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixtures built: ${PLUGIN_A} (signInEvents, a web tree), ${PLUGIN_B}\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/a/server fixtures/a/agent fixtures/b/server fixtures/b/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"@lamalibre/${PLUGIN_A}-agent\\\",\\\"@lamalibre/${PLUGIN_B}-agent\\\"]\" '[\"install\",\"uninstall\"]'\n\nfor u in \"${U_D}\" \"${U_E}\" \"${U_M}\" \"${U_O}\"; do\n  RESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${u}\\\",\\\"displayname\\\":\\\"E2E ${u}\\\",\\\"email\\\":\\\"${u}@example.test\\\",\\\"password\\\":\\\"${PASSWORD}\\\",\\\"groups\\\":[]}\")\n  assert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${u} created\" || true\n  case \"$u\" in\n    \"${U_D}\") ID_D=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty') ;;\n    \"${U_E}\") ID_E=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty') ;;\n    \"${U_M}\") ID_M=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty') ;;\n    \"${U_O}\") ID_O=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty') ;;\n  esac\ndone\n\nINSTALL=$(install_approved \"${PLUGIN_A}\" \"@lamalibre/${PLUGIN_A}-server@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed and approved: ${PLUGIN_A}\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN_A}/hooks\")\" '\"\\(.hooks.identity.approved) \\(.hooks.identity.block.signInEvents)\"' 'true true' \"…its approved identity block declares signInEvents\" || true\nINSTALL=$(install_approved \"${PLUGIN_B}\" \"@lamalibre/${PLUGIN_B}-server@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed and approved: ${PLUGIN_B}\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN_B}/hooks\")\" '\"\\(.hooks.identity.approved) \\(.hooks.identity.block.signInEvents // false)\"' 'true false' \"…its identity block does not\" || true\nRESP=$(host_api_call POST \"plugins/${PLUGIN_A}/web-surface\" '{\"accessMode\":\"authenticated\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"${PLUGIN_A}'s web surface created on ${FQDN}\" || true\nSITE_ID=$(json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty')\nfor plugin in \"${PLUGIN_A}\" \"${PLUGIN_B}\"; do\n  OP=$(host_plugin \"${plugin}\" 300 nudge)\n  assert_json_field \"$OP\" '.status' 'succeeded' \"${plugin} hosted ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\ndone\nif wait_for 120 identity_ready \"${PLUGIN_A}\" && wait_for 120 identity_ready \"${PLUGIN_B}\" && wait_for 120 web_served \"${PLUGIN_A}\"; then\n  log_pass \"Both ready, the site served\"\nelse\n  log_fail \"Not ready: $(identity_view \"${PLUGIN_A}\" | jq -c '.readiness') $(identity_view \"${PLUGIN_B}\" | jq -c '.readiness')\"\nfi\nRESP=$(host_api_call PUT \"plugins/${PLUGIN_A}/web-surface/routes/${PLUGIN_B}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${PLUGIN_B} joins the site\" || true\nRESP=$(host_api_call POST \"native-apps\" \"{\\\"slug\\\":\\\"${SLUG}\\\",\\\"hostKind\\\":\\\"site\\\",\\\"hostId\\\":\\\"${SITE_ID}\\\",\\\"name\\\":\\\"E2E Standing\\\",\\\"redirectPaths\\\":[\\\"${NATIVE_REDIRECT_PATH}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Native client ${CLIENT} registered for the site\" || true\n\nfor u in \"${U_D}\" \"${U_E}\" \"${U_M}\"; do\n  for plugin in \"${PLUGIN_A}\" \"${PLUGIN_B}\"; do\n    host_api_call PUT \"plugins/${plugin}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${u}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\" > /dev/null\n  done\ndone\nRESP=$(host_api_call PUT \"plugins/${PLUGIN_A}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${U_O}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${U_D}, ${U_E} and ${U_M} entitled on both plugins; ${U_O} on ${PLUGIN_A} alone\" || true\nvisitor_exec \"grep -q ' ${FQDN}\\$' /etc/hosts || echo '${HOST_IP} ${FQDN}' >> /etc/hosts\" > /dev/null 2>&1 || true\nif wait_for 120 native_client_known \"${CLIENT}\" \"${FQDN}\" && wait_for 30 in_audience \"${PLUGIN_A}\" \"${ID_O}\" && wait_for 30 in_audience \"${PLUGIN_B}\" \"${ID_M}\"; then\n  log_pass \"Authelia knows the client; the audiences hold the people\"\nelse\n  log_fail \"Not ready to sign in: $(audience_row \"${PLUGIN_A}\" \"${ID_O}\")\"\nfi\n\nSECRET_D=$(reset_totp \"${U_D}\")\nSECRET_E=$(reset_totp \"${U_E}\")\nSECRET_M=$(reset_totp \"${U_M}\")\nSECRET_O=$(reset_totp \"${U_O}\")\nwait_for_next_totp_window\nassert_eq \"$(sign_in \"${U_D}\" \"${PASSWORD}\" \"${SECRET_D}\" \"$(jar_of d)\" \"${FQDN}\") $(sign_in \"${U_E}\" \"${PASSWORD}\" \"${SECRET_E}\" \"$(jar_of e)\" \"${FQDN}\") $(sign_in \"${U_M}\" \"${PASSWORD}\" \"${SECRET_M}\" \"$(jar_of m)\" \"${FQDN}\") $(sign_in \"${U_O}\" \"${PASSWORD}\" \"${SECRET_O}\" \"$(jar_of o)\" \"${FQDN}\")\" \"OK OK OK OK OK OK OK OK\" \"The four signed in to Authelia from the visitor VM\" || true\n\nnative_sign_in \"$(jar_of d)\" \"${CLIENT}\" \"${FQDN}\" \"E2E D\"\nAT_D=\"${NATIVE_AT}\"\nRT_D=\"${NATIVE_RT}\"\nnative_sign_in \"$(jar_of e)\" \"${CLIENT}\" \"${FQDN}\" \"E2E E\"\nAT_E=\"${NATIVE_AT}\"\nRT_E=\"${NATIVE_RT}\"\nnative_sign_in \"$(jar_of m)\" \"${CLIENT}\" \"${FQDN}\" \"E2E M\"\nAT_M=\"${NATIVE_AT}\"\nRT_M=\"${NATIVE_RT}\"\nnative_sign_in \"$(jar_of o)\" \"${CLIENT}\" \"${FQDN}\" \"E2E O\"\nAT_O=\"${NATIVE_AT}\"\nRT_O=\"${NATIVE_RT}\"\nassert_eq \"$(bearer_status \"${AT_D}\" - \"$(echo_url)\") $(bearer_status \"${AT_E}\" - \"$(echo_url)\") $(bearer_status \"${AT_M}\" - \"$(echo_url)\") $(bearer_status \"${AT_O}\" - \"$(echo_url)\")\" \"200 200 200 200\" \"Each signed in on their device; each reaches ${PLUGIN_A}\" || true\nassert_eq \"$(native_grants \"${CLIENT}\" live | jq length)\" \"4\" \"Four live grants\" || true\n\n# ===========================================================================\n# 1. Sign-in events\n# ==========================================================================="
+    },
+    {
+      "id": "sign-in-events-reach-the-plugin-that-declares-them-and-only-it",
+      "label": "Sign-in events reach the plugin that declares them, and only it",
+      "steps": [
+        {
+          "id": "step-80",
+          "label": "${PLUGIN_A}'s agent half holds one sign-in event per person, naming ${CLIENT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${PLUGIN_A}'s agent half holds one sign-in event per person, naming ${CLIENT}"
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "${PLUGIN_A}'s sign-in events: $(sign_ins_of \"${PLUGIN_A}\" | jq -c '[.[] | {userId, client}]')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${PLUGIN_A}'s sign-in events: $(sign_ins_of \"${PLUGIN_A}\" | jq -c '[.[] | {userId, client}]')"
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "${PLUGIN_B} declares none: its agent half holds no event",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sign_ins_of \"${PLUGIN_B}\" | jq length)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "${PLUGIN_B} declares none: its agent half holds no event"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "…and never received the call",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(half_requests \"${PLUGIN_B}\" ' POST /admin/identity/sign-ins$')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…and never received the call"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Sign-in events reach the plugin that declares them, and only it\"\n\nif wait_for 90 all_signed_in; then\n  log_pass \"${PLUGIN_A}'s agent half holds one sign-in event per person, naming ${CLIENT}\"\nelse\n  log_fail \"${PLUGIN_A}'s sign-in events: $(sign_ins_of \"${PLUGIN_A}\" | jq -c '[.[] | {userId, client}]')\"\nfi\nassert_eq \"$(sign_ins_of \"${PLUGIN_A}\" | jq -r '[.[] | select((.at | test(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T\")) and (.seq > 0) and (.client.kind == \"native\"))] | length')\" \"4\" \"…each with its time, a sequence number and the client's kind\" || true\nassert_eq \"$(sign_ins_of \"${PLUGIN_B}\" | jq length)\" \"0\" \"${PLUGIN_B} declares none: its agent half holds no event\" || true\nassert_eq \"$(half_requests \"${PLUGIN_B}\" ' POST /admin/identity/sign-ins$')\" \"0\" \"…and never received the call\" || true\n\n# ===========================================================================\n# 2–5. Each person's standing ends; so does their grant\n# ==========================================================================="
+    },
+    {
+      "id": "disabled-erased-removed-from-the-domain-role-lost",
+      "label": "Disabled, erased, removed from the domain, role lost",
+      "steps": [
+        {
+          "id": "step-85",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call PUT \"users/${U_D}\" '{\"disabled\":true}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-86",
+          "label": "${U_D} disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${U_D} disabled"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call DELETE \"users/${U_E}?erase=true\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-88",
+          "label": "${U_E} deleted and erased",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" 'if .erased then \"erased\" else \"kept\" end')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200 erased"
+              },
+              "message": "${U_E} deleted and erased"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"domains/${DOMAIN}/members/${U_M}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-90",
+          "label": "${U_M} removed from ${DOMAIN}'s members",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.removed')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200 true"
+              },
+              "message": "${U_M} removed from ${DOMAIN}'s members"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "GET /api/gatekeeper/grants?resourceType=plugin&resourceId=${PLUGIN_A}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "gatekeeper/grants?resourceType=plugin&resourceId=${PLUGIN_A}"
+          },
+          "capture": [
+            {
+              "variable": "GRANT_O",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-92",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"gatekeeper/grants/${GRANT_O:-none}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "${U_O}'s only entitlement (its Gatekeeper grant) revoked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${U_O}'s only entitlement (its Gatekeeper grant) revoked"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "${U_D}'s grant ended: standing:disabled",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${U_D}'s grant ended: standing:disabled"
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "${U_D}'s grant: $(grant_reason_of \"${ID_D}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${U_D}'s grant: $(grant_reason_of \"${ID_D}\")"
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "${U_E}'s grant is gone with them: erased, nothing listed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(grant_reason_of \"${ID_E}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "none"
+              },
+              "message": "${U_E}'s grant is gone with them: erased, nothing listed"
+            }
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "${U_M}'s grant ended: standing:not_member",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${U_M}'s grant ended: standing:not_member"
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "${U_M}'s grant: $(grant_reason_of \"${ID_M}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${U_M}'s grant: $(grant_reason_of \"${ID_M}\")"
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "${U_O}'s grant ended: standing:no_role",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${U_O}'s grant ended: standing:no_role"
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "${U_O}'s grant: $(grant_reason_of \"${ID_O}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${U_O}'s grant: $(grant_reason_of \"${ID_O}\")"
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "No live grant is left",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_grants \"${CLIENT}\" live | jq length)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "No live grant is left"
+            }
+          }
+        },
+        {
+          "id": "step-106",
+          "label": "GET /api/audit?action=native-app.grant.revoked&limit=200",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?action=native-app.grant.revoked&limit=200"
+          },
+          "capture": [
+            {
+              "variable": "REASONS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-107",
+          "label": "Audited: native-app.grant.revoked — disabled, no_role, not_member, removed (the erased person's grant ended at the removal)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REASONS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "standing:disabled,standing:no_role,standing:not_member,standing:removed"
+              },
+              "message": "Audited: native-app.grant.revoked — disabled, no_role, not_member, removed (the erased person's grant ended at the removal)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Disabled, erased, removed from the domain, role lost\"\n\nRESP=$(users_call PUT \"users/${U_D}\" '{\"disabled\":true}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${U_D} disabled\" || true\nRESP=$(users_call DELETE \"users/${U_E}?erase=true\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" 'if .erased then \"erased\" else \"kept\" end')\" \"200 erased\" \"${U_E} deleted and erased\" || true\nRESP=$(host_api_call DELETE \"domains/${DOMAIN}/members/${U_M}\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.removed')\" \"200 true\" \"${U_M} removed from ${DOMAIN}'s members\" || true\nGRANT_O=$(host_api_get \"gatekeeper/grants?resourceType=plugin&resourceId=${PLUGIN_A}\" | jq -r --arg u \"${U_O}\" '[.grants[]? | select(.principalType == \"user\" and .principalId == $u) | .grantId] | first // empty' 2>/dev/null || true)\nRESP=$(host_api_call DELETE \"gatekeeper/grants/${GRANT_O:-none}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${U_O}'s only entitlement (its Gatekeeper grant) revoked\" || true\n\nif wait_for 30 grant_ended_as \"${ID_D}\" \"standing:disabled\"; then\n  log_pass \"${U_D}'s grant ended: standing:disabled\"\nelse\n  log_fail \"${U_D}'s grant: $(grant_reason_of \"${ID_D}\")\"\nfi\nassert_cut_off \"${U_D}\" \"${AT_D}\" \"${RT_D}\"\n\nassert_eq \"$(grant_reason_of \"${ID_E}\")\" \"none\" \"${U_E}'s grant is gone with them: erased, nothing listed\" || true\nassert_cut_off \"${U_E}\" \"${AT_E}\" \"${RT_E}\"\n\nif wait_for 90 grant_ended_as \"${ID_M}\" \"standing:not_member\"; then\n  log_pass \"${U_M}'s grant ended: standing:not_member\"\nelse\n  log_fail \"${U_M}'s grant: $(grant_reason_of \"${ID_M}\")\"\nfi\nassert_cut_off \"${U_M}\" \"${AT_M}\" \"${RT_M}\"\n\nif wait_for 90 grant_ended_as \"${ID_O}\" \"standing:no_role\"; then\n  log_pass \"${U_O}'s grant ended: standing:no_role\"\nelse\n  log_fail \"${U_O}'s grant: $(grant_reason_of \"${ID_O}\")\"\nfi\nassert_cut_off \"${U_O}\" \"${AT_O}\" \"${RT_O}\"\n\nassert_eq \"$(native_grants \"${CLIENT}\" live | jq length)\" \"0\" \"No live grant is left\" || true\nREASONS=$(host_api_get \"audit?action=native-app.grant.revoked&limit=200\" | jq -r --arg c \"${CLIENT}\" \"[.entries[]? | select(.id > ${AUDIT_BASE}) | .details | select(any(.grants[]?; .clientId == \\$c)) | .reason] | unique | join(\\\",\\\")\" 2>/dev/null || echo \"?\")\nassert_eq \"${REASONS}\" \"standing:disabled,standing:no_role,standing:not_member,standing:removed\" \"Audited: native-app.grant.revoked — disabled, no_role, not_member, removed (the erased person's grant ended at the removal)\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 65 — Native app: sign-ins end with the person's standing (Three-VM)\n# ============================================================================\n# A native client on a plugin's site (native-apps-design.md D4, D7): the\n# site's owner e2e-nat65a declares identity.signInEvents (fixture identity\n# variant `signin`), e2e-nat65b joins the site and does not. Four people\n# sign in from the visitor VM, each on their own device, and each loses\n# their standing a different way:\n#\n# 1. Sign-in events: e2e-nat65a's agent half receives one event per\n#    sign-in — the person's directory id, the time and the native client;\n#    e2e-nat65b's never receives the call.\n# 2. Disabled (the users API): the grant ends standing:disabled.\n# 3. Deleted and erased: the grant ends, and the person's grants are erased\n#    with them (none is listed afterwards).\n# 4. Removed from the domain (the domains API): the grant ends\n#    standing:not_member.\n# 5. The last role lost (the Gatekeeper grant behind the entitlement\n#    revoked): the grant ends standing:no_role.\n#\n# After each, the person's access token is refused (401 or 403, as the\n# relay decides first) and their refresh token is refused (invalid_grant):\n# the relay's broker never refreshes a person without standing, although\n# Authelia would (its refresh does not apply the client's policy).\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN_A=\"e2e-nat65a\"\nPLUGIN_B=\"e2e-nat65b\"\nSUB_W=\"e2e65app\"\nPOLICY_ID=\"e2e-apphost-65\"\nREMOTE_DIR=\"/var/tmp/e2e-65-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN_A} ${PLUGIN_B}\"\nCLEAN_ROUTES=\"${PLUGIN_A} ${PLUGIN_B}\"\nPURGE_PACKAGES=\"\"\nSLUG=\"e2e65app\"\nCLIENT=\"lamaste-native-${SLUG}\"\n# The four people: disabled, erased, removed from the domain, role lost\nU_D=\"e2e65-disabled\"\nU_E=\"e2e65-erased\"\nU_M=\"e2e65-member\"\nU_O=\"e2e65-roleless\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nFQDN=\"\"\nSITE_ID=\"\"\nID_D=\"\"\nID_E=\"\"\nID_M=\"\"\nID_O=\"\"\nAT_D=\"\"\nRT_D=\"\"\nAT_E=\"\"\nRT_E=\"\"\nAT_M=\"\"\nRT_M=\"\"\nAT_O=\"\"\nRT_O=\"\"\n\njar_of() { echo \"/tmp/e2e-65-$1.cookies\"; }\necho_url() { echo \"https://${FQDN}/api/${PLUGIN_A}/app/echo\"; }\n\n# in_audience <plugin> <userId> — the audience holds the user as an active member\nin_audience() {\n  [ \"$(audience_row \"$1\" \"$2\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\n# events_of <plugin> <userId> — the sign-in events its agent half holds for the user, as \"<clientId>\"s\nevents_of() {\n  sign_ins_of \"$1\" | jq -r --arg u \"$2\" '[.[] | select(.userId == $u) | .client.clientId] | join(\",\")' 2>/dev/null || echo \"?\"\n}\n# all_signed_in — e2e-nat65a's half holds an event for each of the four\nall_signed_in() {\n  local id\n  for id in \"${ID_D}\" \"${ID_E}\" \"${ID_M}\" \"${ID_O}\"; do\n    [ \"$(events_of \"${PLUGIN_A}\" \"$id\")\" = \"${CLIENT}\" ] || return 1\n  done\n}\n\n# grant_reason_of <userId> — why the user's grant ended (\"live\", \"none\" when it has no grant)\ngrant_reason_of() {\n  native_grants \"${CLIENT}\" all | jq -r --arg u \"$1\" '[.[] | select(.userId == $u)] | if length == 0 then \"none\" elif .[0].revokedAt == null then \"live\" else .[0].revokedReason end' 2>/dev/null || echo \"?\"\n}\ngrant_ended_as() { [ \"$(grant_reason_of \"$1\")\" = \"$2\" ]; }\n\n# assert_cut_off <who> <access token> <refresh token> — both refused now\nassert_cut_off() {\n  if bearer_refused \"$2\" \"$(echo_url)\"; then\n    log_pass \"…${1}'s access token is refused ($(bearer_status \"$2\" - \"$(echo_url)\"))\"\n  else\n    log_fail \"${1}'s access token: $(bearer_status \"$2\" - \"$(echo_url)\")\"\n  fi\n  native_refresh \"${CLIENT}\" \"$3\"\n  assert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…${1}'s refresh token: 400 invalid_grant\" || true\n}\n\nbegin_test \"65 — Native app: sign-ins end with the person's standing (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local u\n  native_cleanup \"${CLIENT}\"\n  drop_plugin_grants \"${PLUGIN_A}\"\n  drop_plugin_grants \"${PLUGIN_B}\"\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f /tmp/e2e-65-*.cookies /tmp/e2e-native-nobody.cookies; sed -i '/${SUB_W}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  for u in \"${U_D}\" \"${U_E}\" \"${U_M}\" \"${U_O}\"; do host_api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true; done\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}
