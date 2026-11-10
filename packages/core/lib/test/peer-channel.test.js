@@ -75,6 +75,7 @@ const state = {
   slowRelease: null,
   maxBodyBytes: 100 * 1024 * 1024,
   failGaps: 0,
+  pullSlotTaken: false,
 };
 const denials = [];
 
@@ -249,6 +250,7 @@ before(async () => {
           }
         : null,
     onDenied: (denial) => denials.push(denial),
+    acquireEventsPull: () => (state.pullSlotTaken ? null : () => {}),
   });
   const channels = createPeerChannelServer({ handle: gateway });
   relay = createPeerChannelManager({
@@ -584,4 +586,29 @@ test('a gap pending at a crash is reconciled at the next start', async () => {
     () =>
       consumer.db.prepare('SELECT gap_reason FROM lamaste_peer_cursors').get().gap_reason === null,
   );
+});
+
+test('an events pull while the slot is taken: 429 too_many_pulls, the loop backs off and resumes', async () => {
+  await waitFor(() => {
+    const row = consumer.db.prepare('SELECT cursor, gap_reason FROM lamaste_peer_cursors').get();
+    return row && row.cursor !== null && row.gap_reason === null;
+  });
+  const before = consumer.received.length;
+  state.pullSlotTaken = true;
+  try {
+    await new Promise((r) => setTimeout(r, 500));
+    provider.db.exec('BEGIN');
+    provider.outbox.publish({
+      scope: 'directory:read',
+      type: 'unit.renamed',
+      key: 'slot',
+      data: {},
+    });
+    provider.db.exec('COMMIT');
+    await new Promise((r) => setTimeout(r, 800));
+    assert.equal(consumer.received.length, before, 'nothing pulled while refused');
+  } finally {
+    state.pullSlotTaken = false;
+  }
+  await waitFor(() => consumer.received.some((e) => e.key === 'slot'), 15_000);
 });

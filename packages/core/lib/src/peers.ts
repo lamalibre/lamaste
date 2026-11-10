@@ -101,7 +101,7 @@ export const PEER_RELAY_HEADER = 'x-lamalibre-peer-relay';
  * provider's answer: refusals (`bad_path`, `hop_limit`, `not_granted`,
  * `endpoint_not_allowed`, `delegation_invalid`, `user_not_entitled`,
  * `version_mismatch`, `too_large`, `peer_unavailable`, `hooks_not_approved`,
- * `hook_rejected`, `hook_failed`) and failures of the forward itself
+ * `hook_rejected`, `hook_failed`, `too_many_pulls`) and failures of the forward itself
  * (`provider_unreachable`, `provider_unauthenticated`, `timeout`,
  * `relay_error`).
  */
@@ -119,6 +119,7 @@ export const PEER_RELAY_CODES = [
   'hooks_not_approved',
   'hook_rejected',
   'hook_failed',
+  'too_many_pulls',
   'provider_unreachable',
   'provider_unauthenticated',
   'timeout',

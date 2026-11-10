@@ -103,7 +103,7 @@ import {
   parsePeerEventsPullAnswer,
   parsePeerEventsRequest,
 } from '../peer-events.js';
-import type { PeerEventsChannelAnswer } from '../peer-events.js';
+import type { PeerEventsChannelAnswer, PeerEventsRequest } from '../peer-events.js';
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -175,6 +175,12 @@ export interface PeerGatewayOptions extends AgentForwardTimeouts {
   }): MaybePromise<PeerDelegationResolution>;
   /** The effective subscription consumer ← scope, or null (none granted or subscribed). */
   subscription(consumer: string, scope: string): MaybePromise<PeerGatewaySubscription | null>;
+  /**
+   * Take the one slot a consumer has for an outstanding events pull of a
+   * scope: a release function, or null while another pull of that scope is
+   * open (`429 too_many_pulls`). Without it pulls are not limited.
+   */
+  acquireEventsPull?: ((consumer: string, scope: string) => (() => void) | null) | undefined;
   /** The providers' request hooks; without it every call streams through untouched. */
   readonly hooks?: RequestHookRuntime | undefined;
   /** Called for every refusal (the caller rate-limits its audit). */
@@ -460,7 +466,30 @@ export function createPeerGateway(
     }
     const pull = parsePeerEventsRequest(parsed);
     if (!pull) return void refuse(res, 400, 'bad_request', 'Malformed events pull');
+    const release = opts.acquireEventsPull
+      ? opts.acquireEventsPull(consumer, pull.scope)
+      : () => {};
+    if (release === null) {
+      return void refuse(
+        res,
+        429,
+        'too_many_pulls',
+        'An events pull of this scope is already open',
+      );
+    }
+    try {
+      await pullEventsFor(res, consumer, pull, answer);
+    } finally {
+      release();
+    }
+  }
 
+  async function pullEventsFor(
+    res: Http2ServerResponse,
+    consumer: string,
+    pull: PeerEventsRequest,
+    answer: (status: number, body: PeerEventsChannelAnswer | Record<string, unknown>) => void,
+  ): Promise<void> {
     const subscription = await opts.subscription(consumer, pull.scope);
     if (!subscription) {
       denied(consumer, pull.scope, 'not_granted');
