@@ -976,7 +976,8 @@ function matchTotpStep(config, code, nowMs) {
  * storage. Authelia's CLI has no per-user lookup or verify, so the
  * configurations are exported as URIs to this process's memory (a pipe,
  * never a file) by the Authelia account, the user's found, the code
- * checked here. Prints `ok <step>` or `no` — nothing of the configuration;
+ * checked here. Prints `ok <step>`, `no` (a wrong code) or `none` (the user
+ * has no TOTP configuration) — nothing of the configuration;
  * a failure of the CLI is reported without its output (which would carry
  * every user's secret).
  */
@@ -996,7 +997,11 @@ function autheliaVerifyTotp(username) {
   const text = result.stdout || '';
   if (Buffer.byteLength(text) > MAX_TOTP_EXPORT_BYTES) throw new Error('the export is too large');
   const config = totpConfigFor(text, username);
-  const step = config === null ? null : matchTotpStep(config, code, Date.now());
+  if (config === null) {
+    process.stdout.write('none\n');
+    return;
+  }
+  const step = matchTotpStep(config, code, Date.now());
   process.stdout.write(step === null ? 'no\n' : `ok ${step}\n`);
 }
 
