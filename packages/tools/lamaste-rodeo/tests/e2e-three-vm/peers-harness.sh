@@ -629,10 +629,13 @@ peers_setup() {
 # peers_cleanup — the shelf removed, then app_plugin_cleanup (both plugins
 # uninstalled — their dependents broken on purpose — and their halves
 # removed on both agents), the second agent's push window closed
+# `lamaste-apphost remove` reads the relay's signed job from stdin: give it
+# none, so it refuses at once instead of waiting out the timeout (the
+# uninstall pipeline has already removed the half).
 peers_cleanup() {
   host_api_delete "peers/shelves/${SHELF_ID}" > /dev/null 2>&1 || true
   app_plugin_cleanup
-  timed_exec 120 multipass exec "${VISITOR_VM}" -- sudo bash -c "if [ -x ${APPHOST_HELPER} ]; then ${APPHOST_HELPER} remove ${AGENT2_LABEL_LOCAL} ${CONSUMER} --purge > /dev/null 2>&1; fi; true" > /dev/null 2>&1
+  timed_exec 120 multipass exec "${VISITOR_VM}" -- sudo bash -c "if [ -x ${APPHOST_HELPER} ]; then ${APPHOST_HELPER} remove ${AGENT2_LABEL_LOCAL} ${CONSUMER} --purge < /dev/null > /dev/null 2>&1; fi; true" > /dev/null 2>&1
   if [ -n "${AGENT2_PUSH_WINDOW}" ]; then
     host_api_delete "plugins/push-install/enable/${AGENT2_LABEL}" > /dev/null 2>&1 || true
   fi
