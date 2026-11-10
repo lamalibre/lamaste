@@ -22,6 +22,10 @@
  */
 
 import { saveAgentConfig, requireAgentConfig } from './config.js';
+import { effectiveTrustedScopes, packageScope } from '../trusted-scopes.js';
+import { readPluginRegistry } from './plugins.js';
+import { agentPluginsFile } from './platform.js';
+import { restartPanelService } from './service.js';
 import type { AgentConfig } from './config.js';
 import { loadChiselCredential, saveChiselCredential } from './chisel-credential.js';
 import {
@@ -52,6 +56,11 @@ export interface AgentConfigResponse {
    * it stores none (relay 4.3+); the sync hands it to `syncHostFacts`.
    */
   readonly hostFactsHash?: unknown;
+  /**
+   * The relay's trusted publisher scopes (effective list; relay 4.13+). The
+   * agent's own plugins follow it; converge records it in `config.json`.
+   */
+  readonly trustedScopes?: unknown;
 }
 
 export interface IssuedChiselCredential {
@@ -210,6 +219,7 @@ async function convergeLocked(
 
   const domain = await enrolledDomain(label, config, response);
   const spec = assertRelayServerUrl(parseChiselArgs(response.chiselArgs), domain);
+  const scopeWarnings = await recordTrustedScopes(label, response);
 
   // Operator stopped the tunnels, or there is nothing to carry: chisel must
   // not run (it exits at once without a remote, and would crash-loop).
@@ -226,7 +236,7 @@ async function convergeLocked(
     // does: unhosting a plugin withdraws its internal tunnel, often the
     // agent's last one, and its file (with the secret) must still go. Synced
     // after the stop, so a stop never waits on the relay.
-    const stopWarnings: string[] = [];
+    const stopWarnings: string[] = [...scopeWarnings];
     const appPlugins = await ensureAppPluginConfigs(label, response, panel, stopWarnings);
     return {
       state: stopState,
@@ -239,7 +249,7 @@ async function convergeLocked(
     };
   }
 
-  const warnings: string[] = [];
+  const warnings: string[] = [...scopeWarnings];
   const { credential, source } = await ensureCredential(label, config, response, panel, warnings);
   const binary = await ensureAgentChiselBinary();
 
@@ -294,6 +304,58 @@ async function ensureAppPluginConfigs(
     },
     warnings,
   );
+}
+
+/**
+ * Keep `config.json`'s `trustedScopes` equal to the relay's list. A relay
+ * that sends none (older than 4.13, or rolled back to one) gets the
+ * built-in scope alone — never a list it no longer vouches for. Only
+ * well-formed scopes are kept; the built-in scope is always first. Called
+ * under the agent lock.
+ *
+ * When the list loses a scope and an enabled agent plugin is from it, the
+ * agent daemon is restarted (through the service manager, detached), so the
+ * plugin host stops mounting it now rather than at the next restart.
+ */
+export async function recordTrustedScopes(
+  label: string,
+  response: AgentConfigResponse,
+): Promise<string[]> {
+  const next = [
+    ...effectiveTrustedScopes(
+      Array.isArray(response.trustedScopes) ? response.trustedScopes : undefined,
+    ),
+  ];
+  const fresh = await requireAgentConfig(label);
+  const previous = effectiveTrustedScopes(fresh.trustedScopes ?? undefined);
+  if (JSON.stringify(fresh.trustedScopes ?? null) === JSON.stringify(next)) return [];
+  await saveAgentConfig(label, { ...fresh, trustedScopes: next });
+
+  const dropped = previous.filter((scope) => !next.includes(scope));
+  if (dropped.length === 0) return [];
+  let registry;
+  try {
+    registry = await readPluginRegistry(agentPluginsFile(label));
+  } catch {
+    return [];
+  }
+  const affected = registry.plugins.filter(
+    (p) => p.status === 'enabled' && dropped.includes(packageScope(p.packageName) ?? ''),
+  );
+  if (affected.length === 0) return [];
+  const names = affected.map((p) => p.packageName).join(', ');
+  try {
+    await restartPanelService(label);
+    return [
+      `The relay no longer trusts ${dropped.join(', ')}; restarting the agent daemon so it stops running ${names}`,
+    ];
+  } catch (err: unknown) {
+    return [
+      `The relay no longer trusts ${dropped.join(', ')}, but the agent daemon could not be restarted to stop ${names}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    ];
+  }
 }
 
 /**

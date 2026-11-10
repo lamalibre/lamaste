@@ -121,7 +121,7 @@ test('manifest: the hooks block is checked strictly', () => {
   assert.match(req({ timeoutMs: 5000 }), /timeoutMs/);
   assert.match(req({ body: { maxBytes: 64 * 1024 * 1024 } }), /maxBytes/);
   assert.match(req({ onError: 'pass' }), /onError of a pre-forward hook/);
-  assert.match(req({ routes: ['/tunnels/x'] }), /under \/admin or \/app/);
+  assert.match(req({ routes: ['/tunnels/x'] }), /under \/admin, \/app or \/peer/);
   assert.match(req({ routes: ['FETCH /admin/x'] }), /Unknown method/);
   assert.match(req({ with: {} }), /"with" configures a shared hook/);
   // The secret scanner: post-forward, with a body, Lamaste packs only.

@@ -4,9 +4,11 @@
  * Per-agent config: ~/.lamalibre/lamaste/agents/<label>/config.json
  */
 
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteJSON } from '../file-helpers.js';
+import { effectiveTrustedScopes } from '../trusted-scopes.js';
 import { agentConfigPath, agentsDir } from './platform.js';
 import { validateLabel } from './registry.js';
 
@@ -81,6 +83,42 @@ export interface AgentConfig {
    * restarting it; "start" clears it.
    */
   tunnelsStopped?: boolean | undefined;
+  /**
+   * The trusted publisher scopes of this agent's relay, as its last
+   * `agent-config` answer listed them (`sync` keeps it current). The agent's
+   * own plugins install, update and mount only from these scopes. Absent —
+   * an older relay, or never synced — means `@lamalibre` alone.
+   */
+  trustedScopes?: string[] | undefined;
+}
+
+/**
+ * The trusted publisher scopes the agent `label` follows: its relay's list
+ * (`AgentConfig.trustedScopes`), the built-in scope alone when it has none.
+ */
+export async function agentTrustedScopes(label: string): Promise<readonly string[]> {
+  const config = await loadAgentConfig(label);
+  return effectiveTrustedScopes(
+    Array.isArray(config?.trustedScopes) ? config.trustedScopes : undefined,
+  );
+}
+
+/**
+ * {@link agentTrustedScopes}, read synchronously — for the plugin host's
+ * getter, which asks at every mount and bundle request, so a scope the relay
+ * dropped stops being served at the next request even when the daemon could
+ * not be restarted. Anything unreadable is the built-in scope alone.
+ */
+export function agentTrustedScopesSync(label: string): readonly string[] {
+  const configPath = safeAgentConfigPath(label);
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as { trustedScopes?: unknown };
+    return effectiveTrustedScopes(
+      Array.isArray(parsed?.trustedScopes) ? parsed.trustedScopes : undefined,
+    );
+  } catch {
+    return effectiveTrustedScopes();
+  }
 }
 
 // ---------------------------------------------------------------------------

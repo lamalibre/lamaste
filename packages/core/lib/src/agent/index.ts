@@ -89,7 +89,23 @@ export {
 export type { AgentRegistryEntry, AgentRegistry } from './registry.js';
 
 // Agent config
-export { loadAgentConfig, saveAgentConfig, requireAgentConfig } from './config.js';
+export {
+  loadAgentConfig,
+  saveAgentConfig,
+  requireAgentConfig,
+  agentTrustedScopes,
+  agentTrustedScopesSync,
+} from './config.js';
+export {
+  localTrustedScopesFile,
+  readLocalAdditionalTrustedScopes,
+  localTrustedScopes,
+  localTrustedScopesSync,
+  assertLocalScopeRouted,
+  addLocalTrustedScope,
+  removeLocalTrustedScope,
+  LocalTrustedScopeError,
+} from './local-trusted-scopes.js';
 export type { AgentConfig } from './config.js';
 
 // Curl config files (-K) left behind by a crash
@@ -155,7 +171,12 @@ export {
 export type { StoredChiselCredential } from './chisel-credential.js';
 export { ensureAgentChiselBinary, installedAgentChiselVersion } from './chisel-binary.js';
 export type { AgentChiselBinaryResult } from './chisel-binary.js';
-export { convergeChiselService, setAgentTunnelsStopped, updateAgentConfig } from './converge.js';
+export {
+  convergeChiselService,
+  setAgentTunnelsStopped,
+  updateAgentConfig,
+  recordTrustedScopes,
+} from './converge.js';
 export { withAgentLock } from './agent-lock.js';
 
 // App plugins (hosting an agent-hosted plugin's agent half on this agent)
@@ -454,3 +475,31 @@ export {
   etcEcosystemRoot,
   etcProductRoot,
 } from '../branding.js';
+
+// Peers: calls to other app plugins, their events, the peer surface (design: slice 8)
+export { createPeers, PeerCallError } from './peer-client.js';
+export type {
+  Peers,
+  PeersOptions,
+  PeersLogger,
+  PeerCallOptions,
+  PeerResponse,
+  PeerRequestLike,
+  PeerEventHandler,
+  PeerGapNotice,
+  PeerCaller,
+} from './peer-client.js';
+export { createPeerOutbox, createPeerOutboxHandler } from './peer-outbox.js';
+export type {
+  PeerOutbox,
+  PeerOutboxOptions,
+  PeerOutboxState,
+  PeerEventInput,
+  PeerSqlDatabase,
+  PeerSqlStatement,
+  PeerSqlValue,
+} from './peer-outbox.js';
+export { peerSurface, peerRoute, createPeerAdminHandler } from './peer-surface.js';
+export type { PeerSurfaceOptions, PeerRouteHandler, PeerRouteOptions } from './peer-surface.js';
+export { peerContextOf } from './peer-context.js';
+export type { PeerRequestContext } from './peer-context.js';

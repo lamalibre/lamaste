@@ -11,6 +11,7 @@ import {
   localDir,
   localPluginsFile,
   localPluginsDir,
+  localTrustedScopesSync,
   readPluginRegistry,
 } from '@lamalibre/lamaste/agent';
 
@@ -75,6 +76,9 @@ export async function startLocalPluginHost({ port = 9293 } = {}) {
     readRegistry: () => readPluginRegistry(registryPath),
     auth: 'none',
     reservedPrefixes: new Set(['api', 'health']),
+    // Read at start: a change of the local list takes effect at the host's
+    // next restart (the desktop restarts it after every lifecycle change).
+    trustedScopes: () => localTrustedScopesSync(),
   });
 
   await server.listen({ host: '127.0.0.1', port });

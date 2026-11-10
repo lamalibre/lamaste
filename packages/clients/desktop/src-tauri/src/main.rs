@@ -39,6 +39,7 @@ mod services;
 mod shell_env;
 mod plugins;
 mod tray;
+mod trusted_scopes;
 mod upgrade_admin;
 mod user_access;
 
@@ -388,6 +389,12 @@ fn main() {
             admin_commands::admin_remove_domain_member,
             admin_commands::admin_set_plugin_domain,
             admin_commands::admin_set_domain_language,
+            admin_commands::admin_get_trusted_scopes,
+            admin_commands::admin_add_trusted_scope,
+            admin_commands::admin_remove_trusted_scope,
+            admin_commands::admin_get_peers,
+            admin_commands::admin_apply_peer_shelf,
+            admin_commands::admin_remove_peer_shelf,
             admin_commands::admin_get_domain_branding,
             admin_commands::admin_update_domain_branding,
             admin_commands::admin_remove_domain_branding,

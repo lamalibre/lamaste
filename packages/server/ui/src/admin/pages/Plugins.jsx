@@ -22,6 +22,7 @@ import { useOidcSecretReveal } from '../components/OidcSecretReveal.jsx';
 import { PluginHooks, PluginOperation, PluginUpdate } from '../components/PluginLifecycle.jsx';
 import PluginHostDialog from '../components/PluginHostDialog.jsx';
 import PluginIdentity from '../components/PluginIdentity.jsx';
+import PluginPeers, { PeerDependentsDialog } from '../components/PluginPeers.jsx';
 import PluginSettings, { NeedsConfigurationBadge } from '../components/PluginSettings.jsx';
 import PluginWebSurface from '../components/PluginWebSurface.jsx';
 import PluginDomain from '../components/PluginDomain.jsx';
@@ -29,6 +30,7 @@ import PluginOidcClients from '../components/PluginOidcClients.jsx';
 import PluginInvitations from '../components/PluginInvitations.jsx';
 import { declaresInvitingRole } from '../lib/invitations.js';
 import PushInstallSection from '../components/PushInstallSection.jsx';
+import TrustedScopesSection from '../components/TrustedScopesSection.jsx';
 import { PluginRetainedData, UninstalledRetainedData } from '../components/RetainedData.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import RefreshNote from '../components/RefreshNote.jsx';
@@ -377,6 +379,7 @@ function PluginCard({
         plugin.hooks?.agentHalf ||
         plugin.identity ||
         plugin.userSurface?.web ||
+        plugin.peers ||
         plugin.hooks?.pendingUpdate) && <PluginHooks plugin={plugin} isActing={isActing} />}
 
       {hasAgentHalf && (
@@ -396,6 +399,7 @@ function PluginCard({
       <PluginDomain plugin={plugin} />
       <PluginOidcClients plugin={plugin} />
       {plugin.identity && <PluginIdentity plugin={plugin} />}
+      <PluginPeers plugin={plugin} />
       {declaresInvitingRole(plugin) && <PluginInvitations plugin={plugin} />}
 
       {showsWebSurface(plugin, ownedRoutes) && <PluginWebSurface plugin={plugin} />}
@@ -497,7 +501,7 @@ function InstallForm({ onInstall, isInstalling }) {
           type="text"
           value={packageName}
           onChange={(e) => setPackageName(e.target.value)}
-          placeholder="@lamalibre/..."
+          placeholder="@lamalibre/... (or another trusted scope)"
           className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-cyan-400"
         />
       </div>
@@ -855,15 +859,26 @@ export default function Plugins() {
   });
 
   // A refused uninstall or hosting removal; `hosting` names the agent the
-  // refusal is about.
-  const toastRemovalRefused = (err, { hosting }) =>
-    addToast(refusalText(err, { agentLabel: hosting?.agentLabel, action: 'uninstall' }), 'error');
+  // refusal is about. Other plugins relying on it (`peer_dependents`) is a
+  // question, not an error: the dialog lists them and can go on anyway.
+  const [peerRefusal, setPeerRefusal] = useState(null);
+  const removalRefused = (kind) => (err, variables) => {
+    if (err?.code === 'peer_dependents' && Array.isArray(err.consumers)) {
+      setPeerRefusal({ kind, ...variables, consumers: err.consumers });
+      return;
+    }
+    addToast(
+      refusalText(err, { agentLabel: variables.hosting?.agentLabel, action: 'uninstall' }),
+      'error',
+    );
+  };
 
   // A hosted plugin's hosting goes first (its uninstall pipeline, an
   // operation) — with the agent half Lamaste installed, and its data when
   // `purge` is set; `hosting` names the agent a refusal is about.
   const uninstallMutation = useMutation({
-    mutationFn: ({ name, purge }) => client.uninstallPlugin(name, { purge }),
+    mutationFn: ({ name, purge, breakPeers }) =>
+      client.uninstallPlugin(name, { purge, breakPeers }),
     onSuccess: (data, { name, purge }) => {
       queryClient.invalidateQueries({ queryKey: ['plugins'] });
       if (data.operation) {
@@ -875,7 +890,7 @@ export default function Plugins() {
         addToast(`Plugin "${data.name}" uninstalled`);
       }
     },
-    onError: toastRemovalRefused,
+    onError: removalRefused('uninstall'),
   });
 
   // Hosting and clearing it run the plugin's install / uninstall pipelines
@@ -890,15 +905,29 @@ export default function Plugins() {
   });
 
   const unhostMutation = useMutation({
-    mutationFn: ({ name, force, purge }) => client.clearPluginHosting(name, { force, purge }),
+    mutationFn: ({ name, force, purge, breakPeers }) =>
+      client.clearPluginHosting(name, { force, purge, breakPeers }),
     onSuccess: (_data, { name, purge }) => {
       queryClient.invalidateQueries({ queryKey: ['plugin-operations', name] });
       addToast(
         `Removing the hosting of "${name}"${purge ? ' and its agent half’s data' : ''} — follow the steps on its card`,
       );
     },
-    onError: toastRemovalRefused,
+    onError: removalRefused('unhost'),
   });
+
+  // The administrator chose to break the plugins that rely on it.
+  const confirmBreakPeers = () => {
+    const { kind, name, purge, force, hosting } = peerRefusal;
+    setPeerRefusal(null);
+    (kind === 'unhost' ? unhostMutation : uninstallMutation).mutate({
+      name,
+      purge,
+      force,
+      hosting,
+      breakPeers: true,
+    });
+  };
 
   const rotateMutation = useMutation({
     mutationFn: (name) => client.rotatePluginHostingSecret(name),
@@ -1013,11 +1042,22 @@ export default function Plugins() {
         </div>
       )}
 
+      {peerRefusal && (
+        <PeerDependentsDialog
+          refusal={peerRefusal}
+          isPending={isActing}
+          onConfirm={confirmBreakPeers}
+          onCancel={() => setPeerRefusal(null)}
+        />
+      )}
+
       <UninstalledRetainedData
         records={retainedData}
         installedNames={installedNames}
         isActing={isActing}
       />
+
+      <TrustedScopesSection />
 
       <PushInstallSection>
         <PushInstallPolicies />

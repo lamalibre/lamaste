@@ -1,0 +1,1036 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 59,
+    "name": "A call on behalf of a user",
+    "suite": "e2e-three-vm",
+    "description": "59 — A call on behalf of a user (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    }
+  },
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-users-both-plugins-hosted-the-shelf-applied",
+      "label": "Pre-flight, users, both plugins hosted, the shelf applied",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "The visitor VM has no oathtool: no one can sign in",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The visitor VM has no oathtool: no one can sign in"
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "DELETE /api/peers/shelves/${SHELF_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "peers/shelves/${SHELF_ID}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-6",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-59-peers-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${BOTH}\\\",\\\"displayname\\\":\\\"E2E Both\\\",\\\"email\\\":\\\"${BOTH}@example.test\\\",\\\"password\\\":\\\"${BOTH_PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "User ${BOTH} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${BOTH} created"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Set BOTH_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "BOTH_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${ONLY}\\\",\\\"displayname\\\":\\\"E2E Only\\\",\\\"email\\\":\\\"${ONLY}@example.test\\\",\\\"password\\\":\\\"${ONLY_PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "User ${ONLY} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${ONLY} created"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Set ONLY_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "ONLY_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "apply_shelf"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "The shelf grants ${SCOPE_READ} to ${CONSUMER}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The shelf grants ${SCOPE_READ} to ${CONSUMER}"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${CONSUMER}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${BOTH}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "${BOTH} entitled to ${CONSUMER} (viewer)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${BOTH} entitled to ${CONSUMER} (viewer)"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PROVIDER}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${BOTH}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "${BOTH} entitled to ${PROVIDER} (viewer)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${BOTH} entitled to ${PROVIDER} (viewer)"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${CONSUMER}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${ONLY}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "${ONLY} entitled to ${CONSUMER} only",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${ONLY} entitled to ${CONSUMER} only"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "The audiences hold them: ${BOTH} in both, ${ONLY} in ${CONSUMER}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The audiences hold them: ${BOTH} in both, ${ONLY} in ${CONSUMER}"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Audiences: $(audience_row \"${PROVIDER}\" \"${BOTH_ID}\") $(audience_row \"${CONSUMER}\" \"${ONLY_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Audiences: $(audience_row \"${PROVIDER}\" \"${BOTH_ID}\") $(audience_row \"${CONSUMER}\" \"${ONLY_ID}\")"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight, users, both plugins hosted, the shelf applied\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nif ! visitor_has_oathtool; then\n  log_fail \"The visitor VM has no oathtool: no one can sign in\"\n  end_test\n  exit $?\nfi\ndrop_plugin_grants \"${CONSUMER}\"\ndrop_plugin_grants \"${PROVIDER}\"\nfor user in \"${BOTH}\" \"${ONLY}\"; do host_api_delete \"users/${user}?erase=true\" > /dev/null 2>&1 || true; done\nhost_api_delete \"peers/shelves/${SHELF_ID}\" > /dev/null 2>&1 || true\nLOCAL_TMP=$(mktemp -d /tmp/e2e-59-peers-XXXXXXXX)\nFQDN=\"${SUB}.${DOMAIN:-}\"\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${BOTH}\\\",\\\"displayname\\\":\\\"E2E Both\\\",\\\"email\\\":\\\"${BOTH}@example.test\\\",\\\"password\\\":\\\"${BOTH_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${BOTH} created\" || true\nBOTH_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${ONLY}\\\",\\\"displayname\\\":\\\"E2E Only\\\",\\\"email\\\":\\\"${ONLY}@example.test\\\",\\\"password\\\":\\\"${ONLY_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${ONLY} created\" || true\nONLY_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\n\npeers_setup \"${POLICY_ID}\"\nFQDN=\"${SUB}.${DOMAIN}\"\nRESP=$(apply_shelf)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The shelf grants ${SCOPE_READ} to ${CONSUMER}\" || true\n\nRESP=$(host_api_call PUT \"plugins/${CONSUMER}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${BOTH}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${BOTH} entitled to ${CONSUMER} (viewer)\" || true\nRESP=$(host_api_call PUT \"plugins/${PROVIDER}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${BOTH}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${BOTH} entitled to ${PROVIDER} (viewer)\" || true\nRESP=$(host_api_call PUT \"plugins/${CONSUMER}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${ONLY}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${ONLY} entitled to ${CONSUMER} only\" || true\nif wait_for 60 in_audience \"${CONSUMER}\" \"${BOTH_ID}\" && wait_for 60 in_audience \"${PROVIDER}\" \"${BOTH_ID}\" && wait_for 60 in_audience \"${CONSUMER}\" \"${ONLY_ID}\"; then\n  log_pass \"The audiences hold them: ${BOTH} in both, ${ONLY} in ${CONSUMER}\"\nelse\n  log_fail \"Audiences: $(audience_row \"${PROVIDER}\" \"${BOTH_ID}\") $(audience_row \"${CONSUMER}\" \"${ONLY_ID}\")\"\nfi\n\n# ===========================================================================\n# The consumer's user surface on its own agent\n# ==========================================================================="
+    },
+    {
+      "id": "the-consumer-s-user-surface-on-a-tunnel-its-hosting-agent-carries",
+      "label": "The consumer's user surface, on a tunnel its hosting agent carries",
+      "steps": [
+        {
+          "id": "step-26",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Set TUNNEL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RESP\" '.tunnel.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Tunnel ${FQDN}, carried by ${AGENT2_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESP"
+              },
+              "path": "\"\\(.tunnel.fqdn) \\(.tunnel.agentLabel)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${FQDN} ${AGENT2_LABEL}"
+              },
+              "message": "Tunnel ${FQDN}, carried by ${AGENT2_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"tunnels/${TUNNEL}/user-surface\" \"{\\\"route\\\":\\\"${CONSUMER}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Bound as ${CONSUMER}'s user surface",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Bound as ${CONSUMER}'s user surface"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "…served: the tunnel's agent is the plugin's hosting agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".tunnel.userSurfaceStatus[0] | \"\\(.route) \\(.served)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${CONSUMER} true"
+              },
+              "message": "…served: the tunnel's agent is the plugin's hosting agent"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Set SECRET_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${BOTH}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Set SECRET_O",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${ONLY}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_O",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "${BOTH} signed in from the visitor VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sign_in \"${BOTH}\" \"${BOTH_PASSWORD}\" \"${SECRET_B}\" \"${JAR_BOTH}\" \"${FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${BOTH} signed in from the visitor VM"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "${ONLY} signed in",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sign_in \"${ONLY}\" \"${ONLY_PASSWORD}\" \"${SECRET_O}\" \"${JAR_ONLY}\" \"${FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${ONLY} signed in"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The consumer's user surface, on a tunnel its hosting agent carries\"\n\nRESP=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB}\\\",\\\"port\\\":${PORT_SUB},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT2_LABEL}\\\"}\")\nTUNNEL=$(json_get \"$RESP\" '.tunnel.id // empty')\nassert_json_field \"$RESP\" '\"\\(.tunnel.fqdn) \\(.tunnel.agentLabel)\"' \"${FQDN} ${AGENT2_LABEL}\" \"Tunnel ${FQDN}, carried by ${AGENT2_LABEL}\" || true\nRESP=$(host_api_call PUT \"tunnels/${TUNNEL}/user-surface\" \"{\\\"route\\\":\\\"${CONSUMER}\\\"}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Bound as ${CONSUMER}'s user surface\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.tunnel.userSurfaceStatus[0] | \"\\(.route) \\(.served)\"' \"${CONSUMER} true\" \"…served: the tunnel's agent is the plugin's hosting agent\" || true\nvisitor_exec \"grep -q '${FQDN}' /etc/hosts || echo '${HOST_IP} ${FQDN}' >> /etc/hosts\" > /dev/null 2>&1 || true\n\nSECRET_B=$(reset_totp \"${BOTH}\")\nSECRET_O=$(reset_totp \"${ONLY}\")\nwait_for_next_totp_window\nassert_eq \"$(sign_in \"${BOTH}\" \"${BOTH_PASSWORD}\" \"${SECRET_B}\" \"${JAR_BOTH}\" \"${FQDN}\")\" \"OK OK\" \"${BOTH} signed in from the visitor VM\" || true\nassert_eq \"$(sign_in \"${ONLY}\" \"${ONLY_PASSWORD}\" \"${SECRET_O}\" \"${JAR_ONLY}\" \"${FQDN}\")\" \"OK OK\" \"${ONLY} signed in\" || true\nSECRET_B=\"\"\nSECRET_O=\"\"\n\n# ===========================================================================\n# 1. On behalf of a user entitled to both\n# ==========================================================================="
+    },
+    {
+      "id": "on-behalf-of-both-the-provider-learns-who",
+      "label": "On behalf of ${BOTH}: the provider learns who",
+      "steps": [
+        {
+          "id": "step-40",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "me_via_peer \"${JAR_BOTH}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "GET ${APP}/me-via-peer as ${BOTH}: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$OUT\" | head -n 1)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "GET ${APP}/me-via-peer as ${BOTH}: 200"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Set BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$OUT\" | tail -n 1"
+          },
+          "capture": [
+            {
+              "variable": "BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "The relay gave the consumer a delegation with the request",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BODY"
+              },
+              "path": ".delegated",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The relay gave the consumer a delegation with the request"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "The call on ${BOTH}'s behalf: 200 from the provider ($(json_get \"$BODY\" '.result.error.code // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BODY"
+              },
+              "path": ".result.status",
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The call on ${BOTH}'s behalf: 200 from the provider ($(json_get \"$BODY\" '.result.error.code // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "…the peer caller: ${CONSUMER}, its endpoint",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BODY"
+              },
+              "path": ".result.body.caller | \"\\(.type) \\(.peer) \\(.endpoint)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "peer ${CONSUMER} GET /people/:userId/info"
+              },
+              "message": "…the peer caller: ${CONSUMER}, its endpoint"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "…and the user: the directory's id, the username, the roles in the provider",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BODY"
+              },
+              "path": ".result.body.caller.user | \"\\(.userId) \\(.username) \\(.roles | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${BOTH_ID} ${BOTH} viewer"
+              },
+              "message": "…and the user: the directory's id, the username, the roles in the provider"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "…for the path the consumer built from the user it was told",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BODY"
+              },
+              "path": ".result.body.userId",
+              "expected": {
+                "kind": "var",
+                "name": "BOTH_ID"
+              },
+              "message": "…for the path the consumer built from the user it was told"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"On behalf of ${BOTH}: the provider learns who\"\n\nOUT=$(me_via_peer \"${JAR_BOTH}\")\nassert_eq \"$(echo \"$OUT\" | head -n 1)\" \"200\" \"GET ${APP}/me-via-peer as ${BOTH}: 200\" || true\nBODY=$(echo \"$OUT\" | tail -n 1)\nassert_json_field \"$BODY\" '.delegated' 'true' \"The relay gave the consumer a delegation with the request\" || true\nassert_json_field \"$BODY\" '.result.status' '200' \"The call on ${BOTH}'s behalf: 200 from the provider ($(json_get \"$BODY\" '.result.error.code // \"\"'))\" || true\nassert_json_field \"$BODY\" '.result.body.caller | \"\\(.type) \\(.peer) \\(.endpoint)\"' \"peer ${CONSUMER} GET /people/:userId/info\" \"…the peer caller: ${CONSUMER}, its endpoint\" || true\nassert_json_field \"$BODY\" '.result.body.caller.user | \"\\(.userId) \\(.username) \\(.roles | join(\",\"))\"' \"${BOTH_ID} ${BOTH} viewer\" \"…and the user: the directory's id, the username, the roles in the provider\" || true\nassert_json_field \"$BODY\" '.result.body.userId' \"${BOTH_ID}\" \"…for the path the consumer built from the user it was told\" || true\n\n# ===========================================================================\n# 2. A user outside the provider's audience\n# ==========================================================================="
+    },
+    {
+      "id": "on-behalf-of-only-whom-the-provider-s-audience-does-not-hold",
+      "label": "On behalf of ${ONLY}, whom the provider's audience does not hold",
+      "steps": [
+        {
+          "id": "step-48",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "me_via_peer \"${JAR_ONLY}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "GET ${APP}/me-via-peer as ${ONLY}: the consumer answers",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$OUT\" | head -n 1)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "GET ${APP}/me-via-peer as ${ONLY}: the consumer answers"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "…its call on ${ONLY}'s behalf: 403 user_not_entitled — never named to the provider",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(echo \"$OUT\" | tail -n 1)"
+              },
+              "path": "\"\\(.result.error.code) \\(.result.error.status)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "user_not_entitled 403"
+              },
+              "message": "…its call on ${ONLY}'s behalf: 403 user_not_entitled — never named to the provider"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"On behalf of ${ONLY}, whom the provider's audience does not hold\"\n\nOUT=$(me_via_peer \"${JAR_ONLY}\")\nassert_eq \"$(echo \"$OUT\" | head -n 1)\" \"200\" \"GET ${APP}/me-via-peer as ${ONLY}: the consumer answers\" || true\nassert_json_field \"$(echo \"$OUT\" | tail -n 1)\" '\"\\(.result.error.code) \\(.result.error.status)\"' 'user_not_entitled 403' \"…its call on ${ONLY}'s behalf: 403 user_not_entitled — never named to the provider\" || true\n\n# ===========================================================================\n# 3. A forged delegation\n# ==========================================================================="
+    },
+    {
+      "id": "a-delegation-the-consumer-made-up",
+      "label": "A delegation the consumer made up",
+      "steps": [
+        {
+          "id": "step-51",
+          "label": "Set CALLS_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "provider_peerlog | jq '.calls | length' 2>/dev/null || echo -1"
+          },
+          "capture": [
+            {
+              "variable": "CALLS_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "consumer_call \"${SCOPE_READ}\" GET \"/people/${BOTH_ID}/info\" null forge"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "A made-up delegation: 401 delegation_invalid",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.error.code) \\(.error.status)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "delegation_invalid 401"
+              },
+              "message": "A made-up delegation: 401 delegation_invalid"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "…the provider's handler never ran",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(provider_peerlog | jq '.calls | length' 2>/dev/null || echo -2)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "CALLS_BEFORE"
+              },
+              "message": "…the provider's handler never ran"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "consumer_call \"${SCOPE_READ}\" GET \"/people/${BOTH_ID}/info\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Without a delegation the same call is the plugin's own: no user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": "\"\\(.status) \\(.body.caller.user // \"none\")\"",
+              "expected": {
+                "kind": "literal",
+                "value": "200 none"
+              },
+              "message": "Without a delegation the same call is the plugin's own: no user"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A delegation the consumer made up\"\n\nCALLS_BEFORE=$(provider_peerlog | jq '.calls | length' 2>/dev/null || echo -1)\nOUT=$(consumer_call \"${SCOPE_READ}\" GET \"/people/${BOTH_ID}/info\" null forge)\nassert_json_field \"$OUT\" '\"\\(.error.code) \\(.error.status)\"' 'delegation_invalid 401' \"A made-up delegation: 401 delegation_invalid\" || true\nassert_eq \"$(provider_peerlog | jq '.calls | length' 2>/dev/null || echo -2)\" \"${CALLS_BEFORE}\" \"…the provider's handler never ran\" || true\nOUT=$(consumer_call \"${SCOPE_READ}\" GET \"/people/${BOTH_ID}/info\")\nassert_json_field \"$OUT\" '\"\\(.status) \\(.body.caller.user // \"none\")\"' '200 none' \"Without a delegation the same call is the plugin's own: no user\" || true\n\n# ===========================================================================\n# 4. Disabled\n# ==========================================================================="
+    },
+    {
+      "id": "both-disabled",
+      "label": "${BOTH} disabled",
+      "steps": [
+        {
+          "id": "step-57",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call PUT \"users/${BOTH}\" '{\"disabled\":true}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "${BOTH} disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${BOTH} disabled"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Set CALLS_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "provider_peerlog | jq '.calls | length' 2>/dev/null || echo -1"
+          },
+          "capture": [
+            {
+              "variable": "CALLS_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "me_via_peer \"${JAR_BOTH}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "${BOTH}'s next request is refused at the user surface ($(echo \"$OUT\" | head -n 1))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "literal",
+                "value": "401 403"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "$(echo \"$OUT\" | head -n 1)"
+              },
+              "message": "${BOTH}'s next request is refused at the user surface ($(echo \"$OUT\" | head -n 1))"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "…and nothing is called on their behalf",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(provider_peerlog | jq '.calls | length' 2>/dev/null || echo -2)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "CALLS_BEFORE"
+              },
+              "message": "…and nothing is called on their behalf"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"${BOTH} disabled\"\n\nRESP=$(users_call PUT \"users/${BOTH}\" '{\"disabled\":true}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${BOTH} disabled\" || true\nCALLS_BEFORE=$(provider_peerlog | jq '.calls | length' 2>/dev/null || echo -1)\nOUT=$(me_via_peer \"${JAR_BOTH}\")\nassert_contains \"401 403\" \"$(echo \"$OUT\" | head -n 1)\" \"${BOTH}'s next request is refused at the user surface ($(echo \"$OUT\" | head -n 1))\" || true\nassert_eq \"$(provider_peerlog | jq '.calls | length' 2>/dev/null || echo -2)\" \"${CALLS_BEFORE}\" \"…and nothing is called on their behalf\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 59 — A call on behalf of a user (Three-VM)\n# ============================================================================\n# Slice 8's identity propagation. The consumer e2e-pcons (hosted on the\n# visitor VM's second agent) has a user surface — an authenticated tunnel the\n# second agent carries, bound to its route — and its /app/me-via-peer calls\n# the provider e2e-pdir (agent VM) on behalf of the person asking\n# (onBehalfOf: the request, so the delegation the relay gave with it):\n#\n# 1. A user entitled to both plugins (viewer in each): the provider sees the\n#    peer caller with the user — the directory's userId, the username, the\n#    user's roles in the provider — and the consumer was given a delegation\n#    with the request.\n# 2. A user entitled to the consumer only: the relay refuses to name them to\n#    a provider whose audience does not hold them (403 user_not_entitled).\n# 3. A delegation the consumer makes up (as a plugin inventing a user\n#    would): 401 delegation_invalid; the provider's handler never runs.\n# 4. Once the both-plugins user is disabled, their next request is refused at\n#    the user surface already, and no call is made on their behalf.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=peers-harness.sh\nsource \"${SCRIPT_DIR}/peers-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\nPOLICY_ID=\"e2e-apphost-59\"\nREMOTE_DIR=\"/var/tmp/e2e-59-peers\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${CONSUMER} ${PROVIDER}\"\nCLEAN_ROUTES=\"${PROVIDER}\"\nPURGE_PACKAGES=\"\"\nBOTH=\"e2e59-both\"\nONLY=\"e2e59-only\"\nBOTH_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nONLY_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR_BOTH=\"/tmp/e2e-59-both.cookies\"\nJAR_ONLY=\"/tmp/e2e-59-only.cookies\"\nSUB=\"e2e59pc\"\nPORT_SUB=18459\nTUNNEL=\"\"\nFQDN=\"\"\nBOTH_ID=\"\"\nONLY_ID=\"\"\nAPP=\"/api/${CONSUMER}/app\"\n\nbegin_test \"59 — A call on behalf of a user (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  drop_plugin_grants \"${CONSUMER}\"\n  drop_plugin_grants \"${PROVIDER}\"\n  if [ -n \"${TUNNEL}\" ]; then host_api_delete \"tunnels/${TUNNEL}\" > /dev/null 2>&1 || true; fi\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f ${JAR_BOTH} ${JAR_ONLY}; sed -i '/${SUB}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  for id in \"${BOTH}\" \"${ONLY}\"; do host_api_delete \"users/${id}?erase=true\" > /dev/null 2>&1 || true; done\n  for id in ${BOTH_ID} ${ONLY_ID}; do host_api_post \"identity/directory/${id}/erase\" '{}' > /dev/null 2>&1 || true; done\n  peers_cleanup\n}\ntrap cleanup EXIT\n\n# me_via_peer <jar> — the user's GET /api/e2e-pcons/app/me-via-peer from the\n# visitor VM: status, a blank, then the JSON body on one line\nme_via_peer() {\n  local resp\n  resp=$(visit \"$1\" \"https://${FQDN}${APP}/me-via-peer\")\n  printf '%s\\n%s\\n' \"$(visit_status \"$resp\")\" \"$(visit_body \"$resp\" | jq -c . 2>/dev/null || echo '{}')\"\n}\nin_audience() { [ \"$(audience_row \"$1\" \"$2\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]; }\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

@@ -6,7 +6,7 @@ Two generic mechanisms a plugin can build on, first used by Feria (the Lamalibre
 
 Agents install plugins with `npm install` from the Lamalibre registry. A networked registry accepts nothing anonymously, and an agent must never hold a long-lived registry credential. So the panel holds one credential for the registry and, each time an agent is about to install a plugin, asks the registry for a one-hour read-only token owned by that agent. The agent writes it to a throw-away npm configuration file for that one install and deletes it afterwards.
 
-The panel's own npm calls use the same credential: installing a plugin, fetching a version to stage an update, and reading an agent package's integrity to pin it all run with npm routed to the credential's registry for its scope and authenticated with the panel's service token — through a throw-away userconfig of the same kind (0600 in a private temporary directory, named to npm as `npm_config_userconfig`, removed once npm has run), never the service account's `~/.npmrc`. A registry that answers `401` has the token obtained again once; a token still refused, or `403`, fails the operation naming the registry and the status. Without a credential the panel's npm runs as the machine configures it (the public registry by default).
+The panel's own npm calls use the same credential: installing a plugin, fetching a version to stage an update, and reading an agent package's integrity to pin it all run with npm routed to the credential's registry for every trusted publisher scope (`@lamalibre` and any the administrator added — the registry hosts them all; see [Settings](settings.md#trusted-publisher-scopes)) and authenticated with the panel's service token — through a throw-away userconfig of the same kind (0600 in a private temporary directory, named to npm as `npm_config_userconfig`, removed once npm has run), never the service account's `~/.npmrc`. A registry that answers `401` has the token obtained again once; a token still refused, or `403`, fails the operation naming the registry and the status. Without a credential the panel's npm runs as the machine configures it (the public registry by default).
 
 The panel itself can authenticate to the registry in two ways: with a long-lived token an administrator pasted in, or — the recommended way — as its own **service principal**: an OpenID Connect client on the relay's Authelia named `lamaste-server`. In that mode nothing long-lived is pasted anywhere; the panel proves its identity to Authelia with a secret it generated itself, Authelia issues a short-lived JWT, and the registry exchanges that JWT for a registry token.
 
@@ -160,7 +160,7 @@ Admin only. What is configured — never a token.
 
 ### `PUT /api/registry-credential`
 
-Admin only, 10 per minute. Verifies the whole chain against the registry, then stores the credential at `/etc/lamalibre/lamaste/registry-credential.json` (0600). From then on the panel's own installs, update staging and agent-half pinning authenticate to `registryUrl` for `scope` with the service token (see In Plain English); a package published only there installs from the panel.
+Admin only, 10 per minute. Verifies the whole chain against the registry — and, while additional trusted publisher scopes are configured, that the new registry hosts each of them (`409 registry_lacks_scope` with `scopes` otherwise) —, then stores the credential at `/etc/lamalibre/lamaste/registry-credential.json` (0600). From then on the panel's own installs, update staging and agent-half pinning authenticate to `registryUrl` for `scope` with the service token (see In Plain English); a package published only there installs from the panel.
 
 ```json
 { "registryUrl": "https://feria.example.com", "auth": { "kind": "oidc" } }
@@ -179,7 +179,7 @@ With `oidc`, the Feria token the panel obtains is cached in the panel process un
 
 ### `DELETE /api/registry-credential`
 
-Admin only. Removes the credential; with `oidc`, also removes the `lamaste-server` client from Authelia and deletes its secret.
+Admin only. Removes the credential; with `oidc`, also removes the `lamaste-server` client from Authelia and deletes its secret. Refused with `409 trusted_scopes_need_registry` (and `scopes`) while additional trusted publisher scopes are configured: their packages install only from the registry that hosts them.
 
 ```json
 { "configured": false, "removed": true }
@@ -193,12 +193,14 @@ Agent certificates only; identity is the certificate label, never a parameter. R
 {
   "registryUrl": "https://feria.example.com/",
   "scope": "@lamalibre",
+  "scopes": ["@lamalibre", "@example"],
   "token": "feria_…",
   "expiresAt": "2026-10-13T11:00:00.000Z",
   "tokenId": "7c1e…"
 }
 ```
 
+- `scopes` (relay 4.13+) are the relay's trusted publisher scopes; the agent routes every one of them to the registry (`scope` alone from an older relay). An agent installs a package of a scope other than `@lamalibre` only through this credential, never through the machine's own npm configuration.
 - The token is cached per agent until five minutes before it expires, so every install within the hour gets the same one.
 - An agent may be issued at most **ten new tokens per hour**; beyond that the route answers `429` with `Retry-After` (seconds) and `retryAfterSeconds`. The per-IP limit (30 per minute) remains as a backstop.
 - `403` for any other certificate — an admin certificate has no agent identity to broker for (plugin-agent certificates get `400`); `404` when no registry credential is configured (the agent installs from the public registry as before); `502` when the registry refuses.

@@ -72,6 +72,10 @@ try {
   result = await build({
     absWorkingDir: workspaceRoot,
     entryPoints: [path.resolve(opts.entry)],
+    // The fixture's source lives in a temporary directory: packages it
+    // bundles besides core (Fastify, for the peers fixtures) resolve from
+    // the workspace's node_modules.
+    nodePaths: [path.join(workspaceRoot, 'node_modules')],
     outfile,
     bundle: true,
     platform: 'node',

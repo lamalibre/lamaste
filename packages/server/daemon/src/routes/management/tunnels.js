@@ -32,8 +32,10 @@ import {
   PLUGIN_AGENT_CN_PREFIX,
   RESERVED_TUNNEL_PORTS,
   isInternalPluginPort,
+  SCOPED_PACKAGE_NAME_RE,
 } from '@lamalibre/lamaste';
 import { getConfig } from '../../lib/config.js';
+import { getTrustedScopes } from '../../lib/trusted-scopes.js';
 import { primaryDomainName, resolveActiveDomain } from '../../lib/domains.js';
 import { sendFailure } from '../../lib/app-error.js';
 import { readTunnels, readSites } from '../../lib/state.js';
@@ -142,8 +144,8 @@ const CreateTunnelSchema = z
       .min(1)
       .max(200)
       .regex(
-        /^@lamalibre\/[a-z0-9][a-z0-9._-]*$/,
-        'Invalid plugin name — must be @lamalibre/ scoped with valid npm characters',
+        SCOPED_PACKAGE_NAME_RE,
+        'Invalid plugin name — must be @<scope>/<name> with valid npm characters',
       )
       .optional(),
     // The agent that carries the tunnel. Admins must name it; an agent may
@@ -360,6 +362,9 @@ export default async function tunnelRoutes(fastify, _opts) {
           // through its app host helper (`app-install`, `app-activate`,
           // `app-remove`) — see lib/agent-jobs.js for each job's fields.
           agentJobs: AGENT_LABEL_REGEX.test(label) ? await pendingAgentJobs(label) : [],
+          // The relay's trusted publisher scopes: the agent's own plugins
+          // follow them (converge records them in its config).
+          trustedScopes: [...getTrustedScopes()],
           // For the agent's own sync: the hash of the host facts stored on
           // its record (null: none), which it compares with its own and
           // reports them again when they differ — a record replaced since its

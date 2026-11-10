@@ -65,6 +65,7 @@ ${b('COMMANDS')}
   ${c('restart')}         Restart panel server and optionally gatekeeper
   ${c('plugins')}         Manage plugins (list, install, enable, disable, uninstall, update, hosting, hooks, settings, …)
   ${c('push-install')}    Push install: on/off, default policy, open/close an agent's window
+  ${c('peers')}           Calls and events between app plugins: applied shelves (list, apply, remove)
   ${c('audit')}           The panel's audit log (approvals, hostings, updates, hook events)
   ${c('users')}           Users and the user directory (list, disable, enable, delete, erase, directory)
   ${c('invitations')}     Invitations, the administrator's and delegated (list, revoke, disable-invitees)
@@ -76,6 +77,7 @@ ${b('COMMANDS')}
   ${c('panel-pin')}       The panel's TLS key pin, to compare with what agents and the desktop pinned
   ${c('chisel')}          Manage chisel tunnel-server credentials (rotate-credential)
   ${c('registry-credential')} Registry (Feria) service credential used to broker agent install tokens
+  ${c('trusted-scopes')}      npm scopes whose plugins this relay trusts: list | add <scope> | remove <scope>
   ${c('uninstall')}       Full server teardown (requires confirmation)
 
 ${b('GLOBAL FLAGS')}
@@ -178,6 +180,11 @@ async function main() {
       await runPushInstall(args.slice(1), { json });
       break;
     }
+    case 'peers': {
+      const { runPeers } = await import('../src/commands/peers.js');
+      await runPeers(args.slice(1), { json });
+      break;
+    }
     case 'audit': {
       const { runAudit } = await import('../src/commands/audit.js');
       await runAudit(args.slice(1), { json });
@@ -231,6 +238,11 @@ async function main() {
     case 'panel-pin': {
       const { runPanelPin } = await import('../src/commands/panel-pin.js');
       await runPanelPin({ json });
+      break;
+    }
+    case 'trusted-scopes': {
+      const { runTrustedScopes } = await import('../src/commands/trusted-scopes.js');
+      await runTrustedScopes(args.slice(1), { json });
       break;
     }
     case 'registry-credential': {

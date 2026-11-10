@@ -18,9 +18,11 @@ import storageRoutes from './management/storage.js';
 import gatekeeperProxyRoutes from './management/gatekeeper-proxy.js';
 import agentsRoutes from './management/agents.js';
 import registryCredentialRoutes from './management/registry-credential.js';
+import trustedScopeRoutes from './management/trusted-scopes.js';
 import auditRoutes from './management/audit.js';
 import agentPanelAuthzRoutes from './management/agent-panel-authz.js';
 import domainRoutes from './management/domains.js';
+import peersRoutes from './management/peers.js';
 
 export default async function managementRoutes(fastify, _opts) {
   fastify.addHook('onRequest', managementOnly());
@@ -44,7 +46,9 @@ export default async function managementRoutes(fastify, _opts) {
   await fastify.register(gatekeeperProxyRoutes);
   await fastify.register(agentsRoutes);
   await fastify.register(registryCredentialRoutes);
+  await fastify.register(trustedScopeRoutes);
   await fastify.register(auditRoutes);
   await fastify.register(agentPanelAuthzRoutes);
   await fastify.register(domainRoutes);
+  await fastify.register(peersRoutes);
 }

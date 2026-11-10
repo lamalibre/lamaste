@@ -24,6 +24,17 @@ import type { PluginHosting, PluginMode } from '../constants.js';
 import { KeyedPromiseChainMutex, atomicWriteJSON } from '../file-helpers.js';
 import { invalidatePluginHostCache } from '../plugin-host.js';
 import { withInstallNpmrc } from '../npm-userconfig.js';
+import {
+  BUILTIN_TRUSTED_SCOPE,
+  SCOPED_PACKAGE_NAME_RE,
+  assertManifestPackagesTrusted,
+  assertTrustedPackage,
+  effectiveTrustedScopes,
+  isTrustedPackage,
+  packageScope,
+} from '../trusted-scopes.js';
+import { agentTrustedScopes } from './config.js';
+import { assertLocalScopeRouted, localTrustedScopes } from './local-trusted-scopes.js';
 import type { InstallNpmrc } from '../npm-userconfig.js';
 import {
   agentDataDir,
@@ -83,6 +94,64 @@ export interface PluginLifecycleConfig {
   requiredMode: PluginMode;
   /** Maximum number of plugins allowed. */
   maxPlugins?: number | undefined;
+  /**
+   * The trusted publisher scopes plugins may come from, read when they are
+   * needed (an agent's follow its relay, the local host's are its user's).
+   * Default: `@lamalibre` alone.
+   */
+  trustedScopes?: (() => Promise<readonly string[]>) | undefined;
+  /**
+   * A package of a scope other than `@lamalibre` installs only through an
+   * isolated userconfig routing that scope to the relay's registry (the
+   * brokered credential) — never through the machine's own npm
+   * configuration, which may resolve the scope from a public registry where
+   * anyone could own it. Set for agents (their relay's registry hosts their
+   * trusted scopes); the local host has no relay, and its user's npm
+   * configuration is the user's own choice.
+   */
+  additionalScopesNeedRegistry?: boolean | undefined;
+  /**
+   * Called before npm runs for a package of an additional scope: throws
+   * unless the configuration npm will use routes that scope to a registry
+   * hosting it. The local host's check (`assertLocalScopeRouted`).
+   */
+  assertAdditionalScopeRoute?: ((scope: string) => Promise<unknown>) | undefined;
+}
+
+/** {@link PluginLifecycleConfig.assertAdditionalScopeRoute} for `packageName`, when it applies. */
+async function assertAdditionalRoute(
+  cfg: PluginLifecycleConfig,
+  packageName: string,
+): Promise<void> {
+  if (cfg.assertAdditionalScopeRoute === undefined) return;
+  const scope = packageScope(packageName);
+  if (scope === null || scope === BUILTIN_TRUSTED_SCOPE) return;
+  await cfg.assertAdditionalScopeRoute(scope);
+}
+
+/**
+ * Refuse an install or update of a package from an additional scope that
+ * would not go to the relay's registry (see `additionalScopesNeedRegistry`).
+ */
+function assertRoutedToRegistry(
+  cfg: PluginLifecycleConfig,
+  packageName: string,
+  npmrc: InstallNpmrc | undefined,
+): void {
+  if (!cfg.additionalScopesNeedRegistry) return;
+  const scope = packageScope(packageName);
+  if (scope === null || scope === BUILTIN_TRUSTED_SCOPE) return;
+  const routed = npmrc ? (npmrc.scopes ?? [npmrc.scope ?? BUILTIN_TRUSTED_SCOPE]) : [];
+  if (!routed.includes(scope)) {
+    throw new Error(
+      `${packageName} installs only from the relay's registry, which hosts ${scope} — the panel brokered no registry credential for it`,
+    );
+  }
+}
+
+/** The trusted scopes of `cfg`, read now. */
+async function trustedScopesOf(cfg: PluginLifecycleConfig): Promise<readonly string[]> {
+  return cfg.trustedScopes ? cfg.trustedScopes() : effectiveTrustedScopes();
 }
 
 /**
@@ -116,6 +185,7 @@ interface PluginManifest {
   modes?: PluginMode[];
   config?: Record<string, unknown>;
   hosting?: unknown;
+  agent?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,7 +272,7 @@ function manifestHosting(packageName: string, manifest: PluginManifest): PluginH
 async function safeUninstall(cwd: string, packageName: string): Promise<void> {
   try {
     const { execa } = await import('execa');
-    await execa('npm', ['uninstall', packageName], { cwd });
+    await execa('npm', ['uninstall', '--ignore-scripts', packageName], { cwd });
   } catch {
     // Swallow — rollback is best-effort, original error must not be masked.
   }
@@ -215,14 +285,22 @@ async function safeUninstall(cwd: string, packageName: string): Promise<void> {
 const PKG_NAME_REGEX = /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/;
 const PLUGIN_NAME_REGEX = /^[a-z0-9-]+$/;
 
-function validatePackageName(packageName: string): void {
-  if (!packageName.startsWith('@lamalibre/')) {
-    throw new Error('Only @lamalibre/ scoped packages are allowed');
-  }
-  const pkgName = packageName.slice('@lamalibre/'.length);
-  if (!PKG_NAME_REGEX.test(pkgName)) {
+/** A well-formed scoped package name (`@<scope>/<name>`, no version, no alias). */
+function validatePackageSyntax(packageName: string): void {
+  const scope = packageScope(packageName);
+  if (
+    scope === null ||
+    !SCOPED_PACKAGE_NAME_RE.test(packageName) ||
+    !PKG_NAME_REGEX.test(packageName.slice(scope.length + 1))
+  ) {
     throw new Error('Invalid package name');
   }
+}
+
+/** A well-formed scoped package name from one of `trusted`. */
+function validatePackageName(packageName: string, trusted: readonly string[]): void {
+  validatePackageSyntax(packageName);
+  assertTrustedPackage(packageName, trusted);
 }
 
 // ---------------------------------------------------------------------------
@@ -293,7 +371,10 @@ export function installPlugin(
   options: PluginInstallOptions = {},
 ): Promise<PluginRegistryEntry> {
   return withLock(cfg.registryPath, async () => {
-    validatePackageName(packageName);
+    const trusted = await trustedScopesOf(cfg);
+    validatePackageName(packageName, trusted);
+    assertRoutedToRegistry(cfg, packageName, options.npmrc);
+    await assertAdditionalRoute(cfg, packageName);
 
     const registry = await readPluginRegistry(cfg.registryPath);
     if (registry.plugins.find((p) => p.packageName === packageName)) {
@@ -377,6 +458,23 @@ export function installPlugin(
         );
       }
 
+      // Every package the manifest names: trusted, and of the plugin's own scope.
+      try {
+        assertManifestPackagesTrusted(
+          {
+            packages: manifest.packages ?? {},
+            agent: manifest.agent as { package?: string } | undefined,
+          },
+          packageName,
+          trusted,
+        );
+      } catch (err: unknown) {
+        throw new PluginManifestValidationError(
+          packageName,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+
       const hosting = manifestHosting(packageName, manifest);
 
       // Validate required mode support
@@ -435,14 +533,17 @@ export function uninstallPlugin(cfg: PluginLifecycleConfig, name: string): Promi
       throw new Error(`Plugin "${name}" must be disabled before uninstalling`);
     }
 
-    if (!plugin.packageName.startsWith('@lamalibre/')) {
-      throw new Error('Registry corruption: invalid package scope');
+    // Syntax only: a plugin must stay removable after its scope stops being trusted.
+    try {
+      validatePackageSyntax(plugin.packageName);
+    } catch {
+      throw new Error('Registry corruption: invalid package name');
     }
 
     // npm uninstall — propagate failures so callers can diagnose rather than
     // allowing the on-disk node_modules state to diverge from the registry.
     const { execa } = await import('execa');
-    await execa('npm', ['uninstall', plugin.packageName], { cwd: cfg.dataDir });
+    await execa('npm', ['uninstall', '--ignore-scripts', plugin.packageName], { cwd: cfg.dataDir });
 
     // Remove plugin data directory
     const pluginDir = path.join(cfg.pluginsDir, plugin.name);
@@ -510,9 +611,10 @@ export function updatePlugin(
       throw new Error(`Plugin "${nameOrPackage}" not found`);
     }
 
-    if (!plugin.packageName.startsWith('@lamalibre/')) {
-      throw new Error('Registry corruption: invalid package scope');
-    }
+    const trusted = await trustedScopesOf(cfg);
+    validatePackageName(plugin.packageName, trusted);
+    assertRoutedToRegistry(cfg, plugin.packageName, options.npmrc);
+    await assertAdditionalRoute(cfg, plugin.packageName);
 
     const { execa } = await import('execa');
     await withInstallNpmrc(cfg.dataDir, options.npmrc, (env) =>
@@ -524,11 +626,32 @@ export function updatePlugin(
     );
 
     // Re-read manifest to capture the updated version
+    let manifest: PluginManifest | null = null;
     try {
       const require = createRequire(path.join(cfg.dataDir, '/'));
       const manifestPath = require.resolve(`${plugin.packageName}/lamaste-plugin.json`);
-      const manifestRaw = await readFile(manifestPath, 'utf-8');
-      const manifest = JSON.parse(manifestRaw) as PluginManifest;
+      manifest = JSON.parse(await readFile(manifestPath, 'utf-8')) as PluginManifest;
+    } catch {
+      // Manifest may not exist — keep existing metadata
+    }
+    if (manifest) {
+      // The new version may name only trusted packages of its own scope;
+      // otherwise none of its metadata is taken over.
+      try {
+        assertManifestPackagesTrusted(
+          {
+            packages: manifest.packages ?? {},
+            agent: manifest.agent as { package?: string } | undefined,
+          },
+          plugin.packageName,
+          trusted,
+        );
+      } catch (err: unknown) {
+        throw new PluginManifestValidationError(
+          plugin.packageName,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
       plugin.hosting = manifestHosting(plugin.packageName, manifest);
       plugin.version = manifest.version ?? plugin.version;
       if (manifest.capabilities) plugin.capabilities = normalizeCapabilities(manifest.capabilities);
@@ -536,8 +659,6 @@ export function updatePlugin(
       if (manifest.packages) plugin.packages = manifest.packages;
       if (manifest.description) plugin.description = manifest.description;
       if (manifest.displayName) plugin.displayName = manifest.displayName;
-    } catch {
-      // Manifest may not exist — keep existing metadata
     }
 
     plugin.updatedAt = new Date().toISOString();
@@ -552,6 +673,7 @@ export function updatePlugin(
 export async function checkPluginUpdate(
   cfg: PluginLifecycleConfig,
   name: string,
+  options: { npmrc?: InstallNpmrc | undefined } = {},
 ): Promise<PluginUpdateInfo> {
   const registry = await readPluginRegistry(cfg.registryPath);
   const plugin = registry.plugins.find((p) => p.name === name);
@@ -560,14 +682,16 @@ export async function checkPluginUpdate(
   }
 
   const pkg = plugin.packageName;
-  if (!pkg || !pkg.startsWith('@lamalibre/')) {
-    throw new Error('Invalid package scope');
-  }
+  validatePackageName(pkg, await trustedScopesOf(cfg));
+  // Asked of the registry an install would use — never of a registry that
+  // could hold another publisher's package of that name.
+  assertRoutedToRegistry(cfg, pkg, options.npmrc);
+  await assertAdditionalRoute(cfg, pkg);
 
   const { execa } = await import('execa');
-  const { stdout } = await execa('npm', ['view', pkg, 'version', '--json'], {
-    cwd: cfg.dataDir,
-  });
+  const { stdout } = await withInstallNpmrc(cfg.dataDir, options.npmrc, (env) =>
+    execa('npm', ['view', pkg, 'version', '--json'], { cwd: cfg.dataDir, timeout: 60_000, env }),
+  );
 
   const latestVersion = JSON.parse(stdout.trim()) as string;
   const currentVersion = plugin.version;
@@ -599,9 +723,14 @@ export async function readPluginBundle(cfg: PluginLifecycleConfig, name: string)
     throw new Error(`Plugin "${name}" has no server package with panel bundle`);
   }
 
-  // Defense-in-depth: verify scope in case registry was tampered
-  if (!serverPkg.startsWith('@lamalibre/')) {
-    throw new Error('Server package scope violation');
+  // Defense-in-depth: the registry names a package from a trusted scope
+  const trusted = await trustedScopesOf(cfg);
+  if (
+    !isTrustedPackage(serverPkg, trusted) ||
+    !isTrustedPackage(plugin.packageName, trusted) ||
+    packageScope(serverPkg) !== packageScope(plugin.packageName)
+  ) {
+    throw new Error('Server package is not from a trusted publisher scope');
   }
 
   const require = createRequire(path.join(cfg.dataDir, '/'));
@@ -623,6 +752,8 @@ export function agentPluginConfig(label: string): PluginLifecycleConfig {
     pluginsDir: agentPluginsDir(label),
     requiredMode: 'agent',
     maxPlugins: MAX_PLUGINS_PER_REGISTRY,
+    trustedScopes: () => agentTrustedScopes(label),
+    additionalScopesNeedRegistry: true,
   };
 }
 
@@ -636,5 +767,7 @@ export function localPluginConfig(): PluginLifecycleConfig {
     pluginsDir: localPluginsDir(),
     requiredMode: 'local',
     maxPlugins: MAX_PLUGINS_PER_REGISTRY,
+    trustedScopes: localTrustedScopes,
+    assertAdditionalScopeRoute: assertLocalScopeRouted,
   };
 }

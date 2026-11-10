@@ -6,9 +6,10 @@
  * - the method is `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
  *   or `*`; a pattern without one matches every method, and `GET` also
  *   matches `HEAD` (servers answer `HEAD` with their `GET` handler);
- * - the path starts with `/admin` (the forwarded admin API) or `/app` (the
+ * - the path starts with `/admin` (the forwarded admin API), `/app` (the
  *   user surface: requests of the plugin's users, which only a plugin that
- *   declares `identity` receives);
+ *   declares `identity` receives) or `/peer` (the peer surface: calls of
+ *   other app plugins, which only a plugin that provides a scope receives);
  * - a segment is a literal or `*`. `*` matches exactly one segment, except as
  *   the last segment, where it matches one or more.
  *
@@ -29,7 +30,7 @@ export const ROUTE_PATTERN_METHODS = [
   'OPTIONS',
 ] as const;
 
-export type RoutePatternSurface = 'admin' | 'app';
+export type RoutePatternSurface = 'admin' | 'app' | 'peer';
 
 export interface RoutePattern {
   /** The pattern as written. */
@@ -67,8 +68,8 @@ export function parseRoutePattern(raw: string): RoutePattern | { readonly error:
   if (!pathPart.startsWith('/')) return { error: 'The path of a route pattern starts with /' };
   const segments = pathPart.slice(1).split('/');
   const first = segments[0];
-  if (first !== 'admin' && first !== 'app') {
-    return { error: 'A route pattern names a path under /admin or /app' };
+  if (first !== 'admin' && first !== 'app' && first !== 'peer') {
+    return { error: 'A route pattern names a path under /admin, /app or /peer' };
   }
   for (const segment of segments) {
     if (segment !== '*' && !SEGMENT_RE.test(segment)) {

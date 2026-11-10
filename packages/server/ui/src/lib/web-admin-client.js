@@ -58,8 +58,12 @@ function toQuery(query) {
  * failing pre-teardown hooks pass, `purge` deletes the data and service
  * account of an agent half Lamaste installed. Only the flags that are set.
  */
-function removalQuery({ force = false, purge = false } = {}) {
-  return toQuery({ force: force ? 'true' : undefined, purge: purge ? 'true' : undefined });
+function removalQuery({ force = false, purge = false, breakPeers = false } = {}) {
+  return toQuery({
+    force: force ? 'true' : undefined,
+    purge: purge ? 'true' : undefined,
+    breakPeers: breakPeers ? 'true' : undefined,
+  });
 }
 
 /** `/api/domains/<name><rest>`. */
@@ -116,6 +120,12 @@ export const webAdminClient = {
     jsonDelete(domainPath(name, `/members/${encodeURIComponent(user)}`)),
   setPluginDomain: (name, domain) => jsonPut(pluginPath(name, 'domain'), { domain }),
   setDomainLanguage: (name, language) => jsonPut(domainPath(name, '/language'), { language }),
+
+  // --- Trusted publisher scopes ---
+  getTrustedScopes: () => apiFetch('/api/settings/trusted-scopes'),
+  addTrustedScope: (scope) => jsonPost('/api/settings/trusted-scopes', { scope }),
+  removeTrustedScope: (scope) =>
+    jsonDelete(`/api/settings/trusted-scopes/${encodeURIComponent(scope)}`),
 
   // --- A domain's brand on its auth pages ---
   getDomainBranding: (name) => apiFetch(domainPath(name, '/branding')),
@@ -271,6 +281,12 @@ export const webAdminClient = {
       `/api/plugins/${encodeURIComponent(name)}/retained-data${toQuery({ agentLabel, forget: 'true' })}`,
     ),
   getPluginSettings: (name) => apiFetch(`/api/plugins/${encodeURIComponent(name)}/settings`),
+
+  // --- Calls and events between app plugins: applied shelves ---
+  getPeers: () => apiFetch('/api/peers'),
+  applyPeerShelf: (shelfId, scopes) =>
+    jsonPut(`/api/peers/shelves/${encodeURIComponent(shelfId)}`, { scopes }),
+  removePeerShelf: (shelfId) => jsonDelete(`/api/peers/shelves/${encodeURIComponent(shelfId)}`),
   // The body carries the secrets the administrator typed: it goes in the
   // request body only, never into the URL.
   updatePluginSettings: (name, body) =>

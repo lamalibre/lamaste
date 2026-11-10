@@ -44,6 +44,7 @@ async function invokeRefusable(command, args) {
         ...(typeof rejection.operationId === 'string'
           ? { operationId: rejection.operationId }
           : {}),
+        ...(Array.isArray(rejection.consumers) ? { consumers: rejection.consumers } : {}),
         ...(errors ? { errors } : {}),
         ...(typeof rejection.reason === 'string' ? { reason: rejection.reason } : {}),
         ...(Number.isSafeInteger(rejection.revision) && rejection.revision >= 0
@@ -61,7 +62,12 @@ async function invokeRefusable(command, args) {
  * account of an agent half Lamaste installed.
  */
 function removalArgs(name, options) {
-  return { name, force: options.force === true, purge: options.purge === true };
+  return {
+    name,
+    force: options.force === true,
+    purge: options.purge === true,
+    breakPeers: options.breakPeers === true,
+  };
 }
 
 export const desktopAdminClient = {
@@ -93,6 +99,11 @@ export const desktopAdminClient = {
   setPluginDomain: (name, domain) => invokeRefusable('admin_set_plugin_domain', { name, domain }),
   setDomainLanguage: (name, language) =>
     invokeRefusable('admin_set_domain_language', { name, language }),
+
+  // --- Trusted publisher scopes ---
+  getTrustedScopes: () => invokeRefusable('admin_get_trusted_scopes'),
+  addTrustedScope: (scope) => invokeRefusable('admin_add_trusted_scope', { scope }),
+  removeTrustedScope: (scope) => invokeRefusable('admin_remove_trusted_scope', { scope }),
 
   // --- A domain's brand on its auth pages ---
   getDomainBranding: (name) => invokeRefusable('admin_get_domain_branding', { name }),
@@ -229,6 +240,12 @@ export const desktopAdminClient = {
   forgetPluginRetainedData: (name, agentLabel) =>
     invokeRefusable('admin_forget_plugin_retained_data', { name, agentLabel }),
   getPluginOperations: (name) => invoke('admin_get_plugin_operations', { name }),
+
+  // --- Calls and events between app plugins: applied shelves ---
+  getPeers: () => invokeRefusable('admin_get_peers'),
+  applyPeerShelf: (shelfId, scopes) =>
+    invokeRefusable('admin_apply_peer_shelf', { shelfId, scopes }),
+  removePeerShelf: (shelfId) => invokeRefusable('admin_remove_peer_shelf', { shelfId }),
   getPluginOperation: (name, id) => invoke('admin_get_plugin_operation', { name, id }),
   getPluginHooks: (name) => invoke('admin_get_plugin_hooks', { name }),
   approvePluginHooks: (name, digest, version) =>

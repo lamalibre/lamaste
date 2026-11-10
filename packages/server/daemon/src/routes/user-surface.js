@@ -30,6 +30,7 @@ import errorHandler from '../middleware/errors.js';
 import { managementOnly } from '../middleware/onboarding-guard.js';
 import { requestHookRuntime } from '../lib/request-hooks.js';
 import { resolveUserCaller } from '../lib/user-caller.js';
+import { delegationForUserRequest } from '../lib/peer-runtime.js';
 import {
   USER_SURFACE_ROUTE_CONFIG,
   resolveUserSurfaceTarget,
@@ -43,6 +44,9 @@ async function userSurfaceRoutes(fastify) {
     verifyRelay: verifyUserSurfaceRelay,
     resolveTarget: resolveUserSurfaceTarget,
     resolveUserCaller,
+    // A person's request to a plugin that calls others carries a fresh
+    // delegation, so the plugin can call on their behalf (slice 8).
+    delegationFor: delegationForUserRequest,
     originFor: userSurfaceOrigin,
     trackResponse: userSurfaceResponseTracker(fastify.log),
     hooks: requestHookRuntime,

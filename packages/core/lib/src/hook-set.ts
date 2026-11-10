@@ -29,6 +29,8 @@ import { AgentHalfMaxBodySizeSchema, AgentHalfSpecSchema } from './agent-half.js
 import type { AgentHalfSpec } from './agent-half.js';
 import { normalizeIdentityBlock } from './identity.js';
 import type { IdentityBlockInput } from './identity.js';
+import { normalizePeersBlock } from './peers.js';
+import type { PeersBlockInput } from './peers.js';
 
 import {
   HOOK_TIMEOUTS,
@@ -216,22 +218,28 @@ export interface ApprovalSubject {
    * the default then applies, and nothing about it is approved.
    */
   readonly maxBodySizeMb?: number | null | undefined;
+  /**
+   * The plugin's `peers` block — what it provides to and consumes from
+   * other app plugins; null or omitted when it declares none.
+   */
+  readonly peers?: PeersBlockInput | null | undefined;
 }
 
 /**
  * The digest an approval names: SHA-256 (hex) of the canonical JSON (keys
  * sorted at every level) of
- * `{ v: 2, relay: { set, entrySha256 } | null, agentHalf: { package, version, integrity, service: { entry, memoryMax }, systemPackages } | null, identity?: { roles, attributes }, web?: { treeSha256 }, body?: { maxBodySizeMb } }`,
+ * `{ v: 2, relay: { set, entrySha256 } | null, agentHalf: { package, version, integrity, service: { entry, memoryMax }, systemPackages } | null, identity?: { roles, attributes }, web?: { treeSha256 }, body?: { maxBodySizeMb }, peers?: { provides, consumes } }`,
  * with the agent half's system packages sorted and without repeats,
  * `identity` — the block as {@link normalizeIdentityBlock} returns it —
  * only when the plugin declares one, `web` only when it declares a web
- * surface and `body` only when it declares a request body limit: a digest
- * without them is the digest of the same subject before they existed, byte
- * for byte. Throws on an entry or tree digest that is not SHA-256 hex, an
+ * surface, `body` only when it declares a request body limit and `peers`
+ * — the block as {@link normalizePeersBlock} returns it — only when it
+ * declares one: a digest without them is the digest of the same subject
+ * before they existed, byte for byte. Throws on an entry or tree digest that is not SHA-256 hex, an
  * agent half that is not a valid {@link AgentHalfSpec}
  * (`AgentHalfSpecSchema`, which refuses unknown keys), an identity block
- * that is not valid or a body limit outside `AgentHalfMaxBodySizeSchema` —
- * none can be approved.
+ * that is not valid, a peers block that is not valid or a body limit
+ * outside `AgentHalfMaxBodySizeSchema` — none can be approved.
  */
 export function approvalDigest(subject: ApprovalSubject): string {
   const { relay } = subject;
@@ -269,6 +277,10 @@ export function approvalDigest(subject: ApprovalSubject): string {
   if (maxBodySizeMb !== null && !AgentHalfMaxBodySizeSchema.safeParse(maxBodySizeMb).success) {
     throw new Error('maxBodySizeMb is not a request body limit an agent half may declare');
   }
+  const peers =
+    subject.peers === null || subject.peers === undefined
+      ? null
+      : normalizePeersBlock(subject.peers);
   const doc = canonical({
     v: HOOK_SET_DIGEST_VERSION,
     relay: relay ? { set: relay.set, entrySha256: relay.entrySha256 } : null,
@@ -276,6 +288,7 @@ export function approvalDigest(subject: ApprovalSubject): string {
     ...(identity ? { identity } : {}),
     ...(web ? { web: { treeSha256: web.treeSha256 } } : {}),
     ...(maxBodySizeMb !== null ? { body: { maxBodySizeMb } } : {}),
+    ...(peers ? { peers } : {}),
   });
   return crypto.createHash('sha256').update(JSON.stringify(doc)).digest('hex');
 }

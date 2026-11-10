@@ -19,6 +19,11 @@ import {
   APP_SERVICE_USER_MAX,
   APPHOST_PATHS,
   APPHOST_PROTOCOL_VERSION,
+  APPHOST_MIN_PROTOCOL_VERSION,
+  APPHOST_SCOPED_PROTOCOL_VERSION,
+  apphostProtocolFor,
+  assertManifestPackagesTrusted,
+  UntrustedScopeError,
   AGENT_HALF_INTEGRITY_RE,
   AgentHalfSpecSchema,
   approvalDigest,
@@ -139,7 +144,7 @@ test('manifest: the agent package, the Node.js range and the route are checked',
   const pkg = (p) => manifestError({ ...agentBlock, package: p });
   for (const bad of [
     'fx-agent',
-    '@other/fx-agent',
+    '@Other/fx-agent',
     '@lamalibre/Fx',
     '@lamalibre/fx_agent',
     '@lamalibre/-fx',
@@ -147,6 +152,33 @@ test('manifest: the agent package, the Node.js range and the route are checked',
   ]) {
     assert.match(pkg(bad) ?? '', /agent\.package/, `package ${bad}`);
   }
+  // Any well-formed scope passes the schema: whether it is trusted is the
+  // installing relay's decision, and a manifest names only its own scope.
+  assert.equal(pkg('@other/fx-agent'), null);
+  const trusted = ['@lamalibre', '@other'];
+  assert.doesNotThrow(() =>
+    assertManifestPackagesTrusted(
+      { agent: { package: '@other/fx-agent' } },
+      '@other/fx-server',
+      trusted,
+    ),
+  );
+  assert.throws(
+    () =>
+      assertManifestPackagesTrusted(
+        { agent: { package: '@other/fx-agent' } },
+        '@lamalibre/fx-server',
+        trusted,
+      ),
+    UntrustedScopeError,
+  );
+  assert.throws(
+    () =>
+      assertManifestPackagesTrusted({ agent: { package: '@other/fx-agent' } }, '@other/fx-server', [
+        '@lamalibre',
+      ]),
+    UntrustedScopeError,
+  );
   assert.match(
     manifestError({ ...agentBlock, requires: { node: 'latest' } }),
     /agent\.requires\.node: node must be a semver range/,
@@ -228,7 +260,11 @@ test('names and paths: unit, helper and per-route directories', () => {
   assert.throws(() => APPHOST_PATHS.dataDir('../etc'), /Invalid plugin route/);
   assert.throws(() => appUnitName('fx.service'), /Invalid plugin route/);
   assert.ok(Object.isFrozen(APPHOST_PATHS));
-  assert.equal(APPHOST_PROTOCOL_VERSION, 2);
+  assert.equal(APPHOST_PROTOCOL_VERSION, 3);
+  assert.equal(APPHOST_MIN_PROTOCOL_VERSION, 2);
+  assert.equal(APPHOST_SCOPED_PROTOCOL_VERSION, 3);
+  assert.equal(apphostProtocolFor('@lamalibre/fx-agent'), 2);
+  assert.equal(apphostProtocolFor('@other/fx-agent'), 3);
 });
 
 test('spec: integrity is a sha512 SRI; the spec is checked strictly', () => {
@@ -454,9 +490,28 @@ test('hostEligibility: each reason', () => {
   assert.match(
     reasons(undefined, declaration, {
       ...ubuntu,
-      apphost: { version: APPHOST_PROTOCOL_VERSION - 1, node: '22.13.1', relayKid: RELAY_KID },
+      apphost: { version: APPHOST_MIN_PROTOCOL_VERSION - 1, node: '22.13.1', relayKid: RELAY_KID },
     }).join(),
-    /speaks protocol 1; this relay needs 2 \(update lamaste-agent, then sudo lamaste-agent apphost enable\)/,
+    /speaks protocol 1; this plugin needs 2 \(update lamaste-agent, then sudo lamaste-agent apphost enable\)/,
+  );
+  // A @lamalibre half installs with the oldest supported helper; a half of
+  // another trusted scope needs one that takes any scope.
+  const oldHelper = {
+    ...ubuntu,
+    apphost: { version: APPHOST_MIN_PROTOCOL_VERSION, node: '22.13.1', relayKid: RELAY_KID },
+  };
+  assert.deepEqual(reasons(undefined, declaration, oldHelper), []);
+  assert.match(
+    reasons(undefined, { ...declaration, package: '@other/fx-agent' }, oldHelper).join(),
+    /speaks protocol 2; this plugin needs 3/,
+  );
+  assert.deepEqual(
+    reasons(
+      undefined,
+      { ...declaration, package: '@other/fx-agent' },
+      { ...ubuntu, apphost: { ...ubuntu.apphost, version: APPHOST_SCOPED_PROTOCOL_VERSION } },
+    ),
+    [],
   );
   // The helper runs only what this relay signed: it must trust the key the relay signs with.
   assert.deepEqual(
@@ -515,7 +570,7 @@ test('hostEligibility: each reason', () => {
       ...ubuntu,
       systemd: false,
       distro: null,
-      apphost: { version: APPHOST_PROTOCOL_VERSION - 1, node: '20.0.0', relayKid: null },
+      apphost: { version: APPHOST_MIN_PROTOCOL_VERSION - 1, node: '20.0.0', relayKid: null },
     }).length,
     5,
   );

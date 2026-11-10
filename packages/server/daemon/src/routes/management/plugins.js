@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { AGENT_HALF_SETTINGS_MAX_BYTES, AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
+import {
+  AGENT_HALF_SETTINGS_MAX_BYTES,
+  AGENT_LABEL_REGEX,
+  SCOPED_PACKAGE_SPEC_RE,
+  isTrustedPackage,
+} from '@lamalibre/lamaste';
+import { getTrustedScopes } from '../../lib/trusted-scopes.js';
 import {
   readPlugins,
   installPlugin,
@@ -7,6 +13,7 @@ import {
   disablePlugin,
   getPluginCapabilities,
   findPlugin,
+  withPluginLock,
 } from '../../lib/plugins.js';
 import { setPluginCapabilities, loadAgentRegistry } from '../../lib/mtls.js';
 import { listPluginOidcClients, rotatePluginOidcClientSecret } from '../../lib/plugin-oidc.js';
@@ -97,6 +104,8 @@ const ForceQuerySchema = z.object({
   force: z.enum(['true', 'false']).optional(),
   // Remove the data directory and service account of an agent half Lamaste installed.
   purge: z.enum(['true', 'false']).optional(),
+  // Remove a plugin other plugins' peer edges consume (409 peer_dependents otherwise).
+  breakPeers: z.enum(['true', 'false']).optional(),
 });
 
 /**
@@ -115,6 +124,7 @@ function operationErrorBody(err, fallback) {
     ...(err.retained ? { retained: err.retained } : {}),
     ...(err.owner ? { route: err.route, owner: err.owner } : {}),
     ...(err.operationId ? { operationId: err.operationId } : {}),
+    ...(Array.isArray(err.consumers) ? { consumers: err.consumers } : {}),
   };
 }
 
@@ -186,7 +196,7 @@ const InstallBodySchema = z.object({
     .string()
     .min(1)
     .max(200)
-    .regex(/^@lamalibre\//, 'Package must be in the @lamalibre/ scope'),
+    .regex(SCOPED_PACKAGE_SPEC_RE, 'Package must be @<scope>/<name>[@<version>]'),
 });
 
 // --- Push install schemas ---
@@ -219,7 +229,7 @@ const ScopedPackageSchema = z
   .string()
   .min(1)
   .max(200)
-  .regex(/^@lamalibre\//, 'Package must be in the @lamalibre/ scope');
+  .regex(SCOPED_PACKAGE_SPEC_RE, 'Package must be @<scope>/<name>[@<version>]');
 
 const CreatePolicySchema = z.object({
   name: z.string().min(1).max(100),
@@ -276,7 +286,7 @@ const PushInstallCommandSchema = z
       .string()
       .min(1)
       .max(200)
-      .regex(/^@lamalibre\//, 'Package must be in the @lamalibre/ scope')
+      .regex(SCOPED_PACKAGE_SPEC_RE, 'Package must be @<scope>/<name>[@<version>]')
       .optional(),
   })
   .refine(
@@ -449,7 +459,7 @@ export default async function pluginRoutes(fastify, _opts) {
   );
 
   // ------------------------------------------------------------------
-  // DELETE /plugins/:name/hosting?force=&purge= — remove tunnel, secret,
+  // DELETE /plugins/:name/hosting?force=&purge=&breakPeers= — remove tunnel, secret,
   // capability and the agent half Lamaste installed (a push: `uninstall`);
   // `purge=true` removes the agent half's data and service account too
   // ------------------------------------------------------------------
@@ -467,6 +477,7 @@ export default async function pluginRoutes(fastify, _opts) {
           logger: request.log,
           force: query.force === 'true',
           purge: query.purge === 'true',
+          breakPeers: query.breakPeers === 'true',
           sourceIp: request.ip,
         });
         return reply.code(202).send({ ok: true, operation });
@@ -925,7 +936,7 @@ export default async function pluginRoutes(fastify, _opts) {
   );
 
   // ------------------------------------------------------------------
-  // DELETE /plugins/:name?force=&purge= — uninstall a plugin (must be
+  // DELETE /plugins/:name?force=&purge=&breakPeers= — uninstall a plugin (must be
   // disabled); a hosted one's hosting is removed first (see
   // DELETE /plugins/:name/hosting)
   // ------------------------------------------------------------------
@@ -946,6 +957,7 @@ export default async function pluginRoutes(fastify, _opts) {
           logger: request.log,
           force: query.force === 'true',
           purge: query.purge === 'true',
+          breakPeers: query.breakPeers === 'true',
           sourceIp: request.ip,
         });
         if (result.operation)
@@ -1077,9 +1089,23 @@ export default async function pluginRoutes(fastify, _opts) {
     },
     async (request, reply) => {
       const body = CreatePolicySchema.parse(request.body);
-
+      // Checked and written under the plugin lock — the one trust changes
+      // take — so a scope removed meanwhile is never left named by a policy.
+      let untrusted = [];
       try {
-        const policy = await createPushInstallPolicy(body);
+        const policy = await withPluginLock(async () => {
+          untrusted = (body.allowedPlugins ?? []).filter(
+            (name) => !isTrustedPackage(name, getTrustedScopes()),
+          );
+          if (untrusted.length > 0) return null;
+          return createPushInstallPolicy(body);
+        });
+        if (policy === null) {
+          return reply.code(400).send({
+            error: `Not from a trusted publisher scope: ${untrusted.join(', ')}`,
+            code: 'untrusted_scope',
+          });
+        }
         return { ok: true, policy };
       } catch (err) {
         const statusCode = err.statusCode || 500;
@@ -1101,9 +1127,23 @@ export default async function pluginRoutes(fastify, _opts) {
     async (request, reply) => {
       const { id } = z.object({ id: PolicyIdSchema }).parse(request.params);
       const body = UpdatePolicySchema.parse(request.body);
-
+      // Checked and written under the plugin lock — the one trust changes
+      // take — so a scope removed meanwhile is never left named by a policy.
+      let untrusted = [];
       try {
-        const policy = await updatePushInstallPolicy(id, body);
+        const policy = await withPluginLock(async () => {
+          untrusted = (body.allowedPlugins ?? []).filter(
+            (name) => !isTrustedPackage(name, getTrustedScopes()),
+          );
+          if (untrusted.length > 0) return null;
+          return updatePushInstallPolicy(id, body);
+        });
+        if (policy === null) {
+          return reply.code(400).send({
+            error: `Not from a trusted publisher scope: ${untrusted.join(', ')}`,
+            code: 'untrusted_scope',
+          });
+        }
         return { ok: true, policy };
       } catch (err) {
         const statusCode = err.statusCode || 500;
@@ -1204,6 +1244,17 @@ export default async function pluginRoutes(fastify, _opts) {
     async (request, reply) => {
       const params = AgentLabelParamSchema.parse(request.params);
       const body = PushInstallCommandSchema.parse(request.body);
+      // Installing or updating needs a trusted scope; an uninstall never
+      // does (a plugin stays removable).
+      if (body.packageName && body.action !== 'uninstall') {
+        const trusted = getTrustedScopes();
+        if (!isTrustedPackage(body.packageName, trusted)) {
+          return reply.code(400).send({
+            error: `Package "${body.packageName}" is not from a trusted publisher scope (trusted: ${trusted.join(', ')})`,
+            code: 'untrusted_scope',
+          });
+        }
+      }
 
       // Validate push install access (5-gate auth)
       const access = await validatePushInstallAccess(params.label, request.ip);

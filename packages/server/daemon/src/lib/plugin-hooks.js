@@ -247,8 +247,9 @@ export function declaredMaxBodySizeMb(plugin) {
 /**
  * What approving a plugin version covers — its relay hook set, the agent
  * half Lamaste installs, its identity block (normalized, as the registry
- * stores it), its web tree and the request body limit it declares
- * (`maxBodySizeMb`) — and the digest the approval names. `digest` is null
+ * stores it), its web tree, the request body limit it declares
+ * (`maxBodySizeMb`) and its `peers` block (normalized, as the registry
+ * stores it) — and the digest the approval names. `digest` is null
  * when there is nothing to approve. A plugin without an identity block, a
  * web surface or a declared body limit has the digest it had before they
  * existed.
@@ -259,18 +260,21 @@ export function installedApproval(plugin) {
   const identity = plugin.identity ?? null;
   const web = installedWebTree(plugin);
   const maxBodySizeMb = declaredMaxBodySizeMb(plugin);
+  const peers = plugin.peers ?? null;
   const required =
     relay !== null ||
     agentHalf !== null ||
     identity !== null ||
     web !== null ||
-    maxBodySizeMb !== null;
+    maxBodySizeMb !== null ||
+    peers !== null;
   return {
     relay,
     agentHalf,
     identity,
     web,
     maxBodySizeMb,
+    peers,
     required,
     digest: required
       ? approvalDigest({
@@ -279,6 +283,7 @@ export function installedApproval(plugin) {
           identity,
           web,
           maxBodySizeMb,
+          peers,
         })
       : null,
   };
@@ -299,6 +304,12 @@ export async function installedVersionApproved(plugin) {
   const approval = installedApproval(plugin);
   if (!approval.required) return true;
   return isApproved(approval, await readHookState(plugin.name));
+}
+
+/** The applied edges naming `route` (lib/peers.js; imported late — it imports this module). */
+async function appliedEdgesOf(route) {
+  const { appliedEdgesNaming } = await import('./peers.js');
+  return appliedEdgesNaming(route);
 }
 
 /**
@@ -343,6 +354,18 @@ export async function hookStatus(plugin) {
           maxBodySizeMb: agentHalfMaxBodyMb(plugin),
         }
       : null,
+    // What the installed version provides to and consumes from other
+    // plugins (normalized), and whether that version is approved: calls and
+    // events go only along declarations of approved versions. With the
+    // applied shelves' edges naming its route, whatever their state — what
+    // approving it would let take effect, a grant made before it was
+    // installed included.
+    peers: {
+      declared: approval.peers !== null,
+      approved: approval.peers !== null && approved,
+      block: approval.peers,
+      appliedEdges: await appliedEdgesOf(plugin.route),
+    },
     approval: {
       required: approval.required,
       state: !approval.required ? 'not-required' : approved ? 'approved' : 'pending',
@@ -368,6 +391,10 @@ export const DIGEST_UNAPPROVED = 'digest.unapproved';
 export const SETTINGS_SECRET_TO_PLAIN = 'settings.secret-to-plain';
 /** Why an update waits: it adds or removes a role, or widens the attributes it receives. */
 export const IDENTITY_CHANGED = 'identity.changed';
+/** Why an update waits: it widens what it provides to or consumes from other plugins. */
+export const PEERS_CHANGED = 'peers.changed';
+/** Why an update waits: it ends or narrows an edge a granted consumer relies on. */
+export const PEERS_BREAKS = 'peers.breaks';
 
 /**
  * The reason a staged version waits because what it brings — its relay
@@ -384,13 +411,15 @@ export function digestUnapprovedReason({
   identity = null,
   web = null,
   body = null,
+  peers = null,
 }) {
   const parts = [
-    ...(relay || (!agentHalf && !identity && !web && !body) ? ['relay hooks'] : []),
+    ...(relay || (!agentHalf && !identity && !web && !body && !peers) ? ['relay hooks'] : []),
     ...(agentHalf ? ['agent half'] : []),
     ...(identity ? ['identity'] : []),
     ...(web ? ['web surface'] : []),
     ...(body ? ['request body limit'] : []),
+    ...(peers ? ['peers block'] : []),
   ];
   const named =
     parts.length === 1
@@ -415,6 +444,7 @@ function pendingApprovalRequired(pending) {
         identity: pending.identity?.after ?? null,
         web: pending.web?.after ?? null,
         body: pending.body?.declared ?? null,
+        peers: pending.peers?.after ?? null,
       }),
     ]
   );
@@ -458,6 +488,7 @@ export function pendingUpdateView(pending) {
     identity: pending.identity ?? null,
     web: pending.web ?? null,
     body: pending.body ?? null,
+    peers: pending.peers ?? null,
     approvalRequired: pendingApprovalRequired(pending),
     autoApproveWithheld: pending.autoApproveWithheld ?? null,
   };
@@ -647,7 +678,7 @@ export async function approveHookSet(
   if (pending && pending.digest === digest) return pendingUpdateApproval(pending);
   if (!approval.required) {
     throw httpError(
-      `Plugin "${plugin.name}" has no relay hooks, no agent half Lamaste installs and no identity block — nothing to approve`,
+      `Plugin "${plugin.name}" has no relay hooks, no agent half Lamaste installs, no identity and no peers block — nothing to approve`,
       400,
     );
   }
@@ -673,6 +704,10 @@ export async function approveHookSet(
   // An approved identity block lets the plugin's users through: its
   // audience is computed and sent to its agent half (when it is hosted), and
   // the hosts its user surface is bound to start serving it.
+  if (approval.peers) {
+    const { refreshPluginPeers } = await import('./peer-runtime.js');
+    await refreshPluginPeers(plugin.name, logger);
+  }
   if (approval.identity) {
     const { refreshPluginIdentity } = await import('./identity-sync.js');
     await refreshPluginIdentity(plugin.name, logger);

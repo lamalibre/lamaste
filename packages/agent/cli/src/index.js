@@ -47,6 +47,7 @@ ${b('COMMANDS')}
   ${c('sites')}           List, create, or delete static sites
   ${c('deploy')}          Deploy a local directory to a static site
   ${c('plugin')}          Manage agent plugins (install, uninstall, update, status)
+  ${c('trusted-scopes')}  npm scopes plugins may come from ([list] | --local [list | add | remove])
   ${c('panel')}           Manage agent web panel (--enable, --disable, --status, reset-pin)
   ${c('chisel')}          Manage chisel tunnel credential (refresh-credential)
   ${c('apphost')}         App host helper for plugins' agent halves (enable, pin, status,
@@ -168,6 +169,11 @@ export async function main() {
       const resolved = await resolveLabel(label);
       const { runDeploy } = await import('./commands/deploy.js');
       await runDeploy(args.slice(1), { label: resolved });
+      break;
+    }
+    case 'trusted-scopes': {
+      const { runTrustedScopes } = await import('./commands/trusted-scopes.js');
+      await runTrustedScopes(args.slice(1), { label, json });
       break;
     }
     case 'plugin': {

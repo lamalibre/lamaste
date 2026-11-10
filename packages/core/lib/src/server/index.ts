@@ -492,6 +492,36 @@ export type {
   UserSurfaceRelayVerification,
 } from './agent-forwarder.js';
 
+// --- Peers: the relay's peer channels and gateway (design: slice 8) ---
+export {
+  PEER_ATTACH_TIMEOUT_MS,
+  PEER_CHANNEL_MAX_SESSION_MEMORY_MB,
+  attachPeerChannel,
+  createPeerChannelServer,
+  createPeerChannelManager,
+} from './peer-channel.js';
+export type {
+  PeerChannel,
+  PeerChannelServer,
+  PeerChannelManager,
+  PeerChannelManagerOptions,
+  PeerChannelStatus,
+  PeerChannelTarget,
+  PeerAttachFailure,
+  PeerAttachResult,
+} from './peer-channel.js';
+export { createPeerGateway } from './peer-gateway.js';
+export type {
+  PeerGatewayOptions,
+  PeerGatewayEdge,
+  PeerGatewaySubscription,
+  PeerProviderResolution,
+  PeerDelegationResolution,
+  PeerCallDenial,
+} from './peer-gateway.js';
+export { forwardRequest } from './forward-core.js';
+export type { ForwardRequest, ForwardResponse, ForwardSurface } from './forward-core.js';
+
 // --- Health monitor for hosted plugins ---
 export {
   PLUGIN_HEALTH_DEFAULTS,
@@ -571,6 +601,7 @@ export {
   obtainRegistryServiceToken,
   verifyRegistryCredential,
   brokerAgentRegistryToken,
+  fetchRegistryHostedScopes,
   revokeRegistryTokensForOwner,
   lostFeriaGroups,
   withRegistryUserconfig,

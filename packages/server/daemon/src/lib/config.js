@@ -3,7 +3,7 @@ import { readFile, writeFile, rename, open } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { z } from 'zod';
-import { isIdentityUuid } from '@lamalibre/lamaste';
+import { AdditionalTrustedScopesSchema, isIdentityUuid } from '@lamalibre/lamaste';
 import { SESSION_MAX_AGE } from './user-access-session.js';
 
 const ConfigSchema = z.object({
@@ -35,6 +35,10 @@ const ConfigSchema = z.object({
   // one. An epoch older than a session's longest life can reject nothing and
   // is dropped (`pruneUserEpochs`).
   userEpochs: z.record(z.string(), z.number().int().nonnegative()).optional().default({}),
+  // The additional trusted publisher scopes (`@lamalibre` is always
+  // trusted and never listed). Changed only by an administrator through
+  // `lib/trusted-scope-settings.js`, audited; read via `lib/trusted-scopes.js`.
+  trustedScopes: AdditionalTrustedScopesSchema.optional().default([]),
   onboarding: z.object({
     status: z.enum(['FRESH', 'DOMAIN_SET', 'DNS_READY', 'PROVISIONING', 'COMPLETED']),
   }),

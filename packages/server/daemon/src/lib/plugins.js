@@ -20,6 +20,7 @@ import {
   derivePluginRoute,
   hasAgentHalf,
   normalizeIdentityBlock,
+  normalizePeersBlock,
   pluginHostCapability,
   validateManifest as coreValidateManifest,
   validateInstalledManifest,
@@ -28,9 +29,14 @@ import { listRegisteredSubScopeNames } from './tickets.js';
 import { getStateDb } from './state-db.js';
 import { revokePluginCapabilitiesFromAgents } from './mtls.js';
 import { withRegistryUserconfig } from './registry-credential.js';
+import {
+  assertManifestTrusted,
+  assertPackageSpecSyntax,
+  assertTrustedPackageSpec,
+} from './trusted-scopes.js';
 import { RegistryCredentialError } from '@lamalibre/lamaste/server';
 import {
-  bareLamalibrePackageName,
+  barePackageName,
   installedHookEntrySha256,
   installedWebTreeSha256,
   pinAgentHalf,
@@ -45,7 +51,7 @@ const PLUGINS_DIR = path.join(STATE_DIR, 'plugins');
 // keeps each such sequence atomic. Removable once each operation is
 // collapsed into one transaction.
 let pluginLock = Promise.resolve();
-function withPluginLock(fn) {
+export function withPluginLock(fn) {
   const prev = pluginLock;
   let resolve;
   pluginLock = new Promise((r) => {
@@ -74,9 +80,9 @@ async function getStmts() {
       INSERT INTO plugins
         (name, route, display_name, package_name, version, description, capabilities,
          packages, panel, config, modes, hosting, agent, hooks, hooks_entry_sha256,
-         agent_half_pin, settings, identity, user_surface, web_tree_sha256, status,
+         agent_half_pin, settings, identity, user_surface, web_tree_sha256, peers, status,
          installed_at, enabled_at, domain)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     deleteByName: db.prepare('DELETE FROM plugins WHERE name = ?'),
     // The plugin's audience and the state of its identity feed
@@ -149,6 +155,7 @@ function rowToPlugin(row) {
   if (row.identity != null) entry.identity = JSON.parse(row.identity);
   if (row.user_surface != null) entry.userSurface = JSON.parse(row.user_surface);
   if (row.web_tree_sha256 != null) entry.webTreeSha256 = row.web_tree_sha256;
+  if (row.peers != null) entry.peers = JSON.parse(row.peers);
   if (row.enabled_at != null) entry.enabledAt = row.enabled_at;
   // The domain the plugin belongs to; null: the primary (lib/domains.js).
   entry.domain = row.domain ?? null;
@@ -174,6 +181,28 @@ function nullableJson(value) {
  */
 export function identityOf(manifest) {
   return manifest.identity ? normalizeIdentityBlock(manifest.identity) : undefined;
+}
+
+/**
+ * A manifest's `peers` block as the registry stores it — normalized (core
+ * `normalizePeersBlock`: defaults applied) — or undefined when it declares
+ * none. The stored block enters the approval digest.
+ *
+ * @param {{ peers?: import('@lamalibre/lamaste').PeersBlockInput }} manifest
+ * @returns {import('@lamalibre/lamaste').PeersBlock | undefined}
+ */
+export function peersOf(manifest) {
+  return manifest.peers ? normalizePeersBlock(manifest.peers) : undefined;
+}
+
+/** Judge the applied shelves' edges again (lib/peers.js) — never throws. */
+async function invalidatePeersInBackground(logger) {
+  try {
+    const { invalidatePeers } = await import('./peers.js');
+    invalidatePeers(logger);
+  } catch (err) {
+    logger?.warn({ err: err.message }, 'Could not recompute the peer edges');
+  }
 }
 
 /** Recompute the plugin audiences (lib/audience.js) beside other work — never throws. */
@@ -236,6 +265,7 @@ export async function writePlugins(data) {
         nullableJson(p.identity),
         nullableJson(p.userSurface),
         nullableString(p.webTreeSha256),
+        nullableJson(p.peers),
         p.status,
         p.installedAt,
         nullableString(p.enabledAt),
@@ -262,35 +292,10 @@ export function validateManifest(raw) {
 }
 
 /**
- * Install a plugin by npm package name.
- * Only @lamalibre/ scoped packages are allowed.
- *
- * @param {string} packageName - The npm package name (must start with @lamalibre/)
- * @param {import('pino').Logger} logger
- * @returns {Promise<object>} The installed plugin entry
+ * Install a plugin by npm package name (or `name@version`). The package
+ * must be from a trusted publisher scope (`lib/trusted-scopes.js`), hosted
+ * by the configured registry when it is an additional one.
  */
-// Reject npm aliases (e.g. "@lamalibre/x@npm:totally-evil") and any name that
-// could resolve outside the @lamalibre/ scope. Optional version suffix
-// (`@1.2.3`, `@beta`, etc.) is allowed; alias schemes (`@npm:`, `@github:`,
-// etc.) and shell metacharacters are not.
-const LAMALIBRE_PACKAGE_RE = /^@lamalibre\/[a-z0-9][a-z0-9._-]{0,213}(@[A-Za-z0-9._-]+)?$/;
-
-function assertSafeLamalibrePackage(packageName) {
-  if (typeof packageName !== 'string' || packageName.length === 0 || packageName.length > 256) {
-    throw Object.assign(new Error('Invalid package name'), { statusCode: 400 });
-  }
-  if (!LAMALIBRE_PACKAGE_RE.test(packageName)) {
-    throw Object.assign(
-      new Error('Only @lamalibre/ scoped packages are allowed (alias schemes are rejected)'),
-      { statusCode: 400 },
-    );
-  }
-  // Defense-in-depth against npm alias syntax even if the regex above shifts.
-  const versionSuffix = packageName.indexOf('@', 1);
-  if (versionSuffix !== -1 && packageName.slice(versionSuffix).startsWith('@npm:')) {
-    throw Object.assign(new Error('npm: alias references are not permitted'), { statusCode: 400 });
-  }
-}
 
 /**
  * After a lifecycle change, bring Authelia's OIDC clients and the secret
@@ -382,15 +387,25 @@ function installFailure(spec, err) {
 
 export function installPlugin(packageName, logger) {
   return withPluginLock(async () => {
-    // Validate package scope
-    assertSafeLamalibrePackage(packageName);
-    // `@lamalibre/x@1.2.3` installs that version; the registry knows the
+    // A well-formed spec from a trusted scope the registry hosts
+    await assertTrustedPackageSpec(packageName);
+    // `@scope/x@1.2.3` installs that version; the registry knows the
     // package by its bare name (the manifest is resolved by it, too).
     const installSpec = packageName;
-    packageName = bareLamalibrePackageName(installSpec);
+    packageName = barePackageName(installSpec);
     // Remove the package npm installed when it is refused below.
+    // Through the registry userconfig, like the install: npm's reify may
+    // re-resolve the remaining tree, and must not ask another registry.
     const discardPackage = () =>
-      execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});
+      withRegistryUserconfig(
+        (env) =>
+          execa('npm', ['uninstall', '--ignore-scripts', packageName], {
+            cwd: STATE_DIR,
+            timeout: 120000,
+            env,
+          }),
+        { log: logger },
+      ).catch(() => {});
 
     const s = await getStmts();
 
@@ -451,6 +466,14 @@ export function installPlugin(packageName, logger) {
       throw Object.assign(new Error(`Plugin manifest not found in "${packageName}"`), {
         statusCode: 400,
       });
+    }
+
+    // Every package the manifest names: trusted, of the plugin's own scope
+    try {
+      assertManifestTrusted(manifest, packageName);
+    } catch (err) {
+      await discardPackage();
+      throw err;
     }
 
     const policyError = await manifestPolicyError(manifest);
@@ -534,6 +557,7 @@ export function installPlugin(packageName, logger) {
       identity: identityOf(manifest),
       userSurface: manifest.userSurface,
       webTreeSha256,
+      peers: peersOf(manifest),
       status: 'disabled',
       installedAt: new Date().toISOString(),
     };
@@ -564,6 +588,7 @@ export function installPlugin(packageName, logger) {
         nullableJson(entry.identity),
         nullableJson(entry.userSurface),
         nullableString(entry.webTreeSha256),
+        nullableJson(entry.peers),
         entry.status,
         entry.installedAt,
         null,
@@ -581,6 +606,8 @@ export function installPlugin(packageName, logger) {
     // Users already entitled to its route (grants that outlived an earlier
     // installation) make up its audience from the start.
     if (entry.identity) await recomputeAudiencesInBackground(logger);
+    // Applied shelves may name it: its edges are judged again.
+    if (entry.peers) await invalidatePeersInBackground(logger);
     // A new installation is served on no host (its version is not approved
     // yet): a vhost still carrying the route from before goes in line.
     const { refreshUserSurfaceVhosts } = await import('./user-surface.js');
@@ -640,9 +667,15 @@ export function uninstallPlugin(name, logger) {
 
     // Uninstall the npm package
     logger.info({ name, packageName: plugin.packageName }, 'Uninstalling plugin package');
-    await execa('npm', ['uninstall', plugin.packageName], {
-      cwd: STATE_DIR,
-    }).catch((err) => {
+    await withRegistryUserconfig(
+      (env) =>
+        execa('npm', ['uninstall', '--ignore-scripts', plugin.packageName], {
+          cwd: STATE_DIR,
+          timeout: 120000,
+          env,
+        }),
+      { log: logger },
+    ).catch((err) => {
       logger.warn({ err: err.message }, 'npm uninstall failed (continuing)');
     });
 
@@ -715,6 +748,8 @@ export function uninstallPlugin(name, logger) {
     await releasePluginUserSurface(plugin.route, { plugin: name, logger });
 
     logger.info({ name }, 'Plugin uninstalled');
+    // The applied shelves keep their edges, now pending; its channel goes.
+    if (plugin.peers) await invalidatePeersInBackground(logger);
     await syncOidcClientsBestEffort(logger);
 
     // Grants on its OIDC clients end with it: client ids are chosen, not
@@ -744,7 +779,8 @@ const updateRowSql = `
   UPDATE plugins SET
     display_name = ?, version = ?, description = ?, capabilities = ?, packages = ?, panel = ?,
     config = ?, modes = ?, hosting = ?, agent = ?, hooks = ?, hooks_entry_sha256 = ?,
-    agent_half_pin = ?, settings = ?, identity = ?, user_surface = ?, web_tree_sha256 = ?
+    agent_half_pin = ?, settings = ?, identity = ?, user_surface = ?, web_tree_sha256 = ?,
+    peers = ?
   WHERE name = ?`;
 
 /**
@@ -793,6 +829,7 @@ export async function writePluginRow(
         nullableJson(identityOf(manifest)),
         nullableJson(manifest.userSurface),
         nullableString(webTreeSha256),
+        nullableJson(peersOf(manifest)),
         name,
       );
     const pruned = prunedSettingsCache(
@@ -840,9 +877,13 @@ export function replacePluginPackage(
   { restoring = false } = {},
 ) {
   return withPluginLock(async () => {
-    const bare = bareLamalibrePackageName(packageName);
+    const bare = barePackageName(packageName);
     const spec = `${bare}@${version}`;
-    assertSafeLamalibrePackage(spec);
+    // An update must be trusted now; a revert puts back the package that
+    // was installed (trusted then — a scope in use cannot be untrusted) and
+    // checks only that it is a well-formed spec.
+    if (restoring) assertPackageSpecSyntax(spec);
+    else await assertTrustedPackageSpec(spec);
     logger?.info({ name, spec }, 'Installing plugin package version');
     try {
       await withRegistryUserconfig(
@@ -873,6 +914,7 @@ export function replacePluginPackage(
         { statusCode: 400 },
       );
     }
+    if (!restoring) assertManifestTrusted(manifest, bare);
     const hooksEntrySha256 = await installedHookEntrySha256(packageName, manifest);
     const webTreeSha256 = await installedWebTreeSha256(packageName, manifest);
     return { manifest, hooksEntrySha256, webTreeSha256 };
@@ -909,6 +951,8 @@ export function enablePlugin(name, logger) {
     }
 
     logger?.info({ name }, 'Plugin enabled');
+    // Its edges take effect again (lib/peers.js): channels and calls follow.
+    if (row.peers) await invalidatePeersInBackground(logger);
     const oidcClients = await syncOidcClientsBestEffort(logger);
     return { ok: true, name, status: 'enabled', oidcClients };
   });
@@ -944,6 +988,9 @@ export function disablePlugin(name, logger) {
     }
 
     logger?.info({ name }, 'Plugin disabled');
+    // A disabled plugin calls and serves nobody (lib/peers.js): its edges go
+    // pending, and its channel is closed and its open calls ended.
+    if (row.peers) await invalidatePeersInBackground(logger);
     await syncOidcClientsBestEffort(logger);
     return { ok: true, name, status: 'disabled' };
   });

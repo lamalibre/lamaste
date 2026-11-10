@@ -24,12 +24,20 @@ export type JsonValue =
  * Who the panel admitted for a forwarded request: an admin or an agent on
  * `/admin/*`, a user on the user surface (`/app/*`) — named by the
  * directory's stable id and the user's roles in this plugin, never by
- * username or any other attribute.
+ * username or any other attribute — or another app plugin on the peer
+ * surface (`/peer/*`), by its route and the scope it called, with the id
+ * of the person it calls on behalf of, if any.
  */
 export type HookCaller =
   | { readonly type: 'admin' }
   | { readonly type: 'agent'; readonly label: string }
-  | { readonly type: 'user'; readonly userId: string; readonly roles: readonly string[] };
+  | { readonly type: 'user'; readonly userId: string; readonly roles: readonly string[] }
+  | {
+      readonly type: 'peer';
+      readonly peer: string;
+      readonly scope: string;
+      readonly userId?: string;
+    };
 
 /** A request or response body a hook asked to see (`body.maxBytes`). */
 export interface HookBody {
