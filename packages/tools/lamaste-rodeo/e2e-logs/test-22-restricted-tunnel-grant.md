@@ -1,75 +1,75 @@
 # Lamaste E2E: 22 — Restricted Tunnel + Per-User Grant (Three-VM)
 
-> Started at `2026-11-10 13:05:47 UTC`
+> Started at `2026-11-10 17:48:39 UTC`
 
 
 ## Pre-flight
 
-✅ `13:05:47` Onboarding is complete  
+✅ `17:48:39` Onboarding is complete  
 
 ## Step 1: Create tunnel using the default accessMode
 
-✅ `13:05:49` Tunnel creation returned ok: true  
-✅ `13:05:49` Tunnel has an ID  
-✅ `13:05:49` Tunnel is owned by test-agent  
-✅ `13:05:49` Default accessMode is 'restricted' (security posture)  
-ℹ️ `13:05:49` Created restricted tunnel: e2erestricted.test.lamaste.local (ID: 8d1c5608-a74a-4129-a272-5dd138292525)  
-✅ `13:05:50` Second tunnel e2ehostconfusion.test.lamaste.local is 'authenticated' (any Authelia user)  
+✅ `17:48:41` Tunnel creation returned ok: true  
+✅ `17:48:41` Tunnel has an ID  
+✅ `17:48:41` Tunnel is owned by test-agent  
+✅ `17:48:41` Default accessMode is 'restricted' (security posture)  
+ℹ️ `17:48:41` Created restricted tunnel: e2erestricted.test.lamaste.local (ID: 56c08a43-d161-4c02-8020-bc6d584f5eaf)  
+✅ `17:48:42` Second tunnel e2ehostconfusion.test.lamaste.local is 'authenticated' (any Authelia user)  
 
 ## Step 2: Wire up host entries and start a marker HTTP server
 
-✅ `13:05:53` Marker HTTP server running on agent at port 18090  
+✅ `17:48:45` Marker HTTP server running on agent at port 18090  
 
 ## Step 3: Create a second Authelia user without a grant
 
-✅ `13:06:00` Created second Authelia user (e2eoutsider) for no-grant case  
+✅ `17:48:52` Created second Authelia user (e2eoutsider) for no-grant case  
 
 ## Step 4: Authenticate as testuser (will have the grant)
 
-✅ `13:06:01` TOTP reset returned otpauth URI for testuser  
-✅ `13:06:32` testuser first factor OK  
-✅ `13:06:33` testuser TOTP OK  
+✅ `17:48:53` TOTP reset returned otpauth URI for testuser  
+✅ `17:49:03` testuser first factor OK  
+✅ `17:49:03` testuser TOTP OK  
 
 ## Step 5: testuser WITHOUT a grant is denied (403)
 
-✅ `13:06:33` Restricted tunnel denies authenticated user without grant (403)  
+✅ `17:49:03` Restricted tunnel denies authenticated user without grant (403)  
 
 ## Step 6: Admin creates a grant for testuser
 
-✅ `13:06:33` Grant created (2ef69735-7a32-472a-b8f5-964c7b53d402)  
+✅ `17:49:03` Grant created (0464bdfe-381c-4888-9449-b1b32b70efb7)  
 
 ## Step 7: testuser WITH a grant is allowed (200 + marker)
 
-✅ `13:06:35` Grantee receives tunnel marker content  
-✅ `13:06:35` Grantee reaches tunnel (HTTP 200)  
+✅ `17:49:04` Grantee receives tunnel marker content  
+✅ `17:49:05` Grantee reaches tunnel (HTTP 200)  
 
 ## Step 8: Outsider authenticates but has no grant → 403
 
-✅ `13:07:03` outsider first factor OK  
-✅ `13:07:03` outsider TOTP OK  
-✅ `13:07:03` Outsider authenticated but ungranted receives 403  
-✅ `13:07:03` Outsider does not see tunnel content (restricted mode holds)  
+✅ `17:49:32` outsider first factor OK  
+✅ `17:49:32` outsider TOTP OK  
+✅ `17:49:33` Outsider authenticated but ungranted receives 403  
+✅ `17:49:33` Outsider does not see tunnel content (restricted mode holds)  
 
 ## Step 8b: Another tunnel's Host header does not open this tunnel
 
-✅ `13:07:04` Restricted tunnel vhost set back to the old form  
-✅ `13:07:05` A vhost written the old way closes its tunnel (grantee gets 403)  
-✅ `13:07:05` Old vhost: the outsider does not get in with Host e2ehostconfusion.test.lamaste.local  
-✅ `13:07:08` Panel startup rewrote the vhost: the subrequest path names e2erestricted.test.lamaste.local  
-✅ `13:07:08` Panel startup rewrote the vhost: X-Original-URL names e2erestricted.test.lamaste.local  
-✅ `13:07:08` Panel startup rewrote the vhost: Host names e2erestricted.test.lamaste.local  
-✅ `13:07:08` The rewritten vhost names no client Host header  
-✅ `13:07:09` Rewritten vhost: the grantee gets in again  
-✅ `13:07:09` Control: the grantee's request line for e2erestricted.test.lamaste.local with Host e2ehostconfusion.test.lamaste.local is served  
-✅ `13:07:10` Outsider with Host e2ehostconfusion.test.lamaste.local is denied this tunnel (403)  
-✅ `13:07:10` Outsider with another tunnel's Host does not see tunnel content  
-✅ `13:07:10` Anonymous request is sent to the login portal  
-✅ `13:07:10` Login redirect returns to e2erestricted.test.lamaste.local, not the Host header  
+✅ `17:49:33` Restricted tunnel vhost set back to the old form  
+✅ `17:49:34` A vhost written the old way closes its tunnel (grantee gets 403)  
+✅ `17:49:35` Old vhost: the outsider does not get in with Host e2ehostconfusion.test.lamaste.local  
+✅ `17:49:37` Panel startup rewrote the vhost: the subrequest path names e2erestricted.test.lamaste.local  
+✅ `17:49:37` Panel startup rewrote the vhost: X-Original-URL names e2erestricted.test.lamaste.local  
+✅ `17:49:37` Panel startup rewrote the vhost: Host names e2erestricted.test.lamaste.local  
+✅ `17:49:37` The rewritten vhost names no client Host header  
+✅ `17:49:38` Rewritten vhost: the grantee gets in again  
+✅ `17:49:39` Control: the grantee's request line for e2erestricted.test.lamaste.local with Host e2ehostconfusion.test.lamaste.local is served  
+✅ `17:49:39` Outsider with Host e2ehostconfusion.test.lamaste.local is denied this tunnel (403)  
+✅ `17:49:39` Outsider with another tunnel's Host does not see tunnel content  
+✅ `17:49:39` Anonymous request is sent to the login portal  
+✅ `17:49:39` Login redirect returns to e2erestricted.test.lamaste.local, not the Host header  
 
 ## Step 9: Revoke testuser's grant → previously-allowed user 403
 
-✅ `13:07:22` Revoked grant blocks the previously-allowed user (403)  
-✅ `13:07:22` Previously-allowed user no longer receives tunnel content  
+✅ `17:49:51` Revoked grant blocks the previously-allowed user (403)  
+✅ `17:49:51` Previously-allowed user no longer receives tunnel content  
 
 ---
 
@@ -82,4 +82,4 @@
 | **Skipped** | `0` |
 | **Total** | `34` |
 
-ℹ️ `13:07:22` Cleaning up test resources...  
+ℹ️ `17:49:51` Cleaning up test resources...  
