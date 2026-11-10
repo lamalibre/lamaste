@@ -90,7 +90,9 @@ state.db migration `0022_mail.sql` (its comments are the reference):
   `skip_verify`. Optional `caPem` (Q4): a PEM bundle trusted **in addition
   to** the system roots for that transport only (≤ 16 KiB, every block a
   CA certificate, parsed before storing) — for a self-hosted mail server
-  and the e2e sink alike.
+  and the e2e sink alike. Like the password, a change that omits it keeps
+  the stored bundle for the same host only (never trusted for another
+  server); `null` or `''` removes it.
 
 **Which transport a mail uses**: the domain's row if it names a kind; else
 the relay's transport with the domain row's sender if there is one; else
@@ -278,15 +280,16 @@ the row ("no address — cannot reset their own password").
 
 Authelia's notifier is SMTP only. It submits to **Lamaste**:
 
-```yaml
-certificates_directory: /etc/authelia/certs # the listener's local CA, nothing else
+<!-- prettier-ignore -->
+```text
+certificates_directory: /etc/authelia/certs   # the listener's local CA, nothing else
 notifier:
   disable_startup_check: true
   smtp:
     address: 'submissions://127.0.0.1:9295'
     tls: { server_name: 'lamaste-mail.localhost' }
     username: 'authelia'
-    password: { { secret "/etc/authelia/mail-submission-password" | msquote } }
+    password: {{ secret "/etc/authelia/mail-submission-password" | msquote }}
     sender: 'Code Lama <no-reply@notify.codelama.com.tr>'
     subject: '{title}'
 ```

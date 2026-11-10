@@ -96,6 +96,16 @@ The new password is hashed with bcrypt and written to `users.yml`. Authelia is r
 
 You can also update the display name, email, and groups in the same edit form.
 
+#### People changing their own password
+
+With a [mail transport](mail.md) (4.13), people no longer need you for this:
+
+- **Forgot password.** Every sign-in page links **Reset password** (`https://auth.<domain>/reset`). A link arrives by mail; the new password needs a **current code from their authenticator app** too, so someone who only has the mailbox cannot take the account. Someone who lost their authenticator cannot reset by mail — reset their TOTP (step 4) and set a password here.
+- **Change password.** Signed in, they open **Change password** on the sign-in page (`https://auth.<domain>/account/password`) and give their current password and a new one.
+- Either way they get a "your password changed" mail. Sessions already open stay open until they sign in again (Authelia cannot end them).
+
+Only users whose address can receive mail can reset: the Users page marks an address that cannot (`@lamaste.local` — the onboarding administrator's —, `.test`, `.example`, `.invalid`, `.localhost`) with "no address — cannot reset their own password". Give them a real address. Without a transport, the reset page is not linked and this step stays yours.
+
 ### 6. Update User Details
 
 To change a user's display name, email, or group membership:

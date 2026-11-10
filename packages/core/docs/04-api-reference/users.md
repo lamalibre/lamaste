@@ -71,16 +71,17 @@ curl -s --cert client.p12:password \
 }
 ```
 
-| Field         | Type             | Description                                                                                                                              |
-| ------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `username`    | `string`         | Unique login identifier                                                                                                                  |
-| `displayname` | `string`         | Human-readable display name                                                                                                              |
-| `email`       | `string`         | User's email address                                                                                                                     |
-| `groups`      | `string[]`       | Authelia group memberships an administrator assigned — never the groups Lamaste owns ([Domains](#domains))                               |
-| `disabled`    | `boolean`        | Authelia's `disabled: true` — the user cannot sign in                                                                                    |
-| `userId`      | `string \| null` | The user's directory id; `null` until the directory has seen the user (within a minute of an edit of `users.yml` made outside the panel) |
-| `status`      | `string`         | `active` or `disabled`                                                                                                                   |
-| `domains`     | `object[]`       | Domain memberships, `{ name, kind }` — `kind` `member` or `external` ([Domains](#domains))                                               |
+| Field              | Type             | Description                                                                                                                                                            |
+| ------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `username`         | `string`         | Unique login identifier                                                                                                                                                |
+| `displayname`      | `string`         | Human-readable display name                                                                                                                                            |
+| `email`            | `string`         | User's email address                                                                                                                                                   |
+| `groups`           | `string[]`       | Authelia group memberships an administrator assigned — never the groups Lamaste owns ([Domains](#domains))                                                             |
+| `disabled`         | `boolean`        | Authelia's `disabled: true` — the user cannot sign in                                                                                                                  |
+| `userId`           | `string \| null` | The user's directory id; `null` until the directory has seen the user (within a minute of an edit of `users.yml` made outside the panel)                               |
+| `status`           | `string`         | `active` or `disabled`                                                                                                                                                 |
+| `domains`          | `object[]`       | Domain memberships, `{ name, kind }` — `kind` `member` or `external` ([Domains](#domains))                                                                             |
+| `emailDeliverable` | `boolean`        | Mail to `email` can arrive — not under `.example`, `.invalid`, `.local`, `.localhost` or `.test`. A user without one cannot reset their own password ([Mail](mail.md)) |
 
 Users deleted from `users.yml` are not listed here; the [directory](#get-api-identity-directory) keeps their tombstones.
 

@@ -417,7 +417,7 @@ A tunnel's hostname is `<subdomain>.<domain>` and is unique as a whole: `feria.s
 - Must be an integer
 - Minimum: 1024 (no privileged ports)
 - Maximum: 65535
-- Must not be a reserved port: `3100` (panel server), `9090` (Chisel server), `9091` (Authelia), `9292` (IP-based panel listener), `9294` (Gatekeeper)
+- Must not be a reserved port: `3100` (panel server), `9090` (Chisel server), `9091` (Authelia), `9292` (IP-based panel listener), `9294` (Gatekeeper), `9295` (mail submission listener)
 - Must not be in `21000`–`21999`, the range Lamaste assigns to the internal tunnels of hosted agent-hosted plugins (a tunnel created before 4.3 on such a port keeps it)
 - Must be unique across all tunnels — Chisel binds the same port on the server and on the agent
 

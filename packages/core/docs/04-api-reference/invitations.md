@@ -54,7 +54,9 @@ The newest invitations, both kinds. Query: `plugin` (name), `inviter` (directory
       "acceptedAt": null,
       "acceptedUserId": null,
       "fulfilled": false,
-      "used": false
+      "used": false,
+      "mail": { "status": "sent", "sentAt": "2026-11-02T09:00:01.000Z" },
+      "reissuedAt": null
     }
   ],
   "truncated": false
@@ -70,6 +72,8 @@ The newest invitations, both kinds. Query: `plugin` (name), `inviter` (directory
 | `status`        | `pending`, `expired` (pending past `expiresAt`), `accepting`, `accepted`, `revoked`                                            |
 | `revokedReason` | Below                                                                                                                          |
 | `fulfilled`     | Accepted and, for a delegated one, every grant made. `false` on an accepted invitation: access is still being completed        |
+| `mail`          | The mail of its current link: `{ status, sentAt }` ([Mail status](mail.md#mail-status)), `status` `null` when none was tried   |
+| `reissuedAt`    | When its link was last replaced by a new one, or `null`                                                                        |
 
 **Revocation reasons:** `inviter`, `admin`, `inviter_disabled`, `inviter_removed`, `inviter_unentitled` (lost every role that could give it), `policy_disabled`, `email_domain_removed`, `plugin_removed`, `role_undeclared`, `surface_removed`, `surface_not_restricted`, `attempts_exhausted`, `repair_abandoned`, `superseded` (expired, and closed when another invitation named its username).
 
@@ -85,7 +89,11 @@ An administrator's invitation.
 | `expiresInDays` | 1–30, default 7                                                                                                                         |
 | `domains`       | Domain names (members) or `{ name, kind }`. Required on a relay with two or more domains (400 `domains_required`); with one, its member |
 
-`201 { ok, invitation, inviteUrl, token }` — `inviteUrl` and `token` here and never again. `409` when the username is taken, or an open invitation names it.
+`201 { ok, invitation, inviteUrl, token, mail }` — `inviteUrl` and `token` here and never again. The link is mailed to `email` when the invitation's domain can send ([Mail](mail.md)); `mail` says what happened (`sent`, `failed`, `not-configured`, `deferred-budget`), and the link is answered whatever it says. `409` when the username is taken, or an open invitation names it.
+
+### `POST /api/invitations/:id/reissue`
+
+A new link for a **pending** invitation, an expired one included, either kind: a new token (the old link dead at once), its failed attempts reset, mailed — the same answer as creating one. Held to neither an inviter's rate nor the caps. An administrator's invitation keeps the lifetime its link last had; a delegated one gets its policy's. `404 not_found`; `409 invitation_not_pending` (accepted, being accepted or revoked); `409 username_taken` when the username exists by then. Audited `invitation.reissued`.
 
 ### `DELETE /api/invitations/:id`
 
@@ -167,7 +175,8 @@ On the plugin's domain's sign-in host, for its page `https://auth.<domain>/invit
       "revokedReason": null,
       "createdAt": "2026-11-02T09:00:00.000Z",
       "expiresAt": "2026-11-09T09:00:00.000Z",
-      "acceptedAt": null
+      "acceptedAt": null,
+      "mail": { "status": "sent", "sentAt": "2026-11-02T09:00:01.000Z" }
     }
   ]
 }
@@ -177,7 +186,11 @@ The caller's own invitations only, and never who accepted one.
 
 ### `POST /api/delegated-invitations/:route`
 
-`{ "email": "deniz@client.example", "displayName": "Deniz", "role": "stakeholder" }` (`displayName` optional) → `201 { invitation, inviteUrl }`, the link here and never again.
+`{ "email": "deniz@client.example", "displayName": "Deniz", "role": "stakeholder" }` (`displayName` optional) → `201 { invitation, inviteUrl, mail }`, the link here and never again — mailed to the invitee, in the domain's language, when the domain can send (`mail.status`, [Mail status](mail.md#mail-status)).
+
+### `POST /api/delegated-invitations/:route/:id/reissue`
+
+A new link for the caller's own pending invitation (an expired one included): the old link dead, the new one mailed, answered `{ invitation, inviteUrl, mail }` once. Under the rules of making one — invitations still allowed, the address's domain still in the policy, the role still the caller's to give, the grant reserve — and it counts toward the 30 an hour; one that had expired and opens again counts toward the caps too. `404 not_found` (not the caller's, or none); `409 invitation_not_pending`. The inviter's page shows each open invitation's mail and a **New link** button.
 
 ### `DELETE /api/delegated-invitations/:route/:id`
 
@@ -245,6 +258,7 @@ A delegated acceptance is refused `410` unless everything still holds: the plugi
 ```
 lamaste-server invitations list [--plugin <name>] [--inviter <user>]
 lamaste-server invitations revoke <id>
+lamaste-server invitations reissue <id>
 lamaste-server invitations disable-invitees <user> [--transitive]
 lamaste-server plugins invitations <name>
 lamaste-server plugins invitations <name> set [--enable|--disable] [--email-domains a,b]
@@ -257,5 +271,6 @@ lamaste-server plugins invitations <name> set [--enable|--disable] [--email-doma
 
 - [Agent-Hosted Plugins — Delegated invitations](agent-hosted-plugins.md#delegated-invitations)
 - [Users API](users.md)
+- [Mail API](mail.md)
 - [Domains API — External members](domains.md)
 - [Security model — Delegated invitations](../01-concepts/security-model.md#5g-delegated-invitations)
