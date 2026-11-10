@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Trusted publisher scopes: an administrator can trust a second npm scope whose publisher they trust as much as Lamalibre, so its plugins install, update and run like `@lamalibre` ones — on the relay, on agents (which follow their relay's list) and in the desktop's local plugin host (its user's own list). Everything else stays refused; third-party plugins still wait for sandboxed plugin UIs. Design: `packages/core/docs/trusted-publisher-scopes-design.md`; reference: `04-api-reference/settings.md#trusted-publisher-scopes`.
+
+### Added
+
+- `GET|POST /api/settings/trusted-scopes`, `DELETE /api/settings/trusted-scopes/:scope` (admin; audited as `settings.trusted-scope.added|removed`, announced to the administrators); `lamaste-server trusted-scopes`; the Plugins page's **Trusted publishers** card; `AdminClient.getTrustedScopes|addTrustedScope|removeTrustedScope` (web, desktop).
+- Core `trusted-scopes.ts` (`isTrustedPackage`, `assertManifestPackagesTrusted`, `effectiveTrustedScopes`, …) and its Rust twin in the desktop, tested against one shared case table (look-alikes, case, Unicode, aliases).
+- `trustedScopes` in `GET /api/tunnels/agent-config` and `scopes` in the agent's brokered registry credential; agents record the list at every sync and restart their daemon when a scope their plugins use is dropped.
+- `lamaste-agent trusted-scopes [list] | --local [list | add | remove]`.
+
+### Changed
+
+- A plugin package, and every package its manifest names (which must be in its own scope), is checked against the trusted scopes at install, update staging, agent-half pinning, push install, mount and bundle serving. The manifest schema takes any well-formed scoped name; trust is the installing relay's or agent's decision.
+- A package of an additional scope installs only from a registry that hosts the scope (Feria's `GET /-/feria/scopes`): trusting one needs a registry credential whose registry hosts it, the credential cannot be cleared while additional scopes are trusted, and an agent installs such a package only through the brokered credential. The panel's and agents' install userconfigs route every trusted scope to the registry.
+- The app host helper speaks protocol 3: it takes an agent half of any well-formed scope. Protocol 2 still installs `@lamalibre` halves; a half of another scope needs 3 (host eligibility says so).
+
 ## [4.12.0] - 2026-11-09
 
 A plugin's request body limit: an agent-hosted plugin declares how large a request its agent half takes — `agent.maxBodySizeMb` in its manifest, up to 100 MiB — and an administrator approves it with the plugin. Before, every agent half took at most 10 MiB, which nothing could raise, and a plugin's site refused anything above 1 MiB with a `500`. Reference: `04-api-reference/agent-hosted-plugins.md#request-body-limit`.

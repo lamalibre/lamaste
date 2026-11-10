@@ -341,3 +341,43 @@ curl -s -X POST --cert client.p12:password \
   -b cookies.txt \
   https://203.0.113.42:9292/api/settings/2fa/disable | jq
 ```
+
+## Trusted Publisher Scopes
+
+The npm scopes whose plugins this relay installs and runs. `@lamalibre` is always trusted and never listed; an administrator adds scopes whose publisher they trust exactly as much — a plugin from one runs with the same privileges as Lamalibre's own, including its admin page in this panel (see [Security Model](../01-concepts/security-model.md), _Trusted publisher scopes_). Admin certificate only (and the 2FA session when panel 2FA is on). CLI: `lamaste-server trusted-scopes [list | add <scope> | remove <scope>]`.
+
+Every answer is the list:
+
+```json
+{ "builtIn": "@lamalibre", "additional": ["@example"], "effective": ["@lamalibre", "@example"] }
+```
+
+### `GET /api/settings/trusted-scopes`
+
+The list.
+
+### `POST /api/settings/trusted-scopes`
+
+Body `{ "scope": "@example" }` (`@` + lowercase letters, digits and hyphens). Trusts the scope and answers `201` with the list; audited as `settings.trusted-scope.added`, announced to the administrators. The configured registry must host the scope (it serves it as a closed scope — Feria's `GET /-/feria/scopes`), checked now.
+
+| Status | `code`                         | When                                                     |
+| ------ | ------------------------------ | -------------------------------------------------------- |
+| 400    | `invalid_scope`                | Not an npm scope                                         |
+| 400    | `builtin_scope`                | `@lamalibre`                                             |
+| 409    | `scope_already_trusted`        | Already in the list                                      |
+| 409    | `too_many_scopes`              | 16 additional scopes already                             |
+| 409    | `registry_credential_required` | No registry credential is configured                     |
+| 409    | `registry_lacks_scope`         | The registry does not host the scope (or has retired it) |
+| 502    | `registry_unreachable`         | The registry's scope list could not be read              |
+
+### `DELETE /api/settings/trusted-scopes/:scope`
+
+Stops trusting the scope (`%40example` in the path). Answers the list; audited as `settings.trusted-scope.removed`. Agents drop the scope at their next sync.
+
+| Status | `code`              | When                                                                                               |
+| ------ | ------------------- | -------------------------------------------------------------------------------------------------- |
+| 400    | `builtin_scope`     | `@lamalibre`                                                                                       |
+| 404    | `scope_not_trusted` | Not in the list                                                                                    |
+| 409    | `scope_in_use`      | An installed plugin (`plugins`) or a push-install policy (`policies`) uses it — remove those first |
+
+Elsewhere: an install, update staging or agent-half pin of a package from an untrusted scope answers `400 untrusted_scope`; one from an additional scope the registry no longer hosts `409 registry_lacks_scope`. `GET /api/tunnels/agent-config` and `GET /api/agents/me/registry-credential` carry `trustedScopes` / `scopes` (the effective list) for agents.
