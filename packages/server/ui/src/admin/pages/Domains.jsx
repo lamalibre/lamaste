@@ -7,6 +7,7 @@ import {
   ChevronUp,
   Globe2,
   Languages,
+  Mail,
   Palette,
   Plus,
   Power,
@@ -23,6 +24,7 @@ import { errorMessage } from '../lib/errorMessage.js';
 import { ConfirmDialog } from '../components/Dialog.jsx';
 import { DomainBranding } from '../components/DomainBranding.jsx';
 import { DomainLanguage } from '../components/DomainLanguage.jsx';
+import { MailSettings } from '../components/MailSettings.jsx';
 import {
   EXTERNAL_MEMBER_HINT,
   domainStatusText,
@@ -221,6 +223,7 @@ function DomainCard({ domain }) {
   const [open, setOpen] = useState(false);
   const [brandOpen, setBrandOpen] = useState(false);
   const [languageOpen, setLanguageOpen] = useState(false);
+  const [mailOpen, setMailOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const onError = (err) => addToast(explainDomainRefusal(err), 'error');
   const activate = useMutation({
@@ -297,6 +300,14 @@ function DomainCard({ domain }) {
             <Languages size={14} /> Language{' '}
             {languageOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </button>
+          <button
+            type="button"
+            className={BUTTON}
+            onClick={() => setMailOpen(!mailOpen)}
+            title="The sender, or the transport, of the domain’s invitations and password reset mails"
+          >
+            <Mail size={14} /> Mail {mailOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
         </div>
       </div>
       {usage.length > 0 && (
@@ -324,6 +335,11 @@ function DomainCard({ domain }) {
       {languageOpen && (
         <div className="mt-3 border-t border-zinc-800 pt-3">
           <DomainLanguage key={domain.language ?? ''} domain={domain} />
+        </div>
+      )}
+      {mailOpen && (
+        <div className="mt-3 border-t border-zinc-800 pt-3">
+          <MailSettings domain={domain} />
         </div>
       )}
       {confirmRemove && (

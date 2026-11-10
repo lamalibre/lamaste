@@ -139,10 +139,29 @@ export const webAdminClient = {
   removeDomainBrandingFavicon: (name) => jsonDelete(domainPath(name, '/branding/favicon')),
   getDomainBrandingPreview: (name) => apiFetch(domainPath(name, '/branding/preview')),
 
+  // --- Mail: the relay's transport, then a domain's override (mail-design.md §3.5) ---
+  getMailSettings: () => apiFetch('/api/settings/mail'),
+  setMailSmtp: (input) => jsonPut('/api/settings/mail', input),
+  startMailGoogleConsent: (input) => jsonPost('/api/settings/mail/google/start', input),
+  setMailSender: (input) => jsonPatch('/api/settings/mail', input),
+  resumeMail: () => jsonPost('/api/settings/mail/resume'),
+  clearMailSettings: () => jsonDelete('/api/settings/mail'),
+  sendTestMail: (to) => jsonPost('/api/settings/mail/test', { to }),
+  getDomainMail: (name) => apiFetch(domainPath(name, '/mail')),
+  setDomainMailSmtp: (name, input) => jsonPut(domainPath(name, '/mail'), input),
+  startDomainMailGoogleConsent: (name, input) =>
+    jsonPost(domainPath(name, '/mail/google/start'), input),
+  setDomainMailSender: (name, input) => jsonPut(domainPath(name, '/mail/sender'), input),
+  updateDomainMail: (name, input) => jsonPatch(domainPath(name, '/mail'), input),
+  resumeDomainMail: (name) => jsonPost(domainPath(name, '/mail/resume')),
+  clearDomainMail: (name) => jsonDelete(domainPath(name, '/mail')),
+  sendDomainTestMail: (name, to) => jsonPost(domainPath(name, '/mail/test'), { to }),
+
   // --- Invitations ---
   getInvitations: (filter = {}) => apiFetch(`/api/invitations${toQuery(filter)}`),
   createInvitation: (data) => jsonPost('/api/invitations', data),
   revokeInvitation: (id) => jsonDelete(`/api/invitations/${encodeURIComponent(id)}`),
+  reissueInvitation: (id) => jsonPost(`/api/invitations/${encodeURIComponent(id)}/reissue`),
   disableInvitees: (inviterUserId, { transitive = false } = {}) =>
     jsonPost('/api/invitations/disable-invitees', { inviterUserId, transitive }),
   getPluginInvitationPolicy: (name) => apiFetch(pluginPath(name, 'invitation-policy')),

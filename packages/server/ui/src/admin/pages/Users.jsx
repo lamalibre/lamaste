@@ -21,6 +21,7 @@ import {
   Eraser,
   AlertTriangle,
   Archive,
+  Link2,
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import CopyableId from '../components/CopyableId.jsx';
@@ -46,6 +47,7 @@ import {
   useMembershipChoice,
 } from '../components/DomainChoice.jsx';
 import { isExternalAnywhere } from '../lib/domains.js';
+import { isReissuable, mailStatusText } from '../lib/mail.js';
 
 /** Toast each warning a users change came back with: what the panel could not complete beside it. */
 function toastWarnings(toast, result) {
@@ -479,10 +481,17 @@ function InviteUserModal({ onClose, onSuccess }) {
 
 // --- Invite Link Modal (shown after creating invitation) ---
 
-function InviteLinkModal({ inviteUrl, token, onClose }) {
+/**
+ * A made or reissued invitation's link, shown once, and what became of its
+ * mail: whoever opens the link first can accept the invitation.
+ */
+function InviteLinkModal({ result, onClose }) {
   const [copied, setCopied] = useState(false);
+  const { inviteUrl, token, mail, invitation, reissued } = result;
 
   const displayUrl = inviteUrl || `(Domain not configured — token: ${token})`;
+  const mailText = mailStatusText(mail, invitation?.email ?? null);
+  const expiresAt = invitation?.expiresAt ? new Date(invitation.expiresAt) : null;
 
   function handleCopy() {
     const textToCopy = inviteUrl || token;
@@ -497,9 +506,23 @@ function InviteLinkModal({ inviteUrl, token, onClose }) {
 
   return (
     <Modal onClose={onClose}>
-      <h2 className="mb-4 text-lg font-bold text-white">Invitation Created</h2>
+      <h2 className="mb-4 text-lg font-bold text-white">
+        {reissued ? 'New Invitation Link' : 'Invitation Created'}
+      </h2>
+      {mailText && (
+        <p
+          className={`mb-3 text-sm ${mail?.status === 'sent' ? 'text-green-400' : 'text-yellow-400'}`}
+        >
+          {mailText}
+        </p>
+      )}
       <p className="mb-4 text-sm text-zinc-400">
-        Share this link with the invited user. It expires in 7 days.
+        {reissued ? 'The old link no longer works. ' : ''}
+        This link is shown only now
+        {expiresAt && !Number.isNaN(expiresAt.getTime())
+          ? ` and expires on ${expiresAt.toLocaleString()}`
+          : ''}
+        .
       </p>
       <div className="mb-4 flex items-center gap-2 rounded-lg bg-zinc-900 px-4 py-3">
         <code className="flex-1 text-sm text-cyan-400 break-all">{displayUrl}</code>
@@ -883,6 +906,7 @@ export default function Users() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteResult, setInviteResult] = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
+  const [reissueTarget, setReissueTarget] = useState(null);
   const [invitationFilter, setInvitationFilter] = useState({ plugin: '', inviter: '' });
   const { newUsersNeedDomains: showDomains } = useDomains();
 
@@ -965,6 +989,19 @@ export default function Users() {
     onError: (err) => {
       toast(errorMessage(err), 'error');
       setRevokeTarget(null);
+    },
+  });
+
+  const reissueMutation = useMutation({
+    mutationFn: (id) => client.reissueInvitation(id),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      setReissueTarget(null);
+      setInviteResult({ ...result, reissued: true });
+    },
+    onError: (err) => {
+      toast(errorMessage(err), 'error');
+      setReissueTarget(null);
     },
   });
 
@@ -1090,6 +1127,14 @@ export default function Users() {
                     <td className="px-4 py-3 text-sm text-zinc-300">{u.displayname}</td>
                     <td className="px-4 py-3 text-sm text-zinc-400 hidden sm:table-cell">
                       {u.email}
+                      {u.emailDeliverable === false && (
+                        <span
+                          className="mt-0.5 block text-xs text-yellow-400/80"
+                          title="Password reset mails go only to a deliverable address"
+                        >
+                          no address — cannot reset their own password
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
                       <div className="flex flex-wrap gap-1">
@@ -1290,11 +1335,26 @@ export default function Users() {
                         {revokeReasonText(inv.revokedReason)}
                       </span>
                     )}
+                    {isReissuable(inv) && mailStatusText(inv.mail) && (
+                      <span className="mt-1 block text-xs text-zinc-500">
+                        {mailStatusText(inv.mail)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-sm text-zinc-500 hidden md:table-cell">
                     {new Date(inv.expiresAt).toLocaleDateString()}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    {isReissuable(inv) && (
+                      <button
+                        type="button"
+                        onClick={() => setReissueTarget(inv.id)}
+                        className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-cyan-400"
+                        title="New link (mailed when its domain can send; the old link stops working)"
+                      >
+                        <Link2 size={14} />
+                      </button>
+                    )}
                     {isRevocable(inv) && (
                       <button
                         type="button"
@@ -1326,10 +1386,18 @@ export default function Users() {
 
       {/* Invite Link Modal */}
       {inviteResult && (
-        <InviteLinkModal
-          inviteUrl={inviteResult.inviteUrl}
-          token={inviteResult.token}
-          onClose={() => setInviteResult(null)}
+        <InviteLinkModal result={inviteResult} onClose={() => setInviteResult(null)} />
+      )}
+
+      {/* New Invitation Link Confirmation */}
+      {reissueTarget && (
+        <ConfirmDialog
+          title="New Invitation Link"
+          message="The current link stops working. The new one is mailed when the invitation’s domain can send, and shown once."
+          confirmLabel="Give a new link"
+          onConfirm={() => reissueMutation.mutate(reissueTarget)}
+          onCancel={() => setReissueTarget(null)}
+          isPending={reissueMutation.isPending}
         />
       )}
 

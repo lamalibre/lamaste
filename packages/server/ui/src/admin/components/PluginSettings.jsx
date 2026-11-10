@@ -19,6 +19,7 @@ import {
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { useToast } from './Toast.jsx';
 import RefreshNote from './RefreshNote.jsx';
+import { SecretMaskNote, SecretTextInput } from './SecretTextInput.jsx';
 import { errorMessage, refusalOf } from '../lib/errorMessage.js';
 import { failedWithoutData } from '../lib/query-refresh.js';
 import { settingsHostingOutage, settingsReadOnlyReason } from '../lib/hostingState.js';
@@ -31,7 +32,6 @@ import {
   initialSecretActions,
   looksLikeCredential,
   needsValue,
-  secretMaskSupported,
   secretState,
   secretStatusText,
   settingsErrorsOf,
@@ -44,17 +44,6 @@ const INPUT =
 
 /** How often read-only settings are read again, to open the form once its hosting is up. */
 const READ_ONLY_POLL_MS = 10_000;
-
-/**
- * Whether this browser masks a secret's text input (`-webkit-text-security`;
- * every current browser — Firefox since 114). Read once: it does not change.
- */
-const SECRET_MASKED = secretMaskSupported(typeof CSS === 'undefined' ? undefined : CSS);
-
-/** A secret's text never leaves its input by the clipboard, as a password input's does not. */
-function refuseClipboard(e) {
-  e.preventDefault();
-}
 
 const SMALL_BUTTON =
   'flex items-center gap-1.5 rounded bg-zinc-700 px-2 py-0.5 text-zinc-300 hover:bg-zinc-600 disabled:opacity-50';
@@ -320,14 +309,9 @@ function SettingsForm({
             </div>
             {!readOnly && action === 'replace' && (
               <>
-                <input
+                <SecretTextInput
                   id={id}
                   ref={secretRef(key)}
-                  type="text"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
                   placeholder={state.set ? 'New value' : 'Value'}
                   onChange={(e) => {
                     const filled = e.target.value !== '';
@@ -336,21 +320,10 @@ function SettingsForm({
                     );
                     onEdit(key);
                   }}
-                  onCopy={refuseClipboard}
-                  onCut={refuseClipboard}
                   aria-invalid={error ? true : undefined}
-                  data-1p-ignore
-                  data-lpignore="true"
-                  data-bwignore="true"
-                  data-form-type="other"
-                  className={`${inputClass(error)} [-webkit-text-security:disc]`}
+                  className={inputClass(error)}
                 />
-                {!SECRET_MASKED && (
-                  <p className="text-yellow-400/90">
-                    This browser cannot mask the value: it shows as you type it. Use a current
-                    browser to keep it out of sight.
-                  </p>
-                )}
+                <SecretMaskNote />
               </>
             )}
           </div>
