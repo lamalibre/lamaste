@@ -70,6 +70,8 @@ export function associationFileUrls(client) {
 const NOT_SERVED = {
   disabled: 'Disabled — no new sign-ins, every grant ended',
   host_missing: 'Its host is gone',
+  host_public: 'Its host is public — no sign-ins until it is authenticated or restricted again',
+  host_disabled: 'Its host is disabled — no sign-ins until it is enabled again',
   domain_inactive: 'Its host lies under no active domain',
 };
 

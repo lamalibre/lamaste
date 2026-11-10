@@ -338,27 +338,63 @@ export function userSurfaceHostingAgent(tunnels: unknown, route: string): string
 }
 
 /**
- * The agent a tunnel's binding was confirmed cross-agent for
- * (`userSurface.originAgent`, native-apps-design.md D1), read defensively —
- * a valid agent label, or null.
+ * One route's cross-agent confirmation (native-apps-design.md D1, security
+ * review M2): an administrator bound `route` while `agent` carried the
+ * tunnel and `hostingAgent` hosted the plugin, and let the one front the
+ * other's users.
  */
-export function tunnelOriginAgent(tunnel: unknown): string | null {
-  if (!tunnel || typeof tunnel !== 'object') return null;
+export interface CrossAgentConfirmation {
+  readonly route: string;
+  /** The agent carrying the tunnel when the route was bound. */
+  readonly agent: string;
+  /** The agent hosting the route's plugin when it was bound. */
+  readonly hostingAgent: string;
+}
+
+/**
+ * The cross-agent confirmations a tunnel's binding stores
+ * (`userSurface.crossAgent`), read defensively: entries with a bound,
+ * valid route and two valid, different agent labels, one per route; `[]`
+ * for anything else. The pre-release per-tunnel `originAgent` is not read:
+ * a binding that still carries it confirms nothing.
+ */
+export function tunnelCrossAgentConfirmations(tunnel: unknown): CrossAgentConfirmation[] {
+  const routes = tunnelUserSurfaceRoutes(tunnel);
+  if (routes.length === 0) return [];
   const binding = (tunnel as { userSurface?: unknown }).userSurface;
-  if (!binding || typeof binding !== 'object' || Array.isArray(binding)) return null;
-  const origin = (binding as { originAgent?: unknown }).originAgent;
-  return typeof origin === 'string' && AGENT_LABEL_REGEX.test(origin) ? origin : null;
+  const stored = (binding as { crossAgent?: unknown }).crossAgent;
+  if (!Array.isArray(stored)) return [];
+  const out: CrossAgentConfirmation[] = [];
+  for (const entry of stored as unknown[]) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { route, agent, hostingAgent } = entry as Record<string, unknown>;
+    if (
+      typeof route !== 'string' ||
+      !routes.includes(route) ||
+      out.some((c) => c.route === route) ||
+      typeof agent !== 'string' ||
+      !AGENT_LABEL_REGEX.test(agent) ||
+      typeof hostingAgent !== 'string' ||
+      !AGENT_LABEL_REGEX.test(hostingAgent) ||
+      agent === hostingAgent
+    ) {
+      continue;
+    }
+    out.push({ route, agent, hostingAgent });
+  }
+  return out;
 }
 
 /**
  * Where one route bound to a tunnel stands, as far as `tunnels.json` tells:
  *
  * - `served` — the plugin is hosted by the agent carrying the tunnel, or by
- *   another agent and the binding was confirmed cross-agent for the agent
- *   carrying the tunnel now (its `originAgent`);
+ *   another agent and this route was confirmed cross-agent for exactly
+ *   these two agents: the one carrying the tunnel now and the one hosting
+ *   the plugin now ({@link tunnelCrossAgentConfirmations});
  * - `cross_agent_unconfirmed` — another agent hosts the plugin and no
- *   confirmation names the tunnel's current agent (none was given, or the
- *   tunnel moved since);
+ *   confirmation of this route names both agents as they are now (none was
+ *   given, the tunnel moved, or the plugin was hosted elsewhere since);
  * - `not_hosted` — no agent hosts the plugin, or the tunnel has no agent;
  * - `not_bound` — the tunnel does not bind the route.
  *
@@ -376,7 +412,24 @@ export function tunnelUserSurfaceRouteState(
   const hosting = userSurfaceHostingAgent(tunnels, route);
   if (hosting === null) return 'not_hosted';
   if (hosting === agent) return 'served';
-  return tunnelOriginAgent(tunnel) === agent ? 'served' : 'cross_agent_unconfirmed';
+  return isCrossAgentConfirmed(tunnel, route, agent, hosting)
+    ? 'served'
+    : 'cross_agent_unconfirmed';
+}
+
+/**
+ * Whether `tunnel` confirms `route` cross-agent for the tunnel's agent
+ * `agent` fronting the plugin `hostingAgent` hosts — both as they are now.
+ */
+export function isCrossAgentConfirmed(
+  tunnel: unknown,
+  route: string,
+  agent: string,
+  hostingAgent: string,
+): boolean {
+  return tunnelCrossAgentConfirmations(tunnel).some(
+    (c) => c.route === route && c.agent === agent && c.hostingAgent === hostingAgent,
+  );
 }
 
 /**

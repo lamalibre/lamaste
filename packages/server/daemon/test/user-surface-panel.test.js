@@ -1174,3 +1174,76 @@ test('a native app’s bearer token: the half gets the same user caller, never t
     db.prepare('DELETE FROM native_clients WHERE client_id = ?').run(NATIVE_CLIENT);
   }
 });
+
+test('a live bearer token on a host not served for now is a 503, kept; another host’s client’s is a 401 (security review L5)', async () => {
+  const db = await lib.getStateDb();
+  const ayse = await lib.findDirectoryUser('ayse');
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO native_clients (client_id, host_kind, host_id, name, redirect_paths_json,
+       access_token_minutes, idle_days, absolute_days, associations_json, enabled, created_at, updated_at)
+     VALUES (?, 'tunnel', ?, 'Piyasa', '["/oauth/callback"]', 15, 30, 90, '{}', 1, ?, ?)`,
+  ).run(NATIVE_CLIENT, piyasa.id, now, now);
+  const grantId = crypto.randomUUID();
+  db.prepare(
+    `INSERT INTO native_grants (grant_id, client_id, user_id, created_at, last_used_at, absolute_expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(grantId, NATIVE_CLIENT, ayse.userId, now, now, now + 90 * 86_400_000);
+  const token = nativeToken();
+  const sha = crypto.createHash('sha256').update(token).digest('hex');
+  db.prepare(
+    'INSERT INTO native_access_tokens (token_sha256, grant_id, expires_at) VALUES (?, ?, ?)',
+  ).run(sha, grantId, now + 900_000);
+  nativeClients = [{ clientId: NATIVE_CLIENT, fqdn: HOST, domain: 'relay.test' }];
+  /** Gatekeeper's answer first, then the state changes, then the panel. */
+  const vouchedThen = async (change) => {
+    const authz = await gk.inject({
+      method: 'GET',
+      url: `/authz/user-surface/${HOST}`,
+      headers: {
+        host: HOST,
+        'x-original-url': `https://${HOST}/api/ux/app/me`,
+        'x-original-method': 'GET',
+        authorization: `Bearer ${token}`,
+      },
+    });
+    assert.equal(authz.statusCode, 200);
+    await change();
+    return panel.inject({
+      method: 'GET',
+      url: '/api/ux/app/me',
+      headers: {
+        host: HOST,
+        'x-forwarded-for': CLIENT,
+        'x-forwarded-proto': 'https',
+        [RELAY_ASSERTION_HEADER]: authz.headers[RELAY_ASSERTION_HEADER],
+      },
+    });
+  };
+  const original = await lib.readTunnels();
+  try {
+    // The host disabled meanwhile: a moment, not the token.
+    const disabled = await vouchedThen(() =>
+      lib.writeTunnels(original.map((t) => (t.id === piyasa.id ? { ...t, enabled: false } : t))),
+    );
+    assert.equal(disabled.statusCode, 503, disabled.body);
+    assert.equal(disabled.headers['www-authenticate'], undefined, 'the app keeps its token');
+    await lib.writeTunnels(original);
+
+    // The client belongs to another host now: the token is wrong.
+    const moved = await vouchedThen(async () => {
+      db.prepare('UPDATE native_clients SET host_id = ? WHERE client_id = ?').run(
+        'another-host',
+        NATIVE_CLIENT,
+      );
+    });
+    assert.equal(moved.statusCode, 401, moved.body);
+    assert.deepEqual(moved.json(), { error: 'invalid_token' });
+  } finally {
+    await lib.writeTunnels(original);
+    nativeClients = null;
+    db.prepare('DELETE FROM native_access_tokens WHERE grant_id = ?').run(grantId);
+    db.prepare('DELETE FROM native_grants WHERE grant_id = ?').run(grantId);
+    db.prepare('DELETE FROM native_clients WHERE client_id = ?').run(NATIVE_CLIENT);
+  }
+});

@@ -808,10 +808,13 @@ async function authorizeUserSurfaceRequest(
 
   // A native app's bearer token, when the request carries one, is its only
   // credential: a cookie beside it is ignored (native-apps-design.md D3).
+  // Only the Bearer scheme: any other `Authorization` — a Basic login a
+  // browser cached for the host, say — is not the relay's and is ignored
+  // (security review L3), the session deciding as without it.
   let username: string;
   let kind: MembershipKind;
   let credential: RelayBearerCredential | undefined;
-  if (request.headers['authorization'] !== undefined) {
+  if (isBearerScheme(request.headers['authorization'])) {
     const bearer = await authenticateBearer(fastify, request, host.fqdn);
     if (!bearer.ok) {
       request.log.info(
@@ -916,6 +919,15 @@ async function authorizeUserSurfaceRequest(
 type BearerOutcome =
   | { readonly ok: true; readonly username: string; readonly credential: RelayBearerCredential }
   | { readonly ok: false; readonly status: 401 | 503; readonly reason: string };
+
+/**
+ * Whether an `Authorization` header uses the Bearer scheme (RFC 6750 §2.1;
+ * the scheme in any case), whatever follows — a malformed bearer token is
+ * still one, and refused as such.
+ */
+export function isBearerScheme(header: unknown): boolean {
+  return typeof header === 'string' && /^bearer(?:\s|$)/i.test(header);
+}
 
 /**
  * Authenticate a native app's access token on the user surface of `fqdn`

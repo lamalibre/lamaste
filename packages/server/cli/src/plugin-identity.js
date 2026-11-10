@@ -282,7 +282,7 @@ export function userSurfaceStatusText(status) {
     case 'not_hosting_agent':
       return 'not served — no agent hosts the plugin, or no agent carries the tunnel (the relay answers its API with 503)';
     case 'cross_agent_unconfirmed':
-      return 'not served — another agent hosts the plugin and the binding is not confirmed across agents for the agent carrying the tunnel now; bind it again with --cross-agent';
+      return 'not served — another agent hosts the plugin and this route is not confirmed across agents for the agent carrying the tunnel and the agent hosting the plugin as they are now; bind it again with --cross-agent';
     default:
       return `not served (${terminalText(status.reason)})`;
   }

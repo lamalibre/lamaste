@@ -49,10 +49,28 @@ export function setNativeFilesDepsForTests(override) {
   deps = override;
 }
 
-async function servedClients() {
-  if (deps?.listNativeClients) return (await deps.listNativeClients()).filter((c) => c.served);
+async function allClients() {
+  if (deps?.listNativeClients) return deps.listNativeClients();
   const { listNativeClients } = await import('./native-apps.js');
-  return (await listNativeClients()).filter((c) => c.served && c.fqdn && c.domain);
+  return listNativeClients();
+}
+
+async function servedClients() {
+  return (await allClients()).filter((c) => c.served && c.fqdn && c.domain);
+}
+
+/**
+ * Whether a native client — served or not — is registered for the host
+ * `fqdn`: its vhost then never passes `Authorization` to a backend nor a
+ * backend's `WWW-Authenticate` back (`nginx.js` `NATIVE_BACKEND_GUARD`;
+ * security review M1, L3) — a disabled client's app still holds tokens, and
+ * a host made public by a race with the client's creation still has one.
+ *
+ * @param {string} fqdn
+ */
+export async function nativeGuardOf(fqdn) {
+  const name = String(fqdn).toLowerCase();
+  return (await allClients()).some((c) => c.fqdn === name);
 }
 
 async function pageInputs(domain) {

@@ -9,7 +9,12 @@
  * token the broker recorded — whatever the client fields say (R1: Authelia
  * accepts a public client authenticated by `Basic base64("<id>:")` with no
  * `client_id` in the body). Any other request is passed to Authelia byte for
- * byte and its answer returned as it came.
+ * byte and its answer returned as it came — but only a form: a request
+ * whose body is anything but `application/x-www-form-urlencoded` (RFC 6749
+ * §3.2), or that is content-encoded, is refused for every client before it
+ * is classified (security review H1 — Authelia also reads a multipart body,
+ * which the broker would not see into, so a native client's refresh could
+ * pass it unseen).
  *
  * A native request is answered by the broker's rules: the client must be a
  * served native client of the portal's own domain (R5); it is public, so
@@ -292,7 +297,9 @@ const tooMany = () =>
 export function basicClientId(header) {
   if (typeof header !== 'string') return null;
   const match = /^Basic\s+([A-Za-z0-9+/=._~-]+)\s*$/i.exec(header);
-  if (!match) return null;
+  // A Basic header the broker cannot read is one it cannot classify:
+  // refused, never passed on for Authelia to read its own way.
+  if (!match) return /^\s*basic(?:\s|$)/i.test(header) ? false : null;
   let decoded;
   try {
     decoded = Buffer.from(match[1], 'base64').toString('utf-8');
@@ -324,6 +331,48 @@ export function parseForm(contentType, body) {
     params.set(name, [...(params.get(name) ?? []), value]);
   }
   return params;
+}
+
+/**
+ * Why a request's body is not one the endpoints take, or null: a media type
+ * other than `application/x-www-form-urlencoded` (parameters and case
+ * ignored; none at all is refused too), or a `Content-Encoding` other than
+ * `identity`. Checked before anything else, for every client (H1).
+ *
+ * @param {string | undefined} contentType
+ * @param {string | undefined} contentEncoding
+ */
+export function bodyRefusal(contentType, contentEncoding) {
+  if (contentEncoding !== undefined && contentEncoding.trim().toLowerCase() !== 'identity') {
+    return 'The body must not be content-encoded.';
+  }
+  const type = (contentType ?? '').split(';')[0]?.trim().toLowerCase();
+  if (type !== 'application/x-www-form-urlencoded') {
+    return 'The body must be application/x-www-form-urlencoded.';
+  }
+  return null;
+}
+
+/**
+ * The clients a request's `client_assertion` names (RFC 7523 §3: its `iss`
+ * and `sub`), read without checking it — the broker only classifies; an
+ * unreadable assertion names none (Authelia refuses it).
+ */
+function assertionClients(params) {
+  const out = [];
+  for (const assertion of params.get('client_assertion') ?? []) {
+    const payload = typeof assertion === 'string' ? assertion.split('.')[1] : undefined;
+    if (payload === undefined) continue;
+    try {
+      const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+      for (const name of ['iss', 'sub']) {
+        if (typeof claims?.[name] === 'string') out.push(claims[name]);
+      }
+    } catch {
+      // not a JWT: names no client
+    }
+  }
+  return out;
 }
 
 /** The one value of `name`, undefined when absent, null when repeated. */
@@ -402,7 +451,7 @@ function tokenAnswerOf(answer) {
 /**
  * Answer one request to the domain's token or revocation endpoint.
  *
- * @param {{ endpoint: 'token' | 'revocation', host: string | undefined, contentType: string | undefined, authorization: string | undefined, userAgent: string | undefined, accept: string | undefined, clientIp: string | undefined, body: Buffer | undefined, logger?: import('pino').Logger }} req
+ * @param {{ endpoint: 'token' | 'revocation', host: string | undefined, contentType: string | undefined, contentEncoding?: string | undefined, authorization: string | undefined, userAgent: string | undefined, accept: string | undefined, clientIp: string | undefined, body: Buffer | undefined, logger?: import('pino').Logger }} req
  * @returns {Promise<{ status: number, headers: Record<string, string | string[]>, body: Buffer }>}
  */
 export async function handleBrokerRequest(req) {
@@ -410,9 +459,15 @@ export async function handleBrokerRequest(req) {
   if (!domain) {
     return oauthError(404, 'invalid_request', 'Not found.');
   }
+  const refusedBody = bodyRefusal(req.contentType, req.contentEncoding);
+  if (refusedBody !== null) return oauthError(400, 'invalid_request', refusedBody);
   const params = parseForm(req.contentType, req.body);
   const basic = basicClientId(req.authorization);
-  const bodyClients = params?.get('client_id') ?? [];
+  if (basic === false) return invalidClient(true);
+  const bodyClients = [
+    ...(params?.get('client_id') ?? []),
+    ...(params ? assertionClients(params) : []),
+  ];
   const tokenParam = params
     ? single(params, req.endpoint === 'token' ? 'refresh_token' : 'token')
     : undefined;
@@ -431,7 +486,9 @@ export async function handleBrokerRequest(req) {
   if (!withinRate(`ip:${req.clientIp ?? '-'}`, NATIVE_RATE_PER_ADDRESS)) return tooMany();
   if (params === null) return oauthError(400, 'invalid_request', 'The body must be a form.');
   // Native clients are public: any client authentication is refused.
-  if (req.authorization !== undefined) return invalidClient(basic !== null);
+  if (req.authorization !== undefined || params.has('client_assertion')) {
+    return invalidClient(basic !== null);
+  }
   const clientId = single(params, 'client_id');
   if (clientId === null) return oauthError(400, 'invalid_request', 'client_id repeated.');
 
@@ -540,8 +597,16 @@ async function codeExchange(req, domain, params, clientId) {
   const { findDirectoryUser } = await import('./directory.js');
   const user = await findDirectoryUser(claims.username);
   const ctx = await standingContext({ checkHostGrant: true });
+  // The client again, as the standing reads the hosts: deleted or no longer
+  // served while Authelia answered, the tokens it just issued must not live
+  // (security review L1).
+  const current = await findResolvedNativeClient(clientId, ctx.state);
+  if (!current?.served || current.domain !== domain) {
+    await revokeAtAuthelia(domain, clientId, refreshToken, req.logger);
+    return invalidClient(false);
+  }
   const standing = user
-    ? await nativeStanding(user.userId, await findResolvedNativeClient(clientId, ctx.state), ctx)
+    ? await nativeStanding(user.userId, current, ctx)
     : { ok: false, reason: 'standing:removed' };
   if (standing.ok !== true) {
     await revokeAtAuthelia(domain, clientId, refreshToken, req.logger);
@@ -591,7 +656,9 @@ async function refresh(req, domain, params, clientId, refreshToken, known) {
   const { grant: seen } = known;
 
   if (known.token.state === 'spent') {
-    // Within the grace window, the answer this token's rotation got (R8).
+    // Within the grace window, the answer this token's rotation got (R8) —
+    // on the client's own portal, within the grant's lifetimes and the
+    // person's standing, as a refresh would be (security review L2).
     if (
       seen.revokedAt === null &&
       seen.clientId === clientId &&
@@ -599,6 +666,8 @@ async function refresh(req, domain, params, clientId, refreshToken, known) {
       known.token.graceUntil !== null &&
       Date.now() <= known.token.graceUntil
     ) {
+      const refused = await graceRefusal(seen, clientId, domain, req.logger);
+      if (refused) return refused;
       let sealed = null;
       try {
         sealed = JSON.parse(known.token.graceAnswer);
@@ -624,6 +693,22 @@ async function refresh(req, domain, params, clientId, refreshToken, known) {
   const client = await clientOfPortal(clientId, domain);
   if (!client) return invalidClient(false);
 
+  // The person's standing — Gatekeeper's answer included — before the
+  // grant's lock, which holds nothing but state.db and Authelia's loopback
+  // (R14, security review L5); a revocation meanwhile loses to the commit's
+  // compare-and-swap (R7).
+  const ctx = await standingContext({ checkHostGrant: true });
+  const standing = await nativeStanding(
+    seen.userId,
+    await findResolvedNativeClient(clientId, ctx.state),
+    ctx,
+  );
+  if (standing.ok === false) {
+    await revokeNativeGrants({ grantId: seen.grantId }, standing.reason, { logger: req.logger });
+    return invalidGrant();
+  }
+  if (standing.ok !== true) return unavailable();
+
   return withGrantLock(seen.grantId, async () => {
     // Read again under the lock: another refresh may have rotated it.
     const fresh = await findRefreshToken(sha);
@@ -642,14 +727,6 @@ async function refresh(req, domain, params, clientId, refreshToken, known) {
     };
     const expiry = grantExpiry(grant, client);
     if (expiry) return end(expiry);
-    const ctx = await standingContext({ checkHostGrant: true });
-    const standing = await nativeStanding(
-      grant.userId,
-      await findResolvedNativeClient(clientId, ctx.state),
-      ctx,
-    );
-    if (standing.ok === false) return end(standing.reason);
-    if (standing.ok !== true) return unavailable();
 
     let answer;
     try {
@@ -705,6 +782,29 @@ async function refresh(req, domain, params, clientId, refreshToken, known) {
     }
     return passAnswer(answer);
   });
+}
+
+/**
+ * Why a spent token's grace answer may not be given, as a response, or null
+ * (L2): another domain's portal (R5), a client not served, the grant past
+ * its lifetimes, or the person's standing — directory and audience, the
+ * cheap part (the restricted host's grant waits for the next refresh or the
+ * tick). Ends the grant when its time or standing is over.
+ */
+async function graceRefusal(grant, clientId, domain, logger) {
+  const client = await clientOfPortal(clientId, domain);
+  if (!client) return invalidClient(false);
+  const end = async (reason) => {
+    await revokeNativeGrants({ grantId: grant.grantId }, reason, { logger });
+    return invalidGrant();
+  };
+  const expiry = grantExpiry(grant, client);
+  if (expiry) return end(expiry);
+  const ctx = await standingContext({ checkHostGrant: false });
+  const standing = await nativeStanding(grant.userId, client, ctx);
+  if (standing.ok === false) return end(standing.reason);
+  if (standing.ok !== true) return unavailable();
+  return null;
 }
 
 /** A 5xx or no answer from Authelia for a grant's current token (R9). */

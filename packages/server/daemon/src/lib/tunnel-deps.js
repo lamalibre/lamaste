@@ -6,7 +6,7 @@
  */
 
 import {
-  writePublicVhost,
+  writePublicVhost as writePublicVhostOf,
   writeGatekeeperVhost as writeGatekeeperVhostOf,
   removeAppVhost,
   enableAppVhost,
@@ -18,7 +18,7 @@ import {
 } from './nginx.js';
 import { issueTunnelCert } from './certbot.js';
 import { syncChisel } from './chisel.js';
-import { nativeHostOf } from './native-files.js';
+import { nativeGuardOf, nativeHostOf } from './native-files.js';
 import { readTunnels, writeTunnels } from './state.js';
 
 /**
@@ -31,6 +31,19 @@ async function writeGatekeeperVhost(fqdn, domain, port, certPath, opts = {}) {
   return writeGatekeeperVhostOf(fqdn, domain, port, certPath, {
     ...opts,
     native: await nativeHostOf(fqdn),
+    nativeGuard: await nativeGuardOf(fqdn),
+  });
+}
+
+/**
+ * A `public` tunnel's vhost, with the guard of a host that has a native
+ * client (served or not — a public host's never is): no `Authorization` to
+ * the backend, no `WWW-Authenticate` back (security review M1, L3).
+ */
+async function writePublicVhost(fqdn, domain, port, certPath, opts = {}) {
+  return writePublicVhostOf(fqdn, domain, port, certPath, {
+    ...opts,
+    nativeGuard: await nativeGuardOf(fqdn),
   });
 }
 

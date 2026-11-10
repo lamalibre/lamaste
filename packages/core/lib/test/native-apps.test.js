@@ -63,7 +63,8 @@ import {
   signCallerAssertion,
   signRelayAssertion,
   siteUserSurfaceRoutes,
-  tunnelOriginAgent,
+  tunnelCrossAgentConfirmations,
+  isCrossAgentConfirmed,
   tunnelServedUserSurfaceRoutes,
   tunnelUserSurfaceRouteState,
   userSurfaceHosts,
@@ -144,6 +145,9 @@ test('redirect paths: segments of [A-Za-z0-9._~-], nothing under /api or /.well-
     '/api/fx/app',
     '/.well-known/assetlinks.json',
     '/.Well-Known',
+    '/internal',
+    '/internal/lamaste/user-surface-401',
+    '/Internal/x',
     `/${'a'.repeat(128)}`,
   ]) {
     assert.equal(isNativeRedirectPath(bad), false, bad);
@@ -771,7 +775,7 @@ test('sites: the owner route first, then joined routes; served whichever agent h
   assert.equal(hosts.length, 1);
 });
 
-test('tunnels: a route another agent hosts is served only while the binding names the tunnel’s agent', () => {
+test('tunnels: a route another agent hosts is served only while its confirmation names both agents as they are', () => {
   const tunnels = [internal('own', 'a1'), internal('far', 'a2'), internal('gone', undefined)];
   const tunnel = {
     id: 't1',
@@ -782,15 +786,24 @@ test('tunnels: a route another agent hosts is served only while the binding name
     userSurface: { routes: ['own', 'far', 'gone', 'unbound-x'] },
   };
   const all = [...tunnels, tunnel];
-  assert.equal(tunnelOriginAgent(tunnel), null);
+  assert.deepEqual(tunnelCrossAgentConfirmations(tunnel), []);
   assert.equal(tunnelUserSurfaceRouteState(all, tunnel, 'own'), 'served');
   assert.equal(tunnelUserSurfaceRouteState(all, tunnel, 'far'), 'cross_agent_unconfirmed');
   assert.equal(tunnelUserSurfaceRouteState(all, tunnel, 'gone'), 'not_hosted');
   assert.equal(tunnelUserSurfaceRouteState(all, tunnel, 'nope'), 'not_bound');
   assert.deepEqual(tunnelServedUserSurfaceRoutes(all, tunnel), ['own']);
 
-  const confirmed = { ...tunnel, userSurface: { ...tunnel.userSurface, originAgent: 'a1' } };
-  assert.equal(tunnelOriginAgent(confirmed), 'a1');
+  const confirmed = {
+    ...tunnel,
+    userSurface: {
+      ...tunnel.userSurface,
+      crossAgent: [{ route: 'far', agent: 'a1', hostingAgent: 'a2' }],
+    },
+  };
+  assert.deepEqual(tunnelCrossAgentConfirmations(confirmed), [
+    { route: 'far', agent: 'a1', hostingAgent: 'a2' },
+  ]);
+  assert.equal(isCrossAgentConfirmed(confirmed, 'far', 'a1', 'a2'), true);
   assert.deepEqual(tunnelServedUserSurfaceRoutes([...tunnels, confirmed], confirmed), [
     'own',
     'far',
@@ -802,8 +815,40 @@ test('tunnels: a route another agent hosts is served only while the binding name
     'cross_agent_unconfirmed',
   );
   assert.deepEqual(tunnelServedUserSurfaceRoutes([...tunnels, moved], moved), []);
-  // A malformed origin is none.
-  assert.equal(tunnelOriginAgent({ userSurface: { routes: [], originAgent: 'A B' } }), null);
+  // The plugin hosted by another agent now: the confirmation lapses too (M2).
+  const rehosted = [internal('own', 'a1'), internal('far', 'a4'), confirmed];
+  assert.equal(tunnelUserSurfaceRouteState(rehosted, confirmed, 'far'), 'cross_agent_unconfirmed');
+  // A confirmation is per route: a route a1 hosted before and another
+  // agent hosts now is not covered by far's (M2).
+  const ownMoved = [internal('own', 'a2'), internal('far', 'a2'), confirmed];
+  assert.equal(tunnelUserSurfaceRouteState(ownMoved, confirmed, 'own'), 'cross_agent_unconfirmed');
+  assert.equal(tunnelUserSurfaceRouteState(ownMoved, confirmed, 'far'), 'served');
+});
+
+test('tunnels: confirmations are read defensively; the pre-release per-tunnel originAgent confirms nothing', () => {
+  const base = { type: 'app', userSurface: { routes: ['far', 'own'] } };
+  const of = (crossAgent) =>
+    tunnelCrossAgentConfirmations({ ...base, userSurface: { ...base.userSurface, crossAgent } });
+  assert.deepEqual(
+    tunnelCrossAgentConfirmations({
+      ...base,
+      userSurface: { ...base.userSurface, originAgent: 'a1' },
+    }),
+    [],
+  );
+  assert.deepEqual(of('x'), []);
+  assert.deepEqual(of([{ route: 'unbound', agent: 'a1', hostingAgent: 'a2' }]), [], 'not bound');
+  assert.deepEqual(of([{ route: 'far', agent: 'A B', hostingAgent: 'a2' }]), [], 'bad label');
+  assert.deepEqual(of([{ route: 'far', agent: 'a1', hostingAgent: 'a1' }]), [], 'same agent');
+  assert.deepEqual(
+    of([
+      { route: 'far', agent: 'a1', hostingAgent: 'a2' },
+      { route: 'far', agent: 'a3', hostingAgent: 'a2' },
+    ]),
+    [{ route: 'far', agent: 'a1', hostingAgent: 'a2' }],
+    'one per route',
+  );
+  assert.deepEqual(tunnelCrossAgentConfirmations({ type: 'app' }), []);
 });
 
 // ---------------------------------------------------------------------------

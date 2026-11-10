@@ -668,8 +668,16 @@ export interface NativeClientView {
   readonly fqdn: string | null;
   readonly domain: string | null;
   readonly served: boolean;
-  /** Why it is not served: `disabled`, `host_missing` or `domain_inactive`. */
-  readonly reason?: 'disabled' | 'host_missing' | 'domain_inactive';
+  /**
+   * Why it is not served: `disabled`, `host_missing`, `host_public`,
+   * `host_disabled` or `domain_inactive`.
+   */
+  readonly reason?:
+    | 'disabled'
+    | 'host_missing'
+    | 'host_public'
+    | 'host_disabled'
+    | 'domain_inactive';
   /** `https://<fqdn>` — the audience of every access token it gets. */
   readonly audience: string | null;
   readonly redirectUris: readonly string[];

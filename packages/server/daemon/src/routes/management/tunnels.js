@@ -269,6 +269,7 @@ function tunnelErrorStatus(code) {
     case 'NOT_FOUND':
       return 404;
     case 'USER_SURFACE_CONFLICT':
+    case 'NATIVE_CLIENT_CONFLICT':
       return 409;
     default:
       return 500;
@@ -646,6 +647,7 @@ export default async function tunnelRoutes(fastify, _opts) {
           return reply.code(status).send({
             error: status === 404 ? 'Tunnel not found' : 'Failed to update tunnel',
             details: err.message,
+            ...(err.code === 'NATIVE_CLIENT_CONFLICT' ? { code: 'native_client_conflict' } : {}),
           });
         }
         request.log.error(err, 'Failed to update tunnel');

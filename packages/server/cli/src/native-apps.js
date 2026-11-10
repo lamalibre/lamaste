@@ -196,6 +196,8 @@ export function nativeClientStateText(client) {
     {
       disabled: 'disabled — no sign-ins, its grants ended',
       host_missing: 'not served — its host is gone',
+      host_public: 'not served — its host is public',
+      host_disabled: 'not served — its host is disabled',
       domain_inactive: 'not served — its host lies under no active domain',
     }[client.reason] ?? 'not served'
   );

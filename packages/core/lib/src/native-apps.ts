@@ -113,15 +113,21 @@ export const NATIVE_REFRESH_GRACE_MS = 30_000;
 
 const REDIRECT_PATH_RE = /^\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*$/;
 
-/** The path prefixes a redirect path may not lie under: the API, and the association files. */
-const REDIRECT_PATH_FORBIDDEN_PREFIXES = Object.freeze(['/api', '/.well-known']);
+/**
+ * The path prefixes a redirect path may not lie under: the API, the
+ * association files, and the vhosts' own internal locations (an exact
+ * location there would collide with one the renderers write, and nginx
+ * would refuse the host's whole vhost — security review L4).
+ */
+const REDIRECT_PATH_FORBIDDEN_PREFIXES = Object.freeze(['/api', '/.well-known', '/internal']);
 
 /**
  * Whether `path` may be a native client's redirect path on its host: one or
  * more segments of `[A-Za-z0-9._~-]`, no `.` or `..` segment, at most
- * {@link NATIVE_REDIRECT_PATH_MAX_LENGTH}, nothing under `/api` or
- * `/.well-known` (compared case-insensitively), no query or fragment. The
- * host serves a fallback page there without authentication (D6).
+ * {@link NATIVE_REDIRECT_PATH_MAX_LENGTH}, nothing under `/api`,
+ * `/.well-known` or `/internal` (compared case-insensitively), no query or
+ * fragment. The host serves a fallback page there without authentication
+ * (D6) — in place of whatever its backend or shell would answer there.
  */
 export function isNativeRedirectPath(path: unknown): path is string {
   if (typeof path !== 'string' || path.length > NATIVE_REDIRECT_PATH_MAX_LENGTH) return false;

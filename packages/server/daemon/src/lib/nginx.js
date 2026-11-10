@@ -1343,11 +1343,20 @@ export const NATIVE_FILES = Object.freeze({
   redirectPage: 'redirect.html',
 });
 
-/** A native app's bearer token never reaches the host's backend. */
-const NATIVE_AUTHORIZATION_CLEARED = `
+/**
+ * What the backend location of a host with a native client carries
+ * (native-apps-design.md R2, security review M1 and L3): a native app's
+ * bearer token never reaches the backend, and the backend cannot ask the
+ * browser for credentials of its own (`WWW-Authenticate`) — a cached Basic
+ * login would ride every later request to the host, the user surface's
+ * included.
+ */
+const NATIVE_BACKEND_GUARD = `
 
-        # A native app's bearer token is the relay's alone
-        proxy_set_header Authorization "";`;
+        # A native app's bearer token is the relay's alone, and the backend
+        # asks no browser for credentials of its own
+        proxy_set_header Authorization "";
+        proxy_hide_header WWW-Authenticate;`;
 
 /**
  * Write a public vhost — no authentication, direct proxy.
@@ -1358,12 +1367,13 @@ export async function writePublicVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
+  { pathPrefix, maxBodySizeMb, userSurface, nativeGuard = false, enabled = true } = {},
 ) {
   const { name, config } = renderPublicVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
+    nativeGuard,
   });
   return safeWriteVhost(name, config, fqdn, { enabled });
 }
@@ -1373,7 +1383,7 @@ function renderPublicVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface } = {},
+  { pathPrefix, maxBodySizeMb, userSurface, nativeGuard = false } = {},
 ) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
@@ -1410,7 +1420,7 @@ ${bodySizeDirective(maxBodySizeMb)}
         # Nor a relay assertion: only Gatekeeper's, set on an authenticated
         # vhost, may reach a backend (lamaste-agentd serves plugin routes)
         proxy_set_header X-Lamalibre-Relay-Assertion "";
-${TUNNEL_PROXY_HEADERS}
+${TUNNEL_PROXY_HEADERS}${nativeGuard ? NATIVE_BACKEND_GUARD : ''}
 
         ${pathPrefix ? `rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n        ` : ''}proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
@@ -1435,13 +1445,21 @@ export async function writeGatekeeperVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface, native = null, enabled = true } = {},
+  {
+    pathPrefix,
+    maxBodySizeMb,
+    userSurface,
+    native = null,
+    nativeGuard = false,
+    enabled = true,
+  } = {},
 ) {
   const { name, config } = renderGatekeeperTunnelVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
     native,
+    nativeGuard,
   });
   return safeWriteVhost(name, config, fqdn, { enabled });
 }
@@ -1451,7 +1469,7 @@ function renderGatekeeperTunnelVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface, native },
+  { pathPrefix, maxBodySizeMb, userSurface, native, nativeGuard },
 ) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
@@ -1467,6 +1485,7 @@ function renderGatekeeperTunnelVhost(
     maxBodySizeMb,
     userSurface,
     native,
+    nativeGuard,
   });
 
   return { name: appVhostName(fqdn), fqdn, config };
@@ -1482,19 +1501,23 @@ function renderGatekeeperTunnelVhost(
  * @param {string} domain the base domain it is under (its sign-in, `auth.<domain>`)
  * @param {number} port
  * @param {string} [certPath]
- * @param {{ pathPrefix?: string, maxBodySizeMb?: number, userSurface?: ReadonlyArray<{ route: string, maxBodySizeMb: number, served?: boolean }>, native?: object | null }} [opts]
+ * @param {{ pathPrefix?: string, maxBodySizeMb?: number, userSurface?: ReadonlyArray<{ route: string, maxBodySizeMb: number, served?: boolean }>, native?: object | null, nativeGuard?: boolean }} [opts]
  *   `userSurface`: the plugins' user surfaces bound to the vhost (not on a public vhost) —
  *   a route with `served: false` is answered 503 by nginx; `native`: the host's
- *   served native client ({@link nativeAppLocations})
+ *   served native client ({@link nativeAppLocations}); `nativeGuard`: a native
+ *   client — served or not — is registered for the host ({@link NATIVE_BACKEND_GUARD})
  * @returns {{ name: string, fqdn: string, config: string }}
  */
 export function renderTunnelVhost(accessMode, fqdn, domain, port, certPath, opts = {}) {
-  const { pathPrefix, maxBodySizeMb, userSurface, native } = opts;
+  const { pathPrefix, maxBodySizeMb, userSurface, native, nativeGuard } = opts;
   if (accessMode === 'public') {
+    // A public host serves no native client (its client is not served —
+    // native-apps.js `host_public`): only the guard.
     return renderPublicVhost(fqdn, domain, port, certPath, {
       pathPrefix,
       maxBodySizeMb,
       userSurface,
+      nativeGuard: Boolean(nativeGuard || native),
     });
   }
   return renderGatekeeperTunnelVhost(fqdn, domain, port, certPath, {
@@ -1502,6 +1525,7 @@ export function renderTunnelVhost(accessMode, fqdn, domain, port, certPath, opts
     maxBodySizeMb,
     userSurface,
     native,
+    nativeGuard,
   });
 }
 
@@ -1532,7 +1556,7 @@ function buildGatekeeperVhost(
   certDirClean,
   port,
   domain,
-  { pathPrefix, maxBodySizeMb, userSurface = [], native = null } = {},
+  { pathPrefix, maxBodySizeMb, userSurface = [], native = null, nativeGuard = false } = {},
 ) {
   const url = originalUrl(fqdn);
   return `server {
@@ -1582,7 +1606,7 @@ ${userSurfaceLocations(fqdn, userSurface)}${nativeAppLocations(native, domain)}
         # plugin tunnel or the panel, never one a client sent
         proxy_set_header X-Lamalibre-Relay-Assertion "";`
         }
-${TUNNEL_PROXY_HEADERS}${native ? NATIVE_AUTHORIZATION_CLEARED : ''}
+${TUNNEL_PROXY_HEADERS}${native || nativeGuard ? NATIVE_BACKEND_GUARD : ''}
 
         ${pathPrefix ? `rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n        ` : ''}proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;

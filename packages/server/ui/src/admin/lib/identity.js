@@ -130,7 +130,7 @@ export function userSurfaceReasonText(reason) {
     case 'not_hosting_agent':
       return 'no agent hosts the plugin, or no agent carries the tunnel — the relay answers its API with 503';
     case 'cross_agent_unconfirmed':
-      return 'another agent hosts the plugin and the binding is not confirmed across agents for the agent carrying the tunnel now (never confirmed, or the tunnel changed agent) — bind it again to confirm; until then the relay answers its API with 503';
+      return 'another agent hosts the plugin and this route is not confirmed across agents for the agent carrying the tunnel and the agent hosting the plugin as they are now (never confirmed, or the tunnel or the plugin changed agent) — bind it again to confirm; until then the relay answers its API with 503';
     default:
       return String(reason);
   }

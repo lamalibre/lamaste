@@ -294,8 +294,8 @@ test('a valid bearer token is vouched for with its credential — the cookie bes
 test('a refused token is a 401 naming invalid_token', async () => {
   const other = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const cases = [
-    ['not a bearer', 'Basic YWxpY2U6'],
     ['empty bearer', 'Bearer '],
+    ['a bearer scheme in another case, no token', 'bEaReR'],
     ['wrong issuer', `Bearer ${token({ iss: 'https://auth.other.com' })}`],
     ['wrong audience', `Bearer ${token({ aud: ['https://elsewhere.example.com'] })}`],
     ['another client', `Bearer ${token({ client_id: 'lamaste-native-locked' })}`],
@@ -312,6 +312,29 @@ test('a refused token is a 401 naming invalid_token', async () => {
     assert.equal(res.headers['x-lamalibre-refusal'], 'invalid_token', label);
     assert.equal(res.headers['x-lamalibre-relay-assertion'], undefined, label);
   }
+});
+
+test('another scheme is not a bearer: ignored, the session decides (security review L3)', async () => {
+  // A Basic login a browser cached for the host rides every request: it
+  // never locks the user out of the user surface.
+  let res = await check('/api/notes/app/x', {
+    authorization: 'Basic YWxpY2U6',
+    cookie: 'authelia_session=bob',
+  });
+  assert.equal(res.statusCode, 200);
+  const verified = verifyAsPanel(
+    res.headers['x-lamalibre-relay-assertion'],
+    'GET',
+    '/api/notes/app/x',
+  );
+  assert.equal(verified.ok, true);
+  assert.equal(verified.payload.caller.username, 'bob', 'the session’s user');
+  assert.equal(verified.payload.caller.credential, undefined, 'a session, not a bearer');
+  // Without a session: unauthenticated, never invalid_token (the app would
+  // refresh a token it does not send).
+  res = await check('/api/notes/app/x', { authorization: 'Digest username="alice"' });
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.headers['x-lamalibre-refusal'], undefined);
 });
 
 test('a host without a served native client, or no projection, refuses every bearer', async () => {

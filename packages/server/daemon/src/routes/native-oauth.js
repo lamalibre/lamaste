@@ -9,7 +9,8 @@
  * requests itself — a plugin client's device-code polling, passed to
  * Authelia, is never throttled here). Its bodies are read raw, at most
  * 16 KiB, whatever their type: a request no native client makes reaches
- * Authelia byte for byte. 503 before onboarding completes. Logs metadata
+ * Authelia byte for byte, provided it is a form (`lib/native-broker.js`
+ * `bodyRefusal`). 503 before onboarding completes. Logs metadata
  * only (the panel's request logging: the route pattern, never a body).
  */
 
@@ -39,6 +40,7 @@ async function brokerRoutes(fastify) {
         endpoint,
         host: request.headers.host,
         contentType: request.headers['content-type'],
+        contentEncoding: request.headers['content-encoding'],
         authorization: request.headers.authorization,
         userAgent: request.headers['user-agent'],
         accept: request.headers.accept,

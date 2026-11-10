@@ -108,8 +108,11 @@ function hostEntryOf(client, state) {
  * The client with its host resolved: `fqdn` and `domain` (null when the
  * host entry is gone or lies under no active domain), the user-surface
  * host it is (`host`: core `UserSurfaceHost`, null when the entry binds no
- * route), and whether it is `served` — enabled, its host present, under an
- * active domain.
+ * route), and whether it is `served` — enabled, its host present, enabled,
+ * not public, under an active domain. Why not (`reason`): `disabled`,
+ * `host_missing`, `host_public` (a public host has no session to stand for
+ * and its backend answers every path — security review M1), `host_disabled`
+ * (a disabled tunnel), `domain_inactive`.
  */
 export function resolveNativeClient(client, state) {
   const entry = hostEntryOf(client, state);
@@ -126,9 +129,13 @@ export function resolveNativeClient(client, state) {
     ? 'disabled'
     : !entry
       ? 'host_missing'
-      : !domain || domain === fqdn
-        ? 'domain_inactive'
-        : null;
+      : entry.accessMode === 'public'
+        ? 'host_public'
+        : entry.enabled === false
+          ? 'host_disabled'
+          : !domain || domain === fqdn
+            ? 'domain_inactive'
+            : null;
   return {
     ...client,
     fqdn,
@@ -177,6 +184,21 @@ export async function findResolvedNativeClient(clientId, state) {
   const row = db.prepare('SELECT * FROM native_clients WHERE client_id = ?').get(clientId);
   if (!row) return null;
   return resolveNativeClient(clientOf(row), state ?? (await readHostState()));
+}
+
+/**
+ * The native client registered for one host — any, served or not — or
+ * null. State.db only, no lock: safe under the tunnel and sites locks.
+ *
+ * @param {'site' | 'tunnel'} hostKind
+ * @param {string} hostId
+ */
+export async function nativeClientOfHost(hostKind, hostId) {
+  const db = await getStateDb();
+  const row = db
+    .prepare('SELECT * FROM native_clients WHERE host_kind = ? AND host_id = ?')
+    .get(hostKind, hostId);
+  return row ? clientOf(row) : null;
 }
 
 async function clientRowOr404(clientId) {

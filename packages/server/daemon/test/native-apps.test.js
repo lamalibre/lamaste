@@ -105,6 +105,8 @@ const issuer = {
   failRefresh: false,
   /** run before Authelia answers a refresh (to race a revocation) */
   beforeRefresh: null,
+  /** run before Authelia answers a code exchange (to race a client's deletion) */
+  beforeCode: null,
 };
 
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -159,6 +161,7 @@ async function fakeIssuer({ method, path: urlPath, headers, body }) {
   }
   if (issuer.mode === '500') return json(500, { error: 'server_error' });
   if (form.get('grant_type') === 'authorization_code') {
+    if (issuer.beforeCode) await issuer.beforeCode();
     const username = issuer.codes.get(form.get('code'));
     if (!username) return json(400, { error: 'invalid_grant' });
     issuer.codes.delete(form.get('code'));
@@ -404,6 +407,7 @@ beforeEach(() => {
   issuer.mode = 'normal';
   issuer.failRefresh = false;
   issuer.beforeRefresh = null;
+  issuer.beforeCode = null;
 });
 
 // ---------------------------------------------------------------------------
@@ -1140,5 +1144,237 @@ test('a sign-in reaches the plugins of the host that declare signInEvents — se
     lib.setSignInEventsDepsForTests(null);
     server.close();
     await call('DELETE', `/api/native-apps/${CLIENT}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Security review (2026-11-10): H1, M1, L1, L2, L5
+// ---------------------------------------------------------------------------
+
+/** A request to the broker with a body and headers of the test's choosing. */
+function rawBroker(endpoint, payload, headers) {
+  return app.inject({
+    method: 'POST',
+    url: `/api/native-apps/oauth/${endpoint}`,
+    headers: { host: `auth.${D}`, ...headers },
+    payload,
+  });
+}
+
+test('H1: anything but a form is refused for every client before it is classified', async () => {
+  await siteClient();
+  const { refresh_token: token } = (await signIn('ali')).json();
+  const before = issuer.calls.length;
+  const nativeForm = `grant_type=refresh_token&refresh_token=${token}&client_id=${CLIENT}`;
+  const boundary = 'x-boundary';
+  const multipart =
+    `--${boundary}\r\nContent-Disposition: form-data; name="grant_type"\r\n\r\nrefresh_token\r\n` +
+    `--${boundary}\r\nContent-Disposition: form-data; name="refresh_token"\r\n\r\n${token}\r\n` +
+    `--${boundary}\r\nContent-Disposition: form-data; name="client_id"\r\n\r\n${CLIENT}\r\n` +
+    `--${boundary}--\r\n`;
+  const cases = [
+    ['multipart', multipart, { 'content-type': `multipart/form-data; boundary=${boundary}` }],
+    ['no type', nativeForm, {}],
+    ['text/plain', nativeForm, { 'content-type': 'text/plain' }],
+    [
+      'json',
+      JSON.stringify({ grant_type: 'refresh_token' }),
+      { 'content-type': 'application/json' },
+    ],
+    [
+      'a form, gzip-encoded',
+      nativeForm,
+      { 'content-type': 'application/x-www-form-urlencoded', 'content-encoding': 'gzip' },
+    ],
+    // A plugin client's request in another type is refused too: no body
+    // the broker cannot read reaches Authelia.
+    [
+      'another client, multipart',
+      multipart.replaceAll(CLIENT, 'mx-cli'),
+      { 'content-type': `multipart/form-data; boundary=${boundary}` },
+    ],
+  ];
+  for (const [label, payload, headers] of cases) {
+    for (const endpoint of ['token', 'revocation']) {
+      const res = await rawBroker(endpoint, payload, headers);
+      assert.equal(res.statusCode, 400, `${label} (${endpoint}): ${res.body}`);
+      assert.equal(res.json().error, 'invalid_request', label);
+    }
+  }
+  assert.equal(issuer.calls.length, before, 'nothing reached Authelia');
+
+  // The form type in another case, with parameters: a form.
+  const mixed = await rawBroker('token', nativeForm, {
+    'content-type': 'Application/X-WWW-Form-Urlencoded; charset=UTF-8',
+  });
+  assert.equal(mixed.statusCode, 200, mixed.body);
+  const next = mixed.json().refresh_token;
+
+  // A native refresh token under another client's id: native (the token is
+  // known), never passed on.
+  const disguised = await broker('token', {
+    grant_type: 'refresh_token',
+    refresh_token: next,
+    client_id: 'mx-cli',
+  });
+  assert.equal(disguised.statusCode, 400);
+  assert.equal(disguised.json().error, 'invalid_grant');
+  // A client assertion naming the native client: native, and refused (public client).
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const assertion = `${enc({ alg: 'RS256' })}.${enc({ iss: CLIENT, sub: CLIENT })}.sig`;
+  const asserted = await broker('token', {
+    grant_type: 'refresh_token',
+    refresh_token: 'unknown',
+    client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+    client_assertion: assertion,
+  });
+  assert.equal(asserted.statusCode, 401);
+  assert.equal(asserted.json().error, 'invalid_client');
+  // A Basic header the broker cannot read: refused, not passed on.
+  const unreadable = await broker(
+    'token',
+    { grant_type: 'refresh_token', refresh_token: 'x' },
+    { authorization: 'Basic not*base64' },
+  );
+  assert.equal(unreadable.statusCode, 401);
+  assert.equal(issuer.calls.length, before + 1, 'only the form reached Authelia');
+  assert.equal((await refreshWith(next)).statusCode, 200, 'the grant lived through it all');
+});
+
+test('L1: a client deleted while Authelia answered a code exchange: its tokens revoked there, invalid_client', async () => {
+  const code = `code-${crypto.randomUUID()}`;
+  issuer.codes.set(code, 'ali');
+  const revokedBefore = issuer.revoked.length;
+  issuer.beforeCode = async () => {
+    const db = await lib.getStateDb();
+    db.prepare('UPDATE native_clients SET enabled = 0 WHERE client_id = ?').run(CLIENT);
+  };
+  try {
+    const res = await broker('token', {
+      grant_type: 'authorization_code',
+      code,
+      client_id: CLIENT,
+      redirect_uri: `https://${SITE.fqdn}/oauth/callback`,
+      code_verifier: 'v'.repeat(43),
+    });
+    assert.equal(res.statusCode, 401, res.body);
+    assert.equal(res.json().error, 'invalid_client');
+    assert.equal(issuer.revoked.length, revokedBefore + 1, 'the issued refresh token revoked');
+  } finally {
+    const db = await lib.getStateDb();
+    db.prepare('UPDATE native_clients SET enabled = 1 WHERE client_id = ?').run(CLIENT);
+  }
+});
+
+test('L2: a grace answer is given only on the client’s portal, within the grant’s lifetimes', async () => {
+  const first = (await signIn('ali')).json();
+  const rotated = await refreshWith(first.refresh_token);
+  assert.equal(rotated.statusCode, 200);
+  assert.equal((await refreshWith(first.refresh_token)).statusCode, 200, 'the grace answer');
+
+  // At another domain's portal: refused, the grant untouched.
+  await lib.addDomain(OTHER, { actor: 'test', logger: quiet }).catch(() => {});
+  const db = await lib.getStateDb();
+  db.prepare("UPDATE domains SET status = 'active', activated_at = ? WHERE name = ?").run(
+    new Date().toISOString(),
+    OTHER,
+  );
+  try {
+    const elsewhere = await broker(
+      'token',
+      { grant_type: 'refresh_token', refresh_token: first.refresh_token, client_id: CLIENT },
+      { host: `auth.${OTHER}` },
+    );
+    assert.equal(elsewhere.statusCode, 401, elsewhere.body);
+    assert.equal(elsewhere.json().error, 'invalid_client');
+  } finally {
+    await lib.removeDomain(OTHER, { actor: 'test', logger: quiet });
+  }
+  const { grant } = await lib.findRefreshToken(sha(first.refresh_token));
+  assert.equal(grant.revokedAt, null);
+
+  // Past its absolute lifetime: no grace answer, and the grant ends.
+  db.prepare('UPDATE native_grants SET absolute_expires_at = ? WHERE grant_id = ?').run(
+    Date.now() - 1000,
+    grant.grantId,
+  );
+  const expired = await refreshWith(first.refresh_token);
+  assert.equal(expired.statusCode, 400);
+  assert.equal((await lib.getNativeGrant(grant.grantId)).revokedReason, 'absolute_expired');
+});
+
+test('M1: a client on a public or disabled host is not served; the guard keeps Authorization from its backend', async () => {
+  const client = {
+    clientId: 'lamaste-native-x',
+    hostKind: 'tunnel',
+    hostId: 't-x',
+    enabled: true,
+    redirectPaths: ['/cb'],
+  };
+  const tunnel = {
+    id: 't-x',
+    type: 'app',
+    fqdn: `x.${D}`,
+    agentLabel: 'agent-a',
+    accessMode: 'authenticated',
+    enabled: true,
+  };
+  const resolve = (entry) =>
+    lib.resolveNativeClient(client, { tunnels: [entry], sites: [], domains: [D] });
+  assert.equal(resolve(tunnel).served, true);
+  assert.equal(resolve({ ...tunnel, accessMode: 'public' }).reason, 'host_public');
+  assert.equal(resolve({ ...tunnel, enabled: false }).reason, 'host_disabled');
+
+  const { renderTunnelVhost } = await import('../src/lib/nginx.js');
+  const { createRequire } = await import('node:module');
+  const { fileURLToPath } = await import('node:url');
+  const { validateVhost } = createRequire(import.meta.url)(
+    fileURLToPath(new URL('../../../provisioners/server/scripts/lamaste-priv', import.meta.url)),
+  );
+  const guard = /proxy_set_header Authorization "";\s+proxy_hide_header WWW-Authenticate;/;
+  for (const mode of ['public', 'authenticated', 'restricted']) {
+    const plain = renderTunnelVhost(mode, `x.${D}`, D, 8080).config;
+    assert.doesNotMatch(plain, guard, `${mode}: no client, no guard`);
+    const guarded = renderTunnelVhost(mode, `x.${D}`, D, 8080, undefined, {
+      nativeGuard: true,
+    }).config;
+    assert.match(guarded, guard, `${mode}: a client, served or not — the guard`);
+    assert.doesNotThrow(() => validateVhost(guarded), mode);
+  }
+});
+
+test('L5: sign-in events of a person who left the plugin’s audience are dropped at delivery, never sent', async () => {
+  const sent = [];
+  lib.setSignInEventsDepsForTests({
+    hostingOf: async () => ({
+      plugin: 'mx',
+      port: 1,
+      current: { secret: 'a'.repeat(64), issuedAt: '2026-11-10T00:00:00.000Z' },
+      acknowledgedIssuedAt: '2026-11-10T00:00:00.000Z',
+    }),
+    call: async ({ body }) => {
+      const out = body('n'.repeat(32));
+      sent.push(out);
+      return { ok: true, status: 200, body: { acknowledged: out.to } };
+    },
+  });
+  try {
+    const ali = await idOf('ali');
+    // Queued while ali holds a role; a delivery that cannot run yet.
+    const db = await lib.getStateDb();
+    db.prepare(
+      'INSERT INTO native_sign_in_events (plugin, user_id, at, client_id) VALUES (?, ?, ?, ?)',
+    ).run('mx', ali, Date.now(), CLIENT);
+    // ali loses the role: no longer in mx's audience.
+    const role = gatekeeper.grants.find((g) => g.principalId === 'ali' && g.resourceId === 'mx');
+    gatekeeper.grants.splice(gatekeeper.grants.indexOf(role), 1);
+    await lib.recomputeAudiences({ logger: quiet });
+    const result = await lib.deliverSignInEvents('mx', { logger: quiet, force: true });
+    assert.equal(result.status, 'delivered', JSON.stringify(result));
+    assert.equal(result.dropped, 1);
+    assert.equal(sent.length, 0, 'nothing sent of a person the plugin no longer knows');
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM native_sign_in_events').get().n, 0);
+  } finally {
+    lib.setSignInEventsDepsForTests(null);
   }
 });

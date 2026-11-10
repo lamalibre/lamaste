@@ -50,7 +50,7 @@ import {
   isRelayInvitationsTarget,
   isRelayUserSurfaceTarget,
   siteUserSurfaceRoutes,
-  tunnelOriginAgent,
+  isCrossAgentConfirmed,
   tunnelUserSurfaceRoutes,
   userSurfaceHostServing,
   userSurfaceHostingAgent,
@@ -140,8 +140,8 @@ async function userSurfaceHostingAgentOf(route) {
  * declares none), `not_approved` (that version is not approved),
  * `not_hosting_agent` (no agent hosts the plugin, or the tunnel has no
  * agent — its agent was revoked), `cross_agent_unconfirmed` (another agent
- * hosts it and the binding was not confirmed cross-agent for the agent
- * carrying the tunnel now — never confirmed, or the tunnel moved since).
+ * hosts it and the route was not confirmed cross-agent for the two agents
+ * as they are now — never confirmed, or the tunnel or the plugin moved since).
  * Not the agent half's protocol answer: the panel checks that per request
  * (503 until it answered).
  *
@@ -164,9 +164,9 @@ async function routeServing(route, tunnel, tunnels) {
     return { served: false, reason: 'not_hosting_agent', plugin };
   }
   if (agentLabel === hosting) return { served: true, plugin };
-  // Another agent hosts the plugin: served only on a binding confirmed
-  // cross-agent for the agent carrying the tunnel now (D1, R3).
-  if (tunnelOriginAgent(tunnel) === agentLabel) return { served: true, plugin };
+  // Another agent hosts the plugin: served only while this route's
+  // cross-agent confirmation names both agents as they are now (D1, R3, M2).
+  if (isCrossAgentConfirmed(tunnel, route, agentLabel, hosting)) return { served: true, plugin };
   return { served: false, reason: 'cross_agent_unconfirmed', plugin };
 }
 
@@ -204,7 +204,20 @@ export async function servedUserSurfaceRoutes(routes, tunnel) {
 export const userSurfaceDeps = Object.freeze({
   servedRoutes: servedUserSurfaceRoutes,
   hostingAgent: userSurfaceHostingAgentOf,
+  hasNativeClient: tunnelHasNativeClient,
 });
+
+/**
+ * Whether a native client is registered for the tunnel's host (any, served
+ * or not): such a host is never made public (security review M1). Reads
+ * state.db only — called under the tunnel lock.
+ *
+ * @param {{ id: string }} tunnel
+ */
+async function tunnelHasNativeClient(tunnel) {
+  const { nativeClientOfHost } = await import('./native-apps.js');
+  return (await nativeClientOfHost('tunnel', tunnel.id)) !== null;
+}
 
 /**
  * A tunnel as the panel lists it: with `userSurfaceStatus`, how each route
@@ -350,8 +363,9 @@ async function isBindableRoute(route) {
  * @param {string} id
  * @param {string} route
  * A plugin another agent hosts is bound only with `crossAgent` (the
- * administrator's explicit confirmation, recorded as the binding's
- * `originAgent` — native-apps-design.md D1, R3); core refuses it otherwise.
+ * administrator's explicit confirmation, recorded for that route and the
+ * two agents as they are now — native-apps-design.md D1, R3, M2); core
+ * refuses it otherwise.
  *
  * @param {{ actor: string, logger: import('pino').Logger, crossAgent?: boolean }} opts
  * @returns {Promise<{ changed: boolean, tunnel: object }>} the tunnel with its `userSurfaceStatus`
@@ -587,9 +601,11 @@ async function panelVerifyKeys() {
  *
  * @param {import('fastify').FastifyRequest} request
  * A native app's bearer credential must be live too ({@link liveBearer}):
- * else `invalidToken`, answered 401 `invalid_token` so the app refreshes.
+ * else `invalidToken`, answered 401 `invalid_token` so the app refreshes —
+ * or, when the route or the client is not served for now, `unavailable`
+ * (503: the token stays good).
  *
- * @returns {Promise<{ ok: true, username: string, route: string, bearer?: { grantId: string } } | { ok: false, reason: string, invalidToken?: boolean }>}
+ * @returns {Promise<{ ok: true, username: string, route: string, bearer?: { grantId: string } } | { ok: false, reason: string, invalidToken?: boolean, unavailable?: boolean }>}
  */
 export async function verifyUserSurfaceRelay(request) {
   let keys;
@@ -628,7 +644,9 @@ export async function verifyUserSurfaceRelay(request) {
   const live = await liveBearer(caller.credential, caller.username, target.route);
   if (!live.ok) {
     request.log.info({ reason: live.reason }, 'User-surface bearer token not live');
-    return { ok: false, reason: live.reason, invalidToken: true };
+    return live.unavailable
+      ? { ok: false, reason: live.reason, unavailable: true }
+      : { ok: false, reason: live.reason, invalidToken: true };
   }
   return {
     ok: true,
@@ -654,13 +672,19 @@ async function liveBearer(credential, username, route) {
   const { liveAccessToken } = await import('./native-grants.js');
   const live = await liveAccessToken(credential.tokenSha256, credential.clientId, username);
   if (!live.ok) return { ok: false, reason: `token_${live.reason}` };
-  const host = await servedUserSurfaceHost(route);
-  if (!host) return { ok: false, reason: 'token_no_host' };
   const { findResolvedNativeClient } = await import('./native-apps.js');
   const client = await findResolvedNativeClient(credential.clientId);
-  if (!client || !client.served || client.fqdn !== host.fqdn) {
-    return { ok: false, reason: 'token_wrong_host' };
-  }
+  // The client gone: its tokens are no one's. Another host's client: its
+  // tokens never serve this host (the token is wrong, not the moment).
+  if (!client || client.fqdn === null) return { ok: false, reason: 'token_no_client' };
+  const host = await servedUserSurfaceHost(route);
+  if (host && client.fqdn !== host.fqdn) return { ok: false, reason: 'token_wrong_host' };
+  // The route served nowhere for now (its hosting moving, an approval
+  // pending), or the client not served for now (its host disabled, made
+  // public, its domain inactive): a moment, not the token — 503, so the app
+  // keeps it rather than refreshing in a loop (security review L5).
+  if (!host) return { ok: false, reason: 'token_no_host', unavailable: true };
+  if (!client.served) return { ok: false, reason: 'token_client_not_served', unavailable: true };
   return { ok: true, grantId: live.grantId };
 }
 

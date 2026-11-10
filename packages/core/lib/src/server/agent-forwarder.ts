@@ -557,6 +557,12 @@ export type UserSurfaceRelayVerification =
        * so the app refreshes it.
        */
       readonly invalidToken?: boolean | undefined;
+      /**
+       * A live bearer token for a route or a client not served for now (a
+       * hosting moving, a host disabled): answered 503, so the app keeps
+       * its token rather than refreshing in a loop.
+       */
+      readonly unavailable?: boolean | undefined;
     };
 
 /** Who the user is to the plugin, or why they may not use it. */
@@ -721,7 +727,8 @@ export function isCodeFetch(headers: IncomingHttpHeaders): boolean {
  *    request) — unless it came with a native app's bearer token
  *    (`bearer` on the relay check; no browser attaches one by itself). A
  *    bearer token that is not live is answered 401 `{ error:
- *    'invalid_token' }` with `WWW-Authenticate`;
+ *    'invalid_token' }` with `WWW-Authenticate`, one whose route or client
+ *    is not served for now 503;
  * 5. the directory must know the user for this plugin
  *    (`resolveUserCaller`) — else its 403, 404 or 503;
  * 6. the request is forwarded to `/app/<rest>` with the `user` caller,
@@ -777,6 +784,9 @@ export async function userSurfacePlugin(
       return reply.code(403).send({ error: 'not a script or style source' });
     }
     const relay = await opts.verifyRelay(request);
+    if (!relay.ok && relay.unavailable === true) {
+      return reply.code(503).send({ error: 'The plugin is not available right now' });
+    }
     if (!relay.ok && relay.invalidToken === true) {
       return reply
         .code(401)

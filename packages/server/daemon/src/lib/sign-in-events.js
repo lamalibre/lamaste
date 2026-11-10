@@ -8,7 +8,9 @@
  * (`native_sign_in_events`) for every plugin the client's host serves whose
  * installed version declares `identity.signInEvents`, is approved, and
  * holds the user as an active member of its audience at that moment — a
- * plugin never hears of anyone it does not already know.
+ * plugin never hears of anyone it does not already know. Delivery asks
+ * again: the events of a person no longer an active member are dropped,
+ * never sent.
  *
  * Delivery is per plugin, one at a time, at least once: oldest first, at
  * most {@link SIGN_IN_EVENTS_BATCH_MAX} a batch, `POST
@@ -181,7 +183,7 @@ function failed(name, error, logger) {
  *
  * @param {string} name
  * @param {{ logger?: import('pino').Logger, force?: boolean }} [opts]
- * @returns {Promise<{ status: 'delivered' | 'idle' | 'skipped' | 'waiting' | 'failed', delivered?: number, reason?: string, error?: string }>}
+ * @returns {Promise<{ status: 'delivered' | 'idle' | 'skipped' | 'waiting' | 'failed', delivered?: number, dropped?: number, reason?: string, error?: string }>}
  */
 export function deliverSignInEvents(name, { logger, force = false } = {}) {
   return deliveries.run(name, async () => {
@@ -211,8 +213,28 @@ export function deliverSignInEvents(name, { logger, force = false } = {}) {
     const secret = signingSecretFor(record);
     const call = deps?.call ?? callAgentHalf;
 
+    // A person who left the plugin's audience since their sign-in was
+    // queued: the event is no longer the plugin's to hear (security review
+    // L5) — dropped, never sent.
+    const dropLeavers = async (batch) => {
+      const gone = [];
+      for (const row of batch) {
+        if (!(await activeMember(plugin, row.user_id))) gone.push(row.seq);
+      }
+      const drop = db.prepare('DELETE FROM native_sign_in_events WHERE plugin = ? AND seq = ?');
+      for (const seq of gone) drop.run(name, seq);
+      return gone.length;
+    };
+
     let delivered = 0;
+    let dropped = 0;
     while (rows.length > 0) {
+      const left = await dropLeavers(rows);
+      if (left > 0) {
+        dropped += left;
+        rows = pending();
+        continue;
+      }
       const events = eventsOf(rows);
       const envelope = { from: events[0].seq, to: events[events.length - 1].seq };
       const result = await call({
@@ -243,8 +265,8 @@ export function deliverSignInEvents(name, { logger, force = false } = {}) {
       rows = pending();
     }
     backoff.delete(name);
-    logger?.info?.({ plugin: name, delivered }, 'Sign-in events delivered');
-    return { status: 'delivered', delivered };
+    logger?.info?.({ plugin: name, delivered, dropped }, 'Sign-in events delivered');
+    return { status: 'delivered', delivered, ...(dropped > 0 ? { dropped } : {}) };
   });
 }
 
