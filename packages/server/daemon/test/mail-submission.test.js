@@ -536,6 +536,39 @@ test('a tunnel on the listener’s port: never moved, reported once, Authelia’
   assert.ok(entries.some((e) => e.action === 'mail.submission.recovered'));
 });
 
+test('a refusal streak outlives a restart: not announced again, its end still audited', async () => {
+  await setRelayTransport();
+  await lib.writeTunnels([
+    {
+      id: 't1',
+      subdomain: 'cam',
+      fqdn: `cam.${PRIMARY}`,
+      port: MAIL_SUBMISSION_PORT,
+      enabled: true,
+    },
+  ]);
+  const before = (await notifications(`port ${MAIL_SUBMISSION_PORT}`)).length;
+  assert.equal((await lib.syncMailConfiguration({ deliver })).submitting, false);
+  assert.equal((await notifications(`port ${MAIL_SUBMISSION_PORT}`)).length, before + 1);
+
+  // The panel restarts (what it held in memory is gone), the tunnel still there.
+  lib.resetMailSyncForTests();
+  assert.equal((await lib.syncMailConfiguration({ deliver })).submitting, false);
+  assert.equal(
+    (await notifications(`port ${MAIL_SUBMISSION_PORT}`)).length,
+    before + 1,
+    'the same streak: not announced again',
+  );
+
+  // An operator moves the tunnel and restarts the panel: the end is audited.
+  await lib.writeTunnels([]);
+  lib.resetMailSyncForTests();
+  assert.equal((await lib.syncMailConfiguration({ deliver })).submitting, true);
+  const [last] = await lib.listAudit({ action: 'mail.submission.', limit: 1 });
+  assert.equal(last.action, 'mail.submission.recovered');
+  assert.deepEqual(last.details, { previous: 'tunnel' });
+});
+
 test('a port another program holds: Authelia keeps submitting, the listener retried, its file only after the grace', async () => {
   await setRelayTransport();
   // Authelia submits already, as a relay that ran the listener before.

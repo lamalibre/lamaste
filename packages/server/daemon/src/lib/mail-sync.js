@@ -34,7 +34,7 @@
 
 import { MAIL_SUBMISSION_PORT, PromiseChainMutex } from '@lamalibre/lamaste';
 
-import { recordAuditBestEffort } from './audit.js';
+import { listAudit, recordAuditBestEffort } from './audit.js';
 import { convergeAuthVhosts } from './auth-branding.js';
 import { reloadAuthelia, updateAutheliaMailSettings } from './authelia.js';
 import { withDomainRendering } from './domains.js';
@@ -54,6 +54,27 @@ const syncMutex = new PromiseChainMutex();
 /** Why the listener last could not run (`tunnel` / `port_in_use` / `failed`), or null — reported once per streak. */
 let listenerRefusal = null;
 
+/**
+ * Whether {@link listenerRefusal} was taken from the audit log yet. A streak
+ * outlives the process (an operator moves a tunnel, then restarts the
+ * panel): the first report of a process continues the streak the audit log
+ * shows, so its end is still recorded and its start not announced twice.
+ */
+let listenerRefusalLoaded = false;
+
+/** The streak the audit log shows: the reason of a last `mail.submission.refused`, else null. */
+async function recordedListenerRefusal(logger) {
+  try {
+    const [last] = await listAudit({ action: 'mail.submission.', limit: 1 });
+    return last?.action === 'mail.submission.refused' && typeof last.details?.reason === 'string'
+      ? last.details.reason
+      : null;
+  } catch (err) {
+    logger?.warn({ err }, 'Could not read the mail listener’s last refusal from the audit log');
+    return null;
+  }
+}
+
 /** How long the listener's port may be held before Authelia is moved to its file notifier. */
 export const PORT_HELD_GRACE_MS = 5 * 60_000;
 let portHeldGraceMs = PORT_HELD_GRACE_MS;
@@ -72,6 +93,10 @@ async function portTunnel() {
 
 /** Audit and notify the start of a refusal streak; audit its end. */
 async function reportListener(reason, logger) {
+  if (!listenerRefusalLoaded) {
+    listenerRefusal = await recordedListenerRefusal(logger);
+    listenerRefusalLoaded = true;
+  }
   if (reason === listenerRefusal) return;
   const previous = listenerRefusal;
   listenerRefusal = reason;
@@ -231,6 +256,7 @@ export async function retrySubmissionListener({ deliver, logger }) {
 /** Forget a refusal streak and what Authelia was given (tests); `graceMs` the port's grace. */
 export function resetMailSyncForTests({ graceMs } = {}) {
   listenerRefusal = null;
+  listenerRefusalLoaded = false;
   portHeldSince = null;
   autheliaSubmitting = null;
   portHeldGraceMs = graceMs ?? PORT_HELD_GRACE_MS;
