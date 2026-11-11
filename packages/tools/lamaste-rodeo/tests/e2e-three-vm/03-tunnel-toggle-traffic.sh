@@ -544,7 +544,15 @@ while [ "$SECONDS" -lt "$DEADLINE" ]; do
   sleep 3
 done
 assert_eq "$RECOVERED" "yes" "The panel recovered chisel from the failed state within 75 seconds" || true
-NOTE=$(host_api_get "notifications" | jq -c "[.notifications[]? | select(.id > ${NOTE_BASE}) | select(.message | contains(\"Chisel had stopped in the failed state\"))] | length" 2>/dev/null || echo 0)
+# The panel writes the notification right after chisel is active again, so
+# it may land a moment after the unit does.
+NOTE=0
+DEADLINE=$((SECONDS + 20))
+while [ "$SECONDS" -lt "$DEADLINE" ]; do
+  NOTE=$(host_api_get "notifications" | jq -c "[.notifications[]? | select(.id > ${NOTE_BASE}) | select(.message | contains(\"Chisel had stopped in the failed state\"))] | length" 2>/dev/null || echo 0)
+  [ "$NOTE" = "0" ] || break
+  sleep 2
+done
 assert_eq "$NOTE" "1" "Administrators are notified of the recovery" || true
 if port_opens_within "$TUNNEL_PORT" "$PAGE" 60; then
   log_pass "The tunnel serves again after the recovery"

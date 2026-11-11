@@ -3035,12 +3035,14 @@ lamalibre_registry_probe_script() {
 set -uo pipefail
 cd /opt/lamalibre/lamaste/serverd
 probe='const m = await import("@lamalibre/lamaste/server"); try { process.stdout.write(await m.resolveLamalibreRegistry({ cwd: "/" })); } catch (e) { process.stdout.write("refused:" + (e.code || e.name)); }'
-empty="$(mktemp)"
+# npm refuses one file loaded as both its user and its global configuration.
+empty_user="$(mktemp)"
+empty_global="$(mktemp)"
 printf 'root %s\n' "$(node --input-type=module -e "$probe" 2>/dev/null || echo error)"
 printf 'lamaste %s\n' "$(sudo -u lamaste env HOME=/nonexistent node --input-type=module -e "$probe" 2>/dev/null || echo error)"
-printf 'unconfigured %s\n' "$(env npm_config_userconfig="$empty" npm_config_globalconfig="$empty" node --input-type=module -e "$probe" 2>/dev/null || echo error)"
+printf 'unconfigured %s\n' "$(env npm_config_userconfig="$empty_user" npm_config_globalconfig="$empty_global" node --input-type=module -e "$probe" 2>/dev/null || echo error)"
 printf 'npmjs %s\n' "$(env 'npm_config_@lamalibre:registry=https://registry.npmjs.org/' node --input-type=module -e "$probe" 2>/dev/null || echo error)"
-rm -f "$empty"
+rm -f "$empty_user" "$empty_global"
 SCRIPT
 }
 
