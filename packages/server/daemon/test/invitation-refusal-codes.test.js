@@ -25,7 +25,9 @@ const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src')
 const PATHS = {
   'routes/invite.js': INVITE_PAGE_KEYS,
   'lib/invitation-acceptance.js': INVITE_PAGE_KEYS,
-  'lib/invitations.js': INVITE_PAGE_KEYS,
+  // The store answers both pages: an acceptance's refusals the invitation
+  // page, a new link's (reissue) the inviter's page.
+  'lib/invitations.js': [...INVITE_PAGE_KEYS, ...INVITATIONS_PAGE_KEYS],
   'routes/delegated-invitations.js': INVITATIONS_PAGE_KEYS,
   'lib/delegated-invitations.js': INVITATIONS_PAGE_KEYS,
   'lib/user-caller.js': INVITATIONS_PAGE_KEYS,
@@ -201,12 +203,14 @@ test('the 4.10 codes: each refusal the design names carries its own', () => {
     assert.ok(acceptance.includes(expected), expected);
   }
   assert.ok(codesOf('lib/invitations.js').includes('410 invitation_closed'));
+  // Giving one's own a new link; revoking one's own (none, or no longer open).
   assert.deepEqual(
     codesOf('lib/delegated-invitations.js').filter((c) => c.startsWith('404 not_found')),
-    ['404 not_found', '404 not_found'],
+    ['404 not_found', '404 not_found', '404 not_found'],
   );
+  // No plugin on the route, another domain's, a malformed id (new link, revoke).
   assert.equal(
     codesOf('routes/delegated-invitations.js').filter((c) => c === '404 not_found').length,
-    3,
+    4,
   );
 });

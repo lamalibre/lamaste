@@ -202,7 +202,7 @@ Key configuration choices:
 - **`server.address: 'tcp://127.0.0.1:9091/'`** — binds to localhost only; nginx handles public access
 - **`default_policy: two_factor`** — requires password + TOTP for all authenticated users
 - **`session.cookies`** — array format (Authelia v4.38+) specifying the domain and Authelia URL for session cookies
-- **`notifier.filesystem`** — writes notifications to a file instead of sending email (suitable for small-scale use)
+- **`notifier.filesystem`** — writes notifications to a file while the relay has no mail transport. With one (4.14) Authelia's notifier is `smtp` to the panel's own listener on `127.0.0.1:9295`, which delivers through the relay's transport, and `authentication_backend.password_reset.custom_url` points the portal's "Reset password?" at Lamaste's `https://auth.<domain>/reset` — Authelia's own reset and change stay disabled ([Mail](../02-guides/mail.md))
 - **`totp.period: 30`** — standard 30-second TOTP window
 
 ### Users file format
@@ -380,6 +380,7 @@ A copy is also stored in `/etc/authelia/.secrets.json` (mode `600`) for referenc
 
 Authelia is also the relay's OpenID Connect provider, at `https://auth.<domain>` (`/.well-known/openid-configuration`, `/jwks.json`, `/api/oidc/token`, `/api/oidc/device-authorization`, `/api/oidc/userinfo` — all served by the auth vhost's plain proxy location, without forward auth). The clients come from two places: every enabled plugin's manifest (`oidcClients` — e.g. Feria's `feria-cli`, a public device-code client so `feria login` authenticates through the relay) and the panel itself (`lamaste-server`, a confidential client-credentials client, when the registry credential uses `auth.kind: oidc`). The panel rewrites `identity_providers.oidc` after every plugin lifecycle change and every registry-credential change, restarting Authelia only when the section actually changed, and removes the section when no client is left (Authelia refuses an `oidc` section without clients).
 
+<!-- prettier-ignore -->
 ```yaml
 identity_providers:
   oidc:
@@ -388,7 +389,7 @@ identity_providers:
       - key_id: lamaste-oidc
         algorithm: RS256
         use: sig
-        key: { { secret "/etc/authelia/oidc-issuer.pem" | mindent 10 "|" | msquote } }
+        key: {{ secret "/etc/authelia/oidc-issuer.pem" | mindent 10 "|" | msquote }}
     lifespans:
       device_code: 10 minutes
     claims_policies:

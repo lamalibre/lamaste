@@ -15,12 +15,12 @@ The helper does only what the relay **signed**. When it is enabled it remembers 
 Once per agent machine (Linux with systemd; macOS agents cannot host an agent half Lamaste installs):
 
 ```bash
-sudo npm install -g @lamalibre/lamaste-agent   # a root-owned install
+sudo npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent   # a root-owned install
 sudo lamaste-agent apphost enable              # the agent runs as the user who ran sudo
 sudo lamaste-agent apphost enable --user root  # the agent runs as root: no sudoers rule
 ```
 
-`enable` refuses to act from an install another user could have changed: the package, the helper it ships and the core library it loads — and every directory above them — must be root-owned and writable by no group or other user. A user-level install (`nvm`, a home-directory prefix) is not; install it root-owned with `sudo npm install -g @lamalibre/lamaste-agent` and run `enable` from that install. It also needs `/usr/bin/node` (the helper's interpreter and the Node.js every agent half runs on — from the distribution or NodeSource), systemd as the system manager (`/run/systemd/system`), and `sudo` and `visudo` unless the agent runs as root.
+`enable` refuses to act from an install another user could have changed: the package, the helper it ships and the core library it loads — and every directory above them — must be root-owned and writable by no group or other user. A user-level install (`nvm`, a home-directory prefix) is not; install it root-owned with `sudo npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent` and run `enable` from that install. It also needs `/usr/bin/node` (the helper's interpreter and the Node.js every agent half runs on — from the distribution or NodeSource), systemd as the system manager (`/run/systemd/system`), and `sudo` and `visudo` unless the agent runs as root.
 
 What `enable` does:
 

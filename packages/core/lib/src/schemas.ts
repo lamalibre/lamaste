@@ -9,6 +9,8 @@
 
 import semver from 'semver';
 import { z } from 'zod';
+
+import { isReservedOidcClientId } from './native-apps.js';
 import {
   APPHOST_ROUTE_RE,
   AgentHalfMaxBodySizeSchema,
@@ -938,6 +940,16 @@ export const ManifestSchema = z
           code: z.ZodIssueCode.custom,
           path: ['oidcClients', idx, 'id'],
           message: `OIDC client id "${client.id}" must be "${pluginRoute}" or start with "${pluginRoute}-"`,
+        });
+      }
+      // Lamaste's own clients (`lamaste-server`, the native clients
+      // `lamaste-native-*`) live under `lamaste-`: a plugin routed `lamaste`
+      // could otherwise name one.
+      if (isReservedOidcClientId(client.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['oidcClients', idx, 'id'],
+          message: `OIDC client id "${client.id}" is reserved for Lamaste ("lamaste" and "lamaste-*")`,
         });
       }
       if (seen.has(client.id)) {

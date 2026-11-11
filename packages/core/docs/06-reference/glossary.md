@@ -24,7 +24,7 @@ If you are reading documentation and hit an unfamiliar term, this is the place t
 
 **Where it appears:**
 
-- Enrolled from the panel (**Certificates → Enrollment Token**) and `lamaste-agent setup` (installed globally with `npm install -g @lamalibre/lamaste-agent`)
+- Enrolled from the panel (**Certificates → Enrollment Token**) and `lamaste-agent setup` (installed globally with `npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent`)
 - Agent registry: `/etc/lamalibre/lamaste/agents.json` on the server; `~/.lamalibre/lamaste/agents/<label>/` on the agent
 - The **Agent** column and field on the panel's Tunnels page
 

@@ -643,6 +643,8 @@ The `auth_request` target of a plugin's user surface — `/api/<route>/app` and 
 | 403    | Anything else refused — never the access-request page; the reason is logged (`user-surface authz denied`) and named in `X-Lamalibre-Refusal`: `not_a_member` for a user who is not a member of the host's domain, `forbidden` otherwise. nginx keeps only the status and headers (`auth_request`) and answers the application itself: `403 { "error": "not_a_member" }` for that value, `403 { "error": "forbidden" }` for any other |
 | 503    | The relay signing key is unusable                                                                                                                                                                                                                                                                                                                                                                                                    |
 
+**Bearer tokens.** A request carrying `Authorization` is authenticated by its token instead of the session ([Native Apps](native-apps.md#bearer-tokens-on-the-user-surface)); a cookie beside it is ignored. Gatekeeper requires exactly `Bearer <compact JWS>` (≤ 8 KiB) and verifies it with core `verifyNativeAccessToken`: `RS256`, `typ: at+jwt`, a key of Authelia's `jwks.json` (fetched on loopback with the domain's portal as forwarded host, cached, fetched again on an unknown `kid` or a bad signature at most every 30 s), `iss` = `https://auth.<domain of the host>`, `aud` containing `https://<fqdn>`, `client_id` = the host's native client in the panel's projection `native-apps.json` (`{ v: 1, clients: [{ clientId, fqdn, domain, enabled }] }`, 0600, watched like `domains.json`; missing or unreadable: every bearer refused), not expired, issued within 30 s, at most 15 minutes long, a UUID `jti`, a Lamaste username in `preferred_username`. Then the session path's checks — the domain membership, the host grant on a restricted host, the served route — and the assertion's caller carries `credential: { kind: "bearer", clientId, tokenSha256, exp }`. A token refused: `401` with `X-Lamalibre-Refusal: invalid_token` (nginx answers `401 { "error": "invalid_token" }` with `WWW-Authenticate: Bearer error="invalid_token"`); no issuer keys yet: `503`. The token is never logged.
+
 ### Web-Surface Shell Authorization (nginx auth_request)
 
 ```
@@ -677,6 +679,23 @@ The `auth_request` target of an inviter's API on a domain's sign-in host, `auth.
 | 401    | No valid session, or more than one session cookie — nginx answers JSON `401 { "error": "unauthenticated" }`  |
 | 403    | Anything else refused (`X-Lamalibre-Refusal: forbidden`) — nginx answers JSON `403 { "error": "forbidden" }` |
 | 503    | The relay signing key is unusable                                                                            |
+
+### Password-Change Authorization (nginx auth_request)
+
+```
+GET /authz/account/:domain
+```
+
+**Host:** `127.0.0.1:9294`
+
+The `auth_request` target of a person's own password change on a domain's sign-in host, `POST auth.<domain>/api/account/password` ([Mail API](mail.md#account-routes)). The vhost names the portal in the path, `X-Original-URL` and `Host`, which must agree; the raw target must be `/api/account/password` exactly. Gatekeeper asks Authelia about the session **for that very URL** — the portal's rule wants two factors from the domain's members and external members — never from its session cache, one `authelia_session` only; checks the projection (member or external member of the domain, fail closed); and signs a relay assertion for the panel — audience `@panel`, port 3100, caller `{ type: "user", username }`, target `{ account: "password", domain, path: "/api/account/password" }`, bound to the method and target, a kind of its own that no other route accepts. The panel takes the user from it and nothing else: before, it read `Remote-User`, which any local process could send to its loopback port.
+
+| Status | Meaning                                                                                                     |
+| ------ | ----------------------------------------------------------------------------------------------------------- |
+| 200    | `X-Lamalibre-Relay-Assertion` for this one request; `Cache-Control: no-store`                               |
+| 401    | No valid session, or more than one session cookie — nginx answers JSON `401 { "error": "unauthenticated" }` |
+| 403    | Anything else refused — nginx answers JSON `403 { "error": "forbidden" }`                                   |
+| 503    | The relay signing key is unusable                                                                           |
 
 ### Domain membership
 

@@ -8,7 +8,7 @@ on macOS (launchd) and Linux (systemd).
 Install the agent globally, then run setup:
 
 ```bash
-npm install -g @lamalibre/lamaste-agent
+npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN=<token> \
   lamaste-agent setup --label my-server --panel-url https://<server-ip>:9292
 ```
@@ -146,12 +146,12 @@ lamaste-agent deploy blog ./dist
 
 ## Requirements
 
-| Requirement | Details                                                                             |
-| ----------- | ----------------------------------------------------------------------------------- |
-| OS          | macOS or Ubuntu Linux (24.04 LTS)                                                   |
-| Node.js     | >= 20.0.0                                                                           |
-| Access      | User account (no root); on headless Linux, `sudo loginctl enable-linger $USER` once |
-| Install     | Global: `npm install -g @lamalibre/lamaste-agent`                                   |
+| Requirement | Details                                                                                                |
+| ----------- | ------------------------------------------------------------------------------------------------------ |
+| OS          | macOS or Ubuntu Linux (24.04 LTS)                                                                      |
+| Node.js     | >= 20.0.0                                                                                              |
+| Access      | User account (no root); on headless Linux, `sudo loginctl enable-linger $USER` once                    |
+| Install     | Global: `npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent` |
 
 ## How It Works
 

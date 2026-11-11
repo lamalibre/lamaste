@@ -8,6 +8,14 @@
 import type { BrandFieldError, BrandFields, RenderedBrand } from './auth-branding.js';
 import type { PluginHosting, PluginMode } from './constants.js';
 import type { MembershipKind } from './domains.js';
+import type {
+  MailGoogleStartRequest,
+  MailSendResult,
+  MailSenderRequest,
+  MailTransportPatchRequest,
+  MailTransportView,
+  SmtpTransportRequest,
+} from './mail.js';
 import type { PageLanguage } from './page-messages.js';
 import type { HostEligibility } from './host-eligibility.js';
 import type { AudienceChange, NormalizedIdentityBlock } from './identity.js';
@@ -17,6 +25,7 @@ import type {
   InvitationPolicyInput,
   InvitationPolicyView,
 } from './invitations.js';
+import type { NativeAssociations, NativeGrantEndReason } from './native-apps.js';
 import type { SettingsField, SettingsValue } from './plugin-settings.js';
 import type { AgentBlock } from './schemas.js';
 
@@ -156,6 +165,12 @@ export interface AdminUser {
    * Authelia groups.
    */
   readonly domains: readonly DomainMembership[];
+  /**
+   * Whether `email` can receive mail (mail-design.md §4): not under
+   * `.local`, `.invalid`, `.test` or `.example`. A user without one cannot
+   * reset their own password.
+   */
+  readonly emailDeliverable: boolean;
 }
 
 /**
@@ -484,6 +499,11 @@ export interface PluginWebSurfaceView {
     readonly membersWithoutGrant:
       | readonly { readonly userId: string; readonly username: string }[]
       | null;
+    /**
+     * Other plugins' routes joined to the site (an application host): each
+     * served there, or answered 503 by nginx, and why.
+     */
+    readonly joined?: readonly WebSurfaceJoinedRoute[];
   } | null;
   readonly served: boolean;
   readonly reason: WebSurfaceNotServedReason | null;
@@ -626,7 +646,107 @@ export interface UserSurfaceRouteStatus {
    * tunnel is not carried by the agent hosting the plugin (moved, revoked,
    * or the plugin hosted elsewhere or not at all).
    */
-  readonly reason: 'not_installed' | 'no_identity' | 'not_approved' | 'not_hosting_agent' | null;
+  readonly reason:
+    | 'not_installed'
+    | 'no_identity'
+    | 'not_approved'
+    | 'not_hosting_agent'
+    | 'cross_agent_unconfirmed'
+    | null;
+}
+
+// ---------------------------------------------------------------------------
+// Native apps (native-apps-design.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * A native client of an application host, as the panel shows it: its
+ * settings, its host resolved (`fqdn`, `domain`, null when the host entry is
+ * gone or lies under no active domain), whether Authelia serves it and why
+ * not, the audience and redirect URIs it is rendered with, and the routes
+ * its host binds and serves.
+ */
+export interface NativeClientView {
+  readonly clientId: string;
+  readonly hostKind: 'site' | 'tunnel';
+  readonly hostId: string;
+  readonly name: string;
+  readonly redirectPaths: readonly string[];
+  readonly accessTokenMinutes: number;
+  readonly idleDays: number;
+  readonly absoluteDays: number;
+  readonly associations: NativeAssociations;
+  readonly enabled: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly fqdn: string | null;
+  readonly domain: string | null;
+  readonly served: boolean;
+  /**
+   * Why it is not served: `disabled`, `host_missing`, `host_public`,
+   * `host_disabled` or `domain_inactive`.
+   */
+  readonly reason?:
+    | 'disabled'
+    | 'host_missing'
+    | 'host_public'
+    | 'host_disabled'
+    | 'domain_inactive';
+  /** `https://<fqdn>` — the audience of every access token it gets. */
+  readonly audience: string | null;
+  readonly redirectUris: readonly string[];
+  readonly accessMode: 'authenticated' | 'restricted' | null;
+  readonly routes: readonly string[];
+  readonly servedRoutes: readonly string[];
+}
+
+/** What creates a native client (core `NativeClientCreateSchema`). */
+export interface NativeClientCreateRequest {
+  readonly slug: string;
+  readonly hostKind: 'site' | 'tunnel';
+  readonly hostId: string;
+  readonly name: string;
+  readonly redirectPaths: readonly string[];
+  readonly accessTokenMinutes?: number;
+  readonly idleDays?: number;
+  readonly absoluteDays?: number;
+  readonly associations?: NativeAssociations;
+  readonly enabled?: boolean;
+}
+
+/** A change to a native client (core `NativeClientUpdateSchema`); `enabled` enables or disables it. */
+export type NativeClientUpdateRequest = Partial<
+  Omit<NativeClientCreateRequest, 'slug' | 'hostKind' | 'hostId'>
+>;
+
+/** One person's sign-in on one device with one native client. */
+export interface NativeGrantView {
+  readonly grantId: string;
+  readonly clientId: string;
+  readonly userId: string;
+  readonly username: string | null;
+  readonly deviceName: string | null;
+  readonly userAgent: string | null;
+  readonly createdAt: string;
+  readonly lastUsedAt: string;
+  /** When it ends unless used again or ended earlier: the sooner of idle and absolute. */
+  readonly expiresAt: string | null;
+  readonly status: 'live' | 'ended';
+  readonly endedAt: string | null;
+  readonly endedReason: NativeGrantEndReason | null;
+}
+
+/** A route joined to a plugin's site, and whether it is served there. */
+export interface WebSurfaceJoinedRoute {
+  readonly route: string;
+  readonly served: boolean;
+  readonly reason:
+    | 'site_not_served'
+    | 'not_installed'
+    | 'no_identity'
+    | 'not_approved'
+    | 'not_hosted'
+    | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -870,6 +990,60 @@ export interface AdminClient {
    * `scope_in_use` with `plugins` and `policies` that still use it.
    */
   removeTrustedScope(scope: string): Promise<TrustedScopesView>;
+  // Mail (mail-design.md §3.5): the relay-wide transport, then a domain's override
+  /** The relay's transport and sender, or null when the relay sends no mail. */
+  getMailSettings(): Promise<{ transport: MailTransportView | null }>;
+  /** Set an `smtp` transport — checked before it is stored; `password` omitted keeps the stored one. */
+  setMailSmtp(
+    input: SmtpTransportRequest,
+  ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  /**
+   * Start Google's consent for a `gmail-api` transport: the URL to open,
+   * signed in as the sending Workspace user. The transport is stored when
+   * Google returns to `https://auth.<primary>/mail/google/callback`; poll
+   * {@link AdminClient.getMailSettings}.
+   */
+  startMailGoogleConsent(
+    input: MailGoogleStartRequest,
+  ): Promise<{ authorizeUrl: string; expiresAt: string }>;
+  /**
+   * Change the sender, its name or the daily limit. A `gmail-api` sender
+   * other than the account answers a `sender` warning: Gmail sends as it
+   * only when it is a send-as address of the account — send a test.
+   */
+  setMailSender(
+    input: MailTransportPatchRequest,
+  ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  /** End a provider's limit refusal early, once its console shows the account sending again. */
+  resumeMail(): Promise<{ transport: MailTransportView }>;
+  /** Remove the relay's transport: Authelia back to its file notifier, Google's token revoked (best effort). */
+  clearMailSettings(): Promise<{ removed: boolean; warnings?: AdminWarning[] }>;
+  /** Send a test mail in the primary domain's language and brand. */
+  sendTestMail(to: string): Promise<{ mail: MailSendResult }>;
+  /** A domain's override, or null when it uses the relay's transport and sender. */
+  getDomainMail(name: string): Promise<{ transport: MailTransportView | null }>;
+  setDomainMailSmtp(
+    name: string,
+    input: SmtpTransportRequest,
+  ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  startDomainMailGoogleConsent(
+    name: string,
+    input: MailGoogleStartRequest,
+  ): Promise<{ authorizeUrl: string; expiresAt: string }>;
+  /** A sender of the domain's own over the relay's transport (`PUT …/mail/sender`). */
+  setDomainMailSender(
+    name: string,
+    input: MailSenderRequest,
+  ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  /** Change the domain row's sender, name or (own transport only) daily limit. */
+  updateDomainMail(
+    name: string,
+    input: MailTransportPatchRequest,
+  ): Promise<{ transport: MailTransportView; warnings?: AdminWarning[] }>;
+  resumeDomainMail(name: string): Promise<{ transport: MailTransportView }>;
+  clearDomainMail(name: string): Promise<{ removed: boolean; warnings?: AdminWarning[] }>;
+  /** Send a test mail in the domain's language and brand, through what its mail resolves to. */
+  sendDomainTestMail(name: string, to: string): Promise<{ mail: MailSendResult }>;
 
   // A domain's brand on its auth pages (per-domain branding)
   /** The brand without its blobs, or null when the domain has none (404 `unknown_domain`). */
@@ -919,7 +1093,36 @@ export interface AdminClient {
      * external membership (400 `external_member_groups`).
      */
     domains?: DomainMembershipInput[];
-  }): Promise<{ ok: boolean; invitation: unknown; token: string }>;
+    /**
+     * Whether the link is mailed (mail-design.md §6.1). Omitted: mailed
+     * unless `groups` names `admins` or a `feria-*` group
+     * ({@link adminInvitationMailDefault}).
+     */
+    mail?: boolean;
+  }): Promise<{
+    ok: boolean;
+    invitation: unknown;
+    token: string;
+    inviteUrl: string | null;
+    /** What became of the mail; null when it was not to be mailed. */
+    mail: MailSendResult | null;
+  }>;
+  /**
+   * A new link for a pending invitation (at most three a day): the old link
+   * stops working (mail-design.md §6.1), the token is answered once, as on
+   * creation, and the link is mailed when `options.mail` says so — omitted,
+   * as on creation ({@link adminInvitationMailDefault} of its groups).
+   */
+  reissueInvitation(
+    id: string,
+    options?: { mail?: boolean },
+  ): Promise<{
+    ok: boolean;
+    invitation: unknown;
+    token: string;
+    inviteUrl: string | null;
+    mail: MailSendResult | null;
+  }>;
   /**
    * Revoke a pending invitation, delete one that ended; one being accepted
    * is marked (`action: 'marked'`, 202): it ends revoked, and an account its
@@ -1216,6 +1419,40 @@ export interface AdminClient {
   ): Promise<{ webSurface: PluginWebSurfaceView }>;
   /** Delete the site, its trees and the grants on it. */
   deletePluginWebSurface(name: string): Promise<{ ok: boolean }>;
+  /**
+   * Join plugin `route`'s user surface to the site plugin `name` owns (an
+   * application host). Refusals: `invalid_route`, `not_found`,
+   * `not_agent_hosted`, `not_plugin_domain`, `served_elsewhere`,
+   * `too_many_routes`.
+   */
+  joinWebSurfaceRoute(name: string, route: string): Promise<{ webSurface: PluginWebSurfaceView }>;
+  /** Take a joined route off the site again. */
+  leaveWebSurfaceRoute(name: string, route: string): Promise<{ webSurface: PluginWebSurfaceView }>;
+  // Native apps (native-apps-design.md): one native client per application
+  // host, and its grants — one per person and device.
+  listNativeApps(): Promise<{ clients: NativeClientView[] }>;
+  createNativeApp(
+    data: NativeClientCreateRequest,
+  ): Promise<{ client: NativeClientView; warnings?: AdminWarning[] }>;
+  /** Change a native client; `{ enabled: false }` disables it (its grants end, no new sign-ins). */
+  updateNativeApp(
+    clientId: string,
+    data: NativeClientUpdateRequest,
+  ): Promise<{ client: NativeClientView; warnings?: AdminWarning[] }>;
+  /** Delete a native client; its grants end. */
+  deleteNativeApp(clientId: string): Promise<{ ok: boolean; warnings?: AdminWarning[] }>;
+  listNativeGrants(
+    clientId: string,
+    filter?: { userId?: string; status?: 'live' | 'ended' | 'all' },
+  ): Promise<{ grants: NativeGrantView[] }>;
+  revokeNativeGrant(clientId: string, grantId: string): Promise<{ ok: boolean; ended: number }>;
+  /** End every grant a person holds with the client. */
+  revokeUserNativeGrants(clientId: string, userId: string): Promise<{ ok: boolean; ended: number }>;
+  /** A person's grants with every native client. */
+  getUserNativeGrants(
+    username: string,
+    filter?: { status?: 'live' | 'ended' | 'all' },
+  ): Promise<{ grants: NativeGrantView[] }>;
   // Push install: what lets the panel install, update and remove what
   // Lamaste installs on an agent while that agent's window is open.
   getPushInstallConfig(): Promise<{
@@ -1355,6 +1592,15 @@ export interface AdminClient {
   bindTunnelUserSurface(
     id: string,
     route: string,
+    options?: {
+      /**
+       * Serve a route whose plugin another agent hosts: the administrator's
+       * explicit decision that the tunnel's agent may serve the origin of
+       * that plugin's users. Lapses when the tunnel changes agent
+       * (`cross_agent_unconfirmed`).
+       */
+      crossAgent?: boolean;
+    },
   ): Promise<{ ok: boolean; changed: boolean; tunnel: unknown }>;
   /** Stop serving it there: requests for the route go down the tunnel again. */
   unbindTunnelUserSurface(id: string, route: string): Promise<{ ok: boolean; tunnel: unknown }>;

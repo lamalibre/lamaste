@@ -70,6 +70,7 @@
 
 import crypto from 'node:crypto';
 import { httpError } from './app-error.js';
+import { purgeAccountRecordsOf } from './account-store.js';
 import { recordAuditBestEffort } from './audit.js';
 import {
   autheliaHoldsOidcIdentity,
@@ -702,27 +703,14 @@ async function reconcileUnlocked({
  * @returns {Promise<Array<{ step: string, message: string }>>}
  */
 async function offboardUserUnlocked(userId, { kind, actor, logger }) {
-  const warnings = [];
   const db = await getStateDb();
   const row = db.prepare('SELECT username FROM directory_users WHERE user_id = ?').get(userId);
   const username = row?.username ?? null;
+  const warnings = await endRelaySessionsOf(userId, username, logger);
   const failed = (step, message, err) => {
     logger?.warn({ userId, step, err: err.message }, message);
     warnings.push({ step, message: `${message}: ${err.message}` });
   };
-
-  try {
-    await bumpUserEpoch(userId);
-  } catch (err) {
-    failed('session-epoch', 'Live desktop sessions were not ended', err);
-  }
-  if (username !== null) {
-    try {
-      await revokeUserRegistryTokens(username, { deleted: true }, logger, { userId });
-    } catch (err) {
-      failed('registry', 'Registry tokens were not revoked', err);
-    }
-  }
   if (kind === 'deleted' && username !== null) {
     try {
       const removed = await removeGrantsForUser(username, logger ?? SILENT_LOGGER);
@@ -752,7 +740,70 @@ async function offboardUserUnlocked(userId, { kind, actor, logger }) {
       );
     }
   }
+  // Native apps: every grant ends — its access tokens refused at once.
+  try {
+    const { revokeNativeGrants } = await import('./native-grants.js');
+    await revokeNativeGrants(
+      { userId },
+      kind === 'deleted' ? 'standing:removed' : 'standing:disabled',
+      { actor, logger },
+    );
+  } catch (err) {
+    failed('native-apps', 'Native app sign-ins were not ended', err);
+  }
   logger?.info({ userId, kind }, 'User offboarded');
+  return warnings;
+}
+
+/**
+ * The session-ending part of offboarding, for user `userId` (`username`,
+ * null when unknown): their desktop sessions end (their session epoch
+ * bumped) and their registry tokens are revoked. Best effort; the
+ * warnings of what failed.
+ *
+ * @param {string} userId
+ * @param {string | null} username
+ * @param {import('pino').Logger} [logger]
+ * @returns {Promise<Array<{ step: string, message: string }>>}
+ */
+async function endRelaySessionsOf(userId, username, logger) {
+  const warnings = [];
+  const failed = (step, message, err) => {
+    logger?.warn({ userId, step, err: err.message }, message);
+    warnings.push({ step, message: `${message}: ${err.message}` });
+  };
+  try {
+    await bumpUserEpoch(userId);
+  } catch (err) {
+    failed('session-epoch', 'Live desktop sessions were not ended', err);
+  }
+  if (username !== null) {
+    try {
+      await revokeUserRegistryTokens(username, { deleted: true }, logger, { userId });
+    } catch (err) {
+      failed('registry', 'Registry tokens were not revoked', err);
+    }
+  }
+  return warnings;
+}
+
+/**
+ * End the sessions the relay itself holds for user `userId` after their
+ * password changed (mail-design.md §6.2, §6.3) — the session-ending part
+ * of offboarding, keyed by user id: their desktop user-access sessions,
+ * their registry tokens, and Gatekeeper's cached session verdicts.
+ * Authelia's own sessions and the OpenID Connect tokens it issued are not
+ * ended: Authelia has no way to be asked to (an administrator's disable
+ * and enable ends them). Best effort; the warnings of what failed.
+ *
+ * @param {string} userId
+ * @param {{ logger?: import('pino').Logger }} [opts]
+ * @returns {Promise<Array<{ step: string, message: string }>>}
+ */
+export async function endUserSessions(userId, { logger } = {}) {
+  const user = await getDirectoryUser(userId);
+  const warnings = await endRelaySessionsOf(userId, user?.username ?? null, logger);
+  warnings.push(...(await bustCachedSessions(logger)));
   return warnings;
 }
 
@@ -1151,6 +1202,12 @@ export async function eraseDirectoryUser(userId, { actor, logger }) {
       invitationId: row.invitation_id,
     });
 
+    // Native apps: grants ended (offboarding did, unless it failed), then
+    // forgotten with the sign-in events queued for the user.
+    const { eraseNativeDataOfUser, revokeNativeGrants } = await import('./native-grants.js');
+    await revokeNativeGrants({ userId }, 'standing:erased', { actor, logger });
+    await eraseNativeDataOfUser(userId);
+
     const now = new Date().toISOString();
     db.exec('BEGIN IMMEDIATE');
     try {
@@ -1160,6 +1217,8 @@ export async function eraseDirectoryUser(userId, { actor, logger }) {
                version = version + 1, updated_at = ?
          WHERE user_id = ? AND status = 'removed' AND erased_at IS NULL`,
       ).run(now, now, userId);
+      // Their reset links (which name the username) and account records.
+      purgeAccountRecordsOf(db, userId);
       db.prepare(
         'INSERT INTO directory_erasures (user_id, requested_at, requested_by) VALUES (?, ?, ?)',
       ).run(userId, now, actor);

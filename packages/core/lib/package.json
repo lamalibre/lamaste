@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste",
-  "version": "4.13.1",
+  "version": "4.14.0",
   "description": "Core library for Lamaste — types, constants, schemas, plugin host, file helpers",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE.md",
@@ -37,6 +37,14 @@
     "./page-messages": {
       "types": "./dist/page-messages.d.ts",
       "import": "./dist/page-messages.js"
+    },
+    "./native-apps": {
+      "types": "./dist/native-apps.d.ts",
+      "import": "./dist/native-apps.js"
+    },
+    "./mail": {
+      "types": "./dist/mail.d.ts",
+      "import": "./dist/mail.js"
     }
   },
   "files": [

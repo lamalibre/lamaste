@@ -273,6 +273,12 @@ export type {
 } from './identity-projection.js';
 export { createIdentityHandlers } from './identity-handler.js';
 export type { IdentityHandlerLogger, IdentityHandlersOptions } from './identity-handler.js';
+// Sign-in events for halves whose identity block asks for them (native-apps-design.md D7)
+export { createSignInEventsHandler } from './sign-in-events-handler.js';
+export type {
+  SignInEventsHandlerLogger,
+  SignInEventsHandlerOptions,
+} from './sign-in-events-handler.js';
 // App host helper (slice 3): running lamaste-apphost, the record of the agent
 // halves it installed here, and the host facts the relay checks hosting against
 export { appServiceAccountComment } from '../agent-half.js';
@@ -503,3 +509,12 @@ export { peerSurface, peerRoute, createPeerAdminHandler } from './peer-surface.j
 export type { PeerSurfaceOptions, PeerRouteHandler, PeerRouteOptions } from './peer-surface.js';
 export { peerContextOf } from './peer-context.js';
 export type { PeerRequestContext } from './peer-context.js';
+
+// npm's @lamalibre:registry, read and resolved — see npm-registry-config.ts
+export {
+  readConfiguredLamalibreRegistry,
+  resolveLamalibreRegistry,
+  lamalibreRegistryNpmEnv,
+  lamalibreRegistryNpmArg,
+} from '../npm-registry-config.js';
+export type { LamalibreRegistryOptions } from '../npm-registry-config.js';

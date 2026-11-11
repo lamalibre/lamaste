@@ -1,6 +1,6 @@
 # Installer Flow
 
-## What `npx @lamalibre/create-lamaste` Does
+## What `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` Does
 
 The installer is a **zero-prompt, fire-and-forget** command. It assumes:
 
@@ -13,7 +13,7 @@ It requires **no user input**. All configuration happens later through the brows
 ## Execution Flow
 
 ```
-$ npx @lamalibre/create-lamaste
+$ npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste
 
   Lamaste Installer v1.0.0
 
@@ -104,7 +104,7 @@ $ npx @lamalibre/create-lamaste
 - Create the `lamaste` system user
 - Create `/opt/lamalibre/lamaste/` **root-owned** (read-only for `lamaste`; a tree owned by anyone else is moved aside and replaced) and write the certificate help page into it
 - Create the `lamaste-chisel` group and the `lamaste-authelia` account; install Chisel 1.12.0 and Authelia 4.39.28 to `/usr/local/bin` (fixed release URLs, SHA-256 verified before unpacking; a newer Authelia is kept); write `chisel.service` and `authelia.service`; set ownership of `/var/www/lamaste` (`lamaste:www-data`), `/etc/authelia` (`lamaste:lamaste-authelia`) and `/var/log/authelia` (`lamaste-authelia`). The services are started by onboarding
-- Deploy lamalibre-lamaste-serverd from bundled `vendor/lamaste-serverd/` directory + npm install, the `lamaste-server` CLI, and lamaste-server-ui from bundled `vendor/lamaste-server-ui/dist/` (pre-built, avoids Vite build on low-RAM VPS)
+- Deploy lamalibre-lamaste-serverd from bundled `vendor/lamaste-serverd/` directory + npm install (`@lamalibre/*` from the registry npm's configuration names for `@lamalibre` — refused when it is a public registry — else the hosted Feria, `https://feria.codelama.com.tr/`), the `lamaste-server` CLI, and lamaste-server-ui from bundled `vendor/lamaste-server-ui/dist/` (pre-built, avoids Vite build on low-RAM VPS)
 - Write `/etc/lamalibre/lamaste/panel.json` with droplet IP and paths
 - Write systemd unit file for panel service
 - Install the root-owned programs `/usr/local/sbin/lamaste-priv`, `lamaste-certbot` and `lamaste-cert-info`
@@ -144,7 +144,7 @@ There's no domain yet during initial setup. The browser will show a certificate 
 
 ### What happens when re-running on an existing installation?
 
-If an existing Lamaste installation is detected (`/etc/lamalibre/lamaste/panel.json` exists), the installer enters **redeploy mode** by default. This redeploys the panel, CLI, UI, docs and gatekeeper into a root-owned install directory, merges configuration, re-checks the pinned Chisel and Authelia installs, their units and the directory ownership, rewrites the root-owned programs and the sudoers rules, and restarts what changed -- skipping OS hardening, mTLS certificates, and the panel's nginx vhosts. See [Upgrades](../05-operations/upgrades.md). Use `--force-full` to run the complete installation instead.
+If an existing Lamaste installation is detected (`/etc/lamalibre/lamaste/panel.json` exists), the installer enters **redeploy mode** by default. This redeploys the panel, CLI, UI, docs and gatekeeper into a root-owned install directory, merges configuration, re-checks the pinned Chisel and Authelia installs, their units and the directory ownership, rewrites the root-owned programs and the sudoers rules, and restarts what changed -- skipping OS hardening, mTLS certificates, and the panel's nginx vhosts. The panel server comes from the installer's own `vendor/` directory, so `create-lamaste@<version>` redeploys exactly that version. See [Upgrades](../05-operations/upgrades.md). Use `--force-full` to run the complete installation instead.
 
 ### Why not use the lamalibre-lamaste-serverd directly on port 9292?
 

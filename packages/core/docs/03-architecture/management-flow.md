@@ -270,6 +270,7 @@ lamaste ALL=(root) NOPASSWD: /usr/sbin/nginx -t
 #   lamaste-priv authelia-totp <username>                    secret on stdin
 #   lamaste-priv authelia-user purge-second-factors <username>  TOTP + WebAuthn deleted
 #   lamaste-priv authelia-user has-oidc-identifier <username>   prints yes or no
+#   lamaste-priv authelia-user verify-totp <username>          code on stdin; prints ok <step>, no or none
 #   lamaste-priv self-update <version>                       create-lamaste in a transient unit
 #   lamaste-certbot issue <email> <cert-name> <domain>...    certbot certonly --nginx
 #   lamaste-certbot renew <cert-name> [force] | renew-all | list
@@ -283,7 +284,7 @@ Everything else the panel does needs no rule: the PKI directory (agent CSR signi
 
 The certbot wrappers accept only lowercase DNS hostnames (no wildcards or path characters, at most 100 per certificate) and a syntactically valid email address. Renewals the panel triggers pass `--no-random-sleep-on-renew`, because certbot otherwise sleeps up to about 8 minutes before a non-interactive renewal (a delay meant for `certbot.timer`) while an operator waits.
 
-Redeploying (`npx @lamalibre/create-lamaste` on an existing install) reinstalls the programs, removes retired ones (`lamaste-sign-csr`, `lamaste-pki-rename`), and replaces this file atomically after `visudo -c` accepts it, so upgrades pick up new rules.
+Redeploying (`npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` on an existing install) reinstalls the programs, removes retired ones (`lamaste-sign-csr`, `lamaste-pki-rename`), and replaces this file atomically after `visudo -c` accepts it, so upgrades pick up new rules.
 
 ## File Operation Safety
 

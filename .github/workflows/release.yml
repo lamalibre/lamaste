@@ -1,6 +1,8 @@
-# Runs on a version tag: validates and builds, then creates the GitHub
-# Release. Packages are published to npmjs by hand; afterwards run
-# feria.yml on the tag to copy the release to Feria.
+# Runs on a version tag: validates, builds and packs the release, creates
+# the GitHub Release with the packed tarballs attached (the durable copy the
+# registry can be rebuilt from), then publishes exactly those tarballs to
+# Feria (feria.yml). Feria — not npmjs — is where Lamaste's @lamalibre
+# packages are installed from since 4.14.
 name: Release
 
 on:
@@ -11,12 +13,11 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-permissions:
-  contents: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # the GitHub Release and its assets
 
     steps:
       - name: Checkout
@@ -44,8 +45,24 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Pack the release
+        run: |
+          node .github/scripts/pack-release.mjs "${{ steps.version.outputs.version }}" \
+            --out "${RUNNER_TEMP}/packages"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: Lamaste v${{ steps.version.outputs.version }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ runner.temp }}/packages/*.tgz
+            ${{ runner.temp }}/packages/release-manifest.json
+
+  feria:
+    needs: release
+    permissions:
+      contents: read # download the Release's assets
+      id-token: write # the OIDC token exchanged at Feria
+    uses: ./.github/workflows/feria.yml

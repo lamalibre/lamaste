@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 import type { CloudProvider } from './provider.js';
 import type { ProvisionOptions, ProvisionStep, ProgressEvent, ServerEntry } from './types.js';
 import { CloudError } from './errors.js';
+import { installerCommand } from './installer-command.js';
 import { DigitalOceanProvider } from './digitalocean/index.js';
 import { assertValidDOToken } from './digitalocean/scopes.js';
 import {
@@ -487,11 +488,13 @@ export async function provision(options: ProvisionOptions): Promise<ServerEntry>
       knownHostsPath,
     );
 
-    // Run the Lamaste installer
+    // Run the Lamaste installer — from the hosted Feria, the registry
+    // Lamaste's packages are published to (a fresh droplet's npm names
+    // nothing for @lamalibre, and npmjs no longer carries them)
     await sshExec(
       ip,
       sshKeyPair.privateKeyPath,
-      `npx --yes @lamalibre/create-lamaste@${installerVersion} --yes`,
+      installerCommand(installerVersion),
       600_000, // 10 minute timeout for installation
       knownHostsPath,
     );

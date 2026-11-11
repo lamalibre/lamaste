@@ -6,7 +6,13 @@
  * Subcommands:
  *   list [--plugin <n>] [--inviter <user>]
  *                                 Every invitation: who for, who invited, role, status
+ *   create <username> <email> [--groups a,b] [--domains a,b] [--external-domains c,d]
+ *          [--expires-days n] [--mail|--no-mail]
+ *                                 An administrator's invitation; its link printed once
  *   revoke <id>                   Revoke a pending one (delete one that ended with no account)
+ *   reissue <id> [--mail|--no-mail]
+ *                                 A new link for a pending (or expired) one: the old link stops
+ *                                 working; the new one is mailed as chosen (at most 3 a day)
  *   disable-invitees <user> [--transitive]
  *                                 Disable everyone a person invited (and those they invited)
  *
@@ -27,7 +33,10 @@ import {
   invitationRows,
   invitationsPath,
   isUserId,
+  madeMailText,
+  parseCreateArgs,
   parseListArgs,
+  parseReissueArgs,
   policyLines,
   policySetBody,
   resolveUserId,
@@ -44,7 +53,9 @@ const call = (json, ...args) => panelRequest(...args).catch((err) => fail(err.me
 export async function runInvitations(args, { json }) {
   const [sub, ...rest] = args;
   if (sub === 'list') return listCmd(rest, { json });
+  if (sub === 'create') return createCmd(rest, { json });
   if (sub === 'revoke' && rest.length === 1) return revokeCmd(rest[0], { json });
+  if (sub === 'reissue') return reissueCmd(rest, { json });
   if (sub === 'disable-invitees') return disableInviteesCmd(rest, { json });
   return usage(sub ? 1 : 0);
 }
@@ -58,8 +69,16 @@ ${b('Usage:')} lamaste-server invitations <subcommand>
 ${b('Subcommands:')}
   ${c('list [--plugin <name>] [--inviter <user>]')}
                                     Every invitation: who for, who invited, role, status
+  ${c('create <username> <email> [--groups a,b] [--domains a,b] [--external-domains c,d]')}
+         ${c('[--expires-days n] [--mail|--no-mail]')}
+                                    An administrator's invitation, its link printed once. Mailed
+                                    unless it grants admins or a feria-* group (--mail to mail
+                                    it all the same, --no-mail to never)
   ${c('revoke <id>')}                       Revoke a pending invitation; delete one that ended
                                     without making an account (one that made one stays on record)
+  ${c('reissue <id> [--mail|--no-mail]')}   A new link for a pending (or expired) invitation: the old
+                                    link stops working; the new one is printed once and mailed
+                                    as on creation unless a flag says (at most 3 a day)
   ${c('disable-invitees <user> [--transitive]')}
                                     Disable everyone a person invited — with --transitive,
                                     everyone those people invited too
@@ -103,6 +122,7 @@ function printInvitations(invitations) {
     const reason = row.reason ? d(` — ${row.reason}`) : '';
     console.log(`  ${chalk.cyan(row.invitee)}  ${row.status}${reason}`);
     console.log(d(`    ${row.invitedBy}, role ${row.role}, until ${row.expiresAt}, ${row.id}`));
+    if (row.mail) console.log(d(`    ${row.mail}`));
   }
   if (invitations.length === 0) console.log(d('  No invitations.'));
   console.log('');
@@ -112,6 +132,54 @@ async function revokeCmd(id, { json }) {
   const result = await call(json, 'DELETE', `/api/invitations/${encodeURIComponent(id)}`);
   if (json) emitComplete(result);
   else console.log(`\n  ${chalk.green('✓')} ${revokeText(id, result.action)}\n`);
+}
+
+async function createCmd(rest, { json }) {
+  const body = parseCreateArgs(rest);
+  if (!body) return usage(1);
+  const result = await call(json, 'POST', '/api/invitations', body);
+  if (json) {
+    emitComplete(result);
+    return;
+  }
+  const mailed = madeMailText(result.mail, result.invitation?.email ?? null);
+  console.log(
+    `\n  ${chalk.green('✓')} Invitation ${terminalText(result.invitation?.id ?? '')} for ${terminalText(body.username)}`,
+  );
+  if (mailed) console.log(`  ${mailed}`);
+  console.log(`\n  ${chalk.cyan(terminalText(result.inviteUrl ?? result.token))}`);
+  console.log(
+    chalk.dim(
+      `  Shown only now; it expires ${terminalText(result.invitation?.expiresAt ?? '')}.\n`,
+    ),
+  );
+}
+
+async function reissueCmd(rest, { json }) {
+  const parsed = parseReissueArgs(rest);
+  if (!parsed) return usage(1);
+  const { id, body } = parsed;
+  const result = await call(
+    json,
+    'POST',
+    `/api/invitations/${encodeURIComponent(id)}/reissue`,
+    body,
+  );
+  if (json) {
+    emitComplete(result);
+    return;
+  }
+  const mailed = madeMailText(result.mail, result.invitation?.email ?? null);
+  console.log(
+    `\n  ${chalk.green('✓')} New link for ${terminalText(id)} — the old one no longer works`,
+  );
+  if (mailed) console.log(`  ${mailed}`);
+  console.log(`\n  ${chalk.cyan(terminalText(result.inviteUrl ?? result.token))}`);
+  console.log(
+    chalk.dim(
+      `  Shown only now; it expires ${terminalText(result.invitation?.expiresAt ?? '')}.\n`,
+    ),
+  );
 }
 
 async function disableInviteesCmd(rest, { json }) {

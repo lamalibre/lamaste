@@ -2535,7 +2535,24 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-151",
+          "label": "Set DEADLINE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(SECONDS + 20)"
+          },
+          "capture": [
+            {
+              "variable": "DEADLINE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-153",
           "label": "GET /api/notifications",
           "target": "host",
           "op": {
@@ -2553,7 +2570,16 @@
           ]
         },
         {
-          "id": "step-151",
+          "id": "step-155",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-157",
           "label": "Administrators are notified of the recovery",
           "target": "local",
           "continueOnError": true,
@@ -2574,7 +2600,7 @@
           }
         },
         {
-          "id": "step-152",
+          "id": "step-158",
           "label": "The tunnel serves again after the recovery",
           "target": "local",
           "op": {
@@ -2584,7 +2610,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-159",
           "label": "The tunnel stayed dark after the recovery",
           "target": "local",
           "op": {
@@ -2594,14 +2620,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"A failed chisel is recovered by the panel\"\n# ---------------------------------------------------------------------------\n# Force what older relays hit: a start limit of one start, then two restarts.\n# The panel's watch (every 30 s) must reset the failure and start chisel.\n\nNOTE_BASE=$(host_api_get \"notifications?limit=1\" | jq \".notifications[0].id // 0\" 2>/dev/null || echo \"0\")\nhost_exec \"mkdir -p $(dirname ${CHISEL_LIMIT_DROPIN}) && printf '[Unit]\\nStartLimitIntervalSec=300\\nStartLimitBurst=1\\n' > ${CHISEL_LIMIT_DROPIN} && systemctl daemon-reload && systemctl restart chisel; systemctl restart chisel; true\" >/dev/null 2>&1 || true\nFORCED=$(host_exec \"systemctl is-failed chisel\" 2>/dev/null || true)\nassert_eq \"$FORCED\" \"failed\" \"Chisel is forced into the failed state\" || true\nhost_exec \"systemctl show -p Result --value chisel\" 2>/dev/null | grep -q 'start-limit' \\\n  && log_pass \"The failure is a start-limit hit\" || log_fail \"The forced failure is not a start-limit hit\"\n# Drop the forced limit; the unit stays failed until something resets it.\nhost_exec \"rm -f ${CHISEL_LIMIT_DROPIN} && systemctl daemon-reload\" >/dev/null 2>&1 || true\n\nRECOVERED=no\nDEADLINE=$((SECONDS + 75))\nwhile [ \"$SECONDS\" -lt \"$DEADLINE\" ]; do\n  if [ \"$(host_exec \"systemctl is-active chisel\" 2>/dev/null || true)\" = \"active\" ]; then\n    RECOVERED=yes\n    break\n  fi\n  sleep 3\ndone\nassert_eq \"$RECOVERED\" \"yes\" \"The panel recovered chisel from the failed state within 75 seconds\" || true\nNOTE=$(host_api_get \"notifications\" | jq -c \"[.notifications[]? | select(.id > ${NOTE_BASE}) | select(.message | contains(\\\"Chisel had stopped in the failed state\\\"))] | length\" 2>/dev/null || echo 0)\nassert_eq \"$NOTE\" \"1\" \"Administrators are notified of the recovery\" || true\nif port_opens_within \"$TUNNEL_PORT\" \"$PAGE\" 60; then\n  log_pass \"The tunnel serves again after the recovery\"\nelse\n  log_fail \"The tunnel stayed dark after the recovery\"\nfi\n\n# ${OTHER_AGENT} is revoked in cleanup: revoking restarts chisel, which would\n# drop the tunnel again right before the full-path checks below."
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"A failed chisel is recovered by the panel\"\n# ---------------------------------------------------------------------------\n# Force what older relays hit: a start limit of one start, then two restarts.\n# The panel's watch (every 30 s) must reset the failure and start chisel.\n\nNOTE_BASE=$(host_api_get \"notifications?limit=1\" | jq \".notifications[0].id // 0\" 2>/dev/null || echo \"0\")\nhost_exec \"mkdir -p $(dirname ${CHISEL_LIMIT_DROPIN}) && printf '[Unit]\\nStartLimitIntervalSec=300\\nStartLimitBurst=1\\n' > ${CHISEL_LIMIT_DROPIN} && systemctl daemon-reload && systemctl restart chisel; systemctl restart chisel; true\" >/dev/null 2>&1 || true\nFORCED=$(host_exec \"systemctl is-failed chisel\" 2>/dev/null || true)\nassert_eq \"$FORCED\" \"failed\" \"Chisel is forced into the failed state\" || true\nhost_exec \"systemctl show -p Result --value chisel\" 2>/dev/null | grep -q 'start-limit' \\\n  && log_pass \"The failure is a start-limit hit\" || log_fail \"The forced failure is not a start-limit hit\"\n# Drop the forced limit; the unit stays failed until something resets it.\nhost_exec \"rm -f ${CHISEL_LIMIT_DROPIN} && systemctl daemon-reload\" >/dev/null 2>&1 || true\n\nRECOVERED=no\nDEADLINE=$((SECONDS + 75))\nwhile [ \"$SECONDS\" -lt \"$DEADLINE\" ]; do\n  if [ \"$(host_exec \"systemctl is-active chisel\" 2>/dev/null || true)\" = \"active\" ]; then\n    RECOVERED=yes\n    break\n  fi\n  sleep 3\ndone\nassert_eq \"$RECOVERED\" \"yes\" \"The panel recovered chisel from the failed state within 75 seconds\" || true\n# The panel writes the notification right after chisel is active again, so\n# it may land a moment after the unit does.\nNOTE=0\nDEADLINE=$((SECONDS + 20))\nwhile [ \"$SECONDS\" -lt \"$DEADLINE\" ]; do\n  NOTE=$(host_api_get \"notifications\" | jq -c \"[.notifications[]? | select(.id > ${NOTE_BASE}) | select(.message | contains(\\\"Chisel had stopped in the failed state\\\"))] | length\" 2>/dev/null || echo 0)\n  [ \"$NOTE\" = \"0\" ] || break\n  sleep 2\ndone\nassert_eq \"$NOTE\" \"1\" \"Administrators are notified of the recovery\" || true\nif port_opens_within \"$TUNNEL_PORT\" \"$PAGE\" 60; then\n  log_pass \"The tunnel serves again after the recovery\"\nelse\n  log_fail \"The tunnel stayed dark after the recovery\"\nfi\n\n# ${OTHER_AGENT} is revoked in cleanup: revoking restarts chisel, which would\n# drop the tunnel again right before the full-path checks below."
     },
     {
       "id": "reset-totp-before-authentication",
       "label": "Reset TOTP before authentication",
       "steps": [
         {
-          "id": "step-154",
+          "id": "step-160",
           "label": "Generate TOTP on host",
           "target": "host",
           "op": {
@@ -2622,7 +2648,7 @@
           ]
         },
         {
-          "id": "step-155",
+          "id": "step-161",
           "label": "POST /api/users/${TEST_USER}/reset-totp",
           "target": "host",
           "op": {
@@ -2641,7 +2667,7 @@
           ]
         },
         {
-          "id": "step-156",
+          "id": "step-162",
           "label": "TOTP reset returned otpauth URI",
           "target": "local",
           "continueOnError": true,
@@ -2659,7 +2685,7 @@
           }
         },
         {
-          "id": "step-157",
+          "id": "step-163",
           "label": "Extract OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -2676,7 +2702,7 @@
           }
         },
         {
-          "id": "step-158",
+          "id": "step-164",
           "label": "Extract TOTP_SECRET",
           "target": "local",
           "op": {
@@ -2693,7 +2719,7 @@
           }
         },
         {
-          "id": "step-159",
+          "id": "step-165",
           "label": "Failed to extract TOTP secret from otpauth URI: $OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -2710,7 +2736,7 @@
           }
         },
         {
-          "id": "step-160",
+          "id": "step-166",
           "label": "Extracted TOTP secret from otpauth URI",
           "target": "local",
           "op": {
@@ -2732,7 +2758,7 @@
       "label": "Authenticate with Authelia (first factor)",
       "steps": [
         {
-          "id": "step-162",
+          "id": "step-168",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -2758,7 +2784,7 @@
           ]
         },
         {
-          "id": "step-163",
+          "id": "step-169",
           "label": "Extract AUTH_STATUS",
           "target": "local",
           "op": {
@@ -2775,7 +2801,7 @@
           }
         },
         {
-          "id": "step-164",
+          "id": "step-170",
           "label": "Authelia first factor authentication succeeded",
           "target": "local",
           "op": {
@@ -2790,7 +2816,7 @@
           }
         },
         {
-          "id": "step-165",
+          "id": "step-171",
           "label": "Authelia first factor authentication failed (status: $AUTH_STATUS, response: $AUTH_RESPONSE)",
           "target": "local",
           "op": {
@@ -2812,7 +2838,7 @@
       "label": "Second factor authentication (TOTP)",
       "steps": [
         {
-          "id": "step-166",
+          "id": "step-172",
           "label": "Generate TOTP on host",
           "target": "host",
           "op": {
@@ -2833,7 +2859,7 @@
           ]
         },
         {
-          "id": "step-167",
+          "id": "step-173",
           "label": "oathtool failed to generate a valid 6-digit TOTP code (got: '${TOTP_CODE}')",
           "target": "local",
           "op": {
@@ -2850,7 +2876,7 @@
           }
         },
         {
-          "id": "step-168",
+          "id": "step-174",
           "label": "Generated TOTP code: ${TOTP_CODE}",
           "target": "local",
           "op": {
@@ -2860,7 +2886,7 @@
           }
         },
         {
-          "id": "step-169",
+          "id": "step-175",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -2887,7 +2913,7 @@
           ]
         },
         {
-          "id": "step-170",
+          "id": "step-176",
           "label": "Extract TOTP_AUTH_STATUS",
           "target": "local",
           "op": {
@@ -2904,7 +2930,7 @@
           }
         },
         {
-          "id": "step-171",
+          "id": "step-177",
           "label": "Second factor authentication succeeded (TOTP accepted)",
           "target": "local",
           "op": {
@@ -2919,7 +2945,7 @@
           }
         },
         {
-          "id": "step-172",
+          "id": "step-178",
           "label": "Second factor authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)",
           "target": "local",
           "op": {
@@ -2941,7 +2967,7 @@
       "label": "Verify traffic through nginx with full 2FA (re-enabled tunnel)",
       "steps": [
         {
-          "id": "step-173",
+          "id": "step-179",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -2964,7 +2990,7 @@
           ]
         },
         {
-          "id": "step-174",
+          "id": "step-180",
           "label": "Full-path tunnel traffic (nginx + Authelia 2FA) returns expected content",
           "target": "local",
           "continueOnError": true,

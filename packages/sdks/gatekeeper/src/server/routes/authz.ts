@@ -2,22 +2,32 @@ import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { request as undiciRequest } from 'undici';
 import {
+  ACCOUNT_PASSWORD_API_PATH,
   AUTHELIA_SESSION_COOKIE,
   RELAY_ASSERTION_HEADER,
   RELAY_PANEL_AUDIENCE,
   RELAY_PANEL_PORT,
   autheliaSessionCookies,
+  bearerTokenOf,
   domainMembership,
   domainOfHost,
   DELEGATED_INVITATIONS_API_PREFIX,
   isDelegatedInvitationsUrl,
   isLamasteOwnedGroup,
   isUserSurfaceUrl,
+  nativeAudience,
+  nativeClientOfHost,
   signRelayAssertion,
   userSurfaceHostByFqdn,
   userSurfaceHostServing,
+  verifyNativeAccessToken,
 } from '@lamalibre/lamaste';
-import type { MembershipKind, RelaySigningKey, UserSurfaceHost } from '@lamalibre/lamaste';
+import type {
+  MembershipKind,
+  RelayBearerCredential,
+  RelaySigningKey,
+  UserSurfaceHost,
+} from '@lamalibre/lamaste';
 import { AUTHELIA_VERIFY_URL, SESSION_CACHE_TTL_MS } from '../../lib/constants.js';
 import { checkAccess, isPluginAudienceMember } from '../../lib/authz.js';
 import {
@@ -355,6 +365,31 @@ export async function authzRoutes(
     { config: authzRateLimit },
     async (request, reply) =>
       authorizeDelegatedInvitationsRequest(fastify, request, reply, request.params.domain),
+  );
+
+  /**
+   * GET /authz/account/:domain — the nginx auth_request target of the
+   * password change on a domain's sign-in host
+   * (`auth.<domain>/api/account/password`, mail-design.md §6.3). The vhost
+   * names its domain in the path; `X-Original-URL` and `Host` must be
+   * `auth.<domain>` and the raw target exactly that API.
+   *
+   * Gatekeeper asks Authelia about the session for exactly that URL — its
+   * portal rule wants two factors from the domain's members and external
+   * members — never from its session cache, refuses two session cookies,
+   * checks the panel's projection (member or external member of the
+   * domain, fail closed) and vouches for the user to the panel with an
+   * assertion of the password change's kind (`{ account: 'password',
+   * domain, path }`), bound to the method and the target. The panel takes
+   * the user from nothing else — a `Remote-User` any local process could
+   * send names nobody there. 200 with the assertion, 401 without a session,
+   * 403 otherwise, 503 while the relay signing key is unusable.
+   */
+  fastify.get<{ Params: { domain: string } }>(
+    '/authz/account/:domain',
+    { config: authzRateLimit },
+    async (request, reply) =>
+      authorizeAccountRequest(fastify, request, reply, request.params.domain),
   );
 
   /**
@@ -797,37 +832,73 @@ async function authorizeUserSurfaceRequest(
   // plugin not hosted at all, or a route another host would serve too.
   if (!host.served.includes(route)) return refuse('not_hosting_agent', { route });
 
-  const answer = await authenticatedSession(
-    fastify,
-    request,
-    request.headers['cookie'],
-    originalUrl,
-    parsed.hostname,
-  );
-  if (!answer) return reply.code(401).send();
-  const checked = checkDomain(fastify, answer, parsed.hostname);
-  if ('refused' in checked) {
-    // An application's request: JSON, never a page.
-    request.log.info(
-      { requestId, reason: checked.refused.reason, tunnel: fqdn },
-      'user-surface authz denied',
+  // A native app's bearer token, when the request carries one, is its only
+  // credential: a cookie beside it is ignored (native-apps-design.md D3).
+  // Only the Bearer scheme: any other `Authorization` — a Basic login a
+  // browser cached for the host, say — is not the relay's and is ignored
+  // (security review L3), the session deciding as without it.
+  let username: string;
+  let kind: MembershipKind;
+  let credential: RelayBearerCredential | undefined;
+  if (isBearerScheme(request.headers['authorization'])) {
+    const bearer = await authenticateBearer(fastify, request, host.fqdn);
+    if (!bearer.ok) {
+      request.log.info(
+        { requestId, reason: bearer.reason, tunnel: fqdn },
+        'user-surface authz denied',
+      );
+      if (bearer.status === 503) return reply.code(503).send();
+      return reply.code(401).header(USER_SURFACE_REFUSAL_HEADER, 'invalid_token').send();
+    }
+    const index = fastify.getDomains();
+    const verdict = index ? domainMembership(index, parsed.hostname, bearer.username) : null;
+    if (!verdict?.kind) {
+      request.log.info(
+        { requestId, reason: 'not_a_member', tunnel: fqdn },
+        'user-surface authz denied',
+      );
+      return reply.code(403).header(USER_SURFACE_REFUSAL_HEADER, 'not_a_member').send();
+    }
+    username = bearer.username;
+    kind = verdict.kind;
+    credential = bearer.credential;
+  } else {
+    const answer = await authenticatedSession(
+      fastify,
+      request,
+      request.headers['cookie'],
+      originalUrl,
+      parsed.hostname,
     );
-    // An external member Authelia refused is on the domain, only not
-    // granted: `forbidden`, as Gatekeeper's own refusal of them says.
-    return reply
-      .code(403)
-      .header(USER_SURFACE_REFUSAL_HEADER, checked.refused.external ? 'forbidden' : 'not_a_member')
-      .send();
+    if (!answer) return reply.code(401).send();
+    const checked = checkDomain(fastify, answer, parsed.hostname);
+    if ('refused' in checked) {
+      // An application's request: JSON, never a page.
+      request.log.info(
+        { requestId, reason: checked.refused.reason, tunnel: fqdn },
+        'user-surface authz denied',
+      );
+      // An external member Authelia refused is on the domain, only not
+      // granted: `forbidden`, as Gatekeeper's own refusal of them says.
+      return reply
+        .code(403)
+        .header(
+          USER_SURFACE_REFUSAL_HEADER,
+          checked.refused.external ? 'forbidden' : 'not_a_member',
+        )
+        .send();
+    }
+    username = checked.session.username;
+    kind = checked.kind;
   }
-  const { session } = checked;
 
-  if (externalRefused(checked.kind, host.accessMode)) {
+  if (externalRefused(kind, host.accessMode)) {
     return refuse('external_not_granted', { resourceType: host.kind, resourceId: host.id });
   }
   if (host.accessMode !== 'authenticated') {
     // restricted — the user's grant for the host (the tunnel, or the site),
     // as on its other paths
-    const result = await checkAccess(session.username, host.kind, host.id, {
+    const result = await checkAccess(username, host.kind, host.id, {
       adminContact: fastify.getSettings().adminEmail,
       adminName: fastify.getSettings().adminName,
     });
@@ -852,7 +923,11 @@ async function authorizeUserSurfaceRequest(
       {
         aud: RELAY_PANEL_AUDIENCE,
         port: RELAY_PANEL_PORT,
-        caller: { type: 'user', username: session.username },
+        caller: {
+          type: 'user',
+          username,
+          ...(credential !== undefined ? { credential } : {}),
+        },
         method: originalMethod,
         target: { route, path: target },
       },
@@ -864,6 +939,61 @@ async function authorizeUserSurfaceRequest(
   }
   reply.header(RELAY_ASSERTION_HEADER, assertion);
   return reply.code(200).send();
+}
+
+/** A bearer token Gatekeeper accepted, or why not (401: refresh and retry; 503: try later). */
+type BearerOutcome =
+  | { readonly ok: true; readonly username: string; readonly credential: RelayBearerCredential }
+  | { readonly ok: false; readonly status: 401 | 503; readonly reason: string };
+
+/**
+ * Whether an `Authorization` header uses the Bearer scheme (RFC 6750 §2.1;
+ * the scheme in any case), whatever follows — a malformed bearer token is
+ * still one, and refused as such.
+ */
+export function isBearerScheme(header: unknown): boolean {
+  return typeof header === 'string' && /^bearer(?:\s|$)/i.test(header);
+}
+
+/**
+ * Authenticate a native app's access token on the user surface of `fqdn`
+ * (native-apps-design.md D3, R6): `Authorization: Bearer <JWS>`, verified
+ * against the relay issuer's keys, issued by the portal of the host's domain
+ * to the host's native client (the panel's projection) for the host's
+ * audience. On an unknown key id or a bad signature the key set is fetched
+ * again (at most every 30 s) and the token checked once more. 503 while no
+ * key set was ever read (Authelia unreachable): an app told 401 would throw
+ * its tokens away. Never logs the token.
+ */
+async function authenticateBearer(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  fqdn: string,
+): Promise<BearerOutcome> {
+  const token = bearerTokenOf(request.headers['authorization']);
+  if (token === null) return { ok: false, status: 401, reason: 'not_a_bearer_token' };
+  const clients = fastify.getNativeClients();
+  const client = clients ? nativeClientOfHost(clients, fqdn) : null;
+  if (!client) return { ok: false, status: 401, reason: 'no_native_client' };
+  const portal = `auth.${client.domain}`;
+  const keyCache = fastify.getIssuerKeys();
+  if (keyCache.current() === null) await keyCache.refresh(portal);
+  const verify = () =>
+    verifyNativeAccessToken(token, {
+      keys: keyCache.current() ?? [],
+      issuer: `https://${portal}`,
+      audience: nativeAudience(fqdn),
+      clientId: client.clientId,
+    });
+  if (keyCache.current() === null)
+    return { ok: false, status: 503, reason: 'issuer_keys_unavailable' };
+  let result = verify();
+  if (!result.ok && (result.reason === 'unknown_key' || result.reason === 'bad_signature')) {
+    if (await keyCache.refresh(portal)) result = verify();
+  }
+  if (!result.ok) return { ok: false, status: 401, reason: `token_${result.reason}` };
+  const { username, clientId, tokenSha256, exp } = result.claims;
+  return { ok: true, username, credential: { kind: 'bearer', clientId, tokenSha256, exp } };
 }
 
 /** The route of an inviter's API path (`/api/delegated-invitations/<route>…`), or null. */
@@ -973,6 +1103,89 @@ async function authorizeDelegatedInvitationsRequest(
 }
 
 /**
+ * Authorize one password change on the sign-in host of `domain` (see the
+ * `/authz/account/:domain` route).
+ */
+async function authorizeAccountRequest(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  domain: string,
+): Promise<FastifyReply> {
+  const requestId = request.id;
+  reply.header('Cache-Control', 'no-store');
+  const refuse = (reason: string): FastifyReply => {
+    request.log.info({ requestId, reason, domain }, 'account authz denied');
+    return reply.code(403).header(USER_SURFACE_REFUSAL_HEADER, 'forbidden').send();
+  };
+
+  const index = fastify.getDomains();
+  const wanted = domain.toLowerCase();
+  if (!index || !index.names.includes(wanted)) return refuse('unknown_domain');
+  const portal = `auth.${wanted}`;
+  const originalUrl = request.headers['x-original-url'];
+  const originalMethod = request.headers['x-original-method'];
+  if (typeof originalUrl !== 'string' || typeof originalMethod !== 'string') {
+    return refuse('missing_original_request');
+  }
+  const parsed = parseOriginalUrl(originalUrl);
+  if (!parsed) return refuse('invalid_original_url');
+  const mismatch = hostnameMismatch(request, portal, parsed.hostname);
+  if (mismatch) return refuse(mismatch.reason);
+  const prefix = `https://${portal}`;
+  if (originalUrl.slice(0, prefix.length).toLowerCase() !== prefix) {
+    return refuse('invalid_original_url');
+  }
+  const target = originalUrl.slice(prefix.length);
+  if (target !== ACCOUNT_PASSWORD_API_PATH) return refuse('not_the_account_path');
+
+  // Never from the cache: Authelia decides two factors for this very URL.
+  const presented = presentedSession(request.headers['cookie']);
+  if (presented.kind !== 'one') {
+    request.log.info(
+      {
+        requestId,
+        reason: presented.kind === 'none' ? 'missing_authelia_cookie' : 'duplicate_authelia_cookie',
+        domain,
+      },
+      'account authz denied',
+    );
+    return reply.code(401).send();
+  }
+  const validated = await validateWithAuthelia(presented.value, originalUrl, requestId);
+  if (validated === FORBIDDEN) return refuse('authelia_forbidden');
+  if (!validated) return reply.code(401).send();
+  const { kind } = domainMembership(index, portal, validated.username);
+  if (kind !== 'member' && kind !== 'external') return refuse('not_a_member');
+
+  const key = await currentRelayKey(fastify, request);
+  if (!key) {
+    request.log.error(
+      { requestId, reason: 'relay_signing_key_unavailable', domain },
+      'account authz failed',
+    );
+    return reply.code(503).send();
+  }
+  let assertion: string;
+  try {
+    assertion = signRelayAssertion(
+      {
+        aud: RELAY_PANEL_AUDIENCE,
+        port: RELAY_PANEL_PORT,
+        caller: { type: 'user', username: validated.username },
+        method: originalMethod,
+        target: { account: 'password', domain: wanted, path: target },
+      },
+      key,
+    );
+  } catch {
+    return refuse('not_assertable');
+  }
+  reply.header(RELAY_ASSERTION_HEADER, assertion);
+  return reply.code(200).send();
+}
+
+/**
  * Authorize one request for the shell of the plugin-owned site named
  * `fqdn` (see the `/authz/user-surface-shell/:fqdn` route).
  */
@@ -1011,6 +1224,9 @@ async function authorizeUserSurfaceShellRequest(
 
   const host: UserSurfaceHost | null = userSurfaceHostByFqdn(fastify.getUserSurfaceHosts(), fqdn);
   if (!host || host.kind !== 'site') return refuse('not_a_web_surface');
+  // The site's own route first; the routes joined to it after (D1). The
+  // shell is the owner's, but it is the front of every plugin the site
+  // serves: whoever may use one of them may load it.
   const [route] = host.routes;
   if (route === undefined || !host.served.includes(route)) return refuse('not_served', { route });
 
@@ -1071,7 +1287,14 @@ async function authorizeUserSurfaceShellRequest(
       .send(buildAccessRequestPage(session.username, parsed.hostname, templateOptions));
   };
 
-  if (!(await isPluginAudienceMember(session.username, route))) return deny('plugin', route);
+  let audienceMember = false;
+  for (const served of host.served) {
+    if (await isPluginAudienceMember(session.username, served)) {
+      audienceMember = true;
+      break;
+    }
+  }
+  if (!audienceMember) return deny('plugin', route);
   if (externalRefused(checked.kind, host.accessMode)) return deny('site', host.id);
   if (host.accessMode !== 'authenticated') {
     const result = await checkAccess(session.username, 'site', host.id, templateOptions);

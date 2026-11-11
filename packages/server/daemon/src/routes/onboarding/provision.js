@@ -1,15 +1,18 @@
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { execa } from 'execa';
-import { CHISEL_RELEASE } from '@lamalibre/lamaste';
+import { CHISEL_RELEASE, LAMALIBRE_REGISTRY_FLAG } from '@lamalibre/lamaste';
 import { getConfig, updateConfig } from '../../lib/config.js';
 import * as chisel from '../../lib/chisel.js';
 import * as authelia from '../../lib/authelia.js';
 import * as certbot from '../../lib/certbot.js';
 import * as nginx from '../../lib/nginx.js';
 import {
+  writeAccountPasswordPage,
+  writeAuthStockCss,
   writeInvitationsPage,
   writeInvitePage,
+  writeResetPage,
   writeUnavailablePage,
 } from '../../lib/invite-page.js';
 import { migrateChiselCredentialsIfNeeded } from '../../lib/chisel-users.js';
@@ -95,7 +98,7 @@ async function runProvisioning(log) {
     emitProgress('install-chisel', 'running', 'Checking the Chisel installation...');
     if (!(await chisel.isChiselInstalled())) {
       throw new Error(
-        'Chisel is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation.',
+        `Chisel is not installed. Run \`sudo npx --yes ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/create-lamaste\` on the server to repair the installation.`,
       );
     }
     const chiselVersion = await chisel.getInstalledChiselVersion();
@@ -117,7 +120,7 @@ async function runProvisioning(log) {
     emitProgress('install-authelia', 'running', 'Checking the Authelia installation...');
     if (!(await authelia.isAutheliaInstalled())) {
       throw new Error(
-        'Authelia is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation.',
+        `Authelia is not installed. Run \`sudo npx --yes ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/create-lamaste\` on the server to repair the installation.`,
       );
     }
     emitProgress('install-authelia', 'running', 'Creating admin user...');
@@ -178,6 +181,9 @@ async function runProvisioning(log) {
     await writeInvitePage();
     await writeInvitationsPage();
     await writeUnavailablePage();
+    await writeResetPage();
+    await writeAccountPasswordPage();
+    await writeAuthStockCss();
 
     emitProgress('configure-nginx', 'running', 'Enabling sites...');
     await nginx.enableSite('lamalibre-lamaste-panel-domain');

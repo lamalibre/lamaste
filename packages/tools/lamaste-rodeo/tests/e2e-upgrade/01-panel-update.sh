@@ -23,7 +23,7 @@
 #    Gatekeeper has its member file (v2); the branded sign-in's base is in
 #    place with the page pixel-for-pixel stock (auth-branding-design.md,
 #    "Upgrade and reconcile": the override locations in the auth vhost,
-#    data-theme="light", data-logooverride="false", no stylesheet; theme
+#    data-theme="light", data-logooverride="false", the stock stylesheet; theme
 #    and server.asset_path in Authelia's configuration — one restart,
 #    audited; no brand; nginx built with the sub module; the stock
 #    invitation page rewritten); the user signed in before the update,
@@ -45,13 +45,17 @@
 #    the auth vhosts force no locale; the running Authelia is the pin; the
 #    stock "not available" page is in place; Gatekeeper's GET
 #    /access-request is gone.
+# 6. Where Lamaste's packages came from (upgrades.md, "Where Lamaste's
+#    packages come from"): the candidate's root helper names the registry
+#    for the self-update; npm's caches and logs hold @lamalibre requests to
+#    the development Feria only — none to npmjs or the hosted Feria.
 # ============================================================================
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/helpers.sh"
 
-require_commands curl jq nginx npm sha256sum oathtool python3 node sqlite3
+require_commands curl jq nginx npm sha256sum oathtool python3 node sqlite3 find
 
 begin_test "01 — Panel Update from the previous release to the candidate"
 
@@ -408,12 +412,12 @@ assert_contains "${AUTH_VHOST}" "location = /static/media/logo.png {" "…/stati
 assert_contains "${AUTH_VHOST}" "location /locales/ {" "…/locales/" || true
 assert_contains "${AUTH_VHOST}" "location @authelia {" "…with @authelia as the fallback" || true
 assert_contains "${AUTH_VHOST}" "sub_filter 'data-logooverride=\"true\"' 'data-logooverride=\"false\"';" "…and switches the logo off (data-logooverride=\"false\": no brand)" || true
-assert_not_contains "${AUTH_VHOST}" "brand.css\"></head>" "…adds no stylesheet link" || true
+assert_contains "${AUTH_VHOST}" "brand.css\"></head>" "…links the stylesheet (4.14: the stock one carries the change-password link's rules)" || true
 AUTH_PAGE=$(curl -sk --max-time 15 --resolve "${AUTH_FQDN}:443:127.0.0.1" -w '\n%{http_code}' "https://${AUTH_FQDN}/" 2>/dev/null || echo "000")
 assert_eq "$(printf '%s\n' "${AUTH_PAGE}" | tail -n 1)" "200" "https://${AUTH_FQDN}/ answers 200" || true
 assert_contains "${AUTH_PAGE}" 'data-theme="light"' "…data-theme=\"light\"" || true
 assert_contains "${AUTH_PAGE}" 'data-logooverride="false"' "…data-logooverride=\"false\" (the placeholder is never shown)" || true
-assert_not_contains "${AUTH_PAGE}" 'brand.css' "…no stylesheet: the stock page until a brand is set" || true
+assert_contains "${AUTH_PAGE}" 'brand.css' "…links /brand.css (the stock stylesheet until a brand is set)" || true
 assert_json_field "$CONFIG" '"\(.theme) \(.server.asset_path)"' "light /etc/authelia/assets" "Authelia's configuration gained theme light and server.asset_path /etc/authelia/assets" || true
 assert_eq "$(sudo stat -c '%G' /etc/authelia/assets/logo.png 2>/dev/null || echo "missing")" "lamaste-authelia" "The placeholder logo is in the asset directory, group lamaste-authelia" || true
 BASE_RESTARTS=$(api_get "audit?action=authelia.restarted&limit=200" 2>/dev/null | jq --argjson base "${AUDIT_BASE}" '[.entries[]? | select(.id > $base and .details.reason == "branding-base")] | length' 2>/dev/null || echo "?")
@@ -506,6 +510,28 @@ for D in "${DOMAIN}" "${DOMAIN_2}"; do
 done
 assert_not_contains "$(curl -sk --max-time 15 --resolve "${AUTH_FQDN}:443:127.0.0.1" "https://${AUTH_FQDN}/")" "data-authelia-lang" "https://${AUTH_FQDN}/: Authelia's own <html lang>" || true
 assert_eq "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:9294/access-request 2>/dev/null || echo 000)" "404" "Gatekeeper's GET /access-request is gone (404)" || true
+
+# ===========================================================================
+# 6. Where Lamaste's packages came from (4.14)
+# ===========================================================================
+
+log_section "Lamaste's packages came from the development Feria, never npmjs"
+
+# The previous release reached the candidate through its own Update action:
+# its root helper's npx read root's npmrc (the development Feria — what a
+# relay before 4.14 needs once, upgrades.md "Upgrading to 4.14"). The
+# candidate's helper names the registry itself.
+assert_contains "$(sudo cat /usr/local/sbin/lamaste-priv 2>/dev/null || echo "")" '`--@lamalibre:registry=${registry}`' "The candidate's lamaste-priv runs the self-update's npx with --@lamalibre:registry=" || true
+EVIDENCE=$(sudo bash -c "$(npm_fetch_evidence_script)")
+PUBLIC=$(public_registry_fetches "${EVIDENCE}")
+log_info "$(printf '%s' "${EVIDENCE}" | grep -c . || true) @lamalibre URLs in npm's caches and logs, $(dev_feria_fetches "${EVIDENCE}" | grep -c . || true) from the development Feria"
+assert_not_eq "$(dev_feria_fetches "${EVIDENCE}" | grep -c . || true)" "0" "npm's caches hold @lamalibre requests to the development Feria (the evidence is there to read)" || true
+assert_contains "${EVIDENCE}" "create-lamaste-${CANDIDATE}.tgz" "…among them the candidate's installer, fetched by the update" || true
+if [ -n "${PUBLIC}" ]; then
+  log_fail "@lamalibre was asked of a public registry or the hosted Feria: $(printf '%s' "${PUBLIC}" | head -5 | tr '\n' ' ')"
+else
+  log_pass "No @lamalibre request to npmjs, its mirrors or the hosted Feria — before the update or after"
+fi
 
 log_section "The panel logged no error since the update"
 

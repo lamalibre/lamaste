@@ -51,7 +51,7 @@ Subdomain rules:
 - Cannot use reserved names: `panel`, `auth`, `tunnel`, `www`, `mail`, `ftp`, `api`
 - Cannot start with `agent-` (this prefix is reserved for agent panel tunnels)
 
-Enter the port number. This is the port your web app listens on, on `127.0.0.1` of the agent machine. Must be between 1024 and 65535, and unique across all tunnels (Chisel binds the same port on the server). Ports 3100, 9090, 9091, 9292 and 9294 are refused: they belong to Lamaste's own services on the server, and a tunnel on one of them would publish that service.
+Enter the port number. This is the port your web app listens on, on `127.0.0.1` of the agent machine. Must be between 1024 and 65535, and unique across all tunnels (Chisel binds the same port on the server). Ports 3100, 9090, 9091, 9292, 9294 and 9295 are refused: they belong to Lamaste's own services on the server, and a tunnel on one of them would publish that service.
 
 Pick the **Agent** that runs the app. Only that agent is told about the tunnel, and only that agent's Chisel credential may open its port on the server — another agent cannot take over the hostname.
 
@@ -217,14 +217,14 @@ The TLS certificate is left in place (certbot manages its lifecycle).
 | **View tunnel URL**    | Click the domain link on the tunnel row                     |
 | **Update client**      | Automatic within ~30 s; `lamaste-agent update` to apply now |
 
-| Constraint           | Value                                           |
-| -------------------- | ----------------------------------------------- |
-| Subdomain format     | `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`               |
-| Port range           | 1024-65535, except 3100, 9090, 9091, 9292, 9294 |
-| Max subdomain length | 63 characters                                   |
-| Reserved subdomains  | panel, auth, tunnel, www, mail, ftp, api        |
-| Reserved prefix      | `agent-` (used by agent panel tunnels)          |
-| Unique port          | Yes (one tunnel per port)                       |
-| Unique subdomain     | Yes (one tunnel per subdomain)                  |
-| Carrying agent       | Exactly one (`agentLabel`)                      |
-| Request body limit   | 1-10240 MiB (agents: up to 100), default 10     |
+| Constraint           | Value                                                 |
+| -------------------- | ----------------------------------------------------- |
+| Subdomain format     | `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`                     |
+| Port range           | 1024-65535, except 3100, 9090, 9091, 9292, 9294, 9295 |
+| Max subdomain length | 63 characters                                         |
+| Reserved subdomains  | panel, auth, tunnel, www, mail, ftp, api              |
+| Reserved prefix      | `agent-` (used by agent panel tunnels)                |
+| Unique port          | Yes (one tunnel per port)                             |
+| Unique subdomain     | Yes (one tunnel per subdomain)                        |
+| Carrying agent       | Exactly one (`agentLabel`)                            |
+| Request body limit   | 1-10240 MiB (agents: up to 100), default 10           |

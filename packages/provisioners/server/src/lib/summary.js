@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { LAMALIBRE_REGISTRY_FLAG } from '@lamalibre/lamaste';
 
 // eslint-disable-next-line no-control-regex
 const ansiPattern = new RegExp('\x1b\\[[0-9;]*m', 'g');
@@ -117,7 +118,7 @@ export async function printSummary(ctx) {
     `      ${chalk.dim('Makes the private key non-extractable — the P12 file')}`,
     `      ${chalk.dim('and password can no longer grant panel access.')}`,
     '',
-    `      ${chalk.cyan('npx @lamalibre/create-lamaste-admin')}`,
+    `      ${chalk.cyan(`npx --yes ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/create-lamaste-admin`)}`,
     '',
     `      ${chalk.dim('Run on your Mac after importing the P12 above.')}`,
     `      ${chalk.dim('One-way operation — recovery requires server console.')}`,

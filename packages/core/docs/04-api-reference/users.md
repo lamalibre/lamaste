@@ -71,16 +71,17 @@ curl -s --cert client.p12:password \
 }
 ```
 
-| Field         | Type             | Description                                                                                                                              |
-| ------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `username`    | `string`         | Unique login identifier                                                                                                                  |
-| `displayname` | `string`         | Human-readable display name                                                                                                              |
-| `email`       | `string`         | User's email address                                                                                                                     |
-| `groups`      | `string[]`       | Authelia group memberships an administrator assigned — never the groups Lamaste owns ([Domains](#domains))                               |
-| `disabled`    | `boolean`        | Authelia's `disabled: true` — the user cannot sign in                                                                                    |
-| `userId`      | `string \| null` | The user's directory id; `null` until the directory has seen the user (within a minute of an edit of `users.yml` made outside the panel) |
-| `status`      | `string`         | `active` or `disabled`                                                                                                                   |
-| `domains`     | `object[]`       | Domain memberships, `{ name, kind }` — `kind` `member` or `external` ([Domains](#domains))                                               |
+| Field              | Type             | Description                                                                                                                                                            |
+| ------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `username`         | `string`         | Unique login identifier                                                                                                                                                |
+| `displayname`      | `string`         | Human-readable display name                                                                                                                                            |
+| `email`            | `string`         | User's email address                                                                                                                                                   |
+| `groups`           | `string[]`       | Authelia group memberships an administrator assigned — never the groups Lamaste owns ([Domains](#domains))                                                             |
+| `disabled`         | `boolean`        | Authelia's `disabled: true` — the user cannot sign in                                                                                                                  |
+| `userId`           | `string \| null` | The user's directory id; `null` until the directory has seen the user (within a minute of an edit of `users.yml` made outside the panel)                               |
+| `status`           | `string`         | `active` or `disabled`                                                                                                                                                 |
+| `domains`          | `object[]`       | Domain memberships, `{ name, kind }` — `kind` `member` or `external` ([Domains](#domains))                                                                             |
+| `emailDeliverable` | `boolean`        | Mail to `email` can arrive — not under `.example`, `.invalid`, `.local`, `.localhost` or `.test`. A user without one cannot reset their own password ([Mail](mail.md)) |
 
 Users deleted from `users.yml` are not listed here; the [directory](#get-api-identity-directory) keeps their tombstones.
 
@@ -238,10 +239,13 @@ One function, keyed by `userId`, for every way a user stops being one — disabl
 | ------------------------------------------------------------------------------------------------- | -------- | ------- |
 | Desktop app sessions end: the user's session epoch (`panel.json` `userEpochs`, keyed by `userId`) | ✓        | ✓       |
 | Registry (Feria) tokens revoked                                                                   | ✓        | ✓       |
+| Native app grants end ([Native Apps](native-apps.md#standing)): refresh and access tokens refused | ✓        | ✓       |
 | Grants in the legacy `user-plugin-access.json` removed                                            |          | ✓       |
 | Gatekeeper drops every grant and group membership under the username (pending until it can)       |          | ✓       |
 | Authelia deletes the user's TOTP configuration and WebAuthn credentials                           |          | ✓       |
 | Gatekeeper's cached session verdicts dropped                                                      | ✓        | ✓       |
+
+A person's own password reset or change ([Mail](mail.md#account-routes)) runs the session-ending part of offboarding: desktop sessions (the epoch), registry tokens, Gatekeeper's cached verdicts. It cannot end Authelia's own sessions or the OpenID Connect tokens Authelia issued — disabling and enabling the user does.
 
 Desktop sessions are bound to the `userId` as well as the username: one is valid only while its user still holds the username and is enabled, so a username given to someone else never revives a session. Sessions issued before 4.5 carry no `userId` and are refused — desktop users sign in again once after the upgrade. An epoch older than a session's longest life (12 hours) can reject nothing and is dropped; `panel.json` names nobody.
 
@@ -355,6 +359,10 @@ Every user listed by `GET /api/users` carries `domains`: their memberships, `{ n
 **External members** reach only what names them — `restricted` hosts that grant them, static sites that list them, OIDC clients granted to them — and **hold no Authelia groups**: a user who is an external member of any domain cannot be given a group (409 `external_member_groups`), a user with groups cannot be made external (409), and a new user or an invitation asking for both is refused (400 `external_member_groups`).
 
 **Groups Lamaste owns.** Who may reach what is written into each user's `groups` in `users.yml` as groups Lamaste owns — `lamaste:m:<key>`, `lamaste:x:<key>` (a random key per domain), `lamaste:s:<site id>`, hostnames (external members' granted hosts), `lamaste:oidc@<client id>` ([Domains API](domains.md#where-membership-is-enforced)). The users and identity APIs never show them and an edit keeps them; an administrator assigns only names of letters, digits, `-` and `_` (400 `reserved_group` for a name with `.`, `:` or `@` the user does not hold already).
+
+### `GET /api/users/:username/native-grants`
+
+The person's devices: their grants with every [native app](native-apps.md#grants) — one per sign-in on one device — `?status=live|ended|all` (default `live`). `{ grants: [{ grantId, clientId, userId, username, deviceName, userAgent, createdAt, lastUsedAt, expiresAt, status, endedAt, endedReason }] }`; `404 user_not_found`. End one with `DELETE /api/native-apps/:clientId/grants/:grantId`. CLI: `lamaste-server users native-grants <username>`.
 
 ## The User Directory
 

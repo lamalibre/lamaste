@@ -59,8 +59,10 @@ Once connected:
 
 ```bash
 apt install -y npm
-npx @lamalibre/create-lamaste
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste
 ```
+
+Lamaste's packages are published to the hosted Feria registry, `https://feria.codelama.com.tr/`, not to npmjs; the `--@lamalibre:registry=` option sends only the `@lamalibre` scope there. You can set it once instead with `sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/` (read by every user on the machine) (see [Where Lamaste's packages come from](../05-operations/upgrades.md#where-lamastes-packages-come-from)).
 
 The installer displays a confirmation banner showing what it will do:
 
@@ -253,7 +255,7 @@ Every tunnel is carried by one **agent** — the machine that runs the app. Enro
 Install the Lamaste Desktop app, which provides a GUI with automatic service discovery and one-click tunnel creation:
 
 ```bash
-npx @lamalibre/create-lamaste-desktop
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop
 ```
 
 The app auto-detects local services (Ollama, ComfyUI, PostgreSQL, Docker containers, etc.) and lets you expose them with one click. See the [Desktop App Setup](../02-guides/desktop-app-setup.md) guide for details.
@@ -263,7 +265,7 @@ The app auto-detects local services (Ollama, ComfyUI, PostgreSQL, Docker contain
 In the panel, go to **Certificates → Enrollment Token** and create a token for a label such as `laptop`. Then, on the machine that runs your app, install the agent globally and run setup:
 
 ```bash
-npm install -g @lamalibre/lamaste-agent
+npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN=<token> \
   lamaste-agent setup --label laptop --panel-url https://203.0.113.42:9292
 ```
@@ -345,7 +347,7 @@ Your Mac                          DigitalOcean Droplet            Internet
 The installer accepts optional flags:
 
 ```bash
-npx @lamalibre/create-lamaste [flags]
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste [flags]
 ```
 
 | Flag            | Effect                                          |
@@ -435,7 +437,7 @@ In development mode (`NODE_ENV=development` or `NODE_ENV` unset), the panel serv
 # 2. SSH in and install
 ssh root@203.0.113.42
 apt install -y npm
-npx @lamalibre/create-lamaste
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste
 
 # 3. Download cert (from your local machine)
 scp root@203.0.113.42:/etc/lamalibre/lamaste/pki/client.p12 .

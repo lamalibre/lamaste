@@ -16,6 +16,7 @@ import {
   approveHooksCommand,
   identityBlockLines,
   identityDiffLines,
+  SIGN_IN_EVENTS_WORDS,
   parseApproveArgs,
   pendingUpdateReasons,
   webSurfaceBlockLines,
@@ -331,5 +332,19 @@ test('a role allowed to invite: shown with the block; a wider one waits, a narro
       approval: true,
     },
     { text: 'may invite less: viewer (Viewer) → viewer (Viewer)', approval: false },
+  ]);
+});
+
+test('sign-in events turned on wait for approval; turned off they do not', () => {
+  const on = identityDiffLines({ before: {}, after: {}, signInEventsAdded: true });
+  assert.deepEqual(on.lines, [
+    {
+      text: `receives more about its users: ${SIGN_IN_EVENTS_WORDS} — waits for approval`,
+      approval: true,
+    },
+  ]);
+  const off = identityDiffLines({ before: {}, after: {}, signInEventsRemoved: true });
+  assert.deepEqual(off.lines, [
+    { text: `receives less about its users: ${SIGN_IN_EVENTS_WORDS}`, approval: false },
   ]);
 });

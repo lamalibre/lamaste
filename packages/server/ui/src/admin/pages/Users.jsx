@@ -21,9 +21,12 @@ import {
   Eraser,
   AlertTriangle,
   Archive,
+  Smartphone,
+  Link2,
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import CopyableId from '../components/CopyableId.jsx';
+import { UserNativeGrantsModal } from '../components/NativeGrants.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { relativeTime } from '../lib/formatters.js';
 import { invalidateUsers, isLastEnabledAdmin, warningText } from '../lib/identity.js';
@@ -46,6 +49,7 @@ import {
   useMembershipChoice,
 } from '../components/DomainChoice.jsx';
 import { isExternalAnywhere } from '../lib/domains.js';
+import { invitationMailDefault, isReissuable, mailStatusText } from '../lib/mail.js';
 
 /** Toast each warning a users change came back with: what the panel could not complete beside it. */
 function toastWarnings(toast, result) {
@@ -368,6 +372,11 @@ function InviteUserModal({ onClose, onSuccess }) {
   });
   const membership = useMembershipChoice(null);
   const [error, setError] = useState('');
+  // Null until the administrator ticks or unticks the box: then the
+  // default follows the groups typed (core `adminInvitationMailDefault`).
+  const [mailChoice, setMailChoice] = useState(null);
+  const mailDefault = invitationMailDefault(groupList(form.groups));
+  const mail = mailChoice ?? mailDefault;
 
   const mutation = useMutation({
     mutationFn: (data) => client.createInvitation(data),
@@ -409,6 +418,7 @@ function InviteUserModal({ onClose, onSuccess }) {
         username: form.username,
         email: form.email,
         groups,
+        mail,
         ...membership.createFields,
       });
       toast('Invitation created');
@@ -453,6 +463,11 @@ function InviteUserModal({ onClose, onSuccess }) {
           external={membership.external}
         />
         <DomainMembershipChoice choice={membership} />
+        <MailInvitationChoice
+          checked={mail}
+          onChange={setMailChoice}
+          quietByDefault={!mailDefault}
+        />
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -477,12 +492,50 @@ function InviteUserModal({ onClose, onSuccess }) {
   );
 }
 
+/**
+ * Whether an administrator's invitation is mailed (mail-design.md §6.1):
+ * ticked unless it makes an administrator or gives a registry group, whose
+ * link should not rest in a mailbox — the sending one's Sent folder
+ * included.
+ */
+function MailInvitationChoice({ checked, onChange, quietByDefault }) {
+  return (
+    <div>
+      <label className="flex items-center gap-2 text-sm text-zinc-300">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="accent-cyan-500"
+        />
+        E-mail the link (when its domain can send mail)
+      </label>
+      {quietByDefault && (
+        <p className="mt-1 text-xs text-zinc-500">
+          Not mailed unless you tick it: this invitation makes an administrator or gives a registry
+          group — hand its link over another way.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // --- Invite Link Modal (shown after creating invitation) ---
 
-function InviteLinkModal({ inviteUrl, token, onClose }) {
+/**
+ * A made or reissued invitation's link, shown once, and what became of its
+ * mail: whoever opens the link first can accept the invitation.
+ */
+function InviteLinkModal({ result, onClose }) {
   const [copied, setCopied] = useState(false);
+  const { inviteUrl, token, mail, invitation, reissued } = result;
 
   const displayUrl = inviteUrl || `(Domain not configured — token: ${token})`;
+  const mailText =
+    mail === null
+      ? 'Not e-mailed, as chosen — hand the link over yourself'
+      : mailStatusText(mail, invitation?.email ?? null);
+  const expiresAt = invitation?.expiresAt ? new Date(invitation.expiresAt) : null;
 
   function handleCopy() {
     const textToCopy = inviteUrl || token;
@@ -497,9 +550,23 @@ function InviteLinkModal({ inviteUrl, token, onClose }) {
 
   return (
     <Modal onClose={onClose}>
-      <h2 className="mb-4 text-lg font-bold text-white">Invitation Created</h2>
+      <h2 className="mb-4 text-lg font-bold text-white">
+        {reissued ? 'New Invitation Link' : 'Invitation Created'}
+      </h2>
+      {mailText && (
+        <p
+          className={`mb-3 text-sm ${mail?.status === 'sent' ? 'text-green-400' : 'text-yellow-400'}`}
+        >
+          {mailText}
+        </p>
+      )}
       <p className="mb-4 text-sm text-zinc-400">
-        Share this link with the invited user. It expires in 7 days.
+        {reissued ? 'The old link no longer works. ' : ''}
+        This link is shown only now
+        {expiresAt && !Number.isNaN(expiresAt.getTime())
+          ? ` and expires on ${expiresAt.toLocaleString()}`
+          : ''}
+        .
       </p>
       <div className="mb-4 flex items-center gap-2 rounded-lg bg-zinc-900 px-4 py-3">
         <code className="flex-1 text-sm text-cyan-400 break-all">{displayUrl}</code>
@@ -883,6 +950,8 @@ export default function Users() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteResult, setInviteResult] = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
+  const [devicesOf, setDevicesOf] = useState(null);
+  const [reissueTarget, setReissueTarget] = useState(null);
   const [invitationFilter, setInvitationFilter] = useState({ plugin: '', inviter: '' });
   const { newUsersNeedDomains: showDomains } = useDomains();
 
@@ -965,6 +1034,19 @@ export default function Users() {
     onError: (err) => {
       toast(errorMessage(err), 'error');
       setRevokeTarget(null);
+    },
+  });
+
+  const reissueMutation = useMutation({
+    mutationFn: ({ id, mail }) => client.reissueInvitation(id, { mail }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      setReissueTarget(null);
+      setInviteResult({ ...result, reissued: true });
+    },
+    onError: (err) => {
+      toast(errorMessage(err), 'error');
+      setReissueTarget(null);
     },
   });
 
@@ -1090,6 +1172,14 @@ export default function Users() {
                     <td className="px-4 py-3 text-sm text-zinc-300">{u.displayname}</td>
                     <td className="px-4 py-3 text-sm text-zinc-400 hidden sm:table-cell">
                       {u.email}
+                      {u.emailDeliverable === false && (
+                        <span
+                          className="mt-0.5 block text-xs text-yellow-400/80"
+                          title="Password reset mails go only to a deliverable address"
+                        >
+                          no address — cannot reset their own password
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
                       <div className="flex flex-wrap gap-1">
@@ -1126,6 +1216,14 @@ export default function Users() {
                           title="Edit user"
                         >
                           <Pencil size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDevicesOf(u.username)}
+                          className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
+                          title="Devices signed in with native apps"
+                        >
+                          <Smartphone size={14} />
                         </button>
                         <button
                           type="button"
@@ -1180,6 +1278,10 @@ export default function Users() {
           </table>
         )}
       </div>
+
+      {devicesOf && (
+        <UserNativeGrantsModal username={devicesOf} onClose={() => setDevicesOf(null)} />
+      )}
 
       {/* Invitations Section */}
       <div className="mt-8 mb-6">
@@ -1290,11 +1392,32 @@ export default function Users() {
                         {revokeReasonText(inv.revokedReason)}
                       </span>
                     )}
+                    {isReissuable(inv) && mailStatusText(inv.mail) && (
+                      <span className="mt-1 block text-xs text-zinc-500">
+                        {mailStatusText(inv.mail)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-sm text-zinc-500 hidden md:table-cell">
                     {new Date(inv.expiresAt).toLocaleDateString()}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    {isReissuable(inv) && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setReissueTarget({
+                            id: inv.id,
+                            mail: invitationMailDefault(inv.groups ?? []),
+                            quietByDefault: !invitationMailDefault(inv.groups ?? []),
+                          })
+                        }
+                        className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-cyan-400"
+                        title="New link (mailed when its domain can send; the old link stops working)"
+                      >
+                        <Link2 size={14} />
+                      </button>
+                    )}
                     {isRevocable(inv) && (
                       <button
                         type="button"
@@ -1326,11 +1449,34 @@ export default function Users() {
 
       {/* Invite Link Modal */}
       {inviteResult && (
-        <InviteLinkModal
-          inviteUrl={inviteResult.inviteUrl}
-          token={inviteResult.token}
-          onClose={() => setInviteResult(null)}
-        />
+        <InviteLinkModal result={inviteResult} onClose={() => setInviteResult(null)} />
+      )}
+
+      {/* New Invitation Link Confirmation */}
+      {reissueTarget && (
+        <Modal onClose={() => setReissueTarget(null)}>
+          <h2 className="mb-2 text-lg font-bold text-white">New Invitation Link</h2>
+          <p className="mb-4 text-sm text-zinc-400">
+            The current link stops working. The new one is shown once — and mailed when you choose
+            so and the invitation’s domain can send. An invitation gets at most three new links a
+            day.
+          </p>
+          <div className="mb-6">
+            <MailInvitationChoice
+              checked={reissueTarget.mail}
+              onChange={(mail) => setReissueTarget((prev) => ({ ...prev, mail }))}
+              quietByDefault={reissueTarget.quietByDefault}
+            />
+          </div>
+          <DialogButtons
+            confirmLabel="Give a new link"
+            isPending={reissueMutation.isPending}
+            onConfirm={() =>
+              reissueMutation.mutate({ id: reissueTarget.id, mail: reissueTarget.mail })
+            }
+            onCancel={() => setReissueTarget(null)}
+          />
+        </Modal>
       )}
 
       {/* Revoke Invitation Confirmation */}

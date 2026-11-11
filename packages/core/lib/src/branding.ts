@@ -28,3 +28,15 @@ export const userProductRoot = (home: string = homedir()): string =>
 // System filesystem roots
 export const etcEcosystemRoot = (): string => `/etc/${ORG}`;
 export const etcProductRoot = (): string => `/etc/${ORG}/${PROJECT}`;
+
+/**
+ * The registry Lamalibre's own `@lamalibre/*` packages are published to and
+ * installed from: the hosted Feria, which serves them to anonymous readers.
+ * Ecosystem-level — every Lamalibre product installs from it. npmjs is not a
+ * source (no longer maintained since 4.14). Twins: `LAMALIBRE_REGISTRY_URL`
+ * in the desktop's `branding.rs` and in the root helper `lamaste-priv`
+ * (tests compare them). Where a path resolves it, an explicit
+ * `@lamalibre:registry` in npm's configuration wins (a development Feria) —
+ * see `lamalibre-registry.ts`.
+ */
+export const LAMALIBRE_REGISTRY_URL = 'https://feria.codelama.com.tr/';

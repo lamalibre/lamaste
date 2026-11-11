@@ -379,7 +379,7 @@ test('with a credential configured, npm view, npm pack and npm install all run w
   );
 });
 
-test('without a credential the calls run as before: no userconfig', async () => {
+test("without a credential: no userconfig, @lamalibre from the hosted Feria — never npm's default", async () => {
   assert.equal(await lib.clearRegistryCredentialConfig(), true);
   const before = npm.calls().length;
   assert.equal(await lib.readRegistryIntegrity(AGENT_PKG, '1.0.0'), INTEGRITY);
@@ -389,7 +389,33 @@ test('without a credential the calls run as before: no userconfig', async () => 
     calls.map((c) => c.args[0]),
     ['view', 'pack'],
   );
-  for (const call of calls) assert.equal(call.userconfig, null);
+  for (const call of calls) {
+    assert.equal(call.userconfig, null);
+    assert.equal(call.lamalibreRegistry, 'https://feria.codelama.com.tr/');
+  }
+});
+
+test("without a credential, npm's own @lamalibre:registry (a development Feria) is kept", async () => {
+  process.env['npm_config_@lamalibre:registry'] = 'http://127.0.0.1:4873';
+  try {
+    const before = npm.calls().length;
+    await lib.readRegistryPackage(PKG, '1.0.0');
+    const [call] = npm.calls().slice(before);
+    assert.equal(call.lamalibreRegistry, 'http://127.0.0.1:4873/');
+  } finally {
+    delete process.env['npm_config_@lamalibre:registry'];
+  }
+});
+
+test('without a credential, npm configured for npmjs refuses before npm runs', async () => {
+  process.env['npm_config_@lamalibre:registry'] = 'https://registry.npmjs.org/';
+  try {
+    const before = npm.calls().length;
+    await assert.rejects(lib.readRegistryPackage(PKG, '1.0.0'), /registry\.npmjs\.org/);
+    assert.equal(npm.calls().length, before, 'npm was not run');
+  } finally {
+    delete process.env['npm_config_@lamalibre:registry'];
+  }
 });
 
 test('a credential file that cannot be read fails the call instead of installing from the public registry', async () => {

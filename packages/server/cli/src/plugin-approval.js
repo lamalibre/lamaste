@@ -71,7 +71,10 @@ export function identityBlockLines(block) {
   const roles = block.roles
     .filter((role) => role !== null && typeof role === 'object')
     .map((role) => `${role.id} (${role.label}${role.description ? ` — ${role.description}` : ''})`);
-  const attributes = Array.isArray(block.attributes) ? block.attributes.map(attributeWords) : [];
+  const attributes = [
+    ...(Array.isArray(block.attributes) ? block.attributes.map(attributeWords) : []),
+    ...(block.signInEvents === true ? [SIGN_IN_EVENTS_WORDS] : []),
+  ];
   const inviting = block.roles
     .filter((role) => Array.isArray(role?.invites) && role.invites.length > 0)
     .map((role) => `${role.id} → ${role.invites.join(', ')}`);
@@ -87,7 +90,8 @@ export function identityBlockLines(block) {
 /**
  * How an update changes a plugin's identity block (`pendingUpdate.
  * identity`: `{ before, after, rolesAdded, rolesRemoved, attributesAdded,
- * attributesRemoved, labelsChanged, grantsAffected? }` — `grantsAffected`:
+ * attributesRemoved, labelsChanged, invitesAdded, invitesRemoved,
+ * signInEventsAdded, signInEventsRemoved, grantsAffected? }` — `grantsAffected`:
  * how many role grants approving it rewrites or revokes, null when unknown):
  * a headline and a line per kind of
  * change — roles added or removed and attributes widened wait for an
@@ -98,6 +102,9 @@ export function identityBlockLines(block) {
  * @param {unknown} diff
  * @returns {{ headline: string, lines: Array<{ text: string, approval: boolean }> } | null}
  */
+/** What `identity.signInEvents: true` gives a plugin, in words. */
+export const SIGN_IN_EVENTS_WORDS = 'native app sign-in events (user, time, client)';
+
 export function identityDiffLines(diff) {
   if (diff === null || typeof diff !== 'object') return null;
   const list = (value) => (Array.isArray(value) ? value.map(String) : []);
@@ -121,6 +128,16 @@ export function identityDiffLines(diff) {
   add('roles removed', list(diff.rolesRemoved).map(role(diff.before)), true);
   add('receives more about its users', list(diff.attributesAdded).map(attributeWords), true);
   add('receives less about its users', list(diff.attributesRemoved).map(attributeWords), false);
+  add(
+    'receives more about its users',
+    diff.signInEventsAdded === true ? [SIGN_IN_EVENTS_WORDS] : [],
+    true,
+  );
+  add(
+    'receives less about its users',
+    diff.signInEventsRemoved === true ? [SIGN_IN_EVENTS_WORDS] : [],
+    false,
+  );
   const invites = (block, value) =>
     (Array.isArray(value) ? value : []).map(
       (entry) => `${role(block)(entry.role)} → ${list(entry.roles).map(role(block)).join(', ')}`,

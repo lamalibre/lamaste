@@ -94,6 +94,11 @@
           "file": "02-guides/second-domain.md"
         },
         {
+          "title": "Mail",
+          "slug": "mail",
+          "file": "02-guides/mail.md"
+        },
+        {
           "title": "Desktop App Setup",
           "slug": "desktop-app-setup",
           "file": "02-guides/desktop-app-setup.md"
@@ -229,6 +234,11 @@
           "file": "04-api-reference/domains.md"
         },
         {
+          "title": "Mail API",
+          "slug": "mail-api",
+          "file": "04-api-reference/mail.md"
+        },
+        {
           "title": "Certificates API",
           "slug": "api-certificates",
           "file": "04-api-reference/certificates.md"
@@ -277,6 +287,11 @@
           "title": "Calls and Events Between Plugins",
           "slug": "api-peers",
           "file": "04-api-reference/peers.md"
+        },
+        {
+          "title": "Native Apps",
+          "slug": "api-native-apps",
+          "file": "04-api-reference/native-apps.md"
         },
         {
           "title": "App Host (Agent Halves)",

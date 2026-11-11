@@ -7,6 +7,7 @@
  */
 
 import crypto from 'node:crypto';
+import { LAMALIBRE_REGISTRY_FLAG } from '../lamalibre-registry.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -216,7 +217,7 @@ export async function provisionServer(opts: ProvisionServerOptions): Promise<Pro
     emitProgress('install-chisel', 'running', 'Checking the Chisel installation...');
     if (!(await chisel.isChiselInstalled())) {
       throw new Error(
-        'Chisel is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation.',
+        `Chisel is not installed. Run \`sudo npx --yes ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/create-lamaste\` on the server to repair the installation.`,
       );
     }
     await chisel.ensureChiselKey();
@@ -228,7 +229,7 @@ export async function provisionServer(opts: ProvisionServerOptions): Promise<Pro
     emitProgress('install-authelia', 'running', 'Checking the Authelia installation...');
     if (!(await authelia.isAutheliaInstalled())) {
       throw new Error(
-        'Authelia is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation.',
+        `Authelia is not installed. Run \`sudo npx --yes ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/create-lamaste\` on the server to repair the installation.`,
       );
     }
     emitProgress('install-authelia', 'running', 'Writing configuration...');

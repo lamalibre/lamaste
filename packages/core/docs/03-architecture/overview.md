@@ -6,7 +6,7 @@
 
 Lamaste has three main pieces:
 
-1. **The Installer** (`npx @lamalibre/create-lamaste`) — a one-shot script you run once on a fresh VPS. It sets up nginx, generates security certificates, and deploys a web-based control panel. After it finishes, you never SSH into the server again.
+1. **The Installer** (`npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste`) — a one-shot script you run once on a fresh VPS. It sets up nginx, generates security certificates, and deploys a web-based control panel. After it finishes, you never SSH into the server again.
 
 2. **The Panel** (browser UI + backend API) — a management interface protected by a client certificate. Through it, you configure your domain, create tunnels, manage users, and monitor services.
 
@@ -95,6 +95,7 @@ These three pieces interact through a clear lifecycle: the installer creates the
 | `9090` | Chisel Server | TCP      | Loopback only | WebSocket tunnel endpoint                  |
 | `9091` | Authelia      | TCP      | Loopback only | Authentication portal + forward auth API   |
 | `9294` | Gatekeeper    | TCP      | Loopback only | Tunnel authorization (auth_request target) |
+| `9295` | Panel Server  | TCP      | Loopback only | Mail submission listener (Authelia's mail) |
 
 All backend services (Panel Server, Chisel, Authelia) bind exclusively to `127.0.0.1`. nginx is the only process listening on public interfaces.
 
@@ -483,7 +484,7 @@ The Panel Server runs as the `lamaste` user with minimal privileges and cannot b
 The full lifecycle of a Lamaste installation:
 
 ```
-Phase 1: Installation (npx @lamalibre/create-lamaste)
+Phase 1: Installation (npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste)
   └─ OS hardening, Node.js, mTLS certs, nginx, panel deploy
   └─ Result: Panel accessible at https://<ip>:9292
 

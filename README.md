@@ -2,19 +2,20 @@
 
 One-command setup for secure reverse tunnels with a management dashboard.
 
-[![npm version](https://img.shields.io/npm/v/@lamalibre/create-lamaste)](https://www.npmjs.com/package/@lamalibre/create-lamaste)
-[![npm version](https://img.shields.io/npm/v/@lamalibre/lamaste-agent)](https://www.npmjs.com/package/@lamalibre/lamaste-agent)
+[![GitHub release](https://img.shields.io/github/v/release/lamalibre/lamaste)](https://github.com/lamalibre/lamaste/releases)
 [![License: Polyform Noncommercial](https://img.shields.io/badge/License-Polyform%20Noncommercial-blue.svg)](LICENSE.md)
 
 > [!WARNING]
-> **`develop` is not a release.** It is the integration branch: it carries work that has not been through a release's full E2E run, and it can change configuration files, systemd units, sudoers rules and on-disk state in ways a later commit revises again. A server installed or redeployed from a `develop` checkout may be left in a state no published version knows how to upgrade or roll back. Deploy from the published npm packages (`npx @lamalibre/create-lamaste`, `npx @lamalibre/create-lamaste-agent`) or from a release tag (`v4.1.0` and later); see [CHANGELOG.md](CHANGELOG.md) for what each release changed and its upgrade notes.
+> **`develop` is not a release.** It is the integration branch: it carries work that has not been through a release's full E2E run, and it can change configuration files, systemd units, sudoers rules and on-disk state in ways a later commit revises again. A server installed or redeployed from a `develop` checkout may be left in a state no published version knows how to upgrade or roll back. Deploy from the published packages on the hosted Feria registry (`npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste`, `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-agent`) or from a release tag (`v4.1.0` and later); see [CHANGELOG.md](CHANGELOG.md) for what each release changed and its upgrade notes.
 
 ## Quick Start
+
+Lamaste's packages are published to the hosted Feria registry, `https://feria.codelama.com.tr/` (every release's tarballs are also on [GitHub Releases](https://github.com/lamalibre/lamaste/releases)), not to npmjs. The `--@lamalibre:registry=` option below sends only the `@lamalibre` scope there; see [Where Lamaste's packages come from](https://lamalibre.github.io/lamaste/05-operations/upgrades#where-lamastes-packages-come-from).
 
 ### Desktop App (Recommended)
 
 ```bash
-npx @lamalibre/create-lamaste-desktop
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop
 ```
 
 The desktop app lets you create a DigitalOcean server, manage agents, and configure tunnels — all from a native GUI. It handles cloud provisioning (including DNS setup), certificate management, service discovery, and tunnel authorization automatically.
@@ -27,7 +28,7 @@ The desktop app lets you create a DigitalOcean server, manage agents, and config
 
 ```bash
 apt install -y npm
-npx @lamalibre/create-lamaste
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste
 ```
 
 Run this on a fresh Ubuntu 24.04 droplet as root. The installer provisions everything with zero prompts, prints a client certificate and URL, and you disconnect SSH forever. All configuration happens through the browser-based management panel.
@@ -37,7 +38,7 @@ Run this on a fresh Ubuntu 24.04 droplet as root. The installer provisions every
 An agent is the machine (macOS or Linux — a laptop, a server, a VM) that runs the apps you expose. Every tunnel is carried by exactly one agent. Create an enrollment token in the panel (**Certificates → Enrollment Token**), then on the agent:
 
 ```bash
-npm install -g @lamalibre/lamaste-agent
+npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN=<token> \
   lamaste-agent setup --label <name> --panel-url https://<ip>:9292
 ```
@@ -60,7 +61,7 @@ The installer provisions the server, generates mTLS certificates for secure pane
 ## Architecture
 
 ```
-npx @lamalibre/create-lamaste (on fresh Ubuntu 24.04 droplet)
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste (on fresh Ubuntu 24.04 droplet)
   Installs: Node.js, nginx, lamalibre-lamaste-serverd, lamaste-server-ui,
             lamalibre-lamaste-gatekeeper, mTLS PKI
   Prints:   client.p12 + password + https://<ip>:9292
@@ -97,13 +98,14 @@ Browser (with imported client certificate):
 - **Tunnel management** -- create, move, reconfigure, and remove tunnels with automatic nginx vhost and TLS certificate generation; each tunnel is carried by one agent and has its own request body limit
 - **Static sites** -- host static files on a managed subdomain or your own domain, with `www`-style redirect aliases on one certificate
 - **User management** -- Authelia user CRUD with TOTP enrollment and QR code generation
+- **Mail** -- invitations by mail, "Reset password" and "Change password" on every sign-in page, and Authelia's one-time codes, through the Gmail API (HTTPS, where the host blocks outbound SMTP) or an SMTP server, kept under the provider's daily limit
 - **Certificate management** -- Let's Encrypt certificate listing, renewal, and mTLS client certificate rotation
 - **Service control** -- start, stop, and restart services with live log streaming via WebSocket
 - **System dashboard** -- CPU, RAM, disk, and uptime monitoring with service health indicators
 - **Tunnel authorization** -- three access modes (public, authenticated, restricted) with group-based grants via Gatekeeper
 - **Plugin ecosystem** -- install, enable, and manage `@lamalibre/` plugins on agents, locally, or server-side
 - **Agent management** -- multi-agent support with per-agent certificates, capabilities, and plugin hosting
-- **Desktop app** -- native macOS/Linux GUI with automatic service discovery (Ollama, ComfyUI, PostgreSQL, Docker containers, etc.), one-click tunnel creation, cloud provisioning, and agent management. Install with `npx @lamalibre/create-lamaste-desktop`
+- **Desktop app** -- native macOS/Linux GUI with automatic service discovery (Ollama, ComfyUI, PostgreSQL, Docker containers, etc.), one-click tunnel creation, cloud provisioning, and agent management. Install with `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop`
 - **User plugin access** -- non-admin users can access plugins via Authelia-gated tunneled subdomains or desktop enrollment
 - **IP fallback** -- `https://<ip>:9292` always works, even if the domain is lost (disabled when panel 2FA is enabled)
 - **Low resource usage** -- the full stack runs within 250 MB RAM, suitable for $4/month VPS instances
@@ -116,7 +118,7 @@ Browser (with imported client certificate):
 - **Authelia 2FA for tunneled services** -- all services exposed through tunnels are protected by Authelia with TOTP two-factor authentication.
 - **Gatekeeper authorization** -- tunnel access modes (public, authenticated, restricted) with group-based grants, nginx auth_request caching, and user-friendly access-request pages.
 - **Certificate scoping** -- admin certs get full access; agent certs are capability-scoped (tunnels, services, sites, panel expose, identity, etc.).
-- **Tunnel ownership** -- the Chisel authfile grants each agent only the ports of the tunnels it carries, so one agent cannot take over another's hostname. Agents verify the relay's TLS certificate and keep their Chisel credential out of process arguments. The authfile is readable only by the group Chisel runs as, and ports of Lamaste's own services (3100, 9090, 9091, 9292, 9294) can never be tunnel ports.
+- **Tunnel ownership** -- the Chisel authfile grants each agent only the ports of the tunnels it carries, so one agent cannot take over another's hostname. Agents verify the relay's TLS certificate and keep their Chisel credential out of process arguments. The authfile is readable only by the group Chisel runs as, and ports of Lamaste's own services (3100, 9090, 9091, 9292, 9294, 9295) can never be tunnel ports.
 - **Privilege boundary** -- the panel runs as the unprivileged `lamaste` user and cannot become root. Its sudoers file has no wildcards: fixed `systemctl` lines, `nginx -t`, and three root-owned programs that validate their arguments (`lamaste-priv` installs only the panel's own nginx vhosts, each checked against a directive allow-list). Code in `/opt/lamalibre/lamaste` is root-owned; Chisel and Authelia are pinned, checksum-verified releases installed by `create-lamaste`, and Authelia runs as its own unprivileged account.
 - **Service binding** -- all services bind to `127.0.0.1` only. nginx is the sole public-facing service.
 - **UFW firewall** -- only ports 22 (SSH, disabled after setup), 80 (HTTP redirect), 443 (HTTPS), and 9292 (panel) are open.
@@ -177,8 +179,8 @@ All configuration lives under `/etc/lamalibre/lamaste/`:
 
 **Tunnel client cannot connect:**
 
-- **Recommended:** Install the desktop app with `npx @lamalibre/create-lamaste-desktop` — it manages agents and tunnels through a GUI.
-- **Alternative:** Set up the agent from the command line with `npm install -g @lamalibre/lamaste-agent` and `lamaste-agent setup` (see [Agent Setup](https://lamalibre.github.io/lamaste/02-guides/agent-setup)).
+- **Recommended:** Install the desktop app with `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop` — it manages agents and tunnels through a GUI.
+- **Alternative:** Set up the agent from the command line with `npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent` and `lamaste-agent setup` (see [Agent Setup](https://lamalibre.github.io/lamaste/02-guides/agent-setup)).
 - Check `lamaste-agent status` (including its **Sync** line) and `lamaste-agent logs` on the agent. The tunnel must be carried by that agent (the **Agent** column on the Tunnels page); the agent applies tunnel changes within 30 seconds, and `lamaste-agent update` applies them at once.
 
 ## Documentation

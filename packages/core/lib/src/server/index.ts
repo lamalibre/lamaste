@@ -141,6 +141,7 @@ export type {
   SiteType,
   SiteEntry,
   SiteOwner,
+  SiteUserSurface,
   SiteLogger,
   CertResult as SiteCertResult,
   SiteNginxDeps,
@@ -226,6 +227,18 @@ export {
   autheliaReady,
   isAutheliaRunning,
   updateDomainAccess as updateAutheliaDomainAccess,
+  updateAutheliaMail,
+  applyAutheliaMail,
+  autheliaMailMatches,
+  renderAutheliaNotifier,
+  relayResetUrls,
+  AUTHELIA_CERTS_DIR,
+  AUTHELIA_NOTIFICATIONS_FILE,
+  AUTHELIA_MAIL_PASSWORD_FILE,
+  MAIL_PASSWORD_TEMPLATE_SENTINEL,
+  MAIL_SUBMISSION_SERVER_NAME,
+  MAIL_SUBMISSION_USERNAME,
+  mailPasswordTemplateLine,
   updateOidcProvider as updateAutheliaOidcProvider,
   isOidcIssuerKeyProvisioned as isAutheliaOidcIssuerKeyProvisioned,
   renderOidcClient,
@@ -234,6 +247,10 @@ export {
   renderGroupAccessControl,
   externalHostRegex,
   renderOidcClientPolicies,
+  renderNativeClient,
+  renderNativeClientLifespans,
+  renderNativeClientPolicies,
+  HOST_ACCESS_FACTOR,
   oidcClientPolicyName,
   ensureUsersFileWatched,
   usersFileWatched,
@@ -260,6 +277,7 @@ export {
   ensureAutheliaBrandingBase,
 } from './authelia.js';
 export type {
+  AutheliaMailSettings,
   AutheliaRewriteOptions,
   AutheliaAssetsOptions,
   AutheliaBrandingBaseOptions,
@@ -272,6 +290,7 @@ export type {
   BcryptHashFn,
   ExecFn as AutheliaExecFn,
   AutheliaOidcClient,
+  AutheliaNativeClient,
   OidcClientSecretDigests,
   OidcScopeDefinitions,
   OidcProviderOptions,
@@ -284,7 +303,10 @@ export type {
 export {
   purgeAutheliaSecondFactors,
   autheliaHoldsOpaqueIdentifier,
+  verifyAutheliaTotp,
+  TOTP_CODE_RE,
 } from './authelia-user-storage.js';
+export type { AutheliaTotpVerdict } from './authelia-user-storage.js';
 
 // --- OIDC client secrets (confidential clients) ---
 export {
@@ -729,5 +751,38 @@ export {
   renderUnavailablePage,
   unavailablePageHeaders,
   unavailablePageLogoUrl,
+  unavailablePageBrandHeader,
 } from './unavailable-page.js';
+// The page at a native client's redirect path (native-apps-design.md D6)
+export { nativeRedirectPageHeaders, renderNativeRedirectPage } from './native-redirect-page.js';
 export type { UnavailablePageBrand } from './unavailable-page.js';
+
+// npm's @lamalibre:registry, read and resolved — see npm-registry-config.ts
+export {
+  readConfiguredLamalibreRegistry,
+  resolveLamalibreRegistry,
+  lamalibreRegistryNpmEnv,
+  lamalibreRegistryNpmArg,
+} from '../npm-registry-config.js';
+export type { LamalibreRegistryOptions } from '../npm-registry-config.js';
+// A person's own account pages and the mail consent's result (mail-design.md §3.3, §6)
+export {
+  RESET_PAGE_SCRIPT,
+  RESET_PAGE_HEADERS,
+  ACCOUNT_PASSWORD_PAGE_SCRIPT,
+  ACCOUNT_PASSWORD_PAGE_HEADERS,
+  renderResetPage,
+  renderAccountPasswordPage,
+} from './account-pages.js';
+export { authPageStaticHeaders } from './auth-pages.js';
+// Mail: a transport's own CA bundle (node:crypto), what the mails say and the consent's page
+export { MailCaPemError, parseMailCaPem } from './mail.js';
+export {
+  MAIL_CONSENT_FAILURES,
+  renderInvitationMail,
+  renderPasswordResetMail,
+  renderPasswordChangedMail,
+  renderTestMail,
+  renderMailConsentPage,
+} from './mail-content.js';
+export type { MailBrand, RenderedMail, MailConsentFailure } from './mail-content.js';

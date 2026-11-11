@@ -33,6 +33,7 @@ import {
 import path from 'node:path';
 
 import { productBundleId, productUnit } from '../branding.js';
+import { LAMALIBRE_REGISTRY_FLAG } from '../lamalibre-registry.js';
 import { agentDataDir, agentLogsDir, isDarwin } from './platform.js';
 import { runUserSystemctl } from './user-systemd-env.js';
 import { withAgentLock } from './agent-lock.js';
@@ -124,7 +125,7 @@ export async function resolveInstalledAgentCli(currentScript: string): Promise<A
     throw new Error(
       'lamaste-agent must be installed globally: its sync timer runs the installed program ' +
         'every 30 seconds, and an npx copy can disappear from the npm cache at any time.\n' +
-        '  npm install -g @lamalibre/lamaste-agent\n' +
+        `  npm install -g ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/lamaste-agent\n` +
         'then run `lamaste-agent setup ...` again.',
     );
   }

@@ -243,6 +243,8 @@ curl -s --cert client.p12:password \
 | 500    | `{"error":"Failed to create site","details":"Directory creation failed: ..."}`                    | Could not create site directory                                                                               |
 | 500    | `{"error":"Failed to create site","details":"State persistence failed: ..."}`                     | Could not write sites.json                                                                                    |
 
+A refusal of the site workflow (`Failed to create site`, `Failed to update site configuration`, `Failed to delete site`, and DNS verification) also carries `code`, the workflow's error code — for example `{"error":"Failed to create site","code":"MAIL_SENDER_HOST","details":"..."}` (400) when the hostname is the host the relay's mail is sent from (4.14).
+
 **Reserved names** (for managed type):
 
 `panel`, `auth`, `tunnel`, `www`, `mail`, `ftp`, `api`

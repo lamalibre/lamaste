@@ -11,6 +11,7 @@ import path from 'node:path';
 import { RESERVED_API_PREFIXES, RESERVED_NAV_LABELS, derivePluginRoute } from '../constants.js';
 import type { PluginHosting } from '../constants.js';
 import { PromiseChainMutex, atomicWriteJSON } from '../file-helpers.js';
+import { lamalibreRegistryNpmArg } from '../npm-registry-config.js';
 import { invalidatePluginHostCache } from '../plugin-host.js';
 import { ManifestValidationError, validateManifest as validateSharedManifest } from '../schemas.js';
 import { revokePluginCapabilitiesFromAgents } from './mtls.js';
@@ -268,10 +269,13 @@ export function installPlugin(opts: InstallPluginOptions): Promise<PluginEntry> 
       }
     }
 
-    // Install the npm package
+    // Install the npm package — @lamalibre from the registry Lamaste
+    // installs itself from (the hosted Feria unless npm's configuration
+    // names another), never npm's default registry
     logger.info({ packageName }, 'Installing plugin package');
+    const registryArg = await lamalibreRegistryNpmArg({ cwd: stateDir });
     try {
-      await exec('npm', ['install', '--ignore-scripts', packageName], {
+      await exec('npm', ['install', '--ignore-scripts', registryArg, packageName], {
         cwd: stateDir,
         timeout: 120000,
       });

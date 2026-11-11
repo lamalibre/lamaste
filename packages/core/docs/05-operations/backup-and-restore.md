@@ -199,7 +199,7 @@ sudo chown lamaste-authelia:lamaste-authelia /etc/authelia/db.sqlite3* /etc/auth
 sudo chmod 600 /etc/authelia/db.sqlite3* /etc/authelia/notifications.txt
 ```
 
-A backup taken on a version before the privilege boundary holds root-owned Authelia files and older unit files. After restoring one, re-run `npx @lamalibre/create-lamaste --yes`: the redeploy rewrites the `chisel` and `authelia` units and converts the ownership of `/etc/authelia`, the Chisel key and the PKI directory (see [Upgrades](upgrades.md)).
+A backup taken on a version before the privilege boundary holds root-owned Authelia files and older unit files. After restoring one, re-run `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --yes`: the redeploy rewrites the `chisel` and `authelia` units and converts the ownership of `/etc/authelia`, the Chisel key and the PKI directory (see [Upgrades](upgrades.md)).
 
 The panel re-applies the authfile's group and mode itself on every start, so a Chisel that fails to read it before the panel is up is started again by the panel's reconciliation.
 
@@ -236,7 +236,7 @@ To move Lamaste to a new droplet:
 **Step 2: Run the installer**
 
 ```bash
-npx @lamalibre/create-lamaste@latest --yes
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste@latest --yes
 ```
 
 **Step 3: Stop services**

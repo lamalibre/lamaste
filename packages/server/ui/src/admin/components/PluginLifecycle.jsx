@@ -24,7 +24,12 @@ import { errorMessage } from '../lib/errorMessage.js';
 import { refusalText } from '../lib/pluginRefusal.js';
 import { markSecretsRead, operationSecretsAction, withoutSecrets } from '../lib/oidcSecrets.js';
 import { settingsDiffRows } from '../lib/pluginSettings.js';
-import { IDENTITY_CHANGED, attributeLabel, identityDiffRows } from '../lib/identity.js';
+import {
+  IDENTITY_CHANGED,
+  SIGN_IN_EVENTS_LABEL,
+  attributeLabel,
+  identityDiffRows,
+} from '../lib/identity.js';
 import { PeersBlockView, PeersChanges } from './PluginPeers.jsx';
 import {
   accessModeText,
@@ -585,9 +590,14 @@ function IdentityBlockView({ block }) {
       <div>
         <span className="text-zinc-500">receives </span>
         <span className="text-zinc-300">
-          {['user id', 'username', 'roles', 'status', ...block.attributes.map(attributeLabel)].join(
-            ', ',
-          )}
+          {[
+            'user id',
+            'username',
+            'roles',
+            'status',
+            ...block.attributes.map(attributeLabel),
+            ...(block.signInEvents === true ? [SIGN_IN_EVENTS_LABEL] : []),
+          ].join(', ')}
         </span>
         <span className="text-zinc-600"> — of the users entitled to it</span>
       </div>

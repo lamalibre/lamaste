@@ -526,7 +526,9 @@ if wait_for 90 rendering_gone "${DOMAIN_3}"; then
 else
   log_fail "…a rendering is left: $(json_get "$(domain_entry "${DOMAIN_3}")" '.rendering')"
 fi
-assert_eq "$(visit_status "$(page_of "${DOMAIN_3}" /brand.css)")" "404" "auth.${DOMAIN_3}/brand.css: 404" || true
+CSS_C=$(page_of "${DOMAIN_3}" /brand.css)
+assert_eq "$(visit_status "${CSS_C}")" "200" "auth.${DOMAIN_3}/brand.css: the stock stylesheet (4.13)" || true
+assert_not_contains "$(visit_body "${CSS_C}")" "#language-button" "…without the language rule" || true
 assert_eq "$(language_audit "${DOMAIN_2}")" "null tr,tr null" "The audit: domain.language.updated for ${DOMAIN_2}, null → tr, then tr → null" || true
 assert_eq "$(language_audit "${DOMAIN_3}")" "null en,en null" "…for ${DOMAIN_3}, null → en, then en → null" || true
 assert_eq "$(authelia_pid)" "${AUTHELIA_PID}" "Clearing the languages restarted no Authelia" || true

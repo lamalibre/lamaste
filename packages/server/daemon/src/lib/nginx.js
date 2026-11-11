@@ -17,17 +17,35 @@ import {
   userSurfaceApiPath,
   WEB_TREE_CONTENT_TYPES,
   autheliaIndexLanguageFilters,
+  autheliaIndexMailFilters,
   AUTHELIA_FORCED_LOCALES_DIR,
+  AUTH_ACCOUNT_PASSWORD_PATH,
+  AUTH_RESET_PATH,
+  ACCOUNT_PASSWORD_API_PATH,
+  MAIL_GOOGLE_CALLBACK_PATH,
+  PASSWORD_RESET_API,
   isPageLanguage,
+  APPLE_APP_SITE_ASSOCIATION_PATH,
+  ASSET_LINKS_PATH,
+  isNativeRedirectPath,
 } from '@lamalibre/lamaste';
 import {
+  nativeRedirectPageHeaders,
+  ACCOUNT_PASSWORD_PAGE_HEADERS,
   INVITATIONS_PAGE_HEADERS,
   INVITE_PAGE_HEADERS,
+  RESET_PAGE_HEADERS,
   UNAVAILABLE_PAGE_STOCK_DIR,
   authBrandingDir,
   unavailablePageHeaders,
 } from '@lamalibre/lamaste/server';
-import { INVITATIONS_DIR, INVITE_DIR } from './invite-page.js';
+import {
+  ACCOUNT_PASSWORD_DIR,
+  AUTH_STOCK_DIR,
+  INVITATIONS_DIR,
+  INVITE_DIR,
+  RESET_DIR,
+} from './invite-page.js';
 
 const SITES_AVAILABLE = '/etc/nginx/sites-available';
 const SITES_ENABLED = '/etc/nginx/sites-enabled';
@@ -427,6 +445,35 @@ const AUTHZ_CLEARED_HEADERS = `
         proxy_set_header X-Forwarded-Uri "";
         proxy_set_header X-Forwarded-Method "";`;
 
+/**
+ * The domain's token and revocation endpoints, sent to the panel's token
+ * broker (`routes/native-oauth.js`; native-apps-design.md D4) instead of
+ * straight to Authelia: the broker answers native clients' requests itself
+ * — their refresh tokens' chain, lifetimes and standing are Lamaste's — and
+ * passes every other client's request to Authelia byte for byte. `Host` is
+ * this portal's literal name (the broker answers only for an active
+ * domain's portal) and `X-Forwarded-Host` is cleared; the client address
+ * goes as for the invitation API. Exact matches: Authelia answers a
+ * trailing slash with a redirect to these very paths.
+ */
+function nativeBrokerLocations(fqdn) {
+  return ['token', 'revocation']
+    .map(
+      (endpoint) => `
+    location = /api/oidc/${endpoint} {
+        proxy_pass http://127.0.0.1:3100/api/native-apps/oauth/${endpoint};
+        proxy_set_header Host ${fqdn};
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
+        client_max_body_size 16k;
+    }
+`,
+    )
+    .join('');
+}
+
 /** Site name of the auth portal vhost of `domain` (`auth.<domain>`). */
 export function authVhostName(domain) {
   assertLiteralHostname(domain);
@@ -443,13 +490,18 @@ export const LEGACY_AUTH_VHOST = 'lamalibre-lamaste-auth';
  * none — see {@link renderAuthVhost}).
  *
  * @param {string} domain
- * @param {{ primary: boolean, enabled?: boolean, branding?: AuthVhostBranding | null, language?: import('@lamalibre/lamaste').PageLanguage | null }} opts
+ * @param {{ primary: boolean, enabled?: boolean, branding?: AuthVhostBranding | null, language?: import('@lamalibre/lamaste').PageLanguage | null, mail?: AuthVhostMail }} opts
  */
 export async function writeAuthVhost(
   domain,
-  { primary, enabled = true, branding = null, language = null },
+  { primary, enabled = true, branding = null, language = null, mail = NO_MAIL },
 ) {
-  const { name, config } = renderAuthVhost(domain, undefined, { primary, branding, language });
+  const { name, config } = renderAuthVhost(domain, undefined, {
+    primary,
+    branding,
+    language,
+    mail,
+  });
   await safeWriteVhost(name, config, `auth.${domain}`, { enabled });
   return path.join(SITES_AVAILABLE, name);
 }
@@ -462,6 +514,19 @@ export async function writeAuthVhost(
  *
  * @typedef {{ theme: string, logo: boolean }} AuthVhostBranding
  */
+
+/**
+ * Where a domain's portal links "Reset password?" (lib/auth-branding.js
+ * `authVhostInputs`; packages/core/docs/mail-design.md §5): Authelia's one
+ * reset URL (`primaryResetUrl` — the primary's `/reset` while some domain
+ * can send, else null) and this domain's own page (`domainResetUrl`, null
+ * when the domain cannot send).
+ *
+ * @typedef {{ primaryResetUrl: string | null, domainResetUrl: string | null }} AuthVhostMail
+ */
+
+/** A relay that sends no mail: no reset link anywhere. */
+export const NO_MAIL = Object.freeze({ primaryResetUrl: null, domainResetUrl: null });
 
 /**
  * The brand-override locations of an auth vhost: the three routes Authelia
@@ -513,7 +578,14 @@ function authBrandLocations(domain, fqdn, language) {
     # to the rendering that serves, switched by rename — disable_symlinks
     # stays off. The headers apply to a file served from here alone: the
     # fallback is produced in @authelia, which adds none. The content type
-    # comes from the extension, never from the bytes.${override(`= /${AUTH_BRANDING_FILES.favicon}`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.logo}`, '@authelia')}${override(`/${AUTH_BRANDING_LOCALES_DIR}/`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.css}`, '=404')}${forced}
+    # comes from the extension, never from the bytes.${override(`= /${AUTH_BRANDING_FILES.favicon}`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.logo}`, '@authelia')}${override(`/${AUTH_BRANDING_LOCALES_DIR}/`, '@authelia')}${override(`= /${AUTH_BRANDING_FILES.css}`, '@stock_css')}${forced}
+
+    # The stylesheet of a domain with neither brand nor language: the
+    # change-password link's rules alone (mail-design.md §6.3).
+    location @stock_css {
+        root ${AUTH_STOCK_DIR};
+        try_files /${AUTH_BRANDING_FILES.css} =404;${headers}
+    }
 
     # Authelia's own answer for an override the domain lacks (a location
     # that sets any header inherits none of the server's).
@@ -553,14 +625,30 @@ function autheliaProxyHeaders(fqdn) {
  * `<noscript>` sentence in that language (core
  * `autheliaIndexLanguageFilters`: printable ASCII without `$`, the Turkish
  * as character references — lamaste-priv refuses anything else in a vhost).
- * A domain with a brand or a language links its stylesheet: the brand's
- * colours, and the rule hiding the language menu.
+ * Every domain gets the mail filters (core `autheliaIndexMailFilters`,
+ * packages/core/docs/mail-design.md §5, §6.3): "Reset password?" pointed
+ * at the domain's own `/reset`, or switched off where the domain cannot
+ * send, and a "Change password" link — and links its stylesheet: the
+ * brand's colours and the rule hiding the language menu when it has them,
+ * the link's rules always (the stock stylesheet for a domain with
+ * neither).
  *
  * @param {AuthVhostBranding | null} branding
  * @param {import('@lamalibre/lamaste').PageLanguage | null} language
+ * @param {AuthVhostMail} mail
  */
-function autheliaIndexRewrite(branding, language) {
+function autheliaIndexRewrite(branding, language, mail) {
   const theme = branding === null ? 'light' : branding.theme;
+  const mailFilters = autheliaIndexMailFilters({
+    primaryResetUrl: mail.primaryResetUrl,
+    domainResetUrl: mail.domainResetUrl,
+    language,
+  })
+    .map(
+      ([from, to]) => `
+        sub_filter '${from}' '${to}';`,
+    )
+    .join('');
   const logo = branding !== null && branding.logo;
   const languageFilters =
     language === null
@@ -582,12 +670,10 @@ function autheliaIndexRewrite(branding, language) {
         proxy_set_header Accept-Encoding "";
         sub_filter_once off;
         sub_filter 'data-theme="light"' 'data-theme="${theme}"';
-        sub_filter 'data-logooverride="true"' 'data-logooverride="${logo ? 'true' : 'false'}"';${languageFilters}${
-          branding === null && language === null
-            ? ''
-            : `
-        sub_filter '</head>' '<link rel="stylesheet" href="/${AUTH_BRANDING_FILES.css}"></head>';`
-        }`;
+        sub_filter 'data-logooverride="true"' 'data-logooverride="${logo ? 'true' : 'false'}"';${languageFilters}
+        # The domain's mail (mail-design.md §5, §6.3): "Reset password?" to
+        # its own page or nowhere, and the change-password link${mailFilters}
+        sub_filter '</head>' '<link rel="stylesheet" href="/${AUTH_BRANDING_FILES.css}"></head>';`;
 }
 
 /** Refuse a language the vhost cannot say (the value is interpolated into a root-validated file). */
@@ -759,31 +845,236 @@ function delegatedInvitationsLocations(domain, fqdn) {
 }
 
 /**
+ * What a browser request the auth host proxies to the panel never carries
+ * on, but the relay assertion — for a location that sets it itself from
+ * Gatekeeper's answer (a second `proxy_set_header` of one header would send
+ * both values).
+ */
+const BROWSER_IDENTITY_CLEARED_KEEP_ASSERTION = `
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Groups "";
+        proxy_set_header Remote-Name "";
+        proxy_set_header Remote-Email "";
+        proxy_set_header Authorization "";
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
+        proxy_set_header X-Forwarded-Host "";`;
+
+/**
+ * What a browser request the auth host proxies to the panel never carries
+ * on: whatever names a user or a credential (`Remote-*`, `Authorization`,
+ * client-certificate headers, a relay assertion) and a client's
+ * `X-Forwarded-Host`.
+ */
+const BROWSER_IDENTITY_CLEARED = `${BROWSER_IDENTITY_CLEARED_KEEP_ASSERTION}${PANEL_ASSERTION_CLEARED}`;
+
+/** To the panel under the auth host's literal name `fqdn`. */
+function panelProxy(fqdn) {
+  return `
+        proxy_set_header Host ${fqdn};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_pass http://127.0.0.1:${RELAY_PANEL_PORT};
+        proxy_http_version 1.1;`;
+}
+
+/** The prefix of the forgot-password API (`/api/account/reset/`). */
+const PASSWORD_RESET_API_PREFIX = PASSWORD_RESET_API.start.slice(
+  0,
+  PASSWORD_RESET_API.start.lastIndexOf('/') + 1,
+);
+
+/** Refuse a reset URL the vhost cannot say: only an auth host's own `https://auth.<domain>/reset`. */
+function assertAuthVhostMail(domain, mail) {
+  const resetUrl = (value) =>
+    value === null ||
+    (typeof value === 'string' && /^https:\/\/auth\.[a-z0-9.-]{1,253}\/reset$/.test(value));
+  if (
+    mail === null ||
+    typeof mail !== 'object' ||
+    !resetUrl(mail.primaryResetUrl) ||
+    !(
+      mail.domainResetUrl === null ||
+      mail.domainResetUrl === `https://auth.${domain}${AUTH_RESET_PATH}`
+    )
+  ) {
+    throw new Error("Invalid auth vhost mail: reset URLs are an auth host's own /reset, or null");
+  }
+}
+
+/**
+ * The account locations of a domain's sign-in host
+ * (packages/core/docs/mail-design.md §6.2, §6.3):
+ *
+ * - the forgot-password page (`/reset`, the domain's own from its
+ *   rendering, else the stock one) and its API (`/api/account/reset/*`) —
+ *   public, like the invitation's: `Host` this portal's literal name,
+ *   `X-Forwarded-Host` and every identity header cleared, a small body;
+ * - the change-password page (`/account/password`) behind Authelia's
+ *   forward auth — the portal's rule wants two factors from the domain's
+ *   members and external members; it redirects to the sign-in;
+ * - its API (`POST /api/account/password`) behind Gatekeeper
+ *   (`/authz/account/<domain>`), which asks Authelia the same about the
+ *   session for that very URL and vouches for its user to the panel with
+ *   a relay assertion bound to the method and target — the only thing the
+ *   panel takes the user from (the panel listens on loopback, where any
+ *   local process could send `Remote-User`). JSON 401/403, never a
+ *   redirect; nothing of the browser's credentials reaches the panel.
+ */
+export function accountLocations(domain, fqdn) {
+  const cleared = BROWSER_IDENTITY_CLEARED;
+  const toPanel = `${panelProxy(fqdn)}
+        client_max_body_size 16k;`;
+  const accountPageHeaders = pageHeaderLines(ACCOUNT_PASSWORD_PAGE_HEADERS);
+  return `
+    # Forgot password (mail-design.md §6.2): the page, the domain's own
+    # when it has a rendering, else the stock one — a link carries its
+    # token in the fragment (\`/reset#<token>\`).${authPageLocations(
+      domain,
+      [`= ${AUTH_RESET_PATH}`],
+      AUTH_BRANDING_FILES.reset,
+      'reset',
+      RESET_DIR,
+      RESET_PAGE_HEADERS,
+    )}
+
+    # Its API — public, proxied to the panel (no mTLS)
+    location ^~ ${PASSWORD_RESET_API_PREFIX} {
+        proxy_set_header Cookie "";${cleared}${toPanel}
+    }
+
+    # Change password (mail-design.md §6.3): behind Authelia's forward auth
+    location = /internal/lamaste/account-authz {
+        internal;
+
+        proxy_pass http://127.0.0.1:9091/api/authz/auth-request;
+        proxy_pass_request_body off;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Connection "";
+        proxy_set_header X-Original-Method $request_method;
+        # This vhost's hostname, never the client's Host header
+        proxy_set_header X-Original-URL ${originalUrl(fqdn)};
+        proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
+
+        proxy_http_version 1.1;
+        proxy_buffers 4 32k;
+    }
+
+    location = /internal/lamaste/account-401 {
+        internal;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        return 401 '{"error":"unauthenticated"}';
+    }
+
+    location = ${AUTH_ACCOUNT_PASSWORD_PATH} {
+        auth_request /internal/lamaste/account-authz;
+        auth_request_set $redirection_url $upstream_http_location;
+        error_page 401 =302 $redirection_url;
+
+        root ${authBrandingDir(domain)};
+        try_files /${AUTH_BRANDING_FILES.accountPassword} @account_password;${accountPageHeaders}
+    }
+    location @account_password {
+        auth_request /internal/lamaste/account-authz;
+        auth_request_set $redirection_url $upstream_http_location;
+        error_page 401 =302 $redirection_url;
+
+        root ${ACCOUNT_PASSWORD_DIR};
+        try_files /index.html =404;${accountPageHeaders}
+    }
+
+    # Its API: Gatekeeper vouches for the session's user to the panel
+    location = /internal/lamaste/account-api-authz {
+        internal;
+        auth_request off;
+
+        proxy_pass http://127.0.0.1:9294/authz/account/${domain};
+        proxy_pass_request_body off;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Connection "";
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Original-URL ${originalUrl(fqdn)};
+        proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
+        proxy_set_header Host ${fqdn};
+        proxy_set_header Cookie $http_cookie;
+
+        proxy_http_version 1.1;
+    }
+
+    location = /internal/lamaste/account-403 {
+        internal;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        return 403 '{"error":"forbidden"}';
+    }
+
+    location = ${ACCOUNT_PASSWORD_API_PATH} {
+        auth_request /internal/lamaste/account-api-authz;
+        auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;
+        error_page 401 = /internal/lamaste/account-401;
+        error_page 403 = /internal/lamaste/account-403;
+
+        # Nothing the client sent that names a user or a credential; the
+        # user as Gatekeeper vouched for them, for this one request
+        proxy_set_header Cookie "";${BROWSER_IDENTITY_CLEARED_KEEP_ASSERTION}
+        proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;${toPanel}
+    }
+`;
+}
+
+/**
+ * Google's return from the relay's mail consent (mail-design.md §3.3), on
+ * the primary's sign-in host alone: proxied to the panel with this
+ * portal's literal name as `Host` — the panel answers it on that host
+ * only — and nothing of the browser's credentials.
+ */
+export function mailCallbackLocation(fqdn) {
+  return `
+    # Google's return from the relay's mail consent (mail-design.md §3.3)
+    location = ${MAIL_GOOGLE_CALLBACK_PATH} {
+        # Its query carries Google's single-use code and the consent's state
+        access_log off;
+        proxy_set_header Cookie "";${BROWSER_IDENTITY_CLEARED}${panelProxy(fqdn)}
+        client_max_body_size 1k;
+    }
+`;
+}
+
+/**
  * Render the Authelia auth portal vhost of one domain. Pure; the startup
  * reconcile renders it on the certificate directory the installed vhost
  * names. Every domain's portal serves Authelia and the invitation page (the
  * domain's own from its rendering when it has a brand, else the stock one
- * from `INVITE_DIR`); only
- * the primary's — the panel's domain, which the desktop's user login
- * exchanges at — serves `/api/user-access/authorize` and declares its rate
- * limit zone (an http-level name, declared once). Every portal serves the
- * domain's brand and language ({@link authBrandLocations},
+ * from `INVITE_DIR`) and its account pages ({@link accountLocations});
+ * only the primary's — the panel's domain, which the desktop's user login
+ * exchanges at and Google returns the mail consent to — serves
+ * `/api/user-access/authorize`, `/mail/google/callback` and declares the
+ * rate limit zone (an http-level name, declared once). Every portal serves
+ * the domain's brand, language and mail ({@link authBrandLocations},
  * {@link autheliaIndexRewrite}): `branding` is null for a domain without a
- * brand, `language` null for one without a page language — a domain with
- * neither keeps the vhost it had before languages.
+ * brand, `language` null for one without a page language, `mail` where the
+ * portal links "Reset password?" ({@link NO_MAIL} when nothing sends).
  *
  * @param {string} domain
  * @param {string} [certPath] - certificate directory (default: the portal's own lineage)
- * @param {{ primary?: boolean, branding?: AuthVhostBranding | null, language?: import('@lamalibre/lamaste').PageLanguage | null }} [opts]
+ * @param {{ primary?: boolean, branding?: AuthVhostBranding | null, language?: import('@lamalibre/lamaste').PageLanguage | null, mail?: AuthVhostMail }} [opts]
  * @returns {{ name: string, fqdn: string, config: string }}
  */
 export function renderAuthVhost(
   domain,
   certPath,
-  { primary = true, branding = null, language = null } = {},
+  { primary = true, branding = null, language = null, mail = NO_MAIL } = {},
 ) {
   assertAuthVhostBranding(branding);
   assertAuthVhostLanguage(language);
+  assertAuthVhostMail(domain, mail);
   const fqdn = `auth.${domain}`;
   let certDirClean = certPath || `/etc/letsencrypt/live/${fqdn}`;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
@@ -892,14 +1183,14 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
         proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
         client_max_body_size 16k;
     }
-${delegatedInvitationsLocations(domain, fqdn)}${userAccess}${authBrandLocations(domain, fqdn, language)}
+${nativeBrokerLocations(fqdn)}${delegatedInvitationsLocations(domain, fqdn)}${accountLocations(domain, fqdn)}${primary ? mailCallbackLocation(fqdn) : ''}${userAccess}${authBrandLocations(domain, fqdn, language)}
     # Default — proxy to Authelia. Authelia takes the OIDC issuer and the
     # session cookie's domain from X-Forwarded-Host / -Proto: this portal's
     # own name, never what the client sent. (A location that sets any
     # header inherits none of the server's.)
     location / {
         proxy_pass http://127.0.0.1:9091;${autheliaProxyHeaders(fqdn)}
-${autheliaIndexRewrite(branding, language)}
+${autheliaIndexRewrite(branding, language, mail)}
     }
 }
 `;
@@ -1134,10 +1425,30 @@ function gatekeeperSubrequest(check, fqdn) {
  */
 function userSurfaceLocations(fqdn, userSurface) {
   if (userSurface.length === 0) return '';
-  const routes = userSurface.map(({ route, maxBodySizeMb }) => {
+  for (const { route } of userSurface) {
     if (!isUserSurfaceRoute(route)) {
       throw new Error(`Invalid user-surface route for nginx vhost: ${route}`);
     }
+  }
+  const unserved = userSurface.filter((r) => r.served === false);
+  const served = userSurface.filter((r) => r.served !== false);
+  const withheld = unserved.map(({ route }) => {
+    const apiPath = userSurfaceApiPath(route);
+    const block = `{${BODY_NOT_READ}
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        return 503 '{"error":"The plugin is not available right now"}';
+    }`;
+    return `
+    # Bound, not served now: answered here, never by the host's backend
+    location = ${apiPath} ${block}
+
+    location ^~ ${apiPath}/ ${block}
+`;
+  });
+  if (served.length === 0) return withheld.join('');
+  const routes = served.map(({ route, maxBodySizeMb }) => {
     assertBodySizeMb(maxBodySizeMb);
     const block = `{
         auth_request /internal/lamaste/user-surface-authz;
@@ -1187,9 +1498,22 @@ ${USER_SURFACE_PROXY_HEADERS}
         return 403 '{"error":"forbidden"}';
     }
 
+    location = /internal/lamaste/user-surface-invalid-token {
+        internal;${BODY_NOT_READ}
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header WWW-Authenticate 'Bearer error="invalid_token"' always;
+        return 401 '{"error":"invalid_token"}';
+    }
+
     location = /internal/lamaste/user-surface-401 {
         internal;
         auth_request off;${BODY_NOT_READ}
+        # A native app's bearer token Gatekeeper refused: the app refreshes it
+        if ($lamaste_refusal = invalid_token) {
+            rewrite ^ /internal/lamaste/user-surface-invalid-token last;
+        }
 
         proxy_pass http://127.0.0.1:9294/authz/user-surface-unauthenticated;
         proxy_pass_request_body off;
@@ -1202,8 +1526,95 @@ ${USER_SURFACE_PROXY_HEADERS}
 
         proxy_http_version 1.1;
     }
-${routes.join('')}`;
+${routes.join('')}${withheld.join('')}`;
 }
+
+/**
+ * The locations a host with a served native client carries
+ * (native-apps-design.md D6), before any authorization: the app
+ * association files — `/.well-known/apple-app-site-association`,
+ * `/.well-known/assetlinks.json`, each only when the client declares that
+ * platform — and the client's redirect paths, which the operating system
+ * hands to the app; a browser that reaches one gets Lamaste's static page
+ * (no script). The files are the panel's (`lib/native-files.js`, under
+ * `dir`). A redirect path is kept out of the access log: its query holds
+ * an authorization code.
+ *
+ * @param {{ dir: string, redirectPaths: readonly string[], appleAppSiteAssociation: boolean, assetLinks: boolean } | null | undefined} native
+ * @param {string} domain the host's domain (the page's headers name its sign-in host)
+ * @returns {string}
+ */
+export function nativeAppLocations(native, domain) {
+  if (!native) return '';
+  if (!path.isAbsolute(native.dir) || !/^\/var\/www\/lamaste\/[A-Za-z0-9/._-]+$/.test(native.dir)) {
+    throw new Error(`Invalid native files directory for nginx vhost: ${native.dir}`);
+  }
+  if (/(^|\/)\.\.?(\/|$)/.test(native.dir)) {
+    throw new Error(`Invalid native files directory for nginx vhost: ${native.dir}`);
+  }
+  const file = (location, name, type) => `
+    location = ${location} {
+        auth_request off;
+        alias ${native.dir}/${name};
+        default_type ${type};
+        add_header Cache-Control "max-age=300" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+`;
+  let out = `
+    # A native app's sign-in on this host (native-apps-design.md D6)`;
+  if (native.appleAppSiteAssociation) {
+    out += file(
+      APPLE_APP_SITE_ASSOCIATION_PATH,
+      NATIVE_FILES.appleAppSiteAssociation,
+      'application/json',
+    );
+  }
+  if (native.assetLinks) {
+    out += file(ASSET_LINKS_PATH, NATIVE_FILES.assetLinks, 'application/json');
+  }
+  const headers = pageHeaderLines(nativeRedirectPageHeaders(domain));
+  for (const redirectPath of native.redirectPaths) {
+    if (!isNativeRedirectPath(redirectPath)) {
+      throw new Error(`Invalid native redirect path for nginx vhost: ${redirectPath}`);
+    }
+    out += `
+    location = ${redirectPath} {
+        auth_request off;
+        # The query holds an authorization code: never in a log
+        access_log off;
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405;
+        }
+        alias ${native.dir}/${NATIVE_FILES.redirectPage};
+        default_type text/html;${headers}
+    }
+`;
+  }
+  return out;
+}
+
+/** The files of a native client's host, in its directory (`lib/native-files.js`). */
+export const NATIVE_FILES = Object.freeze({
+  appleAppSiteAssociation: 'apple-app-site-association',
+  assetLinks: 'assetlinks.json',
+  redirectPage: 'redirect.html',
+});
+
+/**
+ * What the backend location of a host with a native client carries
+ * (native-apps-design.md R2, security review M1 and L3): a native app's
+ * bearer token never reaches the backend, and the backend cannot ask the
+ * browser for credentials of its own (`WWW-Authenticate`) — a cached Basic
+ * login would ride every later request to the host, the user surface's
+ * included.
+ */
+const NATIVE_BACKEND_GUARD = `
+
+        # A native app's bearer token is the relay's alone, and the backend
+        # asks no browser for credentials of its own
+        proxy_set_header Authorization "";
+        proxy_hide_header WWW-Authenticate;`;
 
 /**
  * Write a public vhost — no authentication, direct proxy.
@@ -1214,12 +1625,13 @@ export async function writePublicVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
+  { pathPrefix, maxBodySizeMb, userSurface, nativeGuard = false, enabled = true } = {},
 ) {
   const { name, config } = renderPublicVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
+    nativeGuard,
   });
   return safeWriteVhost(name, config, fqdn, { enabled });
 }
@@ -1229,7 +1641,7 @@ function renderPublicVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface } = {},
+  { pathPrefix, maxBodySizeMb, userSurface, nativeGuard = false } = {},
 ) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
@@ -1266,7 +1678,7 @@ ${bodySizeDirective(maxBodySizeMb)}
         # Nor a relay assertion: only Gatekeeper's, set on an authenticated
         # vhost, may reach a backend (lamaste-agentd serves plugin routes)
         proxy_set_header X-Lamalibre-Relay-Assertion "";
-${TUNNEL_PROXY_HEADERS}
+${TUNNEL_PROXY_HEADERS}${nativeGuard ? NATIVE_BACKEND_GUARD : ''}
 
         ${pathPrefix ? `rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n        ` : ''}proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
@@ -1291,12 +1703,21 @@ export async function writeGatekeeperVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
+  {
+    pathPrefix,
+    maxBodySizeMb,
+    userSurface,
+    native = null,
+    nativeGuard = false,
+    enabled = true,
+  } = {},
 ) {
   const { name, config } = renderGatekeeperTunnelVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
+    native,
+    nativeGuard,
   });
   return safeWriteVhost(name, config, fqdn, { enabled });
 }
@@ -1306,7 +1727,7 @@ function renderGatekeeperTunnelVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface },
+  { pathPrefix, maxBodySizeMb, userSurface, native, nativeGuard },
 ) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
@@ -1321,6 +1742,8 @@ function renderGatekeeperTunnelVhost(
     pathPrefix,
     maxBodySizeMb,
     userSurface,
+    native,
+    nativeGuard,
   });
 
   return { name: appVhostName(fqdn), fqdn, config };
@@ -1336,23 +1759,31 @@ function renderGatekeeperTunnelVhost(
  * @param {string} domain the base domain it is under (its sign-in, `auth.<domain>`)
  * @param {number} port
  * @param {string} [certPath]
- * @param {{ pathPrefix?: string, maxBodySizeMb?: number, userSurface?: ReadonlyArray<{ route: string, maxBodySizeMb: number }> }} [opts]
- *   `userSurface`: the plugins' user surfaces the vhost serves (not on a public vhost)
+ * @param {{ pathPrefix?: string, maxBodySizeMb?: number, userSurface?: ReadonlyArray<{ route: string, maxBodySizeMb: number, served?: boolean }>, native?: object | null, nativeGuard?: boolean }} [opts]
+ *   `userSurface`: the plugins' user surfaces bound to the vhost (not on a public vhost) —
+ *   a route with `served: false` is answered 503 by nginx; `native`: the host's
+ *   served native client ({@link nativeAppLocations}); `nativeGuard`: a native
+ *   client — served or not — is registered for the host ({@link NATIVE_BACKEND_GUARD})
  * @returns {{ name: string, fqdn: string, config: string }}
  */
 export function renderTunnelVhost(accessMode, fqdn, domain, port, certPath, opts = {}) {
-  const { pathPrefix, maxBodySizeMb, userSurface } = opts;
+  const { pathPrefix, maxBodySizeMb, userSurface, native, nativeGuard } = opts;
   if (accessMode === 'public') {
+    // A public host serves no native client (its client is not served —
+    // native-apps.js `host_public`): only the guard.
     return renderPublicVhost(fqdn, domain, port, certPath, {
       pathPrefix,
       maxBodySizeMb,
       userSurface,
+      nativeGuard: Boolean(nativeGuard || native),
     });
   }
   return renderGatekeeperTunnelVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
+    native,
+    nativeGuard,
   });
 }
 
@@ -1383,7 +1814,7 @@ function buildGatekeeperVhost(
   certDirClean,
   port,
   domain,
-  { pathPrefix, maxBodySizeMb, userSurface = [] } = {},
+  { pathPrefix, maxBodySizeMb, userSurface = [], native = null, nativeGuard = false } = {},
 ) {
   const url = originalUrl(fqdn);
   return `server {
@@ -1404,7 +1835,7 @@ ${bodySizeDirective(maxBodySizeMb)}
         proxy_buffers 4 32k;
         proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
     }
-${userSurfaceLocations(fqdn, userSurface)}
+${userSurfaceLocations(fqdn, userSurface)}${nativeAppLocations(native, domain)}
     location / {
         auth_request /internal/lamaste/authz;
         auth_request_set $user $upstream_http_remote_user;
@@ -1433,7 +1864,7 @@ ${userSurfaceLocations(fqdn, userSurface)}
         # plugin tunnel or the panel, never one a client sent
         proxy_set_header X-Lamalibre-Relay-Assertion "";`
         }
-${TUNNEL_PROXY_HEADERS}
+${TUNNEL_PROXY_HEADERS}${native || nativeGuard ? NATIVE_BACKEND_GUARD : ''}
 
         ${pathPrefix ? `rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n        ` : ''}proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
@@ -1791,14 +2222,28 @@ function unavailablePageLocations(domain, clear) {
  * available" page ({@link unavailablePageLocations}), in the domain's
  * language, instead of nginx's own.
  *
+ * The routes joined to the site (`opts.joined`, native-apps-design.md D1)
+ * get their user-surface locations beside the owner's — a joined route not
+ * served now is answered 503 by nginx, never by anything else — and a
+ * served native client of the host (`opts.native`) its association files
+ * and redirect paths ({@link nativeAppLocations}).
+ *
  * @param {{ id: string, fqdn: string }} site
  * @param {string} certDir
  * @param {string} domain
- * @param {{ route: string, served: boolean, maxBodySizeMb: number, treesDir: string, clearSiteData?: boolean }} opts
+ * @param {{ route: string, served: boolean, maxBodySizeMb: number, treesDir: string, clearSiteData?: boolean, joined?: ReadonlyArray<{ route: string, maxBodySizeMb: number, served?: boolean }>, native?: object | null }} opts
  * @returns {{ name: string, fqdn: string, config: string }}
  */
 export function renderWebSurfaceVhost(site, certDir, domain, opts) {
-  const { route, served, maxBodySizeMb, treesDir, clearSiteData = false } = opts;
+  const {
+    route,
+    served,
+    maxBodySizeMb,
+    treesDir,
+    clearSiteData = false,
+    joined = [],
+    native = null,
+  } = opts;
   assertLiteralHostname(site.fqdn);
   if (!isUserSurfaceRoute(route)) throw new Error(`Invalid web surface route: ${route}`);
   if (!path.isAbsolute(treesDir) || !/^[A-Za-z0-9/._-]+$/.test(treesDir)) {
@@ -1839,7 +2284,7 @@ export function renderWebSurfaceVhost(site, certDir, domain, opts) {
         add_header Cache-Control no-store always;${clear}
         return 503;
     }
-${unavailablePageLocations(domain, clear)}
+${nativeAppLocations(native, domain)}${unavailablePageLocations(domain, clear)}
 }
 `,
     };
@@ -1858,7 +2303,7 @@ ${unavailablePageLocations(domain, clear)}
     location = /internal/lamaste/shell-authz {
         ${gatekeeperSubrequest('user-surface-shell', site.fqdn)}
     }
-${userSurfaceLocations(site.fqdn, [{ route, maxBodySizeMb }])}
+${userSurfaceLocations(site.fqdn, [{ route, maxBodySizeMb }, ...joined])}${nativeAppLocations(native, domain)}
     # A script, style, font or image the current tree lacks: the previous
     # tree's (a page still running the old shell), else 404
     location ~* ${WEB_SURFACE_SUBRESOURCE_RE} {

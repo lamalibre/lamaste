@@ -67,6 +67,7 @@ export const PAGE_MESSAGES_EN = {
   'invite.usernameRule':
     'A username has {min} to {max} lower-case letters, digits, - and _, and starts with a letter or digit.',
   'invite.nameRequired': 'Enter your name.',
+  'invite.nameLooksLikeLink': 'Enter your name, not a web address.',
   'invite.passwordShort': 'A password has at least 8 characters.',
   'invite.passwordLong': 'A password has at most 128 characters.',
   'invite.passwordMismatch': 'The passwords do not match.',
@@ -121,6 +122,14 @@ export const PAGE_MESSAGES_EN = {
   'invitations.reallyRevoke': 'Really revoke?',
   'invitations.emailRequired': 'Enter an e-mail address.',
   'invitations.emailInvalid': 'Enter a valid e-mail address.',
+  'invitations.mailed': 'The invitation was e-mailed. Its link is in that mail only.',
+  'invitations.mailFailed':
+    'The invitation could not be e-mailed. Try again later with “New link” — a new link is e-mailed and the old one stops working.',
+  'invitations.nameLooksLikeLink': 'Enter their name, not a web address.',
+  'invitations.mailSent': 'E-mailed',
+  'invitations.mailNotSent': 'Not e-mailed',
+  'invitations.reissue': 'New link',
+  'invitations.reallyReissue': 'Replace the old link?',
   'status.pending': 'Pending',
   'status.expired': 'Expired',
   'status.accepting': 'Being accepted',
@@ -147,9 +156,13 @@ export const PAGE_MESSAGES_EN = {
   'error.email_domain_not_allowed': 'Invitations cannot go to this e-mail address’s domain.',
   'error.role_not_grantable': 'You may not invite people with this role.',
   'error.invitation_rate': 'Too many invitations in the last hour — try again later.',
+  'error.invitation_daily_rate': 'Too many invitations today — try again tomorrow.',
+  'error.reissue_rate': 'This invitation got a new link too often today — try again tomorrow.',
   'error.invitation_cap.inviter':
     'You have reached your limit of open invitations — revoke one or wait for one to be accepted.',
   'error.invitation_cap.plugin': 'This application takes no more people by invitation.',
+  'error.invitation_not_pending':
+    'This invitation is no longer open — it was accepted or revoked, so it cannot get a new link.',
   'error.grant_reserve': 'No more people can be added by invitation right now.',
   'error.gatekeeper_unavailable': 'The service is not answering — try again shortly.',
   'error.authelia_storage_unavailable': 'The service is not answering — try again shortly.',
@@ -165,6 +178,11 @@ export const PAGE_MESSAGES_EN = {
   // … and when Gatekeeper does not allow the request (P9)
   'forbidden.title': 'Not Allowed',
   'forbidden.text': 'You cannot open this page.',
+  // A native app's sign-in redirect path on its application host, when the
+  // operating system did not hand the redirect to the app
+  'nativeRedirect.title': 'Continue in the App',
+  'nativeRedirect.text':
+    'Sign-in continues in the app. If the app did not open, it is not installed on this device — install it and sign in again.',
 
   // Gatekeeper's access-request page (P6)
   'access.title': 'Access Required',
@@ -208,6 +226,105 @@ export const PAGE_MESSAGES_EN = {
   'refusal.noDomainAsk': 'Tell {admin} if this address should work.',
   'refusal.noDomainAskDefault': 'Tell your administrator if this address should work.',
   'refusal.signOut': '[Sign out] to sign in with another account.',
+
+  // What the forgot-password and change-password pages share
+  'account.password': 'New password',
+  'account.passwordHint': 'At least 8 characters',
+  'account.confirmPassword': 'Confirm new password',
+  'account.passwordShort': 'A password has at least 8 characters.',
+  'account.passwordLong': 'A password has at most 128 characters.',
+  'account.passwordMismatch': 'The passwords do not match.',
+  'account.goToSignIn': 'Go to sign-in',
+  // The link Lamaste adds to Authelia's portal
+  'account.changePasswordLink': 'Change password',
+
+  // The forgot-password page (/reset)
+  'reset.title': 'Reset Password',
+  'reset.loading': 'Loading…',
+  'reset.requestTitle': 'Forgot Your Password?',
+  'reset.requestText':
+    'Enter your username or e-mail address. If it belongs to an account here, a link to set a new password is sent to its e-mail address.',
+  'reset.identifier': 'Username or e-mail address',
+  'reset.identifierRequired': 'Enter your username or e-mail address.',
+  'reset.send': 'Send Link',
+  'reset.sending': 'Sending…',
+  'reset.sentTitle': 'Check Your E-mail',
+  'reset.sent_one':
+    'If an account matches, a link is on its way. It works once, for {minutes} minute.',
+  'reset.sent_other':
+    'If an account matches, a link is on its way. It works once, for {minutes} minutes.',
+  'reset.setTitle': 'Set a New Password',
+  'reset.setFor': 'For the account {username}.',
+  'reset.totp': 'Authenticator code',
+  'reset.totpHint': 'The six digits your authenticator app shows for this account now.',
+  'reset.totpRule': 'Enter the six digits your authenticator app shows.',
+  'reset.save': 'Set Password',
+  'reset.saving': 'Saving…',
+  'reset.doneTitle': 'Password Changed',
+  'reset.done': 'You can sign in with your new password now.',
+  'reset.requestAgain': 'Ask for a new link',
+  'reset.unavailableTitle': 'Not Available',
+
+  // The change-password page (/account/password)
+  'password.title': 'Change Password',
+  'password.loading': 'Loading…',
+  'password.text': 'Enter your current password, then the new one.',
+  'password.current': 'Current password',
+  'password.currentRequired': 'Enter your current password.',
+  'password.save': 'Change Password',
+  'password.saving': 'Saving…',
+  'password.doneTitle': 'Password Changed',
+  'password.done': 'Your new password applies from your next sign-in.',
+
+  // The refusals of the two account pages
+  'error.reset_invalid': 'This link is not valid or has expired. Ask for a new one.',
+  'error.reset_unavailable':
+    'Password reset is not available here. Ask your administrator to set a new password.',
+  'error.totp_invalid': 'The code is not correct. Check your authenticator app and try again.',
+  'error.no_totp':
+    'This account has no authenticator app set up, so its password cannot be reset by e-mail. Ask your administrator.',
+  'error.current_password_invalid': 'The current password is not correct.',
+  'error.password_unchanged': 'The new password is the same as the current one.',
+
+  // The page Google's consent returns to (/mail/google/callback)
+  'mailConsent.title': 'Mail Setup',
+  'mailConsent.okTitle': 'Mail Is Set Up',
+  'mailConsent.ok': 'The relay now sends its mail as {sender}. You may close this tab.',
+  'mailConsent.failedTitle': 'Mail Was Not Set Up',
+  'mailConsent.again': 'Start again from the panel’s Mail settings.',
+  'mailConsent.reason.expired': 'This setup took too long, or its link was used already.',
+  'mailConsent.reason.denied': 'Access was not granted on Google’s page.',
+  'mailConsent.reason.sender':
+    'This Google account cannot send as the sender address. Add it under “Send mail as” in the account’s Gmail settings.',
+  'mailConsent.reason.token': 'Google did not hand out a token for this account.',
+  'mailConsent.reason.generic': 'Something went wrong.',
+
+  // The mails
+  'mail.footer': 'Sent by {brand}.',
+  'mail.ignore': 'If you did not expect this e-mail, you can ignore it.',
+  'mail.invite.subject': 'Your invitation to {brand}',
+  'mail.invite.subjectDelegated': 'Your invitation to {plugin}',
+  'mail.invite.intro': 'You are invited to create an account on {brand}.',
+  'mail.invite.introDelegated': '{inviter} invited you to {plugin} as {role}.',
+  'mail.invite.introDelegatedAnonymous': 'You are invited to {plugin} as {role}.',
+  'mail.invite.action': 'Accept the invitation',
+  'mail.invite.expires': 'The link works once and expires on {date}.',
+  'mail.reset.subject': 'Reset your password',
+  'mail.reset.intro': 'Someone asked to reset the password of your account on {brand}.',
+  'mail.reset.introMany':
+    'Someone asked to reset the password of your accounts on {brand}. Each account has its own link.',
+  'mail.reset.account': 'Account: {username}',
+  'mail.reset.action': 'Set a new password',
+  'mail.reset.expires_one': 'A link works once, for {minutes} minute.',
+  'mail.reset.expires_other': 'A link works once, for {minutes} minutes.',
+  'mail.reset.ignore':
+    'If you did not ask for this, ignore this e-mail. Your password stays as it is.',
+  'mail.changed.subject': 'Your password was changed',
+  'mail.changed.text': 'The password of your account {username} on {brand} was changed on {date}.',
+  'mail.changed.warning':
+    'If you did not do this, contact your administrator at once — they can end every session of your account.',
+  'mail.test.subject': 'Test e-mail from {brand}',
+  'mail.test.text': 'This is a test. {brand} can send e-mail as {sender}.',
 } as const satisfies Record<string, string>;
 
 export type PageMessageKey = keyof typeof PAGE_MESSAGES_EN;
@@ -243,6 +360,7 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'invite.usernameRule':
     'Kullanıcı adı {min}–{max} karakter uzunluğunda olmalıdır; yalnızca küçük harf, rakam, kısa çizgi (-) ve alt çizgi (_) içerebilir (ç, ğ, ı, ö, ş, ü kullanılamaz) ve bir harf ya da rakamla başlamalıdır.',
   'invite.nameRequired': 'Adınızı ve soyadınızı girin.',
+  'invite.nameLooksLikeLink': 'Bir web adresi değil, adınızı ve soyadınızı girin.',
   'invite.passwordShort': 'Şifre en az 8 karakter olmalıdır.',
   'invite.passwordLong': 'Şifre en fazla 128 karakter olabilir.',
   'invite.passwordMismatch': 'Şifreler eşleşmiyor.',
@@ -297,6 +415,14 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'invitations.reallyRevoke': 'İptal edilsin mi?',
   'invitations.emailRequired': 'Bir e-posta adresi girin.',
   'invitations.emailInvalid': 'Geçerli bir e-posta adresi girin.',
+  'invitations.mailed': 'Davet e-postayla gönderildi. Bağlantısı yalnızca bu e-postada yer alıyor.',
+  'invitations.mailFailed':
+    'Davet e-postayla gönderilemedi. Daha sonra “Yeni bağlantı” ile yeniden deneyin; yeni bağlantı e-postayla gönderilir ve eskisi geçersiz olur.',
+  'invitations.nameLooksLikeLink': 'Bir web adresi değil, kişinin adını ve soyadını girin.',
+  'invitations.mailSent': 'E-postayla gönderildi',
+  'invitations.mailNotSent': 'E-posta gönderilemedi',
+  'invitations.reissue': 'Yeni bağlantı',
+  'invitations.reallyReissue': 'Eski bağlantı geçersiz olsun mu?',
   'status.pending': 'Bekliyor',
   'status.expired': 'Süresi doldu',
   'status.accepting': 'Kabul işlemi sürüyor',
@@ -325,9 +451,15 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'error.role_not_grantable': 'Bu rolle kişi davet edemezsiniz.',
   'error.invitation_rate':
     'Son bir saatte çok fazla davet oluşturdunuz. Lütfen daha sonra yeniden deneyin.',
+  'error.invitation_daily_rate':
+    'Bugün çok fazla davet oluşturdunuz. Lütfen yarın yeniden deneyin.',
+  'error.reissue_rate':
+    'Bu davet için bugün çok fazla yeni bağlantı oluşturuldu. Lütfen yarın yeniden deneyin.',
   'error.invitation_cap.inviter':
     'Açık davet sınırınıza ulaştınız. Bir daveti iptal edin ya da davetlerden birinin kabul edilmesini bekleyin.',
   'error.invitation_cap.plugin': 'Bu uygulamaya davetle daha fazla kişi eklenemiyor.',
+  'error.invitation_not_pending':
+    'Bu davet artık açık değil; kabul edilmiş ya da iptal edilmiş olduğu için yeni bağlantı oluşturulamaz.',
   'error.grant_reserve':
     'Şu anda davetle yeni kişi eklenemiyor. Lütfen daha sonra yeniden deneyin.',
   'error.gatekeeper_unavailable':
@@ -343,6 +475,9 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'unavailable.text': 'Lütfen birkaç dakika sonra yeniden deneyin.',
   'forbidden.title': 'İzin verilmiyor',
   'forbidden.text': 'Bu sayfayı açma izniniz yok.',
+  'nativeRedirect.title': 'Uygulamada devam edin',
+  'nativeRedirect.text':
+    'Giriş uygulamada devam ediyor. Uygulama açılmadıysa bu cihazda yüklü değildir; uygulamayı yükleyip yeniden giriş yapın.',
 
   'access.title': 'Erişim izni gerekiyor',
   'access.heading': 'Erişim izni gerekiyor',
@@ -389,6 +524,99 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'refusal.noDomainAsk': 'Bu adresin çalışması gerekiyorsa {admin} ile iletişime geçin.',
   'refusal.noDomainAskDefault': 'Bu adresin çalışması gerekiyorsa yöneticinize bildirin.',
   'refusal.signOut': 'Başka bir hesapla giriş yapmak için [oturumu kapatın].',
+
+  'account.password': 'Yeni şifre',
+  'account.passwordHint': 'En az 8 karakter',
+  'account.confirmPassword': 'Yeni şifre (tekrar)',
+  'account.passwordShort': 'Şifre en az 8 karakter olmalıdır.',
+  'account.passwordLong': 'Şifre en fazla 128 karakter olabilir.',
+  'account.passwordMismatch': 'Şifreler eşleşmiyor.',
+  'account.goToSignIn': 'Giriş sayfasına git',
+  'account.changePasswordLink': 'Şifre değiştir',
+
+  'reset.title': 'Şifre sıfırlama',
+  'reset.loading': 'Yükleniyor…',
+  'reset.requestTitle': 'Şifrenizi mi unuttunuz?',
+  'reset.requestText':
+    'Kullanıcı adınızı veya e-posta adresinizi girin. Burada bir hesaba aitse, hesabın e-posta adresine yeni şifre belirleme bağlantısı gönderilir.',
+  'reset.identifier': 'Kullanıcı adı veya e-posta adresi',
+  'reset.identifierRequired': 'Kullanıcı adınızı veya e-posta adresinizi girin.',
+  'reset.send': 'Bağlantı gönder',
+  'reset.sending': 'Gönderiliyor…',
+  'reset.sentTitle': 'E-postanızı kontrol edin',
+  'reset.sent_one':
+    'Eşleşen bir hesap varsa bağlantı yola çıktı. Bağlantı bir kez ve {minutes} dakika boyunca geçerlidir.',
+  'reset.sent_other':
+    'Eşleşen bir hesap varsa bağlantı yola çıktı. Bağlantı bir kez ve {minutes} dakika boyunca geçerlidir.',
+  'reset.setTitle': 'Yeni şifre belirleyin',
+  'reset.setFor': 'Hesap: {username}',
+  'reset.totp': 'Doğrulama kodu',
+  'reset.totpHint': 'Doğrulama uygulamanızın bu hesap için şu anda gösterdiği altı haneli kod.',
+  'reset.totpRule': 'Doğrulama uygulamanızın gösterdiği altı haneli kodu girin.',
+  'reset.save': 'Şifreyi belirle',
+  'reset.saving': 'Kaydediliyor…',
+  'reset.doneTitle': 'Şifre değiştirildi',
+  'reset.done': 'Artık yeni şifrenizle giriş yapabilirsiniz.',
+  'reset.requestAgain': 'Yeni bağlantı isteyin',
+  'reset.unavailableTitle': 'Kullanılamıyor',
+
+  'password.title': 'Şifre değiştir',
+  'password.loading': 'Yükleniyor…',
+  'password.text': 'Önce mevcut şifrenizi, ardından yeni şifrenizi girin.',
+  'password.current': 'Mevcut şifre',
+  'password.currentRequired': 'Mevcut şifrenizi girin.',
+  'password.save': 'Şifreyi değiştir',
+  'password.saving': 'Kaydediliyor…',
+  'password.doneTitle': 'Şifre değiştirildi',
+  'password.done': 'Yeni şifreniz bir sonraki girişinizden itibaren geçerlidir.',
+
+  'error.reset_invalid': 'Bu bağlantı geçerli değil veya süresi doldu. Yeni bir bağlantı isteyin.',
+  'error.reset_unavailable':
+    'Şifre sıfırlama burada kullanılamıyor. Yöneticinizden yeni şifre belirlemesini isteyin.',
+  'error.totp_invalid': 'Kod doğru değil. Doğrulama uygulamanızı kontrol edip tekrar deneyin.',
+  'error.no_totp':
+    'Bu hesapta doğrulama uygulaması kurulu olmadığından şifresi e-postayla sıfırlanamaz. Yöneticinize başvurun.',
+  'error.current_password_invalid': 'Mevcut şifre doğru değil.',
+  'error.password_unchanged': 'Yeni şifre mevcut şifreyle aynı.',
+
+  'mailConsent.title': 'E-posta kurulumu',
+  'mailConsent.okTitle': 'E-posta kuruldu',
+  'mailConsent.ok':
+    'Sunucu artık e-postalarını şu adresten gönderiyor: {sender}. Bu sekmeyi kapatabilirsiniz.',
+  'mailConsent.failedTitle': 'E-posta kurulamadı',
+  'mailConsent.again': 'Panelin E-posta ayarlarından yeniden başlayın.',
+  'mailConsent.reason.expired': 'Kurulum çok uzun sürdü veya bağlantısı zaten kullanıldı.',
+  'mailConsent.reason.denied': 'Google sayfasında erişim izni verilmedi.',
+  'mailConsent.reason.sender':
+    'Bu Google hesabı gönderen adresiyle e-posta gönderemiyor. Adresi hesabın Gmail ayarlarında “Farklı adresten posta gönder” altına ekleyin.',
+  'mailConsent.reason.token': 'Google bu hesap için bir anahtar vermedi.',
+  'mailConsent.reason.generic': 'Bir sorun oluştu.',
+
+  'mail.footer': 'Gönderen: {brand}',
+  'mail.ignore': 'Bu e-postayı beklemiyorsanız dikkate almayabilirsiniz.',
+  'mail.invite.subject': 'Davetiniz: {brand}',
+  'mail.invite.subjectDelegated': 'Davetiniz: {plugin}',
+  'mail.invite.intro': 'Şurada hesap oluşturmaya davet edildiniz: {brand}',
+  'mail.invite.introDelegated': '{inviter} sizi {plugin} uygulamasına {role} olarak davet etti.',
+  'mail.invite.introDelegatedAnonymous': '{plugin} uygulamasına {role} olarak davet edildiniz.',
+  'mail.invite.action': 'Daveti kabul edin',
+  'mail.invite.expires': 'Bağlantı bir kez kullanılabilir. Son geçerlilik tarihi: {date}',
+  'mail.reset.subject': 'Şifrenizi sıfırlayın',
+  'mail.reset.intro': 'Şuradaki hesabınızın şifresinin sıfırlanması istendi: {brand}',
+  'mail.reset.introMany':
+    'Şuradaki hesaplarınızın şifrelerinin sıfırlanması istendi: {brand}. Her hesabın kendi bağlantısı var.',
+  'mail.reset.account': 'Hesap: {username}',
+  'mail.reset.action': 'Yeni şifre belirleyin',
+  'mail.reset.expires_one': 'Bir bağlantı bir kez ve {minutes} dakika boyunca geçerlidir.',
+  'mail.reset.expires_other': 'Bir bağlantı bir kez ve {minutes} dakika boyunca geçerlidir.',
+  'mail.reset.ignore': 'Bunu siz istemediyseniz bu e-postayı dikkate almayın. Şifreniz değişmez.',
+  'mail.changed.subject': 'Şifreniz değiştirildi',
+  'mail.changed.text':
+    'Hesabınızın şifresi değiştirildi. Hesap: {username} ({brand}), tarih: {date}',
+  'mail.changed.warning':
+    'Bunu siz yapmadıysanız hemen yöneticinize başvurun; yöneticiniz hesabınızın tüm oturumlarını sonlandırabilir.',
+  'mail.test.subject': 'Deneme e-postası: {brand}',
+  'mail.test.text': 'Bu bir denemedir. {brand} şu adresten e-posta gönderebiliyor: {sender}',
 });
 
 /** Every language's catalogue. */
@@ -447,8 +675,11 @@ export const INVITATIONS_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
   'error.email_domain_not_allowed',
   'error.role_not_grantable',
   'error.invitation_rate',
+  'error.invitation_daily_rate',
+  'error.reissue_rate',
   'error.invitation_cap.inviter',
   'error.invitation_cap.plugin',
+  'error.invitation_not_pending',
   'error.grant_reserve',
   'error.gatekeeper_unavailable',
   'error.not_found',
@@ -461,6 +692,12 @@ export const INVITATIONS_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
 export const UNAVAILABLE_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
   'unavailable.title',
   'unavailable.text',
+]);
+
+/** The fallback page of a native app's sign-in redirect path (native-apps-design.md D6). */
+export const NATIVE_REDIRECT_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
+  'nativeRedirect.title',
+  'nativeRedirect.text',
 ]);
 
 /** Gatekeeper's "not allowed" page (P9). */
@@ -479,6 +716,43 @@ export const ACCESS_REQUEST_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze
 /** Gatekeeper's domain refusal page (P7). */
 export const DOMAIN_REFUSAL_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
   ...PAGE_MESSAGE_KEYS.filter((key) => key.startsWith('refusal.') || key.startsWith('contact.')),
+]);
+
+/** The password words both account pages share. */
+const ACCOUNT_PASSWORD_KEYS = [
+  'account.password',
+  'account.passwordHint',
+  'account.confirmPassword',
+  'account.passwordShort',
+  'account.passwordLong',
+  'account.passwordMismatch',
+  'account.goToSignIn',
+] as const satisfies readonly PageMessageKey[];
+
+/** The forgot-password page's keys (`/reset`). */
+export const RESET_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
+  ...PAGE_MESSAGE_KEYS.filter((key) => key.startsWith('reset.')),
+  ...ACCOUNT_PASSWORD_KEYS,
+  'error.reset_invalid',
+  'error.reset_unavailable',
+  'error.totp_invalid',
+  'error.no_totp',
+  'error.invalid_request.password',
+  'error.invalid_request',
+  'error.tooManyRequests',
+  'error.generic',
+]);
+
+/** The change-password page's keys (`/account/password`). */
+export const ACCOUNT_PASSWORD_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
+  ...PAGE_MESSAGE_KEYS.filter((key) => key.startsWith('password.')),
+  ...ACCOUNT_PASSWORD_KEYS,
+  'error.current_password_invalid',
+  'error.password_unchanged',
+  'error.invalid_request.password',
+  'error.invalid_request',
+  'error.tooManyRequests',
+  'error.generic',
 ]);
 
 /** One text of a language's catalogue. */

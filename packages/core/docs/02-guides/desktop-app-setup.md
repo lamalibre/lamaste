@@ -26,7 +26,7 @@ The Lamaste Desktop app is a native application (built with Tauri) that wraps th
 Run the installer:
 
 ```bash
-npx @lamalibre/create-lamaste-desktop
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop
 ```
 
 The installer:
@@ -56,7 +56,7 @@ After the app launches, it shows a setup screen with two options:
 Install the agent globally and run its setup command:
 
 ```bash
-npm install -g @lamalibre/lamaste-agent
+npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 lamaste-agent setup --label my-server
 ```
 
@@ -170,7 +170,7 @@ Stopping an agent's tunnels from the app is remembered: the agent's sync timer k
 Run the installer again to get the latest version:
 
 ```bash
-npx @lamalibre/create-lamaste-desktop
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop
 ```
 
 If a new release is available, it downloads and installs the update. The previous version is replaced.
@@ -201,22 +201,22 @@ Deleting `~/.lamalibre/lamaste/` by hand instead would leave the agents' service
 
 ## Quick Reference
 
-| Action               | Command / Location                                                                   |
-| -------------------- | ------------------------------------------------------------------------------------ |
-| **Install**          | `npx @lamalibre/create-lamaste-desktop`                                              |
-| **Update**           | `npx @lamalibre/create-lamaste-desktop`                                              |
-| **Agent setup**      | `npm install -g @lamalibre/lamaste-agent`, then `lamaste-agent setup --label <name>` |
-| **App location**     | `/Applications/Lamaste.app` (macOS)                                                  |
-| **Agent registry**   | `~/.lamalibre/lamaste/agents.json`                                                   |
-| **Per-agent data**   | `~/.lamalibre/lamaste/agents/<label>/`                                               |
-| **Config (legacy)**  | `~/.lamalibre/lamaste/agent.json`                                                    |
-| **Server registry**  | `~/.lamalibre/lamaste/servers.json`                                                  |
-| **Service registry** | `~/.lamalibre/lamaste/services.json`                                                 |
-| **Download cache**   | `~/.lamalibre/lamaste/desktop/`                                                      |
-| **Chisel logs**      | `~/.lamalibre/lamaste/agents/<label>/logs/chisel.log`                                |
-| **Cloud tokens**     | OS credential store (`com.lamalibre.cloud`)                                          |
-| **P12 passwords**    | OS credential store (`com.lamalibre.lamaste.server`)                                 |
-| **npm package**      | `@lamalibre/create-lamaste-desktop`                                                  |
+| Action               | Command / Location                                                                                                                        |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Install**          | `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop`                                        |
+| **Update**           | `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop`                                        |
+| **Agent setup**      | `npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent`, then `lamaste-agent setup --label <name>` |
+| **App location**     | `/Applications/Lamaste.app` (macOS)                                                                                                       |
+| **Agent registry**   | `~/.lamalibre/lamaste/agents.json`                                                                                                        |
+| **Per-agent data**   | `~/.lamalibre/lamaste/agents/<label>/`                                                                                                    |
+| **Config (legacy)**  | `~/.lamalibre/lamaste/agent.json`                                                                                                         |
+| **Server registry**  | `~/.lamalibre/lamaste/servers.json`                                                                                                       |
+| **Service registry** | `~/.lamalibre/lamaste/services.json`                                                                                                      |
+| **Download cache**   | `~/.lamalibre/lamaste/desktop/`                                                                                                           |
+| **Chisel logs**      | `~/.lamalibre/lamaste/agents/<label>/logs/chisel.log`                                                                                     |
+| **Cloud tokens**     | OS credential store (`com.lamalibre.cloud`)                                                                                               |
+| **P12 passwords**    | OS credential store (`com.lamalibre.lamaste.server`)                                                                                      |
+| **npm package**      | `@lamalibre/create-lamaste-desktop`                                                                                                       |
 
 ### Related Documentation
 

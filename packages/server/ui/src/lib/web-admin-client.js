@@ -139,10 +139,30 @@ export const webAdminClient = {
   removeDomainBrandingFavicon: (name) => jsonDelete(domainPath(name, '/branding/favicon')),
   getDomainBrandingPreview: (name) => apiFetch(domainPath(name, '/branding/preview')),
 
+  // --- Mail: the relay's transport, then a domain's override (mail-design.md §3.5) ---
+  getMailSettings: () => apiFetch('/api/settings/mail'),
+  setMailSmtp: (input) => jsonPut('/api/settings/mail', input),
+  startMailGoogleConsent: (input) => jsonPost('/api/settings/mail/google/start', input),
+  setMailSender: (input) => jsonPatch('/api/settings/mail', input),
+  resumeMail: () => jsonPost('/api/settings/mail/resume'),
+  clearMailSettings: () => jsonDelete('/api/settings/mail'),
+  sendTestMail: (to) => jsonPost('/api/settings/mail/test', { to }),
+  getDomainMail: (name) => apiFetch(domainPath(name, '/mail')),
+  setDomainMailSmtp: (name, input) => jsonPut(domainPath(name, '/mail'), input),
+  startDomainMailGoogleConsent: (name, input) =>
+    jsonPost(domainPath(name, '/mail/google/start'), input),
+  setDomainMailSender: (name, input) => jsonPut(domainPath(name, '/mail/sender'), input),
+  updateDomainMail: (name, input) => jsonPatch(domainPath(name, '/mail'), input),
+  resumeDomainMail: (name) => jsonPost(domainPath(name, '/mail/resume')),
+  clearDomainMail: (name) => jsonDelete(domainPath(name, '/mail')),
+  sendDomainTestMail: (name, to) => jsonPost(domainPath(name, '/mail/test'), { to }),
+
   // --- Invitations ---
   getInvitations: (filter = {}) => apiFetch(`/api/invitations${toQuery(filter)}`),
   createInvitation: (data) => jsonPost('/api/invitations', data),
   revokeInvitation: (id) => jsonDelete(`/api/invitations/${encodeURIComponent(id)}`),
+  reissueInvitation: (id, options = {}) =>
+    jsonPost(`/api/invitations/${encodeURIComponent(id)}/reissue`, options),
   disableInvitees: (inviterUserId, { transitive = false } = {}) =>
     jsonPost('/api/invitations/disable-invitees', { inviterUserId, transitive }),
   getPluginInvitationPolicy: (name) => apiFetch(pluginPath(name, 'invitation-policy')),
@@ -326,6 +346,34 @@ export const webAdminClient = {
   movePluginWebSurface: (name, tunnelId) =>
     jsonPost(pluginPath(name, 'web-surface/move'), { tunnelId }),
   deletePluginWebSurface: (name) => jsonDelete(pluginPath(name, 'web-surface')),
+  joinWebSurfaceRoute: (name, route) =>
+    jsonPut(pluginPath(name, `web-surface/routes/${encodeURIComponent(route)}`), {}),
+  leaveWebSurfaceRoute: (name, route) =>
+    jsonDelete(pluginPath(name, `web-surface/routes/${encodeURIComponent(route)}`)),
+
+  // --- Native apps (native clients of application hosts and their grants) ---
+  listNativeApps: () => apiFetch('/api/native-apps'),
+  createNativeApp: (data) => jsonPost('/api/native-apps', data),
+  updateNativeApp: (clientId, data) =>
+    jsonPatch(`/api/native-apps/${encodeURIComponent(clientId)}`, data),
+  deleteNativeApp: (clientId) => jsonDelete(`/api/native-apps/${encodeURIComponent(clientId)}`),
+  listNativeGrants: (clientId, { userId, status } = {}) => {
+    const query = new URLSearchParams();
+    if (userId) query.set('userId', userId);
+    if (status) query.set('status', status);
+    const qs = query.toString();
+    return apiFetch(`/api/native-apps/${encodeURIComponent(clientId)}/grants${qs ? `?${qs}` : ''}`);
+  },
+  revokeNativeGrant: (clientId, grantId) =>
+    jsonDelete(
+      `/api/native-apps/${encodeURIComponent(clientId)}/grants/${encodeURIComponent(grantId)}`,
+    ),
+  revokeUserNativeGrants: (clientId, userId) =>
+    jsonPost(`/api/native-apps/${encodeURIComponent(clientId)}/grants/revoke`, { userId }),
+  getUserNativeGrants: (username, { status } = {}) =>
+    apiFetch(
+      `/api/users/${encodeURIComponent(username)}/native-grants${status ? `?status=${encodeURIComponent(status)}` : ''}`,
+    ),
   fetchPluginBundle: async (name) => {
     const res = await fetch(`/api/${encodeURIComponent(name)}/panel.js`);
     if (!res.ok) throw new Error(`Failed to load plugin bundle for "${name}"`);
@@ -391,8 +439,11 @@ export const webAdminClient = {
   updateTunnel: (id, data) => jsonPatch(`/api/tunnels/${encodeURIComponent(id)}`, data),
   deleteTunnel: (id) => jsonDelete(`/api/tunnels/${encodeURIComponent(id)}`),
   getTunnelAgentConfig: () => apiFetch('/api/tunnels/agent-config'),
-  bindTunnelUserSurface: (id, route) =>
-    jsonPut(`/api/tunnels/${encodeURIComponent(id)}/user-surface`, { route }),
+  bindTunnelUserSurface: (id, route, { crossAgent } = {}) =>
+    jsonPut(`/api/tunnels/${encodeURIComponent(id)}/user-surface`, {
+      route,
+      ...(crossAgent === true ? { crossAgent: true } : {}),
+    }),
   unbindTunnelUserSurface: (id, route) =>
     jsonDelete(`/api/tunnels/${encodeURIComponent(id)}/user-surface/${encodeURIComponent(route)}`),
 

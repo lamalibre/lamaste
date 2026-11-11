@@ -34,8 +34,22 @@ import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 import { canonicalJson } from '../app-job-signature.js';
 import { AUTHELIA_SESSION_COOKIE } from '../authelia-session.js';
-import { isOidcClientId } from '../constants.js';
+import { AUTH_RESET_PATH } from '../account.js';
+import { MAIL_SUBMISSION_PORT, isOidcClientId } from '../constants.js';
+import { LAMALIBRE_REGISTRY_FLAG } from '../lamalibre-registry.js';
 import { assertDomainName, domainOfHost } from '../domains.js';
+import { formatMailbox } from '../mail.js';
+import type { MailSender } from '../mail.js';
+import {
+  NATIVE_CLIENT_GRANT_TYPES,
+  NATIVE_CLIENT_SCOPES,
+  NATIVE_ACCESS_TOKEN_MINUTES,
+  NATIVE_LIFETIME_DAYS,
+  isNativeClientId,
+  isNativeRedirectPath,
+  nativeAudience,
+  nativeRedirectUris,
+} from '../native-apps.js';
 import { externalGroup, memberGroup, oidcClientGroup, siteGroup } from '../owned-groups.js';
 import type { OidcClientDeclaration } from '../schemas.js';
 
@@ -292,11 +306,7 @@ export async function writeAutheliaConfig(
         path: path.join(AUTHELIA_CONFIG_DIR, 'db.sqlite3'),
       },
     },
-    notifier: {
-      filesystem: {
-        filename: path.join(AUTHELIA_CONFIG_DIR, 'notifications.txt'),
-      },
-    },
+    notifier: renderAutheliaNotifier(null),
     totp: {
       issuer: 'Lamaste',
       period: 30,
@@ -588,11 +598,14 @@ export async function isAutheliaRunning(exec: ExecFn): Promise<boolean> {
  * - `refresh_interval: always` — a session's groups are read again at
  *   every request (Authelia's default with `watch`, rendered so nothing
  *   else can stand in for it);
- * - password change and reset disabled — Authelia's own writes of the file
- *   come from its in-memory copy, which may be older than the panel's last
- *   write (a reload skipped in its cooldown), and would put revoked groups
- *   back. Neither can work on a relay anyway: its notifier is a file, so no
- *   user can verify themselves for either.
+ * - Authelia's own password change and reset never registered — its writes
+ *   of the file come from its in-memory copy, which may be older than the
+ *   panel's last write (a reload skipped in its cooldown), and would put
+ *   revoked groups back. Change is disabled; reset is disabled, or points
+ *   at Lamaste's own reset page through `password_reset.custom_url` — one
+ *   of this relay's `https://auth.<domain>/reset` — with which Authelia
+ *   shows the link and registers none of its reset endpoints (4.39.28
+ *   `internal/server/handlers.go`; packages/core/docs/mail-design.md §5).
  */
 const LAMASTE_USERS_FILE_SETTINGS = {
   refresh_interval: 'always',
@@ -601,11 +614,36 @@ const LAMASTE_USERS_FILE_SETTINGS = {
 } as const;
 
 /**
+ * The reset URLs Authelia may link to: `https://auth.<domain>/reset` of
+ * every domain the configuration holds a session cookie for — this
+ * relay's domains, read from the configuration itself.
+ */
+export function relayResetUrls(config: Record<string, unknown>): string[] {
+  const session = config.session as { cookies?: unknown } | undefined;
+  const cookies = Array.isArray(session?.cookies) ? (session.cookies as unknown[]) : [];
+  const urls: string[] = [];
+  for (const cookie of cookies) {
+    const domain = (cookie as { domain?: unknown } | null)?.domain;
+    if (typeof domain === 'string') urls.push(`https://auth.${domain}${AUTH_RESET_PATH}`);
+  }
+  return urls;
+}
+
+/** `password_reset.custom_url` when it is one of {@link relayResetUrls}, else null. */
+function lamasteResetUrl(
+  config: Record<string, unknown>,
+  section: Record<string, unknown> | undefined,
+): string | null {
+  const url = section?.custom_url;
+  return typeof url === 'string' && relayResetUrls(config).includes(url) ? url : null;
+}
+
+/**
  * Hold users.yml as {@link LAMASTE_USERS_FILE_SETTINGS} says in a
  * configuration written before (watch on, refresh always, Authelia's
- * password change and reset off). Mutates `config`; every rewrite of the
- * configuration applies it. A configuration with another backend than the
- * file is left alone.
+ * password change off, its reset off or linking to this relay's own reset
+ * page). Mutates `config`; every rewrite of the configuration applies it.
+ * A configuration with another backend than the file is left alone.
  */
 export function ensureUsersFileWatched(config: Record<string, unknown>): void {
   const backend = config.authentication_backend as Record<string, unknown> | undefined;
@@ -613,29 +651,38 @@ export function ensureUsersFileWatched(config: Record<string, unknown>): void {
   if (!backend || !file) return;
   file.watch = true;
   backend.refresh_interval = LAMASTE_USERS_FILE_SETTINGS.refresh_interval;
-  for (const key of ['password_change', 'password_reset'] as const) {
-    const section = (backend[key] as Record<string, unknown> | undefined) ?? {};
-    section.disable = true;
-    backend[key] = section;
-  }
+  const change = (backend.password_change as Record<string, unknown> | undefined) ?? {};
+  change.disable = true;
+  backend.password_change = change;
+  const resetUrl = lamasteResetUrl(
+    config,
+    backend.password_reset as Record<string, unknown> | undefined,
+  );
+  backend.password_reset = resetUrl === null ? { disable: true } : { custom_url: resetUrl };
 }
 
 /**
  * Whether a configuration holds users.yml as Lamaste needs
  * ({@link ensureUsersFileWatched}): only then does a change of the file
- * reach every session without a restart.
+ * reach every session without a restart, and only then does Authelia never
+ * write it.
  */
 export function usersFileWatched(config: Record<string, unknown>): boolean {
   const backend = config.authentication_backend as Record<string, unknown> | undefined;
   const file = backend?.file as Record<string, unknown> | undefined;
   if (!backend || !file) return true;
-  const disabled = (key: string): boolean =>
-    (backend[key] as { disable?: unknown } | undefined)?.disable === true;
+  const change = backend.password_change as { disable?: unknown } | undefined;
+  const reset = backend.password_reset as Record<string, unknown> | undefined;
+  // An empty custom_url is none, as Authelia reads it.
+  const resetHeld =
+    reset?.custom_url === undefined || reset.custom_url === ''
+      ? reset?.disable === true
+      : lamasteResetUrl(config, reset) !== null;
   return (
     file.watch === true &&
     backend.refresh_interval === LAMASTE_USERS_FILE_SETTINGS.refresh_interval &&
-    disabled('password_change') &&
-    disabled('password_reset')
+    change?.disable === true &&
+    resetHeld
   );
 }
 
@@ -841,6 +888,15 @@ export interface AutheliaDomain {
   readonly groupKey: string;
 }
 
+/**
+ * The factor Authelia's `access_control` asks of a domain's people on its
+ * hosts — a member on any host, an external member on the hosts granted
+ * them. A native client of a host asks the same at sign-in
+ * ({@link renderNativeClientPolicies}): a bearer token is never a weaker
+ * way onto a host than a browser session (native-apps-design.md R4).
+ */
+export const HOST_ACCESS_FACTOR = 'two_factor';
+
 /** What the relay's domains need from Authelia's configuration. */
 export interface DomainAccess {
   /** The active domains. */
@@ -883,6 +939,121 @@ export async function updateDomainAccess(
     config.session = session;
     config.access_control = accessControl;
   }, exec);
+  return { changed: true };
+}
+
+// ---------------------------------------------------------------------------
+// Mail: the notifier and the reset link (packages/core/docs/mail-design.md §5)
+// ---------------------------------------------------------------------------
+
+/**
+ * The listener's local CA certificate, the only file of the directory
+ * Authelia appends to its trust (`certificates_directory`): 0640
+ * `lamaste:lamaste-authelia`, written by the panel.
+ */
+export const AUTHELIA_CERTS_DIR = path.join(AUTHELIA_CONFIG_DIR, 'certs');
+
+/** The name the listener's certificate is issued for, and Authelia checks. */
+export const MAIL_SUBMISSION_SERVER_NAME = 'lamaste-mail.localhost';
+
+/** The one account the listener admits. */
+export const MAIL_SUBMISSION_USERNAME = 'authelia';
+
+/** Where Authelia writes its mail while the relay has no transport. */
+export const AUTHELIA_NOTIFICATIONS_FILE = path.join(AUTHELIA_CONFIG_DIR, 'notifications.txt');
+
+/** What Authelia's mail needs from the relay. */
+export interface AutheliaMailSettings {
+  /** The relay-wide sender; null: no relay transport — the file notifier. */
+  readonly sender: MailSender | null;
+  /**
+   * The primary domain's `https://auth.<domain>/reset` while some
+   * transport can send (each portal's index is rewritten to its own,
+   * `autheliaIndexMailFilters`); null: Authelia's reset disabled.
+   */
+  readonly resetUrl: string | null;
+}
+
+/**
+ * `notifier`: SMTP to Lamaste's loopback listener with the relay-wide
+ * sender, or the file Authelia writes today when there is none. The
+ * startup check is off: a panel that is down while Authelia starts must
+ * not stop every sign-in. Implicit TLS (`submissions://`), the listener's
+ * name checked against its local CA, AUTH with the password pulled in by
+ * template. Pure.
+ */
+export function renderAutheliaNotifier(sender: MailSender | null): Record<string, unknown> {
+  if (sender === null) return { filesystem: { filename: AUTHELIA_NOTIFICATIONS_FILE } };
+  return {
+    disable_startup_check: true,
+    smtp: {
+      address: `submissions://127.0.0.1:${MAIL_SUBMISSION_PORT}`,
+      tls: { server_name: MAIL_SUBMISSION_SERVER_NAME },
+      username: MAIL_SUBMISSION_USERNAME,
+      password: MAIL_PASSWORD_TEMPLATE_SENTINEL,
+      sender: formatMailbox(sender),
+      subject: '{title}',
+    },
+  };
+}
+
+/**
+ * Apply `settings` to a configuration: the notifier, the CA directory
+ * (only while Authelia submits to the listener) and the reset link.
+ * `resetUrl` must be one of the configuration's {@link relayResetUrls}.
+ * Mutates `config`.
+ */
+export function applyAutheliaMail(
+  config: Record<string, unknown>,
+  settings: AutheliaMailSettings,
+): void {
+  if (settings.resetUrl !== null && !relayResetUrls(config).includes(settings.resetUrl)) {
+    throw new Error(`'${settings.resetUrl}' is no reset page of this relay`);
+  }
+  config.notifier = renderAutheliaNotifier(settings.sender);
+  if (settings.sender === null) delete config.certificates_directory;
+  else config.certificates_directory = AUTHELIA_CERTS_DIR;
+  const backend = config.authentication_backend as Record<string, unknown> | undefined;
+  if (backend?.file) {
+    backend.password_reset =
+      settings.resetUrl === null ? { disable: true } : { custom_url: settings.resetUrl };
+  }
+}
+
+/** Whether a configuration already says what {@link applyAutheliaMail} would make it say. */
+export function autheliaMailMatches(
+  config: Record<string, unknown>,
+  settings: AutheliaMailSettings,
+): boolean {
+  const desired = structuredClone(config);
+  applyAutheliaMail(desired, settings);
+  return (
+    sameConfig(config.notifier, desired.notifier) &&
+    sameConfig(config.certificates_directory, desired.certificates_directory) &&
+    sameConfig(
+      (config.authentication_backend as Record<string, unknown> | undefined)?.password_reset,
+      (desired.authentication_backend as Record<string, unknown> | undefined)?.password_reset,
+    )
+  );
+}
+
+/**
+ * Bring Authelia's mail in line with the relay's: rewrites and restarts
+ * Authelia ({@link rewriteAutheliaConfig}) only when the notifier, the CA
+ * directory or the reset link differ from what the file holds; returns
+ * whether it did. The listener's CA certificate and password file must be
+ * in place before a sender is given (the panel writes them first).
+ */
+export async function updateAutheliaMail(
+  settings: AutheliaMailSettings,
+  exec: ExecFn,
+  options: AutheliaRewriteOptions = {},
+): Promise<{ changed: boolean }> {
+  const current = await loadAutheliaConfigFile(options.configPath).catch(() => null);
+  if (current && usersFileWatched(current) && autheliaMailMatches(current, settings)) {
+    return { changed: false };
+  }
+  await rewriteAutheliaConfig((config) => applyAutheliaMail(config, settings), exec, options);
   return { changed: true };
 }
 
@@ -1110,10 +1281,10 @@ export function renderGroupAccessControl(
     const member = `group:${memberGroup(groupKey)}`;
     const external = `group:${externalGroup(groupKey)}`;
     rules.push({ domain: [`auth.${name}`], policy: 'two_factor', subject: [member, external] });
-    rules.push({ domain: hosts, policy: 'two_factor', subject: [member] });
+    rules.push({ domain: hosts, policy: HOST_ACCESS_FACTOR, subject: [member] });
     rules.push({
       domain_regex: [externalHostRegex(name)],
-      policy: 'two_factor',
+      policy: HOST_ACCESS_FACTOR,
       subject: [external],
     });
     rules.push({ domain: hosts, policy: 'deny' });
@@ -1170,23 +1341,72 @@ export function oidcIssuerKeyTemplateLine(indent: number): string {
   return `${' '.repeat(indent)}key: {{ secret "${AUTHELIA_OIDC_KEY}" | mindent ${indent + 2} "|" | msquote }}`;
 }
 
-const OIDC_KEY_TEMPLATE_LINE_RE =
-  /^( *)key: \{\{ secret "[^"]+" \| mindent \d+ "\|" \| msquote \}\}\s*$/;
-const OIDC_KEY_SENTINEL_LINE_RE = new RegExp(`^( *)key: '?${OIDC_KEY_TEMPLATE_SENTINEL}'?\\s*$`);
+/**
+ * The password Authelia submits its mail to Lamaste's listener with
+ * (§5 of packages/core/docs/mail-design.md): 0640
+ * `lamaste:lamaste-authelia`, written by the panel, pulled in with
+ * `{{ secret "<path>" }}` so the configuration never carries it.
+ */
+export const AUTHELIA_MAIL_PASSWORD_FILE = path.join(
+  AUTHELIA_CONFIG_DIR,
+  'mail-submission-password',
+);
+
+/** What `notifier.smtp.password` carries between reading and writing (as {@link OIDC_KEY_TEMPLATE_SENTINEL}). */
+export const MAIL_PASSWORD_TEMPLATE_SENTINEL = '__LAMASTE_MAIL_SUBMISSION_PASSWORD__';
+
+/** The template line Authelia reads the submission password with; `indent` is the column of `password:`. */
+export function mailPasswordTemplateLine(indent: number): string {
+  return `${' '.repeat(indent)}password: {{ secret "${AUTHELIA_MAIL_PASSWORD_FILE}" | msquote }}`;
+}
+
+/**
+ * Every line of the file that is a template expression: how it reads on
+ * disk, how its sentinel reads in YAML, and how it is written back. A
+ * sentinel is a plain YAML scalar, so js-yaml can parse the file and dump
+ * it again; nothing else in the file may hold `{{` or `}}`.
+ */
+const TEMPLATE_LINES: ReadonlyArray<{
+  readonly key: string;
+  readonly sentinel: string;
+  readonly template: RegExp;
+  readonly render: (indent: number) => string;
+}> = [
+  {
+    key: 'key',
+    sentinel: OIDC_KEY_TEMPLATE_SENTINEL,
+    template: /^( *)key: \{\{ secret "[^"]+" \| mindent \d+ "\|" \| msquote \}\}\s*$/,
+    render: oidcIssuerKeyTemplateLine,
+  },
+  {
+    key: 'password',
+    sentinel: MAIL_PASSWORD_TEMPLATE_SENTINEL,
+    template: /^( *)password: \{\{ secret "[^"]+" \| msquote \}\}\s*$/,
+    render: mailPasswordTemplateLine,
+  },
+];
+
+const SENTINEL_LINES = TEMPLATE_LINES.map((line) => ({
+  ...line,
+  sentinelLine: new RegExp(`^( *)${line.key}: '?${line.sentinel}'?\\s*$`),
+}));
 
 /** Configuration text as stored → text js-yaml can parse. Pure. */
 export function sentinelizeAutheliaConfig(text: string): string {
   return text
     .split('\n')
     .map((line) => {
-      const m = OIDC_KEY_TEMPLATE_LINE_RE.exec(line);
-      return m ? `${m[1] ?? ''}key: ${OIDC_KEY_TEMPLATE_SENTINEL}` : line;
+      for (const t of TEMPLATE_LINES) {
+        const m = t.template.exec(line);
+        if (m) return `${m[1] ?? ''}${t.key}: ${t.sentinel}`;
+      }
+      return line;
     })
     .join('\n');
 }
 
 /**
- * Rendered YAML (sentinel inside) → the text Authelia reads. Refuses a
+ * Rendered YAML (sentinels inside) → the text Authelia reads. Refuses a
  * document containing `{{` or `}}` anywhere: with the template filter on,
  * such a value would be executed, not stored. Pure.
  */
@@ -1199,8 +1419,11 @@ export function renderAutheliaConfigTemplate(yamlText: string): string {
   return yamlText
     .split('\n')
     .map((line) => {
-      const m = OIDC_KEY_SENTINEL_LINE_RE.exec(line);
-      return m ? oidcIssuerKeyTemplateLine((m[1] ?? '').length) : line;
+      for (const t of SENTINEL_LINES) {
+        const m = t.sentinelLine.exec(line);
+        if (m) return t.render((m[1] ?? '').length);
+      }
+      return line;
     })
     .join('\n');
 }
@@ -1242,6 +1465,30 @@ export interface OidcProviderOptions {
   /** Required for every confidential client in the list. */
   secretDigests?: OidcClientSecretDigests;
   scopes?: OidcScopeDefinitions;
+  /**
+   * The native clients to serve (native-apps-design.md D2) — those of
+   * enabled clients on active domains: the caller filters, as it filters
+   * plugin clients.
+   */
+  nativeClients?: readonly AutheliaNativeClient[];
+}
+
+/**
+ * A native client as Authelia is told of it: its id, the name its consent
+ * screen shows, its application host and that host's domain, its redirect
+ * paths on the host, and its lifetimes (native-apps-design.md D2).
+ */
+export interface AutheliaNativeClient {
+  readonly clientId: string;
+  readonly name: string;
+  /** The application host's hostname (lower case). */
+  readonly fqdn: string;
+  /** The domain the host lies under. */
+  readonly domain: string;
+  readonly redirectPaths: readonly string[];
+  readonly accessTokenMinutes: number;
+  /** The refresh token's lifetime at Authelia — renewed at every rotation, so the idle lifetime. */
+  readonly idleDays: number;
 }
 
 /**
@@ -1398,6 +1645,130 @@ export function renderOidcClientPolicies(
 }
 
 /**
+ * The `clients[]` entry of a native client: a public client with PKCE
+ * `S256` required, the authorization code and refresh token grants,
+ * `openid offline_access profile`, RS256 JWT access tokens carrying
+ * `preferred_username` (its claims policy, named after it), its host's
+ * audience granted without being asked for, explicit consent (Authelia asks
+ * anyway for `offline_access`), its redirect URIs on its host, its own
+ * lifespan and its own authorization policy — both named
+ * {@link oidcClientPolicyName}. Throws on anything malformed. Pure.
+ */
+export function renderNativeClient(client: AutheliaNativeClient): Record<string, unknown> {
+  assertNativeClient(client);
+  const policy = oidcClientPolicyName(client.clientId);
+  return {
+    client_id: client.clientId,
+    client_name: client.name,
+    public: true,
+    authorization_policy: policy,
+    consent_mode: 'explicit',
+    lifespan: policy,
+    require_pkce: true,
+    pkce_challenge_method: 'S256',
+    redirect_uris: nativeRedirectUris(client.fqdn, client.redirectPaths),
+    scopes: [...NATIVE_CLIENT_SCOPES],
+    grant_types: [...NATIVE_CLIENT_GRANT_TYPES],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+    access_token_signed_response_alg: 'RS256',
+    requested_audience_mode: 'implicit',
+    audience: [nativeAudience(client.fqdn)],
+    claims_policy: client.clientId,
+  };
+}
+
+function assertNativeClient(client: AutheliaNativeClient): void {
+  if (!isNativeClientId(client.clientId)) throw new Error('Not a native client id');
+  assertDomainName(client.domain);
+  const fqdn = client.fqdn.toLowerCase();
+  if (domainOfHost(fqdn, [client.domain]) !== client.domain || fqdn === client.domain) {
+    throw new Error(`Native client "${client.clientId}" has a host outside its domain`);
+  }
+  if (
+    typeof client.name !== 'string' ||
+    client.name.length === 0 ||
+    client.redirectPaths.length === 0 ||
+    !client.redirectPaths.every(isNativeRedirectPath)
+  ) {
+    throw new Error(`Native client "${client.clientId}" is malformed`);
+  }
+  const minutes = client.accessTokenMinutes;
+  const days = client.idleDays;
+  if (
+    !Number.isInteger(minutes) ||
+    minutes < NATIVE_ACCESS_TOKEN_MINUTES.min ||
+    minutes > NATIVE_ACCESS_TOKEN_MINUTES.max ||
+    !Number.isInteger(days) ||
+    days < NATIVE_LIFETIME_DAYS.min ||
+    days > NATIVE_LIFETIME_DAYS.max
+  ) {
+    throw new Error(`Native client "${client.clientId}" has lifetimes out of range`);
+  }
+}
+
+/**
+ * The lifespan of each native client, named as its policy: access and ID
+ * tokens of its minutes, refresh tokens of its idle days (Authelia renews
+ * a refresh token's lifetime at every rotation and has no absolute one —
+ * the broker keeps that). Pure.
+ */
+export function renderNativeClientLifespans(
+  clients: readonly AutheliaNativeClient[],
+): Record<string, { access_token: string; id_token: string; refresh_token: string }> {
+  const lifespans: Record<
+    string,
+    { access_token: string; id_token: string; refresh_token: string }
+  > = {};
+  for (const client of clients) {
+    assertNativeClient(client);
+    const minutes = `${client.accessTokenMinutes} minutes`;
+    lifespans[oidcClientPolicyName(client.clientId)] = {
+      access_token: minutes,
+      id_token: minutes,
+      refresh_token: `${client.idleDays} days`,
+    };
+  }
+  return lifespans;
+}
+
+/**
+ * One authorization policy per native client: the members of its host's
+ * domain, and the external members granted its host (the host group,
+ * `group:<fqdn>`, which only external members granted an enabled restricted
+ * host hold) — with {@link HOST_ACCESS_FACTOR}, the factor a browser
+ * session needs on the host; everyone else refused. Authelia applies it on
+ * every authorization request, never on a refresh (the broker checks the
+ * person's standing there). Every client's domain must be one of
+ * `domains`. Pure.
+ */
+export function renderNativeClientPolicies(
+  clients: readonly AutheliaNativeClient[],
+  domains: readonly AutheliaDomain[],
+): Record<string, { default_policy: 'deny'; rules: AutheliaRule[] }> {
+  const keys = new Map(domains.map((d) => [d.name, d.groupKey]));
+  const policies: Record<string, { default_policy: 'deny'; rules: AutheliaRule[] }> = {};
+  for (const client of clients) {
+    assertNativeClient(client);
+    const key = keys.get(client.domain);
+    if (key === undefined) {
+      throw new Error(`Native client "${client.clientId}" belongs to no domain of this relay`);
+    }
+    policies[oidcClientPolicyName(client.clientId)] = {
+      default_policy: 'deny',
+      rules: [
+        { policy: HOST_ACCESS_FACTOR, subject: [`group:${memberGroup(key)}`] },
+        {
+          policy: HOST_ACCESS_FACTOR,
+          subject: [[`group:${externalGroup(key)}`, `group:${client.fqdn.toLowerCase()}`]],
+        },
+      ],
+    };
+  }
+  return policies;
+}
+
+/**
  * The whole `identity_providers.oidc` section, with the sentinel for the
  * key, and one authorization policy per user-facing client
  * ({@link renderOidcClientPolicies}). Every client's domain must be one of
@@ -1416,7 +1787,25 @@ export function buildOidcProviderSection(
       `OIDC client "${stray.id}" belongs to '${stray.domain}', no domain of this relay`,
     );
   }
+  const natives = options.nativeClients ?? [];
+  const strayNative = natives.find((c) => !known.has(c.domain));
+  if (strayNative) {
+    throw new Error(
+      `Native client "${strayNative.clientId}" belongs to '${strayNative.domain}', no domain of this relay`,
+    );
+  }
+  const ids = new Set<string>();
+  for (const id of [...clients.map((c) => c.id), ...natives.map((c) => c.clientId)]) {
+    if (ids.has(id)) throw new Error(`OIDC client "${id}" is rendered twice`);
+    ids.add(id);
+  }
   const digests = options.secretDigests ?? {};
+  const customLifespans: Record<string, Record<string, string>> = {
+    ...(clients.some(isUserFacingClient)
+      ? { [OIDC_USER_LIFESPAN]: { ...OIDC_USER_LIFESPAN_TOKENS } }
+      : {}),
+    ...renderNativeClientLifespans(natives),
+  };
   const section: Record<string, unknown> = {
     hmac_secret: hmacSecret,
     jwks: [
@@ -1429,23 +1818,32 @@ export function buildOidcProviderSection(
     ],
     lifespans: {
       device_code: '10 minutes',
-      ...(clients.some(isUserFacingClient)
-        ? { custom: { [OIDC_USER_LIFESPAN]: { ...OIDC_USER_LIFESPAN_TOKENS } } }
-        : {}),
+      ...(Object.keys(customLifespans).length > 0 ? { custom: customLifespans } : {}),
     },
   };
-  const policies = renderOidcClaimsPolicies(clients);
+  const policies: Record<string, { access_token: string[] }> = {
+    ...renderOidcClaimsPolicies(clients),
+    ...Object.fromEntries(
+      natives.map((c) => [c.clientId, { access_token: ['preferred_username'] }]),
+    ),
+  };
   if (Object.keys(policies).length > 0) section.claims_policies = policies;
   if (options.scopes && Object.keys(options.scopes).length > 0) {
     section.scopes = Object.fromEntries(
       Object.entries(options.scopes).map(([name, def]) => [name, { claims: [...def.claims] }]),
     );
   }
-  const authorizationPolicies = renderOidcClientPolicies(clients, domains);
+  const authorizationPolicies = {
+    ...renderOidcClientPolicies(clients, domains),
+    ...renderNativeClientPolicies(natives, domains),
+  };
   if (Object.keys(authorizationPolicies).length > 0) {
     section.authorization_policies = authorizationPolicies;
   }
-  section.clients = clients.map((c) => renderOidcClient(c, digests[c.id]));
+  section.clients = [
+    ...clients.map((c) => renderOidcClient(c, digests[c.id])),
+    ...natives.map(renderNativeClient),
+  ];
   return section;
 }
 
@@ -1502,7 +1900,7 @@ export async function updateOidcProvider(
 ): Promise<{ changed: boolean; clients: number }> {
   const current = await readCurrentOidcSection();
 
-  if (clients.length === 0) {
+  if (clients.length === 0 && (options.nativeClients ?? []).length === 0) {
     if (current === null) return { changed: false, clients: 0 };
     await rewriteAutheliaConfig((config) => {
       const ip = config.identity_providers as Record<string, unknown> | undefined;
@@ -1517,14 +1915,15 @@ export async function updateOidcProvider(
   if (!(await isOidcIssuerKeyProvisioned())) {
     throw new Error(
       `${AUTHELIA_OIDC_KEY} is missing — the OIDC issuer key is provisioned by create-lamaste; ` +
-        'run the installer again (npx @lamalibre/create-lamaste, redeploy) to create it',
+        `run the installer again (sudo npx --yes ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/create-lamaste, redeploy) to create it`,
     );
   }
 
   const hmacSecret = await ensureOidcHmacSecret();
   const desired = buildOidcProviderSection(domains, hmacSecret, clients, options);
+  const served = clients.length + (options.nativeClients ?? []).length;
   if (current !== null && sameConfig(current, desired)) {
-    return { changed: false, clients: clients.length };
+    return { changed: false, clients: served };
   }
 
   await rewriteAutheliaConfig((config) => {
@@ -1532,7 +1931,7 @@ export async function updateOidcProvider(
     ip.oidc = desired;
     config.identity_providers = ip;
   }, exec);
-  return { changed: true, clients: clients.length };
+  return { changed: true, clients: served };
 }
 
 // ---------------------------------------------------------------------------

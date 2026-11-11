@@ -202,6 +202,8 @@ test('identityDiff: roles and attributes added and removed, labels changed; what
     labelsChanged: ['manager', 'viewer'],
     invitesAdded: [],
     invitesRemoved: [],
+    signInEventsAdded: false,
+    signInEventsRemoved: false,
   });
   assert.equal(identityChangeNeedsApproval(narrowed), false);
 
@@ -240,6 +242,8 @@ test('identityDiff: roles and attributes added and removed, labels changed; what
     labelsChanged: [],
     invitesAdded: [],
     invitesRemoved: [],
+    signInEventsAdded: false,
+    signInEventsRemoved: false,
   });
 });
 

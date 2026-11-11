@@ -38,6 +38,7 @@ import {
   AgentTokenBroker,
   RegistryCredentialError,
   LAMASTE_SERVER_OIDC_CLIENT_ID,
+  lamalibreRegistryNpmEnv,
 } from '@lamalibre/lamaste/server';
 
 import { effectiveTrustedScopes } from '@lamalibre/lamaste';
@@ -143,7 +144,9 @@ async function serviceToken(config) {
  * registry: with a credential, `env` names an isolated userconfig (0600,
  * removed afterwards) routing the credential's scope to its registry with
  * the panel's service token; a `401` refreshes the token once and retries.
- * Without a credential `fn({})` runs npm as the machine configures it.
+ * Without a credential `fn` runs npm as the machine configures it, except
+ * that `@lamalibre` is routed (`npm_config_@lamalibre:registry`) to the
+ * hosted Feria or the registry npm's configuration names for it.
  * A credential file that cannot be read fails the call rather than
  * silently installing from the public registry.
  *
@@ -154,7 +157,10 @@ async function serviceToken(config) {
  */
 export async function withRegistryUserconfig(fn, options = {}) {
   const config = await readRegistryCredentialConfig();
-  if (!config) return fn({});
+  // No credential: npm as the machine configures it, with @lamalibre routed
+  // to the registry Lamaste installs itself from (the hosted Feria unless
+  // npm's configuration names another) — never npm's default registry.
+  if (!config) return fn(await lamalibreRegistryNpmEnv());
   const deps = await oidcDeps(config);
   return withRegistryUserconfigCore(
     config,
@@ -188,7 +194,8 @@ export async function acquireAgentToken(agentLabel) {
 
 /**
  * Revoke a user's registry tokens after their `feria-*` groups changed or
- * they were offboarded (`{ deleted: true }`: disabled or removed). Returns
+ * they were offboarded (`{ deleted: true }`: disabled or removed — or their
+ * password changed, whose session-ending part is the same). Returns
  * the number revoked, or `null` when nothing needed doing (no credential
  * configured, or no feria group lost). The registry knows the user by
  * username (`user:<username>`); the log line names them by `userId` alone.

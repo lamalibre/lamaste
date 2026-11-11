@@ -19,6 +19,7 @@ import { AppError } from '../../lib/app-error.js';
 import { webSurfaceServing } from '../../lib/web-surface.js';
 import { getConfig } from '../../lib/config.js';
 import { readSites, writeSites, readTunnels, withSitesLock } from '../../lib/state.js';
+import { mailSenderHostnames } from '../../lib/mail.js';
 import { writeStaticSiteVhost, removeStaticSiteVhost } from '../../lib/nginx.js';
 import {
   activeDomainNames,
@@ -160,6 +161,7 @@ function siteErrorStatus(code) {
     case 'ALIAS_IN_USE':
     case 'DNS_MISMATCH':
     case 'NOT_UNDER_DOMAIN':
+    case 'MAIL_SENDER_HOST':
       return 400;
     case 'NOT_FOUND':
       return 404;
@@ -339,6 +341,7 @@ export default async function sitesRoutes(fastify, _opts) {
             domain: await siteDomain(body.domain),
             domains: await activeDomainNames(),
             relayDomains: await domainNames(),
+            mailSenderDomains: await mailSenderHostnames(),
             email: config.email,
             nginx: nginxDeps,
             certbot: certbotDeps,
@@ -357,6 +360,7 @@ export default async function sitesRoutes(fastify, _opts) {
           const status = siteErrorStatus(err.code);
           return reply.code(status).send({
             error: 'Failed to create site',
+            code: err.code,
             details: err.message,
           });
         }
@@ -395,6 +399,7 @@ export default async function sitesRoutes(fastify, _opts) {
           const status = siteErrorStatus(err.code);
           return reply.code(status).send({
             error: 'Failed to delete site',
+            code: err.code,
             details: err.message,
           });
         }
@@ -430,6 +435,7 @@ export default async function sitesRoutes(fastify, _opts) {
             aliases: body.aliases,
             domains: await activeDomainNames(),
             relayDomains: await domainNames(),
+            mailSenderDomains: await mailSenderHostnames(),
             email: config.email,
             serverIp: config.ip,
             nginx: nginxDeps,
@@ -448,11 +454,13 @@ export default async function sitesRoutes(fastify, _opts) {
           if (err.code === 'AUTHELIA_FAILED') {
             return reply.code(500).send({
               error: 'Site saved but Authelia configuration failed',
+              code: err.code,
               details: err.message,
             });
           }
           return reply.code(status).send({
             error: 'Failed to update site configuration',
+            code: err.code,
             details: err.message,
           });
         }
@@ -499,6 +507,7 @@ export default async function sitesRoutes(fastify, _opts) {
           const status = siteErrorStatus(err.code);
           return reply.code(status).send({
             error: err.message,
+            code: err.code,
           });
         }
         if (err instanceof AppError) throw err;

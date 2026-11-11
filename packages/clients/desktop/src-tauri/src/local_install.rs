@@ -96,7 +96,10 @@ fn create_lamaste_cli_path() -> Result<PathBuf, String> {
         }
     }
 
-    Err("create-lamaste not found. Install it with: npm install -g @lamalibre/create-lamaste".to_string())
+    Err(format!(
+        "create-lamaste not found. Install it with: npm install -g {} @lamalibre/create-lamaste",
+        crate::branding::lamalibre_registry_arg(crate::branding::LAMALIBRE_REGISTRY_URL)
+    ))
 }
 
 /// Validate that a path from NDJSON output is within the allowed PKI directory.

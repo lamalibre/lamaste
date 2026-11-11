@@ -84,16 +84,25 @@ export interface IdentityChangesSealContext {
   readonly envelope: IdentityChangesEnvelope;
 }
 
-function checkContext(ctx: IdentityChangesSealContext): void {
-  if (typeof ctx.secret !== 'string' || !HOSTING_SECRET_RE.test(ctx.secret)) {
+/**
+ * Check the parties sealed data is bound to: an installation secret (64 hex
+ * characters), a caller assertion's nonce (32 hex characters) and a plugin.
+ * Throws, naming no value.
+ */
+export function checkSealParties(secret: unknown, plugin: unknown, nonce: unknown): void {
+  if (typeof secret !== 'string' || !HOSTING_SECRET_RE.test(secret)) {
     throw new Error('Invalid installation secret format');
   }
-  if (typeof ctx.nonce !== 'string' || !NONCE_RE.test(ctx.nonce)) {
+  if (typeof nonce !== 'string' || !NONCE_RE.test(nonce)) {
     throw new Error('Invalid caller assertion nonce');
   }
-  if (typeof ctx.plugin !== 'string' || ctx.plugin.length === 0) {
-    throw new Error('Sealed identity changes name their plugin');
+  if (typeof plugin !== 'string' || plugin.length === 0) {
+    throw new Error('Sealed data names its plugin');
   }
+}
+
+function checkContext(ctx: IdentityChangesSealContext): void {
+  checkSealParties(ctx.secret, ctx.plugin, ctx.nonce);
   const e = ctx.envelope;
   if (
     typeof e !== 'object' ||
@@ -110,12 +119,12 @@ function checkContext(ctx: IdentityChangesSealContext): void {
   }
 }
 
-function derivedKey(secret: string, plugin: string): Buffer {
+function derivedKey(secret: string, plugin: string, salt: Buffer): Buffer {
   return Buffer.from(
     crypto.hkdfSync(
       'sha256',
       Buffer.from(secret, 'hex'),
-      HKDF_SALT,
+      salt,
       Buffer.from(plugin, 'utf-8'),
       KEY_BYTES,
     ),
@@ -153,15 +162,36 @@ export function sealIdentityChanges(
 ): SealedIdentityChanges {
   checkContext(input);
   if (!Array.isArray(input.changes)) throw new Error('Identity changes are a list');
+  return sealPluginJson(
+    input.secret,
+    input.plugin,
+    HKDF_SALT,
+    additionalData(input),
+    input.changes,
+  );
+}
+
+/**
+ * Seal `value` (as JSON) for one plugin under a key derived from the
+ * installation secret with `salt` (one salt per kind of sealed data, so a
+ * value sealed for one never opens as another), with `aad` as additional
+ * data. The construction of {@link sealIdentityChanges}, shared with the
+ * other data Lamaste seals for an agent half (`sign-in-events.ts`). The
+ * caller checks the secret's format.
+ */
+export function sealPluginJson(
+  secret: string,
+  plugin: string,
+  salt: Buffer,
+  aad: Buffer,
+  value: unknown,
+): SealedIdentityChanges {
   const iv = crypto.randomBytes(IV_BYTES);
-  const cipher = crypto.createCipheriv('aes-256-gcm', derivedKey(input.secret, input.plugin), iv, {
+  const cipher = crypto.createCipheriv('aes-256-gcm', derivedKey(secret, plugin, salt), iv, {
     authTagLength: TAG_BYTES,
   });
-  cipher.setAAD(additionalData(input));
-  const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify(input.changes), 'utf-8'),
-    cipher.final(),
-  ]);
+  cipher.setAAD(aad);
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(value), 'utf-8'), cipher.final()]);
   return {
     v: IDENTITY_CHANGES_SEAL_VERSION,
     iv: iv.toString('base64url'),
@@ -197,20 +227,41 @@ export function openIdentityChanges(
   input: IdentityChangesSealContext & { readonly sealed: SealedIdentityChanges },
 ): unknown {
   checkContext(input);
-  const failed = (): Error => new Error('The identity changes could not be opened');
-  const sealed = parseSealedIdentityChanges(input.sealed);
+  return openPluginJson(
+    input.secret,
+    input.plugin,
+    HKDF_SALT,
+    additionalData(input),
+    input.sealed,
+    'The identity changes could not be opened',
+  );
+}
+
+/**
+ * Open what {@link sealPluginJson} sealed: the parsed JSON. Throws `failure`
+ * — never the value, the key material or the ciphertext — when it was
+ * sealed under another secret, plugin, salt or additional data, was
+ * altered, or is not JSON.
+ */
+export function openPluginJson(
+  secret: string,
+  plugin: string,
+  salt: Buffer,
+  aad: Buffer,
+  sealedRaw: SealedIdentityChanges,
+  failure: string,
+): unknown {
+  const failed = (): Error => new Error(failure);
+  const sealed = parseSealedIdentityChanges(sealedRaw);
   const iv = sealed ? base64urlBytes(sealed.iv) : null;
   const ct = sealed ? base64urlBytes(sealed.ct) : null;
   if (!iv || !ct) throw failed();
   let plain: Buffer;
   try {
-    const decipher = crypto.createDecipheriv(
-      'aes-256-gcm',
-      derivedKey(input.secret, input.plugin),
-      iv,
-      { authTagLength: TAG_BYTES },
-    );
-    decipher.setAAD(additionalData(input));
+    const decipher = crypto.createDecipheriv('aes-256-gcm', derivedKey(secret, plugin, salt), iv, {
+      authTagLength: TAG_BYTES,
+    });
+    decipher.setAAD(aad);
     decipher.setAuthTag(ct.subarray(ct.length - TAG_BYTES));
     plain = Buffer.concat([
       decipher.update(ct.subarray(0, ct.length - TAG_BYTES)),

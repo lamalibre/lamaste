@@ -23,7 +23,8 @@ import crypto from 'node:crypto';
 
 import { AUTH_PAGE_DARK_PALETTE, AUTH_PAGE_DEFAULT_ACCENT } from '../auth-branding.js';
 import type { AuthPagePalette, BrandTheme } from '../auth-branding.js';
-import { escapeHtml, isPageLanguage, pageMessagesJson } from '../page-messages.js';
+import { AUTH_ACCOUNT_PASSWORD_PATH } from '../account.js';
+import { escapeHtml, isPageLanguage, pageMessage, pageMessagesJson } from '../page-messages.js';
 import type { PageLanguage } from '../page-messages.js';
 
 /** What the pages take from a domain's brand. */
@@ -60,7 +61,8 @@ export const AUTH_PAGE_STYLE = `
     body {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       background: ${v('background')}; color: ${v('text')};
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
       padding: 1.5rem;
     }
     .card {
@@ -151,6 +153,9 @@ export const AUTH_PAGE_STYLE = `
     #bounds { margin-bottom: 1rem; }
     #result:not(:empty) { margin-top: 1rem; }
     .back { display: inline-block; margin-top: 1.5rem; font-size: 0.8125rem; color: ${v('accent')}; }
+    .page-links { margin-top: 1rem; font-size: 0.75rem; }
+    .page-links a { color: ${v('muted')}; }
+    .page-links a:hover { color: ${v('heading')}; }
   `;
 
 /** The id of a page's data block, which its script reads. */
@@ -169,10 +174,68 @@ export function authPageShell(opts: {
   readonly loading: string;
   readonly messages: Readonly<Record<string, string>>;
   readonly script: string;
+  /** The "Change password" link under the card (default: shown; off on that page itself). */
+  readonly accountLink?: boolean;
 }): string {
-  const { brand } = opts;
-  if (!isPageLanguage(opts.language)) throw new Error('A page is rendered in a page language');
-  const title = `${escapeHtml(brand === null ? 'Lamaste' : brand.name)} — ${escapeHtml(opts.title)}`;
+  return pageDocument(
+    opts.brand,
+    opts.language,
+    opts.title,
+    `
+    <div id="app">
+      <div class="loading">
+        <div class="spinner"></div>
+        ${escapeHtml(opts.loading)}
+      </div>
+    </div>
+  </div>${opts.accountLink === false ? '' : accountLinkFooter(opts.language)}
+  <script type="application/json" id="${AUTH_PAGE_MESSAGES_ID}">${pageMessagesJson(opts.language, opts.messages)}</script>
+  <script>${opts.script}</script>`,
+  );
+}
+
+/**
+ * A page without a script ({@link authPageStaticHeaders}): the same shell
+ * around `content`, markup the caller has escaped.
+ */
+export function authPageStaticShell(opts: {
+  readonly brand: InviteBrand | null;
+  readonly language: PageLanguage;
+  readonly title: string;
+  readonly content: string;
+}): string {
+  return pageDocument(
+    opts.brand,
+    opts.language,
+    opts.title,
+    `
+    <div id="app">${opts.content}
+    </div>
+  </div>`,
+  );
+}
+
+/**
+ * The "Change password" link under a page's card
+ * (packages/core/docs/mail-design.md §6.3, Q3): a plain link — no script —
+ * to the auth host's own change-password page.
+ */
+function accountLinkFooter(language: PageLanguage): string {
+  return `
+  <nav class="page-links"><a href="${AUTH_ACCOUNT_PASSWORD_PATH}">${escapeHtml(
+    pageMessage(language, 'account.changePasswordLink'),
+  )}</a></nav>`;
+}
+
+/** The document around a page's body: `lang`, the title, the brand's header and stylesheet link. */
+function pageDocument(
+  brand: InviteBrand | null,
+  language: PageLanguage,
+  pageTitle: string,
+  body: string,
+): string {
+  if (!isPageLanguage(language)) throw new Error('A page is rendered in a page language');
+  const title = `${escapeHtml(brand === null ? 'Lamaste' : brand.name)} — ${escapeHtml(pageTitle)}`;
   const brandCss =
     brand === null ? '' : `\n  <link rel="stylesheet" href="${AUTH_PAGE_BRAND_CSS_PATH}">`;
   const header =
@@ -193,7 +256,7 @@ export function authPageShell(opts: {
       }
     </header>`;
   return `<!DOCTYPE html>
-<html lang="${opts.language}">
+<html lang="${language}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -201,16 +264,7 @@ export function authPageShell(opts: {
   <style>${AUTH_PAGE_STYLE}</style>${brandCss}
 </head>
 <body>
-  <div class="card">${header}
-    <div id="app">
-      <div class="loading">
-        <div class="spinner"></div>
-        ${escapeHtml(opts.loading)}
-      </div>
-    </div>
-  </div>
-  <script type="application/json" id="${AUTH_PAGE_MESSAGES_ID}">${pageMessagesJson(opts.language, opts.messages)}</script>
-  <script>${opts.script}</script>
+  <div class="card">${header}${body}
 </body>
 </html>
 `;
@@ -312,6 +366,28 @@ export function authPageHeaders(script: string): Readonly<Record<string, string>
     'Cross-Origin-Opener-Policy': 'same-origin',
     // `no-referrer` would make a same-origin fetch POST send `Origin: null`.
     'Referrer-Policy': 'same-origin',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+}
+
+/**
+ * The headers of a page without a script: the shared style by hash, the
+ * brand's stylesheet and logo from the page's own host, nothing else.
+ */
+export function authPageStaticHeaders(): Readonly<Record<string, string>> {
+  const csp = [
+    "default-src 'none'",
+    `style-src 'self' ${cspHashSource(AUTH_PAGE_STYLE)}`,
+    "img-src 'self'",
+    "frame-ancestors 'none'",
+    "form-action 'none'",
+    "base-uri 'none'",
+  ].join('; ');
+  return Object.freeze({
+    'Content-Security-Policy': csp,
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
   });

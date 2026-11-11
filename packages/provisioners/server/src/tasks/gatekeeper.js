@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { generateGatekeeperServiceUnit } from '../lib/service-config.js';
 import { lookupId } from '../lib/accounts.js';
 import { writeFileNoFollow } from '../lib/ownership.js';
+import { lamalibreNpmEnv } from '../lib/registry.js';
 
 /**
  * Deploy the gatekeeper package from vendor/ into <installDir>/gatekeeper,
@@ -27,7 +28,10 @@ export async function deployGatekeeperPackage(vendorDir, installDir) {
   await cp(join(gatekeeperSrc, 'package.json'), join(gatekeeperDest, 'package.json'));
   await rm(join(gatekeeperDest, 'dist'), { recursive: true, force: true });
   await cp(join(gatekeeperSrc, 'dist'), join(gatekeeperDest, 'dist'), { recursive: true });
-  await execa('npm', ['install', '--production', '--ignore-scripts'], { cwd: gatekeeperDest });
+  await execa('npm', ['install', '--production', '--ignore-scripts'], {
+    cwd: gatekeeperDest,
+    env: await lamalibreNpmEnv(),
+  });
   return true;
 }
 

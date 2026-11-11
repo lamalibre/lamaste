@@ -24,7 +24,7 @@ import yaml from 'js-yaml';
 import { AUTH_BRANDING_LOGO_MAX_BYTES } from '@lamalibre/lamaste';
 import { authPagesDigest, renderAuthBranding } from '@lamalibre/lamaste/server';
 
-import { renderAuthVhost } from '../src/lib/nginx.js';
+import { NO_MAIL, renderAuthVhost } from '../src/lib/nginx.js';
 
 import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
@@ -294,12 +294,14 @@ test('the fields: created at revision 1, rendered at once, read without blobs, r
       enabled: true,
       branding: { theme: 'dark', logo: false },
       language: null,
+      mail: NO_MAIL,
     },
   ]);
   assert.match(installedVhosts.get(PRIMARY), /data-theme="dark"/);
   assert.deepEqual(await lib.authVhostInputs(PRIMARY), {
     branding: { theme: 'dark', logo: false },
     language: null,
+    mail: NO_MAIL,
   });
 
   // Rendered under the web root: the locales with the name spliced in, the stylesheet, brand.json.
@@ -502,6 +504,7 @@ test('the auth vhost: untouched by a change it does not say; a refused rewrite w
   assert.deepEqual(await lib.authVhostInputs('nobody.example'), {
     branding: null,
     language: null,
+    mail: NO_MAIL,
   });
   const writesBefore = vhostWrites.length;
   const revision = (await call('GET', `/api/domains/${PRIMARY}/branding`)).json().branding.revision;
@@ -576,6 +579,7 @@ test('the auth vhost: untouched by a change it does not say; a refused rewrite w
     enabled: true,
     branding: { theme: 'oled', logo: true },
     language: null,
+    mail: NO_MAIL,
   });
   assert.equal(
     (await audits('domain.branding.vhost.recovered')).filter((e) => e.details.domain === PRIMARY)
@@ -784,6 +788,7 @@ test('removing the brand: the record and the directory go, audited; a removed do
     enabled: true,
     branding: null,
     language: null,
+    mail: NO_MAIL,
   });
   assert.equal(
     installedVhosts.get(PRIMARY),

@@ -38,7 +38,11 @@
  * A plugin that declares a web surface (`userSurface.web`) gets a host of
  * its own: a site it owns (`SiteEntry.owner` in `sites.json`), whose route
  * is its owner's and which serves the plugin's shell beside the API. Such a
- * site's route is served while the plugin is hosted at all. Everything that
+ * site's route is served while the plugin is hosted at all — and so are the
+ * routes an administrator joined to it ({@link siteUserSurfaceRoutes}): one
+ * host for an application's plugins, whichever agents host them. A tunnel
+ * may serve a route another agent hosts too, once an administrator confirms
+ * it for the tunnel's current agent ({@link tunnelUserSurfaceRouteState}). Everything that
  * resolves a host — the panel, Gatekeeper, the vhost renderer — reads both
  * kinds through {@link userSurfaceHosts}, which also keeps a route that two
  * hosts claim from being served on either.
@@ -230,8 +234,9 @@ export function isUserSurfaceUrl(url: string, route: string): boolean {
 
 /**
  * Where the panel answers an inviter, on `auth.<the plugin's domain>`:
- * `/api/delegated-invitations/<route>` and `…/<route>/<invitation id>`
- * (`delegated-invitations-design.md` §5). Gatekeeper vouches for the
+ * `/api/delegated-invitations/<route>`, `…/<route>/<invitation id>` and
+ * `…/<route>/<invitation id>/reissue` (`delegated-invitations-design.md`
+ * §5; mail-design.md §6.1). Gatekeeper vouches for the
  * session's user there as on a user surface, with a target of its own
  * kind (`relay-assertion.ts`).
  */
@@ -243,6 +248,9 @@ export const DELEGATED_INVITATIONS_PAGE_PREFIX = '/invitations';
 /** A delegated invitation's id: a lower-case UUID. */
 const INVITATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** What follows an invitation's id to ask for a new link: `…/<route>/<id>/reissue`. */
+export const DELEGATED_INVITATION_REISSUE_SUFFIX = '/reissue';
+
 /** `/api/delegated-invitations/<route>`. Throws on a route no user surface can have. */
 export function delegatedInvitationsApiPath(route: string): string {
   if (!isUserSurfaceRoute(route)) throw new Error(`Invalid plugin route: "${route}"`);
@@ -251,8 +259,9 @@ export function delegatedInvitationsApiPath(route: string): string {
 
 /**
  * Whether `url` (the raw request target, with its query string) is the
- * inviter's API of `route`: exactly `/api/delegated-invitations/<route>` or
- * `/api/delegated-invitations/<route>/<invitation id>`, read literally —
+ * inviter's API of `route`: exactly `/api/delegated-invitations/<route>`,
+ * `/api/delegated-invitations/<route>/<invitation id>` or that followed by
+ * {@link DELEGATED_INVITATION_REISSUE_SUFFIX}, read literally —
  * nothing longer, no trailing `/`, no unsafe segment
  * ({@link hasUnsafePathSegments}). False for a route no user surface can
  * have.
@@ -264,7 +273,11 @@ export function isDelegatedInvitationsUrl(url: string, route: string): boolean {
   const base = `${DELEGATED_INVITATIONS_API_PREFIX}/${route}`;
   if (pathPart === base) return true;
   if (!pathPart.startsWith(`${base}/`)) return false;
-  return INVITATION_ID_RE.test(pathPart.slice(base.length + 1));
+  const rest = pathPart.slice(base.length + 1);
+  const id = rest.endsWith(DELEGATED_INVITATION_REISSUE_SUFFIX)
+    ? rest.slice(0, -DELEGATED_INVITATION_REISSUE_SUFFIX.length)
+    : rest;
+  return INVITATION_ID_RE.test(id);
 }
 
 /**
@@ -334,22 +347,117 @@ export function userSurfaceHostingAgent(tunnels: unknown, route: string): string
 }
 
 /**
+ * One route's cross-agent confirmation (native-apps-design.md D1, security
+ * review M2): an administrator bound `route` while `agent` carried the
+ * tunnel and `hostingAgent` hosted the plugin, and let the one front the
+ * other's users.
+ */
+export interface CrossAgentConfirmation {
+  readonly route: string;
+  /** The agent carrying the tunnel when the route was bound. */
+  readonly agent: string;
+  /** The agent hosting the route's plugin when it was bound. */
+  readonly hostingAgent: string;
+}
+
+/**
+ * The cross-agent confirmations a tunnel's binding stores
+ * (`userSurface.crossAgent`), read defensively: entries with a bound,
+ * valid route and two valid, different agent labels, one per route; `[]`
+ * for anything else. The pre-release per-tunnel `originAgent` is not read:
+ * a binding that still carries it confirms nothing.
+ */
+export function tunnelCrossAgentConfirmations(tunnel: unknown): CrossAgentConfirmation[] {
+  const routes = tunnelUserSurfaceRoutes(tunnel);
+  if (routes.length === 0) return [];
+  const binding = (tunnel as { userSurface?: unknown }).userSurface;
+  const stored = (binding as { crossAgent?: unknown }).crossAgent;
+  if (!Array.isArray(stored)) return [];
+  const out: CrossAgentConfirmation[] = [];
+  for (const entry of stored as unknown[]) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { route, agent, hostingAgent } = entry as Record<string, unknown>;
+    if (
+      typeof route !== 'string' ||
+      !routes.includes(route) ||
+      out.some((c) => c.route === route) ||
+      typeof agent !== 'string' ||
+      !AGENT_LABEL_REGEX.test(agent) ||
+      typeof hostingAgent !== 'string' ||
+      !AGENT_LABEL_REGEX.test(hostingAgent) ||
+      agent === hostingAgent
+    ) {
+      continue;
+    }
+    out.push({ route, agent, hostingAgent });
+  }
+  return out;
+}
+
+/**
+ * Where one route bound to a tunnel stands, as far as `tunnels.json` tells:
+ *
+ * - `served` — the plugin is hosted by the agent carrying the tunnel, or by
+ *   another agent and this route was confirmed cross-agent for exactly
+ *   these two agents: the one carrying the tunnel now and the one hosting
+ *   the plugin now ({@link tunnelCrossAgentConfirmations});
+ * - `cross_agent_unconfirmed` — another agent hosts the plugin and no
+ *   confirmation of this route names both agents as they are now (none was
+ *   given, the tunnel moved, or the plugin was hosted elsewhere since);
+ * - `not_hosted` — no agent hosts the plugin, or the tunnel has no agent;
+ * - `not_bound` — the tunnel does not bind the route.
+ *
+ * @param tunnels - every entry of `tunnels.json` (the internal tunnels among them)
+ * @param tunnel - one of them
+ */
+export function tunnelUserSurfaceRouteState(
+  tunnels: unknown,
+  tunnel: unknown,
+  route: string,
+): 'served' | 'cross_agent_unconfirmed' | 'not_hosted' | 'not_bound' {
+  if (!tunnelUserSurfaceRoutes(tunnel).includes(route)) return 'not_bound';
+  const agent = (tunnel as { agentLabel?: unknown }).agentLabel;
+  if (typeof agent !== 'string' || !AGENT_LABEL_REGEX.test(agent)) return 'not_hosted';
+  const hosting = userSurfaceHostingAgent(tunnels, route);
+  if (hosting === null) return 'not_hosted';
+  if (hosting === agent) return 'served';
+  return isCrossAgentConfirmed(tunnel, route, agent, hosting)
+    ? 'served'
+    : 'cross_agent_unconfirmed';
+}
+
+/**
+ * Whether `tunnel` confirms `route` cross-agent for the tunnel's agent
+ * `agent` fronting the plugin `hostingAgent` hosts — both as they are now.
+ */
+export function isCrossAgentConfirmed(
+  tunnel: unknown,
+  route: string,
+  agent: string,
+  hostingAgent: string,
+): boolean {
+  return tunnelCrossAgentConfirmations(tunnel).some(
+    (c) => c.route === route && c.agent === agent && c.hostingAgent === hostingAgent,
+  );
+}
+
+/**
  * Of the routes a tunnel binds as a user surface ({@link tunnelUserSurfaceRoutes}),
- * the ones its host may serve as far as `tunnels.json` tells: those whose
- * plugin is hosted by the agent that carries this tunnel
- * ({@link userSurfaceHostingAgent}). Whether a served route also has an
- * installed, approved version declaring `identity` is the panel's to decide;
- * Gatekeeper reads this alone.
+ * the ones its host may serve as far as `tunnels.json` tells
+ * ({@link tunnelUserSurfaceRouteState} `served`): those whose plugin is
+ * hosted by the agent that carries this tunnel
+ * ({@link userSurfaceHostingAgent}) — or by another agent, when the binding
+ * was confirmed cross-agent for the agent carrying it now. Whether a served
+ * route also has an installed, approved version declaring `identity` is the
+ * panel's to decide; Gatekeeper reads this alone.
  *
  * @param tunnels - every entry of `tunnels.json` (the internal tunnels among them)
  * @param tunnel - one of them
  */
 export function tunnelServedUserSurfaceRoutes(tunnels: unknown, tunnel: unknown): string[] {
-  const routes = tunnelUserSurfaceRoutes(tunnel);
-  if (routes.length === 0) return [];
-  const agent = (tunnel as { agentLabel?: unknown }).agentLabel;
-  if (typeof agent !== 'string' || !AGENT_LABEL_REGEX.test(agent)) return [];
-  return routes.filter((route) => userSurfaceHostingAgent(tunnels, route) === agent);
+  return tunnelUserSurfaceRoutes(tunnel).filter(
+    (route) => tunnelUserSurfaceRouteState(tunnels, tunnel, route) === 'served',
+  );
 }
 
 /**
@@ -366,6 +474,28 @@ export function siteUserSurfaceRoute(site: unknown): string | null {
   return isUserSurfaceRoute(plugin) ? plugin : null;
 }
 
+/**
+ * Every route a plugin-owned site serves the user surface of, read
+ * defensively: its owner's first, then the routes an administrator joined
+ * to it (`userSurface.routes`, native-apps-design.md D1) — valid routes
+ * only, each once, at most {@link USER_SURFACE_MAX_ROUTES_PER_HOST} in all;
+ * `[]` for a site no plugin owns (joined routes alone serve nothing).
+ */
+export function siteUserSurfaceRoutes(site: unknown): string[] {
+  const owner = siteUserSurfaceRoute(site);
+  if (owner === null) return [];
+  const out = [owner];
+  const binding = (site as { userSurface?: unknown }).userSurface;
+  if (!binding || typeof binding !== 'object' || Array.isArray(binding)) return out;
+  const joined = (binding as { routes?: unknown }).routes;
+  if (!Array.isArray(joined)) return out;
+  for (const route of joined) {
+    if (out.length === USER_SURFACE_MAX_ROUTES_PER_HOST) break;
+    if (isUserSurfaceRoute(route) && !out.includes(route)) out.push(route);
+  }
+  return out;
+}
+
 /** A host that serves user surfaces: a bound tunnel, or a plugin-owned site. */
 export interface UserSurfaceHost {
   readonly kind: 'tunnel' | 'site';
@@ -376,7 +506,7 @@ export interface UserSurfaceHost {
   /** A site is always enabled; a tunnel unless `enabled: false`. */
   readonly enabled: boolean;
   readonly accessMode: WebSurfaceAccessMode;
-  /** The routes bound to the host (a site: its owner's). */
+  /** The routes bound to the host (a site: its owner's, then those joined to it). */
   readonly routes: readonly string[];
   /**
    * Of `routes`, those the host serves as far as the state files tell: a
@@ -433,16 +563,18 @@ export function userSurfaceHosts(tunnels: unknown, sites: unknown): UserSurfaceH
     });
   }
   for (const site of Array.isArray(sites) ? (sites as unknown[]) : []) {
-    const route = siteUserSurfaceRoute(site);
-    if (route === null) continue;
+    const routes = siteUserSurfaceRoutes(site);
+    if (routes.length === 0) continue;
     const base = hostBase(site);
     if (!base) continue;
     candidates.push({
       kind: 'site',
       ...base,
       enabled: true,
-      routes: [route],
-      hosted: userSurfaceHostingAgent(tunnels, route) === null ? [] : [route],
+      routes,
+      // The shell is Lamaste's (the owner's approved tree), not an agent's:
+      // a site serves a route whichever agent hosts its plugin.
+      hosted: routes.filter((route) => userSurfaceHostingAgent(tunnels, route) !== null),
     });
   }
 

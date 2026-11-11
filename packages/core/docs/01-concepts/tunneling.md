@@ -135,7 +135,7 @@ Each tunnel in `tunnels.json` carries an `agentLabel` — the agent that carries
 
 - Chisel matches these patterns unanchored, so the `^…$` anchors are what keep a grant for port `2001` from also matching `20010`.
 - An agent with no tunnels can authenticate but bind nothing. Disabled and unassigned tunnels grant nothing.
-- A reserved port (3100, 9090, 9091, 9292, 9294 — Lamaste's own services) and a port claimed by two tunnels are never granted, whatever the state file says. Such a tunnel (only possible in state written before these checks) is also left out of its owner's `agent-config`, so the agent never asks for a port Chisel would refuse; it is carried by no one until it is deleted and recreated on a free port.
+- A reserved port (3100, 9090, 9091, 9292, 9294, 9295 — Lamaste's own services) and a port claimed by two tunnels are never granted, whatever the state file says. Such a tunnel (only possible in state written before these checks) is also left out of its owner's `agent-config`, so the agent never asks for a port Chisel would refuse; it is carried by no one until it is deleted and recreated on a free port.
 - `lamaste-no-grants` is a sentinel user with no grants. Chisel disables authentication entirely when its authfile has no users, so without it a fresh server (or one whose agents are all revoked) would be an open relay. Its random password lives in `/etc/lamalibre/lamaste/chisel-sentinel` (0600) and is never handed out.
 - The authfile is `0640`, owner `lamaste`, group `lamaste-chisel`. The panel (a member of that group through `SupplementaryGroups=lamaste-chisel`) writes it directly, without sudo: a `0600` temp file in the same directory, `chgrp lamaste-chisel`, `chmod 0640`, fsync, rename. Chisel's file watcher therefore never sees it with the wrong permissions.
 - Every tunnel change writes the state first, then re-renders the authfile. Chisel reloads the file on every replace, but a reload only applies to **new** sessions: a live session keeps the listeners it already bound. So an addition (a new agent, a new grant) takes effect without a restart, while a revocation (a removed or rotated password, a withdrawn grant) restarts Chisel with `systemctl try-restart` so live sessions drop what they no longer hold. `try-restart` leaves a Chisel that was stopped on purpose stopped. Until the panel knows Chisel is running the pinned release, every change restarts it. Restarts are coalesced: requests within half a second share one restart, two restarts start at least 2 seconds apart, and the restart that answers a revocation always starts after it — so a burst of revocations (several plugin uninstalls in a row) restarts Chisel once or twice, not once each. The Chisel unit has no start rate limit (`StartLimitIntervalSec=0`; before 4.13.1, systemd's default of 5 starts in 10 seconds could leave Chisel `failed` and every tunnel down).
@@ -225,7 +225,7 @@ It **fails closed**: if the authfile cannot be established, Chisel is stopped **
 
 ### Installation
 
-On the server, Chisel is installed by `npx @lamalibre/create-lamaste` — as root, together with its hardened systemd unit (`User=nobody`, `Group=lamaste-chisel`, `NoNewPrivileges`, `ProtectSystem=strict`, empty `CapabilityBoundingSet`) — and kept at the pinned release by every redeploy. The panel never installs a binary or writes the unit; onboarding only checks the binary exists, creates the server key and authfile, and starts the service. Both the server installer and the agents download the pinned release (`CHISEL_RELEASE` in `@lamalibre/lamaste`'s `constants.ts`) from its fixed URL, with no GitHub API lookup and no "latest":
+On the server, Chisel is installed by `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` — as root, together with its hardened systemd unit (`User=nobody`, `Group=lamaste-chisel`, `NoNewPrivileges`, `ProtectSystem=strict`, empty `CapabilityBoundingSet`) — and kept at the pinned release by every redeploy. The panel never installs a binary or writes the unit; onboarding only checks the binary exists, creates the server key and authfile, and starts the service. Both the server installer and the agents download the pinned release (`CHISEL_RELEASE` in `@lamalibre/lamaste`'s `constants.ts`) from its fixed URL, with no GitHub API lookup and no "latest":
 
 ```
 https://github.com/jpillora/chisel/releases/download/v1.12.0/chisel_1.12.0_<os>_<arch>.gz
@@ -322,7 +322,7 @@ sudo systemctl restart chisel
 
 ```bash
 # Install globally, then set up the agent (interactive)
-npm install -g @lamalibre/lamaste-agent
+npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 lamaste-agent setup --label <label>
 
 # Apply tunnel changes now (the sync timer does it within 30 s anyway)

@@ -19,6 +19,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { KeyedPromiseChainMutex, atomicWriteJSON } from '../file-helpers.js';
+import { PUBLIC_NPM_REGISTRY_HOSTS } from '../lamalibre-registry.js';
 import {
   AdditionalTrustedScopesSchema,
   BUILTIN_TRUSTED_SCOPE,
@@ -125,14 +126,6 @@ async function localPluginPackagesOfScope(scope: string): Promise<string[]> {
     .filter((name): name is string => typeof name === 'string' && name.startsWith(`${scope}/`));
 }
 
-/** Public registries where anyone may own a scope: never a trusted scope's source. */
-const PUBLIC_REGISTRY_HOSTS: ReadonlySet<string> = new Set([
-  'registry.npmjs.org',
-  'registry.npmjs.com',
-  'registry.yarnpkg.com',
-  'registry.npmmirror.com',
-]);
-
 /**
  * The local plugin host installs through its user's npm configuration, so
  * an additional local scope must be routed (over https, or http to this
@@ -182,7 +175,7 @@ export async function assertLocalScopeRouted(scope: string): Promise<string> {
   // whoever sits on the path.
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname.toLowerCase());
   if (url.protocol === 'http:' && !loopback) throw notRouted('plain http to another host');
-  if (PUBLIC_REGISTRY_HOSTS.has(url.hostname.toLowerCase())) {
+  if (PUBLIC_NPM_REGISTRY_HOSTS.has(url.hostname.toLowerCase())) {
     throw notRouted(`${url.hostname} is a public registry`);
   }
   const base = url.href.replace(/\/+$/, '');

@@ -1,0 +1,1029 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 67,
+    "name": "Mail: a delegated invitation mailed, and a new link",
+    "suite": "e2e-three-vm",
+    "description": "67 — Mail: a delegated invitation mailed, and a new link (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE plugins/${PLUGIN}/web-surface",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN}/web-surface"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite, which the agent half's projection needs"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "DELETE /api/plugins/${PLUGIN}/web-surface",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}/web-surface"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-8",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "md_api PUT \"domains/${DOMAIN_2}/language\" '{\"language\":\"tr\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "B speaks Turkish",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".domain.language",
+              "expected": {
+                "kind": "literal",
+                "value": "tr"
+              },
+              "message": "B speaks Turkish"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_transport_put \"settings/mail\" \"no-reply@notify.${DOMAIN}\" \"E2E Relay\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "PUT /api/settings/mail: the relay's transport to the sink",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/settings/mail: the relay's transport to the sink"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nmd_setup\nif agent_has_node_sqlite; then\n  log_pass \"The agent VM's Node.js has node:sqlite, which the agent half's projection needs\"\nelse\n  log_fail \"The agent VM's Node.js has no unflagged node:sqlite (Node.js 22.13 or later): the identity fixture cannot run\"\n  end_test\n  exit $?\nfi\n# Leftovers of an interrupted run (rodeo ends a spec at ten minutes without its trap)\nhost_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\ndrop_plugin_grants \"${PLUGIN}\"\nmail_cleanup\nmd_domain_active \"${DOMAIN_2}\"\nRESP=$(md_api PUT \"domains/${DOMAIN_2}/language\" '{\"language\":\"tr\"}')\nassert_json_field \"$(body_of \"$RESP\")\" '.domain.language' 'tr' \"B speaks Turkish\" || true\nmail_sink_start\nRESP=$(mail_transport_put \"settings/mail\" \"no-reply@notify.${DOMAIN}\" \"E2E Relay\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/settings/mail: the relay's transport to the sink\" || true"
+    },
+    {
+      "id": "the-inviting-plugin-on-b-hosted-served",
+      "label": "The inviting plugin on B, hosted, served",
+      "steps": [
+        {
+          "id": "step-13",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-59-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Fixture built: ${SERVER_PACKAGE}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixture built: ${SERVER_PACKAGE}"
+          }
+        }
+      ],
+      "bash": "log_section \"The inviting plugin on B, hosted, served\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-59-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/pmail\" \"${PLUGIN}\" 1.0.0 main \"m$(date +%s)-$$\" '[]' none inviting v1 \"${SUB_W}\"; then\n  log_fail \"The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE}\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/pmail/server fixtures/pmail/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\nFQDN=\"${SUB_W}.${DOMAIN_2}\"\ninv_install \"${PLUGIN}\" \"${SERVER_PACKAGE}\" \"${AGENT_PACKAGE}\"\ninv_web_surface SITE_ID \"${PLUGIN}\" \"${FQDN}\" restricted\nmd_hosts \"${FQDN}\""
+    },
+    {
+      "id": "a-coordinator-invitations-allowed-to-mail-domain",
+      "label": "A coordinator, invitations allowed to ${MAIL_DOMAIN}",
+      "steps": [
+        {
+          "id": "step-28",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${MAIL_DOMAIN}\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Invitations enabled for ${PLUGIN}, to ${MAIL_DOMAIN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Invitations enabled for ${PLUGIN}, to ${MAIL_DOMAIN}"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A coordinator, invitations allowed to ${MAIL_DOMAIN}\"\n\nmd_user COORD_ID \"${COORD}\" \"${PASSWORD}\" \"[{\\\"name\\\":\\\"${DOMAIN_2}\\\",\\\"kind\\\":\\\"external\\\"}]\"\ninv_entitle \"${COORD}\" coordinator\nmd_grant COORD_GRANT user \"${COORD}\" site \"${SITE_ID}\"\ninv_wait_audience \"${COORD_ID}\" coordinator \"The audience holds ${COORD} as coordinator\"\nRESP=$(inv_policy \"{\\\"enabled\\\":true,\\\"emailDomains\\\":[\\\"${MAIL_DOMAIN}\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Invitations enabled for ${PLUGIN}, to ${MAIL_DOMAIN}\" || true\nmd_wait_authelia \"${DOMAIN_2}\"\nmd_sign_in \"${COORD}\" \"${PASSWORD}\" \"$(reset_totp \"${COORD}\")\" \"${JAR_COORD}\" \"${FQDN}\"\n\n# ===========================================================================\n# 1. The inviter's page\n# ==========================================================================="
+    },
+    {
+      "id": "the-inviter-s-page-the-mail-and-new-link-words-in-turkish",
+      "label": "The inviter's page: the mail and \\\"new link\\\" words, in Turkish",
+      "steps": [
+        {
+          "id": "step-32",
+          "label": "Set PAGE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$(visit - \"https://auth.${DOMAIN_2}/invitations/${PLUGIN}\")\""
+          },
+          "capture": [
+            {
+              "variable": "PAGE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "auth.${DOMAIN_2}/invitations/${PLUGIN}: lang=\\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"tr\">"
+              },
+              "message": "auth.${DOMAIN_2}/invitations/${PLUGIN}: lang=\\"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "…its data block: invitations.reissue Yeni bağlantı",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(data_block \"$PAGE\")"
+              },
+              "path": ".messages.\"invitations.reissue\"",
+              "expected": {
+                "kind": "literal",
+                "value": "Yeni bağlantı"
+              },
+              "message": "…its data block: invitations.reissue Yeni bağlantı"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "…and the mailed / not-mailed words",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(data_block \"$PAGE\")"
+              },
+              "path": "(.messages.\"invitations.mailed\" | length > 0) and (.messages.\"invitations.mailFailed\" | length > 0)",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…and the mailed / not-mailed words"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The inviter's page: the mail and \\\"new link\\\" words, in Turkish\"\n\nPAGE=$(visit_body \"$(visit - \"https://auth.${DOMAIN_2}/invitations/${PLUGIN}\")\")\nassert_contains \"$PAGE\" '<html lang=\"tr\">' \"auth.${DOMAIN_2}/invitations/${PLUGIN}: lang=\\\"tr\\\"\" || true\nassert_json_field \"$(data_block \"$PAGE\")\" '.messages.\"invitations.reissue\"' 'Yeni bağlantı' \"…its data block: invitations.reissue Yeni bağlantı\" || true\nassert_json_field \"$(data_block \"$PAGE\")\" '(.messages.\"invitations.mailed\" | length > 0) and (.messages.\"invitations.mailFailed\" | length > 0)' 'true' \"…and the mailed / not-mailed words\" || true\n\n# ===========================================================================\n# 2. Mailed\n# ==========================================================================="
+    },
+    {
+      "id": "the-invitation-mailed-in-turkish",
+      "label": "The invitation mailed, in Turkish",
+      "steps": [
+        {
+          "id": "step-36",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" POST \"\" \"$(jq -c -n --arg e \"${INVITEE_MAIL}\" '{email: $e, displayName: \"E2E Invitee\", role: \"viewer\"}')\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "${COORD} invites ${INVITEE_MAIL} as viewer: 201",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "${COORD} invites ${INVITEE_MAIL} as viewer: 201"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Set INV_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(visit_body \"$RESP\")\" '.invitation.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "INV_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "…the answer: mail sent, no link (it goes by mail only)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "\"\\(.mail.status) \\(.inviteUrl)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "sent null"
+              },
+              "message": "…the answer: mail sent, no link (it goes by mail only)"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "…no token anywhere in the answer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\" | grep -cE '[a-f0-9]{64}' || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…no token anywhere in the answer"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Set MAIL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_last_to \"${INVITEE_MAIL}\""
+          },
+          "capture": [
+            {
+              "variable": "MAIL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "…From the relay's sender",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "MAIL"
+              },
+              "path": ".from",
+              "expected": {
+                "kind": "expr",
+                "template": "no-reply@notify.${DOMAIN}"
+              },
+              "message": "…From the relay's sender"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "…in Turkish ($(json_get \"$MAIL\" '.subject'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "MAIL"
+              },
+              "path": ".subject | startswith(\"Davetiniz\")",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…in Turkish ($(json_get \"$MAIL\" '.subject'))"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Set URL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_link_in \"$MAIL\" \"/invite#\""
+          },
+          "capture": [
+            {
+              "variable": "URL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "…its link on auth.${DOMAIN_2}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "URL"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN_2}/invite#"
+              },
+              "message": "…its link on auth.${DOMAIN_2}"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Set LIST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit_body \"$(inv_api \"${JAR_COORD}\" GET)\""
+          },
+          "capture": [
+            {
+              "variable": "LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "The inviter's list: mail sent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$LIST\" | jq -r --arg i \"${INV_ID}\" '.invitations[]? | select(.id == $i) | .mail.status' 2>/dev/null)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "sent"
+              },
+              "message": "The inviter's list: mail sent"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "The administrator's list: mail sent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(inv_row \"${INV_ID}\")"
+              },
+              "path": ".mail.status",
+              "expected": {
+                "kind": "literal",
+                "value": "sent"
+              },
+              "message": "The administrator's list: mail sent"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" POST \"\" \"$(jq -c -n --arg e \"${LATER_MAIL}\" '{email: $e, displayName: \"pay-here.example\", role: \"viewer\"}')\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "A name that reads as a host name: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A name that reads as a host name: 400"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "…invalid_request, field displayName",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "\"\\(.code) \\(.field)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "invalid_request displayName"
+              },
+              "message": "…invalid_request, field displayName"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The invitation mailed, in Turkish\"\n\nRESP=$(inv_api \"${JAR_COORD}\" POST \"\" \"$(jq -c -n --arg e \"${INVITEE_MAIL}\" '{email: $e, displayName: \"E2E Invitee\", role: \"viewer\"}')\")\nassert_eq \"$(visit_status \"$RESP\")\" \"201\" \"${COORD} invites ${INVITEE_MAIL} as viewer: 201\" || true\nINV_ID=$(json_get \"$(visit_body \"$RESP\")\" '.invitation.id // empty')\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.mail.status) \\(.inviteUrl)\"' 'sent null' \"…the answer: mail sent, no link (it goes by mail only)\" || true\nassert_eq \"$(visit_body \"$RESP\" | grep -cE '[a-f0-9]{64}' || true)\" \"0\" \"…no token anywhere in the answer\" || true\nmail_wait \"${INVITEE_MAIL}\" 1 \"The sink holds the invitation\"\nMAIL=$(mail_last_to \"${INVITEE_MAIL}\")\nassert_json_field \"$MAIL\" '.from' \"no-reply@notify.${DOMAIN}\" \"…From the relay's sender\" || true\nassert_json_field \"$MAIL\" '.subject | startswith(\"Davetiniz\")' 'true' \"…in Turkish ($(json_get \"$MAIL\" '.subject'))\" || true\nURL=$(mail_link_in \"$MAIL\" \"/invite#\")\nTOKEN=\"${URL##*#}\"\nassert_contains \"${URL}\" \"https://auth.${DOMAIN_2}/invite#\" \"…its link on auth.${DOMAIN_2}\" || true\nLIST=$(visit_body \"$(inv_api \"${JAR_COORD}\" GET)\")\nassert_eq \"$(echo \"$LIST\" | jq -r --arg i \"${INV_ID}\" '.invitations[]? | select(.id == $i) | .mail.status' 2>/dev/null)\" \"sent\" \"The inviter's list: mail sent\" || true\nassert_json_field \"$(inv_row \"${INV_ID}\")\" '.mail.status' 'sent' \"The administrator's list: mail sent\" || true\nRESP=$(inv_api \"${JAR_COORD}\" POST \"\" \"$(jq -c -n --arg e \"${LATER_MAIL}\" '{email: $e, displayName: \"pay-here.example\", role: \"viewer\"}')\")\nassert_eq \"$(visit_status \"$RESP\")\" \"400\" \"A name that reads as a host name: 400\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.code) \\(.field)\"' 'invalid_request displayName' \"…invalid_request, field displayName\" || true\n\n# ===========================================================================\n# 3. A new link\n# ==========================================================================="
+    },
+    {
+      "id": "a-new-link-the-old-one-dead-the-new-one-mailed",
+      "label": "A new link: the old one dead, the new one mailed",
+      "steps": [
+        {
+          "id": "step-54",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" POST \"/${INV_ID}/reissue\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-55",
+          "label": "POST …/${PLUGIN}/${INV_ID}/reissue: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "POST …/${PLUGIN}/${INV_ID}/reissue: 200"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "…the same invitation, mailed again, no link answered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "\"\\(.invitation.id) \\(.mail.status) \\(.inviteUrl)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${INV_ID} sent null"
+              },
+              "message": "…the same invitation, mailed again, no link answered"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Set URL_2",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_link_in \"$(mail_last_to \"${INVITEE_MAIL}\")\" \"/invite#\""
+          },
+          "capture": [
+            {
+              "variable": "URL_2",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "…a new token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "TOKEN_2"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "TOKEN"
+              },
+              "message": "…a new token"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "The old link is dead",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_lookup \"${TOKEN}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The old link is dead"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "The new one answers",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(inv_lookup \"${TOKEN_2}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The new one answers"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "The administrator's list: reissued",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(inv_row \"${INV_ID}\")"
+              },
+              "path": ".reissuedAt != null",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The administrator's list: reissued"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_accept \"${TOKEN_2}\" \"${INVITEE}\" \"${INVITEE_PASSWORD}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "Accepted with the new link",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Accepted with the new link"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "Set INVITEE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(inv_row \"${INV_ID}\")\" '.acceptedUserId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "INVITEE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-67",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" POST \"/${INV_ID}/reissue\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "An accepted invitation gets no new link: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "An accepted invitation gets no new link: 409"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "…invitation_not_pending",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "invitation_not_pending"
+              },
+              "message": "…invitation_not_pending"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A new link: the old one dead, the new one mailed\"\n\nRESP=$(inv_api \"${JAR_COORD}\" POST \"/${INV_ID}/reissue\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"POST …/${PLUGIN}/${INV_ID}/reissue: 200\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.invitation.id) \\(.mail.status) \\(.inviteUrl)\"' \"${INV_ID} sent null\" \"…the same invitation, mailed again, no link answered\" || true\nmail_wait \"${INVITEE_MAIL}\" 2 \"The sink holds the new link\"\nURL_2=$(mail_link_in \"$(mail_last_to \"${INVITEE_MAIL}\")\" \"/invite#\")\nTOKEN_2=\"${URL_2##*#}\"\nassert_not_eq \"${TOKEN_2}\" \"${TOKEN}\" \"…a new token\" || true\nassert_not_eq \"$(visit_status \"$(inv_lookup \"${TOKEN}\")\")\" \"200\" \"The old link is dead\" || true\nassert_eq \"$(visit_status \"$(inv_lookup \"${TOKEN_2}\")\")\" \"200\" \"The new one answers\" || true\nassert_json_field \"$(inv_row \"${INV_ID}\")\" '.reissuedAt != null' 'true' \"The administrator's list: reissued\" || true\nRESP=$(inv_accept \"${TOKEN_2}\" \"${INVITEE}\" \"${INVITEE_PASSWORD}\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"Accepted with the new link\" || true\nINVITEE_ID=$(json_get \"$(inv_row \"${INV_ID}\")\" '.acceptedUserId // empty')\nRESP=$(inv_api \"${JAR_COORD}\" POST \"/${INV_ID}/reissue\")\nassert_eq \"$(visit_status \"$RESP\")\" \"409\" \"An accepted invitation gets no new link: 409\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '.code' 'invitation_not_pending' \"…invitation_not_pending\" || true\n\n# ===========================================================================\n# 4. No transport\n# ==========================================================================="
+    },
+    {
+      "id": "no-transport-not-configured-the-link-answered-to-the-inviter",
+      "label": "No transport: not-configured, the link answered to the inviter",
+      "steps": [
+        {
+          "id": "step-70",
+          "label": "DELETE /api/settings/mail",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "settings/mail"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-73",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "inv_api \"${JAR_COORD}\" POST \"\" \"$(jq -c -n --arg e \"${LATER_MAIL}\" '{email: $e, displayName: \"E2E Later\", role: \"viewer\"}')\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "Another invitation: 201",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "Another invitation: 201"
+            }
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "Set INV_ID_2",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(visit_body \"$RESP\")\" '.invitation.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "INV_ID_2",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "…mail not-configured, its link answered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "\"\\(.mail.status) \\(.inviteUrl | test(\"/invite#\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "not-configured true"
+              },
+              "message": "…mail not-configured, its link answered"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"No transport: not-configured, the link answered to the inviter\"\n\nhost_api_delete \"settings/mail\" > /dev/null 2>&1 || true\n# Clearing the transport rewrites Authelia's notifier and restarts it, and\n# Authelia's sessions live in memory: the inviter signs in again.\nmd_wait_authelia \"${DOMAIN_2}\"\nmd_sign_in \"${COORD}\" \"${PASSWORD}\" \"$(reset_totp \"${COORD}\")\" \"${JAR_COORD}\" \"${FQDN}\"\nRESP=$(inv_api \"${JAR_COORD}\" POST \"\" \"$(jq -c -n --arg e \"${LATER_MAIL}\" '{email: $e, displayName: \"E2E Later\", role: \"viewer\"}')\")\nassert_eq \"$(visit_status \"$RESP\")\" \"201\" \"Another invitation: 201\" || true\nINV_ID_2=$(json_get \"$(visit_body \"$RESP\")\" '.invitation.id // empty')\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.mail.status) \\(.inviteUrl | test(\"/invite#\"))\"' 'not-configured true' \"…mail not-configured, its link answered\" || true\n[ -n \"${INV_ID_2}\" ] && inv_api \"${JAR_COORD}\" DELETE \"/${INV_ID_2}\" > /dev/null || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 67 — Mail: a delegated invitation mailed, and a new link (Three-VM)\n# ============================================================================\n# An inviter's invitation reaches the invitee by mail, in the domain's\n# language, and the inviter can send a new link (design: packages/core/\n# docs/mail-design.md §6.1). The inviting app plugin of the delegated\n# invitations harness on B (Turkish), the relay's transport to the SMTP\n# stand-in on the host VM (mail-harness.sh).\n#\n# 1. The inviter's page on B carries the mail words and the \"new link\"\n#    button's words (Turkish).\n# 2. A coordinator invites an address of the policy's domain: the answer\n#    says the mail was sent and carries no link (the domain sends mail: the\n#    link goes by mail only); the sink holds it — From the relay's sender,\n#    in Turkish, its link on auth.<B>/invite#…. The inviter's list and the\n#    administrator's show the mail sent. A name that reads as a host name\n#    is refused.\n# 3. A new link (…/<id>/reissue): the same invitation, a new token mailed\n#    and not answered, the old link dead; the new one accepted.\n# 4. The transport removed: an invitation answers not-configured, and its\n#    link is answered — the inviter sends it.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=67\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=invitation-harness.sh\nsource \"${SCRIPT_DIR}/invitation-harness.sh\"\nMAIL_SPEC=67\n# shellcheck source-path=SCRIPTDIR source=mail-harness.sh\nsource \"${SCRIPT_DIR}/mail-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\nPLUGIN=\"e2e-pmail\"\nSERVER_PACKAGE=\"@lamalibre/e2e-pmail-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-pmail-agent\"\nSUB_W=\"e2e59web\"\nPOLICY_ID=\"e2e-apphost-59\"\nREMOTE_DIR=\"/var/tmp/e2e-59-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\nRUN_ID=\"$(date +%s)\"\nCOORD=\"e2e59-coord\"\nINVITEE=\"e2e59-inv-${RUN_ID}\"\nINVITEE_MAIL=\"deniz-${RUN_ID}@${MAIL_DOMAIN}\"\nLATER_MAIL=\"ayse-${RUN_ID}@${MAIL_DOMAIN}\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nINVITEE_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nCOORD_ID=\"\"\nINVITEE_ID=\"\"\nJAR_COORD=$(md_jar coord)\nFQDN=\"\"\nCOORD_GRANT=\"\"\nTOKEN=\"\"\nINV_ID=\"\"\nTOKEN_2=\"\"\nINV_ID_2=\"\"\n\n# data_block <html> — the page's messages (its JSON data block), compact\ndata_block() {\n  printf '%s' \"$1\" | node -e 'const h=require(\"fs\").readFileSync(0,\"utf8\");const m=h.match(/<script type=\"application\\/json\" id=\"lamaste-messages\">([\\s\\S]*?)<\\/script>/);process.stdout.write(m?m[1].trim():\"null\")' | jq -c . 2>/dev/null || echo \"null\"\n}\n\nbegin_test \"67 — Mail: a delegated invitation mailed, and a new link (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  [ -n \"${DOMAIN_2:-}\" ] && md_api PUT \"domains/${DOMAIN_2}/language\" '{\"language\":null}' > /dev/null 2>&1 || true\n  if [ -n \"${COORD_GRANT}\" ]; then host_api_delete \"gatekeeper/grants/${COORD_GRANT}\" > /dev/null 2>&1 || true; fi\n  if [ -n \"${SITE_ID}\" ]; then inv_drop_site_grants \"${SITE_ID}\"; fi\n  host_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\n  drop_plugin_grants \"${PLUGIN}\"\n  inv_cleanup_users \"${COORD}\" \"${INVITEE}\"\n  inv_cleanup_ids ${COORD_ID} ${INVITEE_ID}\n  mail_cleanup\n  nudge_sync\n  app_plugin_cleanup\n  md_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

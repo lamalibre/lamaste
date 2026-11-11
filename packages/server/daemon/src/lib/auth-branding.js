@@ -103,6 +103,7 @@ import {
   vhostCertDir,
   writeAuthVhost,
 } from './nginx.js';
+import { resetLinkState } from './mail-store.js';
 import { notifyAdminsBestEffort } from './notifications.js';
 import { getStateDb } from './state-db.js';
 
@@ -395,16 +396,24 @@ function sameVhostBranding(a, b) {
 
 /**
  * What the auth vhost of a domain says (lib/nginx.js `renderAuthVhost`):
- * its brand's theme and logo switch, and its page language.
+ * its brand's theme and logo switch, its page language, and where its
+ * portal links "Reset password?" (mail-design.md §5: Authelia's one reset
+ * URL, rewritten to the domain's own page or emptied).
  *
- * @typedef {{ branding: AuthVhostBranding | null, language: import('@lamalibre/lamaste').PageLanguage | null }} AuthVhostInputs
+ * @typedef {{ primaryResetUrl: string | null, domainResetUrl: string | null }} AuthVhostMail
+ * @typedef {{ branding: AuthVhostBranding | null, language: import('@lamalibre/lamaste').PageLanguage | null, mail: AuthVhostMail }} AuthVhostInputs
  */
 
 /** The vhost inputs of `domain` from its records. */
 function vhostInputsOf(db, domain) {
+  const reset = resetLinkState(db);
   return {
     branding: vhostBrandingOf(brandingRow(db, domain)),
     language: languageOf(db, domain),
+    mail: {
+      primaryResetUrl: reset.autheliaResetUrl,
+      domainResetUrl: reset.domainResetUrl(domain),
+    },
   };
 }
 
@@ -422,6 +431,50 @@ function vhostInputsOf(db, domain) {
  */
 export async function authVhostInputs(domain) {
   return vhostInputsOf(await getStateDb(), domain);
+}
+
+/**
+ * What a page Lamaste renders for a host under `domain` is written with —
+ * its brand's `{ name, tagline, logo }` (null for none) and its page
+ * language (English when none is set) — read from the records, as
+ * {@link authVhostInputs} reads them.
+ *
+ * @param {string} domain
+ * @returns {Promise<{ brand: { name: string, tagline: string | null, logo: boolean } | null, language: import('@lamalibre/lamaste').PageLanguage }>}
+ */
+export async function pageInputsOf(domain) {
+  const db = await getStateDb();
+  const row = brandingRow(db, domain);
+  return {
+    brand: row ? { name: row.name, tagline: row.tagline, logo: Boolean(row.logo) } : null,
+    language: languageOf(db, domain) ?? 'en',
+  };
+}
+
+/**
+ * How Lamaste's pages and mails on domain `domain` look: the page brand
+ * (core `InviteBrand`; null for a domain without one), the mail brand
+ * (name and accent; null likewise) and the page language (`en` when the
+ * domain sets none). Read from the records.
+ *
+ * @param {string} domain
+ */
+export async function domainPresentation(domain) {
+  const db = await getStateDb();
+  const row = brandingRow(db, domain);
+  return {
+    pageBrand: row
+      ? {
+          name: row.name,
+          tagline: row.tagline,
+          theme: row.theme,
+          accent: row.accent,
+          logo: row.logo_sha256 !== null,
+        }
+      : null,
+    mailBrand: row ? { name: row.name, accent: row.accent } : null,
+    language: languageOf(db, domain) ?? 'en',
+  };
 }
 
 /**
@@ -744,7 +797,7 @@ async function convergeAuthVhostLocked(domain, logger) {
     await recordVhostOutcome(domain, null, logger);
     logger?.info(
       { domain, branded: inputs.branding !== null, language: inputs.language },
-      'Auth vhost rewritten for the brand and language',
+      'Auth vhost rewritten for the brand, language and mail',
     );
     return 'written';
   } catch (err) {
@@ -755,6 +808,35 @@ async function convergeAuthVhostLocked(domain, logger) {
     await recordVhostOutcome(domain, err, logger);
     throw err;
   }
+}
+
+/**
+ * Bring every active domain's auth vhost in line with its records — after
+ * a change of the relay's mail moved where the portals link "Reset
+ * password?" (mail-design.md §5). A vhost that could not be written stays
+ * pending and is retried within a minute ({@link reconcileAuthBranding});
+ * the answer names it.
+ *
+ * @param {{ logger?: import('pino').Logger }} [opts]
+ * @returns {Promise<{ written: string[], failed: string[] }>}
+ */
+export async function convergeAuthVhosts({ logger } = {}) {
+  return brandingMutex.run(async () => {
+    const result = { written: [], failed: [] };
+    const domains = (await getStateDb())
+      .prepare("SELECT name FROM domains WHERE status = 'active' ORDER BY name")
+      .all()
+      .map((row) => row.name);
+    for (const domain of domains) {
+      try {
+        if ((await convergeAuthVhostLocked(domain, logger)) === 'written')
+          result.written.push(domain);
+      } catch {
+        result.failed.push(domain);
+      }
+    }
+    return result;
+  });
 }
 
 /**

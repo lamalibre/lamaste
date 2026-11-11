@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
 const priv = require(fileURLToPath(new URL('../scripts/lamaste-priv', import.meta.url)));
@@ -20,6 +21,12 @@ const location = (inner) => server(` location / {\n${inner}\n }`);
 
 const refused = {
   'access_log to a file': server(' access_log /etc/cron.d/x;'),
+  'access_log to a file in a location': location('  access_log /etc/cron.d/x;'),
+  'access_log off at server level': server(' access_log off;'),
+  'access_log off with a format': location('  access_log off combined;'),
+  'proxy_hide_header at server level': server(' proxy_hide_header WWW-Authenticate;'),
+  'proxy_hide_header with two names': location('  proxy_hide_header WWW-Authenticate X-A;'),
+  'proxy_hide_header naming a variable': location('  proxy_hide_header $x;'),
   'log_format at http level': "log_format x '$request';\n" + server(''),
   error_log: server(' error_log /etc/cron.d/x;'),
   'include of an arbitrary file': server(' include /etc/shadow;'),
@@ -86,6 +93,7 @@ const refused = {
   sub_filter_types: location('  sub_filter_types text/css;'),
   sub_filter_last_modified: location('  sub_filter_last_modified on;'),
   'single-quoted string followed by a character': location("  sub_filter 'a'b 'c';"),
+  'access_log syslog in a location': location('  access_log syslog:server=127.0.0.1;'),
 };
 
 for (const [name, text] of Object.entries(refused)) {
@@ -103,6 +111,10 @@ test('accepts a minimal TLS proxy vhost, comments with any text included', () =>
   );
 });
 
+test('accepts access_log off in a location — and nothing else of it', () => {
+  validateVhost(location('  access_log off;\n  proxy_pass http://127.0.0.1:3100;'));
+});
+
 test('accepts the content types of a web surface in a location', () => {
   validateVhost(
     location(
@@ -117,6 +129,33 @@ test('accepts a user surface’s JSON refusal: a media type and a fixed body', (
       '  internal;\n  default_type application/json;\n' +
         '  if ($lamaste_refusal = not_a_member) {\n   return 403 \'{"error":"not_a_member"}\';\n  }\n' +
         '  return 403 \'{"error":"forbidden"}\';',
+    ),
+  );
+});
+
+test('accepts a native app’s locations: no access log, an alias under the web root, a bearer refusal', () => {
+  validateVhost(
+    server(
+      ' location = /.well-known/apple-app-site-association {\n  auth_request off;\n' +
+        '  alias /var/www/lamaste/native/app.example.com/apple-app-site-association;\n' +
+        '  default_type application/json;\n }\n' +
+        ' location = /oauth/callback {\n  auth_request off;\n  access_log off;\n' +
+        '  if ($request_method !~ ^(GET|HEAD)$) {\n   return 405;\n  }\n' +
+        '  alias /var/www/lamaste/native/app.example.com/redirect.html;\n  default_type text/html;\n }\n' +
+        ' location = /internal/lamaste/user-surface-invalid-token {\n  internal;\n' +
+        '  add_header WWW-Authenticate \'Bearer error="invalid_token"\' always;\n' +
+        '  return 401 \'{"error":"invalid_token"}\';\n }\n' +
+        ' location = /internal/lamaste/user-surface-401 {\n' +
+        '  if ($lamaste_refusal = invalid_token) {\n   rewrite ^ /internal/lamaste/user-surface-invalid-token last;\n  }\n }',
+    ),
+  );
+});
+
+test('accepts the backend guard of a host with a native client: no Authorization, no challenge back', () => {
+  validateVhost(
+    location(
+      '  proxy_set_header Authorization "";\n  proxy_hide_header WWW-Authenticate;\n' +
+        '  proxy_pass http://127.0.0.1:8080;',
     ),
   );
 });
@@ -288,7 +327,7 @@ test('hooks: refused unless run as root', () => {
 });
 
 test('authelia-user: the action and the username are validated before anything runs', () => {
-  for (const action of ['purge-second-factors', 'has-oidc-identifier']) {
+  for (const action of ['purge-second-factors', 'has-oidc-identifier', 'verify-totp']) {
     assert.deepEqual(priv.parseAutheliaUserArgs([action, 'ayse']), { action, username: 'ayse' });
     assert.deepEqual(priv.parseAutheliaUserArgs([action, '0_x-1']), {
       action,
@@ -322,6 +361,91 @@ test('authelia-user: refused unless run as root', () => {
   );
 });
 
+// RFC 6238 Appendix B: the secret "12345678901234567890" (ASCII), SHA-1, 8 digits.
+const RFC6238_SECRET = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+
+/** A line of `authelia storage user totp export uri` as Authelia 4.39.28 prints it. */
+function totpUri({
+  issuer = 'Lamaste',
+  username,
+  secret,
+  algorithm = 'SHA1',
+  digits = 6,
+  period = 30,
+}) {
+  const query = new URLSearchParams({
+    algorithm,
+    digits: String(digits),
+    issuer,
+    period: String(period),
+    secret,
+  });
+  return `otpauth://totp/${encodeURIComponent(issuer)}:${username}?${query}`;
+}
+
+test('authelia-user verify-totp: Authelia’s URI export parsed, the user’s line found', () => {
+  const text = [
+    totpUri({ username: 'ayse', secret: RFC6238_SECRET }),
+    totpUri({
+      issuer: 'auth.example.com',
+      username: 'mehmet',
+      secret: 'JBSWY3DPEHPK3PXP',
+      digits: 8,
+    }),
+    totpUri({ username: 'ayse-2', secret: 'JBSWY3DPEHPK3PXP' }),
+    '',
+    '',
+    "Successfully exported 3 TOTP configurations as TOTP URI's and printed them to the console",
+  ].join('\n');
+  const ayse = priv.totpConfigFor(text, 'ayse');
+  assert.equal(ayse.username, 'ayse');
+  assert.equal(ayse.digits, 6);
+  assert.equal(ayse.period, 30);
+  assert.equal(ayse.algorithm, 'sha1');
+  assert.equal(ayse.secret.toString('ascii'), '12345678901234567890');
+  assert.equal(priv.totpConfigFor(text, 'mehmet').digits, 8);
+  // A username that is another's prefix or suffix is not that user.
+  assert.equal(priv.totpConfigFor(text, 'ayse-2').username, 'ayse-2');
+  assert.equal(priv.totpConfigFor(text, 'yse'), null);
+  assert.equal(priv.totpConfigFor(text, 'nobody'), null);
+  // Lines that are not a TOTP URI of a known algorithm, digits and period.
+  for (const line of [
+    'otpauth://hotp/Lamaste:ayse?secret=GEZDGNBV&issuer=Lamaste&algorithm=SHA1&digits=6&period=30',
+    totpUri({ username: 'ayse', secret: RFC6238_SECRET, algorithm: 'MD5' }),
+    totpUri({ username: 'ayse', secret: RFC6238_SECRET, digits: 7 }),
+    totpUri({ username: 'ayse', secret: RFC6238_SECRET, period: 0 }),
+    totpUri({ username: 'ayse', secret: 'not base32!' }),
+    'otpauth://totp/Other:ayse?secret=GEZDGNBV&issuer=Lamaste&algorithm=SHA1&digits=6&period=30',
+  ]) {
+    assert.equal(priv.parseTotpUri(line), null, line);
+  }
+});
+
+test('authelia-user verify-totp: RFC 6238’s vectors, one step either side, nothing else', () => {
+  const config = priv.parseTotpUri(
+    totpUri({ username: 'ayse', secret: RFC6238_SECRET, digits: 8 }),
+  );
+  // RFC 6238 Appendix B, SHA-1: T = 59 s → 94287082, T = 1111111109 s → 07081804.
+  assert.equal(priv.matchTotpStep(config, '94287082', 59_000), 1);
+  assert.equal(priv.matchTotpStep(config, '07081804', 1_111_111_109_000), 37037036);
+  // The neighbouring steps are accepted, two away are not.
+  assert.equal(priv.matchTotpStep(config, '07081804', 1_111_111_109_000 + 30_000), 37037036);
+  assert.equal(priv.matchTotpStep(config, '07081804', 1_111_111_109_000 - 30_000), 37037036);
+  assert.equal(priv.matchTotpStep(config, '07081804', 1_111_111_109_000 + 60_000), null);
+  // A code of the wrong length or shape never matches.
+  for (const code of ['0708180', '070818045', '0708180a', '', ' 7081804']) {
+    assert.equal(priv.matchTotpStep(config, code, 1_111_111_109_000), null, code);
+  }
+  // Six digits: the last six of the eight.
+  const six = priv.parseTotpUri(totpUri({ username: 'ayse', secret: RFC6238_SECRET }));
+  assert.equal(priv.matchTotpStep(six, '287082', 59_000), 1);
+});
+
+test('authelia-user verify-totp: refused unless run as root', () => {
+  if (process.getuid?.() === 0) return;
+  assert.throws(() => priv.main(['authelia-user', 'verify-totp', 'ayse']), /must run as root/);
+});
+
 test('authelia-user has-oidc-identifier: a username in Authelia’s identifiers export, plain or quoted', () => {
   const exported = [
     '---',
@@ -347,4 +471,51 @@ test('authelia-user has-oidc-identifier: a username in Authelia’s identifiers 
     assert.equal(priv.exportNamesUsername(exported, absent), false, absent);
   }
   assert.equal(priv.exportNamesUsername('identifiers: []\n', 'ayse'), false);
+});
+
+// ---------------------------------------------------------------------------
+// self-update: where the installer comes from
+// ---------------------------------------------------------------------------
+
+const registryCases = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL('../../../core/lib/test/fixtures/lamalibre-registry-cases.json', import.meta.url),
+    ),
+    'utf8',
+  ),
+);
+
+test("self-update's registry rule matches core's case table", () => {
+  assert.equal(priv.LAMALIBRE_REGISTRY_URL, registryCases.default);
+  for (const c of registryCases.cases) {
+    if (c.refused) {
+      assert.throws(() => priv.chooseLamalibreRegistry(c.configured), JSON.stringify(c.configured));
+    } else {
+      assert.equal(
+        priv.chooseLamalibreRegistry(c.configured),
+        c.registry,
+        JSON.stringify(c.configured),
+      );
+    }
+  }
+});
+
+test("lamaste-priv's registry is core's LAMALIBRE_REGISTRY_URL", async () => {
+  const core = await import('@lamalibre/lamaste');
+  assert.equal(priv.LAMALIBRE_REGISTRY_URL, core.LAMALIBRE_REGISTRY_URL);
+});
+
+test('self-update runs npx with @lamalibre routed to the registry, the version pinned', () => {
+  const argv = priv.selfUpdateArgs('4.14.0', 'https://feria.codelama.com.tr/', 'u1');
+  const npx = argv.indexOf('/usr/bin/npx');
+  assert.ok(npx > 0);
+  assert.deepEqual(argv.slice(npx), [
+    '/usr/bin/npx',
+    '--yes',
+    '--@lamalibre:registry=https://feria.codelama.com.tr/',
+    '@lamalibre/create-lamaste@4.14.0',
+    '--yes',
+  ]);
+  assert.deepEqual(argv.slice(0, 2), ['--unit', 'u1']);
 });

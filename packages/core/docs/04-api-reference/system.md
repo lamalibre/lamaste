@@ -115,7 +115,7 @@ curl -s --cert client.p12:password \
 
 ### `POST /api/system/update`
 
-Triggers a background update of the Lamaste server to the specified version. The panel runs `sudo lamaste-priv self-update <version>`; the root-owned helper validates the version (`MAJOR.MINOR.PATCH`) and starts `npx @lamalibre/create-lamaste@<version> --yes` — the installer's redeploy path — in a transient systemd unit two seconds later. The transient unit keeps the update alive while the installer stops and restarts the panel; the delay lets this response reach the client first. The panel passes only the version: it never writes a script for root to run.
+Triggers a background update of the Lamaste server to the specified version. The panel runs `sudo lamaste-priv self-update <version>`; the root-owned helper validates the version (`MAJOR.MINOR.PATCH`) and starts `npx --yes --@lamalibre:registry=<registry> @lamalibre/create-lamaste@<version> --yes` — the installer's redeploy path, which deploys the panel server bundled in that version of the installer — in a transient systemd unit two seconds later. The transient unit keeps the update alive while the installer stops and restarts the panel; the delay lets this response reach the client first. The panel passes only the version: it never writes a script for root to run. `<registry>` is the registry root's npm configuration names for `@lamalibre` (`@lamalibre:registry`, such as a development Feria) — refused when it names a public registry (`registry.npmjs.org` and its mirrors) — and otherwise the hosted Feria, `https://feria.codelama.com.tr/` (see [Where Lamaste's packages come from](../05-operations/upgrades.md#where-lamastes-packages-come-from)).
 
 **Authentication:** Admin-only. Agent certificates cannot trigger updates.
 

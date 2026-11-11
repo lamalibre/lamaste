@@ -11,6 +11,54 @@ import { ensureRootOwnedInstallDir, removeTree, writeFileNoFollow } from '../lib
 import { generateCertHelpPage } from '../lib/cert-help-page.js';
 import { provisionRelayServices } from '../lib/relay-services.js';
 import { installSudoersFile, installSudoersWrappers } from '../lib/wrappers.js';
+import { lamalibreNpmEnv } from '../lib/registry.js';
+
+/**
+ * Deploy the panel server from vendor/ (this installer's own release, its
+ * `@lamalibre/*` dependencies pinned exactly by bundle-vendor) into
+ * <installDir>/serverd, root-owned, and install its production
+ * dependencies — `@lamalibre/*` from the registry the installer resolved.
+ * Shared by the full install and the redeploy, so a redeploy installs
+ * exactly the version it was started for.
+ *
+ * @param {string} vendorDir
+ * @param {string} installDir
+ * @returns {Promise<string>} the version deployed
+ */
+export async function deployServerdPackage(vendorDir, installDir) {
+  const serverSrc = join(vendorDir, 'serverd');
+  const serverDest = join(installDir, 'serverd');
+
+  if (!existsSync(serverSrc)) {
+    throw new Error(
+      `Panel server source not found at ${serverSrc}. The installer is missing bundled vendor files — rebuild create-lamaste.`,
+    );
+  }
+
+  // Copy package.json first. For src/ we nuke the existing directory
+  // before copying — redeploys over an existing install need to drop
+  // stale files that are no longer in the source tree. `fs.cp` with
+  // recursive merges but does not delete orphans, and its overwrite
+  // behaviour is not reliable for every file shape.
+  await mkdir(serverDest, { recursive: true });
+  await cp(join(serverSrc, 'package.json'), join(serverDest, 'package.json'), { force: true });
+  await rm(join(serverDest, 'src'), { recursive: true, force: true });
+  await cp(join(serverSrc, 'src'), join(serverDest, 'src'), { recursive: true, force: true });
+
+  try {
+    await execa('npm', ['install', '--production', '--ignore-scripts'], {
+      cwd: serverDest,
+      env: await lamalibreNpmEnv(),
+    });
+  } catch (err) {
+    throw new Error(
+      `Failed to install serverd dependencies. Check your network connection and try again.\n${err.stderr || err.message}`,
+    );
+  }
+
+  const { version } = JSON.parse(await readFile(join(serverDest, 'package.json'), 'utf8'));
+  return String(version);
+}
 
 /**
  * Panel deployment subtasks: system user, directories, server + client deploy,
@@ -93,42 +141,9 @@ export function panelTasks(ctx, task) {
     {
       title: 'Deploying serverd',
       task: async (_ctx, subtask) => {
-        const serverSrc = join(vendorDir, 'serverd');
-        const serverDest = `${installDir}/serverd`;
-
-        if (!existsSync(serverSrc)) {
-          throw new Error(
-            `Panel server source not found at ${serverSrc}. Ensure the monorepo is intact.`,
-          );
-        }
-
-        subtask.output = 'Copying serverd files...';
-        // Copy package.json first. For src/ we nuke the existing directory
-        // before copying — redeploys over an existing install need to drop
-        // stale files that are no longer in the source tree. `fs.cp` with
-        // recursive merges but does not delete orphans, and its overwrite
-        // behaviour is not reliable for every file shape.
-        await cp(join(serverSrc, 'package.json'), join(serverDest, 'package.json'), {
-          force: true,
-        });
-        await rm(join(serverDest, 'src'), { recursive: true, force: true });
-        await cp(join(serverSrc, 'src'), join(serverDest, 'src'), {
-          recursive: true,
-          force: true,
-        });
-
-        subtask.output = 'Installing production dependencies...';
-        try {
-          await execa('npm', ['install', '--production', '--ignore-scripts'], {
-            cwd: serverDest,
-          });
-        } catch (err) {
-          throw new Error(
-            `Failed to install serverd dependencies. Check your network connection and try again.\n${err.stderr || err.message}`,
-          );
-        }
-
-        subtask.output = 'Panel server deployed';
+        subtask.output = 'Copying serverd files and installing production dependencies...';
+        const version = await deployServerdPackage(vendorDir, installDir);
+        subtask.output = `Panel server ${version} deployed`;
       },
       rendererOptions: { persistentOutput: true },
     },
@@ -162,6 +177,7 @@ export function panelTasks(ctx, task) {
         try {
           await execa('npm', ['install', '--production', '--ignore-scripts'], {
             cwd: cliDest,
+            env: await lamalibreNpmEnv(),
           });
         } catch (err) {
           throw new Error(
@@ -237,7 +253,10 @@ export function panelTasks(ctx, task) {
 
         subtask.output = 'Installing dependencies for build...';
         try {
-          await execa('npm', ['install', '--ignore-scripts'], { cwd: buildDir });
+          await execa('npm', ['install', '--ignore-scripts'], {
+            cwd: buildDir,
+            env: await lamalibreNpmEnv(),
+          });
         } catch (err) {
           throw new Error(
             `Failed to install lamaste-server-ui build dependencies. Check your network connection and try again.\n${err.stderr || err.message}`,

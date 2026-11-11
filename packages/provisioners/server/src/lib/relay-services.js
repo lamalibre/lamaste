@@ -5,6 +5,7 @@ import { installPinnedAuthelia, installPinnedChisel } from './binaries.js';
 import { ensureOidcIssuerKey } from './oidc-issuer-key.js';
 import {
   chownTree,
+  ensureAutheliaMailFiles,
   ensureDirectory,
   migrateAutheliaDir,
   migrateWebRoot,
@@ -83,6 +84,9 @@ export async function provisionRelayServices(ctx, report) {
     autheliaUid,
     autheliaGid,
   });
+  // Authelia's mail (mail-design.md §5): the panel's local CA and the
+  // submission password, written by the panel, read by Authelia.
+  await ensureAutheliaMailFiles(AUTHELIA_CONFIG_DIR, { lamasteUid, autheliaGid });
   await ensureDirectory(AUTHELIA_LOG_DIR, { uid: autheliaUid, gid: autheliaGid, mode: 0o750 });
   await chownTree(AUTHELIA_LOG_DIR, `${autheliaUid}:${autheliaGid}`);
   // The OIDC issuer key: Authelia's alone, generated here so the panel —
@@ -94,6 +98,7 @@ export async function provisionRelayServices(ctx, report) {
     uid: lamasteUid,
     gid: chiselGid,
     mode: 0o640,
+    previousOwners: [await lookupId('user', 'nobody')],
   });
   // The panel is the CA: the PKI directory is its own. Files earlier
   // versions created through sudo may still be root-owned.

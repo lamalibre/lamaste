@@ -183,14 +183,20 @@ export function parseUserArgs(sub, args) {
  * @returns {{ ok: true, tunnel: string, plugin: string } | { ok: false, error: string }}
  */
 export function parseUserSurfaceArgs(sub, args) {
-  const usage = `Usage: lamaste-server tunnels ${sub} <tunnel id | subdomain | fqdn> <plugin>`;
+  const bind = sub === 'bind-user-surface';
+  const usage = `Usage: lamaste-server tunnels ${sub} <tunnel id | subdomain | fqdn> <plugin>${bind ? ' [--cross-agent]' : ''}`;
   const positional = [];
+  let crossAgent = false;
   for (const arg of args) {
+    if (bind && arg === '--cross-agent') {
+      crossAgent = true;
+      continue;
+    }
     if (arg.startsWith('--')) return { ok: false, error: `Unknown option ${arg} — ${usage}` };
     positional.push(arg);
   }
   if (positional.length !== 2) return { ok: false, error: usage };
-  return { ok: true, tunnel: positional[0], plugin: positional[1] };
+  return { ok: true, tunnel: positional[0], plugin: positional[1], crossAgent };
 }
 
 /**
@@ -270,11 +276,13 @@ export function userSurfaceStatusText(status) {
     case 'not_installed':
       return 'not served — no installed plugin holds the route';
     case 'no_identity':
-      return 'not served yet — its installed version declares no identity (requests go down the tunnel)';
+      return 'not served yet — its installed version declares no identity (the relay answers its API with 503)';
     case 'not_approved':
-      return 'not served yet — its installed version waits for approval (requests go down the tunnel)';
+      return 'not served yet — its installed version waits for approval (the relay answers its API with 503)';
     case 'not_hosting_agent':
-      return 'not served — the agent carrying this tunnel does not host the plugin (moved, revoked, or hosted elsewhere); requests go down the tunnel';
+      return 'not served — no agent hosts the plugin, or no agent carries the tunnel (the relay answers its API with 503)';
+    case 'cross_agent_unconfirmed':
+      return 'not served — another agent hosts the plugin and this route is not confirmed across agents for the agent carrying the tunnel and the agent hosting the plugin as they are now; bind it again with --cross-agent';
     default:
       return `not served (${terminalText(status.reason)})`;
   }

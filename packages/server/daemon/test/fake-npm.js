@@ -22,6 +22,13 @@ const zlib = require('node:zlib');
 const root = process.env.LAMASTE_TEST_FAKE_NPM;
 const reg = JSON.parse(fs.readFileSync(path.join(root, 'registry.json'), 'utf8'));
 const args = process.argv.slice(2);
+// \`config get <key>\`: npm's own answer from the environment (the only
+// configuration a test gives), \`undefined\` when unset. A read, not logged.
+if (args[0] === 'config' && args[1] === 'get') {
+  const value = process.env['npm_config_' + args[2]];
+  process.stdout.write((value === undefined ? 'undefined' : value) + '\n');
+  process.exit(0);
+}
 // The userconfig npm would read (npm_config_userconfig), as it is at call
 // time: its text and mode, so a test can check what the panel handed npm
 // and that nothing of it outlives the call.
@@ -38,7 +45,15 @@ if (userconfig) {
 }
 fs.appendFileSync(
   path.join(root, 'calls.log'),
-  JSON.stringify({ args, cwd: process.cwd(), userconfig, userconfigText, userconfigMode }) + '\n',
+  JSON.stringify({
+    args,
+    cwd: process.cwd(),
+    userconfig,
+    userconfigText,
+    userconfigMode,
+    // Where @lamalibre was routed through the environment, if anywhere.
+    lamalibreRegistry: process.env['npm_config_@lamalibre:registry'] ?? null,
+  }) + '\n',
 );
 const cmd = args[0];
 const valueFlags = new Set(['--pack-destination']);
@@ -160,6 +175,9 @@ export async function installFakeNpm(dir) {
   // so the inherited one must not reach it (the daemon itself never runs
   // under npm).
   delete process.env.npm_config_userconfig;
+  // Nor may this machine's routing of @lamalibre (a developer's npm may
+  // name a Feria): the fake npm's configuration is what the test sets.
+  delete process.env['npm_config_@lamalibre:registry'];
 
   const registry = { packages: {}, integrity: {}, distTags: {}, failInstall: [] };
   const registryPath = path.join(dir, 'registry.json');
@@ -188,7 +206,7 @@ export async function installFakeNpm(dir) {
       if (fail) registry.failInstall.push(spec);
       await save();
     },
-    /** Every call so far: `{ args, cwd, userconfig, userconfigText, userconfigMode }`. */
+    /** Every call so far: `{ args, cwd, userconfig, userconfigText, userconfigMode, lamalibreRegistry }`. */
     calls() {
       return readFileSync(logPath, 'utf-8')
         .split('\n')

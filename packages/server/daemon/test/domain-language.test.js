@@ -24,7 +24,7 @@ import yaml from 'js-yaml';
 import { AUTHELIA_RELEASE, parseDomainsProjection } from '@lamalibre/lamaste';
 import { authPagesDigest } from '@lamalibre/lamaste/server';
 
-import { renderAuthVhost } from '../src/lib/nginx.js';
+import { NO_MAIL, renderAuthVhost } from '../src/lib/nginx.js';
 
 import { createFakeAutheliaStorage } from './fake-authelia-storage.js';
 import { installFakeGatekeeper } from './fake-gatekeeper.js';
@@ -303,6 +303,7 @@ test('Turkish on an unbranded domain: rendered, its vhost, the projection, audit
     enabled: true,
     branding: null,
     language: 'tr',
+    mail: NO_MAIL,
   });
   assert.match(
     installedVhosts.get(PRIMARY),
@@ -371,6 +372,7 @@ test('a brand on a Turkish domain: brand-spliced forced files; removing the bran
     enabled: true,
     branding: { theme: 'dark', logo: false },
     language: 'tr',
+    mail: NO_MAIL,
   });
   // The panel's preview speaks the domain's language, its stylesheet the rendered one.
   const preview = await call('GET', `/api/domains/${PRIMARY}/branding/preview`);
@@ -403,6 +405,7 @@ test('a brand on a Turkish domain: brand-spliced forced files; removing the bran
     enabled: true,
     branding: null,
     language: 'tr',
+    mail: NO_MAIL,
   });
 });
 
@@ -503,6 +506,7 @@ test('a pending domain: rendered at once, its vhost written at activation with t
     enabled: true,
     branding: null,
     language: 'tr',
+    mail: NO_MAIL,
   });
   assert.equal((await projection()).domains.find((d) => d.name === OTHER).language, 'tr');
 });
@@ -524,6 +528,7 @@ test('English forced, then cleared: the rendering goes with the last input, the 
     enabled: true,
     branding: null,
     language: null,
+    mail: NO_MAIL,
   });
   assert.equal(
     installedVhosts.get(OTHER),

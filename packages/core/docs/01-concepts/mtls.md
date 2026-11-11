@@ -25,7 +25,7 @@ You encounter mTLS during two moments:
 
 ### Importing the certificate
 
-After running `npx @lamalibre/create-lamaste`, the installer prints something like:
+After running `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste`, the installer prints something like:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
@@ -101,7 +101,7 @@ When connecting a machine to Lamaste using `lamaste-agent`, you should **not** u
 2. Click "Generate" and enter a label (e.g., `macbook-pro`)
 3. Save the displayed password — it cannot be retrieved later
 4. Download the `.p12` file
-5. Share the `.p12` file and password with the agent machine through a secure channel, then install the agent there (`npm install -g @lamalibre/lamaste-agent`) and run `lamaste-agent setup` (an enrollment token avoids moving the key at all — see [Agent Setup](../02-guides/agent-setup.md))
+5. Share the `.p12` file and password with the agent machine through a secure channel, then install the agent there (`npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent`) and run `lamaste-agent setup` (an enrollment token avoids moving the key at all — see [Agent Setup](../02-guides/agent-setup.md))
 
 Agent certificates have capability-based access. By default, a new agent can only read tunnel configuration. Admins can grant additional capabilities per-agent from the panel UI:
 

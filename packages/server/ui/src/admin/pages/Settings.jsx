@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { QRCodeSVG } from 'qrcode.react';
-import { ShieldCheck, Copy, Check, AlertTriangle, RefreshCw } from 'lucide-react';
+import { ShieldCheck, Copy, Check, AlertTriangle, RefreshCw, Mail } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
+import { MailSettings } from '../components/MailSettings.jsx';
 
 // --- Settings Page ---
 
@@ -114,7 +115,7 @@ export default function Settings({ hasDomain }) {
     <div className="mx-auto max-w-2xl p-6">
       <div className="mb-6">
         <h1 className="text-xl font-bold text-white">Settings</h1>
-        <p className="mt-1 text-sm text-zinc-500">Configure panel security settings.</p>
+        <p className="mt-1 text-sm text-zinc-500">Configure panel security and the relay’s mail.</p>
       </div>
 
       {/* 2FA Section */}
@@ -287,6 +288,19 @@ export default function Settings({ hasDomain }) {
             </form>
           </div>
         )}
+      </div>
+
+      {/* Mail Section */}
+      <div className="mt-6 rounded-lg border border-zinc-800 bg-zinc-900 p-6">
+        <div className="mb-2 flex items-center gap-3">
+          <Mail className="h-5 w-5 text-cyan-400" />
+          <h2 className="text-lg font-bold text-white">Mail</h2>
+        </div>
+        <p className="mb-4 text-sm text-zinc-400">
+          How the relay sends invitations, password reset links and Authelia’s codes. Every domain
+          uses this unless it has its own (Domains → Mail).
+        </p>
+        <MailSettings domain={null} />
       </div>
 
       {/* Panel Update Section */}

@@ -62,8 +62,10 @@ Execute the Lamaste installer:
 
 ```bash
 apt install -y npm
-npx @lamalibre/create-lamaste
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste
 ```
+
+Lamaste's packages are published to the hosted Feria registry, `https://feria.codelama.com.tr/`, not to npmjs. The `--@lamalibre:registry=` option sends only the `@lamalibre` scope there; everything else still comes from npm's default registry. To avoid typing it, set it once with `sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/` (read by every user on the machine) — the installer follows that setting too. See [Where Lamaste's packages come from](../05-operations/upgrades.md#where-lamastes-packages-come-from).
 
 The installer displays a confirmation banner before making any changes:
 
@@ -90,7 +92,7 @@ The installer displays a confirmation banner before making any changes:
   Press Enter to continue or Ctrl+C to abort...
 ```
 
-Press **Enter** to proceed. To skip the confirmation prompt, use `npx @lamalibre/create-lamaste --yes`.
+Press **Enter** to proceed. To skip the confirmation prompt, use `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --yes`.
 
 ### 4. What the Installer Does
 
@@ -378,16 +380,16 @@ The service includes security hardening: `ProtectHome=true`, `PrivateTmp=true`, 
 
 ## Quick Reference
 
-| Item                     | Value                                                        |
-| ------------------------ | ------------------------------------------------------------ |
-| **Install command**      | `npx @lamalibre/create-lamaste`                              |
-| **Minimum VPS**          | Ubuntu 24.04, 512 MB RAM                                     |
-| **Required ports**       | 22 (SSH), 80 (HTTP/Let's Encrypt), 443 (HTTPS), 9292 (panel) |
-| **Certificate location** | `/etc/lamalibre/lamaste/pki/client.p12`                      |
-| **Download command**     | `scp root@<ip>:/etc/lamalibre/lamaste/pki/client.p12 .`      |
-| **Panel URL**            | `https://<ip>:9292`                                          |
-| **Config file**          | `/etc/lamalibre/lamaste/panel.json`                          |
-| **Service name**         | `lamalibre-lamaste-serverd`                                  |
-| **Service logs**         | `journalctl -u lamalibre-lamaste-serverd -f`                 |
-| **Re-run safe**          | Yes (idempotent)                                             |
-| **Total install time**   | ~5-10 minutes                                                |
+| Item                     | Value                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------ |
+| **Install command**      | `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` |
+| **Minimum VPS**          | Ubuntu 24.04, 512 MB RAM                                                                   |
+| **Required ports**       | 22 (SSH), 80 (HTTP/Let's Encrypt), 443 (HTTPS), 9292 (panel)                               |
+| **Certificate location** | `/etc/lamalibre/lamaste/pki/client.p12`                                                    |
+| **Download command**     | `scp root@<ip>:/etc/lamalibre/lamaste/pki/client.p12 .`                                    |
+| **Panel URL**            | `https://<ip>:9292`                                                                        |
+| **Config file**          | `/etc/lamalibre/lamaste/panel.json`                                                        |
+| **Service name**         | `lamalibre-lamaste-serverd`                                                                |
+| **Service logs**         | `journalctl -u lamalibre-lamaste-serverd -f`                                               |
+| **Re-run safe**          | Yes (idempotent)                                                                           |
+| **Total install time**   | ~5-10 minutes                                                                              |

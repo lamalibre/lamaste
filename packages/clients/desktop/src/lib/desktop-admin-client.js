@@ -131,11 +131,35 @@ export const desktopAdminClient = {
   getDomainBrandingPreview: (name) =>
     invokeRefusable('admin_get_domain_branding_preview', { name }),
 
+  // --- Mail: the relay's transport, then a domain's override (mail-design.md §3.5) ---
+  // Bodies may carry a password or a client secret: Rust hands them to curl on stdin.
+  getMailSettings: () => invokeRefusable('admin_get_mail', { domain: null }),
+  setMailSmtp: (input) => invokeRefusable('admin_set_mail_smtp', { domain: null, input }),
+  startMailGoogleConsent: (input) =>
+    invokeRefusable('admin_start_mail_google_consent', { domain: null, input }),
+  setMailSender: (input) => invokeRefusable('admin_update_mail', { domain: null, input }),
+  resumeMail: () => invokeRefusable('admin_resume_mail', { domain: null }),
+  clearMailSettings: () => invokeRefusable('admin_clear_mail', { domain: null }),
+  sendTestMail: (to) => invokeRefusable('admin_send_test_mail', { domain: null, to }),
+  getDomainMail: (name) => invokeRefusable('admin_get_mail', { domain: name }),
+  setDomainMailSmtp: (name, input) =>
+    invokeRefusable('admin_set_mail_smtp', { domain: name, input }),
+  startDomainMailGoogleConsent: (name, input) =>
+    invokeRefusable('admin_start_mail_google_consent', { domain: name, input }),
+  setDomainMailSender: (name, input) =>
+    invokeRefusable('admin_set_domain_mail_sender', { name, input }),
+  updateDomainMail: (name, input) => invokeRefusable('admin_update_mail', { domain: name, input }),
+  resumeDomainMail: (name) => invokeRefusable('admin_resume_mail', { domain: name }),
+  clearDomainMail: (name) => invokeRefusable('admin_clear_mail', { domain: name }),
+  sendDomainTestMail: (name, to) => invokeRefusable('admin_send_test_mail', { domain: name, to }),
+
   // --- Invitations ---
   getInvitations: ({ plugin = null, inviter = null, kind = null } = {}) =>
     invokeRefusable('admin_get_invitations', { plugin, inviter, kind }),
   createInvitation: (data) => invokeRefusable('admin_create_invitation', { data }),
   revokeInvitation: (id) => invokeRefusable('admin_revoke_invitation', { id }),
+  reissueInvitation: (id, options = {}) =>
+    invokeRefusable('admin_reissue_invitation', { id, mail: options.mail ?? null }),
   disableInvitees: (inviterUserId, { transitive = false } = {}) =>
     invokeRefusable('admin_disable_invitees', { inviterUserId, transitive }),
   getPluginInvitationPolicy: (name) =>
@@ -282,6 +306,29 @@ export const desktopAdminClient = {
   movePluginWebSurface: (name, tunnelId) =>
     invokeRefusable('admin_move_plugin_web_surface', { name, tunnelId }),
   deletePluginWebSurface: (name) => invokeRefusable('admin_delete_plugin_web_surface', { name }),
+  joinWebSurfaceRoute: (name, route) =>
+    invokeRefusable('admin_join_web_surface_route', { name, route }),
+  leaveWebSurfaceRoute: (name, route) =>
+    invokeRefusable('admin_leave_web_surface_route', { name, route }),
+
+  // --- Native apps (native clients of application hosts and their grants) ---
+  listNativeApps: () => invokeRefusable('admin_list_native_apps'),
+  createNativeApp: (data) => invokeRefusable('admin_create_native_app', { data }),
+  updateNativeApp: (clientId, data) =>
+    invokeRefusable('admin_update_native_app', { clientId, data }),
+  deleteNativeApp: (clientId) => invokeRefusable('admin_delete_native_app', { clientId }),
+  listNativeGrants: (clientId, { userId, status } = {}) =>
+    invokeRefusable('admin_list_native_grants', {
+      clientId,
+      userId: userId || null,
+      status: status || null,
+    }),
+  revokeNativeGrant: (clientId, grantId) =>
+    invokeRefusable('admin_revoke_native_grant', { clientId, grantId }),
+  revokeUserNativeGrants: (clientId, userId) =>
+    invokeRefusable('admin_revoke_user_native_grants', { clientId, userId }),
+  getUserNativeGrants: (username, { status } = {}) =>
+    invokeRefusable('admin_get_user_native_grants', { username, status: status || null }),
   getPluginSettings: (name) => invokeRefusable('admin_get_plugin_settings', { name }),
   // The body carries secrets: it goes to the Rust command and on to curl's
   // stdin as the request body, and nowhere else.
@@ -332,8 +379,12 @@ export const desktopAdminClient = {
   updateTunnel: (id, data) => invoke('admin_update_tunnel', { id, data }),
   deleteTunnel: (id) => invoke('admin_delete_tunnel', { id }),
   getTunnelAgentConfig: () => invoke('admin_get_tunnel_agent_config'),
-  bindTunnelUserSurface: (id, route) =>
-    invokeRefusable('admin_bind_tunnel_user_surface', { id, route }),
+  bindTunnelUserSurface: (id, route, { crossAgent } = {}) =>
+    invokeRefusable('admin_bind_tunnel_user_surface', {
+      id,
+      route,
+      crossAgent: crossAgent === true,
+    }),
   unbindTunnelUserSurface: (id, route) =>
     invokeRefusable('admin_unbind_tunnel_user_surface', { id, route }),
 

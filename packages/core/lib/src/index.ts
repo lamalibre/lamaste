@@ -27,6 +27,7 @@ export {
   OIDC_CLIENT_ID_MAX_LENGTH,
   isOidcClientId,
   RESERVED_TUNNEL_PORTS,
+  MAIL_SUBMISSION_PORT,
   isTunnelPortAllowed,
   INTERNAL_PLUGIN_PORT_RANGE,
   isInternalPluginPort,
@@ -271,6 +272,96 @@ export type {
   IdentityChangesSealContext,
 } from './identity-seal.js';
 
+// Native apps on the user surface (native-apps-design.md): the native
+// client's rules (browser-safe), its access tokens, the broker's grace
+// window, and the sign-in events agent halves may receive.
+export {
+  LAMASTE_OIDC_CLIENT_ID_PREFIX,
+  NATIVE_CLIENT_ID_PREFIX,
+  NATIVE_CLIENT_SLUG_RE,
+  isReservedOidcClientId,
+  isNativeClientId,
+  nativeClientId,
+  NATIVE_ACCESS_TOKEN_MINUTES,
+  NATIVE_LIFETIME_DAYS,
+  NATIVE_REDIRECT_PATHS_MAX,
+  NATIVE_REDIRECT_PATH_MAX_LENGTH,
+  NATIVE_CLIENT_NAME_MAX_LENGTH,
+  NATIVE_DEVICE_NAME_MAX_LENGTH,
+  NATIVE_USER_AGENT_MAX_LENGTH,
+  NATIVE_CLIENT_SCOPES,
+  NATIVE_CLIENT_GRANT_TYPES,
+  NATIVE_REFRESH_GRACE_MS,
+  isNativeRedirectPath,
+  nativeAudience,
+  nativeRedirectUris,
+  APPLE_APP_SITE_ASSOCIATION_PATH,
+  ASSET_LINKS_PATH,
+  APPLE_TEAM_ID_RE,
+  APP_PACKAGE_NAME_RE,
+  APP_PACKAGE_NAME_MAX_LENGTH,
+  SHA256_CERT_FINGERPRINT_RE,
+  NATIVE_ASSOCIATIONS_MAX,
+  NativeAssociationsSchema,
+  renderAppleAppSiteAssociation,
+  renderAssetLinks,
+  NATIVE_CLIENT_HOST_KINDS,
+  NativeClientCreateSchema,
+  NativeClientUpdateSchema,
+  nativeClientLifetimesValid,
+  NATIVE_GRANT_END_REASONS,
+  isNativeGrantEndReason,
+  nativeDeviceName,
+  nativeUserAgentSummary,
+  NATIVE_APPS_PROJECTION_FILE,
+  parseNativeAppsProjection,
+  nativeClientOfHost,
+} from './native-apps.js';
+export type {
+  NativeAppsProjectionClient,
+  NativeAssociations,
+  NativeClientHostKind,
+  NativeClientCreateInput,
+  NativeClientCreate,
+  NativeClientUpdateInput,
+  NativeClientUpdate,
+  NativeGrantEndReason,
+} from './native-apps.js';
+export {
+  NATIVE_ACCESS_TOKEN_MAX_LENGTH,
+  NATIVE_TOKEN_CLOCK_SKEW_SECONDS,
+  NATIVE_TOKEN_MAX_LIFETIME_SECONDS,
+  NATIVE_ACCESS_TOKEN_TYPE,
+  parseNativeIssuerKeys,
+  nativeTokenSha256,
+  verifyNativeAccessToken,
+  bearerTokenOf,
+  sealGraceAnswer,
+  openGraceAnswer,
+} from './native-token.js';
+export type {
+  NativeIssuerKey,
+  NativeAccessTokenClaims,
+  NativeAccessTokenRejection,
+  VerifyNativeAccessTokenResult,
+  VerifyNativeAccessTokenOptions,
+  SealedGraceAnswer,
+} from './native-token.js';
+export {
+  AGENT_HALF_SIGN_IN_EVENTS_PATH,
+  SIGN_IN_EVENTS_PROTOCOL_VERSION,
+  SIGN_IN_EVENTS_BATCH_MAX,
+  SIGN_IN_EVENTS_MAX_BYTES,
+  SIGN_IN_EVENT_RETENTION_MS,
+  SignInClientSchema,
+  SignInEventSchema,
+  sealSignInEvents,
+  openSignInEvents,
+  parseSignInEventsWire,
+  parseSignInEvents,
+} from './sign-in-events.js';
+export type { SignInEvent, SignInEventsEnvelope, SignInEventsWire } from './sign-in-events.js';
+
 export type {
   IdentityAttribute,
   AudienceRemoveReason,
@@ -307,10 +398,16 @@ export {
   isUserSurfaceRoute,
   isUserSurfaceUrl,
   DELEGATED_INVITATIONS_API_PREFIX,
+  DELEGATED_INVITATION_REISSUE_SUFFIX,
   DELEGATED_INVITATIONS_PAGE_PREFIX,
   delegatedInvitationsApiPath,
   isDelegatedInvitationsUrl,
   siteUserSurfaceRoute,
+  siteUserSurfaceRoutes,
+  tunnelCrossAgentConfirmations,
+  isCrossAgentConfirmed,
+  type CrossAgentConfirmation,
+  tunnelUserSurfaceRouteState,
   tunnelUserSurfaceRoutes,
   tunnelServedUserSurfaceRoutes,
   userSurfaceApiPath,
@@ -755,6 +852,7 @@ export {
   verifyRelayAssertion,
   urlIsUnderRoute,
   isRelayInvitationsTarget,
+  isRelayAccountTarget,
   isRelayUserSurfaceTarget,
 } from './relay-assertion.js';
 
@@ -762,9 +860,11 @@ export type {
   RelayCaller,
   RelaySessionUser,
   RelayPanelUser,
+  RelayBearerCredential,
   RelayTarget,
   RelayUserSurfaceTarget,
   RelayInvitationsTarget,
+  RelayAccountTarget,
   RelayAssertionPayload,
   RelaySigningKey,
   RelayVerifyKey,
@@ -817,6 +917,21 @@ export type { ManifestPackageRefs } from './trusted-scopes.js';
 
 export * from './branding.js';
 
+// Where @lamalibre packages install from (the hosted Feria unless npm's
+// configuration names another registry) — pure; the npm-reading half is in
+// the agent and server subpaths (npm-registry-config.ts)
+export {
+  LAMALIBRE_REGISTRY_CONFIG_KEY,
+  LAMALIBRE_REGISTRY_ENV,
+  PUBLIC_NPM_REGISTRY_HOSTS,
+  isPublicNpmRegistry,
+  LamalibreRegistryError,
+  chooseLamalibreRegistry,
+  lamalibreRegistryArg,
+  lamalibreRegistryEnv,
+  LAMALIBRE_REGISTRY_FLAG,
+} from './lamalibre-registry.js';
+
 // Per-domain branding of the auth pages: the brand record's rules, the
 // image checks and the rendering (browser-safe; the relay's side is in /server)
 export {
@@ -856,6 +971,7 @@ export {
   AUTH_PAGE_PROPERTY_PREFIX,
   renderAuthPageThemeCss,
   BRAND_CSS_LANGUAGE_MENU_RULE,
+  AUTH_STOCK_CSS,
   renderDomainCss,
 } from './auth-branding.js';
 
@@ -886,7 +1002,10 @@ export {
   PAGE_MESSAGE_DROPPED_PLACEHOLDERS,
   INVITE_PAGE_KEYS,
   INVITATIONS_PAGE_KEYS,
+  RESET_PAGE_KEYS,
+  ACCOUNT_PASSWORD_PAGE_KEYS,
   UNAVAILABLE_PAGE_KEYS,
+  NATIVE_REDIRECT_PAGE_KEYS,
   FORBIDDEN_PAGE_KEYS,
   ACCESS_REQUEST_PAGE_KEYS,
   DOMAIN_REFUSAL_PAGE_KEYS,
@@ -913,6 +1032,11 @@ export {
   AUTHELIA_CORRECTIONS,
   forcedAutheliaLocaleFile,
   autheliaIndexLanguageFilters,
+  AUTHELIA_INDEX_RESET_ATTRIBUTE,
+  AUTHELIA_INDEX_RESET_URL_ATTRIBUTE,
+  AUTHELIA_ACCOUNT_LINK_ID,
+  AUTHELIA_ACCOUNT_LINK_CSS,
+  autheliaIndexMailFilters,
   renderForcedAutheliaLocale,
 } from './authelia-locales.js';
 export type {
@@ -920,6 +1044,98 @@ export type {
   AutheliaMessages,
   ForcedAutheliaLocale,
 } from './authelia-locales.js';
+
+// Mail: transports, senders, deliverable addresses (mail-design.md; browser-safe,
+// also the subpath ./mail) and a person's own account pages' contract
+export {
+  MAIL_TRANSPORT_KINDS,
+  SMTP_SECURITY_MODES,
+  MAIL_CA_PEM_MAX_BYTES,
+  MAIL_CA_PEM_MAX_CERTIFICATES,
+  MAIL_ADDRESS_MAX_LENGTH,
+  MAIL_SENDER_NAME_MAX_LENGTH,
+  MAIL_SEND_STATUSES,
+  MAIL_SEND_CLASSES,
+  MAIL_KINDS,
+  MAIL_DAILY_LIMIT,
+  MAIL_BUDGET,
+  mailBudgetThresholds,
+  mailBudgetDecision,
+  adminInvitationMailDefault,
+  UNDELIVERABLE_MAIL_TLDS,
+  GOOGLE_CLIENT_ID_RE,
+  parseMailAddress,
+  mailAddressDomain,
+  isDeliverableAddress,
+  isMailSenderName,
+  formatMailbox,
+  splitPemCertificates,
+  resolveMailTransport,
+  canSendMail,
+  mailSenderDomains,
+  MailAddressSchema,
+  MailSenderNameSchema,
+  SmtpTransportSettingsSchema,
+  GmailApiTransportSettingsSchema,
+  SmtpTransportInputSchema,
+  MailGoogleStartInputSchema,
+  MailSenderInputSchema,
+  MailTransportPatchSchema,
+  MailTestInputSchema,
+} from './mail.js';
+export type {
+  MailTransportKind,
+  SmtpSecurity,
+  MailSendStatus,
+  MailSendClass,
+  MailKind,
+  MailBudgetRefusal,
+  MailBudgetView,
+  MailTransportPatch,
+  MailTransportPatchRequest,
+  MailSender,
+  SmtpTransportSettings,
+  GmailApiTransportSettings,
+  MailTransportSettings,
+  MailTransportRecord,
+  ResolvedMailTransport,
+  SmtpTransportInput,
+  SmtpTransportRequest,
+  MailGoogleStartInput,
+  MailGoogleStartRequest,
+  MailSenderInput,
+  MailSenderRequest,
+  MailTestInput,
+  SmtpTransportView,
+  MailTransportHealth,
+  MailTransportView,
+  MailSendResult,
+  InvitationMailState,
+} from './mail.js';
+export {
+  AUTH_RESET_PATH,
+  AUTH_ACCOUNT_PASSWORD_PATH,
+  PASSWORD_RESET_API,
+  ACCOUNT_PASSWORD_API_PATH,
+  MAIL_GOOGLE_CALLBACK_PATH,
+  authResetUrl,
+  mailGoogleRedirectUri,
+  PASSWORD_RESET_TTL_MINUTES,
+  PASSWORD_RESET_MAX_FAILURES,
+  PASSWORD_RESET_TOKEN_RE,
+  ACCOUNT_PASSWORD_MIN_LENGTH,
+  ACCOUNT_PASSWORD_MAX_LENGTH,
+  PasswordResetStartSchema,
+  PasswordResetLookupSchema,
+  PasswordResetFinishSchema,
+  PasswordChangeSchema,
+} from './account.js';
+export type { PasswordResetStart, PasswordResetFinish, PasswordChange } from './account.js';
+export {
+  hasControlCharacters,
+  looksLikeLinkOrHostname,
+  DISPLAY_NAME_LINK_PATTERN,
+} from './text-rules.js';
 
 // Delegated invitations: a plugin user with an inviting role invites
 // colleagues into that plugin (delegated-invitations-design.md)
@@ -931,6 +1147,8 @@ export {
   DelegatedInvitationRequestSchema,
   InvitationLookupSchema,
   INVITATIONS_PER_INVITER_PER_HOUR,
+  INVITATIONS_PER_INVITER_PER_DAY,
+  INVITATION_REISSUES_PER_DAY,
   INVITATION_ACCEPTING_STALE_MS,
   INVITATION_GRANT_RESERVE,
   INVITATION_KINDS,

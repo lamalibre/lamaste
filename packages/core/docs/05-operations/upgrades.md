@@ -27,13 +27,79 @@ Coming from 3.x, upgrade the **agents first**, as 4.0 required: agents from befo
 On each agent machine, after the server:
 
 ```bash
-sudo npm install -g @lamalibre/lamaste-agent
+sudo npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 lamaste-agent update
 ```
+
+Lamaste's packages are published to the hosted Feria, `https://feria.codelama.com.tr/`, not to npmjs (see [Where Lamaste's packages come from](#where-lamastes-packages-come-from)); the `--@lamalibre:registry=` option sends only the `@lamalibre` scope there.
 
 `update` applies the panel's configuration, restarts the tunnel client, and installs the sync timer (which applies later tunnel changes within 30 seconds). An agent originally set up with `npx` must be installed globally first — the sync timer runs the installed program. On Linux it also rewrites the agent panel's user unit so the panel starts at boot. An agent from before 4.0 rotates its Chisel credential once on its first sync, because older versions exposed it in process arguments and 0644 unit files. The Desktop App updates the agents it manages.
 
 A machine that hosts app plugins' agent halves needs the root-owned install shown above and its app host helper enabled once with `sudo lamaste-agent apphost enable` (see [App host](../04-api-reference/app-host.md)); after replacing the server's relay signing key, run `sudo lamaste-agent apphost pin` there. An upgrade of `lamaste-agent` does not replace that helper: when a release raises the app host protocol (4.4 speaks 2), run `sudo lamaste-agent apphost enable` again there — until then the agent refuses to install agent halves and the server does not offer it for hosting (`lamaste-agent apphost status` shows the helper as out of date).
+
+### Where Lamaste's packages come from
+
+Since 4.14 Lamaste's `@lamalibre/*` packages are published to the hosted Feria, **`https://feria.codelama.com.tr/`**, which serves them to anyone without a login. npmjs is no longer a source: it was frozen on 2026-11-10 at 4.12.0 and is not updated. The source code and every release's packed tarballs are on [GitHub Releases](https://github.com/lamalibre/lamaste/releases) — the copy the registry is published from.
+
+Every command that installs Lamaste names the registry for the `@lamalibre` scope only:
+
+```bash
+sudo npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste
+sudo npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
+```
+
+Other dependencies still come from the machine's default registry. To avoid typing the option, set it once in npm's global configuration — every user on the machine reads it, and Lamaste follows it too:
+
+```bash
+sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/
+```
+
+**What Lamaste itself does (4.14 and later).** Every path that installs or checks Lamaste's own packages — the installer's `npm install`s, the panel's **Update** action (`lamaste-priv self-update`), plugin installs and update checks without a [registry credential](../04-api-reference/registry-and-oidc.md), the Desktop App's installs and update check, and the cloud provisioner and updater — takes `@lamalibre` from:
+
+1. the registry npm's configuration names for `@lamalibre` (`@lamalibre:registry` in any npmrc, as root for the installer and **Update**; a development Feria, such as the one `feria-server setup` configures) — **refused** when it names a public registry (`registry.npmjs.org` and its mirrors), with a message saying to remove the line;
+2. otherwise the hosted Feria.
+
+With a registry credential the panel and agents keep installing plugins through the credential's registry, as before. The installer (`create-lamaste`) deploys the panel server it carries in its own package — a redeploy to `<version>` installs exactly `<version>`, no longer whatever a registry calls `latest`.
+
+### Upgrading to 4.14
+
+4.14 changes where Lamaste's packages come from (see [above](#where-lamastes-packages-come-from)); nothing else needs migrating. npmjs was frozen on 2026-11-10: its last Lamaste release is **4.12.0**. 4.13.0 and every later release are on the hosted Feria only.
+
+**A relay or agent running 4.13 or older updates through code that asks npm's default registry**, npmjs: the panel's **Update** action (and the Desktop App's **Update**, which asks it) finds nothing newer than 4.12.0, or fails with `E404` for a version you name. Each such machine needs npm told once where `@lamalibre` lives — in npm's **global** configuration, which every user on the machine reads, including root's `lamaste-priv self-update` (its `systemd-run` keeps only `PATH`) and the panel's own `lamaste` account:
+
+```bash
+sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/
+npm view @lamalibre/create-lamaste version   # the newest release, from Feria
+```
+
+**Relay.** After that line, use the panel's **Update** action (or the Desktop App's) as usual — it reaches 4.13.0 and 4.14.0. 4.14 keeps following the line (it names the hosted Feria, which is also 4.14's own default), and every later update works without it. Instead of the mapping you can run the redeploy once as root:
+
+```bash
+sudo npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste@4.14.0 --yes
+```
+
+**DigitalOcean servers, without a console.** A server provisioned through the Desktop App can be redeployed over SSH by the 4.14 cloud CLI, which fetches the installer from Feria whatever the relay runs (it adds a temporary SSH key through the DigitalOcean API and removes it afterwards):
+
+```bash
+LAMALIBRE_CLOUD_TOKEN=<token> npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ \
+  @lamalibre/lamaste-cloud@4.14.0 update --id <serverId> --version 4.14.0
+```
+
+(`<serverId>` is the server's `id` in `~/.lamalibre/lamaste/servers.json`.)
+
+**Agents.** On each agent machine, after the relay — the same global line, then the usual install and update; the agent's own plugin installs follow the same rule from then on:
+
+```bash
+sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/
+sudo npm install -g @lamalibre/lamaste-agent@4.14.0
+lamaste-agent update
+```
+
+A machine whose npm configuration routes `@lamalibre` to npmjs (`@lamalibre:registry=https://registry.npmjs.org/`, in any npmrc) refuses to install Lamaste from 4.14 on until the line is removed or changed — the error names it.
+
+**Desktop App.** Install 4.14 as usual ([Desktop App Setup](../02-guides/desktop-app-setup.md)); its daemon installs, plugin host install, `lamaste-agent` install and panel update check use Feria from then on.
+
+**Development.** A development Feria keeps working without changes: `feria-server setup` writes `@lamalibre:registry=http://localhost:4873` to `~/.npmrc`, and Lamaste follows npm's configuration. The Desktop App no longer hardcodes `http://127.0.0.1:4873` for its installs: it follows that line as well (its own Feria pill starts Feria with `--no-npmrc`, so run `feria-server setup` once).
 
 ### Upgrading to 4.6
 
@@ -66,10 +132,10 @@ ssh root@203.0.113.42
 **Step 2: Re-run the installer**
 
 ```bash
-npx @lamalibre/create-lamaste@latest --yes
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste@latest --yes
 ```
 
-The `@latest` tag ensures you get the newest published version. The `--yes` flag skips the confirmation prompt.
+The `@latest` tag ensures you get the newest published version, from the hosted Feria (see [Where Lamaste's packages come from](#where-lamastes-packages-come-from)). The `--yes` flag skips the confirmation prompt. The installer deploys the panel server it carries, so `create-lamaste@<version>` installs exactly that version.
 
 **What happens during re-install:**
 
@@ -84,7 +150,7 @@ The `@latest` tag ensures you get the newest published version. The `--yes` flag
 - It rewrites the panel's systemd unit and the sudoers rules (checked with `visudo -c` before they replace the old file), installs the root-owned programs in `/usr/local/sbin/` (`lamaste-priv`, `lamaste-certbot`, `lamaste-cert-info`) and removes the retired `lamaste-sign-csr` and `lamaste-pki-rename`, and installs the port-80 redirect site, and refreshes the IP panel vhost when its text differs (from 4.5; `nginx -t`, put back on failure)
 - It restarts Chisel if its binary or unit changed, starts the gatekeeper if it was running, and restarts `lamalibre-lamaste-serverd`, whose startup reconciliation rewrites Chisel's authfile. The first start of a 4.3 panel also creates the relay signing key (`/etc/lamalibre/lamaste/relay-signing-key.json`, 0600) and rewrites existing tunnel, static site and auth portal vhosts; check its log for `Left tunnel vhosts as they are`, `Left site vhosts as they are` and `Failed to rewrite … vhost` (see the [4.3.0 upgrade notes](https://github.com/lamalibre/lamaste/blob/main/CHANGELOG.md))
 
-The panel's **Update** action (`POST /api/system/update`) runs the same redeploy: it asks `sudo lamaste-priv self-update <version>` to start `create-lamaste@<version> --yes` in a transient systemd unit (see [System API](../04-api-reference/system.md)).
+The panel's **Update** action (`POST /api/system/update`) runs the same redeploy: it asks `sudo lamaste-priv self-update <version>` to start `create-lamaste@<version> --yes` in a transient systemd unit, fetched from the registry root's npm configuration names for `@lamalibre`, else the hosted Feria (see [System API](../04-api-reference/system.md)).
 
 **Step 3: Verify the update**
 
@@ -272,17 +338,17 @@ sudo dpkg-reconfigure -plow unattended-upgrades
 
 ## Quick Reference
 
-| Component    | Location                                       | Update Method                                         |
-| ------------ | ---------------------------------------------- | ----------------------------------------------------- |
-| Panel server | `/opt/lamalibre/lamaste/lamaste-serverd/`      | Re-run `npx @lamalibre/create-lamaste@latest`         |
-| Panel client | `/opt/lamalibre/lamaste/lamaste-server-ui/`    | Re-run `npx @lamalibre/create-lamaste@latest`         |
-| Chisel       | `/usr/local/bin/chisel`                        | Pinned; installed by `create-lamaste`                 |
-| Agents       | `sudo npm install -g @lamalibre/lamaste-agent` | Upgrade after the server, then `lamaste-agent update` |
-| Authelia     | `/usr/local/bin/authelia`                      | Pinned; installed by `create-lamaste` (newer is kept) |
-| nginx        | System package                                 | `sudo apt-get update && sudo apt-get upgrade`         |
-| certbot      | System package                                 | `sudo apt-get update && sudo apt-get upgrade`         |
-| Node.js      | System package                                 | Managed by installer (NodeSource repo)                |
-| Ubuntu       | System packages                                | `sudo apt-get update && sudo apt-get upgrade`         |
+| Component    | Location                                                                                            | Update Method                                         |
+| ------------ | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Panel server | `/opt/lamalibre/lamaste/lamaste-serverd/`                                                           | Re-run `create-lamaste` (see above)                   |
+| Panel client | `/opt/lamalibre/lamaste/lamaste-server-ui/`                                                         | Re-run `create-lamaste` (see above)                   |
+| Chisel       | `/usr/local/bin/chisel`                                                                             | Pinned; installed by `create-lamaste`                 |
+| Agents       | `sudo npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent` | Upgrade after the server, then `lamaste-agent update` |
+| Authelia     | `/usr/local/bin/authelia`                                                                           | Pinned; installed by `create-lamaste` (newer is kept) |
+| nginx        | System package                                                                                      | `sudo apt-get update && sudo apt-get upgrade`         |
+| certbot      | System package                                                                                      | `sudo apt-get update && sudo apt-get upgrade`         |
+| Node.js      | System package                                                                                      | Managed by installer (NodeSource repo)                |
+| Ubuntu       | System packages                                                                                     | `sudo apt-get update && sudo apt-get upgrade`         |
 
 | Post-Upgrade Check   | Command                                                                 |
 | -------------------- | ----------------------------------------------------------------------- |

@@ -83,7 +83,7 @@ function DeclaredSection({ view }) {
         {declared.attributes.length > 0
           ? `, and their ${declared.attributes.map(attributeLabel).join(' and ')}`
           : ' — nothing else about them'}
-        .
+        .{declared.signInEvents === true && ' It also receives their native app sign-ins.'}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         {approval.approved ? (

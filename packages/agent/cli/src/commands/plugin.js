@@ -14,8 +14,9 @@ import { fetchRegistryCredential } from '../lib/panel-api.js';
  * The registry credential the panel brokers for one install (the same as
  * the agent daemon's): npm then installs from the relay's registry, which
  * hosts every trusted scope. Undefined when the panel has none or cannot be
- * reached — a @lamalibre package then installs as the machine's npm is
- * configured, and a package of another scope is refused (core lifecycle).
+ * reached — a @lamalibre package then installs from the hosted Feria (or
+ * the registry this machine's npm configuration names for @lamalibre; never
+ * npmjs), and a package of another scope is refused (core lifecycle).
  * @param {string} label
  */
 async function installNpmrc(label) {

@@ -2043,7 +2043,7 @@ dependencies = [
 
 [[package]]
 name = "lamaste-desktop"
-version = "4.13.1"
+version = "4.14.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2063,6 +2063,7 @@ dependencies = [
  "tauri-plugin-deep-link",
  "tauri-plugin-shell",
  "tokio",
+ "url",
  "uuid",
 ]
 

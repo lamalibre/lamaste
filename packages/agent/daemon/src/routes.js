@@ -142,8 +142,9 @@ export default async function routes(fastify, opts) {
   /**
    * Registry credential for one plugin install, brokered by the panel.
    * `undefined` when the panel has none configured or cannot be reached —
-   * the install then proceeds against the public registry, which is the
-   * pre-credential behaviour.
+   * a @lamalibre package then installs from the hosted Feria (or the
+   * registry this machine's npm configuration names for @lamalibre; never
+   * npmjs), and a package of another scope is refused (core lifecycle).
    * @param {import('fastify').FastifyBaseLogger} log
    */
   async function installNpmrc(log) {

@@ -18,7 +18,7 @@ import { terminalText } from './plugin-settings.js';
 
 /** How `plugins web-surface` is called. */
 export const WEB_SURFACE_USAGE =
-  'Usage: lamaste-server plugins web-surface <name> [create [--subdomain <label>] [--access-mode authenticated|restricted] | move --tunnel <id | subdomain | fqdn> | delete [--yes] | grants | grant --user <u> | --group <g> | revoke --user <u> | --group <g>]';
+  'Usage: lamaste-server plugins web-surface <name> [create [--subdomain <label>] [--access-mode authenticated|restricted] | move --tunnel <id | subdomain | fqdn> | delete [--yes] | grants | grant --user <u> | --group <g> | revoke --user <u> | --group <g> | join <route> | leave <route>]';
 
 /** The flags each action takes, and whether each takes a value. */
 const ACTION_FLAGS = {
@@ -29,7 +29,12 @@ const ACTION_FLAGS = {
   grants: {},
   grant: { '--user': true, '--group': true },
   revoke: { '--user': true, '--group': true },
+  join: {},
+  leave: {},
 };
+
+/** The actions that name a route after themselves: `join <route>`, `leave <route>`. */
+const ROUTE_ACTIONS = new Set(['join', 'leave']);
 
 /** The actions after the plugin's name. */
 const ACTIONS = Object.keys(ACTION_FLAGS).filter((action) => action !== 'status');
@@ -50,7 +55,7 @@ const VALUE_FLAGS = new Set(
  * `move --tunnel <ref>` (a tunnel's id, subdomain or FQDN), `delete`
  * (`--yes` skips the typed confirmation), `grants` (who may reach its
  * site), or `grant` / `revoke` with exactly one of `--user <username>` and
- * `--group <name>`.
+ * `--group <name>`, or `join` / `leave` with another plugin's route.
  *
  * @param {string[]} args
  * @returns {{ ok: true, name: string, action: 'status' }
@@ -59,6 +64,7 @@ const VALUE_FLAGS = new Set(
  *   | { ok: true, name: string, action: 'delete', yes: boolean }
  *   | { ok: true, name: string, action: 'grants' }
  *   | { ok: true, name: string, action: 'grant' | 'revoke', principal: { principalType: 'user' | 'group', principalId: string } }
+ *   | { ok: true, name: string, action: 'join' | 'leave', route: string }
  *   | { ok: false, error: string }}
  */
 export function parseWebSurfaceArgs(args) {
@@ -85,8 +91,10 @@ export function parseWebSurfaceArgs(args) {
     i++;
   }
   if (positional.length === 0) return { ok: false, error: usage };
-  if (positional.length > 2) {
-    return { ok: false, error: `Unexpected argument "${positional[2]}" — ${usage}` };
+  const routeAction = ROUTE_ACTIONS.has(positional[1] ?? '');
+  if (positional.length > (routeAction ? 3 : 2)) {
+    const extra = positional[routeAction ? 3 : 2];
+    return { ok: false, error: `Unexpected argument "${extra}" — ${usage}` };
   }
   const [name, action = 'status'] = positional;
   if (positional.length === 2 && !ACTIONS.includes(action)) {
@@ -135,6 +143,14 @@ export function parseWebSurfaceArgs(args) {
     }
     case 'delete':
       return { ok: true, name, action, yes: flags.has('--yes') };
+    case 'join':
+    case 'leave': {
+      const route = positional[2];
+      if (route === undefined) {
+        return { ok: false, error: `${action} names a plugin route — ${usage}` };
+      }
+      return { ok: true, name, action, route };
+    }
     case 'grants':
       return { ok: true, name, action };
     case 'grant':
@@ -404,7 +420,32 @@ const REFUSAL_HINTS = {
     'That username belonged to a deleted user: create a user under it before giving it anything.',
   gatekeeper_unavailable: () =>
     'Gatekeeper is not reachable; nothing changed. Try again once it runs.',
+  invalid_route: () => 'Name the route of an installed agent-hosted plugin (plugins list).',
+  not_agent_hosted: () => 'Only an agent-hosted plugin with a user surface can join a site.',
+  not_plugin_domain: () =>
+    'Move the plugin to the site’s domain first: lamaste-server plugins domain <plugin> <domain>',
+  served_elsewhere: () =>
+    'Another host serves that plugin: unbind it there (tunnels unbind-user-surface) or delete its own site first.',
+  too_many_routes: () => 'A host serves at most 16 plugins’ user surfaces.',
 };
+
+/**
+ * A route joined to a plugin's site (`site.joined[]`), in words: served
+ * there, or why the relay answers its API with 503.
+ *
+ * @param {{ route: string, served: boolean, reason: string | null }} joined
+ */
+export function joinedRouteText(joined) {
+  if (joined.served) return 'served';
+  const why = {
+    site_not_served: 'the site itself is not served',
+    not_installed: 'the plugin is not installed',
+    no_identity: 'its installed version declares no identity',
+    not_approved: 'its installed version waits for approval',
+    not_hosted: 'it is not hosted',
+  }[joined.reason];
+  return `not served — ${why ?? terminalText(String(joined.reason))}`;
+}
 
 /**
  * The next step a refusal (`code`) of the web-surface routes points to, or
