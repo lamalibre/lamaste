@@ -52,7 +52,6 @@ Native apps on the user surface: a mobile app signs a person in through the rela
 - **A relay or agent on 4.13 or older** updates through code that asks npmjs. Map `@lamalibre` once in npm's global configuration — `sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/` — then use the panel's **Update** (relay) or `sudo npm install -g @lamalibre/lamaste-agent@4.14.0 && lamaste-agent update` (agents). Or run the redeploy once as root with `--@lamalibre:registry=https://feria.codelama.com.tr/`; a DigitalOcean server the Desktop App provisioned can be redeployed by the 4.14 cloud CLI (`lamaste-cloud update`). See `05-operations/upgrades.md`, "Upgrading to 4.14".
 - A machine whose npm configuration names npmjs for `@lamalibre` now stops installs with an error saying to remove the line.
 
-
 ## [4.13.1] - 2026-11-11
 
 ### Fixed

@@ -626,8 +626,7 @@ Fresh VMs, the branch rebased on `release/4.13.0` (`8ae8dc12`), the candidate on
   sign-in events reach only the plugin that declares them) 52/52. Regressions: 01 55, 31 45, 40 121, 42 61, 48 42,
   57 63, 59 47.
 - **Single-VM** — 40 (the client API's refusals, Authelia's rendering, the broker's form-only bodies and pass-through,
-  the public-host refusals, the CLI) 77/77; 01 12, 03 4, 26 69, 27 49 (+1 skip, as always: no agent on that host), 32
-  186.
+  the public-host refusals, the CLI) 77/77; 01 12, 03 4, 26 69, 27 49 (+1 skip, as always: no agent on that host), 32 186.
 - **What the runs found.** In the specs: usernames are per run (one that reached an OIDC client is never given out
   again), grants are read as the API answers them (`endedAt`/`endedReason`), 64 signs in to Authelia again after
   the client is enabled again (that restarts Authelia, whose sessions live in memory), and the app-plugin harness no
