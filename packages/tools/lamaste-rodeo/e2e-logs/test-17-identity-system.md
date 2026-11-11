@@ -1,6 +1,6 @@
 # Lamaste E2E: 17 — Identity System (Three-VM)
 
-> Started at `2026-11-10 17:48:22 UTC`
+> Started at `2026-11-11 09:04:21 UTC`
 
 
 ## Pre-flight: verify onboarding is complete
@@ -8,57 +8,57 @@
 
 ## 1. Identity API — list users (admin cert)
 
-✅ `17:48:22` GET /api/identity/users returns users array  
-✅ `17:48:22` Identity users list contains at least one user (count: 2)  
-ℹ️ `17:48:22` First user in list: admin  
+✅ `09:04:21` GET /api/identity/users returns users array  
+✅ `09:04:21` Identity users list contains at least one user (count: 2)  
+ℹ️ `09:04:21` First user in list: admin  
 
 ## 2. Identity API — single user lookup (admin cert)
 
-✅ `17:48:22` GET /api/identity/users/:username returns correct user  
-✅ `17:48:22` Single user has displayname field  
-✅ `17:48:22` Single user has groups field  
-✅ `17:48:22` GET /api/identity/users/:username returns 404 for non-existent user  
+✅ `09:04:21` GET /api/identity/users/:username returns correct user  
+✅ `09:04:21` Single user has displayname field  
+✅ `09:04:21` Single user has groups field  
+✅ `09:04:21` GET /api/identity/users/:username returns 404 for non-existent user  
 
 ## 3. Identity API — list groups (admin cert)
 
-✅ `17:48:23` GET /api/identity/groups returns groups array  
-✅ `17:48:23` Identity groups list contains at least one group (count: 1)  
+✅ `09:04:21` GET /api/identity/groups returns groups array  
+✅ `09:04:21` Identity groups list contains at least one group (count: 1)  
 
 ## 4. Identity API — /self returns 400 on mTLS vhost
 
-✅ `17:48:23` GET /api/identity/self returns 400 on mTLS vhost (no Remote-* headers)  
+✅ `09:04:21` GET /api/identity/self returns 400 on mTLS vhost (no Remote-* headers)  
 
 ## 5. nginx header stripping — forged Remote-User rejected
 
-✅ `17:48:23` Forged Remote-User header stripped by nginx (still returns 400)  
-✅ `17:48:23` Response confirms identity headers not present despite forged header  
+✅ `09:04:22` Forged Remote-User header stripped by nginx (still returns 400)  
+✅ `09:04:22` Response confirms identity headers not present despite forged header  
 
 ## 6. Capability gating — agent without identity:query gets 403
 
-✅ `17:48:24` Agent cert creation returned ok: true  
-✅ `17:48:24` Agent cert has a p12 password  
-ℹ️ `17:48:24` Created agent cert: identity-agent (capabilities: [tunnels:read])  
-✅ `17:48:24` Extracted PEM cert and key from .p12  
-✅ `17:48:24` Agent without identity:query rejected with 403 on /identity/users  
-✅ `17:48:25` Agent without identity:query rejected with 403 on /identity/groups  
+✅ `09:04:23` Agent cert creation returned ok: true  
+✅ `09:04:23` Agent cert has a p12 password  
+ℹ️ `09:04:23` Created agent cert: identity-agent (capabilities: [tunnels:read])  
+✅ `09:04:24` Extracted PEM cert and key from .p12  
+✅ `09:04:24` Agent without identity:query rejected with 403 on /identity/users  
+✅ `09:04:24` Agent without identity:query rejected with 403 on /identity/groups  
 
 ## 7. Capability gating — grant identity:query, verify access
 
-✅ `17:48:25` Capability update to add identity:query returned ok: true  
-ℹ️ `17:48:25` Updated agent capabilities: [tunnels:read, identity:query]  
-✅ `17:48:25` Agent with identity:query can access /identity/users  
-✅ `17:48:25` Agent with identity:query can access /identity/groups  
-✅ `17:48:25` Agent sees the same number of users as admin (count: 2)  
+✅ `09:04:24` Capability update to add identity:query returned ok: true  
+ℹ️ `09:04:24` Updated agent capabilities: [tunnels:read, identity:query]  
+✅ `09:04:24` Agent with identity:query can access /identity/users  
+✅ `09:04:24` Agent with identity:query can access /identity/groups  
+✅ `09:04:24` Agent sees the same number of users as admin (count: 2)  
 
 ## 8. Password hash exclusion verification
 
-✅ `17:48:25` No user in /identity/users response contains a password field  
-✅ `17:48:25` No password hash patterns found in raw /identity/users response  
-✅ `17:48:25` Single user endpoint does not contain password field  
+✅ `09:04:25` No user in /identity/users response contains a password field  
+✅ `09:04:25` No password hash patterns found in raw /identity/users response  
+✅ `09:04:25` Single user endpoint does not contain password field  
 
 ## 9. Cleanup
 
-ℹ️ `17:48:25` All test sections completed. EXIT trap will handle resource cleanup.  
+ℹ️ `09:04:25` All test sections completed. EXIT trap will handle resource cleanup.  
 
 ---
 
@@ -71,4 +71,4 @@
 | **Skipped** | `0` |
 | **Total** | `23` |
 
-ℹ️ `17:48:25` Cleaning up test resources...  
+ℹ️ `09:04:25` Cleaning up test resources...  
