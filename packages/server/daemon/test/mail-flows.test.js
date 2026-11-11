@@ -1003,6 +1003,37 @@ test("a delegated invitation: mailed in the inviter's name, its link in the mail
   d.prepare('DELETE FROM invitation_reissues').run();
 });
 
+test("the inviter's reissue of an invitation that ended keeps no address: 409, never a crash", async () => {
+  const res = await invite('POST', '/api/delegated-invitations/corral', {
+    email: 'ended@client.example.com',
+    role: 'viewer',
+  });
+  assert.equal(res.statusCode, 201, res.body);
+  const id = res.json().invitation.id;
+  const d = await lib.getStateDb();
+  const coordId = await idOf('coord');
+  // As an acceptance leaves it — accepted, or revoked while it was being
+  // accepted: the address and the name cleared.
+  for (const status of ['accepted', 'revoked']) {
+    d.prepare(
+      `UPDATE invitations SET status = ?, status_at = ?, accepted_user_id = ?,
+         username = 'ended-invitee', email = NULL, display_name = NULL,
+         revoked_by = ?, revoked_reason = ? WHERE id = ?`,
+    ).run(
+      status,
+      new Date().toISOString(),
+      coordId,
+      status === 'revoked' ? 'lamaste' : null,
+      status === 'revoked' ? 'inviter_unentitled' : null,
+      id,
+    );
+    const again = await invite('POST', `/api/delegated-invitations/corral/${id}/reissue`);
+    assert.equal(again.statusCode, 409, `${status}: ${again.body}`);
+    assert.equal(again.json().code, 'invitation_not_pending');
+  }
+  d.prepare('DELETE FROM invitation_reissues').run();
+});
+
 test('a delegated invitation where the domain sends no mail: the link is the inviter’s to send', async () => {
   await clearTransport();
   const res = await invite('POST', '/api/delegated-invitations/corral', {

@@ -805,7 +805,6 @@ async function reissueOwnInvitationOnce(plugin, caller, id, { logger } = {}) {
   ) {
     throw httpError('Invitation not found', 404, { code: 'not_found' });
   }
-  allowedEmailDomain(policy, found.email);
   await assertGrantReserve();
   const made = await reissueInvitationLink(id, {
     plugin: plugin.name,
@@ -815,6 +814,9 @@ async function reissueOwnInvitationOnce(plugin, caller, id, { logger } = {}) {
     // of their role and this new link are never interleaved.
     vet: () => inviterGrantableRoles(plugin, caller.userId),
     expiry: (row, db, now, grantable) => {
+      // Here the row is known to be pending: an accepted one keeps no
+      // address, and is answered 409 `invitation_not_pending` before this.
+      allowedEmailDomain(policy, row.email);
       if (!grantable.includes(row.role)) {
         throw httpError('You may not invite people with this role', 403, {
           code: 'role_not_grantable',
