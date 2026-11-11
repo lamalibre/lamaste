@@ -630,14 +630,14 @@ The RSA-4096 private key (PKCS#8) Authelia signs ID and JWT access tokens with. 
 
 ---
 
-## Mail (4.13)
+## Mail (4.14)
 
 With a mail transport ([Mail](../02-guides/mail.md)) Authelia's notifier submits to the panel's listener on `127.0.0.1:9295` instead of writing `/etc/authelia/notifications.txt`:
 
 - **`/etc/authelia/mail-submission-password`** — 32 random bytes (base64url), 0640 `lamaste:lamaste-authelia`, written by the panel. `configuration.yml` names it as `password: {{ secret "/etc/authelia/mail-submission-password" | msquote }}` — a second template line beside the OIDC issuer key's, kept by every rewrite. Replaced only with the listener's material; Authelia restarts then, since it reads the file at start.
 - **`/etc/authelia/certs/`** — 2750 `lamaste:lamaste-authelia` (made by `create-lamaste`), `certificates_directory` in Authelia's configuration: it holds `lamaste-mail-ca.pem` alone, so Authelia trusts the listener and nothing new beside it.
 - **`/etc/lamalibre/lamaste/mail-submission/`** — 0700 `lamaste`: `ca-key.pem`, `ca.pem`, `key.pem`, `cert.pem` (P-256, the leaf for `lamaste-mail.localhost`), renewed 30 days before they expire.
-- **`state.db`** (migration `0022_mail.sql`) — the transports (`mail_transports`: settings, secret — a password, or a Google client secret and refresh token —, sender, daily limit, health), the sending accounts (`mail_accounts`), consents under way (`mail_oauth_pending`), delivery attempts (`mail_sends`, no address, kept 48 h), password resets and their TOTP steps, invitations' mail status. Secrets are never answered or logged.
+- **`state.db`** (migration `0023_mail.sql`) — the transports (`mail_transports`: settings, secret — a password, or a Google client secret and refresh token —, sender, daily limit, health), the sending accounts (`mail_accounts`), consents under way (`mail_oauth_pending`), delivery attempts (`mail_sends`, no address, kept 48 h), password resets and their TOTP steps, invitations' mail status. Secrets are never answered or logged.
 
 `configuration.yml` then carries `notifier.smtp` (`submissions://127.0.0.1:9295`, `disable_startup_check: true`) and `authentication_backend.password_reset.custom_url: https://auth.<primary>/reset`; `password_change` stays disabled. Without a transport: `notifier.filesystem`, `password_reset.disable: true`.
 

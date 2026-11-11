@@ -98,7 +98,7 @@ You can also update the display name, email, and groups in the same edit form.
 
 #### People changing their own password
 
-With a [mail transport](mail.md) (4.13), people no longer need you for this:
+With a [mail transport](mail.md) (4.14), people no longer need you for this:
 
 - **Forgot password.** Every sign-in page links **Reset password** (`https://auth.<domain>/reset`). A link arrives by mail; the new password needs a **current code from their authenticator app** too, so someone who only has the mailbox cannot take the account. Someone who lost their authenticator cannot reset by mail — reset their TOTP (step 4) and set a password here.
 - **Administrators** (members of `admins`) **never reset by mail**: the page answers them like anyone and sends nothing. Another administrator sets their password here, or — the last one — `lamaste-server` on the relay (`sudo lamaste-server reset-admin` restores panel access).

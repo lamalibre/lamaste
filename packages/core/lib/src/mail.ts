@@ -589,7 +589,7 @@ export interface MailSendResult {
 
 /**
  * What became of the mail of an invitation's current link (§6.1): its
- * status (null before 4.13, or while it is being sent) and when it was
+ * status (null before 4.14, or while it is being sent) and when it was
  * sent.
  */
 export interface InvitationMailState {

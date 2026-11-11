@@ -14,7 +14,7 @@
 | 9090 | `127.0.0.1` | chisel                       | TCP      | Chisel tunnel server (WebSocket)                        |
 | 9091 | `127.0.0.1` | authelia                     | TCP      | Authelia authentication server                          |
 | 9294 | `127.0.0.1` | lamalibre-lamaste-gatekeeper | TCP      | Tunnel authorization (auth_request target)              |
-| 9295 | `127.0.0.1` | lamalibre-lamaste-serverd    | TCP      | Mail submission listener — Authelia's notifier (4.13)   |
+| 9295 | `127.0.0.1` | lamalibre-lamaste-serverd    | TCP      | Mail submission listener — Authelia's notifier (4.14)   |
 
 **Key points:**
 

@@ -2946,7 +2946,7 @@ local_sign_in() {
 }
 
 # ---------------------------------------------------------------------------
-# Mail (4.13): a stand-in SMTP server and a stand-in Google
+# Mail (4.14): a stand-in SMTP server and a stand-in Google
 #
 # The VMs reach neither Google nor a public SMTP server, and must not
 # (design: packages/core/docs/mail-design.md §8). `write_smtp_sink <file>`

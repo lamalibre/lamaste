@@ -292,7 +292,7 @@ A plugin's agent half may call another's and receive its events ([Calls and Even
 - **Bodies in clear on held loopback ports; the squat window.** A call's body and the events travel through chisel (TLS) and are in clear only on the loopback ends of internal tunnels, which systemd holds for the halves. On the relay, though, a provider's tunnel port is chisel's while the agent is connected and nobody's when it drops: as for the admin forwarder (5e), in the seconds before the health monitor marks the hosting down (up to three failed probes, 10 s apart), a local process on the relay that takes that port receives the peer calls sent to it — their bodies, and the caller assertion, which names the consumer and, on behalf of a person, their `userId`, username and roles in the provider. It cannot answer them (it has no provider secret, so its answers are refused as `provider_unauthenticated`), and an assertion cannot be replayed (nonce, 60 s). Events never go that way: the provider's answer to a pull must carry its responder signature over the body. Closing the window needs a probe before every call or a tunnel end chisel never releases; it is the same for the admin forwarder and stays documented here.
 - **Same-agent calls go through the relay** — two tunnel legs — on purpose: one place enforces everything.
 
-#### 5i. Mail and people's own passwords (4.13)
+#### 5i. Mail and people's own passwords (4.14)
 
 A relay may send mail ([Mail](../02-guides/mail.md), [Mail API](../04-api-reference/mail.md)). What this adds, and how it is held:
 

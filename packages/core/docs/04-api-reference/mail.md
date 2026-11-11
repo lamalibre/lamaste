@@ -4,7 +4,7 @@
 
 ## In Plain English
 
-Until 4.13 a relay sent no mail: an invitation link was shown once to its inviter, nobody could recover a forgotten password, and Authelia wrote its one-time codes to a file. A relay now has a **mail transport**: either the **Gmail API** (one Google Workspace mailbox, over HTTPS — what works where outbound SMTP is blocked, as on DigitalOcean) or an **SMTP server**. The relay's transport carries Authelia's mail and is every domain's default; a domain may set its own sender, or its own transport.
+Until 4.14 a relay sent no mail: an invitation link was shown once to its inviter, nobody could recover a forgotten password, and Authelia wrote its one-time codes to a file. A relay now has a **mail transport**: either the **Gmail API** (one Google Workspace mailbox, over HTTPS — what works where outbound SMTP is blocked, as on DigitalOcean) or an **SMTP server**. The relay's transport carries Authelia's mail and is every domain's default; a domain may set its own sender, or its own transport.
 
 With a transport, invitations are mailed, every sign-in portal links its own **Reset password** page (`auth.<domain>/reset` — a link by mail, then a new password with a current authenticator code), and **Change password** (`auth.<domain>/account/password`) sends a notice. Authelia never talks to the mail provider: it submits to the panel's own listener on `127.0.0.1:9295`, which delivers through the relay's transport. Without a transport nothing changes from 4.12.
 

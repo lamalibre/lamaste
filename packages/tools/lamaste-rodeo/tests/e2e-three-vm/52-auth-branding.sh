@@ -14,7 +14,7 @@
 #    revision and the asset's digest, carries no warning; both rendered.
 # 2. The sign-in pages, from the visitor: A's index says data-theme="dark",
 #    data-logooverride="true" and links /brand.css; B's "light"; C's
-#    "light", "false" and the stock stylesheet (4.13: the change-password
+#    "light", "false" and the stock stylesheet (4.14: the change-password
 #    link's rules alone) — and Authelia's CSP is untouched.
 #    /brand.css carries the accent and the hidden footer, nosniff and the
 #    assets' cache policy; C has none (404). The logos and favicons are the
@@ -273,7 +273,7 @@ PAGE_C=$(visit_body "$RESP")
 assert_eq "$(visit_status "$RESP")" "200" "auth.${DOMAIN_3}/: 200" || true
 assert_contains "${PAGE_C}" 'data-theme="light"' "…data-theme=\"light\" (the stock theme)" || true
 assert_contains "${PAGE_C}" 'data-logooverride="false"' "…data-logooverride=\"false\" (the placeholder is never shown)" || true
-assert_contains "${PAGE_C}" '<link rel="stylesheet" href="/brand.css">' "…links /brand.css: the stock stylesheet (4.13: the change-password link)" || true
+assert_contains "${PAGE_C}" '<link rel="stylesheet" href="/brand.css">' "…links /brand.css: the stock stylesheet (4.14: the change-password link)" || true
 assert_contains "$(visit_headers "$RESP" | tr '[:upper:]' '[:lower:]' | awk '$1 == "content-security-policy:" {print}' | tail -n 1)" "style-src 'self'" "…the same CSP as a branded domain's" || true
 
 log_section "/brand.css: the accent, the hidden footer, the asset headers"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034 # variables are read by the specs that source this file
 # ============================================================================
-# Mail's three-VM specs (58, 59): shared helpers
+# Mail's three-VM specs (66, 67): shared helpers
 # ============================================================================
 # Sourced after ../e2e/helpers.sh, app-plugin-harness.sh and
 # multi-domain-harness.sh (design: packages/core/docs/mail-design.md §8).

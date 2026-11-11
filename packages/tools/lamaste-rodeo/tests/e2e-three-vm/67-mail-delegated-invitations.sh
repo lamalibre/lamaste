@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 59 — Mail: a delegated invitation mailed, and a new link (Three-VM)
+# 67 — Mail: a delegated invitation mailed, and a new link (Three-VM)
 # ============================================================================
 # An inviter's invitation reaches the invitee by mail, in the domain's
 # language, and the inviter can send a new link (design: packages/core/
@@ -28,12 +28,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../e2e/helpers.sh"
 # shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh
 source "${SCRIPT_DIR}/app-plugin-harness.sh"
-MD_SPEC=59
+MD_SPEC=67
 # shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh
 source "${SCRIPT_DIR}/multi-domain-harness.sh"
 # shellcheck source-path=SCRIPTDIR source=invitation-harness.sh
 source "${SCRIPT_DIR}/invitation-harness.sh"
-MAIL_SPEC=59
+MAIL_SPEC=67
 # shellcheck source-path=SCRIPTDIR source=mail-harness.sh
 source "${SCRIPT_DIR}/mail-harness.sh"
 
@@ -72,7 +72,7 @@ data_block() {
   printf '%s' "$1" | node -e 'const h=require("fs").readFileSync(0,"utf8");const m=h.match(/<script type="application\/json" id="lamaste-messages">([\s\S]*?)<\/script>/);process.stdout.write(m?m[1].trim():"null")' | jq -c . 2>/dev/null || echo "null"
 }
 
-begin_test "59 — Mail: a delegated invitation mailed, and a new link (Three-VM)"
+begin_test "67 — Mail: a delegated invitation mailed, and a new link (Three-VM)"
 
 cleanup() {
   log_info "Cleaning up test resources..."

@@ -97,7 +97,7 @@ CREATE TABLE password_resets (
 CREATE INDEX password_resets_user ON password_resets (user_id);
 
 -- What became of an invitation's mail (§6.1): sent | failed |
--- not-configured | deferred-budget; NULL before 4.13 or not yet sent.
+-- not-configured | deferred-budget; NULL before 4.14 or not yet sent.
 ALTER TABLE invitations ADD COLUMN mail_status TEXT
   CHECK (mail_status IN ('sent', 'failed', 'not-configured', 'deferred-budget'));
 ALTER TABLE invitations ADD COLUMN mail_sent_at TEXT;

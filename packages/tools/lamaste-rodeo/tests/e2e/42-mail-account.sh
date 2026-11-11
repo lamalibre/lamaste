@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 41 — Mail: a person's own account, invitations, the Gmail API (Single-VM)
+# 42 — Mail: a person's own account, invitations, the Gmail API (Single-VM)
 # ============================================================================
 # What mail gives people on one VM (design: packages/core/docs/
 # mail-design.md §3.2–§3.3, §4, §6), over a stand-in SMTP server (helpers.sh
 # write_smtp_sink) and a stand-in Google (write_fake_google, reached through
-# LAMALIBRE_LAMASTE_TEST_GOOGLE_BASE_URL in a unit drop-in). Spec 40 is the
+# LAMALIBRE_LAMASTE_TEST_GOOGLE_BASE_URL in a unit drop-in). Spec 41 is the
 # relay's side.
 #
 # 1. The Users listing: emailDeliverable — an address under .test is not.
@@ -39,9 +39,9 @@ source "${SCRIPT_DIR}/helpers.sh"
 
 require_commands curl jq node nginx openssl oathtool sqlite3
 
-begin_test "41 — Mail: a person's own account, invitations, the Gmail API (Single-VM)"
+begin_test "42 — Mail: a person's own account, invitations, the Gmail API (Single-VM)"
 
-WORK_DIR="/var/tmp/lamalibre-lamaste-e2e-mail-41"
+WORK_DIR="/var/tmp/lamalibre-lamaste-e2e-mail-42"
 SINK="${WORK_DIR}/sink"
 SINK_PORT=2466
 SINK_USER="relay"

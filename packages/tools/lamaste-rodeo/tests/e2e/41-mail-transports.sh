@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 40 — Mail: the relay's transport and Authelia's mail (Single-VM)
+# 41 — Mail: the relay's transport and Authelia's mail (Single-VM)
 # ============================================================================
 # The relay's side of mail on one VM (design: packages/core/docs/
 # mail-design.md §3–§5, §7, §8). The relay reaches no real mail server: the
 # transport is `smtp` to a stand-in on this VM (helpers.sh write_smtp_sink,
 # implicit TLS, a certificate from a private CA the transport trusts through
-# caPem). Spec 41 is a person's side (reset, change, invitations) and the
+# caPem). Spec 42 is a person's side (reset, change, invitations) and the
 # Gmail API transport.
 #
 # 1. Without mail: no transport, Authelia's notifier a file, nothing on
@@ -23,7 +23,7 @@
 #    the relay's sender; the listener refuses a wrong password.
 # 4. D6: a tunnel and a site on the sending host refused; a sender on a
 #    hostname a tunnel serves refused.
-# 5. A tunnel holding 9295 (a relay older than 4.13): the listener refused,
+# 5. A tunnel holding 9295 (a relay older than 4.14): the listener refused,
 #    audited, the administrators told, Authelia back to the file notifier;
 #    the tunnel moved, the listener back.
 # 6. A domain's own sender over the relay's transport.
@@ -40,10 +40,10 @@ source "${SCRIPT_DIR}/helpers.sh"
 
 require_commands curl jq node nginx openssl oathtool sqlite3 ss
 
-begin_test "40 — Mail: the relay's transport and Authelia's mail (Single-VM)"
+begin_test "41 — Mail: the relay's transport and Authelia's mail (Single-VM)"
 
 STATE_DIR="/etc/lamalibre/lamaste"
-WORK_DIR="/var/tmp/lamalibre-lamaste-e2e-mail-40"
+WORK_DIR="/var/tmp/lamalibre-lamaste-e2e-mail-41"
 SINK_PORT=2465
 SINK_USER="relay"
 USER_ONE="e2e40-one"

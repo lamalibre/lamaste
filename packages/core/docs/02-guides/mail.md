@@ -122,7 +122,7 @@ If Google still refuses for its **daily** limit, the mailbox rests until Google 
 | Settings → Mail: down, `invalid_grant`           | `relay@`'s password changed, or the grant was revoked: connect Google again                                                                                      |
 | Mail arrives From `relay@` instead of the sender | The sender is not a send-as address of `relay@` (step 2)                                                                                                         |
 | An invitation answers `deferred-budget`          | Its share of the budget is used: an administrator's — share the link another way; a delegated one — **New link** later. Raise the limit if the Workspace is paid |
-| Notification: a tunnel uses port 9295            | A tunnel from before 4.13 sits on the mail listener's port: move it; Authelia writes its mail to a file meanwhile                                                |
+| Notification: a tunnel uses port 9295            | A tunnel from before 4.14 sits on the mail listener's port: move it; Authelia writes its mail to a file meanwhile                                                |
 
 ## If the Relay Is Compromised
 
@@ -132,9 +132,9 @@ The panel holds the Google refresh token (or the SMTP password): whoever runs co
 2. **SMTP**: change the account's password (or revoke the app password) at the provider.
 3. On the relay, once it is trusted again: `lamaste-server mail clear`, then set the transport anew.
 
-## Before Downgrading Below 4.13
+## Before Downgrading Below 4.14
 
-Run `lamaste-server mail clear` first. An older panel does not know the second `{{ secret }}` line 4.13 writes into Authelia's configuration (the submission password) and would refuse to rewrite it.
+Run `lamaste-server mail clear` first. An older panel does not know the second `{{ secret }}` line 4.14 writes into Authelia's configuration (the submission password) and would refuse to rewrite it.
 
 ## Authelia's Own Mail
 

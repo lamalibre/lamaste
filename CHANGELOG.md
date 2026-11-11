@@ -31,13 +31,13 @@ Mail: a relay sends mail — invitations, a "Reset password" link on every sign-
 
 - **Nothing changes until a transport is set.** Authelia keeps its file notifier, no reset link is shown, invitations answer `not-configured` with their link as before.
 - **Every domain's sign-in rendering and auth vhost is rewritten once** at start (the new pages, the account locations, the index filters). `lamaste-priv` gains `authelia-user verify-totp` and accepts `access_log off` (only `off`) in a location — the consent callback is not logged.
-- **A tunnel on port 9295** (possible only from before 4.13) is left where it is; the mail listener refuses to start and the administrators are told until it moves.
+- **A tunnel on port 9295** (possible only from before 4.14) is left where it is; the mail listener refuses to start and the administrators are told until it moves.
 - **create-lamaste** makes `/etc/authelia/certs` (2750 `lamaste:lamaste-authelia`) on install and redeploy.
 - **Authelia's own password reset and change stay off**: the panel remains the only writer of `users.yml`; Authelia's portal only links Lamaste's page (`password_reset.custom_url`).
 - **Authelia's sessions** and the OpenID Connect tokens it issued stay open after a password change until they expire (Authelia cannot end them); an administrator's disable and enable ends them.
 - **The sending mailbox must be dedicated**: no delegates, no human use, no IMAP — its Sent folder keeps every live link. Compromise of the `lamaste` account yields the Google refresh token or the SMTP password (recovery: revoke the app at Google, rotate the password, `mail clear`).
 - **create-lamaste** refuses to re-own a file with a second hard link or a foreign owner in a directory the panel writes.
-- **Downgrading below 4.13** needs `lamaste-server mail clear` first: an older panel does not know Authelia's second `{{ secret }}` template line.
+- **Downgrading below 4.14** needs `lamaste-server mail clear` first: an older panel does not know Authelia's second `{{ secret }}` template line.
 
 ## [4.13.1] - 2026-11-11
 

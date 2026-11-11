@@ -34,7 +34,7 @@
  *
  * The local CA is name-constrained to the listener's name (critical
  * `nameConstraints`, permitted `DNS:lamaste-mail.localhost`): Authelia
- * trusts it, and it can vouch for nothing else. A CA made before 4.13 had
+ * trusts it, and it can vouch for nothing else. A CA made before 4.14 had
  * that constraint is made again (and Authelia restarted with it).
  *
  * It runs only while the relay has a transport (lib/mail-sync.js starts and

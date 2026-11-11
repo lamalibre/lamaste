@@ -408,7 +408,7 @@ assert_contains "${AUTH_VHOST}" "location = /static/media/logo.png {" "…/stati
 assert_contains "${AUTH_VHOST}" "location /locales/ {" "…/locales/" || true
 assert_contains "${AUTH_VHOST}" "location @authelia {" "…with @authelia as the fallback" || true
 assert_contains "${AUTH_VHOST}" "sub_filter 'data-logooverride=\"true\"' 'data-logooverride=\"false\"';" "…and switches the logo off (data-logooverride=\"false\": no brand)" || true
-assert_contains "${AUTH_VHOST}" "brand.css\"></head>" "…links the stylesheet (4.13: the stock one carries the change-password link's rules)" || true
+assert_contains "${AUTH_VHOST}" "brand.css\"></head>" "…links the stylesheet (4.14: the stock one carries the change-password link's rules)" || true
 AUTH_PAGE=$(curl -sk --max-time 15 --resolve "${AUTH_FQDN}:443:127.0.0.1" -w '\n%{http_code}' "https://${AUTH_FQDN}/" 2>/dev/null || echo "000")
 assert_eq "$(printf '%s\n' "${AUTH_PAGE}" | tail -n 1)" "200" "https://${AUTH_FQDN}/ answers 200" || true
 assert_contains "${AUTH_PAGE}" 'data-theme="light"' "…data-theme=\"light\"" || true

@@ -202,7 +202,7 @@ Key configuration choices:
 - **`server.address: 'tcp://127.0.0.1:9091/'`** — binds to localhost only; nginx handles public access
 - **`default_policy: two_factor`** — requires password + TOTP for all authenticated users
 - **`session.cookies`** — array format (Authelia v4.38+) specifying the domain and Authelia URL for session cookies
-- **`notifier.filesystem`** — writes notifications to a file while the relay has no mail transport. With one (4.13) Authelia's notifier is `smtp` to the panel's own listener on `127.0.0.1:9295`, which delivers through the relay's transport, and `authentication_backend.password_reset.custom_url` points the portal's "Reset password?" at Lamaste's `https://auth.<domain>/reset` — Authelia's own reset and change stay disabled ([Mail](../02-guides/mail.md))
+- **`notifier.filesystem`** — writes notifications to a file while the relay has no mail transport. With one (4.14) Authelia's notifier is `smtp` to the panel's own listener on `127.0.0.1:9295`, which delivers through the relay's transport, and `authentication_backend.password_reset.custom_url` points the portal's "Reset password?" at Lamaste's `https://auth.<domain>/reset` — Authelia's own reset and change stay disabled ([Mail](../02-guides/mail.md))
 - **`totp.period: 30`** — standard 30-second TOTP window
 
 ### Users file format

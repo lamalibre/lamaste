@@ -927,7 +927,7 @@ function assertAsciiDirectives(text, label) {
 const withoutHashes = (text) => text.replace(/'sha256-[A-Za-z0-9+/=]{44}'/g, "'sha256-…'");
 
 /**
- * An auth vhost without what 4.13's mail added (mail-design.md §5, §6): the
+ * An auth vhost without what 4.14's mail added (mail-design.md §5, §6): the
  * account locations, the consent callback (primary), the stock stylesheet
  * fallback, the index's mail filters and — on a domain with neither brand
  * nor language — the stylesheet link every portal now has.
@@ -966,7 +966,7 @@ test('a domain without a page language keeps its 4.9.0 auth vhost but for the pa
       primary: opts.primary,
       styled: opts.branding !== null,
     });
-    assert.notEqual(pinned, now, `${name}: 4.13's mail is what was taken out`);
+    assert.notEqual(pinned, now, `${name}: 4.14's mail is what was taken out`);
     assert.equal(withoutHashes(pinned), withoutHashes(before), name);
     // `language` absent is `language: null`.
     assert.equal(

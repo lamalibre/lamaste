@@ -1,6 +1,6 @@
 /**
  * What a person's own account flows keep in state.db
- * (packages/core/docs/mail-design.md §6.2, §6.3; migration 0022):
+ * (packages/core/docs/mail-design.md §6.2, §6.3; migration 0023):
  *
  * - `password_resets` — forgot-password links: the token's SHA-256 only,
  *   30 minutes, single use, five failures void one; a new link for a user

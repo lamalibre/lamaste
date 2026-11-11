@@ -253,7 +253,7 @@ test('the local CA, the leaf and Authelia’s two files: made once, private, kep
 });
 
 test('a CA made without the name constraint is made again, and Authelia told', async () => {
-  // A CA as the first 4.13 candidate made it: no nameConstraints.
+  // A CA as the first 4.14 candidate made it: no nameConstraints.
   await mkdir(paths.dir, { recursive: true, mode: 0o700 });
   const work = await mkdtemp(path.join(dir, 'old-ca-'));
   execFileSync(

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 58 — Mail across domains: each portal its own reset link (Three-VM)
+# 66 — Mail across domains: each portal its own reset link (Three-VM)
 # ============================================================================
 # Which domains can send, and what their people meet (design: packages/core/
 # docs/mail-design.md §3.1, §5, §6.2, Q1). Three domains of the
@@ -26,10 +26,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../e2e/helpers.sh"
 # shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh
 source "${SCRIPT_DIR}/app-plugin-harness.sh"
-MD_SPEC=58
+MD_SPEC=66
 # shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh
 source "${SCRIPT_DIR}/multi-domain-harness.sh"
-MAIL_SPEC=58
+MAIL_SPEC=66
 # shellcheck source-path=SCRIPTDIR source=mail-harness.sh
 source "${SCRIPT_DIR}/mail-harness.sh"
 
@@ -42,7 +42,7 @@ USER_C="e2e58-c-${RUN_ID}"
 # Test credentials for this run only, never printed
 PASSWORD="E2E-$(openssl rand -hex 12)"
 
-begin_test "58 — Mail across domains: each portal its own reset link (Three-VM)"
+begin_test "66 — Mail across domains: each portal its own reset link (Three-VM)"
 
 cleanup() {
   log_info "Cleaning up test resources..."
