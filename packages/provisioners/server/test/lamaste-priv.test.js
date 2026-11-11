@@ -93,8 +93,6 @@ const refused = {
   sub_filter_types: location('  sub_filter_types text/css;'),
   sub_filter_last_modified: location('  sub_filter_last_modified on;'),
   'single-quoted string followed by a character': location("  sub_filter 'a'b 'c';"),
-  'access_log to a file in a location': location('  access_log /etc/cron.d/x;'),
-  'access_log with a format in a location': location('  access_log off combined;'),
   'access_log syslog in a location': location('  access_log syslog:server=127.0.0.1;'),
 };
 

@@ -60,7 +60,7 @@ Verified in Authelia 4.39.28's source (`internal/server/handlers.go`,
 
 ### 3.1 Records
 
-state.db migration `0023_mail.sql` (its comments are the reference):
+state.db migration `0024_mail.sql` (its comments are the reference):
 
 - `mail_transports` — one relay row (`domain` NULL: Authelia's mail and
   every domain's default; a partial unique index keeps it to one) and at
@@ -228,7 +228,7 @@ must never be the one that reaches them — least of all through
 
 - **Count**: every delivery attempt is a row in
   `mail_sends (id, account_key, domain, class, kind, sent_at, outcome)` (migration
-  0023; no address, no subject; swept after 48 h). Google's limit is per
+  0024; no address, no subject; swept after 48 h). Google's limit is per
   mailbox, and the relay's row and a domain's may send through the same
   one — or a transport may be removed and set again: usage is counted per
   **sending account**, `account_key` = `gmail:<account>` or
@@ -458,7 +458,7 @@ shows the last check.
   top-level-domain-like run of letters (core `looksLikeLinkOrHostname`,
   which both pages apply too): the invitation mail shows the inviter's
   name to the person invited.
-- `invitations.mail_status`, `mail_sent_at` (migration 0023), recorded only
+- `invitations.mail_status`, `mail_sent_at` (migration 0024), recorded only
   while the mailed link is still the invitation's (a reissue in between
   makes an older mail's outcome moot) — the listings show
   `mail: { status, sentAt }` (administrators' and the inviter's), and the
@@ -478,7 +478,7 @@ shows the last check.
     lock), the grant reserve, the rate — a reissue counts toward the 30 an
     hour and the **100 a day** (429 `invitation_daily_rate`, the
     administrators notified once a day per inviter;
-    `invitation_reissues`, migration 0023, swept after a day) — and,
+    `invitation_reissues`, migration 0024, swept after a day) — and,
     when it had expired and so opens again, the caps. Its lifetime restarts
     at the policy's.
   - The administrator: `POST /api/invitations/:id/reissue`, either kind,
@@ -533,7 +533,7 @@ expires_at, used_at, failed_attempts)`; swept after 24 h.
   (a wrong code) or `none` (no TOTP configuration for the user) — the
   secret never leaves the root helper, nothing is written, a failure of
   the CLI is reported without its output. serverd refuses a step it
-  already accepted for that user (`account_totp_steps`, migration 0023:
+  already accepted for that user (`account_totp_steps`, migration 0024:
   after a restart too), and wrong or replayed codes count toward the
   token's five (400 `totp_invalid`; the fifth answers 410). A user with no
   TOTP configuration, or one who lost it, cannot reset by mail: 409
@@ -576,7 +576,7 @@ path: '/api/account/password' }`, bound to the method and target. The
   to its loopback port (a bcrypt oracle, and a way to lock people out).
 - `{ currentPassword, newPassword }`: the current one checked against
   users.yml (bcrypt; any other hash never matches), 5 failures / 15 min
-  per user (`account_password_failures`, migration 0023) then 429; 400
+  per user (`account_password_failures`, migration 0024) then 429; 400
   `current_password_invalid` / `password_unchanged`; 401 without a valid
   assertion (or one for another domain), 403 for a user disabled, inactive
   or not a member of the host's domain; `Origin` required and exactly
@@ -668,7 +668,7 @@ core (`server/authelia.ts` notifier, `certificates_directory` and reset
 settings, page renderers for `/reset`, `/account/password` and the
 consent callback, translations, `AdminClient`, `account` reserved API
 prefix, 9295 in `RESERVED_TUNNEL_PORTS`, schemas), serverd (`lib/mail.js`,
-`lib/mail-gmail.js`, `lib/mail-submission.js`, routes, migration 0023,
+`lib/mail-gmail.js`, `lib/mail-submission.js`, routes, migration 0024,
 invitations, nginx auth vhost locations), create-lamaste (`/etc/authelia/certs`
 ownership in `lib/ownership.js`), lamaste-priv allow-list for any new
 vhost directive, server-ui (Settings → Mail, Domains → Mail, invitation
@@ -713,7 +713,7 @@ before the next starts.
    `mail-sender` (D6); page messages EN/TR and renderers for `/reset`,
    `/account/password`, the consent result page and the mails; the
    `AdminClient` methods. Unit tests.
-2. **serverd — transports**: migration `0023_mail.sql` (§3.1, `password_resets`,
+2. **serverd — transports**: migration `0024_mail.sql` (§3.1, `password_resets`,
    `invitations.mail_status|mail_sent_at`), `lib/mail.js`,
    `lib/mail-gmail.js`, SMTP delivery with `caPem`, admission checks,
    consent start + callback, `/api/settings/mail*` and

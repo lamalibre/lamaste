@@ -1,5 +1,5 @@
 /**
- * The relay's mail records in state.db (migration 0023;
+ * The relay's mail records in state.db (migration 0024;
  * packages/core/docs/mail-design.md §3.1, §3.7): the transports, the
  * sending accounts' state, every delivery attempt, Google consents under
  * way. Synchronous over `node:sqlite` — a budget check and the attempt it
