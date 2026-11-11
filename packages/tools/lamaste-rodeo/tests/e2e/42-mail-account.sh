@@ -214,7 +214,9 @@ log_section "Lookup, then finish with an authenticator code"
 
 RESP=$(reset_lookup "${TOKEN}")
 assert_json_field "$(body_of "$RESP")" '.username' "${RESET_USER}" "Lookup: the user" || true
-assert_eq "$(status_of "$(reset_lookup "$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')")")" "410" "A token nobody holds: 410" || true
+# A well-formed token (32 random bytes, hex, as the reset mail carries) that
+# nobody holds: 410. A malformed one would be a 400.
+assert_eq "$(status_of "$(reset_lookup "$(openssl rand -hex 32)")")" "410" "A token nobody holds: 410" || true
 SECRET=$(local_reset_totp "${RESET_USER}")
 CODE=$(oathtool --totp --base32 "${SECRET}")
 RESP=$(reset_finish "${TOKEN}" "${NEW_PASSWORD}" "000000")
@@ -354,7 +356,7 @@ assert_contains "${BACK}" "https://auth.${DOMAIN}/mail/google/callback?" "Google
 PAGE=$(curl -sk --max-time 30 --resolve "auth.${DOMAIN}:443:127.0.0.1" -w '\n%{http_code}' "${BACK}" 2>/dev/null || echo "000")
 assert_eq "$(status_of "$PAGE")" "200" "…which answers" || true
 assert_contains "$(body_of "$PAGE")" "Mail Is Set Up" "…Mail Is Set Up" || true
-assert_eq "$(status_of "$(curl -sk --max-time 30 --resolve "auth.${DOMAIN}:443:127.0.0.1" -o /dev/null -w '\n%{http_code}' "${BACK}" 2>/dev/null)")" "200" "The same return again: answered" || true
+assert_eq "$(status_of "$(curl -sk --max-time 30 --resolve "auth.${DOMAIN}:443:127.0.0.1" -o /dev/null -w '\n%{http_code}' "${BACK}" 2>/dev/null)")" "400" "The same return again: the failure page (400)" || true
 assert_not_contains "$(curl -sk --max-time 30 --resolve "auth.${DOMAIN}:443:127.0.0.1" "${BACK}" 2>/dev/null)" "Mail Is Set Up" "…but not stored again (the state is single use)" || true
 T=$(transport)
 assert_json_field "$T" '"\(.kind) \(.settings.account) \(.settings.clientId)"' "gmail-api relay@${MAIL_DOMAIN} ${GOOGLE_CLIENT_ID}" "GET /api/settings/mail: gmail-api, the account read from Google's token" || true
