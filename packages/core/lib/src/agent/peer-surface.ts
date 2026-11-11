@@ -10,6 +10,11 @@
  * }));
  * ```
  *
+ * - **The caller is verified before the body is read.** {@link peerRoute}
+ *   gives its route an `onRequest` hook that verifies the assertion (once —
+ *   the verifier burns its nonce), checks the caller, its endpoint and, with
+ *   `{ scope }`, its scope; Fastify reads and parses the body only after it
+ *   passed. From `preParsing` on, {@link peerCallerOf} names the caller.
  * - **The endpoint binds the handler.** The relay matched the call against
  *   the provider's declared endpoints and names the pattern in the
  *   assertion (`GET /people/:userId/manager`); {@link peerRoute} refuses
@@ -66,9 +71,26 @@ export type PeerRouteHandler = (
   reply: FastifyReply,
 ) => unknown;
 
-/** What {@link peerRoute} returns: route options for `fastify.get(path, …)` and the like. */
+/** What {@link peerRoute} also takes. */
+export interface PeerRouteSettings {
+  /**
+   * The scope (or scopes) this route's endpoint belongs to: a call made
+   * under another scope is refused (403) before the body is read — so a
+   * handler serves only the scope it was written for, even when two scopes
+   * declare the same endpoint.
+   */
+  readonly scope?: string | readonly string[] | undefined;
+}
+
+/**
+ * What {@link peerRoute} returns: route options for `fastify.get(path, …)`
+ * and the like. Spread them to add options (`bodyLimit`, …); to add hooks
+ * of your own, pass an array that keeps `onRequest` / `onSend` in it —
+ * `peerSurface` fails the registration of a `/peer` route that lost them.
+ */
 export interface PeerRouteOptions {
   readonly config: Readonly<Record<string, unknown>>;
+  onRequest(this: unknown, request: FastifyRequest, reply: FastifyReply): Promise<unknown>;
   handler(this: unknown, request: FastifyRequest, reply: FastifyReply): Promise<unknown>;
   onSend(
     this: unknown,
@@ -86,6 +108,53 @@ const surfaces = new WeakMap<object, PeerSurfaceOptions>();
 const PEER_ROUTE_CONFIG_KEY = 'lamastePeerRoute';
 const PEER_ROUTE_MARK: object = Object.freeze({});
 const verifiedRequests = new WeakMap<object, VerifiedCallerAssertion>();
+/** The callers that passed every check of their route, by request. */
+const admittedCallers = new WeakMap<object, PeerCallerIdentity>();
+/** peerRoute's own hooks: `peerSurface` checks a `/peer` route still has them. */
+const peerRouteHooks = new WeakSet<object>();
+
+function hooksInclude(hooks: unknown): boolean {
+  if (typeof hooks === 'function') return peerRouteHooks.has(hooks);
+  if (Array.isArray(hooks))
+    return hooks.some((hook) => typeof hook === 'function' && peerRouteHooks.has(hook));
+  return false;
+}
+
+/**
+ * The verified `peer` caller of a request a {@link peerRoute} admitted, or
+ * null. Set by the route's `onRequest` hook — so readable from `preParsing`
+ * on (a hook that looks at the caller before the body), never earlier.
+ */
+export function peerCallerOf(request: object): PeerCallerIdentity | null {
+  return admittedCallers.get(request) ?? null;
+}
+
+/**
+ * Whether a request carries a body (a `Content-Length` above 0, or any
+ * `Transfer-Encoding`).
+ */
+function hasRequestBody(request: FastifyRequest): boolean {
+  if (request.headers['transfer-encoding'] !== undefined) return true;
+  const length = request.headers['content-length'];
+  return length !== undefined && length !== '0';
+}
+
+/**
+ * Answer a request refused before its body was read. With a body, the
+ * answer says `Connection: close`: Node's server then closes the connection
+ * after it rather than reading the rest of the body to keep the connection,
+ * so a refused upload, however large, is never read to its end.
+ */
+async function refuseBeforeBody(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  status: number,
+  body: Record<string, unknown>,
+): Promise<FastifyReply> {
+  if (hasRequestBody(request)) void reply.header('connection', 'close');
+  await reply.code(status).send(body);
+  return reply;
+}
 
 /** What Fastify's `printRoutes()` answers for an instance with no route. */
 const EMPTY_ROUTE_TREE = '(empty tree)';
@@ -206,13 +275,20 @@ export function peerSurface(opts: PeerSurfaceOptions): (fastify: FastifyInstance
           `${String(route.method)} ${route.url ?? ''}: a route on the peer surface must be made with peerRoute()`,
         );
       }
+      // A spread that replaced peerRoute's hooks would leave the caller
+      // unverified before the body (onRequest) or the answers unsigned (onSend).
+      if (!hooksInclude(route.onRequest) || !hooksInclude(route.onSend)) {
+        throw new Error(
+          `${String(route.method)} ${route.url ?? ''}: a peer route must keep peerRoute()'s onRequest and onSend hooks (pass an array to add your own)`,
+        );
+      }
     });
 
     fastify.addHook('onRequest', async (request, reply) => {
       if (!isUnderAgentHalfPeer(request.url)) return;
       const config = request.routeOptions.config as unknown as Record<string, unknown> | undefined;
       if (config?.[PEER_ROUTE_CONFIG_KEY] !== PEER_ROUTE_MARK) {
-        await reply.code(404).send({ error: 'Not found' });
+        await refuseBeforeBody(request, reply, 404, { error: 'Not found' });
       }
     });
 
@@ -242,41 +318,73 @@ export function peerSurface(opts: PeerSurfaceOptions): (fastify: FastifyInstance
 }
 
 /**
- * A `/peer` route: verify the `peer` caller, check that this route is the
- * endpoint the relay matched, remember the call for onward calls, and sign
- * every answer. Use as the route's options:
- * `fastify.post('/peer/people/lookup', peerRoute(handler))`.
+ * A `/peer` route: verify the `peer` caller before the body is read, check
+ * that this route is the endpoint the relay matched (and, with `{ scope }`,
+ * that the call was made under its scope), remember the call for onward
+ * calls, and sign every answer. Use as the route's options:
+ * `fastify.post('/peer/people/lookup', peerRoute(handler, { scope: 'directory:read' }))`.
  */
-export function peerRoute(handler: PeerRouteHandler): PeerRouteOptions {
+export function peerRoute(
+  handler: PeerRouteHandler,
+  settings: PeerRouteSettings = {},
+): PeerRouteOptions {
+  const scopes: readonly string[] | null =
+    settings.scope === undefined
+      ? null
+      : typeof settings.scope === 'string'
+        ? [settings.scope]
+        : [...settings.scope];
+  if (
+    scopes !== null &&
+    (scopes.length === 0 || scopes.some((s) => typeof s !== 'string' || s === ''))
+  ) {
+    throw new Error('peerRoute: scope must name one or more scopes');
+  }
   const options: PeerRouteOptions = {
     config: { [PEER_ROUTE_CONFIG_KEY]: PEER_ROUTE_MARK },
-    async handler(request, reply) {
+    async onRequest(request, reply) {
       const surface = surfaces.get(request.server.server);
       if (!surface) {
-        await reply.code(500).send({ error: 'peerSurface is not registered on this instance' });
-        return reply;
+        return refuseBeforeBody(request, reply, 500, {
+          error: 'peerSurface is not registered on this instance',
+        });
       }
       const verified = await surface.verifier.verify(request.headers, request.method, request.url, {
         body: null,
       });
       if (!verified.ok) {
-        await reply.code(401).send({ error: verified.reason });
-        return reply;
+        return refuseBeforeBody(request, reply, 401, { error: verified.reason });
       }
       verifiedRequests.set(request, verified);
       const caller = verified.payload.caller;
       if (caller.type !== 'peer') {
-        await reply.code(403).send({ error: 'Only a peer caller reaches the peer surface' });
-        return reply;
+        return refuseBeforeBody(request, reply, 403, {
+          error: 'Only a peer caller reaches the peer surface',
+        });
       }
       const registered = request.routeOptions.url ?? '';
       if (!peerEndpointAdmitsRoute(caller.endpoint, request.method, registered)) {
-        await reply
-          .code(403)
-          .send({ error: 'This route is not the endpoint the relay matched the call to' });
+        return refuseBeforeBody(request, reply, 403, {
+          error: 'This route is not the endpoint the relay matched the call to',
+        });
+      }
+      if (scopes !== null && !scopes.includes(caller.scope)) {
+        return refuseBeforeBody(request, reply, 403, {
+          error: 'This route does not serve the scope the call was made under',
+        });
+      }
+      admittedCallers.set(request, caller);
+      setPeerContext(request, { caller, hops: caller.hops });
+      return undefined;
+    },
+    async handler(request, reply) {
+      const caller = admittedCallers.get(request);
+      if (!caller) {
+        // Only reachable when the route's onRequest did not run: never verify
+        // here, after the body — refuse.
+        await reply.code(500).send({ error: "peerRoute's onRequest hook did not run" });
         return reply;
       }
-      setPeerContext(request, { caller, hops: caller.hops });
       return handler(request, caller, reply);
     },
     async onSend(request, reply, payload) {
@@ -285,5 +393,7 @@ export function peerRoute(handler: PeerRouteHandler): PeerRouteOptions {
       return payload;
     },
   };
+  peerRouteHooks.add(options.onRequest);
+  peerRouteHooks.add(options.onSend);
   return options;
 }

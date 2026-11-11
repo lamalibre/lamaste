@@ -264,10 +264,13 @@ const outbox = await createPeerOutbox({ db, dbPath, peers: manifest.peers });
 await app.register(peerSurface({ verifier, outbox }));
 app.get(
   '/peer/people/:userId/manager',
-  peerRoute(async (request, caller) => {
-    // caller: { peer, scope, major, endpoint, hops, user?: { userId, username, roles } }
-    return lookupManager(request.params.userId);
-  }),
+  peerRoute(
+    async (request, caller) => {
+      // caller: { peer, scope, major, endpoint, hops, user?: { userId, username, roles } }
+      return lookupManager(request.params.userId);
+    },
+    { scope: 'directory:read' },
+  ),
 );
 
 db.exec('BEGIN');
@@ -281,7 +284,7 @@ outbox.publish({
 db.exec('COMMIT');
 ```
 
-`peerSurface` refuses every `/peer` request a route made by `peerRoute` does not answer (fail closed); `peerRoute` verifies the `peer` caller, checks its `endpoint` against the route, and signs every answer. **Register `peerSurface` before any `/peer` route:** registering it after one fails, and a `/peer` route registered after it that is not a `peerRoute` fails its registration — the half does not start with an unchecked route on its peer surface. Routes elsewhere (`/admin/*`, `/app/*`) may come first. A half without Fastify uses `createPeerAdminHandler` for `/admin/peers*`.
+`peerSurface` refuses every `/peer` request a route made by `peerRoute` does not answer (fail closed); `peerRoute` verifies the `peer` caller, checks its `endpoint` against the route — and, with `{ scope }` (one scope or several), that the call was made under the route's scope — and signs every answer. **The caller is verified before the body is read:** all of that runs in the route's own `onRequest` hook, once per request (the verifier burns the assertion's nonce, so a second `verify()` of the same request is a replay), and Fastify reads and parses the body only after it passed; a refusal is `401` (unsigned) or `403` (signed), and a refused request that carries a body is answered `Connection: close`, so its upload is never read to its end. From `preParsing` on, `peerCallerOf(request)` gives the verified caller to a hook of the provider's own. To add options spread `peerRoute`'s (`{ ...peerRoute(handler), bodyLimit }`); to add hooks keep its own in an array (`onRequest: [options.onRequest, mine]`) — a `/peer` route that lost peerRoute's `onRequest` or `onSend` fails its registration. **Register `peerSurface` before any `/peer` route:** registering it after one fails, and a `/peer` route registered after it that is not a `peerRoute` fails its registration — the half does not start with an unchecked route on its peer surface. Routes elsewhere (`/admin/*`, `/app/*`) may come first. A half without Fastify uses `createPeerAdminHandler` for `/admin/peers*`.
 
 ## In the panel and the CLI
 

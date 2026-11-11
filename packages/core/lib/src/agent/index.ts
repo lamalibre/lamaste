@@ -505,8 +505,13 @@ export type {
   PeerSqlStatement,
   PeerSqlValue,
 } from './peer-outbox.js';
-export { peerSurface, peerRoute, createPeerAdminHandler } from './peer-surface.js';
-export type { PeerSurfaceOptions, PeerRouteHandler, PeerRouteOptions } from './peer-surface.js';
+export { peerSurface, peerRoute, peerCallerOf, createPeerAdminHandler } from './peer-surface.js';
+export type {
+  PeerSurfaceOptions,
+  PeerRouteHandler,
+  PeerRouteOptions,
+  PeerRouteSettings,
+} from './peer-surface.js';
 export { peerContextOf } from './peer-context.js';
 export type { PeerRequestContext } from './peer-context.js';
 
