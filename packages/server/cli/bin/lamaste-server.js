@@ -18,6 +18,7 @@
  *   users         Users and the user directory: disable, delete, erase
  *   invitations   Invitations, both kinds: list, revoke, disable invitees
  *   domains       The relay's base domains, their members and their brands
+ *   native-apps   Native (mobile) apps' clients per application host and their grants
  *   tunnels       Manage tunnels
  *   sites         Manage static sites
  *   certs         Certificate status and renewal
@@ -70,6 +71,7 @@ ${b('COMMANDS')}
   ${c('users')}           Users and the user directory (list, disable, enable, delete, erase, directory)
   ${c('invitations')}     Invitations, the administrator's and delegated (list, revoke, disable-invitees)
   ${c('domains')}         The relay's base domains (list, add, verify-dns, activate, remove, members, branding)
+  ${c('native-apps')}     Native (mobile) apps: one client per application host, its grants per device
   ${c('tunnels')}         Manage tunnels (list, create, delete, toggle, bind a plugin's user surface)
   ${c('sites')}           Manage static sites (list, create, delete)
   ${c('certs')}           Certificate status, renewal, and agent cert listing
@@ -198,6 +200,11 @@ async function main() {
     case 'invitations': {
       const { runInvitations } = await import('../src/commands/invitations.js');
       await runInvitations(args.slice(1), { json });
+      break;
+    }
+    case 'native-apps': {
+      const { runNativeApps } = await import('../src/commands/native-apps.js');
+      await runNativeApps(args.slice(1), { json });
       break;
     }
     case 'domains': {

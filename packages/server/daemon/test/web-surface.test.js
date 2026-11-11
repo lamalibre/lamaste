@@ -1093,3 +1093,78 @@ test('offer: nothing while a disabled tunnel is still bound; create and move say
     'tunnel_disabled',
   );
 });
+
+// ---------------------------------------------------------------------------
+// One host for an application (native-apps-design.md D1): routes joined to a site
+// ---------------------------------------------------------------------------
+
+test('join: a plugin another agent hosts is served on the site beside its owner — refusals, leave, uninstall', async () => {
+  await enroll('vm-join');
+  const ws = await withSite('jo');
+  await host('jo', 'vm1');
+  await publish('jm', '1.0.0', {
+    name: 'jm',
+    version: '1.0.0',
+    hosting: 'agent',
+    agent: {},
+    identity: IDENTITY,
+  });
+  await lib.installPlugin('@lamalibre/jm-server', logger);
+  await approve('jm');
+  await host('jm', 'vm-join');
+
+  const joined = await call('PUT', '/api/plugins/jo/web-surface/routes/jm');
+  assert.equal(joined.statusCode, 200, joined.body);
+  assert.deepEqual(joined.json().webSurface.site.joined, [
+    { route: 'jm', served: true, reason: null },
+  ]);
+  const site = (await lib.readSites()).find((s) => s.id === ws.site.id);
+  assert.deepEqual(site.userSurface, { routes: ['jm'] });
+  let vhost = await siteVhost(site);
+  assert.match(
+    locationBodyOf(vhost, '= /api/jm/app'),
+    /auth_request \/internal\/lamaste\/user-surface-authz;/,
+  );
+  assert.match(locationBodyOf(vhost, '^~ /api/jo/app/'), /user-surface-authz/);
+  assert.doesNotThrow(() => validateVhost(vhost.replaceAll(treesRoot, '/var/www/lamaste/apps')));
+  // Every reader of the state: the site is jm's host, whichever agent hosts jm.
+  const hosts = shared.userSurfaceHosts(await lib.readTunnels(), await lib.readSites());
+  assert.equal(shared.userSurfaceHostServing(hosts, 'jm').fqdn, 'jo.relay.test');
+  assert.equal(await lib.userSurfaceOrigin('jm'), 'https://jo.relay.test');
+  const [audit] = await lib.listAudit({ plugin: 'jo', action: 'plugin.web-surface.route.joined' });
+  assert.equal(audit.details.route, 'jm');
+
+  // Idempotent; and refused: itself, nothing installed, a route served elsewhere.
+  assert.equal((await call('PUT', '/api/plugins/jo/web-surface/routes/jm')).statusCode, 200);
+  for (const [url, code, expected] of [
+    ['/api/plugins/jo/web-surface/routes/jo', 400, 'invalid_route'],
+    ['/api/plugins/jo/web-surface/routes/nothing', 404, 'not_found'],
+    ['/api/plugins/nothing/web-surface/routes/jm', 404, 'not_found'],
+  ]) {
+    const res = await call('PUT', url);
+    assert.equal(res.statusCode, code, `${url}: ${res.body}`);
+    assert.equal(res.json().code, expected, url);
+  }
+  // A route joined to a site is that site's: no tunnel binds it, no site of its own.
+  const t = await addTunnel('jt');
+  await assert.rejects(
+    lib.bindTunnelUserSurface(t.id, 'jm', { actor: 'admin', logger }),
+    /served on a web surface/,
+  );
+
+  // Unhosted: the site still answers it — 503 from nginx, never anything else.
+  const left = await call('DELETE', '/api/plugins/jo/web-surface/routes/jm');
+  assert.equal(left.statusCode, 200, left.body);
+  assert.deepEqual(left.json().webSurface.site.joined, []);
+  vhost = await siteVhost((await lib.readSites()).find((s) => s.id === ws.site.id));
+  assert.doesNotMatch(vhost, /\/api\/jm\/app/);
+  assert.equal((await call('DELETE', '/api/plugins/jo/web-surface/routes/jm')).statusCode, 404);
+
+  // Joined again, then uninstalled: the site lets it go.
+  assert.equal((await call('PUT', '/api/plugins/jo/web-surface/routes/jm')).statusCode, 200);
+  await lib.unhostPlugin('jm', { actor: 'admin', logger, sourceIp: IP });
+  assert.equal((await lib.waitForPluginOperation('jm')).status, 'succeeded');
+  await lib.uninstallPlugin('jm', logger);
+  const after = (await lib.readSites()).find((s) => s.id === ws.site.id);
+  assert.equal(after.userSurface, undefined, 'released on uninstall');
+});

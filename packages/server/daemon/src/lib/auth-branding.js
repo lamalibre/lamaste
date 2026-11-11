@@ -425,6 +425,24 @@ export async function authVhostInputs(domain) {
 }
 
 /**
+ * What a page Lamaste renders for a host under `domain` is written with —
+ * its brand's `{ name, tagline, logo }` (null for none) and its page
+ * language (English when none is set) — read from the records, as
+ * {@link authVhostInputs} reads them.
+ *
+ * @param {string} domain
+ * @returns {Promise<{ brand: { name: string, tagline: string | null, logo: boolean } | null, language: import('@lamalibre/lamaste').PageLanguage }>}
+ */
+export async function pageInputsOf(domain) {
+  const db = await getStateDb();
+  const row = brandingRow(db, domain);
+  return {
+    brand: row ? { name: row.name, tagline: row.tagline, logo: Boolean(row.logo) } : null,
+    language: languageOf(db, domain) ?? 'en',
+  };
+}
+
+/**
  * The brand of domain `name` as the API shows it — fields, `logo` and
  * `favicon` as `{ sha256, bytes, format, width, height }`, `revision`,
  * `rendered` — or null when the domain has none. 404 `unknown_domain`.

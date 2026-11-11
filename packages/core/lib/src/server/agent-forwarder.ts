@@ -539,8 +539,31 @@ export type UserSurfaceRelayVerification =
       readonly username: string;
       /** The plugin route the assertion is bound to. */
       readonly route: string;
+      /**
+       * Set when the user came with a native app's bearer access token
+       * the panel found live (native-apps-design.md D3): the grant it
+       * belongs to. No browser attaches such a token by itself, so the
+       * `Origin` rule does not apply to it; the open-response sweep ends
+       * its responses once the grant ends.
+       */
+      readonly bearer?: { readonly grantId: string } | undefined;
     }
-  | { readonly ok: false; readonly reason: string };
+  | {
+      readonly ok: false;
+      readonly reason: string;
+      /**
+       * A bearer token that is not (or no longer) live: answered 401
+       * `invalid_token` with `WWW-Authenticate: Bearer error="invalid_token"`
+       * so the app refreshes it.
+       */
+      readonly invalidToken?: boolean | undefined;
+      /**
+       * A live bearer token for a route or a client not served for now (a
+       * hosting moving, a host disabled): answered 503, so the app keeps
+       * its token rather than refreshing in a loop.
+       */
+      readonly unavailable?: boolean | undefined;
+    };
 
 /** Who the user is to the plugin, or why they may not use it. */
 export type UserCallerResolution =
@@ -564,6 +587,8 @@ export interface OpenUserSurfaceResponse {
   readonly plugin: string;
   /** The user caller the request was forwarded with. */
   readonly caller: UserCallerIdentity;
+  /** The native grant of a bearer request (see {@link UserSurfaceRelayVerification}). */
+  readonly grantId?: string | undefined;
   /** When the request was forwarded (milliseconds since the epoch). */
   readonly startedAt: number;
   /**
@@ -699,7 +724,11 @@ export function isCodeFetch(headers: IncomingHttpHeaders): boolean {
  * 4. a request that may change something must carry `Origin` equal to the
  *    bound host's origin — else 403 `{ error: 'cross-origin request
  *    refused' }` (CSRF: the session cookie travels with any cross-site
- *    request);
+ *    request) — unless it came with a native app's bearer token
+ *    (`bearer` on the relay check; no browser attaches one by itself). A
+ *    bearer token that is not live is answered 401 `{ error:
+ *    'invalid_token' }` with `WWW-Authenticate`, one whose route or client
+ *    is not served for now 503;
  * 5. the directory must know the user for this plugin
  *    (`resolveUserCaller`) — else its 403, 404 or 503;
  * 6. the request is forwarded to `/app/<rest>` with the `user` caller,
@@ -755,6 +784,15 @@ export async function userSurfacePlugin(
       return reply.code(403).send({ error: 'not a script or style source' });
     }
     const relay = await opts.verifyRelay(request);
+    if (!relay.ok && relay.unavailable === true) {
+      return reply.code(503).send({ error: 'The plugin is not available right now' });
+    }
+    if (!relay.ok && relay.invalidToken === true) {
+      return reply
+        .code(401)
+        .header('www-authenticate', 'Bearer error="invalid_token"')
+        .send({ error: 'invalid_token' });
+    }
     if (!relay.ok || relay.route !== route) {
       return reply.code(401).send({ error: 'unauthenticated' });
     }
@@ -770,7 +808,10 @@ export async function userSurfacePlugin(
     }
 
     const method = request.method.toUpperCase();
-    if (hasRequestBody(method)) {
+    // A bearer token is no ambient credential (no browser sends one by
+    // itself): no cross-site request can carry it, so no Origin is asked of
+    // it — a native HTTP stack sends none.
+    if (hasRequestBody(method) && relay.bearer === undefined) {
       const origin = await opts.originFor(route);
       if (origin === null || request.headers.origin !== origin) {
         return reply.code(403).send({ error: 'cross-origin request refused' });
@@ -824,7 +865,14 @@ export async function userSurfacePlugin(
     const lifetime = setTimeout(() => end('lifetime'), maxResponseMs);
     lifetime.unref();
     const untrack =
-      opts.trackResponse?.({ route, plugin: target.plugin, caller, startedAt, end }) ?? null;
+      opts.trackResponse?.({
+        route,
+        plugin: target.plugin,
+        caller,
+        startedAt,
+        end,
+        grantId: relay.bearer?.grantId,
+      }) ?? null;
     let outcome: ForwardOutcome;
     try {
       outcome = await forward(

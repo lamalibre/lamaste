@@ -21,6 +21,12 @@ const location = (inner) => server(` location / {\n${inner}\n }`);
 
 const refused = {
   'access_log to a file': server(' access_log /etc/cron.d/x;'),
+  'access_log to a file in a location': location('  access_log /etc/cron.d/x;'),
+  'access_log off at server level': server(' access_log off;'),
+  'access_log off with a format': location('  access_log off combined;'),
+  'proxy_hide_header at server level': server(' proxy_hide_header WWW-Authenticate;'),
+  'proxy_hide_header with two names': location('  proxy_hide_header WWW-Authenticate X-A;'),
+  'proxy_hide_header naming a variable': location('  proxy_hide_header $x;'),
   'log_format at http level': "log_format x '$request';\n" + server(''),
   error_log: server(' error_log /etc/cron.d/x;'),
   'include of an arbitrary file': server(' include /etc/shadow;'),
@@ -118,6 +124,33 @@ test('accepts a user surface’s JSON refusal: a media type and a fixed body', (
       '  internal;\n  default_type application/json;\n' +
         '  if ($lamaste_refusal = not_a_member) {\n   return 403 \'{"error":"not_a_member"}\';\n  }\n' +
         '  return 403 \'{"error":"forbidden"}\';',
+    ),
+  );
+});
+
+test('accepts a native app’s locations: no access log, an alias under the web root, a bearer refusal', () => {
+  validateVhost(
+    server(
+      ' location = /.well-known/apple-app-site-association {\n  auth_request off;\n' +
+        '  alias /var/www/lamaste/native/app.example.com/apple-app-site-association;\n' +
+        '  default_type application/json;\n }\n' +
+        ' location = /oauth/callback {\n  auth_request off;\n  access_log off;\n' +
+        '  if ($request_method !~ ^(GET|HEAD)$) {\n   return 405;\n  }\n' +
+        '  alias /var/www/lamaste/native/app.example.com/redirect.html;\n  default_type text/html;\n }\n' +
+        ' location = /internal/lamaste/user-surface-invalid-token {\n  internal;\n' +
+        '  add_header WWW-Authenticate \'Bearer error="invalid_token"\' always;\n' +
+        '  return 401 \'{"error":"invalid_token"}\';\n }\n' +
+        ' location = /internal/lamaste/user-surface-401 {\n' +
+        '  if ($lamaste_refusal = invalid_token) {\n   rewrite ^ /internal/lamaste/user-surface-invalid-token last;\n  }\n }',
+    ),
+  );
+});
+
+test('accepts the backend guard of a host with a native client: no Authorization, no challenge back', () => {
+  validateVhost(
+    location(
+      '  proxy_set_header Authorization "";\n  proxy_hide_header WWW-Authenticate;\n' +
+        '  proxy_pass http://127.0.0.1:8080;',
     ),
   );
 });

@@ -125,7 +125,16 @@ test('user surface: a tunnel by id, subdomain or FQDN; a plugin by name or route
     ok: true,
     tunnel: 'piyasa',
     plugin: 'market-indicators',
+    crossAgent: false,
   });
+  assert.equal(
+    parseUserSurfaceArgs('bind-user-surface', ['piyasa', 'fx', '--cross-agent']).crossAgent,
+    true,
+  );
+  assert.match(
+    parseUserSurfaceArgs('unbind-user-surface', ['piyasa', 'fx', '--cross-agent']).error,
+    /Unknown option --cross-agent/,
+  );
   assert.match(
     parseUserSurfaceArgs('unbind-user-surface', ['piyasa']).error,
     /^Usage: lamaste-server tunnels unbind-user-surface/,
@@ -174,11 +183,15 @@ test('readiness and user-surface status, in words', () => {
   assert.equal(userSurfaceStatusText({ route: 'fx', served: true, reason: null }), 'served');
   assert.match(
     userSurfaceStatusText({ route: 'fx', served: false, reason: 'no_identity' }),
-    /requests go down the tunnel/,
+    /answers its API with 503/,
   );
   assert.match(
     userSurfaceStatusText({ route: 'fx', served: false, reason: 'not_hosting_agent' }),
-    /does not host the plugin/,
+    /no agent hosts the plugin/,
+  );
+  assert.match(
+    userSurfaceStatusText({ route: 'fx', served: false, reason: 'cross_agent_unconfirmed' }),
+    /--cross-agent/,
   );
 });
 

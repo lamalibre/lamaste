@@ -11,6 +11,7 @@ import {
   Loader2,
   Plus,
   Trash2,
+  X,
 } from 'lucide-react';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { useToast } from './Toast.jsx';
@@ -25,6 +26,8 @@ import {
   accessModeText,
   createBlock,
   explainWebSurfaceRefusal,
+  joinCandidates,
+  joinedRouteText,
   moveBlock,
   servedText,
   subdomainProblem,
@@ -318,6 +321,94 @@ function MoveSection({ plugin, view }) {
 }
 
 /** Delete the site, its trees and the grants on it, behind typing its hostname. */
+/**
+ * Other plugins' user surfaces joined to the site — an application host:
+ * each plugin's `/api/<route>/app/*` on this one host, whichever agent hosts
+ * it, so the shell and a native app reach them all with one session or
+ * token. Join or take one off.
+ */
+function JoinedSection({ plugin, view }) {
+  const client = useAdminClient();
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [route, setRoute] = useState('');
+  const plugins = useQuery({ queryKey: ['plugins'], queryFn: () => client.getPlugins() });
+  const joined = view.site.joined ?? [];
+  const candidates = joinCandidates(plugins.data?.plugins, plugin.route, joined);
+  const change = useMutation({
+    mutationFn: ({ target, join }) =>
+      join
+        ? client.joinWebSurfaceRoute(plugin.name, target)
+        : client.leaveWebSurfaceRoute(plugin.name, target),
+    onSuccess: (_data, { target, join }) => {
+      invalidateWebSurface(queryClient, plugin.name);
+      queryClient.invalidateQueries({ queryKey: ['native-apps'] });
+      toast(join ? `${target} joined ${view.site.fqdn}` : `${target} taken off ${view.site.fqdn}`);
+      setRoute('');
+    },
+  });
+  if (typeof client.joinWebSurfaceRoute !== 'function') return null;
+  return (
+    <div>
+      <SectionTitle>Joined plugins</SectionTitle>
+      {joined.length === 0 ? (
+        <p className="text-zinc-500">
+          Only this plugin’s user surface is served here. Join others to make the site one host for
+          an application.
+        </p>
+      ) : (
+        <ul className="space-y-1">
+          {joined.map((j) => (
+            <li key={j.route} className="flex items-center justify-between gap-2">
+              <span>
+                <span className="font-mono text-zinc-300">/api/{j.route}/app</span>{' '}
+                <span className={j.served ? 'text-green-400' : 'text-yellow-400'}>
+                  {joinedRouteText(j)}
+                </span>
+              </span>
+              <button
+                type="button"
+                disabled={change.isPending}
+                onClick={() => change.mutate({ target: j.route, join: false })}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-red-400 disabled:opacity-50"
+                title="Take it off this site"
+              >
+                <X size={12} /> Leave
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {candidates.length > 0 && (
+        <div className="mt-2 flex gap-2">
+          <select
+            value={route}
+            onChange={(e) => setRoute(e.target.value)}
+            aria-label="Plugin to join"
+            className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-white focus:border-cyan-500 focus:outline-none"
+          >
+            <option value="">Join a plugin…</option>
+            {candidates.map((p) => (
+              <option key={p.route} value={p.route}>
+                {p.displayName ?? p.name} ({p.route})
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={!route || change.isPending}
+            onClick={() => change.mutate({ target: route, join: true })}
+            className="inline-flex items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-cyan-600 hover:text-white disabled:opacity-50"
+          >
+            <Plus size={12} /> Join
+          </button>
+        </div>
+      )}
+      <RefusalNote error={change.error} />
+    </div>
+  );
+}
+
 function DeleteSection({ plugin, view }) {
   const client = useAdminClient();
   const queryClient = useQueryClient();
@@ -495,6 +586,7 @@ export default function PluginWebSurface({ plugin }) {
           {grantsDecide && (
             <SiteGrantsSection plugin={plugin} site={view.site} now={query.dataUpdatedAt} />
           )}
+          {view.site && <JoinedSection plugin={plugin} view={view} />}
           {view.site && <DeleteSection plugin={plugin} view={view} />}
         </div>
       )}

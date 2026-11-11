@@ -139,7 +139,46 @@ const CODE_HINT = {
     'Gatekeeper could not be reached to copy the tunnel’s grants — nothing was moved; try again.',
   not_found: 'It is gone already — refresh the page.',
   domain_not_configured: 'Configure the relay’s domain and email under Settings first.',
+  invalid_route: 'That is not a plugin route a site can serve.',
+  not_agent_hosted: 'Only an agent-hosted plugin with a user surface can join a site.',
+  not_plugin_domain:
+    'The plugin belongs to another domain than the site — move it to the site’s domain first.',
+  served_elsewhere:
+    'Another host serves that plugin’s user surface — unbind it there (or delete its own site) first.',
+  too_many_routes: 'A host serves at most 16 plugins’ user surfaces.',
 };
+
+const JOINED_REASON = {
+  site_not_served: 'the site itself is not served',
+  not_installed: 'the plugin is not installed',
+  no_identity: 'its installed version declares no identity',
+  not_approved: 'its installed version waits for approval',
+  not_hosted: 'it is not hosted',
+};
+
+/**
+ * A route joined to a plugin's site, in words: served there, or why nginx
+ * answers its API with 503.
+ *
+ * @param {{ served: boolean, reason: string | null }} joined
+ */
+export function joinedRouteText(joined) {
+  if (joined.served) return 'served';
+  return JOINED_REASON[joined.reason] ?? joined.reason ?? 'not served';
+}
+
+/**
+ * The plugins that could join the site plugin `owner` owns: agent-hosted,
+ * with a route, neither the owner nor already joined.
+ *
+ * @param {Array<{ name: string, route?: string, hosting?: string }>} plugins
+ * @param {string} owner the owner's route
+ * @param {Array<{ route: string }>} joined
+ */
+export function joinCandidates(plugins, owner, joined) {
+  const taken = new Set([owner, ...(joined ?? []).map((j) => j.route)]);
+  return (plugins ?? []).filter((p) => p.hosting === 'agent' && p.route && !taken.has(p.route));
+}
 
 /**
  * A refused web-surface request explained: the panel's message, its `code`

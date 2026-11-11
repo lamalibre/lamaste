@@ -165,6 +165,11 @@ export const PAGE_MESSAGES_EN = {
   // … and when Gatekeeper does not allow the request (P9)
   'forbidden.title': 'Not Allowed',
   'forbidden.text': 'You cannot open this page.',
+  // A native app's sign-in redirect path on its application host, when the
+  // operating system did not hand the redirect to the app
+  'nativeRedirect.title': 'Continue in the App',
+  'nativeRedirect.text':
+    'Sign-in continues in the app. If the app did not open, it is not installed on this device — install it and sign in again.',
 
   // Gatekeeper's access-request page (P6)
   'access.title': 'Access Required',
@@ -343,6 +348,9 @@ export const PAGE_MESSAGES_TR: Readonly<Record<PageMessageKey, string>> = Object
   'unavailable.text': 'Lütfen birkaç dakika sonra yeniden deneyin.',
   'forbidden.title': 'İzin verilmiyor',
   'forbidden.text': 'Bu sayfayı açma izniniz yok.',
+  'nativeRedirect.title': 'Uygulamada devam edin',
+  'nativeRedirect.text':
+    'Giriş uygulamada devam ediyor. Uygulama açılmadıysa bu cihazda yüklü değildir; uygulamayı yükleyip yeniden giriş yapın.',
 
   'access.title': 'Erişim izni gerekiyor',
   'access.heading': 'Erişim izni gerekiyor',
@@ -461,6 +469,12 @@ export const INVITATIONS_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
 export const UNAVAILABLE_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
   'unavailable.title',
   'unavailable.text',
+]);
+
+/** The fallback page of a native app's sign-in redirect path (native-apps-design.md D6). */
+export const NATIVE_REDIRECT_PAGE_KEYS: readonly PageMessageKey[] = Object.freeze([
+  'nativeRedirect.title',
+  'nativeRedirect.text',
 ]);
 
 /** Gatekeeper's "not allowed" page (P9). */

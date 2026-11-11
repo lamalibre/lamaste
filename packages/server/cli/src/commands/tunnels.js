@@ -9,9 +9,11 @@
  *   assign <id> --agent <label>                   Move a tunnel to another agent
  *   configure <id> [--access-mode <m>] [--max-body-mb <n>]
  *                                                 Change access mode / body limit
- *   bind-user-surface <tunnel> <plugin>           Serve an agent-hosted plugin's user
+ *   bind-user-surface <tunnel> <plugin> [--cross-agent]
+ *                                                 Serve an agent-hosted plugin's user
  *                                                 surface (/api/<route>/app/*) on the
- *                                                 tunnel's host
+ *                                                 tunnel's host — a plugin another agent
+ *                                                 hosts only with --cross-agent
  *   unbind-user-surface <tunnel> <plugin>         Stop serving it there
  *
  * List reads directly from the state file.
@@ -74,13 +76,18 @@ ${b('Subcommands:')}
   ${c('toggle')} <id> --enable|--disable                      Enable or disable a tunnel
   ${c('assign')} <id> --agent <label>                         Move a tunnel to another agent
   ${c('configure')} <id> [--access-mode <m>] [--max-body-mb <n>] Change access mode / body limit
-  ${c('bind-user-surface')} <tunnel> <plugin>                Serve an agent-hosted plugin's user surface
-                                                      (/api/<route>/app/*) on the tunnel's host
+  ${c('bind-user-surface')} <tunnel> <plugin> [--cross-agent]
+                                                      Serve an agent-hosted plugin's user surface
+                                                      (/api/<route>/app/*) on the tunnel's host;
+                                                      --cross-agent for a plugin another agent hosts
+                                                      (the tunnel's agent then serves the pages
+                                                      beside its users; lapses on a move)
   ${c('unbind-user-surface')} <tunnel> <plugin>              Stop serving it there
 
   A tunnel is named by its id, subdomain or FQDN; a plugin by its name or route. A user
   surface needs an enabled tunnel that is authenticated or restricted, carried by the
-  agent that hosts the plugin — it is served only while that agent carries the tunnel.
+  agent that hosts the plugin — or bound with --cross-agent, served only while the agent
+  that carried the tunnel then still carries it.
 
 ${b('Create options:')}
   --subdomain <name>    Tunnel subdomain (required)
@@ -432,7 +439,10 @@ async function userSurfaceCmd(sub, args, { json }) {
   let result;
   try {
     result = bind
-      ? await panelRequest('PUT', surfacePath, { route })
+      ? await panelRequest('PUT', surfacePath, {
+          route,
+          ...(parsed.crossAgent ? { crossAgent: true } : {}),
+        })
       : await panelRequest('DELETE', `${surfacePath}/${encodeURIComponent(route)}`);
   } catch (err) {
     failWith(err.message, err.code);

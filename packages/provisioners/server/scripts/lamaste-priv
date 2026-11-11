@@ -366,6 +366,10 @@ const RULES = {
     // rather than the host's mime.types (entries checked below).
     types: { block: 'types', args: argc(0, 0) },
     internal: { args: argc(0, 0) },
+    // A native app's redirect path: its query holds an authorization code,
+    // so the location keeps no access log — `off` only, never a file (the
+    // root master opens a log file it names).
+    access_log: { args: oneOf('off') },
     // The type of a body the location writes itself (a user surface's JSON
     // refusal): a media type, never a file.
     default_type: { args: (a) => a.length === 1 && /^[a-z]+\/[a-z0-9.+-]{1,64}$/.test(a[0]) },
@@ -393,6 +397,9 @@ const RULES = {
         a.length === 1 && /^http:\/\/127\.0\.0\.1:\d{1,5}(?:\/[A-Za-z0-9._~/-]*)?$/.test(a[0]),
     },
     proxy_set_header: { args: (a) => a.length === 2 && HEADER_NAME_RE.test(a[0]) },
+    // A host with a native client hides its backend's credential challenge
+    // (native-apps-design.md, security review L3): one header name.
+    proxy_hide_header: { args: (a) => a.length === 1 && HEADER_NAME_RE.test(a[0]) },
     proxy_http_version: { args: oneOf('1.0', '1.1') },
     proxy_read_timeout: { args: (a) => a.length === 1 && /^\d{1,7}[smhd]?$/.test(a[0]) },
     proxy_send_timeout: { args: (a) => a.length === 1 && /^\d{1,7}[smhd]?$/.test(a[0]) },

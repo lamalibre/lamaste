@@ -20,6 +20,9 @@ import {
   toggledRoles,
   userSurfaceEligibility,
   userSurfaceReasonText,
+  SIGN_IN_EVENTS_LABEL,
+  userSurfaceCandidateBlock,
+  userSurfaceCrossAgent,
   warningText,
 } from '../src/admin/lib/identity.js';
 
@@ -73,9 +76,10 @@ test('readiness: ready, or why users cannot reach the application yet', () => {
   assert.deepEqual(readinessText(null), { ready: false, text: 'Unknown' });
 });
 
-test('a user surface is served, or why its requests still go down the tunnel', () => {
+test('a user surface is served, or why the relay answers it with 503', () => {
   assert.match(userSurfaceReasonText(null), /^served/);
-  assert.match(userSurfaceReasonText('no_identity'), /go down the tunnel/);
+  assert.match(userSurfaceReasonText('no_identity'), /503/);
+  assert.match(userSurfaceReasonText('cross_agent_unconfirmed'), /bind it again/);
   assert.match(userSurfaceReasonText('not_approved'), /waits for approval/);
   assert.match(userSurfaceReasonText('not_installed'), /no installed plugin/);
 });
@@ -285,4 +289,30 @@ test('an identity diff: what waits for approval, what only changes the digest', 
     first.rows.map((row) => row.label),
     ['roles added', 'receives more about its users'],
   );
+});
+
+test('a plugin another agent hosts binds only across agents', () => {
+  const tunnel = { agentLabel: 'vm1' };
+  const here = { route: 'fx', agentHosting: { agentLabel: 'vm1' } };
+  const there = { route: 'gx', agentHosting: { agentLabel: 'vm2' } };
+  const nowhere = { route: 'hx', agentHosting: null };
+  assert.equal(userSurfaceCandidateBlock(here, tunnel, new Map()), null);
+  assert.equal(userSurfaceCandidateBlock(there, tunnel, new Map()), null);
+  assert.match(userSurfaceCandidateBlock(nowhere, tunnel, new Map()), /not hosted/);
+  assert.match(
+    userSurfaceCandidateBlock(here, tunnel, new Map([['fx', 'a.example']])),
+    /served on/,
+  );
+  assert.equal(userSurfaceCrossAgent(here, tunnel), null);
+  assert.equal(userSurfaceCrossAgent(there, tunnel), 'vm2');
+  assert.equal(userSurfaceCrossAgent(nowhere, tunnel), null);
+});
+
+test('turning sign-in events on waits for approval, turning them off does not', () => {
+  const on = identityDiffRows({ before: {}, after: {}, signInEventsAdded: true });
+  assert.deepEqual(on.rows, [
+    { label: 'receives more about its users', entries: [SIGN_IN_EVENTS_LABEL], approval: true },
+  ]);
+  const off = identityDiffRows({ before: {}, after: {}, signInEventsRemoved: true });
+  assert.equal(off.rows[0].approval, false);
 });

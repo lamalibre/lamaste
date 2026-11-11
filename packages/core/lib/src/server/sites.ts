@@ -47,6 +47,18 @@ export interface SiteEntry {
   owner?: SiteOwner | undefined;
   /** A plugin-owned site's access mode; absent on every other site. */
   accessMode?: WebSurfaceAccessMode | undefined;
+  /**
+   * The other plugins whose user surfaces a plugin-owned site serves beside
+   * its owner's (native-apps-design.md D1): one host for an application.
+   * Absent when it serves only its owner's (`siteUserSurfaceRoutes` reads it).
+   */
+  userSurface?: SiteUserSurface | undefined;
+}
+
+/** The routes an administrator joined to a plugin-owned site. */
+export interface SiteUserSurface {
+  /** Plugin routes, each a valid user-surface route, never the owner's. */
+  routes: string[];
 }
 
 /** Who owns a plugin-owned site: the plugin, by route. */

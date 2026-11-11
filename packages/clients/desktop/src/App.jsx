@@ -33,6 +33,7 @@ import {
   MessageSquare,
   Globe2,
   Cable,
+  Smartphone,
 } from 'lucide-react';
 import {
   AdminClientProvider,
@@ -51,6 +52,7 @@ import {
   AuditPage,
   PeersPage,
   DomainsPage,
+  NativeAppsPage,
   UserPluginAccessPage,
   GatekeeperDashboardPage,
   GatekeeperGroupsPage,
@@ -98,6 +100,7 @@ const SERVER_ADMIN_TABS = [
   { id: 'server-sites', label: 'Static Sites', icon: FileText },
   { id: 'server-users', label: 'Users', icon: Users },
   { id: 'server-domains', label: 'Domains', icon: Globe2 },
+  { id: 'server-native-apps', label: 'Native Apps', icon: Smartphone },
   { id: 'server-certificates', label: 'Certificates', icon: ShieldCheck },
   { id: 'server-tickets', label: 'Tickets', icon: Ticket },
   { id: 'server-plugins', label: 'Plugins', icon: Package },
@@ -364,6 +367,8 @@ export default function App() {
         return <UsersPage />;
       case 'server-domains':
         return <DomainsPage />;
+      case 'server-native-apps':
+        return <NativeAppsPage />;
       case 'server-certificates':
         return <CertificatesPage />;
       case 'server-tickets':

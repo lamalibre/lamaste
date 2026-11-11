@@ -19,8 +19,12 @@ import {
   autheliaIndexLanguageFilters,
   AUTHELIA_FORCED_LOCALES_DIR,
   isPageLanguage,
+  APPLE_APP_SITE_ASSOCIATION_PATH,
+  ASSET_LINKS_PATH,
+  isNativeRedirectPath,
 } from '@lamalibre/lamaste';
 import {
+  nativeRedirectPageHeaders,
   INVITATIONS_PAGE_HEADERS,
   INVITE_PAGE_HEADERS,
   UNAVAILABLE_PAGE_STOCK_DIR,
@@ -426,6 +430,35 @@ const AUTHZ_CLEARED_HEADERS = `
         proxy_set_header X-Forwarded-Proto "";
         proxy_set_header X-Forwarded-Uri "";
         proxy_set_header X-Forwarded-Method "";`;
+
+/**
+ * The domain's token and revocation endpoints, sent to the panel's token
+ * broker (`routes/native-oauth.js`; native-apps-design.md D4) instead of
+ * straight to Authelia: the broker answers native clients' requests itself
+ * — their refresh tokens' chain, lifetimes and standing are Lamaste's — and
+ * passes every other client's request to Authelia byte for byte. `Host` is
+ * this portal's literal name (the broker answers only for an active
+ * domain's portal) and `X-Forwarded-Host` is cleared; the client address
+ * goes as for the invitation API. Exact matches: Authelia answers a
+ * trailing slash with a redirect to these very paths.
+ */
+function nativeBrokerLocations(fqdn) {
+  return ['token', 'revocation']
+    .map(
+      (endpoint) => `
+    location = /api/oidc/${endpoint} {
+        proxy_pass http://127.0.0.1:3100/api/native-apps/oauth/${endpoint};
+        proxy_set_header Host ${fqdn};
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
+        client_max_body_size 16k;
+    }
+`,
+    )
+    .join('');
+}
 
 /** Site name of the auth portal vhost of `domain` (`auth.<domain>`). */
 export function authVhostName(domain) {
@@ -892,7 +925,7 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
         proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
         client_max_body_size 16k;
     }
-${delegatedInvitationsLocations(domain, fqdn)}${userAccess}${authBrandLocations(domain, fqdn, language)}
+${nativeBrokerLocations(fqdn)}${delegatedInvitationsLocations(domain, fqdn)}${userAccess}${authBrandLocations(domain, fqdn, language)}
     # Default — proxy to Authelia. Authelia takes the OIDC issuer and the
     # session cookie's domain from X-Forwarded-Host / -Proto: this portal's
     # own name, never what the client sent. (A location that sets any
@@ -1134,10 +1167,30 @@ function gatekeeperSubrequest(check, fqdn) {
  */
 function userSurfaceLocations(fqdn, userSurface) {
   if (userSurface.length === 0) return '';
-  const routes = userSurface.map(({ route, maxBodySizeMb }) => {
+  for (const { route } of userSurface) {
     if (!isUserSurfaceRoute(route)) {
       throw new Error(`Invalid user-surface route for nginx vhost: ${route}`);
     }
+  }
+  const unserved = userSurface.filter((r) => r.served === false);
+  const served = userSurface.filter((r) => r.served !== false);
+  const withheld = unserved.map(({ route }) => {
+    const apiPath = userSurfaceApiPath(route);
+    const block = `{${BODY_NOT_READ}
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        return 503 '{"error":"The plugin is not available right now"}';
+    }`;
+    return `
+    # Bound, not served now: answered here, never by the host's backend
+    location = ${apiPath} ${block}
+
+    location ^~ ${apiPath}/ ${block}
+`;
+  });
+  if (served.length === 0) return withheld.join('');
+  const routes = served.map(({ route, maxBodySizeMb }) => {
     assertBodySizeMb(maxBodySizeMb);
     const block = `{
         auth_request /internal/lamaste/user-surface-authz;
@@ -1187,9 +1240,22 @@ ${USER_SURFACE_PROXY_HEADERS}
         return 403 '{"error":"forbidden"}';
     }
 
+    location = /internal/lamaste/user-surface-invalid-token {
+        internal;${BODY_NOT_READ}
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header WWW-Authenticate 'Bearer error="invalid_token"' always;
+        return 401 '{"error":"invalid_token"}';
+    }
+
     location = /internal/lamaste/user-surface-401 {
         internal;
         auth_request off;${BODY_NOT_READ}
+        # A native app's bearer token Gatekeeper refused: the app refreshes it
+        if ($lamaste_refusal = invalid_token) {
+            rewrite ^ /internal/lamaste/user-surface-invalid-token last;
+        }
 
         proxy_pass http://127.0.0.1:9294/authz/user-surface-unauthenticated;
         proxy_pass_request_body off;
@@ -1202,8 +1268,95 @@ ${USER_SURFACE_PROXY_HEADERS}
 
         proxy_http_version 1.1;
     }
-${routes.join('')}`;
+${routes.join('')}${withheld.join('')}`;
 }
+
+/**
+ * The locations a host with a served native client carries
+ * (native-apps-design.md D6), before any authorization: the app
+ * association files — `/.well-known/apple-app-site-association`,
+ * `/.well-known/assetlinks.json`, each only when the client declares that
+ * platform — and the client's redirect paths, which the operating system
+ * hands to the app; a browser that reaches one gets Lamaste's static page
+ * (no script). The files are the panel's (`lib/native-files.js`, under
+ * `dir`). A redirect path is kept out of the access log: its query holds
+ * an authorization code.
+ *
+ * @param {{ dir: string, redirectPaths: readonly string[], appleAppSiteAssociation: boolean, assetLinks: boolean } | null | undefined} native
+ * @param {string} domain the host's domain (the page's headers name its sign-in host)
+ * @returns {string}
+ */
+export function nativeAppLocations(native, domain) {
+  if (!native) return '';
+  if (!path.isAbsolute(native.dir) || !/^\/var\/www\/lamaste\/[A-Za-z0-9/._-]+$/.test(native.dir)) {
+    throw new Error(`Invalid native files directory for nginx vhost: ${native.dir}`);
+  }
+  if (/(^|\/)\.\.?(\/|$)/.test(native.dir)) {
+    throw new Error(`Invalid native files directory for nginx vhost: ${native.dir}`);
+  }
+  const file = (location, name, type) => `
+    location = ${location} {
+        auth_request off;
+        alias ${native.dir}/${name};
+        default_type ${type};
+        add_header Cache-Control "max-age=300" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+`;
+  let out = `
+    # A native app's sign-in on this host (native-apps-design.md D6)`;
+  if (native.appleAppSiteAssociation) {
+    out += file(
+      APPLE_APP_SITE_ASSOCIATION_PATH,
+      NATIVE_FILES.appleAppSiteAssociation,
+      'application/json',
+    );
+  }
+  if (native.assetLinks) {
+    out += file(ASSET_LINKS_PATH, NATIVE_FILES.assetLinks, 'application/json');
+  }
+  const headers = pageHeaderLines(nativeRedirectPageHeaders(domain));
+  for (const redirectPath of native.redirectPaths) {
+    if (!isNativeRedirectPath(redirectPath)) {
+      throw new Error(`Invalid native redirect path for nginx vhost: ${redirectPath}`);
+    }
+    out += `
+    location = ${redirectPath} {
+        auth_request off;
+        # The query holds an authorization code: never in a log
+        access_log off;
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405;
+        }
+        alias ${native.dir}/${NATIVE_FILES.redirectPage};
+        default_type text/html;${headers}
+    }
+`;
+  }
+  return out;
+}
+
+/** The files of a native client's host, in its directory (`lib/native-files.js`). */
+export const NATIVE_FILES = Object.freeze({
+  appleAppSiteAssociation: 'apple-app-site-association',
+  assetLinks: 'assetlinks.json',
+  redirectPage: 'redirect.html',
+});
+
+/**
+ * What the backend location of a host with a native client carries
+ * (native-apps-design.md R2, security review M1 and L3): a native app's
+ * bearer token never reaches the backend, and the backend cannot ask the
+ * browser for credentials of its own (`WWW-Authenticate`) — a cached Basic
+ * login would ride every later request to the host, the user surface's
+ * included.
+ */
+const NATIVE_BACKEND_GUARD = `
+
+        # A native app's bearer token is the relay's alone, and the backend
+        # asks no browser for credentials of its own
+        proxy_set_header Authorization "";
+        proxy_hide_header WWW-Authenticate;`;
 
 /**
  * Write a public vhost — no authentication, direct proxy.
@@ -1214,12 +1367,13 @@ export async function writePublicVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
+  { pathPrefix, maxBodySizeMb, userSurface, nativeGuard = false, enabled = true } = {},
 ) {
   const { name, config } = renderPublicVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
+    nativeGuard,
   });
   return safeWriteVhost(name, config, fqdn, { enabled });
 }
@@ -1229,7 +1383,7 @@ function renderPublicVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface } = {},
+  { pathPrefix, maxBodySizeMb, userSurface, nativeGuard = false } = {},
 ) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
@@ -1266,7 +1420,7 @@ ${bodySizeDirective(maxBodySizeMb)}
         # Nor a relay assertion: only Gatekeeper's, set on an authenticated
         # vhost, may reach a backend (lamaste-agentd serves plugin routes)
         proxy_set_header X-Lamalibre-Relay-Assertion "";
-${TUNNEL_PROXY_HEADERS}
+${TUNNEL_PROXY_HEADERS}${nativeGuard ? NATIVE_BACKEND_GUARD : ''}
 
         ${pathPrefix ? `rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n        ` : ''}proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
@@ -1291,12 +1445,21 @@ export async function writeGatekeeperVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface, enabled = true } = {},
+  {
+    pathPrefix,
+    maxBodySizeMb,
+    userSurface,
+    native = null,
+    nativeGuard = false,
+    enabled = true,
+  } = {},
 ) {
   const { name, config } = renderGatekeeperTunnelVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
+    native,
+    nativeGuard,
   });
   return safeWriteVhost(name, config, fqdn, { enabled });
 }
@@ -1306,7 +1469,7 @@ function renderGatekeeperTunnelVhost(
   domain,
   port,
   certPath,
-  { pathPrefix, maxBodySizeMb, userSurface },
+  { pathPrefix, maxBodySizeMb, userSurface, native, nativeGuard },
 ) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
@@ -1321,6 +1484,8 @@ function renderGatekeeperTunnelVhost(
     pathPrefix,
     maxBodySizeMb,
     userSurface,
+    native,
+    nativeGuard,
   });
 
   return { name: appVhostName(fqdn), fqdn, config };
@@ -1336,23 +1501,31 @@ function renderGatekeeperTunnelVhost(
  * @param {string} domain the base domain it is under (its sign-in, `auth.<domain>`)
  * @param {number} port
  * @param {string} [certPath]
- * @param {{ pathPrefix?: string, maxBodySizeMb?: number, userSurface?: ReadonlyArray<{ route: string, maxBodySizeMb: number }> }} [opts]
- *   `userSurface`: the plugins' user surfaces the vhost serves (not on a public vhost)
+ * @param {{ pathPrefix?: string, maxBodySizeMb?: number, userSurface?: ReadonlyArray<{ route: string, maxBodySizeMb: number, served?: boolean }>, native?: object | null, nativeGuard?: boolean }} [opts]
+ *   `userSurface`: the plugins' user surfaces bound to the vhost (not on a public vhost) —
+ *   a route with `served: false` is answered 503 by nginx; `native`: the host's
+ *   served native client ({@link nativeAppLocations}); `nativeGuard`: a native
+ *   client — served or not — is registered for the host ({@link NATIVE_BACKEND_GUARD})
  * @returns {{ name: string, fqdn: string, config: string }}
  */
 export function renderTunnelVhost(accessMode, fqdn, domain, port, certPath, opts = {}) {
-  const { pathPrefix, maxBodySizeMb, userSurface } = opts;
+  const { pathPrefix, maxBodySizeMb, userSurface, native, nativeGuard } = opts;
   if (accessMode === 'public') {
+    // A public host serves no native client (its client is not served —
+    // native-apps.js `host_public`): only the guard.
     return renderPublicVhost(fqdn, domain, port, certPath, {
       pathPrefix,
       maxBodySizeMb,
       userSurface,
+      nativeGuard: Boolean(nativeGuard || native),
     });
   }
   return renderGatekeeperTunnelVhost(fqdn, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     userSurface,
+    native,
+    nativeGuard,
   });
 }
 
@@ -1383,7 +1556,7 @@ function buildGatekeeperVhost(
   certDirClean,
   port,
   domain,
-  { pathPrefix, maxBodySizeMb, userSurface = [] } = {},
+  { pathPrefix, maxBodySizeMb, userSurface = [], native = null, nativeGuard = false } = {},
 ) {
   const url = originalUrl(fqdn);
   return `server {
@@ -1404,7 +1577,7 @@ ${bodySizeDirective(maxBodySizeMb)}
         proxy_buffers 4 32k;
         proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
     }
-${userSurfaceLocations(fqdn, userSurface)}
+${userSurfaceLocations(fqdn, userSurface)}${nativeAppLocations(native, domain)}
     location / {
         auth_request /internal/lamaste/authz;
         auth_request_set $user $upstream_http_remote_user;
@@ -1433,7 +1606,7 @@ ${userSurfaceLocations(fqdn, userSurface)}
         # plugin tunnel or the panel, never one a client sent
         proxy_set_header X-Lamalibre-Relay-Assertion "";`
         }
-${TUNNEL_PROXY_HEADERS}
+${TUNNEL_PROXY_HEADERS}${native || nativeGuard ? NATIVE_BACKEND_GUARD : ''}
 
         ${pathPrefix ? `rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n        ` : ''}proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
@@ -1791,14 +1964,28 @@ function unavailablePageLocations(domain, clear) {
  * available" page ({@link unavailablePageLocations}), in the domain's
  * language, instead of nginx's own.
  *
+ * The routes joined to the site (`opts.joined`, native-apps-design.md D1)
+ * get their user-surface locations beside the owner's — a joined route not
+ * served now is answered 503 by nginx, never by anything else — and a
+ * served native client of the host (`opts.native`) its association files
+ * and redirect paths ({@link nativeAppLocations}).
+ *
  * @param {{ id: string, fqdn: string }} site
  * @param {string} certDir
  * @param {string} domain
- * @param {{ route: string, served: boolean, maxBodySizeMb: number, treesDir: string, clearSiteData?: boolean }} opts
+ * @param {{ route: string, served: boolean, maxBodySizeMb: number, treesDir: string, clearSiteData?: boolean, joined?: ReadonlyArray<{ route: string, maxBodySizeMb: number, served?: boolean }>, native?: object | null }} opts
  * @returns {{ name: string, fqdn: string, config: string }}
  */
 export function renderWebSurfaceVhost(site, certDir, domain, opts) {
-  const { route, served, maxBodySizeMb, treesDir, clearSiteData = false } = opts;
+  const {
+    route,
+    served,
+    maxBodySizeMb,
+    treesDir,
+    clearSiteData = false,
+    joined = [],
+    native = null,
+  } = opts;
   assertLiteralHostname(site.fqdn);
   if (!isUserSurfaceRoute(route)) throw new Error(`Invalid web surface route: ${route}`);
   if (!path.isAbsolute(treesDir) || !/^[A-Za-z0-9/._-]+$/.test(treesDir)) {
@@ -1839,7 +2026,7 @@ export function renderWebSurfaceVhost(site, certDir, domain, opts) {
         add_header Cache-Control no-store always;${clear}
         return 503;
     }
-${unavailablePageLocations(domain, clear)}
+${nativeAppLocations(native, domain)}${unavailablePageLocations(domain, clear)}
 }
 `,
     };
@@ -1858,7 +2045,7 @@ ${unavailablePageLocations(domain, clear)}
     location = /internal/lamaste/shell-authz {
         ${gatekeeperSubrequest('user-surface-shell', site.fqdn)}
     }
-${userSurfaceLocations(site.fqdn, [{ route, maxBodySizeMb }])}
+${userSurfaceLocations(site.fqdn, [{ route, maxBodySizeMb }, ...joined])}${nativeAppLocations(native, domain)}
     # A script, style, font or image the current tree lacks: the previous
     # tree's (a page still running the old shell), else 404
     location ~* ${WEB_SURFACE_SUBRESOURCE_RE} {

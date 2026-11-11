@@ -17,6 +17,7 @@
  *   erase <userId>             Erase a deleted user: the tombstone is scrubbed to the
  *                              id, their invitations and Gatekeeper's access-request
  *                              log entries go, plugins are sent the erasure
+ *   native-grants <username>   Their devices: their grants with every native client
  *   directory                  Every user the directory knows — deleted and erased
  *                              ones too — with Gatekeeper's cleanup of deleted
  *                              usernames and the erasures plugins have not
@@ -55,6 +56,10 @@ export async function runUsers(args, { json }) {
       return eraseUserCmd(args.slice(1), { json });
     case 'directory':
       return directoryCmd({ json });
+    case 'native-grants': {
+      const { userNativeGrantsCmd } = await import('./native-apps.js');
+      return userNativeGrantsCmd(args.slice(1), { json });
+    }
     default:
       printUsersUsage();
       process.exit(sub ? 1 : 0);
@@ -77,6 +82,7 @@ ${b('Subcommands:')}
   ${c('erase <userId>')}               Erase a deleted user (an id from ${c('users directory')})
   ${c('directory')}                    Every user the directory knows: deleted and erased ones, the
                                Gatekeeper cleanup of their usernames, pending erasures
+  ${c('native-grants <username>')}     Their devices: native app sign-ins (--status live|ended|all)
 `);
 }
 

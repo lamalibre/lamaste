@@ -774,6 +774,7 @@ A plugin with an agent half may have **users**: people who sign in to the relay'
 - **`roles`** — 1 to 32, ids unique. `id`: a lower-case letter, then lower-case letters, digits and `-`, at most 32 characters; `label`: 1–64 characters; `description`: optional, at most 200. Labels and descriptions refuse control and bidirectional formatting characters.
 - **`invites`** — optional on a role: the roles a holder of it may give by [delegated invitation](#delegated-invitations), 1–32 role ids of the same block, no repeats; the role itself may be one of them. A role without it invites nobody. Lamaste before 4.9 refuses a role carrying it (the block is strict): a plugin that declares it needs a 4.9 relay.
 - **`attributes`** — what Lamaste tells the agent half about each user besides the `userId`, username, roles and status: a subset of `displayName` and `email`, no repeats; `["displayName"]` when omitted. The agent half receives nothing it did not declare.
+- **`signInEvents`** — optional, `true`: the agent half is told when one of its users signs in with a native app ([Native Apps → Sign-in events](native-apps.md#sign-in-events)). Normalized away when `false` or absent, so it enters the approval digest only when `true`; an update that turns it on reports `signInEventsAdded` and waits for an administrator (`identity.changed`), one that turns it off `signInEventsRemoved` (only the digest changes). Only a plugin a native client's host serves receives any.
 - Only a plugin with `hosting: "agent"` and an `agent` block may declare it (`400` at install otherwise): its users reach the agent half.
 
 The panel stores the block **normalized** — roles sorted by id, attributes sorted, the default applied — as `identity` on the plugin's entry in `GET /api/plugins` and in `plugins.identity` (`state.db`). It enters the [approval digest](lifecycle-hooks.md#approval) **only when present**, so the digest of a plugin without one is the digest it had before 4.5, byte for byte. A plugin that declares one waits for approval even when it brings no relay hooks and no agent half Lamaste installs; until its installed version is approved, it has no audience on its agent half and no user surface. `GET /api/plugins/:name/hooks` shows it as `identity: { declared, approved, block }`.
@@ -790,7 +791,9 @@ An update that **adds or removes a role**, or **widens the attributes**, waits f
   "attributesRemoved": [],
   "labelsChanged": [],
   "invitesAdded": [],
-  "invitesRemoved": []
+  "invitesRemoved": [],
+  "signInEventsAdded": false,
+  "signInEventsRemoved": false
 }
 ```
 
@@ -849,7 +852,7 @@ On a relay with several domains a plugin belongs to one ([`PUT /api/plugins/:nam
 
 ### The user surface
 
-A plugin's users reach it at `/api/<route>/app` and everything under it, on the host of an app tunnel **bound** as the plugin's user surface ([Tunnels API](tunnels.md#user-surface-binding)) — a tunnel its hosting agent carries — or on the site the plugin owns for its [web surface](#web-surface), which serves the same paths the same way (where the steps below say tunnel, read site; a site's grant is a `site` grant). The bound host serves those paths only while the plugin's installed, approved version declares `identity` and the tunnel's agent hosts the plugin; before that, its requests go down the tunnel as every other path does — which is how a plugin moves its users' API to the relay with a plain update. Each request:
+A plugin's users reach it at `/api/<route>/app` and everything under it, on the host of an app tunnel **bound** as the plugin's user surface ([Tunnels API](tunnels.md#user-surface-binding)) — a tunnel its hosting agent carries — or on the site the plugin owns for its [web surface](#web-surface) — or a site another plugin owns that the plugin [joins](#joined-plugins) — which serves the same paths the same way (where the steps below say tunnel, read site; a site's grant is a `site` grant). The bound host serves those paths only while the plugin's installed, approved version declares `identity` and the tunnel's agent hosts the plugin (or the binding was made [across agents](tunnels.md#user-surface-binding)); before that the relay answers them with `503` — a bound route's requests never go down the tunnel. A native app reaches the same paths with a bearer token instead of a session ([Native Apps → Bearer tokens on the user surface](native-apps.md#bearer-tokens-on-the-user-surface)). Each request:
 
 1. **nginx** asks Gatekeeper (`auth_request` to `/authz/user-surface/<fqdn>`, the tunnel named in the path).
 2. **Gatekeeper** checks the tunnel (enabled, not public, the route bound to it), that the raw request target lies on that route's user surface — no `.` or `..` segment, no backslash, no percent-encoded `.`, `/`, `\` or `%`, no escape that does not decode, so the path it approves is the path every server after it resolves, even one that decodes twice — that the tunnel's agent hosts the plugin (it carries the plugin's internal tunnel), the Authelia session (one `authelia_session` cookie, never two), and on a `restricted` tunnel the user's grant for the tunnel. It answers with a **relay assertion for the panel**: Ed25519 with the relay signing key, audience `@panel`, port 3100, caller `{ type: "user", username }` — the username alone — bound to the method and the raw request target, single use, never cached. Without a session it answers a JSON `401 { error: "unauthenticated" }` (never a login redirect: the caller is an application's request); anything else refused is a bare `403`.
@@ -1060,6 +1063,10 @@ So that an entitlement can never look sufficient on its own, the web surface's s
 
 The panel's user-surface context takes a plugin-owned site as the route's host (its `Origin`, its open responses), and Gatekeeper reads `sites.json` beside `tunnels.json`; a route two hosts would serve is served by neither. A plugin that owns a site cannot have its user surface bound to a tunnel, and a tunnel cannot be created on, or enabled for, a hostname a site serves. Uninstalling the plugin keeps the site, answering `503`, until it is deleted — `DELETE /api/plugins/<name>/web-surface` works without the plugin, and the Sites page offers it. A site records the **package** it was created for (`owner: { plugin, package }`): another package installed later under the same route is not served from it (`not_owner`) — it inherits neither the hostname nor the grants nor the old tree; delete the site, then create one for it.
 
+### Joined plugins
+
+A plugin-owned site can serve other plugins' user surfaces too — an **application host**: one host, one session (or one native app's token), every plugin's `/api/<route>/app/*`, whichever agent hosts each ([Native Apps → Application hosts](native-apps.md#application-hosts)). An administrator **joins** a plugin's route to the site (`PUT /api/plugins/:name/web-surface/routes/:route`, `:name` the site's owner) and takes it off again (`DELETE …`); a site serves its owner's route and at most 15 joined ones. A joined route is served while the site itself is served and the joined plugin is installed, declares `identity`, is approved and hosted (by any agent); otherwise nginx answers its API with `503`. The shell stays the owner's approved tree, and its gate admits a user who is in the audience of **any** route the site serves (plus the site grant when restricted). A joined plugin must belong to the site's domain, and its route may be served by no other host. Uninstalling a joined plugin takes its route off (`reason: "uninstalled"`).
+
 ### Moving from a bound tunnel
 
 A plugin whose users reach it through a tunnel bound as its user surface — the tunnel's backend serving the shell — moves to its web surface with one call: the site is created on the tunnel's hostname (its certificate kept), the tunnel is disabled and unbound in the same state change, and **one nginx reload** hands the hostname from the tunnel's vhost to the site's; the tunnel's port grant is withdrawn only after that, for new sessions alone — chisel is not restarted, which would drop the plugin's internal tunnel (its API answering `502` until the agent reconnects) and fail what nginx's old workers still send to the tunnel; the agent drops the binding at its next sync, restarting its tunnel client as on any tunnel change. There is no moment without an answer. The tunnel stays in `tunnels.json`, disabled and unbound, and its vhost stays installed, unlinked, for a rollback by hand: delete the web surface, enable the tunnel (its vhost is linked again), bind it again. The site takes the tunnel's access mode — a tunnel without a known one is `restricted`, as everywhere else — and a restricted tunnel's grants are copied to the site. Every step from the copy of the grants to the handover is undone in reverse order on a failure: no grant, site entry or tunnel change outlives a move that did not happen; and a move the panel stopped between its state writes and the handover is finished at the next start (the tunnel's vhost unlinked, the site's linked). The tunnel must be enabled, carried by the plugin's hosting agent and bound to this plugin alone, and the plugin approved; when nginx refuses the new configuration everything is put back. Audit: `plugin.web-surface.moved`.
@@ -1108,6 +1115,14 @@ All admin only.
 #### `POST /api/plugins/:name/web-surface/move`
 
 `{ tunnelId }` — see [Moving from a bound tunnel](#moving-from-a-bound-tunnel). `{ webSurface }`. Refused: `exists`, `not_bound`, `shared_tunnel` (other routes are bound there), `tunnel_disabled`, `not_hosted`, `not_approved`, `hostname_taken`, `web_tree` (`409`), `not_found` (`404`), `gatekeeper` (`503`, a restricted tunnel's grants could not be read or copied).
+
+#### `PUT /api/plugins/:name/web-surface/routes/:route`
+
+Joins plugin `:route`'s user surface to the site plugin `:name` owns ([Joined plugins](#joined-plugins)). `{ webSurface }`, whose `site.joined` lists every joined route as `{ route, served, reason }` (`reason` while not served: `site_not_served`, `not_installed`, `no_identity`, `not_approved`, `not_hosted`). Refused: `invalid_route`, `not_agent_hosted`, `not_plugin_domain`, `too_many_routes` (`400`), `not_found` (`404`), `served_elsewhere` (`409`). 30 a minute. Audit `plugin.web-surface.route.joined`.
+
+#### `DELETE /api/plugins/:name/web-surface/routes/:route`
+
+Takes it off again. `{ webSurface }`. Audit `plugin.web-surface.route.left` (`reason: "left"`).
 
 #### `DELETE /api/plugins/:name/web-surface`
 

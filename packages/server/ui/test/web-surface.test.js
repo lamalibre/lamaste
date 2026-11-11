@@ -25,6 +25,8 @@ import {
   subdomainProblem,
   treeSummary,
   webTreeChange,
+  joinCandidates,
+  joinedRouteText,
 } from '../src/admin/lib/web-surface.js';
 
 const SHA_A = 'a'.repeat(56) + '01234567';
@@ -248,4 +250,25 @@ test('create and move say why while a disabled tunnel is still bound', () => {
   assert.match(createBlock(view), /disabled — unbind it, or enable it and move it/);
   assert.match(moveBlock(view, 'mi'), /disabled — enable it to move it, or unbind it/);
   assert.equal(notServedReasonText('not_owner').includes('another package'), true);
+});
+
+test('a joined route says whether it is served, and why not', () => {
+  assert.equal(joinedRouteText({ served: true, reason: null }), 'served');
+  assert.match(joinedRouteText({ served: false, reason: 'not_hosted' }), /not hosted/);
+  assert.match(joinedRouteText({ served: false, reason: 'site_not_served' }), /site/);
+  assert.equal(joinedRouteText({ served: false, reason: 'other' }), 'other');
+});
+
+test('only agent-hosted plugins not on the site yet can join it', () => {
+  const plugins = [
+    { name: 'shop', route: 'shop', hosting: 'agent' },
+    { name: 'news', route: 'news', hosting: 'agent' },
+    { name: 'blog', route: 'blog', hosting: 'agent' },
+    { name: 'srv', route: 'srv', hosting: 'server' },
+  ];
+  assert.deepEqual(
+    joinCandidates(plugins, 'shop', [{ route: 'news' }]).map((p) => p.route),
+    ['blog'],
+  );
+  assert.deepEqual(joinCandidates(undefined, 'shop', undefined), []);
 });

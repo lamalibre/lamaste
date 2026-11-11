@@ -37,6 +37,16 @@ import { AUTHELIA_SESSION_COOKIE } from '../authelia-session.js';
 import { isOidcClientId } from '../constants.js';
 import { LAMALIBRE_REGISTRY_FLAG } from '../lamalibre-registry.js';
 import { assertDomainName, domainOfHost } from '../domains.js';
+import {
+  NATIVE_CLIENT_GRANT_TYPES,
+  NATIVE_CLIENT_SCOPES,
+  NATIVE_ACCESS_TOKEN_MINUTES,
+  NATIVE_LIFETIME_DAYS,
+  isNativeClientId,
+  isNativeRedirectPath,
+  nativeAudience,
+  nativeRedirectUris,
+} from '../native-apps.js';
 import { externalGroup, memberGroup, oidcClientGroup, siteGroup } from '../owned-groups.js';
 import type { OidcClientDeclaration } from '../schemas.js';
 
@@ -842,6 +852,15 @@ export interface AutheliaDomain {
   readonly groupKey: string;
 }
 
+/**
+ * The factor Authelia's `access_control` asks of a domain's people on its
+ * hosts — a member on any host, an external member on the hosts granted
+ * them. A native client of a host asks the same at sign-in
+ * ({@link renderNativeClientPolicies}): a bearer token is never a weaker
+ * way onto a host than a browser session (native-apps-design.md R4).
+ */
+export const HOST_ACCESS_FACTOR = 'two_factor';
+
 /** What the relay's domains need from Authelia's configuration. */
 export interface DomainAccess {
   /** The active domains. */
@@ -1111,10 +1130,10 @@ export function renderGroupAccessControl(
     const member = `group:${memberGroup(groupKey)}`;
     const external = `group:${externalGroup(groupKey)}`;
     rules.push({ domain: [`auth.${name}`], policy: 'two_factor', subject: [member, external] });
-    rules.push({ domain: hosts, policy: 'two_factor', subject: [member] });
+    rules.push({ domain: hosts, policy: HOST_ACCESS_FACTOR, subject: [member] });
     rules.push({
       domain_regex: [externalHostRegex(name)],
-      policy: 'two_factor',
+      policy: HOST_ACCESS_FACTOR,
       subject: [external],
     });
     rules.push({ domain: hosts, policy: 'deny' });
@@ -1243,6 +1262,30 @@ export interface OidcProviderOptions {
   /** Required for every confidential client in the list. */
   secretDigests?: OidcClientSecretDigests;
   scopes?: OidcScopeDefinitions;
+  /**
+   * The native clients to serve (native-apps-design.md D2) — those of
+   * enabled clients on active domains: the caller filters, as it filters
+   * plugin clients.
+   */
+  nativeClients?: readonly AutheliaNativeClient[];
+}
+
+/**
+ * A native client as Authelia is told of it: its id, the name its consent
+ * screen shows, its application host and that host's domain, its redirect
+ * paths on the host, and its lifetimes (native-apps-design.md D2).
+ */
+export interface AutheliaNativeClient {
+  readonly clientId: string;
+  readonly name: string;
+  /** The application host's hostname (lower case). */
+  readonly fqdn: string;
+  /** The domain the host lies under. */
+  readonly domain: string;
+  readonly redirectPaths: readonly string[];
+  readonly accessTokenMinutes: number;
+  /** The refresh token's lifetime at Authelia — renewed at every rotation, so the idle lifetime. */
+  readonly idleDays: number;
 }
 
 /**
@@ -1399,6 +1442,130 @@ export function renderOidcClientPolicies(
 }
 
 /**
+ * The `clients[]` entry of a native client: a public client with PKCE
+ * `S256` required, the authorization code and refresh token grants,
+ * `openid offline_access profile`, RS256 JWT access tokens carrying
+ * `preferred_username` (its claims policy, named after it), its host's
+ * audience granted without being asked for, explicit consent (Authelia asks
+ * anyway for `offline_access`), its redirect URIs on its host, its own
+ * lifespan and its own authorization policy — both named
+ * {@link oidcClientPolicyName}. Throws on anything malformed. Pure.
+ */
+export function renderNativeClient(client: AutheliaNativeClient): Record<string, unknown> {
+  assertNativeClient(client);
+  const policy = oidcClientPolicyName(client.clientId);
+  return {
+    client_id: client.clientId,
+    client_name: client.name,
+    public: true,
+    authorization_policy: policy,
+    consent_mode: 'explicit',
+    lifespan: policy,
+    require_pkce: true,
+    pkce_challenge_method: 'S256',
+    redirect_uris: nativeRedirectUris(client.fqdn, client.redirectPaths),
+    scopes: [...NATIVE_CLIENT_SCOPES],
+    grant_types: [...NATIVE_CLIENT_GRANT_TYPES],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+    access_token_signed_response_alg: 'RS256',
+    requested_audience_mode: 'implicit',
+    audience: [nativeAudience(client.fqdn)],
+    claims_policy: client.clientId,
+  };
+}
+
+function assertNativeClient(client: AutheliaNativeClient): void {
+  if (!isNativeClientId(client.clientId)) throw new Error('Not a native client id');
+  assertDomainName(client.domain);
+  const fqdn = client.fqdn.toLowerCase();
+  if (domainOfHost(fqdn, [client.domain]) !== client.domain || fqdn === client.domain) {
+    throw new Error(`Native client "${client.clientId}" has a host outside its domain`);
+  }
+  if (
+    typeof client.name !== 'string' ||
+    client.name.length === 0 ||
+    client.redirectPaths.length === 0 ||
+    !client.redirectPaths.every(isNativeRedirectPath)
+  ) {
+    throw new Error(`Native client "${client.clientId}" is malformed`);
+  }
+  const minutes = client.accessTokenMinutes;
+  const days = client.idleDays;
+  if (
+    !Number.isInteger(minutes) ||
+    minutes < NATIVE_ACCESS_TOKEN_MINUTES.min ||
+    minutes > NATIVE_ACCESS_TOKEN_MINUTES.max ||
+    !Number.isInteger(days) ||
+    days < NATIVE_LIFETIME_DAYS.min ||
+    days > NATIVE_LIFETIME_DAYS.max
+  ) {
+    throw new Error(`Native client "${client.clientId}" has lifetimes out of range`);
+  }
+}
+
+/**
+ * The lifespan of each native client, named as its policy: access and ID
+ * tokens of its minutes, refresh tokens of its idle days (Authelia renews
+ * a refresh token's lifetime at every rotation and has no absolute one —
+ * the broker keeps that). Pure.
+ */
+export function renderNativeClientLifespans(
+  clients: readonly AutheliaNativeClient[],
+): Record<string, { access_token: string; id_token: string; refresh_token: string }> {
+  const lifespans: Record<
+    string,
+    { access_token: string; id_token: string; refresh_token: string }
+  > = {};
+  for (const client of clients) {
+    assertNativeClient(client);
+    const minutes = `${client.accessTokenMinutes} minutes`;
+    lifespans[oidcClientPolicyName(client.clientId)] = {
+      access_token: minutes,
+      id_token: minutes,
+      refresh_token: `${client.idleDays} days`,
+    };
+  }
+  return lifespans;
+}
+
+/**
+ * One authorization policy per native client: the members of its host's
+ * domain, and the external members granted its host (the host group,
+ * `group:<fqdn>`, which only external members granted an enabled restricted
+ * host hold) — with {@link HOST_ACCESS_FACTOR}, the factor a browser
+ * session needs on the host; everyone else refused. Authelia applies it on
+ * every authorization request, never on a refresh (the broker checks the
+ * person's standing there). Every client's domain must be one of
+ * `domains`. Pure.
+ */
+export function renderNativeClientPolicies(
+  clients: readonly AutheliaNativeClient[],
+  domains: readonly AutheliaDomain[],
+): Record<string, { default_policy: 'deny'; rules: AutheliaRule[] }> {
+  const keys = new Map(domains.map((d) => [d.name, d.groupKey]));
+  const policies: Record<string, { default_policy: 'deny'; rules: AutheliaRule[] }> = {};
+  for (const client of clients) {
+    assertNativeClient(client);
+    const key = keys.get(client.domain);
+    if (key === undefined) {
+      throw new Error(`Native client "${client.clientId}" belongs to no domain of this relay`);
+    }
+    policies[oidcClientPolicyName(client.clientId)] = {
+      default_policy: 'deny',
+      rules: [
+        { policy: HOST_ACCESS_FACTOR, subject: [`group:${memberGroup(key)}`] },
+        {
+          policy: HOST_ACCESS_FACTOR,
+          subject: [[`group:${externalGroup(key)}`, `group:${client.fqdn.toLowerCase()}`]],
+        },
+      ],
+    };
+  }
+  return policies;
+}
+
+/**
  * The whole `identity_providers.oidc` section, with the sentinel for the
  * key, and one authorization policy per user-facing client
  * ({@link renderOidcClientPolicies}). Every client's domain must be one of
@@ -1417,7 +1584,25 @@ export function buildOidcProviderSection(
       `OIDC client "${stray.id}" belongs to '${stray.domain}', no domain of this relay`,
     );
   }
+  const natives = options.nativeClients ?? [];
+  const strayNative = natives.find((c) => !known.has(c.domain));
+  if (strayNative) {
+    throw new Error(
+      `Native client "${strayNative.clientId}" belongs to '${strayNative.domain}', no domain of this relay`,
+    );
+  }
+  const ids = new Set<string>();
+  for (const id of [...clients.map((c) => c.id), ...natives.map((c) => c.clientId)]) {
+    if (ids.has(id)) throw new Error(`OIDC client "${id}" is rendered twice`);
+    ids.add(id);
+  }
   const digests = options.secretDigests ?? {};
+  const customLifespans: Record<string, Record<string, string>> = {
+    ...(clients.some(isUserFacingClient)
+      ? { [OIDC_USER_LIFESPAN]: { ...OIDC_USER_LIFESPAN_TOKENS } }
+      : {}),
+    ...renderNativeClientLifespans(natives),
+  };
   const section: Record<string, unknown> = {
     hmac_secret: hmacSecret,
     jwks: [
@@ -1430,23 +1615,32 @@ export function buildOidcProviderSection(
     ],
     lifespans: {
       device_code: '10 minutes',
-      ...(clients.some(isUserFacingClient)
-        ? { custom: { [OIDC_USER_LIFESPAN]: { ...OIDC_USER_LIFESPAN_TOKENS } } }
-        : {}),
+      ...(Object.keys(customLifespans).length > 0 ? { custom: customLifespans } : {}),
     },
   };
-  const policies = renderOidcClaimsPolicies(clients);
+  const policies: Record<string, { access_token: string[] }> = {
+    ...renderOidcClaimsPolicies(clients),
+    ...Object.fromEntries(
+      natives.map((c) => [c.clientId, { access_token: ['preferred_username'] }]),
+    ),
+  };
   if (Object.keys(policies).length > 0) section.claims_policies = policies;
   if (options.scopes && Object.keys(options.scopes).length > 0) {
     section.scopes = Object.fromEntries(
       Object.entries(options.scopes).map(([name, def]) => [name, { claims: [...def.claims] }]),
     );
   }
-  const authorizationPolicies = renderOidcClientPolicies(clients, domains);
+  const authorizationPolicies = {
+    ...renderOidcClientPolicies(clients, domains),
+    ...renderNativeClientPolicies(natives, domains),
+  };
   if (Object.keys(authorizationPolicies).length > 0) {
     section.authorization_policies = authorizationPolicies;
   }
-  section.clients = clients.map((c) => renderOidcClient(c, digests[c.id]));
+  section.clients = [
+    ...clients.map((c) => renderOidcClient(c, digests[c.id])),
+    ...natives.map(renderNativeClient),
+  ];
   return section;
 }
 
@@ -1503,7 +1697,7 @@ export async function updateOidcProvider(
 ): Promise<{ changed: boolean; clients: number }> {
   const current = await readCurrentOidcSection();
 
-  if (clients.length === 0) {
+  if (clients.length === 0 && (options.nativeClients ?? []).length === 0) {
     if (current === null) return { changed: false, clients: 0 };
     await rewriteAutheliaConfig((config) => {
       const ip = config.identity_providers as Record<string, unknown> | undefined;
@@ -1524,8 +1718,9 @@ export async function updateOidcProvider(
 
   const hmacSecret = await ensureOidcHmacSecret();
   const desired = buildOidcProviderSection(domains, hmacSecret, clients, options);
+  const served = clients.length + (options.nativeClients ?? []).length;
   if (current !== null && sameConfig(current, desired)) {
-    return { changed: false, clients: clients.length };
+    return { changed: false, clients: served };
   }
 
   await rewriteAutheliaConfig((config) => {
@@ -1533,7 +1728,7 @@ export async function updateOidcProvider(
     ip.oidc = desired;
     config.identity_providers = ip;
   }, exec);
-  return { changed: true, clients: clients.length };
+  return { changed: true, clients: served };
 }
 
 // ---------------------------------------------------------------------------

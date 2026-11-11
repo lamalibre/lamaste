@@ -66,6 +66,8 @@ import { isIdentityRoleList, isIdentityUuid } from './identity.js';
 import { openIdentityChanges } from './identity-seal.js';
 import type { IdentityChangesEnvelope, SealedIdentityChanges } from './identity-seal.js';
 import { decryptSettingsSecret } from './settings-secrets.js';
+import { openSignInEvents } from './sign-in-events.js';
+import type { SignInEventsEnvelope } from './sign-in-events.js';
 import type { EncryptedSettingsSecret } from './settings-secrets.js';
 import {
   PEER_MAX_HOPS,
@@ -468,6 +470,13 @@ export interface VerifiedCallerAssertion {
    * parsed JSON; throws, without the changes, when they do not open.
    */
   openIdentityChanges(sealed: SealedIdentityChanges, envelope: IdentityChangesEnvelope): unknown;
+  /**
+   * Open the sign-in events sealed for this request
+   * (`POST /admin/identity/sign-ins`, `sign-in-events.ts`): bound to this
+   * plugin, this request's nonce and the batch's `from`/`to`. Returns the
+   * parsed JSON; throws, without the events, when they do not open.
+   */
+  openSignInEvents(sealed: SealedIdentityChanges, envelope: SignInEventsEnvelope): unknown;
 }
 
 export type VerifyCallerAssertionResult =
@@ -643,6 +652,14 @@ export function verifyCallerAssertion(
       }),
     openIdentityChanges: (sealed, envelope) =>
       openIdentityChanges({
+        secret,
+        plugin: payload.plugin,
+        nonce: payload.nonce,
+        envelope,
+        sealed,
+      }),
+    openSignInEvents: (sealed, envelope) =>
+      openSignInEvents({
         secret,
         plugin: payload.plugin,
         nonce: payload.nonce,

@@ -9,7 +9,7 @@
  * A tunnel may serve agent-hosted plugins' user surfaces (slice 6, admin
  * only; `lib/user-surface.js`):
  *
- *   PUT    /tunnels/:id/user-surface          { route } — bind
+ *   PUT    /tunnels/:id/user-surface          { route, crossAgent? } — bind
  *   DELETE /tunnels/:id/user-surface/:route   unbind
  *
  * Listings carry the binding (`userSurface: { routes }`) and how each bound
@@ -59,6 +59,7 @@ import {
   tunnelChiselDeps,
   tunnelStateDeps,
 } from '../../lib/tunnel-deps.js';
+import { reconcileNativeClientHosts } from '../../lib/native-apps.js';
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
 
@@ -69,7 +70,14 @@ const UserSurfaceRouteSchema = z
   .max(64)
   .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'route must be a plugin route');
 
-const UserSurfaceBodySchema = z.object({ route: UserSurfaceRouteSchema }).strict();
+const UserSurfaceBodySchema = z
+  .object({
+    route: UserSurfaceRouteSchema,
+    // A plugin another agent hosts: the administrator's explicit
+    // confirmation (native-apps-design.md D1).
+    crossAgent: z.boolean().optional(),
+  })
+  .strict();
 
 const UserSurfaceParamsSchema = z.object({ id: z.string().uuid(), route: UserSurfaceRouteSchema });
 
@@ -261,11 +269,18 @@ function tunnelErrorStatus(code) {
     case 'NOT_FOUND':
       return 404;
     case 'USER_SURFACE_CONFLICT':
+    case 'NATIVE_CLIENT_CONFLICT':
       return 409;
     default:
       return 500;
   }
 }
+
+/** The refusals of a tunnel change a client tells apart by `code` (each a 409). */
+const TUNNEL_CONFLICT_CODES = {
+  USER_SURFACE_CONFLICT: 'user_surface_conflict',
+  NATIVE_CLIENT_CONFLICT: 'native_client_conflict',
+};
 
 /** A refused or failed user-surface change: the workflow's status, or a 500. */
 function sendUserSurfaceFailure(request, reply, err, fallback) {
@@ -638,6 +653,7 @@ export default async function tunnelRoutes(fastify, _opts) {
           return reply.code(status).send({
             error: status === 404 ? 'Tunnel not found' : 'Failed to update tunnel',
             details: err.message,
+            ...(TUNNEL_CONFLICT_CODES[err.code] ? { code: TUNNEL_CONFLICT_CODES[err.code] } : {}),
           });
         }
         request.log.error(err, 'Failed to update tunnel');
@@ -667,10 +683,16 @@ export default async function tunnelRoutes(fastify, _opts) {
           logger: request.log,
           authorize: authorizeFor(request, 'delete'),
         });
-        // Its user-surface bindings went with it.
+        // Its user-surface bindings went with it, and its native client.
         await auditDeletedTunnelUserSurface(tunnel, {
           actor: actorFromRequest(request),
           logger: request.log,
+        });
+        await reconcileNativeClientHosts(request.log).catch((err) => {
+          request.log.warn(
+            { err: err.message },
+            'Native clients of the deleted tunnel not removed',
+          );
         });
         return { ok: true };
       } catch (err) {
@@ -697,11 +719,12 @@ export default async function tunnelRoutes(fastify, _opts) {
     { preHandler: fastify.requireRole(['admin']), config: USER_SURFACE_WRITE_RATE_LIMIT },
     async (request, reply) => {
       const { id } = IdParamSchema.parse(request.params);
-      const { route } = UserSurfaceBodySchema.parse(request.body);
+      const { route, crossAgent } = UserSurfaceBodySchema.parse(request.body);
       try {
         const { changed, tunnel } = await bindTunnelUserSurface(id, route, {
           actor: actorFromRequest(request),
           logger: request.log,
+          crossAgent: crossAgent === true,
         });
         return { ok: true, changed, tunnel };
       } catch (err) {

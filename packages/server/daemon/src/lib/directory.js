@@ -752,6 +752,17 @@ async function offboardUserUnlocked(userId, { kind, actor, logger }) {
       );
     }
   }
+  // Native apps: every grant ends — its access tokens refused at once.
+  try {
+    const { revokeNativeGrants } = await import('./native-grants.js');
+    await revokeNativeGrants(
+      { userId },
+      kind === 'deleted' ? 'standing:removed' : 'standing:disabled',
+      { actor, logger },
+    );
+  } catch (err) {
+    failed('native-apps', 'Native app sign-ins were not ended', err);
+  }
   logger?.info({ userId, kind }, 'User offboarded');
   return warnings;
 }
@@ -1150,6 +1161,12 @@ export async function eraseDirectoryUser(userId, { actor, logger }) {
       email: row.email,
       invitationId: row.invitation_id,
     });
+
+    // Native apps: grants ended (offboarding did, unless it failed), then
+    // forgotten with the sign-in events queued for the user.
+    const { eraseNativeDataOfUser, revokeNativeGrants } = await import('./native-grants.js');
+    await revokeNativeGrants({ userId }, 'standing:erased', { actor, logger });
+    await eraseNativeDataOfUser(userId);
 
     const now = new Date().toISOString();
     db.exec('BEGIN IMMEDIATE');

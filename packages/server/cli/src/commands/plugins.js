@@ -275,6 +275,8 @@ ${b('Subcommands:')}
                        Delete its site, its trees and the grants on it (typed confirmation)
   ${c('web-surface <name> grants')}
                        Who may reach its site, and the entitled members no grant admits
+  ${c('web-surface <name> join|leave <route>')}
+                       Serve another plugin's user surface on its site (an application host), or stop
   ${c('web-surface <name> grant|revoke --user <u> | --group <g>')}
                        Let a user or a Lamaste group reach a restricted site (a role alone
                        lets nobody in), or no longer

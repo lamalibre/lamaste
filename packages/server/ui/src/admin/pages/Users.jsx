@@ -21,9 +21,11 @@ import {
   Eraser,
   AlertTriangle,
   Archive,
+  Smartphone,
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import CopyableId from '../components/CopyableId.jsx';
+import { UserNativeGrantsModal } from '../components/NativeGrants.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { relativeTime } from '../lib/formatters.js';
 import { invalidateUsers, isLastEnabledAdmin, warningText } from '../lib/identity.js';
@@ -883,6 +885,7 @@ export default function Users() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteResult, setInviteResult] = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
+  const [devicesOf, setDevicesOf] = useState(null);
   const [invitationFilter, setInvitationFilter] = useState({ plugin: '', inviter: '' });
   const { newUsersNeedDomains: showDomains } = useDomains();
 
@@ -1129,6 +1132,14 @@ export default function Users() {
                         </button>
                         <button
                           type="button"
+                          onClick={() => setDevicesOf(u.username)}
+                          className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
+                          title="Devices signed in with native apps"
+                        >
+                          <Smartphone size={14} />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => handleTotpResetRequest(u.username)}
                           className="rounded p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
                           title="Reset TOTP"
@@ -1180,6 +1191,10 @@ export default function Users() {
           </table>
         )}
       </div>
+
+      {devicesOf && (
+        <UserNativeGrantsModal username={devicesOf} onClose={() => setDevicesOf(null)} />
+      )}
 
       {/* Invitations Section */}
       <div className="mt-8 mb-6">

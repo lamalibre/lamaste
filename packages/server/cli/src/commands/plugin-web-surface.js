@@ -26,6 +26,10 @@
  *                         restricted surface a role alone lets nobody in
  *   web-surface <name> revoke --user <u> | --group <g>
  *                         Revoke every grant on its site naming them
+ *   web-surface <name> join|leave <route>
+ *                         Serve another plugin's user surface on its site (an
+ *                         application host: one host, one session or token,
+ *                         every plugin's API), or stop
  *
  * The plugin is named by its name or its route (as `sites list` shows a
  * site's owner). Every action goes through the running panel
@@ -47,6 +51,7 @@ import { principalText } from '../oidc-client-grants.js';
 import {
   createBody,
   findSiteGrants,
+  joinedRouteText,
   stillAdmitted,
   parseWebSurfaceArgs,
   siteGrantBody,
@@ -134,6 +139,13 @@ function printWebSurface(name, view) {
   const served = webSurfaceServedText(view, name);
   row('served', served.served ? chalk.green(served.text) : chalk.yellow(served.text));
   if (view.site) printSiteGrantRows(view.site);
+  for (const joined of view.site?.joined ?? []) {
+    const text = joinedRouteText(joined);
+    row(
+      'joins',
+      `${chalk.cyan(`/api/${terminalText(joined.route)}/app`)} ${joined.served ? chalk.green(text) : chalk.yellow(text)}`,
+    );
+  }
   for (const [label, value] of webTreeRows(view.tree)) row(label, value);
   if (view.boundTunnel) {
     const host = terminalText(view.boundTunnel.fqdn ?? view.boundTunnel.id);
@@ -395,6 +407,30 @@ export async function webSurfaceCmd(args, { json }) {
 
   if (parsed.action === 'grants' || parsed.action === 'grant' || parsed.action === 'revoke') {
     await siteGrantsCmd(name, parsed, { json });
+    return;
+  }
+
+  if (parsed.action === 'join' || parsed.action === 'leave') {
+    const join = parsed.action === 'join';
+    const result = await request(
+      json,
+      name,
+      join ? 'PUT' : 'DELETE',
+      webSurfacePath(name, `routes/${encodeURIComponent(parsed.route)}`),
+      join ? {} : undefined,
+    );
+    if (json) {
+      emitComplete({ name, route: parsed.route, ...result });
+      return;
+    }
+    const route = terminalText(parsed.route);
+    const host = terminalText(result.webSurface?.site?.fqdn ?? '');
+    console.log(
+      join
+        ? `\n  ${chalk.green('✓')} ${chalk.cyan(route)} joined ${chalk.cyan(host)}: its users reach /api/${route}/app/ there`
+        : `\n  ${chalk.green('✓')} ${chalk.cyan(route)} is off ${chalk.cyan(host)}`,
+    );
+    printWebSurface(name, result.webSurface);
     return;
   }
 

@@ -33,6 +33,7 @@ import {
   Wifi,
   X,
   Zap,
+  Smartphone,
 } from 'lucide-react';
 import SidebarLink from './SidebarLink.jsx';
 import { useAdminClient } from '../../admin/index.js';
@@ -79,6 +80,7 @@ const baseNavItems = [
   { type: 'link', to: '/sites', icon: FileText, label: 'Static Sites' },
   { type: 'link', to: '/users', icon: Users, label: 'Users' },
   { type: 'link', to: '/domains', icon: Globe2, label: 'Domains' },
+  { type: 'link', to: '/native-apps', icon: Smartphone, label: 'Native Apps' },
   { type: 'link', to: '/certificates', icon: ShieldCheck, label: 'Certificates' },
   { type: 'link', to: '/services', icon: Server, label: 'Services' },
   { type: 'link', to: '/tickets', icon: Ticket, label: 'Tickets' },

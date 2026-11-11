@@ -52,6 +52,7 @@ import { updateOidcProvider } from './authelia.js';
 import { listGrantsOfType } from './gatekeeper-client.js';
 import { OIDC_CLIENT_RESOURCE, isUserFacingOidcClient } from './owned-groups.js';
 import { pluginDomainOr, primaryDomainName, withDomainRendering } from './domains.js';
+import { planNativeClients, writeNativeAppsProjection } from './native-apps.js';
 import { readPlugins } from './plugins.js';
 import { readRegistryCredentialConfig } from './registry-credential.js';
 
@@ -210,13 +211,20 @@ export async function syncOidcClients(logger) {
     async (domains) => {
       const plan = await planOidcClients();
       const secrets = await reconcileOidcClientSecrets(STATE_DIR, plan.confidential);
+      // The native clients (lib/native-apps.js) of the active domains, and
+      // Gatekeeper's projection of them — written with the provider, so
+      // Gatekeeper never admits a client Authelia does not serve.
+      const nativeClients = await planNativeClients(domains);
+      const outcome = await updateOidcProvider(keyed(domains), plan.served, {
+        secretDigests: secrets.digests,
+        scopes: plan.scopes,
+        nativeClients,
+      });
+      await writeNativeAppsProjection(nativeClients);
       return {
-        served: plan.served,
+        served: [...plan.served, ...nativeClients.map((c) => ({ id: c.clientId }))],
         reconciled: secrets,
-        result: await updateOidcProvider(keyed(domains), plan.served, {
-          secretDigests: secrets.digests,
-          scopes: plan.scopes,
-        }),
+        result: outcome,
       };
     },
     { logger },
@@ -319,6 +327,7 @@ export async function rotatePluginOidcClientSecret(pluginName, clientId, logger)
         await updateOidcProvider(keyed(domains), served, {
           secretDigests: await readOidcClientSecretDigests(STATE_DIR),
           scopes,
+          nativeClients: await planNativeClients(domains),
         });
       }
       return secret;

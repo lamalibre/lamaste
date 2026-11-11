@@ -40,6 +40,7 @@
 
 import crypto from 'node:crypto';
 import {
+  AGENT_HALF_MAX_BODY_MB,
   NonceStore,
   RELAY_ASSERTION_HEADER,
   RELAY_PANEL_AUDIENCE,
@@ -48,7 +49,8 @@ import {
   isAgentHostedPlugin,
   isRelayInvitationsTarget,
   isRelayUserSurfaceTarget,
-  siteUserSurfaceRoute,
+  siteUserSurfaceRoutes,
+  isCrossAgentConfirmed,
   tunnelUserSurfaceRoutes,
   userSurfaceHostServing,
   userSurfaceHostingAgent,
@@ -136,17 +138,19 @@ async function userSurfaceHostingAgentOf(route) {
  * — the tunnel carried by `agentLabel` — and why not: `not_installed` (no
  * installed plugin holds the route), `no_identity` (its installed version
  * declares none), `not_approved` (that version is not approved),
- * `not_hosting_agent` (the tunnel's agent is not the plugin's hosting
- * agent: the tunnel was moved or its agent revoked, or the plugin is hosted
- * elsewhere or not at all). Not the agent half's protocol answer: the panel
- * checks that per request (503 until it answered).
+ * `not_hosting_agent` (no agent hosts the plugin, or the tunnel has no
+ * agent — its agent was revoked), `cross_agent_unconfirmed` (another agent
+ * hosts it and the route was not confirmed cross-agent for the two agents
+ * as they are now — never confirmed, or the tunnel or the plugin moved since).
+ * Not the agent half's protocol answer: the panel checks that per request
+ * (503 until it answered).
  *
  * @param {string} route
- * @param {string | undefined} agentLabel the agent carrying the bound tunnel
+ * @param {{ agentLabel?: string, userSurface?: object } | undefined} tunnel the bound tunnel (its agent and binding, as they are or are about to be)
  * @param {readonly object[]} tunnels the tunnel state
- * @returns {Promise<{ served: true, plugin: object } | { served: false, reason: 'not_installed' | 'no_identity' | 'not_approved' | 'not_hosting_agent' }>}
+ * @returns {Promise<{ served: true, plugin: object } | { served: false, reason: 'not_installed' | 'no_identity' | 'not_approved' | 'not_hosting_agent' | 'cross_agent_unconfirmed', plugin?: object }>}
  */
-async function routeServing(route, agentLabel, tunnels) {
+async function routeServing(route, tunnel, tunnels) {
   const plugin = await findPluginByRoute(route);
   if (!plugin) return { served: false, reason: 'not_installed' };
   if (!plugin.identity) return { served: false, reason: 'no_identity' };
@@ -155,17 +159,25 @@ async function routeServing(route, agentLabel, tunnels) {
     return { served: false, reason: 'not_approved' };
   }
   const hosting = await hostingAgentOf(plugin, tunnels);
-  if (hosting === null || agentLabel !== hosting) {
-    return { served: false, reason: 'not_hosting_agent' };
+  const agentLabel = tunnel?.agentLabel;
+  if (hosting === null || typeof agentLabel !== 'string') {
+    return { served: false, reason: 'not_hosting_agent', plugin };
   }
-  return { served: true, plugin };
+  if (agentLabel === hosting) return { served: true, plugin };
+  // Another agent hosts the plugin: served only while this route's
+  // cross-agent confirmation names both agents as they are now (D1, R3, M2).
+  if (isCrossAgentConfirmed(tunnel, route, agentLabel, hosting)) return { served: true, plugin };
+  return { served: false, reason: 'cross_agent_unconfirmed', plugin };
 }
 
 /**
- * Of `routes` (bound to `tunnel`), the ones its vhost serves, in order,
- * each with the body limit of its locations (the plugin's:
- * `agent.maxBodySizeMb` of its installed version, `agentHalfMaxBodyMb`). Core's `UserSurfaceDeps.servedRoutes` — called under the
- * tunnel lock, so it reads the tunnel state without taking it.
+ * `routes` (bound to `tunnel`) as its vhost renders them, in order: each
+ * served one with the body limit of its locations (the plugin's:
+ * `agent.maxBodySizeMb` of its installed version, `agentHalfMaxBodyMb`),
+ * each one not served now with `served: false` — nginx answers it 503
+ * itself (native-apps-design.md R2). Core's `UserSurfaceDeps.servedRoutes`
+ * — called under the tunnel lock, so it reads the tunnel state without
+ * taking it.
  *
  * @param {readonly string[]} routes
  * @param {{ agentLabel?: string }} tunnel the bound tunnel (its agent, as it is or is about to be)
@@ -174,20 +186,38 @@ async function routeServing(route, agentLabel, tunnels) {
 export async function servedUserSurfaceRoutes(routes, tunnel) {
   if (routes.length === 0) return [];
   const tunnels = await readTunnels();
-  const served = [];
+  const out = [];
   for (const route of routes) {
-    const serving = await routeServing(route, tunnel?.agentLabel, tunnels);
-    if (!serving.served) continue;
-    served.push({ route, maxBodySizeMb: agentHalfMaxBodyMb(serving.plugin) });
+    const serving = await routeServing(route, tunnel, tunnels);
+    if (serving.served) {
+      out.push({ route, maxBodySizeMb: agentHalfMaxBodyMb(serving.plugin) });
+    } else {
+      // Bound, not served: nginx answers it (503) — never the tunnel's
+      // backend, which would get a native app's bearer token (R2).
+      out.push({ route, maxBodySizeMb: AGENT_HALF_MAX_BODY_MB.default, served: false });
+    }
   }
-  return served;
+  return out;
 }
 
 /** What core's tunnel workflows ask the panel about user surfaces. */
 export const userSurfaceDeps = Object.freeze({
   servedRoutes: servedUserSurfaceRoutes,
   hostingAgent: userSurfaceHostingAgentOf,
+  hasNativeClient: tunnelHasNativeClient,
 });
+
+/**
+ * Whether a native client is registered for the tunnel's host (any, served
+ * or not): such a host is never made public (security review M1). Reads
+ * state.db only — called under the tunnel lock.
+ *
+ * @param {{ id: string }} tunnel
+ */
+async function tunnelHasNativeClient(tunnel) {
+  const { nativeClientOfHost } = await import('./native-apps.js');
+  return (await nativeClientOfHost('tunnel', tunnel.id)) !== null;
+}
 
 /**
  * A tunnel as the panel lists it: with `userSurfaceStatus`, how each route
@@ -204,7 +234,7 @@ export async function withUserSurfaceStatus(tunnel) {
   const tunnels = await readTunnels();
   const status = [];
   for (const route of routes) {
-    const serving = await routeServing(route, tunnel.agentLabel, tunnels);
+    const serving = await routeServing(route, tunnel, tunnels);
     status.push({ route, served: serving.served, reason: serving.served ? null : serving.reason });
   }
   return { ...tunnel, userSurfaceStatus: status };
@@ -281,9 +311,9 @@ async function assertBindableRoute(route) {
   }
   // A route is served on one host at most: the plugin's own site, when it
   // has one, is that host.
-  if ((await readSites()).some((site) => siteUserSurfaceRoute(site) === route)) {
+  if ((await readSites()).some((site) => siteUserSurfaceRoutes(site).includes(route))) {
     throw new TunnelError(
-      `Plugin "${plugin.name}" has a web surface — its user surface is served there`,
+      `Plugin "${plugin.name}" is served on a web surface — its user surface is served there`,
       'INVALID_SETTING',
     );
   }
@@ -332,12 +362,18 @@ async function isBindableRoute(route) {
  *
  * @param {string} id
  * @param {string} route
- * @param {{ actor: string, logger: import('pino').Logger }} opts
+ * A plugin another agent hosts is bound only with `crossAgent` (the
+ * administrator's explicit confirmation, recorded for that route and the
+ * two agents as they are now — native-apps-design.md D1, R3, M2); core
+ * refuses it otherwise.
+ *
+ * @param {{ actor: string, logger: import('pino').Logger, crossAgent?: boolean }} opts
  * @returns {Promise<{ changed: boolean, tunnel: object }>} the tunnel with its `userSurfaceStatus`
  */
-export async function bindTunnelUserSurface(id, route, { actor, logger }) {
+export async function bindTunnelUserSurface(id, route, { actor, logger, crossAgent = false }) {
   const result = await bindUserSurface({
     ...bindingOptions(id, route, logger),
+    crossAgent,
     // Under the tunnel lock, as the plugin's domain changes (lib/domains.js).
     assertRoute: async (r) => {
       await assertBindableRoute(r);
@@ -353,7 +389,11 @@ export async function bindTunnelUserSurface(id, route, { actor, logger }) {
     );
   }
   if (result.changed) {
-    await auditBinding('tunnel.user-surface.bound', result.tunnel, route, { actor, logger });
+    await auditBinding('tunnel.user-surface.bound', result.tunnel, route, {
+      actor,
+      logger,
+      ...(crossAgent ? { reason: 'cross-agent' } : {}),
+    });
   }
   return { changed: result.changed, tunnel: await withUserSurfaceStatus(result.tunnel) };
 }
@@ -455,8 +495,10 @@ export async function refreshUserSurfaceVhosts(route, logger) {
     );
   }
   // Its web surface too: the approved tree served, the site's vhost in line.
-  const { refreshWebSurface } = await import('./web-surface.js');
+  const { refreshWebSurface, releaseJoinedRoute } = await import('./web-surface.js');
   await refreshWebSurface(route, logger);
+  // A site it was joined to serves it no more (D1).
+  await releaseJoinedRoute(route, logger);
 }
 
 /**
@@ -558,7 +600,12 @@ async function panelVerifyKeys() {
  * the username Gatekeeper attested and the route the assertion is for.
  *
  * @param {import('fastify').FastifyRequest} request
- * @returns {Promise<{ ok: true, username: string, route: string } | { ok: false, reason: string }>}
+ * A native app's bearer credential must be live too ({@link liveBearer}):
+ * else `invalidToken`, answered 401 `invalid_token` so the app refreshes —
+ * or, when the route or the client is not served for now, `unavailable`
+ * (503: the token stays good).
+ *
+ * @returns {Promise<{ ok: true, username: string, route: string, bearer?: { grantId: string } } | { ok: false, reason: string, invalidToken?: boolean, unavailable?: boolean }>}
  */
 export async function verifyUserSurfaceRelay(request) {
   let keys;
@@ -591,7 +638,54 @@ export async function verifyUserSurfaceRelay(request) {
   if (caller.type !== 'user' || !isRelayUserSurfaceTarget(target)) {
     return { ok: false, reason: 'malformed' };
   }
-  return { ok: true, username: caller.username, route: target.route };
+  if (caller.credential === undefined) {
+    return { ok: true, username: caller.username, route: target.route };
+  }
+  const live = await liveBearer(caller.credential, caller.username, target.route);
+  if (!live.ok) {
+    request.log.info({ reason: live.reason }, 'User-surface bearer token not live');
+    return live.unavailable
+      ? { ok: false, reason: live.reason, unavailable: true }
+      : { ok: false, reason: live.reason, invalidToken: true };
+  }
+  return {
+    ok: true,
+    username: caller.username,
+    route: target.route,
+    bearer: { grantId: live.grantId },
+  };
+}
+
+/**
+ * Whether a native app's bearer token Gatekeeper verified is live for this
+ * request (native-apps-design.md D3, R10, R15): issued through the token
+ * broker for a grant that is not revoked or expired, of the attested user,
+ * and of the native client of the host that serves `route` now — a token
+ * of another host's client never serves this one's plugins.
+ *
+ * @param {import('@lamalibre/lamaste').RelayBearerCredential} credential
+ * @param {string} username
+ * @param {string} route
+ * @returns {Promise<{ ok: true, grantId: string } | { ok: false, reason: string }>}
+ */
+async function liveBearer(credential, username, route) {
+  const { liveAccessToken } = await import('./native-grants.js');
+  const live = await liveAccessToken(credential.tokenSha256, credential.clientId, username);
+  if (!live.ok) return { ok: false, reason: `token_${live.reason}` };
+  const { findResolvedNativeClient } = await import('./native-apps.js');
+  const client = await findResolvedNativeClient(credential.clientId);
+  // The client gone: its tokens are no one's. Another host's client: its
+  // tokens never serve this host (the token is wrong, not the moment).
+  if (!client || client.fqdn === null) return { ok: false, reason: 'token_no_client' };
+  const host = await servedUserSurfaceHost(route);
+  if (host && client.fqdn !== host.fqdn) return { ok: false, reason: 'token_wrong_host' };
+  // The route served nowhere for now (its hosting moving, an approval
+  // pending), or the client not served for now (its host disabled, made
+  // public, its domain inactive): a moment, not the token — 503, so the app
+  // keeps it rather than refreshing in a loop (security review L5).
+  if (!host) return { ok: false, reason: 'token_no_host', unavailable: true };
+  if (!client.served) return { ok: false, reason: 'token_client_not_served', unavailable: true };
+  return { ok: true, grantId: live.grantId };
 }
 
 /**
@@ -658,14 +752,11 @@ async function servedUserSurfaceHost(route) {
   const host = userSurfaceHostServing(userSurfaceHosts(tunnels, sites), route);
   if (!host) return null;
   if (host.kind === 'site') {
-    const { webSurfaceServing } = await import('./web-surface.js');
-    return (await webSurfaceServing(route, tunnels)).served ? host : null;
+    const { siteRouteServing } = await import('./web-surface.js');
+    return (await siteRouteServing(host, route, tunnels)).served ? host : null;
   }
-  const plugin = await findPluginByRoute(route);
-  if (!plugin) return null;
   const tunnel = tunnels.find((t) => t.id === host.id);
-  const hosting = await hostingAgentOf(plugin, tunnels);
-  return hosting !== null && tunnel?.agentLabel === hosting ? host : null;
+  return (await routeServing(route, tunnel, tunnels)).served ? host : null;
 }
 
 /**
@@ -768,7 +859,8 @@ function sameRoles(a, b) {
  * user now holds the username) — `access_revoked`; holds other roles than
  * the response was started with — `roles_changed`; or the route is no
  * longer served on its host (unbound, the tunnel disabled or moved, the
- * plugin unhosted) — `surface_withdrawn`. Each user and route is
+ * plugin unhosted) — `surface_withdrawn`; a native app's request whose
+ * grant ended (revoked, expired) — `grant_revoked`. Each user and route is
  * resolved once per sweep. One sweep at a time; a failed check keeps the
  * response (the next sweep tries again) and is logged by the request's own
  * line when it ends. Returns how many it ended.
@@ -780,6 +872,12 @@ export async function sweepOpenUserSurfaceResponses(logger) {
   if (sweeping) return sweeping;
   sweeping = (async () => {
     const { resolveUserCaller } = await import('./user-caller.js');
+    const { isNativeGrantLive } = await import('./native-grants.js');
+    const grants = new Map();
+    const nativeGrantLive = async (grantId) => {
+      if (!grants.has(grantId)) grants.set(grantId, await isNativeGrantLive(grantId));
+      return grants.get(grantId);
+    };
     const callers = new Map();
     const served = new Map();
     let ended = 0;
@@ -791,7 +889,9 @@ export async function sweepOpenUserSurfaceResponses(logger) {
         const key = `${route}\n${caller.username}`;
         if (!callers.has(key)) callers.set(key, await resolveUserCaller(route, caller.username));
         const resolution = callers.get(key);
-        if (!resolution.ok || resolution.caller.userId !== caller.userId) {
+        if (response.grantId !== undefined && !(await nativeGrantLive(response.grantId))) {
+          verdict = 'grant_revoked';
+        } else if (!resolution.ok || resolution.caller.userId !== caller.userId) {
           verdict = 'access_revoked';
         } else if (!sameRoles(resolution.caller.roles, caller.roles)) {
           verdict = 'roles_changed';

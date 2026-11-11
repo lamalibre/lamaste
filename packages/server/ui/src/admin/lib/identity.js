@@ -122,13 +122,15 @@ export function userSurfaceReasonText(reason) {
     case undefined:
       return 'served — users reach its application here';
     case 'not_installed':
-      return 'no installed plugin holds this route';
+      return 'no installed plugin holds this route — the relay answers its API with 503';
     case 'no_identity':
-      return 'its installed version declares no identity — requests go down the tunnel until one does';
+      return 'its installed version declares no identity — the relay answers its API with 503 until one does';
     case 'not_approved':
-      return 'its installed version waits for approval — requests go down the tunnel until then';
+      return 'its installed version waits for approval — the relay answers its API with 503 until then';
     case 'not_hosting_agent':
-      return 'the agent carrying this tunnel does not host the plugin (moved, revoked, or hosted elsewhere) — nothing of it is served here; requests go down the tunnel';
+      return 'no agent hosts the plugin, or no agent carries the tunnel — the relay answers its API with 503';
+    case 'cross_agent_unconfirmed':
+      return 'another agent hosts the plugin and this route is not confirmed across agents for the agent carrying the tunnel and the agent hosting the plugin as they are now (never confirmed, or the tunnel or the plugin changed agent) — bind it again to confirm; until then the relay answers its API with 503';
     default:
       return String(reason);
   }
@@ -165,24 +167,35 @@ export function userSurfaceEligibility(tunnel) {
 
 /**
  * Why plugin `plugin` cannot be bound to `tunnel` as a user surface, or
- * null when it can: its route is served on another host (`servedOn`), or
- * it is not hosted by the agent carrying the tunnel — the panel refuses a
- * tunnel any other agent carries (the host whose sessions reach the
- * plugin's users is its hosting agent's only).
+ * null when it can: its route is served on another host (`servedOn`), or it
+ * is not hosted on any agent. A plugin another agent hosts can be bound,
+ * but only across agents ({@link userSurfaceCrossAgent}).
  *
  * @param {{ route: string, agentHosting?: { agentLabel?: string } | null }} plugin
- * @param {{ agentLabel?: string | null }} tunnel
+ * @param {{ agentLabel?: string | null }} _tunnel
  * @param {Map<string, string>} servedOn route → the host already serving it
  * @returns {string | null}
  */
-export function userSurfaceCandidateBlock(plugin, tunnel, servedOn) {
+export function userSurfaceCandidateBlock(plugin, _tunnel, servedOn) {
   if (servedOn.has(plugin.route)) return `served on ${servedOn.get(plugin.route)}`;
-  const hostingAgent = plugin.agentHosting?.agentLabel ?? null;
-  if (hostingAgent === null) return 'not hosted on an agent';
-  if (hostingAgent !== tunnel.agentLabel) {
-    return `hosted on ${hostingAgent}, not on ${tunnel.agentLabel}`;
-  }
+  if ((plugin.agentHosting?.agentLabel ?? null) === null) return 'not hosted on an agent';
   return null;
+}
+
+/**
+ * The agent hosting `plugin` when it is not the one carrying `tunnel`, or
+ * null: binding it then is a cross-agent binding — the tunnel's agent will
+ * serve the origin that reaches the plugin's users, which the administrator
+ * confirms explicitly (`crossAgent`), and which lapses when the tunnel
+ * changes agent.
+ *
+ * @param {{ agentHosting?: { agentLabel?: string } | null }} plugin
+ * @param {{ agentLabel?: string | null }} tunnel
+ * @returns {string | null}
+ */
+export function userSurfaceCrossAgent(plugin, tunnel) {
+  const hostingAgent = plugin.agentHosting?.agentLabel ?? null;
+  return hostingAgent !== null && hostingAgent !== tunnel.agentLabel ? hostingAgent : null;
 }
 
 /** The routes a tunnel is bound to as a user surface. */
@@ -290,7 +303,7 @@ function grantsAffectedEntries(diff) {
  * What an update changes in a plugin's identity block (`pendingUpdate.
  * identity`: `{ before, after, rolesAdded, rolesRemoved, attributesAdded,
  * attributesRemoved, labelsChanged, invitesAdded, invitesRemoved,
- * grantsAffected? }`), as rows — roles added and removed, attributes widened
+ * signInEventsAdded, signInEventsRemoved, grantsAffected? }`), as rows — roles added and removed, attributes widened
  * and a role allowed to invite into one more role wait for an administrator
  * (`approval`), narrowing and label edits only change the digest. When it
  * removes roles, `grantsAffected` (`{ rewritten, revoked }`, null when
@@ -300,6 +313,9 @@ function grantsAffectedEntries(diff) {
  * @param {object | null | undefined} diff
  * @returns {{ rows: Array<{ label: string, entries: string[], approval: boolean }>, declaredBefore: boolean, declaredAfter: boolean } | null}
  */
+/** What an identity block's `signInEvents: true` gives the plugin, in words. */
+export const SIGN_IN_EVENTS_LABEL = 'native app sign-in events (user, time, client)';
+
 export function identityDiffRows(diff) {
   if (!diff || typeof diff !== 'object') return null;
   const list = (value) => (Array.isArray(value) ? value.map(String) : []);
@@ -327,6 +343,16 @@ export function identityDiffRows(diff) {
     {
       label: 'receives less about its users',
       entries: list(diff.attributesRemoved).map(attributeLabel),
+      approval: false,
+    },
+    {
+      label: 'receives more about its users',
+      entries: diff.signInEventsAdded === true ? [SIGN_IN_EVENTS_LABEL] : [],
+      approval: true,
+    },
+    {
+      label: 'receives less about its users',
+      entries: diff.signInEventsRemoved === true ? [SIGN_IN_EVENTS_LABEL] : [],
       approval: false,
     },
     { label: 'may invite more', entries: invites(diff.after, diff.invitesAdded), approval: true },

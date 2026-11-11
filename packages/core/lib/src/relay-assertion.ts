@@ -55,6 +55,7 @@ import crypto from 'node:crypto';
 import { link, open, stat, unlink } from 'node:fs/promises';
 
 import { NonceStore } from './caller-assertion.js';
+import { isNativeClientId } from './native-apps.js';
 import { AGENT_LABEL_REGEX, HOSTNAME_REGEX } from './constants.js';
 import { isDelegatedInvitationsUrl, isUserSurfaceUrl } from './user-surface.js';
 
@@ -104,6 +105,23 @@ const GROUP_RE = /^[^,\u0000-\u001f\u007f]{1,128}$/;
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
 const ED25519_SIGNATURE_BYTES = 64;
+const SHA256_HEX_RE = /^[a-f0-9]{64}$/;
+
+/**
+ * A bearer credential as an assertion may carry it, rebuilt field by field,
+ * or null: kind `bearer`, a native client id, a SHA-256 in lower-case hex,
+ * a positive integer expiry — nothing else.
+ */
+function parseBearerCredential(raw: unknown): RelayBearerCredential | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  if (Object.keys(r).length !== 4) return null;
+  const { kind, clientId, tokenSha256, exp } = r;
+  if (kind !== 'bearer' || !isNativeClientId(clientId)) return null;
+  if (typeof tokenSha256 !== 'string' || !SHA256_HEX_RE.test(tokenSha256)) return null;
+  if (typeof exp !== 'number' || !Number.isSafeInteger(exp) || exp <= 0) return null;
+  return { kind, clientId, tokenSha256, exp };
+}
 
 /**
  * An Authelia user on a plugin tunnel, as Gatekeeper read the session —
@@ -126,6 +144,26 @@ export interface RelaySessionUser {
 export interface RelayPanelUser {
   readonly type: 'user';
   readonly username: string;
+  /**
+   * How Gatekeeper authenticated the user, when it was not an Authelia
+   * session: a native client's bearer access token
+   * (native-apps-design.md D3, R15). Only on a user-surface target.
+   * Absent: a session.
+   */
+  readonly credential?: RelayBearerCredential;
+}
+
+/**
+ * A native client's access token Gatekeeper verified for a user-surface
+ * request: the client, the SHA-256 of the token's exact text (the panel
+ * holds it against the tokens its broker saw issued) and its expiry
+ * (seconds since the epoch). Never the token.
+ */
+export interface RelayBearerCredential {
+  readonly kind: 'bearer';
+  readonly clientId: string;
+  readonly tokenSha256: string;
+  readonly exp: number;
 }
 
 /**
@@ -535,7 +573,11 @@ function panelCallerAndTarget(
 ): { caller: RelayPanelUser; target: RelayUserSurfaceTarget | RelayInvitationsTarget } {
   if (caller.type !== 'user') throw new Error('The panel audience vouches for a user only');
   if (!USERNAME_RE.test(caller.username)) throw new Error('Invalid username in caller');
+  const raw = (caller as { credential?: unknown }).credential;
+  const credential = raw === undefined ? undefined : parseBearerCredential(raw);
+  if (credential === null) throw new Error('Invalid credential in caller');
   if ('invitations' in target) {
+    if (credential !== undefined) throw new Error("An inviter's request carries no bearer token");
     if ('route' in target) throw new Error("An inviter's target names no user-surface route");
     if (!ROUTE_RE.test(target.invitations)) throw new Error('Invalid target route');
     if (!isDomain(target.domain)) throw new Error('Invalid target domain');
@@ -555,7 +597,11 @@ function panelCallerAndTarget(
     throw new Error("The target path is not on the route's user surface");
   }
   return {
-    caller: { type: 'user', username: caller.username },
+    caller: {
+      type: 'user',
+      username: caller.username,
+      ...(credential !== undefined ? { credential } : {}),
+    },
     target: { route: target.route, path: target.path },
   };
 }
@@ -696,7 +742,12 @@ function parsePanelCallerAndTarget(
   if (c['type'] !== 'user' || typeof username !== 'string' || !USERNAME_RE.test(username)) {
     return null;
   }
+  const keys = Object.keys(c);
+  if (keys.some((k) => k !== 'type' && k !== 'username' && k !== 'credential')) return null;
+  const credential = 'credential' in c ? parseBearerCredential(c['credential']) : undefined;
+  if (credential === null) return null;
   if ('invitations' in t) {
+    if (credential !== undefined) return null;
     const invitations = t['invitations'];
     const domain = t['domain'];
     if (
@@ -714,7 +765,10 @@ function parsePanelCallerAndTarget(
   if (typeof route !== 'string' || !ROUTE_RE.test(route) || !isTargetPath(path)) {
     return null;
   }
-  return { caller: { type: 'user', username }, target: { route, path } };
+  return {
+    caller: { type: 'user', username, ...(credential !== undefined ? { credential } : {}) },
+    target: { route, path },
+  };
 }
 
 function parsePayload(raw: Record<string, unknown>): RelayAssertionPayload | null {

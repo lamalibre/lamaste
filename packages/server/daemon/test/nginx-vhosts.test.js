@@ -507,10 +507,11 @@ test('every location that proxies a browser to the panel clears a client’s rel
       if (!userSurface) assert.doesNotMatch(body, /relay_assertion/, `${name} ${matcher}`);
     }
   }
-  // panel (8: the site upload location too) + primary auth (3) + second
-  // and branded domains' auth (2 each: the invitation API, the inviter's
-  // API) + agent-panel authz (1) + user surfaces (2 × 3)
-  assert.equal(checked, 22);
+  // panel (8: the site upload location too) + primary auth (5) + second
+  // and branded domains' auth (4 each: the invitation API, the inviter's
+  // API, the token broker's two endpoints) + agent-panel authz (1) + user
+  // surfaces (2 × 3)
+  assert.equal(checked, 28);
 });
 
 test('no location proxying to a tunnel or agent backend passes Authelia’s session cookie on', async () => {
@@ -902,6 +903,13 @@ function assertAsciiDirectives(text, label) {
 /** A vhost with every CSP hash replaced by one placeholder: what may differ between releases. */
 const withoutHashes = (text) => text.replace(/'sha256-[A-Za-z0-9+/=]{44}'/g, "'sha256-…'");
 
+/**
+ * An auth vhost without the token broker's two locations (native apps,
+ * after 4.12): the rest of it is what 4.9.0 rendered.
+ */
+const withoutTokenBroker = (text) =>
+  text.replace(/\n {4}location = \/api\/oidc\/(?:token|revocation) \{\n[^}]*\}\n/g, '');
+
 test('a domain without a page language keeps its 4.9.0 auth vhost but for the pages’ CSP hashes (regression pin)', async () => {
   for (const [name, domain, opts] of [
     ['auth-primary-unbranded.conf', 'alpha.example', { primary: true, branding: null }],
@@ -917,7 +925,8 @@ test('a domain without a page language keeps its 4.9.0 auth vhost but for the pa
       language: null,
     }).config;
     assert.notEqual(now, before, `${name}: the pages' hashes changed with their scripts`);
-    assert.equal(withoutHashes(now), withoutHashes(before), name);
+    assert.match(now, /location = \/api\/oidc\/token \{/, `${name}: the token broker`);
+    assert.equal(withoutHashes(withoutTokenBroker(now)), withoutHashes(before), name);
     // `language` absent is `language: null`.
     assert.equal(
       nginx.renderAuthVhost(domain, `/etc/letsencrypt/live/auth.${domain}`, opts).config,
@@ -996,11 +1005,28 @@ test('a served web surface keeps its 4.9.0 vhost but for its internal locations�
     { route: 'demo', maxBodySizeMb: 10, treesDir: '/var/www/lamaste/apps/demo', served: true },
   ).config;
   const before = await fixture49('web-surface-served.conf');
-  // The shell's and the API's Gatekeeper checks, the API's 401 and 403.
-  assert.equal(now.match(BODY_NOT_READ_LINES)?.length, 4);
+  // The shell's and the API's Gatekeeper checks, the API's 401 and 403,
+  // and a native app's refused bearer token (after 4.12).
+  assert.equal(now.match(BODY_NOT_READ_LINES)?.length, 5);
   assert.notEqual(now, before, 'the start’s reconcile rewrites it');
-  assert.equal(now.replace(BODY_NOT_READ_LINES, ''), before);
+  assert.equal(withoutBearerRefusal(now).replace(BODY_NOT_READ_LINES, ''), before);
 });
+
+/**
+ * A vhost without the user surface's answer to a refused bearer token
+ * (native apps, after 4.12): its location, and the 401 location's turn to it.
+ */
+function withoutBearerRefusal(text) {
+  return text
+    .replace(
+      /\n {4}location = \/internal\/lamaste\/user-surface-invalid-token \{\n[\s\S]*?\n {4}\}\n/,
+      '',
+    )
+    .replace(
+      /\n {8}# A native app's bearer token Gatekeeper refused[^\n]*\n {8}if \(\$lamaste_refusal = invalid_token\) \{\n[^}]*\}/,
+      '',
+    );
+}
 
 test('a domain with a page language: every locale file forced, the index in its language, the menu hidden — all through lamaste-priv', () => {
   for (const branding of [null, { theme: 'dark', logo: true }]) {
@@ -1106,4 +1132,159 @@ test('a web surface not served answers 503 with Lamaste’s "not available" page
       '',
     );
   assert.equal(added, before);
+});
+
+// ---------------------------------------------------------------------------
+// Native apps on the user surface (native-apps-design.md D1, D3, D6, R2)
+// ---------------------------------------------------------------------------
+
+const NATIVE = Object.freeze({
+  dir: '/var/www/lamaste/native/app.beta.example',
+  redirectPaths: ['/oauth/callback', '/auth/done'],
+  appleAppSiteAssociation: true,
+  assetLinks: true,
+});
+
+test('a host with a native client: association files and redirect paths before any check, no bearer token to the backend — through lamaste-priv', () => {
+  for (const mode of ['authenticated', 'restricted']) {
+    const { config } = nginx.renderTunnelVhost(
+      mode,
+      'app.beta.example',
+      'beta.example',
+      20010,
+      '/etc/letsencrypt/live/app.beta.example',
+      { userSurface: [{ route: 'demo', maxBodySizeMb: 10 }], native: NATIVE },
+    );
+    assert.doesNotThrow(() => validateVhost(config), mode);
+    const aasa = locationBody(config, '= /.well-known/apple-app-site-association');
+    assert.match(aasa, /auth_request off;/);
+    assert.match(
+      aasa,
+      /alias \/var\/www\/lamaste\/native\/app\.beta\.example\/apple-app-site-association;/,
+    );
+    assert.match(aasa, /default_type application\/json;/);
+    assert.match(
+      locationBody(config, '= /.well-known/assetlinks.json'),
+      /alias \/var\/www\/lamaste\/native\/app\.beta\.example\/assetlinks\.json;/,
+    );
+    for (const p of NATIVE.redirectPaths) {
+      const page = locationBody(config, `= ${p}`);
+      assert.match(page, /auth_request off;/);
+      assert.match(page, /access_log off;/, 'the code in its query never in a log');
+      assert.match(page, /redirect\.html;/);
+      assert.match(page, /add_header Referrer-Policy "no-referrer" always;/);
+    }
+    // The tunnel's backend never gets a native app's bearer token.
+    assert.match(locationBody(config, '/'), /proxy_set_header Authorization "";/);
+  }
+  // Without a native client: neither.
+  const plain = nginx.renderTunnelVhost(
+    'authenticated',
+    'app.beta.example',
+    'beta.example',
+    20010,
+    undefined,
+    { userSurface: [{ route: 'demo', maxBodySizeMb: 10 }] },
+  ).config;
+  assert.doesNotMatch(plain, /well-known/);
+  assert.doesNotMatch(locationBody(plain, '/'), /proxy_set_header Authorization/);
+  // Only the platforms declared.
+  const iosOnly = nginx.renderTunnelVhost(
+    'authenticated',
+    'app.beta.example',
+    'beta.example',
+    20010,
+    undefined,
+    { native: { ...NATIVE, assetLinks: false } },
+  ).config;
+  assert.match(iosOnly, /apple-app-site-association/);
+  assert.doesNotMatch(iosOnly, /assetlinks/);
+  // A directory outside the web root, or a redirect path the rules refuse, never renders.
+  assert.throws(() => nginx.nativeAppLocations({ ...NATIVE, dir: '/etc/nginx' }, 'beta.example'));
+  assert.throws(() =>
+    nginx.nativeAppLocations({ ...NATIVE, redirectPaths: ['/api/x'] }, 'beta.example'),
+  );
+});
+
+test('a bound route not served is answered by nginx, never by the tunnel; a refused bearer token is a JSON 401 the app refreshes on', () => {
+  const { config } = nginx.renderTunnelVhost(
+    'authenticated',
+    'app.beta.example',
+    'beta.example',
+    20010,
+    undefined,
+    {
+      userSurface: [
+        { route: 'demo', maxBodySizeMb: 10 },
+        { route: 'away', maxBodySizeMb: 10, served: false },
+      ],
+    },
+  );
+  assert.doesNotThrow(() => validateVhost(config));
+  for (const m of ['= /api/away/app', '^~ /api/away/app/']) {
+    const body = locationBody(config, m);
+    assert.match(body, /return 503 '\{"error":"The plugin is not available right now"\}';/);
+    assert.doesNotMatch(body, /proxy_pass|auth_request/);
+  }
+  assert.match(
+    locationBody(config, '= /api/demo/app'),
+    /auth_request \/internal\/lamaste\/user-surface-authz;/,
+  );
+  const unauth = locationBody(config, '= /internal/lamaste/user-surface-401');
+  assert.match(unauth, /if \(\$lamaste_refusal = invalid_token\) \{/);
+  const invalid = locationBody(config, '= /internal/lamaste/user-surface-invalid-token');
+  assert.match(invalid, /return 401 '\{"error":"invalid_token"\}';/);
+  assert.match(invalid, /add_header WWW-Authenticate 'Bearer error="invalid_token"' always;/);
+
+  // Nothing served at all: the bound routes still never reach the tunnel.
+  const none = nginx.renderTunnelVhost(
+    'authenticated',
+    'app.beta.example',
+    'beta.example',
+    20010,
+    undefined,
+    {
+      userSurface: [{ route: 'away', maxBodySizeMb: 10, served: false }],
+    },
+  ).config;
+  assert.doesNotThrow(() => validateVhost(none));
+  assert.match(locationBody(none, '= /api/away/app'), /return 503/);
+  assert.doesNotMatch(none, /user-surface-authz/);
+});
+
+test('a web surface serves the routes joined to it beside its own, and its native client’s files — through lamaste-priv', () => {
+  const site = { id: 'demo-site', fqdn: 'app.beta.example' };
+  const opts = {
+    route: 'demo',
+    maxBodySizeMb: 10,
+    treesDir: '/var/www/lamaste/apps/demo',
+    served: true,
+    joined: [
+      { route: 'other', maxBodySizeMb: 20 },
+      { route: 'gone', maxBodySizeMb: 10, served: false },
+    ],
+    native: NATIVE,
+  };
+  const { config } = nginx.renderWebSurfaceVhost(
+    site,
+    '/etc/letsencrypt/live/app.beta.example',
+    'beta.example',
+    opts,
+  );
+  assert.doesNotThrow(() => validateVhost(config));
+  assert.match(locationBody(config, '= /api/other/app'), /client_max_body_size 20m;/);
+  assert.match(locationBody(config, '= /api/gone/app'), /return 503/);
+  assert.match(locationBody(config, '= /oauth/callback'), /auth_request off;/);
+  // Not served: everything 503 but the association files and redirect pages.
+  const down = nginx.renderWebSurfaceVhost(
+    site,
+    '/etc/letsencrypt/live/app.beta.example',
+    'beta.example',
+    {
+      ...opts,
+      served: false,
+    },
+  ).config;
+  assert.doesNotThrow(() => validateVhost(down));
+  assert.match(down, /location = \/\.well-known\/apple-app-site-association \{/);
 });
