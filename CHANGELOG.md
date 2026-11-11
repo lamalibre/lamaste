@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 4.14.0 candidate
+## [4.14.0] - 2026-11-11
 
 Lamaste's `@lamalibre/*` packages come from the hosted Feria, `https://feria.codelama.com.tr/`, and no longer from npmjs, frozen at 4.12.0. Every path that installs or checks Lamaste itself names that registry for the `@lamalibre` scope; a release publishes the tag's own packed tarballs to Feria and keeps them on the GitHub Release as the durable copy.
 
