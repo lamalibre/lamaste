@@ -3,6 +3,8 @@
  * Used by both the full installer (panel.js) and the redeploy flow (redeploy.js).
  */
 
+import { HTTPS_CATCH_ALL_SITE, renderHttpsCatchAllVhost } from '@lamalibre/lamaste';
+
 /**
  * Generate the lamalibre-lamaste-serverd systemd service unit content.
  *
@@ -467,30 +469,21 @@ server {
 `;
 }
 
-/** sites-available name of the port-443 catch-all. */
-export const HTTPS_DEFAULT_SITE = 'lamalibre-lamaste-https-default';
+/** sites-available name of the port-443 catch-all (core's: serverd checks it is in place). */
+export const HTTPS_DEFAULT_SITE = HTTPS_CATCH_ALL_SITE;
 
 /**
  * The port-443 catch-all: a hostname no site of the relay serves is refused
  * at the TLS handshake. Without it nginx answers such a name — a typo under
  * a wildcard DNS record, any name pointed at the relay — with its first
  * 443 server, which hands out that site's certificate and its sign-in
- * redirect.
- *
- * It listens exactly as the relay's vhosts do (`listen 443 ssl;`, IPv4, no
- * http2 — `lamaste-priv` refuses `default_server` in any vhost the panel
- * writes, so no other site can claim the default), holds no certificate
- * (`ssl_reject_handshake`, nginx ≥ 1.19.4), and answers nothing should a
- * request reach it anyway (`return 444`). A client without SNI is refused
- * too: the panel at the relay's IP address is on 9292.
+ * redirect. Rendered by core (`renderHttpsCatchAllVhost`), with the relay's
+ * TLS settings — the socket's default server sets every name's protocol
+ * floor; `lamaste-priv`
+ * refuses `default_server` in any vhost the panel writes, so no other site
+ * of the relay can claim the default. A client without SNI is refused too:
+ * the panel at the relay's IP address is on 9292.
  */
 export function generateHttpsDefaultVhost() {
-  return `# Managed by Lamaste — a hostname no site serves is refused at the TLS handshake.
-server {
-    listen 443 ssl default_server;
-    server_name _;
-    ssl_reject_handshake on;
-    return 444;
-}
-`;
+  return renderHttpsCatchAllVhost();
 }

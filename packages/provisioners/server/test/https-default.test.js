@@ -19,6 +19,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { RELAY_TLS_DIRECTIVES } from '@lamalibre/lamaste';
+import { isDuplicateDefaultServer } from '../src/lib/http-redirect.js';
 import {
   HTTPS_DEFAULT_SITE,
   HTTP_REDIRECT_SITE,
@@ -38,6 +40,8 @@ test('the catch-all: the default 443 server, as the relay listens, without a cer
     'server {',
     LISTEN,
     'server_name _;',
+    // The socket's default server sets every name's protocol floor.
+    ...RELAY_TLS_DIRECTIVES,
     'ssl_reject_handshake on;',
     'return 444;',
     '}',
@@ -46,6 +50,28 @@ test('the catch-all: the default 443 server, as the relay listens, without a cer
   assert.notEqual(HTTPS_DEFAULT_SITE, HTTP_REDIRECT_SITE);
   // Port 80 keeps its own default server: the redirect certbot clones.
   assert.match(generateHttpRedirectVhost(), /listen 80 default_server;/);
+});
+
+test("a step is skipped only when another site owns that port's default server", () => {
+  const failure = (stderr) => Object.assign(new Error('nginx rejected'), { nginxStderr: stderr });
+  const duplicate443 =
+    'nginx: [emerg] a duplicate default server for 0.0.0.0:443 in /etc/nginx/sites-enabled/other:3';
+  assert.equal(isDuplicateDefaultServer(failure(duplicate443), 443), true);
+  assert.equal(isDuplicateDefaultServer(failure(duplicate443), 80), false);
+  assert.equal(
+    isDuplicateDefaultServer(
+      failure('nginx: [emerg] a duplicate default server for 0.0.0.0:80 in /x:1'),
+      80,
+    ),
+    true,
+  );
+  assert.equal(
+    isDuplicateDefaultServer(failure('nginx: [emerg] unknown directive "foo" in /x:1'), 443),
+    false,
+    'any other failure is raised, not skipped',
+  );
+  assert.equal(isDuplicateDefaultServer(new Error('EEXIST'), 443), false);
+  assert.equal(isDuplicateDefaultServer(undefined, 443), false);
 });
 
 const nginxBinary = spawnSync('nginx', ['-v']).status === 0 ? 'nginx' : null;
@@ -63,12 +89,13 @@ function freePort() {
 }
 
 /** A TLS handshake to nginx: the certificate's subject and what an HTTP request answered, or the failure. */
-function handshake(port, servername) {
+function handshake(port, servername, tlsVersion) {
   return new Promise((resolve) => {
     const socket = tls.connect({
       host: '127.0.0.1',
       port,
       ...(servername ? { servername } : {}),
+      ...(tlsVersion ? { minVersion: tlsVersion, maxVersion: tlsVersion } : {}),
       rejectUnauthorized: false,
     });
     socket.once('secureConnect', () => {
@@ -133,6 +160,7 @@ test(
           '    server_name known.example.test;',
           `    ssl_certificate ${cert};`,
           `    ssl_certificate_key ${key};`,
+          ...RELAY_TLS_DIRECTIVES.map((line) => `    ${line}`),
           '    location / { return 200 "known"; }',
           '}',
           '',
@@ -148,6 +176,8 @@ test(
           'events { worker_connections 64; }',
           'http {',
           '  access_log off;',
+          // A distribution default the catch-all must not leak to every name.
+          '  ssl_protocols TLSv1.3;',
           `  client_body_temp_path ${path.join(prefix, 'tmp-body')};`,
           `  proxy_temp_path ${path.join(prefix, 'tmp-proxy')};`,
           `  fastcgi_temp_path ${path.join(prefix, 'tmp-fcgi')};`,
@@ -182,6 +212,10 @@ test(
         assert.equal(known.ok, true, JSON.stringify(known));
         assert.equal(known.subject, 'known.example.test');
         assert.equal(known.body, 'known');
+        // TLS 1.2 to the known name: the catch-all (the socket's default)
+        // carries the relay's protocols, not nginx's http-level ones.
+        const tls12 = await handshake(port, 'known.example.test', 'TLSv1.2');
+        assert.equal(tls12.ok, true, `TLS 1.2: ${JSON.stringify(tls12)}`);
 
         const unknown = await handshake(port, 'vinyard.example.test');
         assert.equal(unknown.ok, false, 'an unknown name never gets a certificate');

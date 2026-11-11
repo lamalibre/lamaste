@@ -4,6 +4,7 @@ import { readFile, writeFile, rename, open, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { z } from 'zod';
 import { getSystemStats } from '../../lib/system-stats.js';
+import { httpsCatchAllStatus } from '../../lib/https-catch-all.js';
 import { getConfig } from '../../lib/config.js';
 import { setPluginCapabilities } from '../../lib/mtls.js';
 import { getPluginCapabilities } from '../../lib/plugins.js';
@@ -68,7 +69,8 @@ export default async function systemRoutes(fastify, _opts) {
     async (request, reply) => {
       try {
         const stats = await getSystemStats(request.log);
-        return stats;
+        // Whether the port-443 catch-all is in place (the Dashboard warns when not).
+        return { ...stats, httpsCatchAll: httpsCatchAllStatus() };
       } catch {
         return reply.code(500).send({ error: 'Failed to retrieve system stats' });
       }

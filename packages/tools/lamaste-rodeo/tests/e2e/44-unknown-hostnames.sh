@@ -19,6 +19,10 @@
 #    /usr/bin/certbot is the E2E shim, so no ACME server is asked) reads
 #    the configuration and finds port 80's default server, which it uses
 #    for HTTP-01 challenges, and port 443's catch-all.
+# 6. Without it the relay says so: the link removed, the panel restarted —
+#    GET /api/system/stats reports httpsCatchAll missing, the administrators
+#    get a critical notification, the audit log relay.https-catch-all.missing;
+#    put back, installed again and relay.https-catch-all.restored.
 # ============================================================================
 
 set -euo pipefail
@@ -30,9 +34,17 @@ require_commands curl jq openssl python3
 begin_test "44 — A hostname no site serves is refused at the TLS handshake (Single-VM)"
 
 SITE_ID=""
+CATCH_ALL_LINK=/etc/nginx/sites-enabled/lamalibre-lamaste-https-default
+CATCH_ALL_SITE=/etc/nginx/sites-available/lamalibre-lamaste-https-default
+LINK_REMOVED=no
 cleanup() {
   if [ -n "$SITE_ID" ] && [ "$SITE_ID" != "null" ]; then
     api_delete "sites/${SITE_ID}" > /dev/null 2>&1 || true
+  fi
+  if [ "$LINK_REMOVED" = "yes" ]; then
+    sudo ln -sf "$CATCH_ALL_SITE" "$CATCH_ALL_LINK" > /dev/null 2>&1 || true
+    sudo systemctl reload nginx > /dev/null 2>&1 || true
+    sudo systemctl restart lamalibre-lamaste-serverd > /dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -85,7 +97,10 @@ assert_eq "$(sudo test -L "$CATCH_ALL" && echo yes || echo no)" "yes" "lamalibre
 CONTENT=$(sudo cat "$CATCH_ALL" 2>/dev/null || echo "")
 assert_contains "$CONTENT" "listen 443 ssl default_server;" "…the default server on 443, as the relay's vhosts listen" || true
 assert_contains "$CONTENT" "ssl_reject_handshake on;" "…refusing the handshake, holding no certificate" || true
-DEFAULTS=$(sudo grep -rhE '^\s*listen\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | wc -l | tr -d ' ')
+assert_contains "$CONTENT" "ssl_protocols TLSv1.2 TLSv1.3;" "…with the relay's TLS protocols (the socket's default sets every name's floor)" || true
+TLS12=$(openssl s_client -connect 127.0.0.1:443 -servername "auth.${DOMAIN}" -tls1_2 < /dev/null 2>&1 | grep -c 'BEGIN CERTIFICATE' || true)
+assert_eq "$TLS12" "1" "TLS 1.2 to auth.${DOMAIN} still completes" || true
+DEFAULTS=$( { sudo grep -rhE '^\s*listen\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null || true; } | wc -l | tr -d ' ')
 assert_eq "$DEFAULTS" "1" "No other site claims port 443's default server" || true
 NGINX_T=$(sudo nginx -t 2>&1 && echo OK || echo FAILED)
 assert_contains "$NGINX_T" "OK" "nginx -t passes" || true
@@ -168,5 +183,47 @@ else
   assert_contains "$CERTBOT_VIEW" "default80=1" "certbot finds port 80's default server (the one it clones for HTTP-01)" || true
   assert_contains "$CERTBOT_VIEW" "default443=1" "…and parses port 443's catch-all" || true
 fi
+
+# ---------------------------------------------------------------------------
+log_section "Without the catch-all, the relay says so"
+# ---------------------------------------------------------------------------
+
+# catch_all_status — httpsCatchAll.status on GET /api/system/stats, once the
+# panel restarted and checked (it checks at start)
+catch_all_status() {
+  local status=""
+  for _ in $(seq 1 40); do
+    status=$(api_get "system/stats" | jq -r '.httpsCatchAll.status // empty' 2>/dev/null || echo "")
+    [ -n "$status" ] && break
+    sleep 0.5
+  done
+  echo "$status"
+}
+restart_panel() {
+  sudo systemctl restart lamalibre-lamaste-serverd
+  wait_for_http "${PANEL_DIRECT_URL}/api/health" 60 || log_fail "The panel does not answer after a restart"
+}
+
+assert_eq "$(catch_all_status)" "installed" "GET /api/system/stats: httpsCatchAll installed" || true
+NOTIFICATION_BASE=$(api_get "notifications?limit=1" | jq '.notifications[0].id // 0' 2>/dev/null || echo "0")
+
+sudo rm -f "$CATCH_ALL_LINK"
+LINK_REMOVED=yes
+sudo systemctl reload nginx
+restart_panel
+assert_eq "$(catch_all_status)" "missing" "The link removed: httpsCatchAll missing" || true
+RAISED=$(api_get "notifications?unread=true&limit=50" | jq -c "[.notifications[] | select(.id > ${NOTIFICATION_BASE} and (.message | contains(\"lamalibre-lamaste-https-default\")))]" 2>/dev/null || echo "[]")
+assert_eq "$(echo "$RAISED" | jq 'length')" "1" "The administrators are told, once" || true
+assert_eq "$(echo "$RAISED" | jq -r '.[0].level')" "critical" "…as critical" || true
+assert_contains "$(echo "$RAISED" | jq -r '.[0].message')" "default_server" "…naming how to find the site that owns the default" || true
+assert_eq "$(api_get "audit?limit=20" | jq -r '[.entries[]? | select(.action == "relay.https-catch-all.missing")][0].details.status // empty' 2>/dev/null)" "missing" "Audited: relay.https-catch-all.missing" || true
+
+sudo ln -sf "$CATCH_ALL_SITE" "$CATCH_ALL_LINK"
+LINK_REMOVED=no
+sudo systemctl reload nginx
+restart_panel
+assert_eq "$(catch_all_status)" "installed" "Put back: installed again" || true
+assert_eq "$(api_get "audit?limit=20" | jq -r '[.entries[]? | select(.action | startswith("relay.https-catch-all."))][0].action // empty' 2>/dev/null)" "relay.https-catch-all.restored" "Audited: relay.https-catch-all.restored (after the restart)" || true
+assert_eq "$(certificates "unknown-${RANDOM}.${DOMAIN}" | awk '{print $1}')" "0" "…and unknown names refused again" || true
 
 end_test

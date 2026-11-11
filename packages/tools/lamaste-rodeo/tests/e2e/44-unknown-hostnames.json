@@ -150,11 +150,70 @@
         },
         {
           "id": "step-7",
+          "label": "…with the relay's TLS protocols (the socket's default sets every name's floor)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONTENT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "ssl_protocols TLSv1.2 TLSv1.3;"
+              },
+              "message": "…with the relay's TLS protocols (the socket's default sets every name's floor)"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Set TLS12",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "openssl s_client -connect 127.0.0.1:443 -servername \"auth.${DOMAIN}\" -tls1_2 < /dev/null 2>&1 | grep -c 'BEGIN CERTIFICATE' || true"
+          },
+          "capture": [
+            {
+              "variable": "TLS12",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "TLS 1.2 to auth.${DOMAIN} still completes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TLS12"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "TLS 1.2 to auth.${DOMAIN} still completes"
+            }
+          }
+        },
+        {
+          "id": "step-10",
           "label": "Set DEFAULTS",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "sudo grep -rhE '^\\s*listen\\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | wc -l | tr -d ' '"
+            "command": " { sudo grep -rhE '^\\s*listen\\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null || true; } | wc -l | tr -d ' '"
           },
           "capture": [
             {
@@ -166,7 +225,7 @@
           ]
         },
         {
-          "id": "step-8",
+          "id": "step-11",
           "label": "No other site claims port 443's default server",
           "target": "local",
           "continueOnError": true,
@@ -187,7 +246,7 @@
           }
         },
         {
-          "id": "step-9",
+          "id": "step-12",
           "label": "Set NGINX_T",
           "target": "local",
           "op": {
@@ -204,7 +263,7 @@
           ]
         },
         {
-          "id": "step-10",
+          "id": "step-13",
           "label": "nginx -t passes",
           "target": "local",
           "continueOnError": true,
@@ -225,14 +284,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"The catch-all site\"\n# ---------------------------------------------------------------------------\n\nCATCH_ALL=/etc/nginx/sites-enabled/lamalibre-lamaste-https-default\nassert_eq \"$(sudo test -L \"$CATCH_ALL\" && echo yes || echo no)\" \"yes\" \"lamalibre-lamaste-https-default is enabled\" || true\nCONTENT=$(sudo cat \"$CATCH_ALL\" 2>/dev/null || echo \"\")\nassert_contains \"$CONTENT\" \"listen 443 ssl default_server;\" \"…the default server on 443, as the relay's vhosts listen\" || true\nassert_contains \"$CONTENT\" \"ssl_reject_handshake on;\" \"…refusing the handshake, holding no certificate\" || true\nDEFAULTS=$(sudo grep -rhE '^\\s*listen\\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | wc -l | tr -d ' ')\nassert_eq \"$DEFAULTS\" \"1\" \"No other site claims port 443's default server\" || true\nNGINX_T=$(sudo nginx -t 2>&1 && echo OK || echo FAILED)\nassert_contains \"$NGINX_T\" \"OK\" \"nginx -t passes\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"The catch-all site\"\n# ---------------------------------------------------------------------------\n\nCATCH_ALL=/etc/nginx/sites-enabled/lamalibre-lamaste-https-default\nassert_eq \"$(sudo test -L \"$CATCH_ALL\" && echo yes || echo no)\" \"yes\" \"lamalibre-lamaste-https-default is enabled\" || true\nCONTENT=$(sudo cat \"$CATCH_ALL\" 2>/dev/null || echo \"\")\nassert_contains \"$CONTENT\" \"listen 443 ssl default_server;\" \"…the default server on 443, as the relay's vhosts listen\" || true\nassert_contains \"$CONTENT\" \"ssl_reject_handshake on;\" \"…refusing the handshake, holding no certificate\" || true\nassert_contains \"$CONTENT\" \"ssl_protocols TLSv1.2 TLSv1.3;\" \"…with the relay's TLS protocols (the socket's default sets every name's floor)\" || true\nTLS12=$(openssl s_client -connect 127.0.0.1:443 -servername \"auth.${DOMAIN}\" -tls1_2 < /dev/null 2>&1 | grep -c 'BEGIN CERTIFICATE' || true)\nassert_eq \"$TLS12\" \"1\" \"TLS 1.2 to auth.${DOMAIN} still completes\" || true\nDEFAULTS=$( { sudo grep -rhE '^\\s*listen\\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null || true; } | wc -l | tr -d ' ')\nassert_eq \"$DEFAULTS\" \"1\" \"No other site claims port 443's default server\" || true\nNGINX_T=$(sudo nginx -t 2>&1 && echo OK || echo FAILED)\nassert_contains \"$NGINX_T\" \"OK\" \"nginx -t passes\" || true"
     },
     {
       "id": "unknown-names-fail-the-handshake",
       "label": "Unknown names fail the handshake",
       "steps": [
         {
-          "id": "step-13",
+          "id": "step-16",
           "label": "${UNKNOWN}: no certificate sent (${CN:-none})",
           "target": "local",
           "continueOnError": true,
@@ -253,7 +312,7 @@
           }
         },
         {
-          "id": "step-14",
+          "id": "step-17",
           "label": "${UNKNOWN}: https fails the handshake",
           "target": "local",
           "continueOnError": true,
@@ -274,7 +333,7 @@
           }
         },
         {
-          "id": "step-17",
+          "id": "step-20",
           "label": "${UNKNOWN}: curl reports a TLS handshake failure (exit 35)",
           "target": "local",
           "continueOnError": true,
@@ -295,7 +354,7 @@
           }
         },
         {
-          "id": "step-19",
+          "id": "step-22",
           "label": "A name under no domain of the relay: no certificate",
           "target": "local",
           "continueOnError": true,
@@ -316,7 +375,7 @@
           }
         },
         {
-          "id": "step-21",
+          "id": "step-24",
           "label": "No SNI: no certificate",
           "target": "local",
           "continueOnError": true,
@@ -344,7 +403,7 @@
       "label": "Known names still work",
       "steps": [
         {
-          "id": "step-24",
+          "id": "step-27",
           "label": "${AUTH}: a certificate is sent (CN ${CN:-?})",
           "target": "local",
           "continueOnError": true,
@@ -365,7 +424,7 @@
           }
         },
         {
-          "id": "step-25",
+          "id": "step-28",
           "label": "${AUTH}/api/health answers 200",
           "target": "local",
           "continueOnError": true,
@@ -386,7 +445,7 @@
           }
         },
         {
-          "id": "step-28",
+          "id": "step-31",
           "label": "${PANEL}: a certificate is sent (CN ${CN:-?})",
           "target": "local",
           "continueOnError": true,
@@ -407,7 +466,7 @@
           }
         },
         {
-          "id": "step-29",
+          "id": "step-32",
           "label": "Set PANEL_STATUS",
           "target": "local",
           "op": {
@@ -424,7 +483,7 @@
           ]
         },
         {
-          "id": "step-30",
+          "id": "step-33",
           "label": "${PANEL}: the handshake completes (${PANEL_STATUS} without a client certificate)",
           "target": "local",
           "continueOnError": true,
@@ -445,7 +504,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-35",
           "label": "POST /api/sites",
           "target": "host",
           "op": {
@@ -464,7 +523,7 @@
           ]
         },
         {
-          "id": "step-33",
+          "id": "step-36",
           "label": "Extract SITE_ID",
           "target": "local",
           "op": {
@@ -481,7 +540,7 @@
           }
         },
         {
-          "id": "step-34",
+          "id": "step-37",
           "label": "Extract SITE_FQDN",
           "target": "local",
           "op": {
@@ -498,7 +557,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-38",
           "label": "A managed static site is created (${SITE_FQDN})",
           "target": "local",
           "continueOnError": true,
@@ -519,7 +578,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-39",
           "label": "Set SITE_STATUS",
           "target": "local",
           "op": {
@@ -540,7 +599,7 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-40",
           "label": "${SITE_FQDN}: served over HTTPS",
           "target": "local",
           "continueOnError": true,
@@ -565,7 +624,7 @@
           }
         },
         {
-          "id": "step-39",
+          "id": "step-42",
           "label": "${SITE_FQDN}: its certificate is sent",
           "target": "local",
           "continueOnError": true,
@@ -590,7 +649,7 @@
           }
         },
         {
-          "id": "step-40",
+          "id": "step-43",
           "label": "DELETE /api/sites/${SITE_ID}",
           "target": "host",
           "op": {
@@ -605,7 +664,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-45",
           "label": "Deleted, ${SITE_FQDN} fails the handshake like any unknown name",
           "target": "local",
           "continueOnError": true,
@@ -637,7 +696,7 @@
       "label": "Port 80 is unchanged",
       "steps": [
         {
-          "id": "step-43",
+          "id": "step-46",
           "label": "Set REDIRECT",
           "target": "local",
           "op": {
@@ -654,7 +713,7 @@
           ]
         },
         {
-          "id": "step-44",
+          "id": "step-47",
           "label": "Plain HTTP for any name: 301 to the same https:// URL",
           "target": "local",
           "continueOnError": true,
@@ -682,7 +741,7 @@
       "label": "certbot's nginx plugin reads the configuration",
       "steps": [
         {
-          "id": "step-45",
+          "id": "step-48",
           "label": "Set CERTBOT_VIEW",
           "target": "local",
           "op": {
@@ -699,7 +758,7 @@
           ]
         },
         {
-          "id": "step-54",
+          "id": "step-57",
           "label": "certbot's parser: ${CERTBOT_VIEW}",
           "target": "local",
           "op": {
@@ -709,7 +768,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-58",
           "label": "python3-certbot-nginx is not importable here (${CERTBOT_VIEW})",
           "target": "local",
           "op": {
@@ -724,7 +783,7 @@
           }
         },
         {
-          "id": "step-56",
+          "id": "step-59",
           "label": "certbot finds port 80's default server (the one it clones for HTTP-01)",
           "target": "local",
           "continueOnError": true,
@@ -750,7 +809,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-60",
           "label": "…and parses port 443's catch-all",
           "target": "local",
           "continueOnError": true,
@@ -777,11 +836,252 @@
         }
       ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"certbot's nginx plugin reads the configuration\"\n# ---------------------------------------------------------------------------\n\nCERTBOT_VIEW=$(sudo python3 - <<'PY' 2>&1 || true\ntry:\n    from certbot_nginx._internal import parser\nexcept Exception as err:  # noqa: BLE001\n    print(f\"unavailable {type(err).__name__}\")\n    raise SystemExit(0)\np = parser.NginxParser(\"/etc/nginx/\")\nvhosts = p.get_vhosts()\ndef defaults(port):\n    return sum(1 for v in vhosts for a in v.addrs if a.get_port() == port and a.default)\nprint(f\"vhosts={len(vhosts)} default80={defaults('80')} default443={defaults('443')}\")\nPY\n)\nlog_info \"certbot's parser: ${CERTBOT_VIEW}\"\nif [[ \"$CERTBOT_VIEW\" == unavailable* ]]; then\n  log_skip \"python3-certbot-nginx is not importable here (${CERTBOT_VIEW})\"\nelse\n  assert_contains \"$CERTBOT_VIEW\" \"default80=1\" \"certbot finds port 80's default server (the one it clones for HTTP-01)\" || true\n  assert_contains \"$CERTBOT_VIEW\" \"default443=1\" \"…and parses port 443's catch-all\" || true\nfi"
+    },
+    {
+      "id": "without-the-catch-all-the-relay-says-so",
+      "label": "Without the catch-all, the relay says so",
+      "steps": [
+        {
+          "id": "step-66",
+          "label": "Sleep 0s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 0
+          }
+        },
+        {
+          "id": "step-74",
+          "label": "GET /api/system/stats: httpsCatchAll installed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(catch_all_status)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "installed"
+              },
+              "message": "GET /api/system/stats: httpsCatchAll installed"
+            }
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "GET /api/notifications?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "notifications?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "NOTIFICATION_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "The link removed: httpsCatchAll missing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(catch_all_status)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "missing"
+              },
+              "message": "The link removed: httpsCatchAll missing"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "GET /api/notifications?unread=true&limit=50",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "notifications?unread=true&limit=50"
+          },
+          "capture": [
+            {
+              "variable": "RAISED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-82",
+          "label": "The administrators are told, once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$RAISED\" | jq 'length')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The administrators are told, once"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "…as critical",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$RAISED\" | jq -r '.[0].level')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "critical"
+              },
+              "message": "…as critical"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "…naming how to find the site that owns the default",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$RAISED\" | jq -r '.[0].message')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "default_server"
+              },
+              "message": "…naming how to find the site that owns the default"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "Audited: relay.https-catch-all.missing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get \"audit?limit=20\" | jq -r '[.entries[]? | select(.action == \"relay.https-catch-all.missing\")][0].details.status // empty' 2>/dev/null)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "missing"
+              },
+              "message": "Audited: relay.https-catch-all.missing"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Put back: installed again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(catch_all_status)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "installed"
+              },
+              "message": "Put back: installed again"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Audited: relay.https-catch-all.restored (after the restart)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get \"audit?limit=20\" | jq -r '[.entries[]? | select(.action | startswith(\"relay.https-catch-all.\"))][0].action // empty' 2>/dev/null)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "relay.https-catch-all.restored"
+              },
+              "message": "Audited: relay.https-catch-all.restored (after the restart)"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "…and unknown names refused again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(certificates \"unknown-${RANDOM}.${DOMAIN}\" | awk '{print $1}')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…and unknown names refused again"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Without the catch-all, the relay says so\"\n# ---------------------------------------------------------------------------\n\n# catch_all_status — httpsCatchAll.status on GET /api/system/stats, once the\n# panel restarted and checked (it checks at start)\ncatch_all_status() {\n  local status=\"\"\n  for _ in $(seq 1 40); do\n    status=$(api_get \"system/stats\" | jq -r '.httpsCatchAll.status // empty' 2>/dev/null || echo \"\")\n    [ -n \"$status\" ] && break\n    sleep 0.5\n  done\n  echo \"$status\"\n}\nrestart_panel() {\n  sudo systemctl restart lamalibre-lamaste-serverd\n  wait_for_http \"${PANEL_DIRECT_URL}/api/health\" 60 || log_fail \"The panel does not answer after a restart\"\n}\n\nassert_eq \"$(catch_all_status)\" \"installed\" \"GET /api/system/stats: httpsCatchAll installed\" || true\nNOTIFICATION_BASE=$(api_get \"notifications?limit=1\" | jq '.notifications[0].id // 0' 2>/dev/null || echo \"0\")\n\nsudo rm -f \"$CATCH_ALL_LINK\"\nLINK_REMOVED=yes\nsudo systemctl reload nginx\nrestart_panel\nassert_eq \"$(catch_all_status)\" \"missing\" \"The link removed: httpsCatchAll missing\" || true\nRAISED=$(api_get \"notifications?unread=true&limit=50\" | jq -c \"[.notifications[] | select(.id > ${NOTIFICATION_BASE} and (.message | contains(\\\"lamalibre-lamaste-https-default\\\")))]\" 2>/dev/null || echo \"[]\")\nassert_eq \"$(echo \"$RAISED\" | jq 'length')\" \"1\" \"The administrators are told, once\" || true\nassert_eq \"$(echo \"$RAISED\" | jq -r '.[0].level')\" \"critical\" \"…as critical\" || true\nassert_contains \"$(echo \"$RAISED\" | jq -r '.[0].message')\" \"default_server\" \"…naming how to find the site that owns the default\" || true\nassert_eq \"$(api_get \"audit?limit=20\" | jq -r '[.entries[]? | select(.action == \"relay.https-catch-all.missing\")][0].details.status // empty' 2>/dev/null)\" \"missing\" \"Audited: relay.https-catch-all.missing\" || true\n\nsudo ln -sf \"$CATCH_ALL_SITE\" \"$CATCH_ALL_LINK\"\nLINK_REMOVED=no\nsudo systemctl reload nginx\nrestart_panel\nassert_eq \"$(catch_all_status)\" \"installed\" \"Put back: installed again\" || true\nassert_eq \"$(api_get \"audit?limit=20\" | jq -r '[.entries[]? | select(.action | startswith(\"relay.https-catch-all.\"))][0].action // empty' 2>/dev/null)\" \"relay.https-catch-all.restored\" \"Audited: relay.https-catch-all.restored (after the restart)\" || true\nassert_eq \"$(certificates \"unknown-${RANDOM}.${DOMAIN}\" | awk '{print $1}')\" \"0\" \"…and unknown names refused again\" || true"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 44 — A hostname no site serves is refused at the TLS handshake (Single-VM)\n# ============================================================================\n# Since 4.14.1 create-lamaste installs a port-443 catch-all,\n# lamalibre-lamaste-https-default (`listen 443 ssl default_server;`,\n# `ssl_reject_handshake on;`, `return 444;`). Before it, nginx answered a\n# name no server block names — a typo under a wildcard DNS record — with\n# its first 443 server: that site's certificate and its sign-in redirect.\n#\n# 1. The site: enabled, the only default server on 443, nginx -t passes.\n# 2. Unknown names fail the handshake: one under the relay's domain, one\n#    under no domain of the relay, and no SNI at all — no certificate sent.\n# 3. Known names still work: the auth portal (its own certificate, 200),\n#    the panel (its handshake; mTLS refuses without a client certificate),\n#    a managed static site made for the spec.\n# 4. Port 80 is unchanged: any host gets a 301 to the same https:// URL.\n# 5. certbot's nginx plugin (python3-certbot-nginx — the VM's\n#    /usr/bin/certbot is the E2E shim, so no ACME server is asked) reads\n#    the configuration and finds port 80's default server, which it uses\n#    for HTTP-01 challenges, and port 443's catch-all.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq openssl python3\n\nbegin_test \"44 — A hostname no site serves is refused at the TLS handshake (Single-VM)\"\n\nSITE_ID=\"\"\ncleanup() {\n  if [ -n \"$SITE_ID\" ] && [ \"$SITE_ID\" != \"null\" ]; then\n    api_delete \"sites/${SITE_ID}\" > /dev/null 2>&1 || true\n  fi\n}\ntrap cleanup EXIT\n\n# certificates <servername|-> — how many certificates the relay's TLS\n# handshake sends for that SNI (- : none sent), and the subject's CN.\ncertificates() {\n  local sni=()\n  [ \"$1\" != \"-\" ] && sni=(-servername \"$1\")\n  local out\n  out=$(openssl s_client -connect 127.0.0.1:443 \"${sni[@]}\" < /dev/null 2>&1 || true)\n  printf '%s %s\\n' \\\n    \"$(printf '%s' \"$out\" | grep -c 'BEGIN CERTIFICATE' || true)\" \\\n    \"$(printf '%s' \"$out\" | sed -n 's/^subject=.*CN *= *\\([^,]*\\).*/\\1/p' | head -1)\"\n}\n\n# https_status <host> <path> — the status of https://<host><path> on this\n# relay (curl -k; 000 when the handshake failed), retried for up to 10 s\n# until it equals <expected> when one is given.\nhttps_status() {\n  local host=\"$1\" path=\"$2\" expected=\"${3:-}\" got=\"\"\n  for _ in $(seq 1 20); do\n    got=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \\\n      --resolve \"${host}:443:127.0.0.1\" \"https://${host}${path}\" 2>/dev/null || true)\n    [ -z \"$got\" ] && got=\"000\"\n    [ -z \"$expected\" ] || [ \"$got\" = \"$expected\" ] && break\n    sleep 0.5\n  done\n  echo \"$got\"\n}\n",
+  "headerRaw": "# ============================================================================\n# 44 — A hostname no site serves is refused at the TLS handshake (Single-VM)\n# ============================================================================\n# Since 4.14.1 create-lamaste installs a port-443 catch-all,\n# lamalibre-lamaste-https-default (`listen 443 ssl default_server;`,\n# `ssl_reject_handshake on;`, `return 444;`). Before it, nginx answered a\n# name no server block names — a typo under a wildcard DNS record — with\n# its first 443 server: that site's certificate and its sign-in redirect.\n#\n# 1. The site: enabled, the only default server on 443, nginx -t passes.\n# 2. Unknown names fail the handshake: one under the relay's domain, one\n#    under no domain of the relay, and no SNI at all — no certificate sent.\n# 3. Known names still work: the auth portal (its own certificate, 200),\n#    the panel (its handshake; mTLS refuses without a client certificate),\n#    a managed static site made for the spec.\n# 4. Port 80 is unchanged: any host gets a 301 to the same https:// URL.\n# 5. certbot's nginx plugin (python3-certbot-nginx — the VM's\n#    /usr/bin/certbot is the E2E shim, so no ACME server is asked) reads\n#    the configuration and finds port 80's default server, which it uses\n#    for HTTP-01 challenges, and port 443's catch-all.\n# 6. Without it the relay says so: the link removed, the panel restarted —\n#    GET /api/system/stats reports httpsCatchAll missing, the administrators\n#    get a critical notification, the audit log relay.https-catch-all.missing;\n#    put back, installed again and relay.https-catch-all.restored.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq openssl python3\n\nbegin_test \"44 — A hostname no site serves is refused at the TLS handshake (Single-VM)\"\n\nSITE_ID=\"\"\nCATCH_ALL_LINK=/etc/nginx/sites-enabled/lamalibre-lamaste-https-default\nCATCH_ALL_SITE=/etc/nginx/sites-available/lamalibre-lamaste-https-default\nLINK_REMOVED=no\ncleanup() {\n  if [ -n \"$SITE_ID\" ] && [ \"$SITE_ID\" != \"null\" ]; then\n    api_delete \"sites/${SITE_ID}\" > /dev/null 2>&1 || true\n  fi\n  if [ \"$LINK_REMOVED\" = \"yes\" ]; then\n    sudo ln -sf \"$CATCH_ALL_SITE\" \"$CATCH_ALL_LINK\" > /dev/null 2>&1 || true\n    sudo systemctl reload nginx > /dev/null 2>&1 || true\n    sudo systemctl restart lamalibre-lamaste-serverd > /dev/null 2>&1 || true\n  fi\n}\ntrap cleanup EXIT\n\n# certificates <servername|-> — how many certificates the relay's TLS\n# handshake sends for that SNI (- : none sent), and the subject's CN.\ncertificates() {\n  local sni=()\n  [ \"$1\" != \"-\" ] && sni=(-servername \"$1\")\n  local out\n  out=$(openssl s_client -connect 127.0.0.1:443 \"${sni[@]}\" < /dev/null 2>&1 || true)\n  printf '%s %s\\n' \\\n    \"$(printf '%s' \"$out\" | grep -c 'BEGIN CERTIFICATE' || true)\" \\\n    \"$(printf '%s' \"$out\" | sed -n 's/^subject=.*CN *= *\\([^,]*\\).*/\\1/p' | head -1)\"\n}\n\n# https_status <host> <path> — the status of https://<host><path> on this\n# relay (curl -k; 000 when the handshake failed), retried for up to 10 s\n# until it equals <expected> when one is given.\nhttps_status() {\n  local host=\"$1\" path=\"$2\" expected=\"${3:-}\" got=\"\"\n  for _ in $(seq 1 20); do\n    got=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \\\n      --resolve \"${host}:443:127.0.0.1\" \"https://${host}${path}\" 2>/dev/null || true)\n    [ -z \"$got\" ] && got=\"000\"\n    [ -z \"$expected\" ] || [ \"$got\" = \"$expected\" ] && break\n    sleep 0.5\n  done\n  echo \"$got\"\n}\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

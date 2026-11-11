@@ -7,7 +7,11 @@ import { dirname, join } from 'node:path';
 import { generateServiceUnit, generateSudoersContent } from '../lib/service-config.js';
 import { lookupId } from '../lib/accounts.js';
 import { ensureBackendCookieMap } from '../lib/backend-cookie.js';
-import { ensureHttpRedirect, ensureHttpsDefault } from '../lib/http-redirect.js';
+import {
+  ensureHttpRedirect,
+  ensureHttpsDefault,
+  isDuplicateDefaultServer,
+} from '../lib/http-redirect.js';
 import { refreshIpPanelVhost } from '../lib/ip-panel-vhost.js';
 import { generateCertHelpPage } from '../lib/cert-help-page.js';
 import { ensureRootOwnedInstallDir, removeTree, writeFileNoFollow } from '../lib/ownership.js';
@@ -391,7 +395,8 @@ export function redeployTasks(ctx, task) {
             ? 'Port 80 now redirects every host to https://'
             : 'Port 80 redirect already in place';
         } catch (err) {
-          subtask.skip(`Skipped — ${err.message}`);
+          if (!isDuplicateDefaultServer(err, 80)) throw err;
+          subtask.skip(`Skipped — another site owns port 80's default server:\n${err.message}`);
         }
       },
       rendererOptions: { persistentOutput: true },
@@ -408,7 +413,9 @@ export function redeployTasks(ctx, task) {
             ? 'Port 443 now refuses every hostname no site serves at the TLS handshake'
             : 'HTTPS catch-all already in place';
         } catch (err) {
-          subtask.skip(`Skipped — ${err.message}`);
+          // The panel raises it to the administrators (lib/https-catch-all.js).
+          if (!isDuplicateDefaultServer(err, 443)) throw err;
+          subtask.skip(`Skipped — another site owns port 443's default server:\n${err.message}`);
         }
       },
       rendererOptions: { persistentOutput: true },

@@ -524,6 +524,15 @@ export type {
   PeerEventsChannelAnswer,
 } from './peer-events.js';
 
+// The relay's port-443 catch-all (4.14.1)
+export {
+  HTTPS_CATCH_ALL_SITE,
+  HTTPS_CATCH_ALL_ENABLED_PATH,
+  RELAY_HTTPS_LISTEN,
+  RELAY_TLS_DIRECTIVES,
+  renderHttpsCatchAllVhost,
+} from './https-catch-all.js';
+
 // A consumer's own edges, read over its peer channel (4.14.1)
 export {
   PEER_EDGES_WAIT_MAX_MS,

@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import {
   HTTPS_DEFAULT_SITE,
@@ -20,22 +20,44 @@ async function ensureSite({ site, content, what, reload }) {
   const available = `/etc/nginx/sites-available/${site}`;
   const enabled = `/etc/nginx/sites-enabled/${site}`;
   const previous = existsSync(available) ? await readFile(available, 'utf8') : null;
-  const wasEnabled = existsSync(enabled);
-  if (previous === content && wasEnabled) return { changed: false };
-
-  await writeFile(available, content, { mode: 0o644 });
-  if (!wasEnabled) await symlink(available, enabled);
+  // lstat: a dangling link is a link — symlink() would fail on it.
+  const link = await lstat(enabled).catch(() => null);
+  const wasLinked = link !== null;
+  const linkedRight = link?.isSymbolicLink() && (await readlink(enabled)) === available;
+  if (previous === content && linkedRight) return { changed: false };
 
   try {
+    await writeFile(available, content, { mode: 0o644 });
+    if (!linkedRight) {
+      if (wasLinked) await rm(enabled, { force: true });
+      await symlink(available, enabled);
+    }
     await execa('nginx', ['-t']);
   } catch (err) {
     if (previous === null) await rm(available, { force: true });
     else await writeFile(available, previous, { mode: 0o644 });
-    if (!wasEnabled) await rm(enabled, { force: true });
-    throw new Error(`nginx rejected ${what}; left as it was:\n${err.stderr || err.message}`);
+    if (!wasLinked) await rm(enabled, { force: true });
+    const failure = new Error(
+      `nginx rejected ${what}; left as it was:\n${err.stderr || err.message}`,
+    );
+    failure.nginxStderr = String(err.stderr ?? '');
+    throw failure;
   }
   if (reload) await execa('systemctl', ['reload', 'nginx']);
   return { changed: true };
+}
+
+/**
+ * Whether `err` (from {@link ensureHttpRedirect} / {@link ensureHttpsDefault})
+ * is nginx refusing a second default server on `port` — another site owns
+ * it. The only failure the installer steps skip; any other is raised.
+ *
+ * @param {unknown} err
+ * @param {80 | 443} port
+ */
+export function isDuplicateDefaultServer(err, port) {
+  const stderr = /** @type {{ nginxStderr?: string }} */ (err)?.nginxStderr ?? '';
+  return new RegExp(`a duplicate default server for \\S*:${port}\\b`).test(stderr);
 }
 
 /**

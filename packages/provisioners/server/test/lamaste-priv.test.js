@@ -59,6 +59,7 @@ const refused = {
     'listen [::]:443 ssl default_server;',
   ),
   ssl_reject_handshake: server(' ssl_reject_handshake on;'),
+  'listen on IPv6': server('').replace('listen 443 ssl;', 'listen [::]:443 ssl;'),
   'listen on a unix socket': 'server {\n listen unix:/etc/x;\n}\n',
   backslash: server(String.raw` add_header X a\;access_log;`),
   'dollar-brace variable': server(' add_header X ${x};'),
