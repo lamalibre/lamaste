@@ -1051,34 +1051,50 @@ test('a change wakes the held read at once; listeners get the new list', async (
   );
   assert.deepEqual(consumer.peers.edges().consumes, seen[0].consumes);
 
-  // A wake with nothing changed answers nothing: the read stays held.
+  // A wake with nothing changed answers nothing: the relay reads the list
+  // again (once), and the read stays held — nothing confirmed anew.
+  await waitFor(() => edgesState.listeners.size > 0);
   const before = seen.length;
+  const confirmed = consumer.peers.edges().confirmedAt;
+  const reads = edgesState.reads;
   edgesChanged();
   await new Promise((r) => setTimeout(r, 300));
+  assert.equal(edgesState.reads, reads + 1, 'the relay looked again');
+  assert.equal(consumer.peers.edges().confirmedAt, confirmed, 'and answered nothing');
   assert.equal(seen.length, before);
   off();
 });
 
-test('a new channel reads the edges at once; a second held read is refused', async () => {
-  const readsBefore = edgesState.reads;
-  relay.replace('leave');
-  await waitFor(() => edgesState.reads > readsBefore);
-  // The half holds one read; another on the same channel is refused.
+test('a new channel reads the edges at once: the read held on the old one is cancelled', async () => {
   await waitFor(() => edgesState.listeners.size > 0);
-  const digest = (
-    await (
-      await consumer.peers.call('directory:read', 'POST', '/.lamaste/edges', {
-        json: { digest: null, waitMs: 0 },
-      })
-    ).json()
-  ).digest;
-  await assert.rejects(
-    () =>
-      consumer.peers.call('directory:read', 'POST', '/.lamaste/edges', {
-        json: { digest, waitMs: 1000 },
-      }),
-    (err) => err instanceof PeerCallError && err.code === 'too_many_pulls',
-  );
+  const confirmed = consumer.peers.edges().confirmedAt;
+  await new Promise((r) => setTimeout(r, 20));
+  const started = Date.now();
+  relay.replace('leave');
+  // The old channel drains for up to 25 s; the half does not wait for it.
+  await waitFor(() => consumer.peers.edges().confirmedAt !== confirmed, 3000);
+  assert.ok(Date.now() - started < 3000);
+});
+
+test('a newer held read replaces the held one, which is answered at once', async () => {
+  await waitFor(() => edgesState.listeners.size > 0);
+  const confirmed = consumer.peers.edges().confirmedAt;
+  await new Promise((r) => setTimeout(r, 20));
+  const { digest } = await (
+    await consumer.peers.call('directory:read', 'POST', '/.lamaste/edges', {
+      json: { digest: null, waitMs: 0 },
+    })
+  ).json();
+  // This read takes the slot: the half's held read is answered (confirmed
+  // anew), and the half's next read takes the slot back — answering this one.
+  const started = Date.now();
+  const response = await consumer.peers.call('directory:read', 'POST', '/.lamaste/edges', {
+    json: { digest, waitMs: 20_000 },
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).digest, digest);
+  assert.ok(Date.now() - started < 3000, 'replaced, not held for its wait');
+  await waitFor(() => consumer.peers.edges().confirmedAt !== confirmed, 3000);
   await assert.rejects(
     () =>
       consumer.peers.call('directory:read', 'POST', '/.lamaste/edges', {

@@ -44,6 +44,7 @@ import type { PeerCallerIdentity } from '../caller-assertion.js';
 import {
   PEER_EDGES_ANSWER_MAX_BYTES,
   PEER_EDGES_WAIT_MAX_MS,
+  PEER_EDGES_WAIT_MIN_MS,
   parsePeerEdgesAnswer,
 } from '../peer-edges.js';
 import type { PeerEdge, PeerEdgesAnswer } from '../peer-edges.js';
@@ -316,7 +317,10 @@ export function createPeers(opts: PeersOptions): Peers {
     opts.eventsWaitMs ?? PEER_EVENTS_WAIT_MAX_MS,
     PEER_EVENTS_WAIT_MAX_MS,
   );
-  const edgesWaitMs = Math.min(opts.edgesWaitMs ?? PEER_EDGES_WAIT_MAX_MS, PEER_EDGES_WAIT_MAX_MS);
+  const edgesWaitMs = Math.min(
+    Math.max(opts.edgesWaitMs ?? PEER_EDGES_WAIT_MAX_MS, PEER_EDGES_WAIT_MIN_MS),
+    PEER_EDGES_WAIT_MAX_MS,
+  );
   const logger = opts.logger;
 
   const pingIntervalMs = opts.pingIntervalMs ?? PEER_CHANNEL_PING_INTERVAL_MS;
@@ -851,27 +855,28 @@ export function createPeers(opts: PeersOptions): Peers {
     const fresh = edgesSession !== s || !edgesState.known;
     const abort = new AbortController();
     edgesInFlight = { on: s, abort };
-    let response: PeerResponse;
+    let answer: PeerEdgesAnswer | null;
     try {
-      response = await send(null, 'POST', PEER_CHANNEL_EDGES_PATH, {
+      const response = await send(null, 'POST', PEER_CHANNEL_EDGES_PATH, {
         json: { digest: fresh ? null : edgesState.digest, waitMs: fresh ? 0 : edgesWaitMs },
         timeoutMs: edgesWaitMs + 15_000,
         signal: abort.signal,
       });
+      if (response.status !== 200) {
+        response.body.resume();
+        throw new PeerCallError('relay_error', `The edges read answered ${response.status}`, {
+          status: response.status,
+        });
+      }
+      answer = parsePeerEdgesAnswer(await response.json(PEER_EDGES_ANSWER_MAX_BYTES));
     } catch (err: unknown) {
-      // Cancelled for a newer channel: read there at once.
+      // Cancelled for a newer channel, before or during the answer: read
+      // there at once.
       if (abort.signal.aborted) return;
       throw err;
     } finally {
       if (edgesInFlight?.abort === abort) edgesInFlight = null;
     }
-    if (response.status !== 200) {
-      response.body.resume();
-      throw new PeerCallError('relay_error', `The edges read answered ${response.status}`, {
-        status: response.status,
-      });
-    }
-    const answer = parsePeerEdgesAnswer(await response.json(PEER_EDGES_ANSWER_MAX_BYTES));
     if (!answer) throw new PeerCallError('relay_error', 'The relay answered malformed edges');
     applyEdges(answer, s);
   }

@@ -249,7 +249,7 @@ test("a /peer route that lost peerRoute's hooks fails its registration", async (
         ...peerRoute(async () => ({})),
         onRequest: async () => undefined,
       }),
-    /onRequest and onSend/,
+    /onRequest hook first/,
   );
   await replaced.close();
 
@@ -261,9 +261,39 @@ test("a /peer route that lost peerRoute's hooks fails its registration", async (
         ...peerRoute(async () => ({})),
         onSend: async (_q, _r, p) => p,
       }),
-    /onRequest and onSend/,
+    /onRequest hook first/,
   );
   await unsigned.close();
+
+  // A hook of the plugin's own before peerRoute's would see an unverified request.
+  const before = Fastify();
+  await before.register(peerSurface({ verifier }));
+  const first = peerRoute(async () => ({}));
+  assert.throws(
+    () =>
+      before.post('/peer/x', {
+        ...first,
+        onRequest: [async () => undefined, first.onRequest],
+      }),
+    /onRequest hook first/,
+  );
+  await before.close();
+
+  // Another peerRoute's hooks (another scope) on this route: refused.
+  const borrowed = Fastify();
+  await borrowed.register(peerSurface({ verifier }));
+  const mineScope = peerRoute(async () => ({}), { scope: READ });
+  const otherScope = peerRoute(async () => ({}), { scope: WRITE });
+  assert.throws(
+    () =>
+      borrowed.post('/peer/x', {
+        ...mineScope,
+        onRequest: otherScope.onRequest,
+        onSend: otherScope.onSend,
+      }),
+    /onRequest hook first/,
+  );
+  await borrowed.close();
 
   // Hooks of one's own beside peerRoute's, and a spread with other options, are fine.
   const added = Fastify();
@@ -368,5 +398,36 @@ test('a refusal of a request without a body keeps the connection', async () => {
   const withBody = await post(app, '/peer/nowhere', null);
   assert.equal(withBody.statusCode, 404);
   assert.equal(withBody.headers.connection, 'close');
+  await app.close();
+});
+
+test('a verifier that cannot verify yet: 503 before the body, the connection closed', async () => {
+  const counts = { parsed: 0 };
+  const app = Fastify();
+  await app.register(
+    peerSurface({
+      verifier: {
+        port: () => 21001,
+        verify: async () => {
+          throw new Error('no configuration yet');
+        },
+      },
+    }),
+  );
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_request, body, done) => {
+    counts.parsed += 1;
+    done(null, JSON.parse(body));
+  });
+  app.post(
+    '/peer/x',
+    peerRoute(async () => ({ ok: true })),
+  );
+  await app.ready();
+  const res = await post(app, '/peer/x', 'anything');
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.headers.connection, 'close');
+  assert.equal(res.headers[RESPONDER_HEADER], undefined);
+  assert.equal(counts.parsed, 0);
   await app.close();
 });

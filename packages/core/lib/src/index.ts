@@ -527,6 +527,7 @@ export type {
 // A consumer's own edges, read over its peer channel (4.14.1)
 export {
   PEER_EDGES_WAIT_MAX_MS,
+  PEER_EDGES_WAIT_MIN_MS,
   PEER_EDGES_REQUEST_MAX_BYTES,
   PEER_EDGES_ANSWER_MAX_BYTES,
   PEER_EDGE_REASONS,

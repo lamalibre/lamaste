@@ -128,17 +128,27 @@ export function invalidatePeers(logger) {
   }
 }
 
-/** The current snapshot of effective edges (computed when stale). */
+/** A computation in flight, and the generation it started at: readers of that generation share it. */
+let computing = null;
+
+/** The current snapshot of effective edges (computed when stale; one computation at a time per generation). */
 export async function peersSnapshot() {
   if (snapshot && Date.now() - snapshotAt < SNAPSHOT_MAX_AGE_MS) return snapshot;
+  if (computing && computing.generation === generation) return computing.promise;
   const started = generation;
-  const computed = await computeSnapshot();
-  // Something changed while it was computed: use it once, keep nothing.
-  if (started === generation) {
-    snapshot = computed;
-    snapshotAt = Date.now();
+  const promise = computeSnapshot();
+  computing = { generation: started, promise };
+  try {
+    const computed = await promise;
+    // Something changed while it was computed: use it once, keep nothing.
+    if (started === generation) {
+      snapshot = computed;
+      snapshotAt = Date.now();
+    }
+    return computed;
+  } finally {
+    if (computing?.promise === promise) computing = null;
   }
-  return computed;
 }
 
 /** Sorted intersection of two lists of event types. */

@@ -85,8 +85,9 @@ export interface PeerRouteSettings {
 /**
  * What {@link peerRoute} returns: route options for `fastify.get(path, …)`
  * and the like. Spread them to add options (`bodyLimit`, …); to add hooks
- * of your own, pass an array that keeps `onRequest` / `onSend` in it —
- * `peerSurface` fails the registration of a `/peer` route that lost them.
+ * of your own, pass arrays: `onRequest` first, `onSend` anywhere —
+ * `peerSurface` fails the registration of a `/peer` route that lost them or
+ * runs a hook before `onRequest`.
  */
 export interface PeerRouteOptions {
   readonly config: Readonly<Record<string, unknown>>;
@@ -102,22 +103,37 @@ export interface PeerRouteOptions {
 
 const surfaces = new WeakMap<object, PeerSurfaceOptions>();
 /**
- * How a route says {@link peerRoute} made it: its config holds this
- * module's own object under this key — an identity nothing else has.
+ * How a route says {@link peerRoute} made it: its config holds, under this
+ * key, the token of the `peerRoute()` call that made it — an object only
+ * this module hands out, which names that call's own hooks.
  */
 const PEER_ROUTE_CONFIG_KEY = 'lamastePeerRoute';
-const PEER_ROUTE_MARK: object = Object.freeze({});
+interface PeerRouteHooks {
+  readonly onRequest: object;
+  readonly onSend: object;
+}
+const routeTokens = new WeakMap<object, PeerRouteHooks>();
 const verifiedRequests = new WeakMap<object, VerifiedCallerAssertion>();
-/** The callers that passed every check of their route, by request. */
-const admittedCallers = new WeakMap<object, PeerCallerIdentity>();
-/** peerRoute's own hooks: `peerSurface` checks a `/peer` route still has them. */
-const peerRouteHooks = new WeakSet<object>();
+/** The callers that passed every check of their route, by request, and the route's token. */
+const admittedCallers = new WeakMap<object, { caller: PeerCallerIdentity; token: object }>();
 
-function hooksInclude(hooks: unknown): boolean {
-  if (typeof hooks === 'function') return peerRouteHooks.has(hooks);
-  if (Array.isArray(hooks))
-    return hooks.some((hook) => typeof hook === 'function' && peerRouteHooks.has(hook));
-  return false;
+/** The peerRoute token a route's config carries, or null. */
+function routeTokenOf(config: unknown): object | null {
+  const token = (config as Record<string, unknown> | undefined)?.[PEER_ROUTE_CONFIG_KEY];
+  return typeof token === 'object' && token !== null && routeTokens.has(token) ? token : null;
+}
+
+/**
+ * Whether a route kept the hooks of the peerRoute() call that made it:
+ * its `onRequest` first (nothing of the plugin's runs before the caller is
+ * verified), its `onSend` anywhere.
+ */
+function keptOwnHooks(token: object, onRequest: unknown, onSend: unknown): boolean {
+  const own = routeTokens.get(token);
+  if (!own) return false;
+  const first = Array.isArray(onRequest) ? onRequest[0] : onRequest;
+  const sends: unknown[] = Array.isArray(onSend) ? onSend : [onSend];
+  return first === own.onRequest && sends.includes(own.onSend);
 }
 
 /**
@@ -126,7 +142,7 @@ function hooksInclude(hooks: unknown): boolean {
  * on (a hook that looks at the caller before the body), never earlier.
  */
 export function peerCallerOf(request: object): PeerCallerIdentity | null {
-  return admittedCallers.get(request) ?? null;
+  return admittedCallers.get(request)?.caller ?? null;
 }
 
 /**
@@ -269,25 +285,26 @@ export function peerSurface(opts: PeerSurfaceOptions): (fastify: FastifyInstance
 
     fastify.addHook('onRoute', (route) => {
       if (!isUnderAgentHalfPeer(route.url ?? '')) return;
-      const config = route.config as Record<string, unknown> | undefined;
-      if (config?.[PEER_ROUTE_CONFIG_KEY] !== PEER_ROUTE_MARK) {
+      const token = routeTokenOf(route.config);
+      if (!token) {
         throw new Error(
           `${String(route.method)} ${route.url ?? ''}: a route on the peer surface must be made with peerRoute()`,
         );
       }
       // A spread that replaced peerRoute's hooks would leave the caller
-      // unverified before the body (onRequest) or the answers unsigned (onSend).
-      if (!hooksInclude(route.onRequest) || !hooksInclude(route.onSend)) {
+      // unverified before the body (onRequest) or the answers unsigned
+      // (onSend); one of the plugin's own run first would see an
+      // unverified request.
+      if (!keptOwnHooks(token, route.onRequest, route.onSend)) {
         throw new Error(
-          `${String(route.method)} ${route.url ?? ''}: a peer route must keep peerRoute()'s onRequest and onSend hooks (pass an array to add your own)`,
+          `${String(route.method)} ${route.url ?? ''}: a peer route must keep its peerRoute()'s onRequest hook first and its onSend hook (pass arrays to add your own after them)`,
         );
       }
     });
 
     fastify.addHook('onRequest', async (request, reply) => {
       if (!isUnderAgentHalfPeer(request.url)) return;
-      const config = request.routeOptions.config as unknown as Record<string, unknown> | undefined;
-      if (config?.[PEER_ROUTE_CONFIG_KEY] !== PEER_ROUTE_MARK) {
+      if (!routeTokenOf(request.routeOptions.config)) {
         await refuseBeforeBody(request, reply, 404, { error: 'Not found' });
       }
     });
@@ -340,18 +357,29 @@ export function peerRoute(
   ) {
     throw new Error('peerRoute: scope must name one or more scopes');
   }
+  const token: object = Object.freeze({});
   const options: PeerRouteOptions = {
-    config: { [PEER_ROUTE_CONFIG_KEY]: PEER_ROUTE_MARK },
+    config: { [PEER_ROUTE_CONFIG_KEY]: token },
     async onRequest(request, reply) {
       const surface = surfaces.get(request.server.server);
-      if (!surface) {
+      if (!surface || routeTokenOf(request.routeOptions.config) !== token) {
         return refuseBeforeBody(request, reply, 500, {
-          error: 'peerSurface is not registered on this instance',
+          error: surface
+            ? 'This hook belongs to another peer route'
+            : 'peerSurface is not registered on this instance',
         });
       }
-      const verified = await surface.verifier.verify(request.headers, request.method, request.url, {
-        body: null,
-      });
+      let verified: Awaited<ReturnType<CallerAssertionVerifier['verify']>>;
+      try {
+        verified = await surface.verifier.verify(request.headers, request.method, request.url, {
+          body: null,
+        });
+      } catch {
+        // No configuration to verify with yet (before the first secret
+        // delivery), or one for another plugin: nothing is verified, the
+        // body is never read.
+        return refuseBeforeBody(request, reply, 503, { error: 'Not ready to verify callers' });
+      }
       if (!verified.ok) {
         return refuseBeforeBody(request, reply, 401, { error: verified.reason });
       }
@@ -373,19 +401,19 @@ export function peerRoute(
           error: 'This route does not serve the scope the call was made under',
         });
       }
-      admittedCallers.set(request, caller);
+      admittedCallers.set(request, { caller, token });
       setPeerContext(request, { caller, hops: caller.hops });
       return undefined;
     },
     async handler(request, reply) {
-      const caller = admittedCallers.get(request);
-      if (!caller) {
-        // Only reachable when the route's onRequest did not run: never verify
+      const admitted = admittedCallers.get(request);
+      if (admitted?.token !== token) {
+        // Only reachable when this route's onRequest did not run: never verify
         // here, after the body — refuse.
         await reply.code(500).send({ error: "peerRoute's onRequest hook did not run" });
         return reply;
       }
-      return handler(request, caller, reply);
+      return handler(request, admitted.caller, reply);
     },
     async onSend(request, reply, payload) {
       const verified = verifiedRequests.get(request);
@@ -393,7 +421,6 @@ export function peerRoute(
       return payload;
     },
   };
-  peerRouteHooks.add(options.onRequest);
-  peerRouteHooks.add(options.onSend);
+  routeTokens.set(token, { onRequest: options.onRequest, onSend: options.onSend });
   return options;
 }

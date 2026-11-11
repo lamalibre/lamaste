@@ -58,8 +58,9 @@
  * **A consumer's own edges** (`POST /.lamaste/edges`, `peer-edges.ts`): the
  * scopes its approved version consumes and whether each is effective,
  * answered at once when the consumer's digest is not the current list's,
- * otherwise held — one per consumer, `429 too_many_pulls` for a second —
- * until `onEdgesChanged` fires and the list differs, or the wait passes.
+ * otherwise held — one per consumer; a newer read replaces the held one,
+ * which is answered at once — until `onEdgesChanged` fires and the list
+ * differs, or the wait passes.
  *
  * **Floors.** Every gap the relay answers records the position it told the
  * consumer to resume from (`recordEventFloor`, per consumer and scope, with
@@ -837,12 +838,20 @@ export function createPeerGateway(
     });
   }
 
-  /** Held edges requests: one per consumer, each woken when the edges may have changed. */
-  const edgesWaiting = new Map<string, () => void>();
+  /**
+   * Held edges requests: one per consumer. A newer one replaces the held
+   * one (answered at once) — the consumer's half reads on its newest
+   * channel; the older stream is one it no longer waits on.
+   */
+  interface HeldEdges {
+    wake(): void;
+    supersede(): void;
+  }
+  const edgesWaiting = new Map<string, HeldEdges>();
   let edgesUnsubscribe: (() => void) | null = null;
 
   function wakeEdges(): void {
-    for (const wake of [...edgesWaiting.values()]) wake();
+    for (const held of [...edgesWaiting.values()]) held.wake();
   }
 
   async function handleEdges(
@@ -881,43 +890,54 @@ export function createPeerGateway(
     if (request.digest !== current.digest || request.waitMs === 0) {
       return answer(200, current);
     }
-    if (edgesWaiting.has(consumer)) {
-      return void refuse(res, 429, 'too_many_pulls', 'An edges request is already held');
-    }
+    // The consumer may have cancelled while the list was read: nothing to hold.
+    if (res.closed || res.destroyed || res.stream.closed) return;
+    edgesWaiting.get(consumer)?.supersede();
+
     // Held: until the list differs from what the consumer holds, the wait
-    // passes, or the stream closes.
-    let wake: () => void = () => {};
-    const woken = (): Promise<void> =>
+    // passes, a newer read replaces this one, or the stream closes.
+    type Why = 'woken' | 'superseded' | 'elapsed' | 'closed';
+    let settle: (why: Why) => void = () => {};
+    const next = (): Promise<Why> =>
       new Promise((resolve) => {
-        wake = resolve;
+        settle = resolve;
       });
-    let signal = woken();
-    edgesWaiting.set(consumer, () => wake());
+    let signal = next();
+    const held: HeldEdges = {
+      wake: () => settle('woken'),
+      supersede: () => settle('superseded'),
+    };
+    edgesWaiting.set(consumer, held);
     if (opts.onEdgesChanged && !edgesUnsubscribe) edgesUnsubscribe = opts.onEdgesChanged(wakeEdges);
     let timer: NodeJS.Timeout | null = null;
-    const elapsed = new Promise<'elapsed'>((resolve) => {
-      timer = setTimeout(() => resolve('elapsed'), request.waitMs);
-      timer.unref();
-    });
-    const closed = new Promise<'closed'>((resolve) => {
-      res.once('close', () => resolve('closed'));
-    });
+    let superseded = false;
+    let elapsed = false;
+    const onClose = (): void => settle('closed');
+    res.once('close', onClose);
+    timer = setTimeout(() => {
+      elapsed = true;
+      settle('elapsed');
+    }, request.waitMs);
+    timer.unref();
     try {
       for (;;) {
-        const why = await Promise.race([signal.then(() => 'woken' as const), elapsed, closed]);
+        const why = await signal;
         if (why === 'closed') return;
-        signal = woken();
+        if (why === 'superseded') superseded = true;
+        signal = next();
         current = peerEdgesAnswer(await edgesOf(consumer));
-        if (why === 'elapsed' || current.digest !== request.digest) break;
+        if (superseded || elapsed || current.digest !== request.digest) break;
       }
     } finally {
-      if (timer) clearTimeout(timer);
-      edgesWaiting.delete(consumer);
+      clearTimeout(timer);
+      res.removeListener('close', onClose);
+      if (edgesWaiting.get(consumer) === held) edgesWaiting.delete(consumer);
       if (edgesWaiting.size === 0 && edgesUnsubscribe) {
         edgesUnsubscribe();
         edgesUnsubscribe = null;
       }
     }
+    if (res.closed || res.destroyed) return;
     // The consumer may have stopped qualifying while it waited.
     if (opts.consumerAllowed && !(await opts.consumerAllowed(consumer))) {
       denied(consumer, null, 'not_granted');

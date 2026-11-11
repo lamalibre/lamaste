@@ -35,7 +35,7 @@ test('the answer is canonical: sorted by scope, events sorted, the digest of tha
   );
 });
 
-test('an answer is parsed only when well formed and its digest matches', () => {
+test('an answer is parsed when well formed; its digest kept as the relay gave it', () => {
   const answer = peerEdgesAnswer([
     EDGE,
     {
@@ -54,10 +54,21 @@ test('an answer is parsed only when well formed and its digest matches', () => {
   ]);
   assert.ok(parsePeerEdgesAnswer(newer));
 
+  // The digest is the relay's change token, kept as given; fields a newer
+  // relay adds are left out.
+  const newerFields = {
+    digest: '0'.repeat(64),
+    consumes: [{ ...EDGE, since: '2026-11-11T00:00:00Z' }],
+    extra: true,
+  };
+  const kept = parsePeerEdgesAnswer(newerFields);
+  assert.equal(kept.digest, '0'.repeat(64));
+  assert.deepEqual(Object.keys(kept.consumes[0]).sort(), Object.keys(EDGE).sort());
+
   const bad = [
-    { ...answer, digest: '0'.repeat(64) },
+    { ...answer, digest: 'not-hex' },
     peerEdgesAnswer([{ ...EDGE, provider: 'elsewhere' }]),
-    { digest: peerEdgesAnswer([EDGE]).digest, consumes: [{ ...EDGE, reason: 'not_granted' }] },
+    { digest: answer.digest, consumes: [{ ...EDGE, reason: 'not_granted' }] },
     peerEdgesAnswer([{ ...EDGE, effective: false, reason: null }]),
     peerEdgesAnswer([{ ...EDGE, effective: false, reason: 'Not Granted' }]),
     peerEdgesAnswer([{ ...EDGE, major: 0 }]),

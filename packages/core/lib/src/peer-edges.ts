@@ -29,6 +29,9 @@ import {
 /** The longest an edges request is held, waiting for a change. */
 export const PEER_EDGES_WAIT_MAX_MS = 25_000;
 
+/** The shortest hold a consumer's SDK asks for (0 asks for an answer at once). */
+export const PEER_EDGES_WAIT_MIN_MS = 1_000;
+
 /** The largest edges request a consumer sends on its channel. */
 export const PEER_EDGES_REQUEST_MAX_BYTES = 1024;
 
@@ -37,10 +40,10 @@ export const PEER_EDGES_ANSWER_MAX_BYTES = 256 * 1024;
 
 /**
  * Why a consumed scope is not effective. `not_granted`: no applied shelf
- * grants it. The others: an applied grant is pending because the
- * provider is not installed, does not provide the scope (in its approved
- * version), is disabled or not approved, the majors do not meet, or the
- * consumer itself is not installed, disabled or not approved.
+ * grants it. The others: an applied grant is pending because the provider
+ * is not installed, does not provide the scope (in its approved version),
+ * is disabled or not approved, or the majors do not meet; or — for the
+ * moment before its channel closes — the consumer itself was disabled.
  * A newer relay may name a reason not listed here.
  */
 export const PEER_EDGE_REASONS = [
@@ -50,10 +53,7 @@ export const PEER_EDGE_REASONS = [
   'provider_disabled',
   'provider_not_approved',
   'major_mismatch',
-  'consumer_not_installed',
-  'not_consumed',
   'consumer_disabled',
-  'consumer_not_approved',
 ] as const;
 
 export type PeerEdgeReason = (typeof PEER_EDGE_REASONS)[number];
@@ -80,7 +80,11 @@ export interface PeerEdgesRequest {
   readonly waitMs: number;
 }
 
-/** What the relay answers: the list (sorted by scope) and its digest. */
+/**
+ * What the relay answers: the list (sorted by scope) and its digest — a
+ * change token the consumer sends back as it is, never recomputes: a newer
+ * relay may add fields an older consumer does not read.
+ */
 export interface PeerEdgesAnswer {
   readonly digest: string;
   readonly consumes: readonly PeerEdge[];
@@ -149,8 +153,9 @@ function parseEdge(raw: unknown): PeerEdge | null {
 }
 
 /**
- * An edges answer as the consumer reads it, or null: well formed, at most
- * one entry per scope, and its digest that of its list.
+ * An edges answer as the consumer reads it, or null: a digest, and well
+ * formed entries, at most one per scope — the fields this version knows;
+ * others a newer relay adds are left out. The digest is not recomputed.
  */
 export function parsePeerEdgesAnswer(raw: unknown): PeerEdgesAnswer | null {
   if (!isRecord(raw)) return null;
@@ -165,7 +170,5 @@ export function parsePeerEdgesAnswer(raw: unknown): PeerEdgesAnswer | null {
     seen.add(edge.scope);
     edges.push(edge);
   }
-  const answer = peerEdgesAnswer(edges);
-  if (answer.digest !== digest) return null;
-  return answer;
+  return { digest, consumes: canonicalEdges(edges) };
 }

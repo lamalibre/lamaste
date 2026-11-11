@@ -757,12 +757,17 @@ test("a consumer's own edges: read over its channel, following shelves and its p
   const changes = [];
   const off = halves.notes.peers.onEdgesChanged((snapshot) => changes.push(snapshot));
   try {
+    // The half's read is held (it holds up to 25 s; the relay's tick wakes
+    // it every 15 s): the apply itself must answer it.
+    await waitFor(() => !!halves.notes.peers.edges().confirmedAt, 'notes confirmed');
+    const applied = Date.now();
     await lib.applyPeerShelf(
       'extra',
       { 'dir:read': { provider: 'dir', consumers: ['notes'] } },
       { actor: 'admin', logger },
     );
     await waitFor(() => edgeOf('notes', 'dir:read').effective, 'granted', 10_000);
+    assert.ok(Date.now() - applied < 5_000, 'answered by the apply, not by a tick or the wait');
     assert.ok(changes.length > 0);
     assert.equal(edgeOf('notes', 'dir:read').reason, null);
 
