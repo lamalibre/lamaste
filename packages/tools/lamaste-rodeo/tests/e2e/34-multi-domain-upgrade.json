@@ -363,16 +363,37 @@
             "level": "info",
             "message": "Before: ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}"
           }
+        },
+        {
+          "id": "step-21",
+          "label": "${OFF_FQDN} (disabled) is refused at the TLS handshake",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_status \"${OFF_FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "000"
+              },
+              "message": "${OFF_FQDN} (disabled) is refused at the TLS handshake"
+            }
+          }
         }
       ],
-      "bash": "log_section \"Two tunnels, one disabled; how each host answers\"\n\nAGENT=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL_34}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$AGENT\" '.ok' 'true' \"Agent ${AGENT_LABEL_34} enrolled (it carries the tunnels)\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_ON}\\\",\\\"port\\\":${PORT_ON},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL_34}\\\"}\")\nTUNNEL_ON=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${ON_FQDN}\" \"Tunnel ${ON_FQDN}\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_OFF}\\\",\\\"port\\\":${PORT_OFF},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL_34}\\\"}\")\nTUNNEL_OFF=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${OFF_FQDN}\" \"Tunnel ${OFF_FQDN}\" || true\nRESP=$(api_patch \"tunnels/${TUNNEL_OFF}\" '{\"enabled\":false}')\nassert_json_field \"$RESP\" '.tunnel.enabled' 'false' \"…disabled\" || true\n\nassert_eq \"$(link_state \"$(vhost_name app \"${ON_FQDN}\")\")\" \"available linked\" \"4.7 names the enabled tunnel's vhost by its full hostname, linked\" || true\nassert_eq \"$(link_state \"$(vhost_name app \"${OFF_FQDN}\")\")\" \"available unlinked\" \"…the disabled one's too, not linked\" || true\nassert_eq \"$(link_state \"$(vhost_name auth \"${DOMAIN}\")\")\" \"available linked\" \"…and the auth portal's by its domain\" || true\n\nBEFORE=\"$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")\"\nlog_info \"Before: ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}\"\n\n# ===========================================================================\n# 2. The vhosts as 4.6 left them\n# ==========================================================================="
+      "bash": "log_section \"Two tunnels, one disabled; how each host answers\"\n\nAGENT=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL_34}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$AGENT\" '.ok' 'true' \"Agent ${AGENT_LABEL_34} enrolled (it carries the tunnels)\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_ON}\\\",\\\"port\\\":${PORT_ON},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL_34}\\\"}\")\nTUNNEL_ON=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${ON_FQDN}\" \"Tunnel ${ON_FQDN}\" || true\nRESP=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SUB_OFF}\\\",\\\"port\\\":${PORT_OFF},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL_34}\\\"}\")\nTUNNEL_OFF=$(echo \"$RESP\" | jq -r '.tunnel.id // empty')\nassert_json_field \"$RESP\" '.tunnel.fqdn' \"${OFF_FQDN}\" \"Tunnel ${OFF_FQDN}\" || true\nRESP=$(api_patch \"tunnels/${TUNNEL_OFF}\" '{\"enabled\":false}')\nassert_json_field \"$RESP\" '.tunnel.enabled' 'false' \"…disabled\" || true\n\nassert_eq \"$(link_state \"$(vhost_name app \"${ON_FQDN}\")\")\" \"available linked\" \"4.7 names the enabled tunnel's vhost by its full hostname, linked\" || true\nassert_eq \"$(link_state \"$(vhost_name app \"${OFF_FQDN}\")\")\" \"available unlinked\" \"…the disabled one's too, not linked\" || true\nassert_eq \"$(link_state \"$(vhost_name auth \"${DOMAIN}\")\")\" \"available linked\" \"…and the auth portal's by its domain\" || true\n\nBEFORE=\"$(host_status \"${ON_FQDN}\") $(host_status \"${OFF_FQDN}\") $(host_status \"${AUTH_FQDN}\")\"\nlog_info \"Before: ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}\"\n# The disabled tunnel's vhost is not linked: no site serves its name, so the\n# HTTPS catch-all (4.14.1) refuses it at the handshake — never another\n# site's certificate and sign-in.\nassert_eq \"$(host_status \"${OFF_FQDN}\")\" \"000\" \"${OFF_FQDN} (disabled) is refused at the TLS handshake\" || true\n\n# ===========================================================================\n# 2. The vhosts as 4.6 left them\n# ==========================================================================="
     },
     {
       "id": "the-vhosts-put-back-under-their-4-6-names",
       "label": "The vhosts put back under their 4.6 names",
       "steps": [
         {
-          "id": "step-24",
+          "id": "step-25",
           "label": "nginx serves the 4.6 names",
           "target": "local",
           "op": {
@@ -382,7 +403,7 @@
           }
         },
         {
-          "id": "step-25",
+          "id": "step-26",
           "label": "nginx -t refused the 4.6 names",
           "target": "local",
           "op": {
@@ -392,7 +413,7 @@
           }
         },
         {
-          "id": "step-26",
+          "id": "step-27",
           "label": "4.6 names in place, link state as it was",
           "target": "local",
           "continueOnError": true,
@@ -413,7 +434,7 @@
           }
         },
         {
-          "id": "step-27",
+          "id": "step-28",
           "label": "…every host answers as before",
           "target": "local",
           "continueOnError": true,
@@ -441,7 +462,7 @@
       "label": "The panel restarted: every vhost renamed to its full hostname",
       "steps": [
         {
-          "id": "step-29",
+          "id": "step-30",
           "label": "The panel is back",
           "target": "local",
           "op": {
@@ -451,7 +472,7 @@
           }
         },
         {
-          "id": "step-30",
+          "id": "step-31",
           "label": "The panel did not come back after its restart",
           "target": "local",
           "op": {
@@ -461,7 +482,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-32",
           "label": "${ON_FQDN}: renamed, still linked",
           "target": "local",
           "continueOnError": true,
@@ -482,7 +503,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-33",
           "label": "${OFF_FQDN}: renamed, still not linked",
           "target": "local",
           "continueOnError": true,
@@ -503,7 +524,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-34",
           "label": "The auth portal: renamed to lamalibre-lamaste-auth-${DOMAIN}, linked",
           "target": "local",
           "continueOnError": true,
@@ -524,7 +545,7 @@
           }
         },
         {
-          "id": "step-34",
+          "id": "step-35",
           "label": "No 4.6 name is left, as a file or a link",
           "target": "local",
           "continueOnError": true,
@@ -545,7 +566,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-36",
           "label": "nginx -t passes",
           "target": "local",
           "op": {
@@ -555,7 +576,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-37",
           "label": "nginx -t fails after the rename",
           "target": "local",
           "op": {
@@ -565,7 +586,7 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-38",
           "label": "Every host answers as before (${BEFORE})",
           "target": "local",
           "continueOnError": true,
@@ -586,7 +607,7 @@
           }
         },
         {
-          "id": "step-38",
+          "id": "step-39",
           "label": "The panel logged the rename",
           "target": "local",
           "op": {
@@ -596,7 +617,7 @@
           }
         },
         {
-          "id": "step-39",
+          "id": "step-40",
           "label": "No rename line found in the panel's journal",
           "target": "local",
           "op": {
@@ -613,7 +634,7 @@
       "label": "One domain, the primary; every user its member",
       "steps": [
         {
-          "id": "step-40",
+          "id": "step-41",
           "label": "GET /api/domains",
           "target": "host",
           "op": {
@@ -631,7 +652,7 @@
           ]
         },
         {
-          "id": "step-41",
+          "id": "step-42",
           "label": "One domain",
           "target": "local",
           "continueOnError": true,
@@ -653,7 +674,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-43",
           "label": "…the primary, ${DOMAIN}, active",
           "target": "local",
           "continueOnError": true,
@@ -675,7 +696,7 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-44",
           "label": "…new users need no domains while it is the only one",
           "target": "local",
           "continueOnError": true,
@@ -697,7 +718,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-45",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -722,7 +743,7 @@
       "label": "lamaste-priv writes no vhost under a 4.6 name or an unknown dotted one",
       "steps": [
         {
-          "id": "step-47",
+          "id": "step-48",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -739,7 +760,7 @@
           ]
         },
         {
-          "id": "step-48",
+          "id": "step-49",
           "label": "write lamalibre-lamaste-app-e2e34legacy (a 4.6 name) is refused for its name",
           "target": "local",
           "continueOnError": true,
@@ -760,7 +781,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-50",
           "label": "…and leaves no file",
           "target": "local",
           "continueOnError": true,
@@ -781,7 +802,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-51",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -798,7 +819,7 @@
           ]
         },
         {
-          "id": "step-51",
+          "id": "step-52",
           "label": "write lamalibre-lamaste-x-e2e34.example.test (a dotted name it does not know) is refused for its name",
           "target": "local",
           "continueOnError": true,
@@ -819,7 +840,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-53",
           "label": "…and leaves no file",
           "target": "local",
           "continueOnError": true,
@@ -845,7 +866,7 @@
   ],
   "apiHelpers": [],
   "headerRaw": "# ============================================================================\n# 34 — Multi-domain relay: a single-domain relay upgraded in place (Single-VM)\n# ============================================================================\n# A relay of 4.6 knows one domain and names its vhosts by subdomain\n# (lamalibre-lamaste-app-<subdomain>, lamalibre-lamaste-auth). From 4.7 they\n# are named by full hostname (lamalibre-lamaste-app-<fqdn>,\n# lamalibre-lamaste-auth-<domain>) and the panel renames what it finds when\n# it starts (design: packages/core/docs/multi-domain-relay-design.md,\n# \"Upgrade in place\"). Here:\n#\n# 1. Two tunnels, one enabled and one disabled; how each host answers.\n# 2. Their vhosts and the auth portal's put back under the 4.6 names, link\n#    state as it was (the enabled one linked, the disabled one not).\n# 3. The panel restarted: every vhost renamed to its full hostname, link\n#    state kept, the legacy names gone, nginx -t passes, every host answers\n#    as before.\n# 4. One domain, the primary, active; every user its member; new users\n#    need no domains.\n# 5. lamaste-priv writes no vhost under a 4.6 name, nor under a dotted name\n#    it does not know.\n#\n# This is the nginx side of the rename that has no unit test (the panel's\n# nginx.js works on the real /etc/nginx).\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq nginx\n\nbegin_test \"34 — Multi-domain relay: a single-domain relay upgraded in place\"\n\nRUN_ID=\"$(date +%s)\"\nAGENT_LABEL_34=\"md-upgrade-e2e-${RUN_ID}\"\nSUB_ON=\"e2e34on\"\nSUB_OFF=\"e2e34off\"\nPORT_ON=19934\nPORT_OFF=19935\nTUNNEL_ON=\"\"\nTUNNEL_OFF=\"\"\nAVAILABLE=\"/etc/nginx/sites-available\"\nENABLED=\"/etc/nginx/sites-enabled\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${TUNNEL_ON} ${TUNNEL_OFF}; do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${AGENT_LABEL_34}\" > /dev/null 2>&1 || true\n  sudo rm -f \"${AVAILABLE}/lamalibre-lamaste-app-e2e34legacy\" \"${AVAILABLE}/lamalibre-lamaste-x-e2e34.example.test\"\n}\ntrap cleanup EXIT\n\n# host_status <hostname> — how nginx answers https://<hostname>/ on this VM\nhost_status() {\n  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve \"$1:443:127.0.0.1\" \"https://$1/\" 2>/dev/null || echo \"000\"\n}\n\n# link_state <site name> — \"available linked\" / \"available unlinked\" / \"gone …\"\nlink_state() {\n  local a=gone e=unlinked\n  if sudo test -e \"${AVAILABLE}/$1\"; then a=available; fi\n  if sudo test -L \"${ENABLED}/$1\"; then e=linked; fi\n  echo \"$a $e\"\n}\n\n# to_legacy <new name> <legacy name> — the vhost under its 4.6 name, linked\n# under it if it was linked under the new one\nto_legacy() {\n  local linked=no\n  if sudo test -L \"${ENABLED}/$1\"; then linked=yes; fi\n  sudo mv \"${AVAILABLE}/$1\" \"${AVAILABLE}/$2\"\n  sudo rm -f \"${ENABLED}/$1\"\n  if [ \"$linked\" = \"yes\" ]; then sudo ln -s \"${AVAILABLE}/$2\" \"${ENABLED}/$2\"; fi\n}\n",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq nginx\n\nbegin_test \"34 — Multi-domain relay: a single-domain relay upgraded in place\"\n\nRUN_ID=\"$(date +%s)\"\nAGENT_LABEL_34=\"md-upgrade-e2e-${RUN_ID}\"\nSUB_ON=\"e2e34on\"\nSUB_OFF=\"e2e34off\"\nPORT_ON=19934\nPORT_OFF=19935\nTUNNEL_ON=\"\"\nTUNNEL_OFF=\"\"\nAVAILABLE=\"/etc/nginx/sites-available\"\nENABLED=\"/etc/nginx/sites-enabled\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id\n  for id in ${TUNNEL_ON} ${TUNNEL_OFF}; do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${AGENT_LABEL_34}\" > /dev/null 2>&1 || true\n  sudo rm -f \"${AVAILABLE}/lamalibre-lamaste-app-e2e34legacy\" \"${AVAILABLE}/lamalibre-lamaste-x-e2e34.example.test\"\n}\ntrap cleanup EXIT\n\n# host_status <hostname> — how nginx answers https://<hostname>/ on this VM\nhost_status() {\n  local code\n  code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve \"$1:443:127.0.0.1\" \"https://$1/\" 2>/dev/null || true)\n  echo \"${code:-000}\"\n}\n\n# link_state <site name> — \"available linked\" / \"available unlinked\" / \"gone …\"\nlink_state() {\n  local a=gone e=unlinked\n  if sudo test -e \"${AVAILABLE}/$1\"; then a=available; fi\n  if sudo test -L \"${ENABLED}/$1\"; then e=linked; fi\n  echo \"$a $e\"\n}\n\n# to_legacy <new name> <legacy name> — the vhost under its 4.6 name, linked\n# under it if it was linked under the new one\nto_legacy() {\n  local linked=no\n  if sudo test -L \"${ENABLED}/$1\"; then linked=yes; fi\n  sudo mv \"${AVAILABLE}/$1\" \"${AVAILABLE}/$2\"\n  sudo rm -f \"${ENABLED}/$1\"\n  if [ \"$linked\" = \"yes\" ]; then sudo ln -s \"${AVAILABLE}/$2\" \"${ENABLED}/$2\"; fi\n}\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }
