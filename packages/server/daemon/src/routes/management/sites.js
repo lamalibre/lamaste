@@ -360,6 +360,7 @@ export default async function sitesRoutes(fastify, _opts) {
           const status = siteErrorStatus(err.code);
           return reply.code(status).send({
             error: 'Failed to create site',
+            code: err.code,
             details: err.message,
           });
         }
@@ -398,6 +399,7 @@ export default async function sitesRoutes(fastify, _opts) {
           const status = siteErrorStatus(err.code);
           return reply.code(status).send({
             error: 'Failed to delete site',
+            code: err.code,
             details: err.message,
           });
         }
@@ -452,11 +454,13 @@ export default async function sitesRoutes(fastify, _opts) {
           if (err.code === 'AUTHELIA_FAILED') {
             return reply.code(500).send({
               error: 'Site saved but Authelia configuration failed',
+              code: err.code,
               details: err.message,
             });
           }
           return reply.code(status).send({
             error: 'Failed to update site configuration',
+            code: err.code,
             details: err.message,
           });
         }
@@ -503,6 +507,7 @@ export default async function sitesRoutes(fastify, _opts) {
           const status = siteErrorStatus(err.code);
           return reply.code(status).send({
             error: err.message,
+            code: err.code,
           });
         }
         if (err instanceof AppError) throw err;
