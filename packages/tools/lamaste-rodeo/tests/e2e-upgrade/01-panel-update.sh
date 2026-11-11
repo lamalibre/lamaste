@@ -124,7 +124,9 @@ assert_page_runs() {
 
 # host_status <hostname> — how nginx answers https://<hostname>/ on this VM
 host_status() {
-  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve "$1:443:127.0.0.1" "https://$1/" 2>/dev/null || echo "000"
+  local code
+  code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve "$1:443:127.0.0.1" "https://$1/" 2>/dev/null || true)
+  echo "${code:-000}"
 }
 
 # link_state <site name> — "available linked" / "available unlinked" / "gone …"
@@ -384,7 +386,12 @@ if sudo nginx -t > /dev/null 2>&1; then
 else
   log_fail "nginx -t fails after the update"
 fi
-assert_eq "$(host_status "${ON_FQDN}") $(host_status "${OFF_FQDN}") $(host_status "${AUTH_FQDN}")" "${BEFORE}" "Every host answers as before (${BEFORE})" || true
+read -r ON_BEFORE OFF_BEFORE AUTH_BEFORE <<< "${BEFORE}"
+assert_eq "$(host_status "${ON_FQDN}") $(host_status "${AUTH_FQDN}")" "${ON_BEFORE} ${AUTH_BEFORE}" "The enabled tunnel and the auth portal answer as before (${ON_BEFORE} ${AUTH_BEFORE})" || true
+# The disabled tunnel's vhost is not linked: no site serves its name. Before
+# 4.14.1 nginx's implicit default server — the first 443 site — answered it
+# (${OFF_BEFORE}); the catch-all refuses it at the handshake (section 7).
+assert_eq "$(host_status "${OFF_FQDN}")" "000" "The disabled tunnel ${OFF_FQDN} is refused at the TLS handshake like any name no site serves (before: ${OFF_BEFORE}, answered by another site)" || true
 
 log_section "The primary domain; every user of ${BEFORE_VERSION} its member"
 
