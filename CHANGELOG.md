@@ -38,6 +38,7 @@ Mail: a relay sends mail — invitations, a "Reset password" link on every sign-
 
 ### Changed
 
+- **A refusal of the sites API carries its `code`** beside `error` and `details` (create, update, delete, DNS verification) — e.g. `MAIL_SENDER_HOST` for the host the relay's mail is sent from.
 - **A bound user-surface route that is not served is answered by the relay** (`503` JSON), no longer sent down the tunnel.
 - **Manifests may not declare an OIDC client `lamaste` or `lamaste-*`**: that namespace is Lamaste's own clients'.
 - `native-apps` is a reserved API prefix.
