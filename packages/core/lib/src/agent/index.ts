@@ -494,7 +494,10 @@ export type {
   PeerEventHandler,
   PeerGapNotice,
   PeerCaller,
+  PeerEdgesSnapshot,
+  PeerEdgesListener,
 } from './peer-client.js';
+export type { PeerEdge, PeerEdgeReason } from '../peer-edges.js';
 export { createPeerOutbox, createPeerOutboxHandler } from './peer-outbox.js';
 export type {
   PeerOutbox,

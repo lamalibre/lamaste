@@ -221,6 +221,24 @@ A provider that itself has an effective outgoing edge receives a delegation for 
 
 An offline consumer or provider simply waits: catching up from the cursor is the normal path.
 
+## A consumer's own edges
+
+A consumer's half can learn which of the scopes it consumes are granted to it before it calls (4.14.1), so a plugin that may use one of several providers knows which one it has.
+
+```js
+const peers = createPeers({ configPath, plugin: 'notify', db });
+peers.onEdgesChanged(({ consumes }) => pickProviders(consumes));
+const { known, confirmedAt, consumes } = peers.edges();
+// consumes: [{ scope: 'mailer:send', provider: 'mailer', major: 1, required: false,
+//              events: [], effective: true, reason: null }, …]
+```
+
+- **One entry per scope the half's installed, approved version consumes.** `effective` means an applied shelf grants the edge and both sides' approved versions agree on it (the scope provided, the major served, both enabled). It is not a health check: a call to an effective scope can still be answered `503 peer_unavailable`. `events` lists the event types the edge carries.
+- **`reason`** is null when the edge is effective. `not_granted` means no applied shelf names the edge. Otherwise it is why an applied grant is pending: `provider_not_installed`, `not_provided`, `provider_disabled`, `provider_not_approved` or `major_mismatch`, and for the consumer itself `consumer_disabled` or `consumer_not_approved`. A newer relay may add reasons.
+- **`known`** is false until the relay has answered once since the half started. Nothing is persisted, so a restarted half does not report a stale grant. `confirmedAt` is when the relay last confirmed the list. It advances at least every 25 s while the channel is up; while the channel is down (`connected()`), it stops and the last list is kept.
+- **`onEdgesChanged(listener)`** returns an unsubscribe. It is called when the list first becomes known and after every change: a shelf applied or removed, an install, update, approval, enable or disable on either side, a provider uninstalled. The first use of `edges()` or `onEdgesChanged()` starts the reading.
+- **On the wire:** `POST /.lamaste/edges` `{ digest, waitMs }` on the half's peer channel → `{ digest, consumes }` (the list sorted by scope, and its SHA-256). The half reads at once on every new channel. It then keeps one request held (`429 too_many_pulls` for a second one): the relay answers when the list's digest changes, woken by any change to the effective edges and by its tick, or otherwise after 25 s. A relay from before 4.14.1 answers `400 bad_path`; the half then stops asking until the next attach.
+
 ## Peer readiness
 
 `GET /admin/peers` (Lamaste's own call) → `{ protocol: 1, consumer, outbox: { streamId, head, horizon } | null, inbox }`. The relay attaches to, forwards to and pulls from only a half that answered protocol 1 for its installed version (asked after hosting, an update, an approval, each health transition to up, and on a tick).

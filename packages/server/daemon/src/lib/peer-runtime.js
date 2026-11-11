@@ -59,6 +59,7 @@ import { recordAuditBestEffort } from './audit.js';
 import { getDirectoryUser, principalCleanupPending } from './directory.js';
 import { identityReadiness } from './identity-sync.js';
 import {
+  edgesOfConsumer,
   effectivePeerEdge,
   effectiveSubscription,
   eventFloor,
@@ -369,8 +370,26 @@ function auditDenial({ consumer, scope, code }, logger) {
 }
 
 /** The gateway's options — exported for the tests, which drive it without channels. */
+/** Held edges requests to wake on every tick too (a change the snapshot only notices when it ages). */
+const edgesTickListeners = new Set();
+
+/**
+ * "A consumer's edges may have changed": whenever the effective edges are
+ * invalidated, and on every tick.
+ */
+function onEdgesChanged(listener) {
+  const off = onPeersChanged(() => listener());
+  edgesTickListeners.add(listener);
+  return () => {
+    off();
+    edgesTickListeners.delete(listener);
+  };
+}
+
 export function peerGatewayOptions(logger) {
   return {
+    edges: edgesOfConsumer,
+    onEdgesChanged,
     edge: async (consumer, scope) => {
       const edge = await effectivePeerEdge(consumer, scope);
       return edge ? { provider: edge.provider, major: edge.major, provided: edge.provided } : null;
@@ -493,6 +512,7 @@ async function peerTick(logger) {
     }
   }
   await syncPeerChannels(logger);
+  for (const listener of [...edgesTickListeners]) listener();
   await pruneEventFloors().catch((err) =>
     logger?.warn({ err: err?.message }, 'Pruning peer event floors failed'),
   );

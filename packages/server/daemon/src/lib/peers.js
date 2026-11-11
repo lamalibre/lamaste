@@ -281,6 +281,44 @@ export async function effectiveEdgesInto(route) {
 }
 
 /**
+ * The edges of consumer `route` as its agent half reads them over its
+ * channel (`POST /.lamaste/edges`): one entry per scope its installed,
+ * approved version consumes — effective (with the event types it carries),
+ * or why not: `not_granted` when no applied shelf names it, else the
+ * pending reason of an applied grant. Empty for a plugin that is not
+ * installed, consumes nothing or whose version is not approved.
+ *
+ * @param {string} route
+ * @returns {Promise<Array<{ scope: string, provider: string, major: number, required: boolean, events: string[], effective: boolean, reason: string | null }>>}
+ */
+export async function edgesOfConsumer(route) {
+  const current = await peersSnapshot();
+  const plugin = current.plugins.find((p) => p.route === route);
+  if (!plugin || !plugin.approved) return [];
+  const effective = current.byConsumer.get(route);
+  const pending = new Map();
+  for (const shelf of current.shelves) {
+    for (const edge of shelf.edges) {
+      if (edge.consumer !== route || edge.state === 'effective' || pending.has(edge.scope))
+        continue;
+      pending.set(edge.scope, edge.reason);
+    }
+  }
+  return Object.entries(plugin.consumes ?? {}).map(([scope, consumed]) => {
+    const edge = effective?.get(scope);
+    return {
+      scope,
+      provider: peerScopeProvider(scope),
+      major: consumed.major,
+      required: consumed.required,
+      events: edge ? edge.events : [],
+      effective: !!edge,
+      reason: edge ? null : (pending.get(scope) ?? 'not_granted'),
+    };
+  });
+}
+
+/**
  * The effective subscription `consumer` ← `scope`: the provider, the types
  * both approved versions share and the edge grants, and their epoch — or
  * null when there is no edge or no shared type.

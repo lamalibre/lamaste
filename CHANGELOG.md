@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `peerRoute(handler, { scope })`: the scope, or scopes, the route serves. A call made under another scope gets 403 before its body is read.
 - `peerCallerOf(request)`: the verified peer caller, available to the provider's own hooks from `preParsing` on.
+- **A consumer's own edges.** `peers.edges()` returns `{ known, confirmedAt, consumes }`, with one entry per scope the half's approved version consumes: `{ scope, provider, major, required, events, effective, reason }`. `peers.onEdgesChanged(listener)` reports every change. A plugin that may use one of several providers now knows which one is granted without calling, and without reading the relay's refusal order. The half reads the list over its own peer channel (`POST /.lamaste/edges`) on every attach, then holds one request that the relay answers when the list changes (woken by any change to the effective edges or by its tick) or after 25 s. serverd computes the list with `edgesOfConsumer` in `lib/peers.js`. Core adds `peer-edges.ts`: `PEER_CHANNEL_EDGES_PATH`, `PEER_EDGE_REASONS`, `peerEdgesAnswer`, `parsePeerEdgesRequest` and `parsePeerEdgesAnswer`. The gateway takes the new options `edges` and `onEdgesChanged`.
 
 ## [4.14.0] - 2026-11-11
 

@@ -75,6 +75,9 @@ export const PEER_CHANNEL_RELAY_PREFIX = '/.lamaste/';
 /** `POST` on the peer channel: the consumer pulls a scope's events. */
 export const PEER_CHANNEL_EVENTS_PATH = `${PEER_CHANNEL_RELAY_PREFIX}events`;
 
+/** `POST` on the peer channel: the consumer reads its own edges (`peer-edges.ts`). */
+export const PEER_CHANNEL_EDGES_PATH = `${PEER_CHANNEL_RELAY_PREFIX}edges`;
+
 /** Request header of a call on the channel: the scope called. */
 export const PEER_SCOPE_HEADER = 'x-lamalibre-peer-scope';
 
