@@ -1450,7 +1450,7 @@
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "printf 'EHLO e2e\\r\\nAUTH PLAIN %s\\r\\nQUIT\\r\\n' \"$(printf '\\0authelia\\0wrong-password' | base64 -w0)\" | timeout 10 openssl s_client -quiet -connect 127.0.0.1:9295 2>/dev/null || true"
+            "command": "smtp_dialog 9295 'EHLO e2e' \"AUTH PLAIN $(printf '\\0authelia\\0wrong-password' | base64 -w0)\" 'QUIT'"
           },
           "capture": [
             {
@@ -1488,7 +1488,7 @@
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "printf 'EHLO e2e\\r\\nMAIL FROM:<x@example.com>\\r\\nQUIT\\r\\n' | timeout 10 openssl s_client -quiet -connect 127.0.0.1:9295 2>/dev/null || true"
+            "command": "smtp_dialog 9295 'EHLO e2e' 'MAIL FROM:<x@example.com>' 'QUIT'"
           },
           "capture": [
             {
@@ -1501,7 +1501,28 @@
         },
         {
           "id": "step-79",
-          "label": "MAIL without AUTH: not accepted",
+          "label": "MAIL without AUTH: 530, authentication required",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "LISTENER"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "530"
+              },
+              "message": "MAIL without AUTH: 530, authentication required"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "…not accepted",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1516,19 +1537,19 @@
                 "kind": "literal",
                 "value": "250 2.1.0"
               },
-              "message": "MAIL without AUTH: not accepted"
+              "message": "…not accepted"
             }
           }
         }
       ],
-      "bash": "log_section \"The listener admits Authelia alone\"\n\nLISTENER=$(printf 'EHLO e2e\\r\\nAUTH PLAIN %s\\r\\nQUIT\\r\\n' \"$(printf '\\0authelia\\0wrong-password' | base64 -w0)\" | timeout 10 openssl s_client -quiet -connect 127.0.0.1:9295 2>/dev/null || true)\nassert_contains \"$LISTENER\" \"535\" \"A wrong password: 535\" || true\nLISTENER=$(printf 'EHLO e2e\\r\\nMAIL FROM:<x@example.com>\\r\\nQUIT\\r\\n' | timeout 10 openssl s_client -quiet -connect 127.0.0.1:9295 2>/dev/null || true)\nassert_not_contains \"$LISTENER\" \"250 2.1.0\" \"MAIL without AUTH: not accepted\" || true\n\n# ===========================================================================\n# 4. D6 — the sending host is not a web hostname\n# ==========================================================================="
+      "bash": "log_section \"The listener admits Authelia alone\"\n\nLISTENER=$(smtp_dialog 9295 'EHLO e2e' \"AUTH PLAIN $(printf '\\0authelia\\0wrong-password' | base64 -w0)\" 'QUIT')\nassert_contains \"$LISTENER\" \"535\" \"A wrong password: 535\" || true\nLISTENER=$(smtp_dialog 9295 'EHLO e2e' 'MAIL FROM:<x@example.com>' 'QUIT')\nassert_contains \"$LISTENER\" \"530\" \"MAIL without AUTH: 530, authentication required\" || true\nassert_not_contains \"$LISTENER\" \"250 2.1.0\" \"…not accepted\" || true\n\n# ===========================================================================\n# 4. D6 — the sending host is not a web hostname\n# ==========================================================================="
     },
     {
       "id": "the-sending-host-no-tunnel-no-site-there",
       "label": "The sending host: no tunnel, no site there",
       "steps": [
         {
-          "id": "step-80",
+          "id": "step-81",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1545,7 +1566,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-82",
           "label": "A tunnel at notify.${DOMAIN}: 400",
           "target": "local",
           "continueOnError": true,
@@ -1566,7 +1587,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-83",
           "label": "…the relay's mail holds it",
           "target": "local",
           "continueOnError": true,
@@ -1587,7 +1608,7 @@
           }
         },
         {
-          "id": "step-83",
+          "id": "step-84",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1604,7 +1625,7 @@
           ]
         },
         {
-          "id": "step-84",
+          "id": "step-85",
           "label": "A site named ${SITE_NAME}: 400",
           "target": "local",
           "continueOnError": true,
@@ -1625,7 +1646,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-86",
           "label": "…MAIL_SENDER_HOST",
           "target": "local",
           "continueOnError": true,
@@ -1647,7 +1668,7 @@
           }
         },
         {
-          "id": "step-86",
+          "id": "step-87",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1666,7 +1687,7 @@
           ]
         },
         {
-          "id": "step-87",
+          "id": "step-88",
           "label": "Set SENDER_TUNNEL_ID",
           "target": "local",
           "op": {
@@ -1683,7 +1704,7 @@
           ]
         },
         {
-          "id": "step-88",
+          "id": "step-89",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1700,7 +1721,7 @@
           ]
         },
         {
-          "id": "step-89",
+          "id": "step-90",
           "label": "A sender at ${SENDER_SUB}.${DOMAIN}, which a tunnel serves: 409",
           "target": "local",
           "continueOnError": true,
@@ -1721,7 +1742,7 @@
           }
         },
         {
-          "id": "step-90",
+          "id": "step-91",
           "label": "…mail_sender_host_taken",
           "target": "local",
           "continueOnError": true,
@@ -1750,7 +1771,7 @@
       "label": "Port 9295 reserved; a tunnel left there by an older relay",
       "steps": [
         {
-          "id": "step-92",
+          "id": "step-93",
           "label": "A new tunnel on 9295: 400 (reserved)",
           "target": "local",
           "continueOnError": true,
@@ -1771,7 +1792,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-94",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1790,7 +1811,7 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-95",
           "label": "Set HOLD_ID",
           "target": "local",
           "op": {
@@ -1807,7 +1828,7 @@
           ]
         },
         {
-          "id": "step-95",
+          "id": "step-96",
           "label": "GET /api/audit?limit=1",
           "target": "host",
           "op": {
@@ -1825,7 +1846,7 @@
           ]
         },
         {
-          "id": "step-99",
+          "id": "step-100",
           "label": "GET /api/audit?action=mail.submission.refused&limit=10",
           "target": "host",
           "op": {
@@ -1843,7 +1864,7 @@
           ]
         },
         {
-          "id": "step-100",
+          "id": "step-101",
           "label": "Audited: mail.submission.refused {reason: tunnel}",
           "target": "local",
           "continueOnError": true,
@@ -1865,7 +1886,7 @@
           }
         },
         {
-          "id": "step-101",
+          "id": "step-102",
           "label": "The administrators are told",
           "target": "local",
           "continueOnError": true,
@@ -1886,7 +1907,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-103",
           "label": "The tunnel is left where it is",
           "target": "local",
           "continueOnError": true,
@@ -1907,7 +1928,7 @@
           }
         },
         {
-          "id": "step-106",
+          "id": "step-107",
           "label": "GET /api/audit?action=mail.submission.recovered&limit=10",
           "target": "host",
           "op": {
@@ -1925,7 +1946,7 @@
           ]
         },
         {
-          "id": "step-107",
+          "id": "step-108",
           "label": "Audited: mail.submission.recovered {previous: tunnel}",
           "target": "local",
           "continueOnError": true,
@@ -1947,7 +1968,7 @@
           }
         },
         {
-          "id": "step-108",
+          "id": "step-109",
           "label": "DELETE /api/tunnels/${HOLD_ID}",
           "target": "host",
           "op": {
@@ -1965,7 +1986,7 @@
       "label": "A domain's sender over the relay's transport",
       "steps": [
         {
-          "id": "step-110",
+          "id": "step-111",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -1982,7 +2003,7 @@
           ]
         },
         {
-          "id": "step-111",
+          "id": "step-112",
           "label": "domains mail ${DOMAIN} sender: a sender alone (no transport of its own)",
           "target": "local",
           "continueOnError": true,
@@ -2004,7 +2025,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-113",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2021,7 +2042,7 @@
           ]
         },
         {
-          "id": "step-113",
+          "id": "step-114",
           "label": "domains mail ${DOMAIN} test: sent",
           "target": "local",
           "continueOnError": true,
@@ -2043,7 +2064,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-116",
           "label": "…From the domain's sender, over the relay's sink",
           "target": "local",
           "continueOnError": true,
@@ -2065,7 +2086,7 @@
           }
         },
         {
-          "id": "step-116",
+          "id": "step-117",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2082,7 +2103,7 @@
           ]
         },
         {
-          "id": "step-117",
+          "id": "step-118",
           "label": "domains mail ${DOMAIN} clear",
           "target": "local",
           "continueOnError": true,
@@ -2104,7 +2125,7 @@
           }
         },
         {
-          "id": "step-118",
+          "id": "step-119",
           "label": "…the domain has no row of its own",
           "target": "local",
           "continueOnError": true,
@@ -2133,7 +2154,7 @@
       "label": "The budget: an administrator's invitations until the ceiling",
       "steps": [
         {
-          "id": "step-119",
+          "id": "step-120",
           "label": "Set SENT",
           "target": "local",
           "op": {
@@ -2150,7 +2171,7 @@
           ]
         },
         {
-          "id": "step-120",
+          "id": "step-121",
           "label": "Set CEILING",
           "target": "local",
           "op": {
@@ -2167,7 +2188,7 @@
           ]
         },
         {
-          "id": "step-121",
+          "id": "step-122",
           "label": "Set LIMIT",
           "target": "local",
           "op": {
@@ -2184,7 +2205,7 @@
           ]
         },
         {
-          "id": "step-122",
+          "id": "step-123",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2201,7 +2222,7 @@
           ]
         },
         {
-          "id": "step-123",
+          "id": "step-124",
           "label": "mail limit ${LIMIT}: the ceiling one above the ${SENT} sent in 24 h",
           "target": "local",
           "continueOnError": true,
@@ -2223,7 +2244,7 @@
           }
         },
         {
-          "id": "step-124",
+          "id": "step-125",
           "label": "GET /api/audit?limit=1",
           "target": "host",
           "op": {
@@ -2241,7 +2262,7 @@
           ]
         },
         {
-          "id": "step-125",
+          "id": "step-126",
           "label": "Set INV",
           "target": "local",
           "op": {
@@ -2258,7 +2279,7 @@
           ]
         },
         {
-          "id": "step-126",
+          "id": "step-127",
           "label": "An administrator's invitation: mailed (the last of the ceiling is the administrators')",
           "target": "local",
           "continueOnError": true,
@@ -2280,7 +2301,7 @@
           }
         },
         {
-          "id": "step-127",
+          "id": "step-128",
           "label": "Set INV",
           "target": "local",
           "op": {
@@ -2297,7 +2318,7 @@
           ]
         },
         {
-          "id": "step-128",
+          "id": "step-129",
           "label": "The next one: deferred-budget, its link answered for sharing another way",
           "target": "local",
           "continueOnError": true,
@@ -2319,7 +2340,7 @@
           }
         },
         {
-          "id": "step-129",
+          "id": "step-130",
           "label": "GET /api/audit?action=mail.budget.exhausted&limit=10",
           "target": "host",
           "op": {
@@ -2337,7 +2358,7 @@
           ]
         },
         {
-          "id": "step-130",
+          "id": "step-131",
           "label": "Audited: mail.budget.exhausted",
           "target": "local",
           "continueOnError": true,
@@ -2359,7 +2380,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-132",
           "label": "GET /api/settings/mail: at the ceiling, when sending resumes",
           "target": "local",
           "continueOnError": true,
@@ -2381,7 +2402,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-133",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2398,7 +2419,7 @@
           ]
         },
         {
-          "id": "step-133",
+          "id": "step-134",
           "label": "Back to 500",
           "target": "local",
           "continueOnError": true,
@@ -2427,7 +2448,7 @@
       "label": "The mail server down: invitations still answer, Authelia still signs in",
       "steps": [
         {
-          "id": "step-135",
+          "id": "step-136",
           "label": "Set INV",
           "target": "local",
           "op": {
@@ -2444,7 +2465,7 @@
           ]
         },
         {
-          "id": "step-136",
+          "id": "step-137",
           "label": "An invitation: mail failed, its link answered",
           "target": "local",
           "continueOnError": true,
@@ -2466,7 +2487,7 @@
           }
         },
         {
-          "id": "step-138",
+          "id": "step-139",
           "label": "${USER_ONE} still signs in",
           "target": "local",
           "continueOnError": true,
@@ -2494,7 +2515,7 @@
       "label": "No transport: back as before",
       "steps": [
         {
-          "id": "step-140",
+          "id": "step-141",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -2511,7 +2532,7 @@
           ]
         },
         {
-          "id": "step-141",
+          "id": "step-142",
           "label": "mail clear",
           "target": "local",
           "continueOnError": true,
@@ -2533,7 +2554,7 @@
           }
         },
         {
-          "id": "step-143",
+          "id": "step-144",
           "label": "Audited: mail.transport.cleared",
           "target": "local",
           "continueOnError": true,
@@ -2560,7 +2581,7 @@
   ],
   "apiHelpers": [],
   "headerRaw": "# ============================================================================\n# 41 — Mail: the relay's transport and Authelia's mail (Single-VM)\n# ============================================================================\n# The relay's side of mail on one VM (design: packages/core/docs/\n# mail-design.md §3–§5, §7, §8). The relay reaches no real mail server: the\n# transport is `smtp` to a stand-in on this VM (helpers.sh write_smtp_sink,\n# implicit TLS, a certificate from a private CA the transport trusts through\n# caPem). Spec 42 is a person's side (reset, change, invitations) and the\n# Gmail API transport.\n#\n# 1. Without mail: no transport, Authelia's notifier a file, nothing on\n#    127.0.0.1:9295, no reset link on the portal, /api/account/reset 404.\n# 2. The transport through lamaste-server: refused without the private CA\n#    (tls), stored with it (--ca-file, --password-stdin), shown without a\n#    secret, the CA bundle kept when a change omits it, a test mail in the\n#    sink From the sender, the daily limit and its shares.\n# 3. Authelia's mail: the listener on 9295 (its CA name-constrained to\n#    lamaste-mail.localhost), Authelia's notifier submitting\n#    to it with its password through a template line (kept by every later\n#    rewrite), the reset link and the change-password link on the portal;\n#    Authelia's one-time code (session elevation) arrives in the sink From\n#    the relay's sender; the listener refuses a wrong password.\n# 4. D6: a tunnel and a site on the sending host refused; a sender on a\n#    hostname a tunnel serves refused.\n# 5. A tunnel holding 9295 (a relay older than 4.14): the listener refused,\n#    audited, the administrators told, Authelia back to the file notifier;\n#    the tunnel moved, the listener back.\n# 6. A domain's own sender over the relay's transport.\n# 7. The budget: an administrator's invitation mailed until the ceiling\n#    (the reserve no other class reaches), then deferred-budget,\n#    mail.budget.exhausted audited.\n# 8. The sink down: an invitation answers failed with its link; Authelia\n#    still signs people in.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node nginx openssl oathtool sqlite3 ss\n\nbegin_test \"41 — Mail: the relay's transport and Authelia's mail (Single-VM)\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/var/tmp/lamalibre-lamaste-e2e-mail-41\"\nSINK_PORT=2465\nSINK_USER=\"relay\"\nUSER_ONE=\"e2e40-one\"\nMAIL_DOMAIN=\"e2e-mail.example.com\"\nOWNER_LABEL=\"e2e40-owner-$(date +%s)\"\nHOLD_SUB=\"e2e40hold\"\nHOLD_PORT=19295\nSENDER_SUB=\"e2e40snd\"\nSITE_NAME=\"notify\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR=\"${WORK_DIR}/one.cookies\"\nAUDIT_BASE=0\nSECRET_ONE=\"\"\nHOLD_ID=\"\"\nSENDER_TUNNEL_ID=\"\"\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\n# call <method> <api path> [<json>] — the panel API as the admin: the body, then the status\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 2 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\nrestart_panel() {\n  sudo systemctl restart lamalibre-lamaste-serverd\n  wait_for_http \"${PANEL_DIRECT_URL}/api/health\" 60 || log_fail \"The panel does not answer after a restart\"\n}\n\n# cli_json <args...> — lamaste-server <args> --json: its last JSON line\ncli_json() {\n  local out\n  out=$({ sudo lamaste-server \"$@\" --json 2>/dev/null || true; } | grep -E '^\\{' | tail -n 1 || true)\n  if [ -n \"${out}\" ]; then printf '%s\\n' \"${out}\"; else echo '{}'; fi\n}\n\n# set_smtp <extra flags...> — mail set-smtp against the sink, the password on stdin\nset_smtp() {\n  local out\n  out=$({ sudo lamaste-server mail set-smtp --host 127.0.0.1 --port \"${SINK_PORT}\" --security tls \\\n    --username \"${SINK_USER}\" --password-stdin --sender \"no-reply@notify.${DOMAIN}\" \\\n    --sender-name \"E2E Relay\" \"$@\" --json < \"${WORK_DIR}/sink/password\" 2>/dev/null || true; } | grep -E '^\\{' | tail -n 1 || true)\n  if [ -n \"${out}\" ]; then printf '%s\\n' \"${out}\"; else echo '{}'; fi\n}\n\ntransport() { api_get \"settings/mail\" | jq -c '.transport' 2>/dev/null || echo \"null\"; }\nlistening() { [ -n \"$(ss -ltnH 'sport = :9295' 2>/dev/null)\" ]; }\nnot_listening() { ! listening; }\nauthelia_config() { sudo bash -c \"${AUTHELIA_CONFIG_JSON}\" 2>/dev/null || echo '{}'; }\nnotifier_kind() { authelia_config | jq -r '.notifier | if .smtp then \"smtp\" elif .filesystem then \"filesystem\" else \"none\" end' 2>/dev/null || echo \"\"; }\nnotifier_is() { [ \"$(notifier_kind)\" = \"$1\" ]; }\nauth_get() { curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}$1\" 2>/dev/null || echo \"\"; }\nreset_link_of_portal() { auth_get / | grep -o 'data-resetpasswordcustomurl=\"[^\"]*\"' | head -n 1 || true; }\nportal_links() { [ \"$(reset_link_of_portal)\" = \"data-resetpasswordcustomurl=\\\"$1\\\"\" ]; }\naudit_since() {\n  api_get \"audit?action=$1&limit=50\" | jq -c --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base)]' 2>/dev/null || echo \"[]\"\n}\nsender_named() { [ \"$(authelia_config | jq -r --arg n \"$1\" '.notifier.smtp.sender // \"\" | startswith($n)' 2>/dev/null)\" = \"true\" ]; }\ntemplate_lines() { sudo grep -c 'mail-submission-password' /etc/authelia/configuration.yml 2>/dev/null || echo 0; }\nsink_holds() { sink_wait_count \"${WORK_DIR}/sink\" \"$1\" \"$2\" \"${3:-30}\"; }\n\n# admin_invite <username> — an administrator's invitation to <username>@MAIL_DOMAIN: the answer, compact\nadmin_invite() {\n  api_post \"invitations\" \"{\\\"username\\\":\\\"$1\\\",\\\"email\\\":\\\"$1@${MAIL_DOMAIN}\\\"}\" | jq -c '.' 2>/dev/null || echo '{}'\n}\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  call DELETE \"settings/mail\" > /dev/null 2>&1 || true\n  [ -n \"${DOMAIN:-}\" ] && call DELETE \"domains/${DOMAIN}/mail\" > /dev/null 2>&1 || true\n  local id\n  for id in $(api_get \"invitations\" 2>/dev/null | jq -r '.invitations[]? | select(.username | startswith(\"e2e40-\")) | .id' 2>/dev/null || true); do\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"users/${USER_ONE}?erase=true\" > /dev/null 2>&1 || true\n  for id in $(api_get \"tunnels\" 2>/dev/null | jq -r --arg a \"${HOLD_SUB}\" --arg b \"${SENDER_SUB}\" '.tunnels[]? | select(.subdomain == $a or .subdomain == $b or .subdomain == \"notify\") | .id' 2>/dev/null || true); do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  for id in $(api_get \"sites\" 2>/dev/null | jq -r --arg n \"${SITE_NAME}\" '.sites[]? | select(.name == $n) | .id' 2>/dev/null || true); do\n    api_delete \"sites/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${OWNER_LABEL}\" > /dev/null 2>&1 || true\n  stop_smtp_sink\n  sudo rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node nginx openssl oathtool sqlite3 ss\n\nbegin_test \"41 — Mail: the relay's transport and Authelia's mail (Single-VM)\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/var/tmp/lamalibre-lamaste-e2e-mail-41\"\nSINK_PORT=2465\nSINK_USER=\"relay\"\nUSER_ONE=\"e2e40-one\"\nMAIL_DOMAIN=\"e2e-mail.example.com\"\nOWNER_LABEL=\"e2e40-owner-$(date +%s)\"\nHOLD_SUB=\"e2e40hold\"\nHOLD_PORT=19295\nSENDER_SUB=\"e2e40snd\"\nSITE_NAME=\"notify\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR=\"${WORK_DIR}/one.cookies\"\nAUDIT_BASE=0\nSECRET_ONE=\"\"\nHOLD_ID=\"\"\nSENDER_TUNNEL_ID=\"\"\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\n# call <method> <api path> [<json>] — the panel API as the admin: the body, then the status\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 2 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\nrestart_panel() {\n  sudo systemctl restart lamalibre-lamaste-serverd\n  wait_for_http \"${PANEL_DIRECT_URL}/api/health\" 60 || log_fail \"The panel does not answer after a restart\"\n}\n\n# cli_json <args...> — lamaste-server <args> --json: its last JSON line\ncli_json() {\n  local out\n  out=$({ sudo lamaste-server \"$@\" --json 2>/dev/null || true; } | grep -E '^\\{' | tail -n 1 || true)\n  if [ -n \"${out}\" ]; then printf '%s\\n' \"${out}\"; else echo '{}'; fi\n}\n\n# set_smtp <extra flags...> — mail set-smtp against the sink, the password on stdin\nset_smtp() {\n  local out\n  out=$({ sudo lamaste-server mail set-smtp --host 127.0.0.1 --port \"${SINK_PORT}\" --security tls \\\n    --username \"${SINK_USER}\" --password-stdin --sender \"no-reply@notify.${DOMAIN}\" \\\n    --sender-name \"E2E Relay\" \"$@\" --json < \"${WORK_DIR}/sink/password\" 2>/dev/null || true; } | grep -E '^\\{' | tail -n 1 || true)\n  if [ -n \"${out}\" ]; then printf '%s\\n' \"${out}\"; else echo '{}'; fi\n}\n\ntransport() { api_get \"settings/mail\" | jq -c '.transport' 2>/dev/null || echo \"null\"; }\nlistening() { [ -n \"$(ss -ltnH 'sport = :9295' 2>/dev/null)\" ]; }\nnot_listening() { ! listening; }\nauthelia_config() { sudo bash -c \"${AUTHELIA_CONFIG_JSON}\" 2>/dev/null || echo '{}'; }\nnotifier_kind() { authelia_config | jq -r '.notifier | if .smtp then \"smtp\" elif .filesystem then \"filesystem\" else \"none\" end' 2>/dev/null || echo \"\"; }\nnotifier_is() { [ \"$(notifier_kind)\" = \"$1\" ]; }\nauth_get() { curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}$1\" 2>/dev/null || echo \"\"; }\nreset_link_of_portal() { auth_get / | grep -o 'data-resetpasswordcustomurl=\"[^\"]*\"' | head -n 1 || true; }\nportal_links() { [ \"$(reset_link_of_portal)\" = \"data-resetpasswordcustomurl=\\\"$1\\\"\" ]; }\naudit_since() {\n  api_get \"audit?action=$1&limit=50\" | jq -c --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base)]' 2>/dev/null || echo \"[]\"\n}\n# A display name with a space is quoted in the mailbox: \"E2E Relay Two\" <…>.\nsender_named() { [ \"$(authelia_config | jq -r --arg n \"$1\" '.notifier.smtp.sender // \"\" | startswith($n) or startswith(\"\\\"\" + $n + \"\\\"\")' 2>/dev/null)\" = \"true\" ]; }\ntemplate_lines() { sudo grep -c 'mail-submission-password' /etc/authelia/configuration.yml 2>/dev/null || echo 0; }\nsink_holds() { sink_wait_count \"${WORK_DIR}/sink\" \"$1\" \"$2\" \"${3:-30}\"; }\n\n# admin_invite <username> — an administrator's invitation to <username>@MAIL_DOMAIN: the answer, compact\nadmin_invite() {\n  api_post \"invitations\" \"{\\\"username\\\":\\\"$1\\\",\\\"email\\\":\\\"$1@${MAIL_DOMAIN}\\\"}\" | jq -c '.' 2>/dev/null || echo '{}'\n}\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  call DELETE \"settings/mail\" > /dev/null 2>&1 || true\n  [ -n \"${DOMAIN:-}\" ] && call DELETE \"domains/${DOMAIN}/mail\" > /dev/null 2>&1 || true\n  local id\n  for id in $(api_get \"invitations\" 2>/dev/null | jq -r '.invitations[]? | select(.username | startswith(\"e2e40-\")) | .id' 2>/dev/null || true); do\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"users/${USER_ONE}?erase=true\" > /dev/null 2>&1 || true\n  for id in $(api_get \"tunnels\" 2>/dev/null | jq -r --arg a \"${HOLD_SUB}\" --arg b \"${SENDER_SUB}\" '.tunnels[]? | select(.subdomain == $a or .subdomain == $b or .subdomain == \"notify\") | .id' 2>/dev/null || true); do\n    api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  for id in $(api_get \"sites\" 2>/dev/null | jq -r --arg n \"${SITE_NAME}\" '.sites[]? | select(.name == $n) | .id' 2>/dev/null || true); do\n    api_delete \"sites/${id}\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${OWNER_LABEL}\" > /dev/null 2>&1 || true\n  stop_smtp_sink\n  sudo rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

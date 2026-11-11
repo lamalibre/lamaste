@@ -118,7 +118,8 @@ portal_links() { [ "$(reset_link_of_portal)" = "data-resetpasswordcustomurl=\"$1
 audit_since() {
   api_get "audit?action=$1&limit=50" | jq -c --argjson base "${AUDIT_BASE}" '[.entries[]? | select(.id > $base)]' 2>/dev/null || echo "[]"
 }
-sender_named() { [ "$(authelia_config | jq -r --arg n "$1" '.notifier.smtp.sender // "" | startswith($n)' 2>/dev/null)" = "true" ]; }
+# A display name with a space is quoted in the mailbox: "E2E Relay Two" <…>.
+sender_named() { [ "$(authelia_config | jq -r --arg n "$1" '.notifier.smtp.sender // "" | startswith($n) or startswith("\"" + $n + "\"")' 2>/dev/null)" = "true" ]; }
 template_lines() { sudo grep -c 'mail-submission-password' /etc/authelia/configuration.yml 2>/dev/null || echo 0; }
 sink_holds() { sink_wait_count "${WORK_DIR}/sink" "$1" "$2" "${3:-30}"; }
 
@@ -288,10 +289,11 @@ assert_json_field "$MAIL" '.to | join(",")' "${USER_ONE}@${MAIL_DOMAIN}" "…to 
 
 log_section "The listener admits Authelia alone"
 
-LISTENER=$(printf 'EHLO e2e\r\nAUTH PLAIN %s\r\nQUIT\r\n' "$(printf '\0authelia\0wrong-password' | base64 -w0)" | timeout 10 openssl s_client -quiet -connect 127.0.0.1:9295 2>/dev/null || true)
+LISTENER=$(smtp_dialog 9295 'EHLO e2e' "AUTH PLAIN $(printf '\0authelia\0wrong-password' | base64 -w0)" 'QUIT')
 assert_contains "$LISTENER" "535" "A wrong password: 535" || true
-LISTENER=$(printf 'EHLO e2e\r\nMAIL FROM:<x@example.com>\r\nQUIT\r\n' | timeout 10 openssl s_client -quiet -connect 127.0.0.1:9295 2>/dev/null || true)
-assert_not_contains "$LISTENER" "250 2.1.0" "MAIL without AUTH: not accepted" || true
+LISTENER=$(smtp_dialog 9295 'EHLO e2e' 'MAIL FROM:<x@example.com>' 'QUIT')
+assert_contains "$LISTENER" "530" "MAIL without AUTH: 530, authentication required" || true
+assert_not_contains "$LISTENER" "250 2.1.0" "…not accepted" || true
 
 # ===========================================================================
 # 4. D6 — the sending host is not a web hostname

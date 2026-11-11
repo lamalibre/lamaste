@@ -3386,10 +3386,31 @@ start_smtp_sink() {
     --dir "${dir}/mails" --username "$3" --password-file "${dir}/password" &> "${dir}/sink.log" &
   deadline=$((SECONDS + 20))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if echo QUIT | timeout 5 openssl s_client -quiet -connect "127.0.0.1:${port}" 2>/dev/null | grep -q '^220'; then return 0; fi
+    # Read the whole answer first: `| grep -q` would end the pipe early, and
+    # under a spec's pipefail openssl's SIGPIPE fails the check.
+    local banner
+    banner=$(echo QUIT | timeout 5 openssl s_client -quiet -connect "127.0.0.1:${port}" 2>/dev/null || true)
+    [[ "${banner}" == 220* ]] && return 0
     sleep 1
   done
   return 1
+}
+
+# smtp_dialog <port> <line>... — an SMTP dialogue over implicit TLS with
+# 127.0.0.1:<port>: each line sent a second after the last (an SMTP server
+# closes on a client that talks before its greeting or without waiting for
+# an answer: early talker, no PIPELINING); prints everything answered.
+smtp_dialog() {
+  local port="$1"
+  shift
+  {
+    sleep 1
+    local line
+    for line in "$@"; do
+      printf '%s\r\n' "${line}"
+      sleep 1
+    done
+  } | timeout 20 openssl s_client -quiet -connect "127.0.0.1:${port}" 2>/dev/null || true
 }
 
 # stop_smtp_sink — the sink no longer runs
