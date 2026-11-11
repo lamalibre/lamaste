@@ -18,6 +18,7 @@ import {
   AUTHELIA_CONFIG_FILTERS_ENV,
   AUTHELIA_OIDC_KEY_PATH,
   generateAutheliaUnit,
+  generateChiselUnit,
   generateServiceUnit,
   generateSudoersContent,
 } from '../src/lib/service-config.js';
@@ -51,6 +52,21 @@ test('the Authelia unit and the Authelia CLI run with the template configuration
   assert.match(unitSection, /\nStartLimitIntervalSec=0\n/);
   assert.match(serviceSection, /\nRestartSec=5\n/);
   assert.equal(AUTHELIA_OIDC_KEY_PATH, '/etc/authelia/oidc-issuer.pem');
+});
+
+test('chisel has no start rate limit and the panel may reset its failure', () => {
+  // A burst of revocations restarts chisel quickly; systemd's default start
+  // limit left it failed and every tunnel dark (found by a three-VM spec).
+  const unit = generateChiselUnit({ configDir: '/etc/lamalibre/lamaste' });
+  const [unitSection, serviceSection] = unit.split('[Service]');
+  assert.match(unitSection, /\nStartLimitIntervalSec=0\n/);
+  assert.match(serviceSection, /\nRestart=always\n/);
+  assert.match(serviceSection, /\nRestartSec=5\n/);
+  assert.ok(
+    generateSudoersContent()
+      .split('\n')
+      .includes('lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl reset-failed chisel'),
+  );
 });
 
 test('the panel unit gives npm a HOME and a cache inside the state directory', () => {

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.13.1] - 2026-11-11
+
+### Fixed
+
+- **A burst of revocations no longer leaves every tunnel down.** Each revocation (a plugin uninstalled, a tunnel disabled, a credential rotated) restarts chisel, and systemd's default start limit (5 starts in 10 s) put chisel in `failed (start-limit-hit)` after a few uninstalls in a row. `try-restart` leaves a failed unit alone and nothing noticed, so every tunnel on the relay stayed dark until someone ran `systemctl reset-failed chisel` by hand. Now:
+  - the chisel unit has no start rate limit (`StartLimitIntervalSec=0`, as the Authelia unit already had; crash loops stay bounded by `RestartSec=5`);
+  - the panel coalesces its chisel restarts: requests within 500 ms share one restart, restarts start at least 2 s apart, and the restart answering a revocation always starts after it, so nothing revoked stays live;
+  - starting chisel resets a failed unit first (new sudoers line `systemctl reset-failed chisel`), and once start-up reconciliation has succeeded the panel checks every 30 s for a failed chisel, reconciles (authfile re-rendered, failure reset, chisel started) and notifies the administrators. A chisel stopped on purpose, or held down by a failed reconciliation, is left alone.
+
+### Upgrade notes
+
+- The Panel Update (create-lamaste's redeploy) rewrites the chisel unit and the sudoers file. A relay whose chisel is already failed is recovered when the updated panel starts.
+
 ## [4.13.0] - 2026-11-10
 
 Calls and events between app plugins: an application made of many agent-hosted plugins — a few platform plugins (a directory, audiences, notices, media, search, reporting) used by many domain plugins, on one agent or several behind one relay — lets their agent halves call each other's declared endpoints, on their own or on behalf of the person they serve, and receive each other's events, only along the edges a shelf grants. Design: `plugin-development/design/agent-hosted-app-plugins.md`, _Slice 8 as planned_; reference: `packages/core/docs/04-api-reference/peers.md`.

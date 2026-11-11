@@ -17,6 +17,7 @@ import {
   reloadChisel as reloadChiselCore,
   stopChisel as stopChiselCore,
   isChiselRunning as isChiselRunningCore,
+  isChiselFailed as isChiselFailedCore,
   getChiselStatus as getChiselStatusCore,
 } from '@lamalibre/lamaste/server';
 import { syncChiselAuthfile } from './chisel-users.js';
@@ -58,6 +59,10 @@ export function stopChisel() {
 
 export function isChiselRunning() {
   return isChiselRunningCore(execa);
+}
+
+export function isChiselFailed() {
+  return isChiselFailedCore(execa);
 }
 
 export function getChiselStatus() {

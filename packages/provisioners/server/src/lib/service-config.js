@@ -91,6 +91,9 @@ lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl enable chisel
 # Disabled (with stop) when startup reconciliation cannot secure chisel, so a
 # reboot does not start it on a stale authfile; re-enabled once it succeeds.
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl disable chisel
+# A chisel in the failed state refuses \`start\` until its failure is reset;
+# the panel resets it before starting it (start-up and the failed-unit watch).
+lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl reset-failed chisel
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl start authelia
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl stop authelia
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl restart authelia
@@ -220,6 +223,15 @@ export const WEB_ROOT = '/var/www/lamaste';
  *
  * Installed by create-lamaste only; onboarding enables and starts it.
  *
+ * No start rate limit (`StartLimitIntervalSec=0`): the panel restarts chisel
+ * whenever a change revokes access, and systemd's default (5 starts in
+ * 10 s) put chisel in `failed (start-limit-hit)` after a burst of plugin
+ * uninstalls — every tunnel on the relay stayed dark until someone ran
+ * `systemctl reset-failed` by hand (`try-restart` leaves a failed unit
+ * alone). A crash loop stays bounded by `RestartSec=5`. The panel also
+ * coalesces its restarts and recovers a failed chisel (chisel-runtime.js,
+ * chisel-reconcile.js).
+ *
  * @param {{ configDir: string }} ctx
  * @returns {string}
  */
@@ -227,6 +239,7 @@ export function generateChiselUnit(ctx) {
   return `[Unit]
 Description=Chisel Tunnel Server
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

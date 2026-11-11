@@ -138,7 +138,7 @@ Each tunnel in `tunnels.json` carries an `agentLabel` — the agent that carries
 - A reserved port (3100, 9090, 9091, 9292, 9294 — Lamaste's own services) and a port claimed by two tunnels are never granted, whatever the state file says. Such a tunnel (only possible in state written before these checks) is also left out of its owner's `agent-config`, so the agent never asks for a port Chisel would refuse; it is carried by no one until it is deleted and recreated on a free port.
 - `lamaste-no-grants` is a sentinel user with no grants. Chisel disables authentication entirely when its authfile has no users, so without it a fresh server (or one whose agents are all revoked) would be an open relay. Its random password lives in `/etc/lamalibre/lamaste/chisel-sentinel` (0600) and is never handed out.
 - The authfile is `0640`, owner `lamaste`, group `lamaste-chisel`. The panel (a member of that group through `SupplementaryGroups=lamaste-chisel`) writes it directly, without sudo: a `0600` temp file in the same directory, `chgrp lamaste-chisel`, `chmod 0640`, fsync, rename. Chisel's file watcher therefore never sees it with the wrong permissions.
-- Every tunnel change writes the state first, then re-renders the authfile. Chisel reloads the file on every replace, but a reload only applies to **new** sessions: a live session keeps the listeners it already bound. So an addition (a new agent, a new grant) takes effect without a restart, while a revocation (a removed or rotated password, a withdrawn grant) restarts Chisel with `systemctl try-restart` so live sessions drop what they no longer hold. `try-restart` leaves a Chisel that was stopped on purpose stopped. Until the panel knows Chisel is running the pinned release, every change restarts it.
+- Every tunnel change writes the state first, then re-renders the authfile. Chisel reloads the file on every replace, but a reload only applies to **new** sessions: a live session keeps the listeners it already bound. So an addition (a new agent, a new grant) takes effect without a restart, while a revocation (a removed or rotated password, a withdrawn grant) restarts Chisel with `systemctl try-restart` so live sessions drop what they no longer hold. `try-restart` leaves a Chisel that was stopped on purpose stopped. Until the panel knows Chisel is running the pinned release, every change restarts it. Restarts are coalesced: requests within half a second share one restart, two restarts start at least 2 seconds apart, and the restart that answers a revocation always starts after it — so a burst of revocations (several plugin uninstalls in a row) restarts Chisel once or twice, not once each. The Chisel unit has no start rate limit (`StartLimitIntervalSec=0`; before 4.13.1, systemd's default of 5 starts in 10 seconds could leave Chisel `failed` and every tunnel down).
 
 On the API side the same rule holds: `GET /api/tunnels/agent-config` returns only the calling agent's enabled tunnels, an agent's `GET /api/tunnels` omits other agents' tunnels, and acting on one of those answers `404`.
 
@@ -217,7 +217,9 @@ Every time the panel starts it brings Chisel in line with the persisted state, i
 1. Every active agent gets a Chisel credential if it lacks one.
 2. Ownerless tunnels from versions before tunnel ownership are bound where the owner is certain: an `agent-<label>` panel tunnel only to that agent (when active), other tunnels only when exactly one machine agent is active (plugin-agent certificates carry no tunnels and are not counted). The rest stay unassigned and are logged. Tunnels that are withheld from every agent — a legacy tunnel on a reserved port, or two tunnels sharing a port — are logged too; delete each and recreate it on a free port.
 3. Once onboarding is `COMPLETED`: the server key is ensured and the authfile is rewritten with its ownership and mode. The installed version is checked; if it is not the pinned release, the panel logs an error telling you to run `create-lamaste`, and restarts Chisel on every authfile change until you do (older releases do not reload the authfile reliably).
-4. Chisel is restarted when a revocation requires it, and started if it is enabled but not running.
+4. Chisel is restarted when a revocation requires it, and started if it is enabled but not running (a `failed` unit's failure is reset first — systemd refuses to start it otherwise).
+
+Once reconciliation has succeeded, the panel checks every 30 seconds whether systemd reports Chisel `failed`. If it does, the panel reconciles again — the authfile is re-rendered, the failure reset and Chisel started — and notifies the administrators. A Chisel that is merely stopped, or held down by a failed reconciliation, is left alone.
 
 It **fails closed**: if the authfile cannot be established, Chisel is stopped **and disabled**, and the marker file `/etc/lamalibre/lamaste/chisel-failed-closed` records when — an authfile left by an older version may grant every agent every port, and keeping it live would re-open what this version closes. Disabling the unit keeps a reboot from starting Chisel on that authfile before the panel has reconciled. Reconciliation retries with backoff (30 seconds, doubling up to 10 minutes); once it succeeds it re-enables and starts Chisel and removes the marker.
 
@@ -235,20 +237,20 @@ A digest mismatch aborts the install and leaves any existing binary untouched. A
 
 ### Source files
 
-| File                                                      | Purpose                                                             |
-| --------------------------------------------------------- | ------------------------------------------------------------------- |
-| `packages/core/lib/src/server/chisel.ts`                  | Server key, start, stop, restart, status, installed version         |
-| `packages/provisioners/server/src/lib/binaries.js`        | Server install of the pinned Chisel (and Authelia) release          |
-| `packages/core/lib/src/server/chisel-users.ts`            | Per-agent credentials, grants, authfile rendering, sentinel user    |
-| `packages/core/lib/src/server/chisel-args.ts`             | Client `chiselArgs` returned by `agent-config`                      |
-| `packages/core/lib/src/server/tunnels.ts`                 | Tunnel create/delete/toggle/assign/reconfigure                      |
-| `packages/core/lib/src/chisel-download.ts`                | Pinned, checksum-verified Chisel download (server and agent)        |
-| `packages/core/lib/src/agent/chisel-service.ts`           | Agent-side plist / systemd unit generation, `chiselArgs` validation |
-| `packages/core/lib/src/agent/converge.ts`                 | Agent convergence with the panel (setup, update, sync)              |
-| `packages/core/lib/src/agent/sync-service.ts`             | Agent sync timer                                                    |
-| `packages/server/daemon/src/routes/management/tunnels.js` | Tunnel API endpoints                                                |
-| `packages/server/daemon/src/lib/chisel-reconcile.js`      | Startup reconciliation, fail closed                                 |
-| `packages/server/daemon/src/lib/chisel-runtime.js`        | Whether an authfile change needs a Chisel restart                   |
+| File                                                      | Purpose                                                               |
+| --------------------------------------------------------- | --------------------------------------------------------------------- |
+| `packages/core/lib/src/server/chisel.ts`                  | Server key, start, stop, restart, status, installed version           |
+| `packages/provisioners/server/src/lib/binaries.js`        | Server install of the pinned Chisel (and Authelia) release            |
+| `packages/core/lib/src/server/chisel-users.ts`            | Per-agent credentials, grants, authfile rendering, sentinel user      |
+| `packages/core/lib/src/server/chisel-args.ts`             | Client `chiselArgs` returned by `agent-config`                        |
+| `packages/core/lib/src/server/tunnels.ts`                 | Tunnel create/delete/toggle/assign/reconfigure                        |
+| `packages/core/lib/src/chisel-download.ts`                | Pinned, checksum-verified Chisel download (server and agent)          |
+| `packages/core/lib/src/agent/chisel-service.ts`           | Agent-side plist / systemd unit generation, `chiselArgs` validation   |
+| `packages/core/lib/src/agent/converge.ts`                 | Agent convergence with the panel (setup, update, sync)                |
+| `packages/core/lib/src/agent/sync-service.ts`             | Agent sync timer                                                      |
+| `packages/server/daemon/src/routes/management/tunnels.js` | Tunnel API endpoints                                                  |
+| `packages/server/daemon/src/lib/chisel-reconcile.js`      | Startup reconciliation, fail closed                                   |
+| `packages/server/daemon/src/lib/chisel-runtime.js`        | Whether an authfile change needs a Chisel restart; coalesced restarts |
 
 ### Panel tunnels
 

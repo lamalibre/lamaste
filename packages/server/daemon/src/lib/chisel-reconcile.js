@@ -38,6 +38,7 @@ import { migrateChiselCredentialsIfNeeded, syncChiselAuthfile } from './chisel-u
 import {
   ensureChiselKey,
   getInstalledChiselVersion,
+  isChiselFailed,
   isChiselRunning,
   reloadChisel,
   startChisel,
@@ -45,6 +46,7 @@ import {
 } from './chisel.js';
 import { setChiselRunningPinnedRelease } from './chisel-runtime.js';
 import { getConfig } from './config.js';
+import { notifyAdminsBestEffort } from './notifications.js';
 
 /** Chisel is the panel's to run once onboarding has completed. */
 function isOnboarded() {
@@ -68,6 +70,8 @@ async function isFailClosed() {
 
 const RETRY_MIN_MS = 30_000;
 const RETRY_MAX_MS = 10 * 60_000;
+/** How often the failed-unit watch looks at chisel. */
+export const CHISEL_WATCH_INTERVAL_MS = 30_000;
 
 async function isChiselEnabled() {
   try {
@@ -202,10 +206,70 @@ async function failClosed(logger, provisioned) {
 }
 
 /**
+ * One check of the failed-unit watch. Recovers chisel only when systemd
+ * reports it `failed`, the relay is onboarded and chisel is not held down by
+ * a failed reconciliation (fail-closed): an inactive chisel was stopped on
+ * purpose and stays stopped.
+ *
+ * @param {import('pino').Logger} logger
+ * @param {{ isOnboarded: () => boolean, isFailClosed: () => Promise<boolean>,
+ *   isChiselFailed: () => Promise<boolean>, reconcile: (logger: unknown) => Promise<unknown>,
+ *   notify: (n: { source: string, level: string, message: string }, logger: unknown) =>
+ *     Promise<unknown> }} [deps]
+ * @returns {Promise<'not-onboarded' | 'held-down' | 'ok' | 'recovered'>}
+ */
+export async function recoverFailedChisel(logger, deps = watchDeps) {
+  if (!deps.isOnboarded()) return 'not-onboarded';
+  if (await deps.isFailClosed()) return 'held-down';
+  if (!(await deps.isChiselFailed())) return 'ok';
+  logger.error({}, 'Chisel is in the failed state — every tunnel is down; recovering it');
+  // Reconciliation re-renders the authfile, resets the failure and starts
+  // chisel (startChisel); if it cannot, it fails closed as at start-up.
+  await deps.reconcile(logger);
+  logger.info({}, 'Chisel recovered from the failed state');
+  await deps.notify(
+    {
+      source: 'lamaste',
+      level: 'warning',
+      message:
+        'Chisel had stopped in the failed state, so every tunnel was down; the panel reset ' +
+        'and restarted it. Tunnels reconnect within 30 seconds.',
+    },
+    logger,
+  );
+  return 'recovered';
+}
+
+const watchDeps = {
+  isOnboarded,
+  isFailClosed,
+  isChiselFailed,
+  reconcile: reconcileChiselServer,
+  notify: notifyAdminsBestEffort,
+};
+
+function startChiselWatch(logger) {
+  let checking = false;
+  const timer = setInterval(async () => {
+    if (checking) return;
+    checking = true;
+    try {
+      await recoverFailedChisel(logger);
+    } catch (err) {
+      logger.error({ err }, 'Chisel could not be recovered from the failed state; retrying');
+    } finally {
+      checking = false;
+    }
+  }, CHISEL_WATCH_INTERVAL_MS);
+  timer.unref();
+}
+
+/**
  * Run reconciliation in the background now and, on failure, again with
- * exponential backoff until it succeeds. Never throws and never blocks
- * startup: the panel must stay reachable meanwhile — it is how an
- * administrator fixes whatever made reconciliation fail.
+ * exponential backoff until it succeeds; then watch for a failed chisel
+ * ({@link recoverFailedChisel}). Never throws and never blocks startup: the
+ * panel must stay reachable meanwhile — it is how an administrator fixes
+ * whatever made reconciliation fail.
  */
 export function startChiselReconciler(logger) {
   let delay = RETRY_MIN_MS;
@@ -220,13 +284,17 @@ export function startChiselReconciler(logger) {
   };
   const schedule = () => {
     const timer = setTimeout(async () => {
-      if (await attempt()) return;
+      if (await attempt()) {
+        startChiselWatch(logger);
+        return;
+      }
       delay = Math.min(delay * 2, RETRY_MAX_MS);
       schedule();
     }, delay);
     timer.unref();
   };
   void attempt().then((ok) => {
-    if (!ok) schedule();
+    if (ok) startChiselWatch(logger);
+    else schedule();
   });
 }
