@@ -100,7 +100,7 @@ assert_contains "$CONTENT" "ssl_reject_handshake on;" "…refusing the handshake
 assert_contains "$CONTENT" "ssl_protocols TLSv1.2 TLSv1.3;" "…with the relay's TLS protocols (the socket's default sets every name's floor)" || true
 TLS12=$(openssl s_client -connect 127.0.0.1:443 -servername "auth.${DOMAIN}" -tls1_2 < /dev/null 2>&1 | grep -c 'BEGIN CERTIFICATE' || true)
 assert_eq "$TLS12" "1" "TLS 1.2 to auth.${DOMAIN} still completes" || true
-DEFAULTS=$( { sudo grep -rhE '^\s*listen\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null || true; } | wc -l | tr -d ' ')
+DEFAULTS=$( { sudo grep -RhE '^\s*listen\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null || true; } | wc -l | tr -d ' ')
 assert_eq "$DEFAULTS" "1" "No other site claims port 443's default server" || true
 NGINX_T=$(sudo nginx -t 2>&1 && echo OK || echo FAILED)
 assert_contains "$NGINX_T" "OK" "nginx -t passes" || true

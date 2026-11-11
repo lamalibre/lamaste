@@ -213,7 +213,7 @@
           "target": "local",
           "op": {
             "type": "exec",
-            "command": " { sudo grep -rhE '^\\s*listen\\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null || true; } | wc -l | tr -d ' '"
+            "command": " { sudo grep -RhE '^\\s*listen\\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null || true; } | wc -l | tr -d ' '"
           },
           "capture": [
             {
@@ -284,7 +284,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"The catch-all site\"\n# ---------------------------------------------------------------------------\n\nCATCH_ALL=/etc/nginx/sites-enabled/lamalibre-lamaste-https-default\nassert_eq \"$(sudo test -L \"$CATCH_ALL\" && echo yes || echo no)\" \"yes\" \"lamalibre-lamaste-https-default is enabled\" || true\nCONTENT=$(sudo cat \"$CATCH_ALL\" 2>/dev/null || echo \"\")\nassert_contains \"$CONTENT\" \"listen 443 ssl default_server;\" \"…the default server on 443, as the relay's vhosts listen\" || true\nassert_contains \"$CONTENT\" \"ssl_reject_handshake on;\" \"…refusing the handshake, holding no certificate\" || true\nassert_contains \"$CONTENT\" \"ssl_protocols TLSv1.2 TLSv1.3;\" \"…with the relay's TLS protocols (the socket's default sets every name's floor)\" || true\nTLS12=$(openssl s_client -connect 127.0.0.1:443 -servername \"auth.${DOMAIN}\" -tls1_2 < /dev/null 2>&1 | grep -c 'BEGIN CERTIFICATE' || true)\nassert_eq \"$TLS12\" \"1\" \"TLS 1.2 to auth.${DOMAIN} still completes\" || true\nDEFAULTS=$( { sudo grep -rhE '^\\s*listen\\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null || true; } | wc -l | tr -d ' ')\nassert_eq \"$DEFAULTS\" \"1\" \"No other site claims port 443's default server\" || true\nNGINX_T=$(sudo nginx -t 2>&1 && echo OK || echo FAILED)\nassert_contains \"$NGINX_T\" \"OK\" \"nginx -t passes\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"The catch-all site\"\n# ---------------------------------------------------------------------------\n\nCATCH_ALL=/etc/nginx/sites-enabled/lamalibre-lamaste-https-default\nassert_eq \"$(sudo test -L \"$CATCH_ALL\" && echo yes || echo no)\" \"yes\" \"lamalibre-lamaste-https-default is enabled\" || true\nCONTENT=$(sudo cat \"$CATCH_ALL\" 2>/dev/null || echo \"\")\nassert_contains \"$CONTENT\" \"listen 443 ssl default_server;\" \"…the default server on 443, as the relay's vhosts listen\" || true\nassert_contains \"$CONTENT\" \"ssl_reject_handshake on;\" \"…refusing the handshake, holding no certificate\" || true\nassert_contains \"$CONTENT\" \"ssl_protocols TLSv1.2 TLSv1.3;\" \"…with the relay's TLS protocols (the socket's default sets every name's floor)\" || true\nTLS12=$(openssl s_client -connect 127.0.0.1:443 -servername \"auth.${DOMAIN}\" -tls1_2 < /dev/null 2>&1 | grep -c 'BEGIN CERTIFICATE' || true)\nassert_eq \"$TLS12\" \"1\" \"TLS 1.2 to auth.${DOMAIN} still completes\" || true\nDEFAULTS=$( { sudo grep -RhE '^\\s*listen\\s+[^;]*443[^;]*default_server' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null || true; } | wc -l | tr -d ' ')\nassert_eq \"$DEFAULTS\" \"1\" \"No other site claims port 443's default server\" || true\nNGINX_T=$(sudo nginx -t 2>&1 && echo OK || echo FAILED)\nassert_contains \"$NGINX_T\" \"OK\" \"nginx -t passes\" || true"
     },
     {
       "id": "unknown-names-fail-the-handshake",
