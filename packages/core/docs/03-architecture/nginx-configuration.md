@@ -17,6 +17,10 @@ Internet
   │   └── lamalibre-lamaste-http-redirect (default_server)
   │       └── 301 → https://$host$request_uri
   │
+  ├── :443 (a hostname no site serves)
+  │   └── lamalibre-lamaste-https-default (default_server)
+  │       └── TLS handshake refused (ssl_reject_handshake)
+  │
   ├── :9292 (IP-based, always available)
   │   └── lamalibre-lamaste-panel-ip
   │       ├── Self-signed TLS cert
@@ -1210,6 +1214,7 @@ All Lamaste-managed files are prefixed with `lamalibre-lamaste-` to distinguish 
 | --------------------------------- | ---------------------- | ----------------------- |
 | `lamalibre-lamaste-panel-ip`      | Installation           | Never (fallback access) |
 | `lamalibre-lamaste-http-redirect` | Installation, redeploy | Uninstall               |
+| `lamalibre-lamaste-https-default` | Installation, redeploy | Uninstall               |
 
 Beside them the installer writes the http-level map `conf.d/lamalibre-lamaste-backend-cookie.conf` — on a fresh install with nginx's configuration, on every redeploy as the first step ([The backend cookie map](#the-backend-cookie-map)); `lamaste-server uninstall` removes it after the sites that use it.
 
@@ -1225,6 +1230,20 @@ server {
 ```
 
 Without it nothing listens on port 80 and `http://` links to the relay's hostnames are refused. It does not interfere with Let's Encrypt: for an HTTP-01 challenge (`certbot certonly --nginx` and renewals) certbot's nginx plugin clones this default server block for the name being validated, answers the challenge path ahead of the redirect, and restores the file afterwards. This was verified on Ubuntu 24.04 (nginx 1.24, certbot 2.9) for new names, names that already have a 443 block, multi-name lineages and forced renewals. The installer tests the file with `nginx -t` and restores the previous state on failure; if another site already owns port 80's `default_server`, the step is skipped — not fatal — and the relay works without the redirect.
+
+`lamalibre-lamaste-https-default` is the port-443 catch-all (4.14.1):
+
+```nginx
+# Managed by Lamaste — a hostname no site serves is refused at the TLS handshake.
+server {
+    listen 443 ssl default_server;
+    server_name _;
+    ssl_reject_handshake on;
+    return 444;
+}
+```
+
+Without it, nginx answers a hostname that no server block names with its first 443 server. That happens for a typo under a wildcard DNS record, or for any name pointed at the relay, and the client gets that site's certificate and its sign-in redirect. The catch-all listens exactly as the relay's vhosts do (`listen 443 ssl;`, IPv4, no `http2`), holds no certificate, and fails the handshake for every name no site serves. A client without SNI is refused too; the panel at the relay's IP address is on 9292. No other site can take the default: `lamaste-priv` refuses `default_server` and `ssl_reject_handshake` in any vhost the panel writes, and refuses both catch-alls' names for every action. Port 80 is unchanged. Its redirect sends an unknown name to `https://` on the same name, which this site then refuses, and it stays the default server that certbot clones for HTTP-01. Like the redirect, it is installed with `nginx -t` and the previous state restored on failure. It is skipped, not fatal, when another site already owns port 443's default server, because that site, not one of the relay's, then answers unknown names.
 
 ### Created During Onboarding
 

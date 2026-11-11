@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { generateServiceUnit, generateSudoersContent } from '../lib/service-config.js';
 import { lookupId } from '../lib/accounts.js';
 import { ensureBackendCookieMap } from '../lib/backend-cookie.js';
-import { ensureHttpRedirect } from '../lib/http-redirect.js';
+import { ensureHttpRedirect, ensureHttpsDefault } from '../lib/http-redirect.js';
 import { refreshIpPanelVhost } from '../lib/ip-panel-vhost.js';
 import { generateCertHelpPage } from '../lib/cert-help-page.js';
 import { ensureRootOwnedInstallDir, removeTree, writeFileNoFollow } from '../lib/ownership.js';
@@ -390,6 +390,23 @@ export function redeployTasks(ctx, task) {
           subtask.output = changed
             ? 'Port 80 now redirects every host to https://'
             : 'Port 80 redirect already in place';
+        } catch (err) {
+          subtask.skip(`Skipped — ${err.message}`);
+        }
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Refusing unknown hostnames over HTTPS',
+      task: async (_ctx, subtask) => {
+        // Not fatal: nginx refuses it only when another site already owns
+        // port 443's default server — which then, not one of the relay's
+        // sites, answers names no site serves.
+        try {
+          const { changed } = await ensureHttpsDefault();
+          subtask.output = changed
+            ? 'Port 443 now refuses every hostname no site serves at the TLS handshake'
+            : 'HTTPS catch-all already in place';
         } catch (err) {
           subtask.skip(`Skipped — ${err.message}`);
         }

@@ -22,7 +22,7 @@
 - All backend services bind to `127.0.0.1` — they are never directly accessible from the internet
 - Port 9295 listens only while the relay has a mail transport: the panel's own SMTP listener (implicit TLS, a local CA) to which Authelia submits its mail — see [Mail](../02-guides/mail.md)
 - Port 9292 is the emergency fallback — it works even if your domain is lost or DNS breaks
-- The UFW firewall only allows ports 22, 80, 443, and 9292. Port 80 serves Let's Encrypt HTTP-01 challenges and otherwise redirects every request to HTTPS (`lamalibre-lamaste-http-redirect`)
+- The UFW firewall only allows ports 22, 80, 443, and 9292. Port 80 serves Let's Encrypt HTTP-01 challenges and otherwise redirects every request to HTTPS (`lamalibre-lamaste-http-redirect`). On port 443 a hostname no site serves fails the TLS handshake (`lamalibre-lamaste-https-default`)
 
 ### Reserved tunnel ports
 
@@ -159,6 +159,7 @@ Per agent label, on the agent machine (user-level, no root):
 | Path                                                           | Description                              |
 | -------------------------------------------------------------- | ---------------------------------------- |
 | `/etc/nginx/sites-available/lamalibre-lamaste-http-redirect`   | Port 80 catch-all, `301` to HTTPS        |
+| `/etc/nginx/sites-available/lamalibre-lamaste-https-default`   | Port 443 catch-all, handshake refused    |
 | `/etc/nginx/sites-available/lamalibre-lamaste-panel-ip`        | IP:9292 panel vhost (mTLS, self-signed)  |
 | `/etc/nginx/sites-available/lamalibre-lamaste-panel-domain`    | Domain panel vhost (mTLS, Let's Encrypt) |
 | `/etc/nginx/sites-available/lamalibre-lamaste-auth`            | Authelia portal vhost                    |

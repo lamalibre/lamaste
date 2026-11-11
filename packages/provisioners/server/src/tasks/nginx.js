@@ -2,7 +2,7 @@ import { execa } from 'execa';
 import { writeFile, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { ensureBackendCookieMap } from '../lib/backend-cookie.js';
-import { ensureHttpRedirect } from '../lib/http-redirect.js';
+import { ensureHttpRedirect, ensureHttpsDefault } from '../lib/http-redirect.js';
 import { IP_PANEL_SITE, generateIpPanelVhost } from '../lib/ip-panel-vhost.js';
 
 /**
@@ -113,6 +113,22 @@ ssl_verify_client optional;
         try {
           await ensureHttpRedirect({ reload: false });
           subtask.output = 'Port 80 answers every host with a redirect to https://';
+        } catch (err) {
+          subtask.skip(`Skipped — ${err.message}`);
+        }
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Refusing unknown hostnames over HTTPS',
+      task: async (_ctx, subtask) => {
+        // nginx is (re)started by the next task; no reload here. Not fatal:
+        // nginx refuses it only when another site already owns port 443's
+        // default server — which then, not one of the relay's sites,
+        // answers names no site serves.
+        try {
+          await ensureHttpsDefault({ reload: false });
+          subtask.output = 'Port 443 refuses, at the TLS handshake, every hostname no site serves';
         } catch (err) {
           subtask.skip(`Skipped — ${err.message}`);
         }
